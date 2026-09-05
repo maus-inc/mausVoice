@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Writing styles</title>
+<link rel="stylesheet" href="mock.css" />
+</head>
+<body>
+<main class="stage" data-feature="writing-styles">
+  <header class="window-chrome">
+    <div class="window-controls" aria-hidden="true">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+    </div>
+    <div class="window-title">Writing styles</div>
+    <div class="window-tabs">
+      <span class="tab">Dictation</span>
+      <span class="tab active">Writing styles</span>
+      <span class="tab">Dictionary</span>
+      <span class="tab">History</span>
+      <span class="tab">Settings</span>
+    </div>
+  </header>
+
+  <section class="hero compact">
+    <p class="kicker">Writing styles</p>
+    <h1>Choose how you sound.</h1>
+    <p class="lede">
+      Pick a style for AI post-processing. While dictating, press
+      <kbd>Option</kbd>+<kbd>↑</kbd> or <kbd>Option</kbd>+<kbd>↓</kbd> to cycle
+      between your active styles.
+    </p>
+    <div class="meta-row">
+      <span class="chip chip-success">AI post-processing: On</span>
+      <span class="chip">Provider: Groq</span>
+    </div>
+  </section>
+
+  <section class="panel two-col writing-panel">
+    <div class="panel-head full-span">
+      <h2>Active styles</h2>
+      <p class="panel-sub">
+        Select at least one style. mausVoice applies the highlighted style to
+        your next dictation.
+      </p>
+    </div>
+    <ul class="style-list">
+      <li class="style-row selected">
+        <span class="style-check" aria-hidden="true"></span>
+        <div class="style-meta">
+          <span class="style-name">Professional email</span>
+          <span class="style-desc">
+            Professional email formatting with a greeting, body, and sign-off.
+          </span>
+        </div>
+        <span class="style-action">Edit</span>
+      </li>
+      <li class="style-row selected">
+        <span class="style-check" aria-hidden="true"></span>
+        <div class="style-meta">
+          <span class="style-name">Polished and professional</span>
+          <span class="style-desc">
+            Polished and professional register suitable for documents and
+            correspondence.
+          </span>
+        </div>
+        <span class="style-action">Edit</span>
+      </li>
+      <li class="style-row selected default">
+        <span class="style-check" aria-hidden="true"></span>
+        <div class="style-meta">
+          <span class="style-name">Verbatim</span>
+          <span class="style-desc">
+            Keep filler words and natural speech. No post-processing applied.
+          </span>
+          <span class="style-tag">Default style</span>
+        </div>
+        <span class="style-action">Edit</span>
+      </li>
+    </ul>
+    <div class="panel-aside">
+      <div class="aside-card">
+        <h3>Add a style</h3>
+        <p>Create a custom prompt template for a recurring workflow.</p>
+        <button class="btn btn-primary">Add style</button>
+      </div>
+      <div class="aside-card subtle">
+        <h3>Style hotkeys</h3>
+        <ul class="kbd-list">
+          <li><kbd>Option</kbd>+<kbd>↑</kbd> Cycle backward</li>
+          <li><kbd>Option</kbd>+<kbd>↓</kbd> Cycle forward</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer class="status-bar">
+    <span class="status-dot status-dot-active"></span>
+    <span>3 styles active</span>
+    <span class="status-spacer"></span>
+    <span>Verbatim is your default style</span>
+  </footer>
+</main>
+</body>
+</html>
