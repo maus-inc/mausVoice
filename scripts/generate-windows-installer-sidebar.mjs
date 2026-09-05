@@ -218,7 +218,7 @@ function defilterRow(inflated, y, samples, rowBytes, channels) {
  * and `upLeft` are the neighbours the PNG spec defines; the up-neighbour
  * row is already final when it is read.
  */
-function defilterScanlines(inflated, width, height, rowBytes, channels) {
+function defilterScanlines(inflated, height, rowBytes, channels) {
   const samples = new Uint8Array(height * rowBytes);
   for (let y = 0; y < height; y += 1) {
     defilterRow(inflated, y, samples, rowBytes, channels);
@@ -276,7 +276,14 @@ function expandRgbaSample(samples, i, o, rgba) {
 }
 
 /** Expand one defiltered sample buffer into RGBA for its colour type. */
-function expandToRgba(samples, width, height, colorType, palette, transparency) {
+function expandToRgba(
+  samples,
+  width,
+  height,
+  colorType,
+  palette,
+  transparency,
+) {
   const rgba = new Uint8Array(width * height * 4);
   for (let i = 0; i < width * height; i += 1) {
     const o = i * 4;
@@ -322,13 +329,7 @@ export function decodePng(buf) {
     );
   }
 
-  const samples = defilterScanlines(
-    inflated,
-    png.width,
-    png.height,
-    rowBytes,
-    channels,
-  );
+  const samples = defilterScanlines(inflated, png.height, rowBytes, channels);
   const rgba = expandToRgba(
     samples,
     png.width,
@@ -400,7 +401,7 @@ export function decodeImage(buf) {
     return decodeBmp(buf);
   }
   throw new Error(
-      "unsupported image format - commit a PNG (8-bit, non-interlaced) or a " +
+    "unsupported image format - commit a PNG (8-bit, non-interlaced) or a " +
       "24/32-bit uncompressed BMP as branding/mausvoice-sidebar-installerimg.png",
   );
 }
@@ -449,12 +450,8 @@ function compositeOverBackground(image, background) {
   for (let o = 0; o < rgba.length; o += 4) {
     const alpha = rgba[o + 3] / 255;
     rgba[o] = Math.round(rgba[o] * alpha + background[0] * (1 - alpha));
-    rgba[o + 1] = Math.round(
-      rgba[o + 1] * alpha + background[1] * (1 - alpha),
-    );
-    rgba[o + 2] = Math.round(
-      rgba[o + 2] * alpha + background[2] * (1 - alpha),
-    );
+    rgba[o + 1] = Math.round(rgba[o + 1] * alpha + background[1] * (1 - alpha));
+    rgba[o + 2] = Math.round(rgba[o + 2] * alpha + background[2] * (1 - alpha));
     rgba[o + 3] = 255;
   }
 }
@@ -487,7 +484,10 @@ function sampleBilinear(image, x, y, out, outOffset) {
  */
 export function drawContainFit(image, background) {
   const canvas = new Uint8Array(TARGET_WIDTH * TARGET_HEIGHT * 4);
-  const scale = Math.min(TARGET_WIDTH / image.width, TARGET_HEIGHT / image.height);
+  const scale = Math.min(
+    TARGET_WIDTH / image.width,
+    TARGET_HEIGHT / image.height,
+  );
   const fitWidth = Math.max(1, Math.round(image.width * scale));
   const fitHeight = Math.max(1, Math.round(image.height * scale));
   const offsetX = Math.floor((TARGET_WIDTH - fitWidth) / 2);
@@ -569,7 +569,9 @@ export function verifyOutput(path) {
     problems.push("output is not a BMP");
   } else {
     if (buf.readInt32LE(18) !== TARGET_WIDTH) {
-      problems.push(`width is ${buf.readInt32LE(18)}, expected ${TARGET_WIDTH}`);
+      problems.push(
+        `width is ${buf.readInt32LE(18)}, expected ${TARGET_WIDTH}`,
+      );
     }
     if (buf.readInt32LE(22) !== TARGET_HEIGHT) {
       problems.push(
@@ -584,7 +586,9 @@ export function verifyOutput(path) {
     }
   }
   if (problems.length > 0) {
-    throw new Error(`generated bitmap failed verification: ${problems.join("; ")}`);
+    throw new Error(
+      `generated bitmap failed verification: ${problems.join("; ")}`,
+    );
   }
 }
 
@@ -599,7 +603,9 @@ function main() {
   }
 
   if (!existsSync(SOURCE)) {
-    throw new Error(`Installer sidebar art not found: ${SOURCE}\n${MISSING_SOURCE_HINT}`);
+    throw new Error(
+      `Installer sidebar art not found: ${SOURCE}\n${MISSING_SOURCE_HINT}`,
+    );
   }
 
   const image = decodeImage(readFileSync(SOURCE));

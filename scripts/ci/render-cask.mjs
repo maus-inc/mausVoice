@@ -45,7 +45,9 @@ cask = cask.replaceAll("{{tag}}", tag);
 
 // Never publish a cask with an unverified checksum.
 if (cask.includes(":no_check")) {
-  console.error("Rendered cask still contains ':no_check'; refusing to publish");
+  console.error(
+    "Rendered cask still contains ':no_check'; refusing to publish",
+  );
   process.exit(1);
 }
 

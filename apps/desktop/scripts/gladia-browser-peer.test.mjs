@@ -9,11 +9,15 @@ describe("Gladia browser peer stubs", () => {
     ["undici/lib/websocket", "undici"],
     ["fs/promises", "fs"],
     ["path/posix", "path"],
+    ["node:fs", "fs"],
+    ["node:fs/promises", "fs"],
+    ["node:path", "path"],
+    ["node:ws", "ws"],
   ])("maps %s to the %s browser stub", (source, peer) => {
     expect(getGladiaBrowserPeer(source)).toBe(peer);
   });
 
-  it.each(["wss", "workspace", "undici-types", "node:fs"])(
+  it.each(["wss", "workspace", "undici-types", "node:crypto"])(
     "does not stub unrelated import %s",
     (source) => {
       expect(getGladiaBrowserPeer(source)).toBeUndefined();

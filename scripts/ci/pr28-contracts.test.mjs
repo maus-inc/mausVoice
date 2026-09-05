@@ -118,16 +118,16 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(source.gtkPill, /x11_release_persisted\.set\(persisted\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
-    assert.match(source.gtkX11, /!state_tick\.x11_release_persisted\.replace\(false\)/);
+    assert.match(
+      source.gtkX11,
+      /!state_tick\.x11_release_persisted\.replace\(false\)/,
+    );
   });
 
   it("emits the frontend reset state event after a native position change", () => {
     // Native position change -> frontend enables/disables the tray reset item.
     assert.match(source.effects, /pill-position-changed/);
-    assert.match(
-      source.effects,
-      /invoke\("set_reset_pill_position_enabled"/,
-    );
+    assert.match(source.effects, /invoke\("set_reset_pill_position_enabled"/);
     // The command that the frontend invokes is registered in commands.rs.
     assert.match(source.commands, /reset_pill_position/);
     assert.match(source.commands, /set_reset_pill_position_enabled/);
@@ -148,15 +148,24 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.macApp, /setNeedsDisplay:YES/);
     // Windows must dirty the frame when the ring AND its arm pulse finish, so
     // the final cleared frame repaints instead of leaving a ghost.
-    assert.match(source.windowsPill, /previous_alpha > 0\.0 && anim\.alpha == 0\.0/);
+    assert.match(
+      source.windowsPill,
+      /previous_alpha > 0\.0 && anim\.alpha == 0\.0/,
+    );
     assert.match(
       source.windowsPill,
       /was_pulsing && !rust_pill_shared::pulse_is_running\(anim\.arm_pulse\)/,
     );
     assert.match(source.windowsPill, /dirty\.set\(true\)/);
     // Shared fade policy stays unit-tested in the pill crate.
-    assert.match(source.sharedPill, /ring_alpha_fades_monotonically_after_release/);
-    assert.match(source.sharedPill, /advance_ring_pins_alpha_while_held_and_fades_after/);
+    assert.match(
+      source.sharedPill,
+      /ring_alpha_fades_monotonically_after_release/,
+    );
+    assert.match(
+      source.sharedPill,
+      /advance_ring_pins_alpha_while_held_and_fades_after/,
+    );
   });
 
   it("draws the ring from one continuous driver with no armed-state switch", () => {
@@ -190,7 +199,11 @@ describe("PR28 ring-alpha render-loop policy", () => {
   it("reuses one buffer for the resampled ring instead of allocating per frame", () => {
     assert.match(source.sharedPill, /pub fn resample_perimeter/);
     assert.match(source.sharedPill, /resample_reuses_the_caller_buffer/);
-    for (const state of [source.gtkState, source.macState, source.windowsState]) {
+    for (const state of [
+      source.gtkState,
+      source.macState,
+      source.windowsState,
+    ]) {
       assert.match(state, /ring_points:\s*RefCell<Vec<\(f64,\s*f64,\s*f64\)>>/);
     }
     for (const draw of [source.gtkDraw, source.macDraw, source.windowsDraw]) {
@@ -216,7 +229,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // cursor hit test misses. Trusting that would collapse the pill to its
     // unhovered size mid-gesture and re-expand it on release.
     assert.match(source.sharedPill, /pub fn resolve_hover/);
-    assert.match(source.sharedPill, /hover_survives_a_drag_that_outruns_the_window/);
+    assert.match(
+      source.sharedPill,
+      /hover_survives_a_drag_that_outruns_the_window/,
+    );
     assert.match(
       source.sharedPill,
       /hover_follows_the_cursor_once_the_button_is_released/,
@@ -230,7 +246,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
       source.sharedPill,
       /hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag/,
     );
-    assert.match(source.sharedPill, /pub fn resolve_hover\(probed:\s*bool,\s*pointer_down:\s*bool\)/);
+    assert.match(
+      source.sharedPill,
+      /pub fn resolve_hover\(probed:\s*bool,\s*pointer_down:\s*bool\)/,
+    );
 
     for (const [pill, state] of [
       [source.gtkPill, source.gtkState],
@@ -243,10 +262,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
       assert.match(pill, /pointer_down\.set\(true\)/);
       assert.match(pill, /pointer_down\.set\(false\)/);
       // A gesture-flag gate must not creep back in.
-      assert.doesNotMatch(
-        pill,
-        /resolve_hover\([\s\S]{0,200}?gesture_active/,
-      );
+      assert.doesNotMatch(pill, /resolve_hover\([\s\S]{0,200}?gesture_active/);
     }
 
     // The pin must be released when the button comes up, or a drag finishing
@@ -271,7 +287,10 @@ describe("PR28 ring-alpha render-loop policy", () => {
     for (const pill of [source.gtkPill, source.macPill, source.windowsPill]) {
       assert.match(pill, /arm_pulse\.set\(rust_pill_shared::pulse_armed\(\)\)/);
       // The idle sentinel is named, never an open-coded -1.0.
-      assert.match(pill, /arm_pulse: Cell::new\(rust_pill_shared::PULSE_IDLE\)/);
+      assert.match(
+        pill,
+        /arm_pulse: Cell::new\(rust_pill_shared::PULSE_IDLE\)/,
+      );
     }
     // The sentinel is negative because 0.0 is a real value (the frame the pulse
     // starts), so every read goes through the named predicate rather than a
@@ -283,7 +302,12 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // outlives the ring's own alpha. Each platform therefore needs a liveness
     // check; Windows is the strictest case — it culls frames aggressively, so
     // without its own check the pulse would be dropped mid-flight.
-    for (const src of [source.windowsState, source.windowsDraw, source.macDraw, source.gtkDraw]) {
+    for (const src of [
+      source.windowsState,
+      source.windowsDraw,
+      source.macDraw,
+      source.gtkDraw,
+    ]) {
       assert.match(src, /pulse_is_running\(/);
     }
   });
@@ -315,7 +339,9 @@ describe("PR28 fork-workflow secret isolation", () => {
       shouldRunProviderJob({
         event_name: "pull_request",
         repository: "maus-inc/mausVoice",
-        pull_request: { head: { repo: { full_name: "contributor/mausVoice" } } },
+        pull_request: {
+          head: { repo: { full_name: "contributor/mausVoice" } },
+        },
       }),
       false,
     );
@@ -342,7 +368,10 @@ describe("PR28 removed-enterprise-docs contracts", () => {
     );
     assert.doesNotMatch(source.astro, /enterprise/i);
     assert.doesNotMatch(source.docsIndex, /Enterprise/);
-    assert.doesNotMatch(source.docsLlms, /maus-inc\.github\.io\/mausVoice\/enterprise\//);
+    assert.doesNotMatch(
+      source.docsLlms,
+      /maus-inc\.github\.io\/mausVoice\/enterprise\//,
+    );
     assert.doesNotMatch(source.docsRobots, /enterprise documentation/i);
   });
 });
@@ -405,15 +434,24 @@ describe("PR28 workflow and public-asset contracts", () => {
 
   it("assembles a complete project-Pages artifact at the documented base", () => {
     assert.match(source.astro, /const docsBase = "\/mausVoice\/docs\/"/);
-    assert.match(source.docsIndex, /link: \/mausVoice\/docs\/getting-started\//);
+    assert.match(
+      source.docsIndex,
+      /link: \/mausVoice\/docs\/getting-started\//,
+    );
     assert.match(source.docsWorkflow, /cp -r marketing publish\/marketing/);
-    assert.match(source.docsWorkflow, /cp -r apps\/docs\/dist\/. publish\/docs\//);
+    assert.match(
+      source.docsWorkflow,
+      /cp -r apps\/docs\/dist\/. publish\/docs\//,
+    );
     assert.match(
       source.docsWorkflow,
       /publish\/docs\/assets\/mausvoice-banner\.png/,
     );
     assert.match(source.docsWorkflow, /publish\/docs\/assets\/fonts/);
-    assert.match(source.docsWorkflow, /cp sitemap\.xml robots\.txt llms\.txt publish\//);
+    assert.match(
+      source.docsWorkflow,
+      /cp sitemap\.xml robots\.txt llms\.txt publish\//,
+    );
     assert.match(source.docsWorkflow, /publish\/docs\/llms\.txt/);
   });
 
@@ -423,7 +461,10 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /capTrack\.mode = show \? "showing" : "hidden"/);
     assert.match(source.index, /prefers-reduced-motion/);
     assert.match(source.index, /IntersectionObserver/);
-    assert.match(source.index, /window\.addEventListener\("resize", sizeStage\)/);
+    assert.match(
+      source.index,
+      /window\.addEventListener\("resize", sizeStage\)/,
+    );
     assert.match(source.index, /class="skip-link"/);
     assert.match(source.index, /:focus-visible/);
   });
@@ -434,7 +475,6 @@ describe("PR28 workflow and public-asset contracts", () => {
     assert.match(source.index, /docs\/assets\/mausvoice-banner\.png/);
     assert.match(source.astro, /docsBase\}assets\/mausvoice-banner\.png/);
   });
-
 });
 
 await import("./pr37-contracts.test.mjs");

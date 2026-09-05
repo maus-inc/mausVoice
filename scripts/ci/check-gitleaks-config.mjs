@@ -22,7 +22,7 @@ const configPath = resolve(repoRoot, "gitleaks.toml");
 
 // Base64 of "untrusted comment: rsign" — the first line of every Tauri/Minisign
 // private key file. This is the exact string the detection rule must match.
-const PREAMBLE_B64 = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu";
+export const PREAMBLE_B64 = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu";
 
 function fail(msg) {
   console.error(`::error::${msg}`);
@@ -79,12 +79,69 @@ export function stripTomlComments(text) {
   return out;
 }
 
+// Index of the first `needle` occurrence that is not inside a TOML string,
+// or -1. Markers found inside string values (a regex like
+// `foo[allowlist]bar`) are content, not structure, so they must never
+// delimit sections.
+export function indexOfOutsideStrings(text, needle, from = 0) {
+  let cursor = from;
+  while (cursor < text.length) {
+    const ch = text[cursor];
+    if (ch === '"' || ch === "'") {
+      cursor = stringEnd(text, cursor);
+    } else if (text.startsWith(needle, cursor)) {
+      return cursor;
+    } else {
+      cursor += 1;
+    }
+  }
+  return -1;
+}
+
 function section(text, startMarker, endMarker) {
-  const start = text.indexOf(startMarker);
+  const start = indexOfOutsideStrings(text, startMarker);
   if (start === -1) return "";
   const after = start + startMarker.length;
-  const end = endMarker ? text.indexOf(endMarker, after) : -1;
+  const end = endMarker ? indexOfOutsideStrings(text, endMarker, after) : -1;
   return end === -1 ? text.slice(after) : text.slice(after, end);
+}
+
+// Everything from the first structural `[[rules]]` table to EOF, or null.
+export function rulesSection(raw) {
+  const start = indexOfOutsideStrings(raw, "[[rules]]");
+  return start === -1 ? null : raw.slice(start);
+}
+
+// The `regex` value of the tauri-minisign-updater-private-key rule, or null
+// when no rule with that id carries a regex. Shared with
+// test-secret-history-scan.mjs so both scripts test the same rule. The id
+// line is matched per-line (trimmed, either quote style, any indentation),
+// and the value is read with the same string scanner stripTomlComments uses,
+// so every TOML string form works and no cross-text quantifier can
+// backtrack.
+const UPDATER_RULE_ID_LINE =
+  /^id\s*=\s*["']tauri-minisign-updater-private-key["']\s*$/;
+
+export function updaterRulePattern(rules) {
+  const lines = rules.split("\n");
+  const idLineIndex = lines.findIndex((line) =>
+    UPDATER_RULE_ID_LINE.test(line.trim()),
+  );
+  if (idLineIndex === -1) return null;
+  const afterIdLine = lines.slice(idLineIndex + 1).join("\n");
+  // The regex must belong to the updater rule itself. Stop at the next
+  // [[rules]] table so a regex from a later rule is never attributed to it.
+  const nextRulesTable = indexOfOutsideStrings(afterIdLine, "[[rules]]");
+  const afterId =
+    nextRulesTable === -1 ? afterIdLine : afterIdLine.slice(0, nextRulesTable);
+  const keyMatch = /^[ \t]*regex[ \t]*=[ \t]*/m.exec(afterId);
+  if (!keyMatch) return null;
+  const valueStart = keyMatch.index + keyMatch[0].length;
+  const quote = afterId[valueStart];
+  if (quote !== '"' && quote !== "'") return null;
+  const valueEnd = stringEnd(afterId, valueStart);
+  const delimiter = quoteLengthAt(afterId, valueStart);
+  return afterId.slice(valueStart + delimiter, valueEnd - delimiter).trim();
 }
 
 function main() {
@@ -111,12 +168,12 @@ function main() {
 
   // (e) A top-level `useDefault = false` disables every built-in Gitleaks rule
   // and silently weakens the whole-repo scan to the single updater-key rule.
-  const lines = raw.split("\n");
-  const firstTable = lines.findIndex((line) =>
-    line.trimStart().startsWith("["),
-  );
-  const topLevel = firstTable === -1 ? lines : lines.slice(0, firstTable);
-  if (topLevel.some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()))) {
+  const firstTable = indexOfOutsideStrings(raw, "[");
+  const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
+  const useDefaultDisabled = topLevel
+    .split("\n")
+    .some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()));
+  if (useDefaultDisabled) {
     fail(
       "gitleaks.toml: top-level `useDefault = false` disables the default " +
         "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",
@@ -124,17 +181,17 @@ function main() {
   }
 
   // (b) The preamble MUST be present as a real detection rule's regex.
-  const rules = raw.slice(raw.indexOf("[[rules]]"));
-  const updaterRuleMatch = rules.match(
-    /id\s*=\s*"tauri-minisign-updater-private-key"[\s\S]*?regex\s*=\s*'''?([^']*)'''?/,
-  );
-  const ruleRegexMatch = updaterRuleMatch;
-  if (!ruleRegexMatch) {
+  const rules = rulesSection(raw);
+  if (rules === null) {
+    fail("gitleaks.toml: no [[rules]] section found.");
+  }
+  const rulePattern = updaterRulePattern(rules);
+  if (rulePattern === null) {
     fail(
       "gitleaks.toml: could not find regex for id tauri-minisign-updater-private-key.",
     );
   }
-  if (!ruleRegexMatch[1].includes(PREAMBLE_B64)) {
+  if (!rulePattern.includes(PREAMBLE_B64)) {
     fail(
       "gitleaks.toml: no [[rules]] detector regex matches the updater " +
         "private-key preamble. Add the preamble base64 as the rule regex.",
@@ -155,7 +212,7 @@ function main() {
   // so real Gitleaks would exit non-zero on such a file.
   let re;
   try {
-    re = new RegExp(ruleRegexMatch[1].trim());
+    re = new RegExp(rulePattern);
   } catch (err) {
     fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
   }

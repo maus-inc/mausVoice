@@ -5,8 +5,12 @@ const REDACTED = "[redacted]";
 const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 const PROVIDER_KEY_PREFIX = /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
 const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\b"?`;
+// Either quote style; basic-string backslash escapes only exist in double
+// quotes, but accepting them in single-quoted values too is harmless because
+// the whole value is replaced either way.
+const QUOTED_SECRET_VALUE = String.raw`(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`;
 const LABELED_SECRET_QUOTED = new RegExp(
-  String.raw`${SECRET_LABEL}\s*([:=])\s*"(?:\\.|[^"\\])*"`,
+  String.raw`${SECRET_LABEL}\s*([:=])\s*${QUOTED_SECRET_VALUE}`,
   "gi",
 );
 // The bare value runs to the next whitespace/`,`/`;`. Closing brackets
@@ -28,7 +32,9 @@ const OPENER_TO_CLOSER: Readonly<Record<string, string>> = Object.fromEntries(
 /**
  * Bare values that describe the field instead of carrying a credential
  * (`api_key=required`, `authorization: missing`). Left readable so validation
- * messages stay useful. Anything else after a secret label is redacted.
+ * messages stay useful. Anything else after a secret label is redacted;
+ * `true`/`false` are deliberately absent: a boolean never describes a
+ * credential field usefully.
  */
 const PLACEHOLDER_VALUES = new Set([
   "required",
@@ -40,8 +46,6 @@ const PLACEHOLDER_VALUES = new Set([
   "undefined",
   "none",
   "empty",
-  "true",
-  "false",
 ]);
 
 const SECRET_KEY_ALIASES = new Set([
