@@ -32,30 +32,26 @@ const capLength = (message: string): string =>
     ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
     : message;
 
-const redactCollection = (
-  value: object,
-  depth: number,
-  seen: WeakSet<object>,
-): unknown => {
-  if (seen.has(value)) return "[Circular]";
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => redactUnknown(item, depth + 1, seen));
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    out[key] = isSecretKey(key)
-      ? REDACTED
-      : redactUnknown(child, depth + 1, seen);
-  }
-  return out;
-};
-
-const redactUnknown = (
+function redactUnknown(
   value: unknown,
   depth: number,
   seen: WeakSet<object>,
-): unknown => {
+): unknown {
+  const walkCollection = (collection: object): unknown => {
+    if (seen.has(collection)) return "[Circular]";
+    seen.add(collection);
+    if (Array.isArray(collection)) {
+      return collection.map((item) => redactUnknown(item, depth + 1, seen));
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(collection)) {
+      out[key] = isSecretKey(key)
+        ? REDACTED
+        : redactUnknown(child, depth + 1, seen);
+    }
+    return out;
+  };
+
   if (typeof value === "string") return redactSensitiveTokens(value);
   if (
     value === null ||
@@ -64,8 +60,8 @@ const redactUnknown = (
   ) {
     return value;
   }
-  return redactCollection(value, depth, seen);
-};
+  return walkCollection(value);
+}
 
 const redactJsonIfPossible = (message: string): string => {
   const trimmed = message.trim();
