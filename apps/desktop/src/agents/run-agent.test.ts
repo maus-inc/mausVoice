@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { codePointOf } from "@maus-inc/utilities";
+import { isLogBreakingControl } from "@maus-inc/utilities";
 import { safeSideEffect } from "./run-agent";
 
 const { loggerMock } = vi.hoisted(() => ({
@@ -20,17 +20,9 @@ const withControls = (...parts: Array<string | number>): string =>
     .map((p) => (typeof p === "number" ? String.fromCodePoint(p) : p))
     .join("");
 
-/** True when any C0/C1 control or DEL remains (matches sanitizeContextValue). */
-const hasLogBreakingControl = (value: string): boolean => {
-  for (const ch of value) {
-    // Same codePointOf helper as production — full Unicode scalar, not a surrogate.
-    const code = codePointOf(ch);
-    if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) {
-      return true;
-    }
-  }
-  return false;
-};
+/** True when any log-breaking control remains (shared production predicate). */
+const hasLogBreakingControl = (value: string): boolean =>
+  [...value].some((ch) => isLogBreakingControl(ch));
 
 describe("safeSideEffect", () => {
   beforeEach(() => {

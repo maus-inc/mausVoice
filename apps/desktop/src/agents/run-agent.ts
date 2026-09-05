@@ -1,7 +1,11 @@
 import { AgentLoop } from "@repo/agent";
 import type { AgentLlmProvider, AgentTool } from "@repo/agent";
 import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
-import { codePointOf, delayed, unknownToMessage } from "@maus-inc/utilities";
+import {
+  delayed,
+  isLogBreakingControl,
+  unknownToMessage,
+} from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
 import {
   executeTool,
@@ -37,18 +41,7 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
-/**
- * True for non-printable controls that can break a single log line:
- * C0 (U+0000–U+001F), DEL (U+007F), and C1 (U+0080–U+009F). Built without
- * embedding control-character literals in a regex (DeepSource flags those).
- * Uses `codePointOf` so non-BMP characters are not misread as surrogate units.
- */
-const isLogBreakingControl = (ch: string): boolean => {
-  const code = codePointOf(ch);
-  return code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
-};
-
-/** Collapse C0 control characters so a multi-line or binary-ish value cannot break the log line. */
+/** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
 const sanitizeContextValue = (value: string): string => {
   let singleLine = "";
   for (const ch of value) {

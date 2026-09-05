@@ -18,3 +18,14 @@ export const countWords = (text: string): number => {
  * in this monorepo's root package.json).
  */
 export const codePointOf = (text: string): number => text.codePointAt(0) ?? 0;
+
+/**
+ * True for non-printable controls that can break a single log line:
+ * C0 (U+0000–U+001F), DEL (U+007F), and C1 (U+0080–U+009F).
+ */
+export const isLogBreakingControlCode = (code: number): boolean =>
+  code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+
+/** True when the first code point of `text` is a log-breaking control. */
+export const isLogBreakingControl = (text: string): boolean =>
+  isLogBreakingControlCode(codePointOf(text));
