@@ -1,14 +1,22 @@
 <div align="center">
+  
+<img src=docs/assets/mausVoicetopbanner.png alt="mausVoice top-banner" width="700" />
 
-<img src="branding/mausvoice-logo-256.png" alt="mausVoice logo" width="88" />
+  <br>
+  <br>
+  
+  <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
 
-# mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> <a href="https://github.com/maus-inc/mausVoice/releases/latest"><img src="https://img.shields.io/github/v/release/maus-inc/mausVoice?style=flat&labelColor=000000&color=000000" alt="Latest stable release" /></a>
+  <br>
+  
+# mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a> 
+
 </div>
 
 > [!TIP]
 > Grab your free [Groq↗](https://console.groq.com/keys) and [Deepgram↗](https://console.deepgram.com/) API keys.
 >
-> Transcription accuracy **varies** by STT provider or model; transcripts **may not** be 100 percent accurate due to differences in intonation, native accents and also voice input devices. We **continually** optimize the client-side pipeline to squeeze out the fastest and most accurate transcriptions!
+> Transcription accuracy **varies** by STT provider or model; transcripts **may not** be 100 percent accurate due to differences in intonation, accent, and input device. We **continually** optimize the client-side pipeline to improve transcription speed and accuracy.
 
 <br>
 
@@ -52,7 +60,7 @@
 <br>
 <br>
 <p align="center">
-  <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
+  <img src="branding/mausvoice-logo-256.png" alt="mausVoice logo" width="88" />
 </p>
 
 ## Features
@@ -183,6 +191,6 @@ Open this directory in your file manager:
 ~/.local/share/com.mausinc.desktop/logs
 ```
 
-If `XDG_DATA_HOME` is set, use `$XDG_DATA_HOME/com.mausinc.desktop/logs` instead. Local development builds use `com.mausinc.desktop.local` as the identifier on every platform.
+If `XDG_DATA_HOME` is set, use `$XDG_DATA_HOME/com.mausinc.desktop/logs` instead. Local development builds may use `com.mausinc.desktop.local` or `com.mausinc.desktop.dev` as the identifier on every platform.
 
 </details>
