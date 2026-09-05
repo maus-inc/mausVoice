@@ -168,6 +168,10 @@ export type TranscriptionSegment = {
  */
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
+/** True when adjacent segment texts lack boundary whitespace and need a space. */
+const needsSegmentSeparator = (left: string, right: string): boolean =>
+  !/\s$/.test(left) && !/^\s/.test(right);
+
 /**
  * Rebuild kept segment text with pairwise spacing.
  *
@@ -180,10 +184,8 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 export const joinKeptSegmentTexts = (texts: string[]): string => {
   if (texts.length === 0) return "";
   let joined = texts[0] ?? "";
-  for (let i = 1; i < texts.length; i++) {
-    const text = texts[i] ?? "";
-    const hasBoundaryWhitespace = /^\s/.test(text) || /\s$/.test(joined);
-    joined = `${joined}${hasBoundaryWhitespace ? "" : " "}${text}`;
+  for (const text of texts.slice(1)) {
+    joined += needsSegmentSeparator(joined, text) ? ` ${text}` : text;
   }
   return joined.replace(/[ \t]+/g, " ").trim();
 };
