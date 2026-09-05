@@ -120,33 +120,38 @@ If you sandbox limits you from reaching failed logs, you can work through the fu
 Do not assume "no more reviews will come" after a green snapshot. Review bots and Sonar often post after unit tests pass, and again after every push. From the moment a PR exists (or you push to an open PR) until babysitting is finished, run this loop yourself. Do not wait for the human to nudge.
 
 1. Push only after local Verification Gate + pre-push gates above.
-2. Immediately start short-interval polling (about every 20 to 30 seconds). Do not declare done after one green check list.
-3. On every poll, collect all of the following for the PR head SHA. Require an authenticated GitHub CLI (`gh auth status`) and ensure the active token has repo scope (or an equivalent token for `gh api`). Verify repo access with a quick call such as `gh api repos/<owner>/<repo>` and confirm a 200 response.
-   - CI: `gh pr checks <pr-number>` (example: `gh pr checks 166`). Interpret each job as pending, fail, or pass. Treat build, lint, unit, integration, i18n, and quality jobs as required unless the job is explicitly `skipping`. For scripts without `gh pr checks`, use the Checks API via `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`.
-   - Unresolved review threads: Prefer GraphQL `PullRequest.reviewThreads` with `isResolved == false` (path, line, author, full body). Needs an authenticated token with repo scope. If GraphQL is unavailable, fetch both `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments` (review comments) and `gh api repos/<owner>/<repo>/issues/<pr-number>/comments` (issue comments), and treat threads without a later resolve or reply as open work (REST resolve detection is heuristic).
+2. Immediately start short-interval polling (about every 20 to 30 seconds). Agents must keep this cadence so review bots cannot land unnoticed. Do not declare done after one green check list. If GitHub returns rate-limit (HTTP 403/429 or `X-RateLimit-Remaining: 0`), back off exponentially (for example 30s, 60s, 120s) until the limit clears, then resume the short interval. Prefer webhooks only as a supplement, never as a reason to slow or stop the agent loop.
+3. On every poll, collect all of the following for the PR head SHA. Require an authenticated GitHub CLI (`gh auth status`) and ensure the active token has repo scope (or an equivalent token for `gh api`). Prefer a non-verbose access check that relies on the command exit code (example: `gh repo view <owner>/<repo> >/dev/null` or `gh api repos/<owner>/<repo> >/dev/null`; exit code 0 means access). Never print or log tokens.
+   - CI: `gh pr checks <pr-number>` (example: `gh pr checks 166`). Interpret each job as pending, fail, or pass. Treat build, lint, unit, integration, i18n, quality, and in-flight review check-runs as required unless the job is explicitly `skipping`. For scripts without `gh pr checks`, use the Checks API via `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`.
+   - Unresolved review threads: Prefer GraphQL `PullRequest.reviewThreads` with `isResolved == false` (path, line, author, full body). Paginate (`first: 100` plus `pageInfo.hasNextPage` / `after`) so you do not miss threads. Example query shape: `repository(owner:, name:) { pullRequest(number:) { reviewThreads(first: 100) { pageInfo { hasNextPage endCursor } nodes { id isResolved path line comments(first: 20) { nodes { author { login } body createdAt } } } } } } }`. Filter `isResolved == false` client-side (or use a server filter if available). Needs repo-scoped auth. If GraphQL is unavailable, fetch both `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments` and `gh api repos/<owner>/<repo>/issues/<pr-number>/comments` (paginate). REST cannot see `isResolved` directly; correlate `in_reply_to_id` and timestamps and treat threads without a later resolve or fix reply as open. Prefer GraphQL whenever possible.
    - Newest inline and issue comments from bots. Detect bots generically (GraphQL: `actor.__typename == "Bot"`; REST: `user.type == "Bot"`) and as a heuristic accept logins ending with `[bot]` (case-insensitive). Do not hardcode vendor names. Any new bot comment is a signal to re-evaluate the head.
    - Sonar on the current HEAD: check-run conclusion and summary (for example N New issues) plus `check-runs/<id>/annotations` (path, line, title). Treat the PR as unfinished if N > 0 or any annotations are present.
 4. Stop conditions that force an immediate fix cycle (do not keep spinning):
    - Any hard CI fail (not a soft skip).
-   - Any unresolved review thread.
+   - Any unresolved review thread (including human replies that reopen intent).
    - Any Sonar annotation or New issues count > 0.
    - Head SHA changed under you (reset "stable green" counters).
+   - Pending review check-runs still running on the head you are about to leave (wait; do not push over in-flight reviews).
 5. Fix cycle when anything in step 4 fires:
-   - Read the full comment or annotation. Prefer root-cause shared helpers over local one-offs.
-   - Implement the smallest correct fix. Add or adjust tests.
+   - Read every open thread and annotation in full. Prefer root-cause shared helpers over local one-offs. Never skip a thread because another push is "almost ready."
+   - Implement the smallest correct fix that covers the full open set. Add or adjust tests.
    - Re-run the local Verification Gate for touched packages.
-   - Immediately before commit or push, re-poll step 3 once more (unresolved threads, newest bot inline + issue comments, Sonar annotations, CI fails on current head). Fold any newly dropped findings into this same fix batch so you do not push a partial backlog and start another round of bot churn.
-   - Only after that pre-push recheck is clean of *new* work beyond what this commit covers: commit, push, resolve only the threads you actually fixed (do not mass-resolve stale noise without verifying HEAD).
-   - Resume polling from step 2 on the new head. Never assume prior bot sign-off still applies.
+   - Pre-push recheck (mandatory, once the local fix is ready, before `git commit` / `git push`):
+     1. Wait until review check-runs on the *current remote head* are no longer pending (CodeSpect and peers may still be posting on the SHA you have not replaced yet).
+     2. Re-run step 3 once: unresolved threads, newest bot inline + issue comments, Sonar annotations, CI fails.
+     3. Fold every newly dropped finding into this same fix batch. Repeat the local fix + this recheck until the open set is only what the staged commit fully addresses.
+     4. Keep the recheck short (one full step-3 pass after pending review bots settle). Rely on command exit codes. On rate-limit, exponential backoff, then retry the same recheck. Do not hammer the API with tight empty loops.
+   - Only then: commit, push, resolve only the threads whose fix is on the new HEAD (reply with the HEAD SHA). Do not mass-resolve. Do not resolve a thread you did not fix.
+   - Resume polling from step 2 on the new head immediately. Never assume prior bot sign-off still applies. Do not stop the session after push.
 6. Done only when all of these hold on the same head for several consecutive polls (about 4 polls, roughly 2 minutes of calm):
-   - No pending required CI jobs.
+   - No pending required CI jobs (including review bots and desktop build/lint when those workflows ran for this head or the last code head).
    - No failed required CI jobs.
    - Zero unresolved review threads.
    - Sonar success with 0 New issues and empty annotations.
    - No new bot comments since the last poll that reopen work.
 7. Only then summarize status to the human. Until step 6, keep looping silently and fixing.
 
-Do not end a PR session early because unit tests passed while build or lint is still pending. Do not treat "Quality Gate passed" alone as clean if New issues or annotations remain. Do not resolve a review thread until the fix is on the branch the thread targets.
+Do not end a PR session early because unit tests passed while build, lint, or review bots are still pending. Do not treat "Quality Gate passed" alone as clean if New issues or annotations remain. Do not resolve a review thread until the fix is on the branch the thread targets. Do not push a partial backlog while review bots on the current head are still in flight.
 
 **Verification Gate**
 
