@@ -4,6 +4,21 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 
 const runAgentMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const getLoggerMock = vi.hoisted(() => ({
+  verbose: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  // The real logger also exposes stopwatch(label, fn); mirror the
+  // call-through behavior so the mock is faithful if a tested path
+  // ever instruments with it. async + await keeps the returned value a
+  // Promise and converts a synchronous throw inside fn into a
+  // rejection, exactly like the production helper.
+  stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+    const result = await fn();
+    return result;
+  }),
+}));
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
   rejectNextCreate: false,
@@ -39,6 +54,8 @@ const messageStorage = new Map<string, ChatMessage>();
 // stays out so an unexpected repo call fails loudly. Setting
 // rejectNextUpdate makes the next updateConversation reject once, for the
 // failure-path test.
+vi.mock("../utils/log.utils", () => ({ getLogger: () => getLoggerMock }));
+
 vi.mock("../repos", () => ({
   getConversationRepo: () => ({
     updateConversation: (conversation: Conversation) => {
@@ -212,28 +229,22 @@ describe("sendChatMessage", () => {
 
   it("still delivers the message and runs the agent when the update fails", async () => {
     repoMocks.rejectNextUpdate = true;
-    const errorSpy = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
 
-    try {
-      await sendChatMessage("conv-1", "Can you help me write an email?");
-      // The next send retries the title and timestamp bump.
-      await sendChatMessage("conv-1", "It is about the broken heater");
+    await sendChatMessage("conv-1", "Can you help me write an email?");
+    // The next send retries the title and timestamp bump.
+    await sendChatMessage("conv-1", "It is about the broken heater");
 
-      // mockRestore clears the call history, so assert before the finally
-      // block runs.
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(messageStorage.size).toBe(2);
-      expect(runAgentMock).toHaveBeenCalledTimes(2);
-      // The failed bump never reached the store, and the retry retitled the
-      // row from the second message.
-      expect(getAppState().conversationById["conv-1"]?.title).toBe(
-        "It is about the…",
-      );
-    } finally {
-      errorSpy.mockRestore();
-    }
+    // The failed title/timestamp bump is recorded through the structured
+    // logger (the mock is cleared in beforeEach). Only the first send hit
+    // the failure; the retry succeeded silently.
+    expect(getLoggerMock.error).toHaveBeenCalledTimes(1);
+    expect(messageStorage.size).toBe(2);
+    expect(runAgentMock).toHaveBeenCalledTimes(2);
+    // The failed bump never reached the store, and the retry retitled the
+    // row from the second message.
+    expect(getAppState().conversationById["conv-1"]?.title).toBe(
+      "It is about the…",
+    );
   });
 
   it("a send that lands after deleteConversation never persists a message", async () => {
