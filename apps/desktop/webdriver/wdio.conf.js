@@ -23,6 +23,44 @@ const driverPort = isMac
   ? Number(process.env.WDIO_CHROMEDRIVER_PORT ?? 9515)
   : 4444;
 
+// npm's CLI entrypoint is run through Node directly. Resolving the binary
+// from PATH (or via a shell) would depend on whatever the invoking shell's
+// PATH holds, and a plain `npm` spawn also fails on Windows without a shell.
+const npmCliCandidates = [
+  path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  ),
+  path.join(
+    path.dirname(process.execPath),
+    "..",
+    "lib",
+    "node_modules",
+    "npm",
+    "bin",
+    "npm-cli.js",
+  ),
+];
+const npmCliPath = npmCliCandidates.find((candidate) =>
+  fs.existsSync(candidate),
+);
+if (!npmCliPath) {
+  throw new Error(
+    "Could not locate npm-cli.js next to the running Node binary. npm ships " +
+      "with Node; reinstall Node or run the E2E suite with a standard Node " +
+      "installation.",
+  );
+}
+
+const runNpm = (args) =>
+  spawnSync(process.execPath, [npmCliPath, ...args], {
+    cwd: projectRoot,
+    stdio: "inherit",
+  });
+
 function resolveTauriBinary() {
   const override = process.env.TAURI_APPLICATION_PATH;
   if (override) {
@@ -314,26 +352,14 @@ export const config = {
     : undefined,
   onPrepare: async () => {
     if (isMac) {
-      spawnSync("npm", ["run", "build"], {
-        cwd: projectRoot,
-        stdio: "inherit",
-        shell: true,
-      });
+      runNpm(["run", "build"]);
 
       await startChromeDriver();
       await startPreviewServer();
       return;
     }
 
-    spawnSync(
-      "npm",
-      ["run", "tauri", "build", "--", "--debug", "--no-bundle"],
-      {
-        cwd: projectRoot,
-        stdio: "inherit",
-        shell: true,
-      },
-    );
+    runNpm(["run", "tauri", "build", "--", "--debug", "--no-bundle"]);
 
     ensureBinaryExists(resolveTauriBinary());
   },

@@ -114,13 +114,17 @@ export function rulesSection(raw) {
 
 // The `regex` value of the tauri-minisign-updater-private-key rule, or null
 // when no rule with that id carries a regex. Shared with
-// test-secret-history-scan.mjs so both scripts test the same rule.
+// test-secret-history-scan.mjs so both scripts test the same rule. The id is
+// matched line-anchored and the regex key is then searched forward from it,
+// so there is no cross-text lazy quantifier to backtrack.
 export function updaterRulePattern(rules) {
-  const match =
-    /id\s*=\s*"tauri-minisign-updater-private-key"[\s\S]*?regex\s*=\s*'''?([^']*)'''?/.exec(
-      rules,
-    );
-  return match ? match[1].trim() : null;
+  const idMatch = /^id\s*=\s*"tauri-minisign-updater-private-key"\s*$/m.exec(
+    rules,
+  );
+  if (!idMatch) return null;
+  const afterId = rules.slice(idMatch.index + idMatch[0].length);
+  const regexMatch = /regex\s*=\s*'''?([^']*)'''?/.exec(afterId);
+  return regexMatch ? regexMatch[1].trim() : null;
 }
 
 function main() {
