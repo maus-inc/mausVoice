@@ -3,12 +3,10 @@ import dayjs from "dayjs";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { createId } from "../utils/id.utils";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { insertLocalTranscriptOutputViaPaste } from "../utils/output-routing.utils";
-import {
-  getMyEffectiveUserId,
-  getMyUserPreferences,
-} from "../utils/user.utils";
+import { getMyEffectiveUserId } from "../utils/user.utils";
 import { showSnackbar } from "./app.actions";
 
 export type RemoteFinalTextReceivedPayload = {
@@ -29,7 +27,7 @@ const storeRemoteTranscription = async ({
   transcript: string;
 }): Promise<void> => {
   const state = getAppState();
-  if (getMyUserPreferences(state)?.incognitoModeEnabled) {
+  if (!isPersistenceAllowed()) {
     return;
   }
 

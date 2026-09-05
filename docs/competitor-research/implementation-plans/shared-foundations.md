@@ -26,15 +26,15 @@ themselves.
 
 ## Verified competitor behavior (citations)
 
-| Competitor | Behavior | Source | Confidence |
-|------------|----------|--------|------------|
-| TypeWhisper | Local HTTP API on 127.0.0.1:8978, loopback only, optional auth token | typewhisper.com docs (crawled 2026-08-26) | High |
-| TypeWhisper | CLI talks to the local API | typewhisper.com docs | High |
-| Vowen | MCP server (`vowen mcp`, 23 tools, stdio) | docs.vowen.ai | High |
-| Wispr Flow | Read-only MCP server exposing Notetaker data | docs.wisprflow.ai | High |
-| Vowen | Webhooks POST with HMAC-SHA256 signing | docs.vowen.ai | High |
-| TypeWhisper | Webhook post-processor | typewhisper.com docs | High |
-| All three | Incognito/private mode that suppresses persistence | vowen.ai, wisprflow.ai, typewhisper.com | High |
+| Competitor  | Behavior                                                             | Source                                    | Confidence |
+| ----------- | -------------------------------------------------------------------- | ----------------------------------------- | ---------- |
+| TypeWhisper | Local HTTP API on 127.0.0.1:8978, loopback only, optional auth token | typewhisper.com docs (crawled 2026-08-26) | High       |
+| TypeWhisper | CLI talks to the local API                                           | typewhisper.com docs                      | High       |
+| Vowen       | MCP server (`vowen mcp`, 23 tools, stdio)                            | docs.vowen.ai                             | High       |
+| Wispr Flow  | Read-only MCP server exposing Notetaker data                         | docs.wisprflow.ai                         | High       |
+| Vowen       | Webhooks POST with HMAC-SHA256 signing                               | docs.vowen.ai                             | High       |
+| TypeWhisper | Webhook post-processor                                               | typewhisper.com docs                      | High       |
+| All three   | Incognito/private mode that suppresses persistence                   | vowen.ai, wisprflow.ai, typewhisper.com   | High       |
 
 ---
 
@@ -85,6 +85,7 @@ not overwrite flag state. Registered in `src-tauri/src/db/mod.rs`.
 A small runtime feature-flag module under `src/features/` that reads from
 `UserPreferences` (persisted in SQLite) so each expansion feature can be
 enabled/disabled without a rebuild. Flags added now:
+
 - `meetingNotesEnabled` (default: false)
 - `localApiEnabled` (default: false)
 - `translationsEnabled` (default: false)
@@ -95,6 +96,7 @@ enabled/disabled without a rebuild. Flags added now:
 ## Privacy-safe logging
 
 A `src/utils/redaction.utils.ts` helper with:
+
 - `redactString(input, mode)` — truncates or hashes strings for logs.
 - `redactError(error)` — strips secrets and tokens from
   error messages before they reach any log surface.
@@ -111,22 +113,60 @@ complete.
 
 Centralize the existing scattered incognito checks behind a single
 `isPersistenceAllowed()` helper in `src/utils/incognito.utils.ts` that returns
-`true` only when incognito mode is off. New persistence-gating code paths
-call this helper. Existing inline checks in `transcribe.actions.ts` and
-`remote-transcript.actions.ts` are left unchanged for this PR and should be
-migrated in a follow-up to keep the privacy invariant centralized.
-Existing behavior is preserved exactly.
+`true` only when incognito mode is off and no ephemeral session is active.
+Every path that stores a new transcription calls this helper. The inline checks
+in `transcribe.actions.ts` and `remote-transcript.actions.ts` now call it too,
+so the invariant lives in one place. `retranscribeTranscription` updates a row
+that was already stored under an allowed path, so it needs no gate of its own. Incognito behavior is preserved exactly,
+including the separate `incognitoModeIncludeInStats` option, which still counts
+words only for incognito mode and never for an ephemeral session. The audio
+snapshot guard in `storeTranscription` was removed because the single gate above
+it already rules out both modes.
 
 ## Shared domain types
 
 Add to `apps/desktop/src/types/`:
-- `meetings.types.ts` — `Meeting`, `MeetingSegment`, `MeetingSpeaker`,
+
+- `meetings.types.ts` with `Meeting`, `MeetingSegment`, `MeetingSpeaker`, and
   `MeetingSummary`.
-- `automation.types.ts` — `ApiKeyCredential`, `WebhookConfig`, `ApiRequest`,
-  `ApiResponse`.
-- `translations.types.ts` — `TranslationRequest`, `TranslationResult`.
-- `snippets.types.ts` — `Snippet`, `SnippetVariable`, `SnippetVariableType`.
-- `expansion-flags.types.ts` — the feature-flag map type.
+- `automation.types.ts` with `ApiKeyCredential`, `WebhookConfig`, `ApiRequest`,
+  and `ApiResponse`.
+- `translations.types.ts` with `TranslationRequest` and `TranslationResult`.
+- `snippets.types.ts` with `Snippet`, `SnippetVariable`, and
+  `SnippetVariableType`.
+- `workflows.types.ts` with `Workflow`, `WorkflowAction`, `WorkflowRun`,
+  `WorkflowTriggerType`, and `WorkflowStatus`. The `voiceWorkflowsEnabled` flag
+  and the three workflow events need these shapes, and no other module defines
+  them.
+- `expansion-flags.types.ts` with the feature-flag map type.
+
+## Event contracts
+
+`packages/desktop-utils/src/tauri-events.ts` holds sixteen expansion event names
+and their payload types for meetings, webhooks, connectors, translations,
+workflows, and ephemeral sessions. An `ExpansionEventPayloads` map binds each
+name to its payload so the pair cannot drift apart.
+
+`apps/desktop/src/hooks/tauri.hooks.ts` exposes `useExpansionEventListener`,
+which infers the payload type from the event name and routes listen and handler
+errors to the existing snackbar wrapper. Emitters arrive with each expansion
+feature, so a contract can exist here before anything fires it.
+
+## Ephemeral session mode
+
+`ephemeralSessionEnabled` joins `EXPANSION_FLAG_NAMES`, so the preference needs
+no migration and is toggled through `setExpansionFlag` in
+`src/features/featureFlags.ts`.
+
+`ephemeralSessionActive` in `LocalState` tracks the live session.
+`src/actions/ephemeral-session.actions.ts` starts and ends it, broadcasts
+`ephemeral_session_started` and `ephemeral_session_ended` so other windows can
+react, and ignores a repeat call so the event fires once per transition. The
+store `merge` handler resets the field on rehydration because the persist
+middleware stores the whole `local` object.
+
+`isPersistenceAllowed()` in `src/utils/incognito.utils.ts` returns false while
+incognito mode is on or an ephemeral session is active.
 
 ---
 
@@ -134,11 +174,15 @@ Add to `apps/desktop/src/types/`:
 
 1. Feature flags read from preferences and default to off.
 2. Redaction helper covers strings, errors, and objects; unit tests cover each.
-3. `isPersistenceAllowed()` returns false when incognito is on; existing
-   incognito behavior is unchanged.
+3. `isPersistenceAllowed()` returns false when incognito is on or an ephemeral
+   session is active; existing incognito behavior is unchanged.
 4. Shared domain types compile in `apps/desktop/src/types/`.
-5. No existing dictation, transcription, or post-processing test regresses.
-6. Type check, lint, unit tests, and i18n all pass.
+5. Event contracts bind each name to its payload through one map, and the typed
+   listener infers that payload at the call site.
+6. An ephemeral session suppresses persistence, fires its event once per
+   transition, and does not survive a restart.
+7. No existing dictation, transcription, or post-processing test regresses.
+8. Type check, lint, unit tests, and i18n all pass.
 
 ---
 
@@ -159,6 +203,21 @@ Add to `apps/desktop/src/types/`:
 
 After this PR is green, the Meeting Notes PR (`expansion/2-meeting-notes`)
 can build on:
+
 - `src/features/featureFlags.ts` for the `meetingNotesEnabled` gate.
-- `src/utils/incognito.utils.ts` for persistence suppression.
+- `src/utils/incognito.utils.ts` for persistence suppression, which also covers
+  an active ephemeral session.
 - `apps/desktop/src/types/meetings.types.ts` for domain types.
+- `MEETING_STARTED_EVENT`, `MEETING_STOPPED_EVENT`, and
+  `MEETING_SUMMARY_GENERATED_EVENT` in
+  `packages/desktop-utils/src/tauri-events.ts`, plus their payload types.
+- `useExpansionEventListener` in `src/hooks/tauri.hooks.ts` to subscribe with an
+  inferred payload.
+
+Still open for later poles:
+
+- Emitters for the fifteen expansion events that nothing fires yet. Ephemeral
+  sessions already emit their two.
+- Settings UI for the expansion flag toggles, including
+  `ephemeralSessionEnabled`.
+- A UI indicator for an active ephemeral session.

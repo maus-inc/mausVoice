@@ -21,6 +21,7 @@ import {
   unwrapNestedLlmResponse,
 } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
@@ -374,11 +375,13 @@ export const storeTranscription = async (
   const includeInStats = state.userPrefs?.incognitoModeIncludeInStats ?? false;
   const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
 
-  if (incognitoEnabled) {
+  if (!isPersistenceAllowed()) {
     getLogger().verbose(
-      `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
+      `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
     );
-    if (wordsAdded > 0 && includeInStats) {
+    // Counting words is an incognito-only option. An ephemeral session never
+    // opted into usage statistics.
+    if (wordsAdded > 0 && includeInStats && incognitoEnabled) {
       try {
         await addWordsToCurrentUser(wordsAdded);
       } catch (error) {
@@ -398,20 +401,20 @@ export const storeTranscription = async (
 
   const transcriptionId = createId();
 
+  // The persistence gate above already ruled out incognito and ephemeral
+  // sessions, so audio is stored on every path that reaches here.
   let audioSnapshot: TranscriptionAudioSnapshot | undefined;
-  if (!incognitoEnabled) {
-    try {
-      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
-        "store_transcription_audio",
-        {
-          id: transcriptionId,
-          samples: payloadSamples,
-          sampleRate: rate,
-        },
-      );
-    } catch (error) {
-      console.error("Failed to persist audio snapshot", error);
-    }
+  try {
+    audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
+      "store_transcription_audio",
+      {
+        id: transcriptionId,
+        samples: payloadSamples,
+        sampleRate: rate,
+      },
+    );
+  } catch (error) {
+    console.error("Failed to persist audio snapshot", error);
   }
 
   const transcriptionFailed =
