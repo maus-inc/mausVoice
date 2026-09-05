@@ -98,4 +98,13 @@ describe("safeSideEffect", () => {
     expect(hasLogBreakingControl(message)).toBe(false);
     expect(message).toContain("fail secret-line");
   });
+
+  it("does not truncate a long error message to the 64-char context cap", async () => {
+    const err = `resource-id-failure ${"x".repeat(80)}`;
+    await safeSideEffect("label", { conversationId: "c-1" }, () =>
+      Promise.reject(new Error(err)),
+    );
+    const message = String(loggerMock.error.mock.calls[0][0]);
+    expect(message).toContain(err);
+  });
 });

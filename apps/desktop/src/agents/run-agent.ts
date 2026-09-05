@@ -41,13 +41,17 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
-/** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
-const sanitizeContextValue = (value: string): string => {
+const collapseLogBreakingControls = (value: string): string => {
   let singleLine = "";
   for (const ch of value) {
     singleLine += isLogBreakingControl(ch) ? " " : ch;
   }
-  singleLine = singleLine.replace(/ {2,}/g, " ").trim();
+  return singleLine.replace(/ {2,}/g, " ").trim();
+};
+
+/** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
+const sanitizeContextValue = (value: string): string => {
+  const singleLine = collapseLogBreakingControls(value);
   return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
     ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
     : singleLine;
@@ -70,7 +74,7 @@ export async function safeSideEffect<T>(
   try {
     return await fn();
   } catch (error) {
-    const message = sanitizeContextValue(unknownToMessage(error));
+    const message = collapseLogBreakingControls(unknownToMessage(error));
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,

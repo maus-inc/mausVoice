@@ -2,11 +2,10 @@ const MAX_ERROR_MESSAGE_LENGTH = 512;
 const MAX_REDACT_DEPTH = 8;
 const REDACTED = "[redacted]";
 
-const BEARER_TOKEN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
-const PROVIDER_KEY_PREFIX =
-  /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[A-Za-z0-9_-]{8,}/gi;
+const BEARER_TOKEN = /\bBearer\s+[0-9a-z._~+/-]+={0,2}/gi;
+const PROVIDER_KEY_PREFIX = /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
 const LABELED_SECRET =
-  /("?)(api[_-]?key|apiKey|authorization|access_token|refresh_token)("?\s*[:=]\s*)(?:(")((?:\\.|[^"\\])*)(")|([^"\s,;}]+))/gi;
+  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*[:=]\s*(?:"[^"]*"|[^\s,;]+)/gi;
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -23,7 +22,7 @@ const redactSensitiveTokens = (message: string): string =>
   message
     .replace(BEARER_TOKEN, "Bearer [redacted]")
     .replace(PROVIDER_KEY_PREFIX, REDACTED)
-    .replace(LABELED_SECRET, "$1$2$3$4[redacted]$6");
+    .replace(LABELED_SECRET, "$1=[redacted]");
 
 const capLength = (message: string): string =>
   message.length > MAX_ERROR_MESSAGE_LENGTH
