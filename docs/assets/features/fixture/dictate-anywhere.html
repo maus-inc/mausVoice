@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>mausVoice feature mocks</title>
+<link rel="stylesheet" href="mock.css" />
+</head>
+<body>
+<main class="stage" data-feature="dictate-anywhere">
+  <header class="window-chrome">
+    <div class="window-controls" aria-hidden="true">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+    </div>
+    <div class="window-title">mausVoice</div>
+    <div class="window-tabs">
+      <span class="tab active">Dictation</span>
+      <span class="tab">Writing styles</span>
+      <span class="tab">Dictionary</span>
+      <span class="tab">History</span>
+      <span class="tab">Settings</span>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-text">
+      <p class="kicker">Global dictation</p>
+      <h1>Hold to dictate. Release to insert.</h1>
+      <p class="lede">
+        Press and hold the hold to dictate shortcut, speak, then release.
+        mausVoice streams the transcript and pastes the cleaned-up text into
+        whatever app has focus.
+      </p>
+      <div class="meta-row">
+        <span class="chip chip-info">Hold to dictate: Right Option</span>
+        <span class="chip">Cancel: Escape</span>
+      </div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="pill">
+        <span class="pill-pulse"></span>
+        <span class="pill-label">Listening</span>
+        <svg class="pill-wave" viewBox="0 0 220 40" preserveAspectRatio="none">
+          <path d="M0 20 Q 10 4, 20 20 T 40 20 T 60 20 T 80 20 T 100 20 T 120 20 T 140 20 T 160 20 T 180 20 T 200 20 T 220 20" />
+          <path d="M0 22 Q 10 38, 20 22 T 40 22 T 60 22 T 80 22 T 100 22 T 120 22 T 140 22 T 160 22 T 180 22 T 200 22 T 220 22" />
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Text insertion options</h2>
+      <p class="panel-sub">
+        Choose how mausVoice inserts text and which paste shortcut to use when
+        paste insertion is selected.
+      </p>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Default insertion method</span>
+        <span class="setting-helper">How text is inserted into applications.</span>
+      </div>
+      <div class="select">
+        <span class="select-value">Paste (clipboard)</span>
+        <span class="select-caret">▾</span>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-title">Default paste binding</span>
+        <span class="setting-helper">
+          Used for unregistered apps and as the default for new apps.
+        </span>
+      </div>
+      <div class="select">
+        <span class="select-value">Default (Shift+Insert)</span>
+        <span class="select-caret">▾</span>
+      </div>
+    </div>
+    <div class="setting-row muted">
+      <div class="setting-label">
+        <span class="setting-title">Simulated typing speed</span>
+        <span class="setting-helper">Disabled while paste insertion is selected.</span>
+      </div>
+      <div class="slider disabled" aria-hidden="true">
+        <span class="slider-track"></span>
+        <span class="slider-thumb" style="left: 30%"></span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="status-bar">
+    <span class="status-dot status-dot-active"></span>
+    <span>Ready to dictate</span>
+    <span class="status-spacer"></span>
+    <span>Hold to dictate: Right Option</span>
+  </footer>
+</main>
+</body>
+</html>

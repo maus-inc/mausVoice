@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Assistant approval</title>
+<link rel="stylesheet" href="mock.css" />
+</head>
+<body>
+<main class="stage" data-feature="assistant-approval">
+  <header class="window-chrome">
+    <div class="window-controls" aria-hidden="true">
+      <span class="dot dot-red"></span>
+      <span class="dot dot-yellow"></span>
+      <span class="dot dot-green"></span>
+    </div>
+    <div class="window-title">mausVoice · Assistant approval</div>
+  </header>
+
+  <section class="hero compact">
+    <p class="kicker">Assistant approvals</p>
+    <h1>You decide what the assistant is allowed to do.</h1>
+    <p class="lede">
+      Assistant mode follows commands you dictate instead of just cleaning up
+      text. Every tool call asks before it runs.
+    </p>
+    <div class="meta-row">
+      <span class="chip chip-info">Beta</span>
+      <span class="chip chip-success">Power mode: Off</span>
+      <span class="chip">Assistant hotkey: Right Cmd</span>
+    </div>
+  </section>
+
+  <div class="assistant-grid">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Tool approval</h2>
+        <p class="panel-sub">
+          Review the reason and parameters before you decide.
+        </p>
+      </div>
+
+      <div class="approval-card">
+        <div class="approval-header">
+          <div class="tool-icon" aria-hidden="true">↳</div>
+          <div>
+            <div class="tool-name">Paste into focused field</div>
+            <div class="tool-detail">
+              <span class="tool-label">App</span>
+              <span class="tool-value">Notes.app</span>
+              <span class="tool-sep" aria-hidden="true">·</span>
+              <span class="tool-label">Reason</span>
+              <span class="tool-value">Assistant drafts reply after confirming with the user</span>
+            </div>
+          </div>
+          <span class="chip chip-pending">Awaiting approval</span>
+        </div>
+        <details class="params">
+          <summary>Show parameters</summary>
+          <pre>{
+  "target_app": "Notes.app",
+  "field_id": "body",
+  "text_preview": "Thanks for flagging this. I will follow up by..."
+}</pre>
+        </details>
+        <div class="approval-actions">
+          <button class="btn btn-secondary">Deny</button>
+          <button class="btn btn-primary">Allow</button>
+          <button class="btn btn-ghost">Always allow</button>
+        </div>
+      </div>
+
+      <div class="approval-card resolved">
+        <div class="approval-header">
+          <div class="tool-icon" aria-hidden="true">⌖</div>
+          <div>
+            <div class="tool-name">Open URL in default browser</div>
+            <div class="tool-detail">
+              <span class="tool-label">App</span>
+              <span class="tool-value">Safari</span>
+              <span class="tool-sep" aria-hidden="true">·</span>
+              <span class="tool-label">Reason</span>
+              <span class="tool-value">User asked to open the shared Figma file</span>
+            </div>
+          </div>
+          <span class="chip chip-success">Allowed</span>
+        </div>
+      </div>
+
+      <div class="approval-card resolved">
+        <div class="approval-header">
+          <div class="tool-icon" aria-hidden="true">⌥</div>
+          <div>
+            <div class="tool-name">Run shell command</div>
+            <div class="tool-detail">
+              <span class="tool-label">App</span>
+              <span class="tool-value">Terminal</span>
+              <span class="tool-sep" aria-hidden="true">·</span>
+              <span class="tool-label">Reason</span>
+              <span class="tool-value">Power mode is off. Commands are blocked until you enable it.</span>
+            </div>
+          </div>
+          <span class="chip chip-error">Denied</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel side-panel">
+      <div class="panel-head">
+        <h2>Power mode</h2>
+        <p class="panel-sub">
+          Power mode allows the assistant to run terminal commands on your
+          computer. You will still be asked to approve each command before it
+          runs.
+        </p>
+      </div>
+      <div class="kv-row big">
+        <span>Enable Power mode</span>
+        <span class="toggle" aria-hidden="true"><span class="toggle-knob"></span></span>
+      </div>
+      <p class="side-foot">
+        Assistant mode is disabled by default. This is a new experimental
+        feature.
+      </p>
+      <p class="side-foot strong">
+        By enabling Power mode, you accept full responsibility for any actions
+        taken by the assistant.
+      </p>
+    </aside>
+  </div>
+</main>
+</body>
+</html>
