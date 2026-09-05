@@ -9,6 +9,10 @@ const getLoggerMock = vi.hoisted(() => ({
   info: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
+  // log.utils also exposes stopwatch for performance instrumentation;
+  // none of the paths under test use it, but the mock mirrors the full
+  // Logger shape so a future test can rely on it.
+  stopwatch: vi.fn(),
 }));
 const repoMocks = vi.hoisted(() => ({
   rejectNextUpdate: false,
