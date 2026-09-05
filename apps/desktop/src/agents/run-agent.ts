@@ -53,9 +53,13 @@ const sanitizeContextValue = (value: string): string => {
     : singleLine;
 };
 
+/** Log parsers must treat each value as a JSON string, not a comma-split field. */
+const quoteValueForLog = (value: string): string =>
+  JSON.stringify(sanitizeContextValue(value));
+
 const summarizeContext = (context: Record<string, string>): string =>
   Object.entries(context)
-    .map(([k, v]) => `${k}=${JSON.stringify(sanitizeContextValue(v))}`)
+    .map(([k, v]) => `${k}=${quoteValueForLog(v)}`)
     .join(", ");
 
 export async function safeSideEffect<T>(

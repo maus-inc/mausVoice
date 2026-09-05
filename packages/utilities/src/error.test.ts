@@ -29,11 +29,20 @@ describe("unknownToMessage", () => {
     expect(unknownToMessage({ apiKey: "supersecretvalue" })).toBe(
       '{"apiKey":"[redacted]"}',
     );
+    expect(unknownToMessage({ apiKey: "secret value" })).toBe(
+      '{"apiKey":"[redacted]"}',
+    );
+    expect(
+      unknownToMessage({ nested: { authorization: "secret, value" } }),
+    ).toBe('{"nested":{"authorization":"[redacted]"}}');
+    expect(unknownToMessage('{"apiKey":"secret value","code":"E_BOOM"}')).toBe(
+      '{"apiKey":"[redacted]","code":"E_BOOM"}',
+    );
   });
 
   it("caps huge payloads", () => {
     const message = unknownToMessage("x".repeat(600));
-    expect(message.length).toBe(513);
+    expect(message).toHaveLength(513);
     expect(message.endsWith("…")).toBe(true);
     expect(message.startsWith("x".repeat(512))).toBe(true);
   });
