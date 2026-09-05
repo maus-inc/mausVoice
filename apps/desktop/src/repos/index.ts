@@ -2,9 +2,11 @@ import type { ApiKeyProvider } from "@maus-inc/types";
 import { Nullable } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getAppState } from "../store";
+import { buildGladiaCustomizations } from "../utils/gladia.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
+import { collectDictionaryEntries } from "../utils/prompt.utils";
 import {
   ApiGenerativePrefs,
   GenerativePrefs,
@@ -47,6 +49,7 @@ import {
   DeepSeekModelProviderRepo,
   ElevenLabsModelProviderRepo,
   GeminiModelProviderRepo,
+  GladiaModelProviderRepo,
   GroqModelProviderRepo,
   OllamaModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
@@ -78,6 +81,7 @@ import {
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
+  GladiaTranscribeAudioRepo,
   GeminiTranscribeAudioRepo,
   GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
@@ -320,7 +324,10 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       case "assemblyai":
-        repo = new AssemblyAITranscribeAudioRepo(prefs.apiKeyValue);
+        repo = new AssemblyAITranscribeAudioRepo(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
         break;
       case "aldea":
         repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
@@ -345,13 +352,17 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const model = prefs.transcriptionModel || "whisper-1";
         const providerApiKey = apiKeyRecord?.keyFull || undefined;
         const includeV1Path = apiKeyRecord?.includeV1Path;
-        const transcriptionPath = apiKeyRecord?.transcriptionPath ?? undefined;
         const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+        if (!apiKeyRecord) {
+          throw new Error(
+            "OpenAI-compatible endpoint configuration is missing.",
+          );
+        }
         repo = new OpenAICompatibleTranscribeAudioRepo(
+          apiKeyRecord.id,
           fullUrl,
           model,
           providerApiKey,
-          transcriptionPath,
         );
         break;
       }
@@ -380,11 +391,15 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           prefs.transcriptionModel,
         );
         break;
-      case "xai":
-        repo = new XaiTranscribeAudioRepo(
+      case "gladia":
+        repo = new GladiaTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
+          buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
         );
+        break;
+      case "xai":
+        repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
         break;
       case "groq":
         repo = new GroqTranscribeAudioRepo(
@@ -484,6 +499,8 @@ export const getModelProviderRepo = (
       return new ElevenLabsModelProviderRepo();
     case "deepgram":
       return new DeepgramModelProviderRepo();
+    case "gladia":
+      return new GladiaModelProviderRepo();
     case "xai":
       return new XaiModelProviderRepo();
   }

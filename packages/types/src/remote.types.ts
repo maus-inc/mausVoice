@@ -61,6 +61,12 @@ export type RouteTranscriptOutputArgs = {
    * queue each behind the full delay and destroy realtime behavior.
    */
   isInterim?: boolean;
+  /**
+   * When true, the text is delivered without routing through the
+   * review-before-insert composer. Used for streaming interim segments, which
+   * must never spawn a blocking review popout on every token.
+   */
+  skipReview?: boolean;
 };
 
 export type RouteTranscriptOutputResult = {

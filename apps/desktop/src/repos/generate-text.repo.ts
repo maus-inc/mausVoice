@@ -65,9 +65,14 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.groqApiKey = apiKey;
-    this.model = GENERATE_TEXT_MODELS.includes(model as GenerateTextModel)
-      ? (model as GenerateTextModel)
-      : "openai/gpt-oss-20b";
+    // Membership test runs against the widened list because
+    // `GenerateTextModel` also carries runtime-discovered model ids, which
+    // are not in the literal `GENERATE_TEXT_MODELS` tuple.
+    const allowedModels: readonly string[] = GENERATE_TEXT_MODELS;
+    this.model =
+      model !== null && allowedModels.includes(model)
+        ? (model as GenerateTextModel)
+        : "openai/gpt-oss-20b";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

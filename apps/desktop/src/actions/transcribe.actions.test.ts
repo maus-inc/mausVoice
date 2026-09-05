@@ -29,6 +29,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => path,
 }));
 
+vi.mock("@tauri-apps/plugin-http", () => ({
+  fetch: (...args: Parameters<typeof globalThis.fetch>) =>
+    globalThis.fetch(...args),
+}));
+
 const { createTranscriptionMock, purgeStaleAudioMock } = vi.hoisted(() => ({
   createTranscriptionMock: vi.fn(),
   purgeStaleAudioMock: vi.fn(async () => [] as string[]),
@@ -39,6 +44,7 @@ vi.mock("../repos", async (importOriginal) => {
   return {
     ...actual,
     getTranscriptionRepo: () => ({
+      ...actual.getTranscriptionRepo(),
       createTranscription: createTranscriptionMock,
       purgeStaleAudio: purgeStaleAudioMock,
     }),
@@ -46,7 +52,8 @@ vi.mock("../repos", async (importOriginal) => {
 });
 
 vi.mock("./user.actions", () => ({
-  addWordsToCurrentUser: vi.fn(async () => undefined),
+  recordUsageWords: vi.fn(),
+  addWordsToCurrentUser: vi.fn(),
 }));
 
 const staleOllamaState = () => {

@@ -1,9 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-const buildCreateCompletion = (
-  content: string,
-  usage = { total_tokens: 5 },
-) =>
+const buildCreateCompletion = (content: string, usage = { total_tokens: 5 }) =>
   vi.fn().mockResolvedValue({
     choices: [{ message: { content } }],
     usage,
@@ -71,7 +68,9 @@ export function createOpenAICompatibleGenerateTests({
       }));
 
       const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
+      const fn = mod[functionName] as (
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
 
       await fn(params);
 
@@ -143,7 +142,9 @@ export function createOpenAICompatibleGenerateTests({
         ...extraParams,
       });
 
-      expect(createCompletion.mock.calls[0][0]?.response_format).toBeUndefined();
+      expect(
+        createCompletion.mock.calls[0][0]?.response_format,
+      ).toBeUndefined();
     });
   });
 }

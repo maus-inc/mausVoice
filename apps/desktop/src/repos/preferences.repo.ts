@@ -13,8 +13,8 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
-import { normalizeHandsFreeDelayMs } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
+import { orFalse, orNull, orTrue, orValue } from "../utils/nullable.utils";
 import { getEffectivePillVisibility, LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
@@ -47,7 +47,6 @@ type LocalUserPreferences = {
   ignoreUpdateDialog: boolean;
   incognitoModeEnabled: boolean;
   incognitoModeIncludeInStats: boolean;
-  preserveAudioOnFailure: boolean;
   dictationLimitMinutes?: Nullable<number>;
   dictationPillVisibility: DictationPillVisibility;
   realtimeOutputEnabled: boolean;
@@ -62,11 +61,25 @@ type LocalUserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
-  pillPlacement?: Nullable<PillPlacement>;
+  pillPlacement?: Nullable<string>;
   alwaysRequestAdminOnStartup?: boolean;
+  preserveAudioOnFailure?: boolean;
   handsFreeDelayMs?: Nullable<number>;
   autoLearnDictionaryEnabled?: boolean;
   autoLearnFromEditsEnabled?: boolean;
+  inDictationStyleSwitchingEnabled?: boolean;
+  hallucinationFilterEnabled?: boolean;
+  reviewBeforeInsert?: Nullable<boolean>;
+  // Contract: `null` (the persisted default) means "follow the tool registry's
+  // per-tool enablement"; an empty list `[]` is an *explicit* deny-all the user
+  // chose and must never be coerced into enabling tools; a non-empty list is the
+  // explicit allow-set. Do not migrate `null` to an allow-list of every tool id,
+  // or a user's explicit `[]` would be silently overwritten. Persisted as a
+  // JSON-encoded string (see `parseAgentEnabledTools` / `jsonValue`).
+  agentEnabledTools?: Nullable<string>;
+  agentMaxIterations?: number;
+  agentPermissionTimeoutMs?: number;
+  spokenCommandsEnabled?: boolean;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -74,8 +87,43 @@ const normalizePillResetMonitorStrategy = (
 ): PillResetMonitorStrategy => (strategy === "cursor" ? "cursor" : "current");
 
 const normalizePillPlacement = (
-  placement: Nullable<string> | undefined,
-): PillPlacement => (placement === "top" ? "top" : "bottom");
+  value: Nullable<string> | undefined,
+): PillPlacement => (value === "top" || value === "bottom" ? value : "bottom");
+
+export const normalizeAgentMaxIterations = (
+  value: number | null | undefined,
+): number => {
+  const normalized =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.trunc(value)
+      : 20;
+  return Math.min(100, Math.max(1, normalized));
+};
+
+const normalizeAgentPermissionTimeout = (
+  value: number | null | undefined,
+): number =>
+  Math.min(10 * 60_000, Math.max(5_000, Math.trunc(value ?? 60_000)));
+
+const parseAgentEnabledTools = (
+  value: Nullable<string[]> | string | undefined,
+): Nullable<string[]> => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) &&
+      parsed.every((item) => typeof item === "string")
+      ? parsed
+      : null;
+  } catch {
+    const parsed = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return parsed.length > 0 ? parsed : null;
+  }
+};
 
 // Backwards-compatibility normalization for the persisted AI modes. Older
 // builds stored modes that no longer exist ("cloud" for all three, plus
@@ -111,146 +159,168 @@ const normalizeAgentMode = (mode: Nullable<string>): Nullable<AgentMode> => {
   return "none";
 };
 
-const withDefault = <T>(value: T | null | undefined, fallback: T): T =>
-  (value ?? fallback) as T;
+const jsonValue = (value: string[] | null | undefined): string | null =>
+  value ? JSON.stringify(value) : null;
 
-export const fromLocalPreferences = (
-  preferences: LocalUserPreferences,
-): UserPreferences => ({
-  userId: preferences.userId,
+const fromLocalAiPreferences = (preferences: LocalUserPreferences) => ({
   transcriptionMode: normalizeTranscriptionMode(preferences.transcriptionMode),
-  transcriptionApiKeyId: preferences.transcriptionApiKeyId,
-  transcriptionDevice: preferences.transcriptionDevice,
-  transcriptionModelSize: preferences.transcriptionModelSize,
+  transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
+  transcriptionDevice: orNull(preferences.transcriptionDevice),
+  transcriptionModelSize: orNull(preferences.transcriptionModelSize),
   postProcessingMode: normalizePostProcessingMode(
     preferences.postProcessingMode,
   ),
-  postProcessingApiKeyId: preferences.postProcessingApiKeyId,
-  postProcessingOllamaUrl: preferences.postProcessingOllamaUrl,
-  postProcessingOllamaModel: preferences.postProcessingOllamaModel,
-  activeToneId: preferences.activeToneId,
-  gotStartedAt: preferences.gotStartedAt,
-  gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
+  postProcessingApiKeyId: orNull(preferences.postProcessingApiKeyId),
+  postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
+  postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
+  activeToneId: orNull(preferences.activeToneId),
+  gpuEnumerationEnabled: orFalse(preferences.gpuEnumerationEnabled),
   agentMode: normalizeAgentMode(preferences.agentMode),
   agentModeApiKeyId: preferences.agentModeApiKeyId,
-  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
-  openclawToken: withDefault(preferences.openclawToken, null),
+  openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
+  openclawToken: orNull(preferences.openclawToken),
+});
+
+const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
+  gotStartedAt: orNull(preferences.gotStartedAt),
   lastSeenFeature: preferences.lastSeenFeature,
-  activeDictationLanguage: withDefault(
-    preferences.activeDictationLanguage,
-    null,
-  ),
-  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: withDefault(
-    preferences.incognitoModeIncludeInStats,
-    false,
-  ),
-  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  activeDictationLanguage: orNull(preferences.activeDictationLanguage),
+  preferredMicrophone: orNull(preferences.preferredMicrophone),
+  ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
+  incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
+  incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
   dictationLimitMinutes: normalizeDictationLimitMinutes(
     preferences.dictationLimitMinutes,
   ),
   dictationPillVisibility: getEffectivePillVisibility(
     preferences.dictationPillVisibility,
   ),
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
-  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: withDefault(preferences.pasteKeybind, null),
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: withDefault(preferences.insertionMethod, null),
-  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
+  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
+  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
+  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
+  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
+  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
+  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
+  pasteKeybind: orNull(preferences.pasteKeybind),
+  menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
+  insertionMethod: orNull(preferences.insertionMethod),
+  typingSpeedMs: orNull(preferences.typingSpeedMs),
   pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
     preferences.pillResetMonitorStrategy,
   ),
   pillPlacement: normalizePillPlacement(preferences.pillPlacement),
-  alwaysRequestAdminOnStartup: withDefault(
-    preferences.alwaysRequestAdminOnStartup,
-    false,
-  ),
-  handsFreeDelayMs:
-    preferences.handsFreeDelayMs == null
-      ? null
-      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
+  alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: preferences.handsFreeDelayMs ?? null,
+});
+
+const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
   autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
   autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
+  inDictationStyleSwitchingEnabled: orFalse(
+    preferences.inDictationStyleSwitchingEnabled,
+  ),
+  hallucinationFilterEnabled: orTrue(preferences.hallucinationFilterEnabled),
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
+  agentEnabledTools: parseAgentEnabledTools(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
+});
+
+export const fromLocalPreferences = (
+  preferences: LocalUserPreferences,
+): UserPreferences => ({
+  userId: preferences.userId,
+  ...fromLocalAiPreferences(preferences),
+  ...fromLocalOutputPreferences(preferences),
+  ...fromLocalFeaturePreferences(preferences),
+});
+
+const toLocalAiPreferences = (preferences: UserPreferences) => ({
+  transcriptionMode: orNull(preferences.transcriptionMode),
+  transcriptionApiKeyId: orNull(preferences.transcriptionApiKeyId),
+  transcriptionDevice: orNull(preferences.transcriptionDevice),
+  transcriptionModelSize: orNull(preferences.transcriptionModelSize),
+  postProcessingMode: orNull(preferences.postProcessingMode),
+  postProcessingApiKeyId: orNull(preferences.postProcessingApiKeyId),
+  postProcessingOllamaUrl: orNull(preferences.postProcessingOllamaUrl),
+  postProcessingOllamaModel: orNull(preferences.postProcessingOllamaModel),
+  activeToneId: orNull(preferences.activeToneId),
+  gotStartedAt: orNull(preferences.gotStartedAt),
+  gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
+  agentMode: orNull(preferences.agentMode),
+  agentModeApiKeyId: orNull(preferences.agentModeApiKeyId),
+  openclawGatewayUrl: orNull(preferences.openclawGatewayUrl),
+  openclawToken: orNull(preferences.openclawToken),
+  lastSeenFeature: orNull(preferences.lastSeenFeature),
+});
+
+const toLocalOutputPreferences = (preferences: UserPreferences) => ({
+  languageSwitchEnabled: false,
+  secondaryDictationLanguage: null,
+  activeDictationLanguage: orValue(
+    preferences.activeDictationLanguage,
+    PRIMARY_LANGUAGE_SENTINEL,
+  ),
+  preferredMicrophone: orNull(preferences.preferredMicrophone),
+  ignoreUpdateDialog: orFalse(preferences.ignoreUpdateDialog),
+  incognitoModeEnabled: orFalse(preferences.incognitoModeEnabled),
+  incognitoModeIncludeInStats: orFalse(preferences.incognitoModeIncludeInStats),
+  dictationLimitMinutes: normalizeDictationLimitMinutes(
+    orValue(preferences.dictationLimitMinutes, DEFAULT_DICTATION_LIMIT_MINUTES),
+  ),
+  dictationPillVisibility: getEffectivePillVisibility(
+    preferences.dictationPillVisibility,
+  ),
+  realtimeOutputEnabled: orFalse(preferences.realtimeOutputEnabled),
+  remoteOutputEnabled: orFalse(preferences.remoteOutputEnabled),
+  remoteTargetDeviceId: orNull(preferences.remoteTargetDeviceId),
+  remoteReceiverPort: orNull(preferences.remoteReceiverPort),
+  remoteReceiverAutoStart: orFalse(preferences.remoteReceiverAutoStart),
+  dictationAudioDim: orValue(preferences.dictationAudioDim, 1.0),
+  pasteKeybind: orNull(preferences.pasteKeybind),
+  useNewBackend: true,
+  menuBarIconHidden: orFalse(preferences.menuBarIconHidden),
+  insertionMethod: orNull(preferences.insertionMethod),
+  typingSpeedMs: orNull(preferences.typingSpeedMs),
+  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
+    preferences.pillResetMonitorStrategy,
+  ),
+  pillPlacement: orValue(preferences.pillPlacement, "bottom"),
+  alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
+  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
+  handsFreeDelayMs: orNull(preferences.handsFreeDelayMs),
+});
+
+const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
+  autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled,
+  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled,
+  inDictationStyleSwitchingEnabled:
+    preferences.inDictationStyleSwitchingEnabled,
+  hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,
+  reviewBeforeInsert: orNull(preferences.reviewBeforeInsert),
+  agentEnabledTools: jsonValue(preferences.agentEnabledTools),
+  agentMaxIterations: normalizeAgentMaxIterations(
+    preferences.agentMaxIterations,
+  ),
+  agentPermissionTimeoutMs: normalizeAgentPermissionTimeout(
+    preferences.agentPermissionTimeoutMs,
+  ),
+  spokenCommandsEnabled: orTrue(preferences.spokenCommandsEnabled),
 });
 
 export const toLocalPreferences = (
   preferences: UserPreferences,
 ): LocalUserPreferences => ({
   userId: LOCAL_USER_ID,
-  transcriptionMode: withDefault(preferences.transcriptionMode, null),
-  transcriptionApiKeyId: withDefault(preferences.transcriptionApiKeyId, null),
-  transcriptionDevice: withDefault(preferences.transcriptionDevice, null),
-  transcriptionModelSize: withDefault(preferences.transcriptionModelSize, null),
-  postProcessingMode: withDefault(preferences.postProcessingMode, null),
-  postProcessingApiKeyId: withDefault(preferences.postProcessingApiKeyId, null),
-  postProcessingOllamaUrl: withDefault(
-    preferences.postProcessingOllamaUrl,
-    null,
-  ),
-  postProcessingOllamaModel: withDefault(
-    preferences.postProcessingOllamaModel,
-    null,
-  ),
-  activeToneId: withDefault(preferences.activeToneId, null),
-  gotStartedAt: withDefault(preferences.gotStartedAt, null),
-  gpuEnumerationEnabled: preferences.gpuEnumerationEnabled,
-  agentMode: withDefault(preferences.agentMode, null),
-  agentModeApiKeyId: withDefault(preferences.agentModeApiKeyId, null),
-  openclawGatewayUrl: withDefault(preferences.openclawGatewayUrl, null),
-  openclawToken: withDefault(preferences.openclawToken, null),
-  lastSeenFeature: withDefault(preferences.lastSeenFeature, null),
-  languageSwitchEnabled: false,
-  secondaryDictationLanguage: null,
-  activeDictationLanguage: withDefault(
-    preferences.activeDictationLanguage,
-    PRIMARY_LANGUAGE_SENTINEL,
-  ),
-  preferredMicrophone: withDefault(preferences.preferredMicrophone, null),
-  ignoreUpdateDialog: preferences.ignoreUpdateDialog ?? false,
-  incognitoModeEnabled: preferences.incognitoModeEnabled ?? false,
-  incognitoModeIncludeInStats: withDefault(
-    preferences.incognitoModeIncludeInStats,
-    false,
-  ),
-  preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
-  dictationLimitMinutes: normalizeDictationLimitMinutes(
-    preferences.dictationLimitMinutes ?? DEFAULT_DICTATION_LIMIT_MINUTES,
-  ),
-  dictationPillVisibility: getEffectivePillVisibility(
-    preferences.dictationPillVisibility,
-  ),
-  realtimeOutputEnabled: preferences.realtimeOutputEnabled ?? false,
-  remoteOutputEnabled: preferences.remoteOutputEnabled ?? false,
-  remoteTargetDeviceId: withDefault(preferences.remoteTargetDeviceId, null),
-  remoteReceiverPort: withDefault(preferences.remoteReceiverPort, null),
-  remoteReceiverAutoStart: preferences.remoteReceiverAutoStart ?? false,
-  dictationAudioDim: preferences.dictationAudioDim ?? 1.0,
-  pasteKeybind: withDefault(preferences.pasteKeybind, null),
-  useNewBackend: true,
-  menuBarIconHidden: preferences.menuBarIconHidden ?? false,
-  insertionMethod: withDefault(preferences.insertionMethod, null),
-  typingSpeedMs: withDefault(preferences.typingSpeedMs, null),
-  pillResetMonitorStrategy: normalizePillResetMonitorStrategy(
-    preferences.pillResetMonitorStrategy,
-  ),
-  pillPlacement: normalizePillPlacement(preferences.pillPlacement ?? null),
-  alwaysRequestAdminOnStartup: withDefault(
-    preferences.alwaysRequestAdminOnStartup,
-    false,
-  ),
-  handsFreeDelayMs:
-    preferences.handsFreeDelayMs === null
-      ? null
-      : normalizeHandsFreeDelayMs(preferences.handsFreeDelayMs),
-  autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
-  autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
+  ...toLocalAiPreferences(preferences),
+  ...toLocalOutputPreferences(preferences),
+  ...toLocalFeaturePreferences(preferences),
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {

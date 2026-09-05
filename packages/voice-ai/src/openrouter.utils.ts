@@ -1,7 +1,5 @@
 import OpenAI from "openai";
-import type {
-  ChatCompletionCreateParamsNonStreaming,
-} from "openai/resources/chat/completions";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";

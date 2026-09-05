@@ -2,7 +2,10 @@ import { vi } from "vitest";
 import { createGeminiGenerateTests } from "../src/test-helpers/shared-gemini-generate.helper";
 
 const { fetchMock } = vi.hoisted(() => ({
-  fetchMock: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
+  fetchMock:
+    vi.fn<
+      (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    >(),
 }));
 
 const jsonResponse = (text: string) =>
@@ -11,9 +14,7 @@ const jsonResponse = (text: string) =>
     status: 200,
     text: async () => text,
     json: async () => ({
-      candidates: [
-        { content: { parts: [{ text }] } },
-      ],
+      candidates: [{ content: { parts: [{ text }] } }],
     }),
   }) as unknown as Response;
 

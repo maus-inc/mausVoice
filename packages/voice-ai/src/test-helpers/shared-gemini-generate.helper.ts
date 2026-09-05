@@ -27,7 +27,9 @@ export function createGeminiGenerateTests({
 
     async function runTestCase(params: Record<string, unknown>) {
       const mod = await loadModule();
-      const fn = mod[functionName] as (params: Record<string, unknown>) => Promise<unknown>;
+      const fn = mod[functionName] as (
+        params: Record<string, unknown>,
+      ) => Promise<unknown>;
 
       fetchMock.mockImplementation(respond);
 
@@ -55,7 +57,9 @@ export function createGeminiGenerateTests({
         maxTokens: 600,
       });
 
-      expect(callParams?.generationConfig).toMatchObject({ maxOutputTokens: 600 });
+      expect(callParams?.generationConfig).toMatchObject({
+        maxOutputTokens: 600,
+      });
     });
   });
 }

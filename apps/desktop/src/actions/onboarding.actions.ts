@@ -206,6 +206,13 @@ export const submitOnboarding = async () => {
       pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
       handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+      inDictationStyleSwitchingEnabled: false,
+      hallucinationFilterEnabled: true,
+      reviewBeforeInsert: null,
+      agentEnabledTools: null,
+      agentMaxIterations: 20,
+      agentPermissionTimeoutMs: 60_000,
+      spokenCommandsEnabled: true,
       autoLearnDictionaryEnabled: true,
       autoLearnFromEditsEnabled: false,
     };

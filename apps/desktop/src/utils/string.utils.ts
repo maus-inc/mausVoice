@@ -1,5 +1,11 @@
 import { Nullable } from "@maus-inc/types";
 
+export {
+  KNOWN_SILENCE_HALLUCINATIONS,
+  filterKnownSilenceHallucinations,
+  isKnownSilenceHallucination,
+} from "./hallucination.utils";
+
 /**
  * Escapes regular expression metacharacters in `value` so it can be embedded
  * as a literal pattern. Use this whenever a user-supplied string (for example

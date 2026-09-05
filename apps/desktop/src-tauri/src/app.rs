@@ -227,18 +227,16 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // keyboard hook cannot observe input delivered to a higher-integrity
             // window (UIPI), so this is the first thing to check when a user
             // reports hotkeys failing over an elevated app.
-            #[cfg(target_os = "windows")]
-            {
-                crate::platform::windows::permissions::log_elevation_state();
-                crate::platform::windows::lifecycle::start_watcher(app.handle());
-            }
-
+            //
             // Spin up the OS-level sleep/wake and session-unlock watcher so
             // the global keyboard hook can be re-armed after resume. Without
             // this the hotkey stops firing after a laptop sleep or a fast
             // user-switch unlock.
             #[cfg(target_os = "windows")]
-            crate::platform::windows::lifecycle::start_watcher(app.handle());
+            {
+                crate::platform::windows::permissions::log_elevation_state();
+                crate::platform::windows::lifecycle::start_watcher(app.handle());
+            }
 
             // Purge old log files, keeping the latest 10
             crate::system::diagnostics::purge_old_logs(app.handle());

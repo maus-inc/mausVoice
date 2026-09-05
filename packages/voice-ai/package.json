@@ -22,6 +22,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@gladiaio/sdk": "1.1.0",
+    "@google/genai": "^1.52.0",
     "@maus-inc/types": "workspace:*",
     "@maus-inc/utilities": "workspace:*",
     "eventemitter3": "5.0.4",

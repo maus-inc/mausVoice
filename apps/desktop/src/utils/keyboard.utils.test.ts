@@ -3,6 +3,7 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import {
   getPrettyKeyName,
+  getStyleSwitchActionNamesForKey,
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
 } from "./keyboard.utils";
@@ -108,7 +109,11 @@ describe("syncHotkeyCombosToNative", () => {
       return Promise.resolve(undefined);
     });
 
-    await syncHotkeyCombosToNative();
+    // The failure must reach this caller (run rejects), not be swallowed by
+    // the queue-keeping catch.
+    await expect(syncHotkeyCombosToNative()).rejects.toThrow(
+      "native bridge down",
+    );
     setHotkeyCombo(["ControlLeft", "KeyP"]);
     await syncHotkeyCombosToNative();
 
@@ -142,5 +147,68 @@ describe("getPrettyKeyName", () => {
 
   it("preserves side suffix on bare Meta* without a side", () => {
     expect(getPrettyKeyName("Meta")).toBe("⊞");
+  });
+});
+
+describe("getStyleSwitchActionNamesForKey", () => {
+  it("maps a released physical key to its bound style-switch actions", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+        bwd: {
+          id: "bwd",
+          actionName: "switch-writing-style-backward",
+          keys: ["LeftArrow"],
+        },
+        casual: {
+          id: "casual",
+          actionName: "switch-to-style:casual",
+          keys: ["KeyC"],
+        },
+        futureStyleAction: {
+          id: "future-style-action",
+          actionName: "switch-writing-style-custom",
+          keys: ["KeyF"],
+        },
+        chat: {
+          id: "chat",
+          actionName: OPEN_CHAT_HOTKEY,
+          keys: ["KeyO"],
+        },
+      },
+    };
+
+    expect(getStyleSwitchActionNamesForKey(state, "RightArrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
+      "switch-to-style:casual",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
+      "switch-writing-style-custom",
+    ]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);
+    expect(getStyleSwitchActionNamesForKey(state, "KeyZ")).toEqual([]);
+  });
+
+  it("is case-insensitive about the physical key", () => {
+    const state = {
+      ...INITIAL_APP_STATE,
+      hotkeyById: {
+        fwd: {
+          id: "fwd",
+          actionName: "switch-writing-style-forward",
+          keys: ["RightArrow"],
+        },
+      },
+    };
+    expect(getStyleSwitchActionNamesForKey(state, "rightarrow")).toEqual([
+      "switch-writing-style-forward",
+    ]);
   });
 });
