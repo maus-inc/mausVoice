@@ -261,7 +261,18 @@ const parseProcessedTranscript = (
     }
     return { transcript: validationResult.data.result.trim(), warning: null };
   } catch (e) {
-    const message = (e as Error).message;
+    const message =
+      e instanceof Error
+        ? e.message
+        : typeof e === "string"
+          ? e
+          : (() => {
+              try {
+                return JSON.stringify(e) ?? String(e);
+              } catch {
+                return String(e);
+              }
+            })();
     const truncationHint = /Unterminated string/i.test(message)
       ? " The model output may have been truncated at its token limit."
       : "";

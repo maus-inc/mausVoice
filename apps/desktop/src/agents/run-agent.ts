@@ -37,15 +37,17 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
+/** Collapse control characters so a multi-line tool result cannot break the log line. */
+const sanitizeContextValue = (value: string): string => {
+  const singleLine = value.replace(/[\r\n\t]+/g, " ").trim();
+  return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
+    ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
+    : singleLine;
+};
+
 const summarizeContext = (context: Record<string, string>): string =>
   Object.entries(context)
-    .map(([k, v]) => {
-      const value =
-        v.length > MAX_CONTEXT_VALUE_LENGTH
-          ? `${v.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
-          : v;
-      return `${k}=${value}`;
-    })
+    .map(([k, v]) => `${k}=${sanitizeContextValue(v)}`)
     .join(", ");
 
 export async function safeSideEffect<T>(
