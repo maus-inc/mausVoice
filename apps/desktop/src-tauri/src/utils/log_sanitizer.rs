@@ -47,15 +47,17 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
             pattern: Regex::new(r"(?m)(Webhook payload:)\s*.+$").unwrap(),
             replacement: "$1 [REDACTED]",
         },
-        // Webhook URL: <url>
+        // Webhook URL: <url>, optionally wrapped in quotes
         SanitizeRule {
-            pattern: Regex::new(r#"(?m)(Webhook URL:)\s*https?://[^\s"']+"#).unwrap(),
+            pattern: Regex::new(r#"(?m)(Webhook URL:)\s*["']?https?://[^\s"']+["']?"#).unwrap(),
             replacement: "$1 [REDACTED_URL]",
         },
-        // Connector token/credential/secret/api key: <credential>
+        // Connector token/credential/secret/api key: <credential>, optionally
+        // wrapped in quotes. Without the optional quotes a logged
+        // `Connector token: "value"` skipped the rule entirely and leaked.
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*[^\s"']+"#,
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*["']?[^\s"']+["']?"#,
             )
             .unwrap(),
             replacement: "$1 [REDACTED]",
@@ -213,6 +215,22 @@ mod tests {
     #[test]
     fn test_redacts_connector_token() {
         let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: connector-token-fixture-9f3k2m";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("connector-token-fixture"));
+    }
+
+    #[test]
+    fn test_redacts_quoted_webhook_url() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Webhook URL: \"https://example.com/webhook/secret-endpoint\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook URL: [REDACTED_URL]"));
+        assert!(!result.contains("example.com"));
+    }
+
+    #[test]
+    fn test_redacts_quoted_connector_token() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"connector-token-fixture-9f3k2m\"";
         let result = sanitize_log_content(input);
         assert!(result.contains("Connector token: [REDACTED]"));
         assert!(!result.contains("connector-token-fixture"));

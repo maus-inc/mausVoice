@@ -414,7 +414,7 @@ export const storeTranscription = async (
       },
     );
   } catch (error) {
-    console.error("Failed to persist audio snapshot", error);
+    getLogger().error("Failed to persist audio snapshot", error);
   }
 
   const transcriptionFailed =

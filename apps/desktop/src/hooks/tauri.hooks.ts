@@ -31,7 +31,7 @@ export const useTauriListen = <T = unknown>(
  */
 export const useExpansionEventListener = <TEvent extends ExpansionEventName>(
   eventName: TEvent,
-  callback: (payload: ExpansionEventPayloads[TEvent]) => void,
+  callback: (payload: ExpansionEventPayloads[TEvent]) => void | Promise<void>,
   options?: Omit<UseTauriListenOptions, "onError">,
 ) => {
   useTauriListen<ExpansionEventPayloads[TEvent]>(eventName, callback, options);
