@@ -27,6 +27,7 @@ const hasLogBreakingControl = (value: string): boolean => {
   }
   return false;
 };
+
 describe("safeSideEffect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -56,7 +57,7 @@ describe("safeSideEffect", () => {
     expect(loggerMock.error).toHaveBeenCalledTimes(1);
     const message = String(loggerMock.error.mock.calls[0][0]);
     expect(message).toContain("tool-call-result.persist");
-    expect(message).toContain("toolCallId=t-1");
+    expect(message).toContain('toolCallId="t-1"');
   });
 
   it("collapses control characters in context values before logging", async () => {
@@ -77,6 +78,33 @@ describe("safeSideEffect", () => {
     );
     const message = String(loggerMock.error.mock.calls[0][0]);
     expect(hasLogBreakingControl(message)).toBe(false);
-    expect(message).toContain("snippet=line1 line2 line3 end");
+    expect(message).toContain('snippet="line1 line2 line3 end"');
+  });
+
+  it("JSON-quotes context values so commas and equals stay parseable", async () => {
+    await safeSideEffect("label", { note: "a=b, c=d" }, () =>
+      Promise.reject(new Error("boom")),
+    );
+    const message = String(loggerMock.error.mock.calls[0][0]);
+    expect(message).toContain('note="a=b, c=d"');
+  });
+
+  it("collapses control characters in the error message before logging", async () => {
+    const err = withControls("fail", 0x0a, "secret-line");
+    await safeSideEffect("label", { conversationId: "c-1" }, () =>
+      Promise.reject(new Error(err)),
+    );
+    const message = String(loggerMock.error.mock.calls[0][0]);
+    expect(hasLogBreakingControl(message)).toBe(false);
+    expect(message).toContain("fail secret-line");
+  });
+
+  it("does not truncate a long error message to the 64-char context cap", async () => {
+    const err = `resource-id-failure ${"x".repeat(80)}`;
+    await safeSideEffect("label", { conversationId: "c-1" }, () =>
+      Promise.reject(new Error(err)),
+    );
+    const message = String(loggerMock.error.mock.calls[0][0]);
+    expect(message).toContain(err);
   });
 });

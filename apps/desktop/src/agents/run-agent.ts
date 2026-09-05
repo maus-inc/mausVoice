@@ -35,27 +35,33 @@ const activeLoops = new Map<string, AgentLoop>();
  * surface; wrapping the call keeps the loop alive.
  *
  * `label` is included in the log so post-mortem inspection can map a
- * failure back to a specific event handler. `context` is included verbatim
- * (caller must sanitize) so the tool-call id, conversation id, and
- * message id are available without joining on a stack trace.
+ * failure back to a specific event handler. Context values are collapsed
+ * to a single line, truncated, and JSON-quoted so ids stay parseable
+ * without breaking the log line.
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
+const collapseLogBreakingControls = (value: string): string =>
+  Array.from(value, (ch) => (isLogBreakingControl(ch) ? " " : ch))
+    .join("")
+    .replace(/ {2,}/g, " ")
+    .trim();
+
 /** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
 const sanitizeContextValue = (value: string): string => {
-  let singleLine = "";
-  for (const ch of value) {
-    singleLine += isLogBreakingControl(ch) ? " " : ch;
-  }
-  singleLine = singleLine.replace(/ {2,}/g, " ").trim();
+  const singleLine = collapseLogBreakingControls(value);
   return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
     ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
     : singleLine;
 };
 
+/** Log parsers must treat each value as a JSON string, not a comma-split field. */
+const quoteValueForLog = (value: string): string =>
+  JSON.stringify(sanitizeContextValue(value));
+
 const summarizeContext = (context: Record<string, string>): string =>
   Object.entries(context)
-    .map(([k, v]) => `${k}=${sanitizeContextValue(v)}`)
+    .map(([k, v]) => `${k}=${quoteValueForLog(v)}`)
     .join(", ");
 
 export async function safeSideEffect<T>(
@@ -66,7 +72,9 @@ export async function safeSideEffect<T>(
   try {
     return await fn();
   } catch (error) {
-    const message = unknownToMessage(error);
+    const message = JSON.stringify(
+      collapseLogBreakingControls(unknownToMessage(error)),
+    );
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,
