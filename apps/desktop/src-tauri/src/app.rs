@@ -19,8 +19,10 @@ const MAX_LOG_FILES: usize = 10;
 /// `MAUSVOICE_LOG` environment variable when it parses to a known level.
 /// `debug` and `trace` are reachable for opt-in troubleshooting; the
 /// production default is `info` to keep file size and noise in check.
+const MAUSVOICE_LOG_ENV: &str = "MAUSVOICE_LOG";
+
 fn default_log_level() -> log::LevelFilter {
-    if let Ok(raw) = std::env::var("MAUSVOICE_LOG") {
+    if let Ok(raw) = std::env::var(MAUSVOICE_LOG_ENV) {
         match raw.trim().to_ascii_lowercase().as_str() {
             "trace" => return log::LevelFilter::Trace,
             "debug" => return log::LevelFilter::Debug,
