@@ -192,7 +192,7 @@ describe("runAgent continues after a tool call when the desktop side effect reje
       errorMessages.some(
         (m) =>
           m.includes("tool-call-result.persist") &&
-          m.includes("toolCallId=t-1"),
+          m.includes('toolCallId="t-1"'),
       ),
     ).toBe(true);
 

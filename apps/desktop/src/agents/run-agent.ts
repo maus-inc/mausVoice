@@ -35,9 +35,9 @@ const activeLoops = new Map<string, AgentLoop>();
  * surface; wrapping the call keeps the loop alive.
  *
  * `label` is included in the log so post-mortem inspection can map a
- * failure back to a specific event handler. `context` is included verbatim
- * (caller must sanitize) so the tool-call id, conversation id, and
- * message id are available without joining on a stack trace.
+ * failure back to a specific event handler. Context values are collapsed
+ * to a single line, truncated, and JSON-quoted so ids stay parseable
+ * without breaking the log line.
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
@@ -55,7 +55,7 @@ const sanitizeContextValue = (value: string): string => {
 
 const summarizeContext = (context: Record<string, string>): string =>
   Object.entries(context)
-    .map(([k, v]) => `${k}=${sanitizeContextValue(v)}`)
+    .map(([k, v]) => `${k}=${JSON.stringify(sanitizeContextValue(v))}`)
     .join(", ");
 
 export async function safeSideEffect<T>(
@@ -66,7 +66,7 @@ export async function safeSideEffect<T>(
   try {
     return await fn();
   } catch (error) {
-    const message = unknownToMessage(error);
+    const message = sanitizeContextValue(unknownToMessage(error));
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,
