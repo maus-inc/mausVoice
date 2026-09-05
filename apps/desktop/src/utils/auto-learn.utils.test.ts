@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractAutoLearnTerms } from "./auto-learn.utils";
+import {
+  extractAutoLearnTerms,
+  tokenizeForComparison,
+} from "./auto-learn.utils";
 
 const learn = (
   original: string,
@@ -86,5 +89,31 @@ describe("extractAutoLearnTerms", () => {
   it("learns two-letter proper nouns but drops single letters", () => {
     expect(learn("her name is Jo", "her name is Bo")).toEqual(["Bo"]);
     expect(learn("I said A", "I said B")).toEqual([]);
+  });
+});
+
+describe("tokenizeForComparison", () => {
+  it("strips surrounding punctuation but keeps apostrophes and hyphens", () => {
+    expect(tokenizeForComparison("(hello), well-known [word]")).toEqual([
+      "hello",
+      "well-known",
+      "word",
+    ]);
+  });
+
+  it("drops tokens that carry no apostrophe or hyphen and no letters", () => {
+    expect(tokenizeForComparison("!!! ... ???")).toEqual([]);
+  });
+
+  it("removes a trailing possessive", () => {
+    expect(tokenizeForComparison("Sonia's car")).toEqual(["Sonia", "car"]);
+  });
+
+  it("trims long punctuation runs in linear time", () => {
+    const token = `${"!".repeat(5000)}word${"?".repeat(5000)}`;
+    const start = performance.now();
+
+    expect(tokenizeForComparison(token)).toEqual(["word"]);
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });

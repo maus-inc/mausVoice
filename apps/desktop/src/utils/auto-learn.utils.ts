@@ -17,11 +17,11 @@ const MAX_TERM_LENGTH = 40;
 const MAX_LEARNED_TERMS = 5;
 const MAX_EDIT_TOKENS = 8;
 
-// Split into leading/trailing passes rather than a single alternation. The
-// two anchored character classes can otherwise overlap on all-punctuation
-// tokens, which makes the regex backtrack in super-linear time.
-const LEADING_EDGE_PATTERN = /^[^\p{L}\p{N}'’-]+/u;
-const TRAILING_EDGE_PATTERN = /[^\p{L}\p{N}'’-]+$/u;
+// Trimming runs as a two-pointer scan over single-character tests. A quantified
+// character class anchored only at one end (for example /[^...]+$/u) makes the
+// engine retry from every offset, which is super-linear on all-punctuation
+// tokens. Testing one code point at a time keeps this linear.
+const TOKEN_EDGE_CHARACTER = /[^\p{L}\p{N}'’-]/u;
 const POSSESSIVE_SUFFIX_PATTERN = /['’]s$/iu;
 const UPPERCASE_LETTER_PATTERN = /^\p{Lu}/u;
 const LETTER_PATTERN = /\p{L}/u;
@@ -241,6 +241,20 @@ export type AutoLearnTermsResult = {
   learnedTerms: string[];
 };
 
+const trimTokenEdges = (raw: string): string => {
+  let start = 0;
+  let end = raw.length;
+
+  while (start < end && TOKEN_EDGE_CHARACTER.test(raw[start]!)) {
+    start += 1;
+  }
+  while (end > start && TOKEN_EDGE_CHARACTER.test(raw[end - 1]!)) {
+    end -= 1;
+  }
+
+  return raw.slice(start, end);
+};
+
 /**
  * Splits text into comparable word tokens: surrounding punctuation stripped,
  * a trailing possessive "'s" removed, empty tokens dropped.
@@ -248,12 +262,7 @@ export type AutoLearnTermsResult = {
 export const tokenizeForComparison = (text: string): string[] =>
   text
     .split(/\s+/)
-    .map((raw) =>
-      raw
-        .replace(LEADING_EDGE_PATTERN, "")
-        .replace(TRAILING_EDGE_PATTERN, "")
-        .replace(POSSESSIVE_SUFFIX_PATTERN, ""),
-    )
+    .map((raw) => trimTokenEdges(raw).replace(POSSESSIVE_SUFFIX_PATTERN, ""))
     .filter((token) => token.length > 0);
 
 const toTokenCounts = (tokens: string[]): Map<string, number> => {
@@ -297,7 +306,12 @@ export const computeAddedTokens = (
 export const computeRemovedTokens = (
   original: string,
   corrected: string,
-): string[] => computeAddedTokens(corrected, original);
+): string[] => {
+  // A removal is an addition viewed from the other side, so the two strings
+  // are swapped deliberately here.
+  const [from, to] = [corrected, original];
+  return computeAddedTokens(from, to);
+};
 
 const isCommonWord = (word: string): boolean =>
   COMMON_WORDS.has(word.toLowerCase());
