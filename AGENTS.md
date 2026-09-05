@@ -115,6 +115,38 @@ If you sandbox limits you from reaching failed logs, you can work through the fu
 - Always make sure to poll CI to quickly address errors, if your sandbox doesn't let you get the rust toolchain.
 - In the course of making pr changes, make sure at intervals to update the PR's title and description
 
+**Mandatory CI + review babysit loop (do this without being asked)**
+
+Do not assume "no more reviews will come" after a green snapshot. Review bots and Sonar often post after unit tests pass, and again after every push. From the moment a PR exists (or you push to an open PR) until babysitting is finished, run this loop yourself. Do not wait for the human to nudge.
+
+1. Push only after local Verification Gate + pre-push gates above.
+2. Immediately start short-interval polling (about every 20 to 30 seconds). Do not declare done after one green check list.
+3. On every poll, collect all of the following for the PR head SHA:
+   - CI: `gh pr checks <n>` (pending, fail, pass). Treat build, lint, unit, integration, i18n, and quality jobs as required unless the job is explicitly `skipping`.
+   - Unresolved review threads: GraphQL `reviewThreads` with `isResolved == false` (path, line, author, full body).
+   - Newest inline + issue comments from bots (CodeSpect, Kilo, DeepSource, Sourcery, CodeRabbit, Sonar, Kody).
+   - Sonar on the current HEAD: check-run conclusion, summary "N New issues", and `check-runs/<id>/annotations` (path, line, title). Gate pass with N>0 new issues or non-empty annotations is still unfinished.
+4. Stop conditions that force an immediate fix cycle (do not keep spinning):
+   - Any hard CI fail (not a soft skip).
+   - Any unresolved review thread.
+   - Any Sonar annotation or New issues count > 0.
+   - Head SHA changed under you (reset "stable green" counters).
+5. Fix cycle when anything in step 4 fires:
+   - Read the full comment or annotation. Prefer root-cause shared helpers over local one-offs.
+   - Implement the smallest correct fix. Add or adjust tests.
+   - Re-run the local Verification Gate for touched packages.
+   - Commit, push, resolve only the threads you actually fixed (do not mass-resolve stale noise without verifying HEAD).
+   - Resume polling from step 2 on the new head. Never assume prior bot sign-off still applies.
+6. Done only when all of these hold on the same head for several consecutive polls (about 4 polls, roughly 2 minutes of calm):
+   - No pending required CI jobs.
+   - No failed required CI jobs.
+   - Zero unresolved review threads.
+   - Sonar success with 0 New issues and empty annotations.
+   - No new bot comments since the last poll that reopen work.
+7. Only then summarize status to the human. Until step 6, keep looping silently and fixing.
+
+Do not end a PR session early because unit tests passed while build or lint is still pending. Do not treat "Quality Gate passed" alone as clean if New issues or annotations remain. Do not resolve a review thread until the fix is on the branch the thread targets.
+
 **Verification Gate**
 
 You'll also need to always verify your changes are CI-ready before propagating to main: depending on your changes -
