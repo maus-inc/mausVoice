@@ -283,6 +283,17 @@ type RunPostProcessingRequestArgs = {
   warnings: string[];
 };
 
+const fallbackValue = (value: Nullable<string>, fallback: string): string =>
+  value ?? fallback;
+
+const resolvePostProcessingLanguage = async (
+  state: AppState,
+  override?: string,
+): Promise<string> =>
+  override
+    ? coerceToDictationLanguage(override)
+    : await loadMyEffectiveDictationLanguage(state);
+
 const buildPostProcessingRequest = (
   state: AppState,
   rawTranscript: string,
@@ -374,7 +385,13 @@ const runPostProcessingRequest = async ({
   warnings,
 }: RunPostProcessingRequestArgs): Promise<string> => {
   getLogger().verbose(
-    `Post-processing with tone=${toneName ?? "default"}, provider=${genProvider ?? "none"}, apiKeyId=${genApiKeyId ?? "none"}`,
+    `Post-processing with tone=${fallbackValue(
+      toneName,
+      "default",
+    )}, provider=${fallbackValue(genProvider, "none")}, apiKeyId=${fallbackValue(
+      genApiKeyId,
+      "none",
+    )}`,
   );
 
   // Persist attribution BEFORE the network request so a 402, timeout, or
@@ -384,9 +401,10 @@ const runPostProcessingRequest = async ({
   metadata.postProcessProvider = genProvider;
   metadata.postProcessMode = "api";
 
-  const dictationLanguage = dictationLanguageOverride
-    ? coerceToDictationLanguage(dictationLanguageOverride)
-    : await loadMyEffectiveDictationLanguage(state);
+  const dictationLanguage = await resolvePostProcessingLanguage(
+    state,
+    dictationLanguageOverride,
+  );
   const { system, prompt } = buildPostProcessingRequest(
     state,
     rawTranscript,
@@ -398,7 +416,7 @@ const runPostProcessingRequest = async ({
     "Post-process language:",
     dictationLanguage,
     "toneName:",
-    toneName ?? "unknown",
+    fallbackValue(toneName, "unknown"),
   );
   getLogger().verbose(
     "Post-process prompt length:",
