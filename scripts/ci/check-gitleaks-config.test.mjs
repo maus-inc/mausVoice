@@ -120,6 +120,19 @@ describe("updaterRulePattern", () => {
     assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
   });
 
+  it("accepts indented and single-quoted id lines", () => {
+    assert.equal(
+      updaterRulePattern(`  ${idLine}\n  regex = 'dW50cnVzdGVk'\n`),
+      "dW50cnVzdGVk",
+    );
+    assert.equal(
+      updaterRulePattern(
+        `${idLine.replaceAll('"', "'")}\nregex = 'dW50cnVzdGVk'\n`,
+      ),
+      "dW50cnVzdGVk",
+    );
+  });
+
   it("returns null when the id or the regex key is missing", () => {
     assert.equal(updaterRulePattern(`regex = 'x'\n`), null);
     assert.equal(updaterRulePattern(`${idLine}\nentropy = 3.5\n`), null);
