@@ -175,7 +175,7 @@ const unescapeEntities = (input: string): string =>
       decodeNumericEntity(entity, Number(decimal)),
     )
     .replace(/&#x([0-9a-fA-F]+);/g, (entity, hex: string) =>
-      decodeNumericEntity(entity, parseInt(hex, 16)),
+      decodeNumericEntity(entity, Number.parseInt(hex, 16)),
     );
 
 const stripHtml = (input: string): string => {
