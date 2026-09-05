@@ -6,3 +6,12 @@ export const countWords = (text: string): number => {
       return count + Math.ceil(word.length / 100);
     }, 0);
 };
+
+/**
+ * First Unicode code point of `text`, or `0` when empty.
+ *
+ * Prefer `codePointAt` over `charCodeAt` so non-BMP characters (emoji / astral
+ * planes) are not misread as a high-surrogate unit. The `?? 0` fallback covers
+ * the empty-string case where `codePointAt` returns `undefined`.
+ */
+export const codePointOf = (text: string): number => text.codePointAt(0) ?? 0;

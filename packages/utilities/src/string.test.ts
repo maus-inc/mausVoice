@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords } from "./string";
+import { codePointOf, countWords } from "./string";
 
 describe("countWords", () => {
   it("should count words in a normal sentence", () => {
@@ -38,5 +38,20 @@ describe("countWords", () => {
     const twoHundredChars = "a".repeat(200);
     expect(countWords(twoHundredChars)).toBe(2);
     expect(countWords("Short " + twoHundredChars)).toBe(3);
+  });
+});
+
+describe("codePointOf", () => {
+  it("returns 0 for an empty string", () => {
+    expect(codePointOf("")).toBe(0);
+  });
+
+  it("returns the BMP code point", () => {
+    expect(codePointOf("A")).toBe(0x41);
+  });
+
+  it("returns the full non-BMP code point, not a surrogate unit", () => {
+    // U+1F600 😀 is outside the BMP; charCodeAt would yield 0xd83d.
+    expect(codePointOf("\u{1F600}")).toBe(0x1f600);
   });
 });

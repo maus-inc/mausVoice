@@ -1,7 +1,7 @@
 import { AgentLoop } from "@repo/agent";
 import type { AgentLlmProvider, AgentTool } from "@repo/agent";
 import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
-import { delayed, unknownToMessage } from "@maus-inc/utilities";
+import { codePointOf, delayed, unknownToMessage } from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
 import {
   executeTool,
@@ -38,9 +38,10 @@ const activeLoops = new Map<string, AgentLoop>();
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
 /** True for C0 controls (U+0000–U+001F) and DEL (U+007F). Built without embedding
- * control-character literals in a regex (DeepSource flags those). */
+ * control-character literals in a regex (DeepSource flags those). Uses
+ * `codePointOf` so non-BMP characters are not misread as surrogate units. */
 const isLogBreakingControl = (ch: string): boolean => {
-  const code = ch.codePointAt(0) ?? 0;
+  const code = codePointOf(ch);
   return code <= 0x1f || code === 0x7f;
 };
 

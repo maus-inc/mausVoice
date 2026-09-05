@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { codePointOf } from "@maus-inc/utilities";
 import { safeSideEffect } from "./run-agent";
 
 const { loggerMock } = vi.hoisted(() => ({
@@ -21,7 +22,8 @@ const withControls = (...parts: Array<string | number>): string =>
 /** True when any C0 control or DEL remains (matches sanitizeContextValue's range). */
 const hasLogBreakingControl = (value: string): boolean => {
   for (const ch of value) {
-    const code = ch.codePointAt(0) ?? 0;
+    // Same codePointOf helper as production — full Unicode scalar, not a surrogate.
+    const code = codePointOf(ch);
     if (code <= 0x1f || code === 0x7f) return true;
   }
   return false;
