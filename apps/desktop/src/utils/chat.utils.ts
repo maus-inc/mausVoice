@@ -102,13 +102,6 @@ const capTitleText = (text: string): string =>
     capByGraphemes(capByWords(text, TITLE_MAX_WORDS), TITLE_MAX_CHARS),
   ).trimEnd();
 
-// Returns the trimmed text when nothing was cut, or the ellipsized
-// version when the cap shortened it.
-const ellipsizeIfTrimmed = (trimmed: string, collapsed: string): string =>
-  trimmed.length === collapsed.length
-    ? trimmed
-    : ellipsizeCapped(trimmed, TITLE_MAX_CHARS);
-
 /**
  * Derives a very short conversation title from the first user message.
  * Whitespace is collapsed, then the text is capped at a few words and
@@ -119,6 +112,13 @@ export const deriveConversationTitle = (text: string): string => {
   if (!collapsed) return "";
   return ellipsizeIfTrimmed(capTitleText(collapsed), collapsed);
 };
+
+// Returns the trimmed text when nothing was cut, or the ellipsized
+// version when the cap shortened it.
+const ellipsizeIfTrimmed = (trimmed: string, collapsed: string): string =>
+  trimmed.length === collapsed.length
+    ? trimmed
+    : ellipsizeCapped(trimmed, TITLE_MAX_CHARS);
 
 let placeholderTitles: ReadonlySet<string> | undefined;
 
