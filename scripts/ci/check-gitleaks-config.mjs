@@ -119,8 +119,9 @@ export function rulesSection(raw) {
 // stripTomlComments uses, so every TOML string form works and no cross-text
 // quantifier can backtrack.
 export function updaterRulePattern(rules) {
-  const idMatch =
-    /^id\s*=\s*"tauri-minisign-updater-private-key"\s*$/m.exec(rules);
+  const idMatch = /^id\s*=\s*"tauri-minisign-updater-private-key"\s*$/m.exec(
+    rules,
+  );
   if (!idMatch) return null;
   const afterId = rules.slice(idMatch.index + idMatch[0].length);
   const keyMatch = /^[ \t]*regex[ \t]*=[ \t]*/m.exec(afterId);
@@ -159,7 +160,10 @@ function main() {
   // and silently weakens the whole-repo scan to the single updater-key rule.
   const firstTable = indexOfOutsideStrings(raw, "[");
   const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
-  if (/^\s*useDefault\s*=\s*false\b/m.test(topLevel)) {
+  const useDefaultDisabled = topLevel
+    .split("\n")
+    .some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()));
+  if (useDefaultDisabled) {
     fail(
       "gitleaks.toml: top-level `useDefault = false` disables the default " +
         "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",
