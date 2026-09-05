@@ -2,10 +2,12 @@ const MAX_ERROR_MESSAGE_LENGTH = 512;
 const MAX_REDACT_DEPTH = 8;
 const REDACTED = "[redacted]";
 
-const BEARER_TOKEN = /\bBearer\s+[0-9a-z._~+/-]+={0,2}/gi;
+const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 const PROVIDER_KEY_PREFIX = /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
-const LABELED_SECRET =
-  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*[:=]\s*(?:"[^"]*"|[^\s,;]+)/gi;
+const LABELED_SECRET_QUOTED =
+  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*"(?:\\.|[^"\\])*"/gi;
+const LABELED_SECRET_BARE =
+  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*[^\s,;]+/gi;
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -22,12 +24,32 @@ const redactSensitiveTokens = (message: string): string =>
   message
     .replace(BEARER_TOKEN, "Bearer [redacted]")
     .replace(PROVIDER_KEY_PREFIX, REDACTED)
-    .replace(LABELED_SECRET, "$1=[redacted]");
+    .replace(LABELED_SECRET_QUOTED, "$1$2[redacted]")
+    .replace(LABELED_SECRET_BARE, "$1$2[redacted]");
 
 const capLength = (message: string): string =>
   message.length > MAX_ERROR_MESSAGE_LENGTH
     ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
     : message;
+
+const redactCollection = (
+  value: object,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown => {
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => redactUnknown(item, depth + 1, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    out[key] = isSecretKey(key)
+      ? REDACTED
+      : redactUnknown(child, depth + 1, seen);
+  }
+  return out;
+};
 
 const redactUnknown = (
   value: unknown,
@@ -42,18 +64,7 @@ const redactUnknown = (
   ) {
     return value;
   }
-  if (seen.has(value)) return "[Circular]";
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => redactUnknown(item, depth + 1, seen));
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    out[key] = isSecretKey(key)
-      ? REDACTED
-      : redactUnknown(child, depth + 1, seen);
-  }
-  return out;
+  return redactCollection(value, depth, seen);
 };
 
 const redactJsonIfPossible = (message: string): string => {
