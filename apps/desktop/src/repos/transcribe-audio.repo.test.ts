@@ -15,10 +15,10 @@ import { type TranscriptionSegment } from "../utils/hallucination.utils";
 
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({
-    info: () => {},
-    warning: () => {},
-    error: () => {},
-    verbose: () => {},
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
   }),
 }));
 

@@ -16,7 +16,8 @@
     "dist"
   ],
   "dependencies": {
-    "@maus-inc/types": "workspace:*"
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*"
   },
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",

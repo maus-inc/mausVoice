@@ -1,7 +1,11 @@
 import { AgentLoop } from "@repo/agent";
 import type { AgentLlmProvider, AgentTool } from "@repo/agent";
 import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
-import { delayed } from "@maus-inc/utilities";
+import {
+  delayed,
+  isLogBreakingControl,
+  unknownToMessage,
+} from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
 import {
   executeTool,
@@ -37,15 +41,21 @@ const activeLoops = new Map<string, AgentLoop>();
  */
 const MAX_CONTEXT_VALUE_LENGTH = 64;
 
+/** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
+const sanitizeContextValue = (value: string): string => {
+  let singleLine = "";
+  for (const ch of value) {
+    singleLine += isLogBreakingControl(ch) ? " " : ch;
+  }
+  singleLine = singleLine.replace(/ {2,}/g, " ").trim();
+  return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
+    ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
+    : singleLine;
+};
+
 const summarizeContext = (context: Record<string, string>): string =>
   Object.entries(context)
-    .map(([k, v]) => {
-      const value =
-        v.length > MAX_CONTEXT_VALUE_LENGTH
-          ? `${v.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
-          : v;
-      return `${k}=${value}`;
-    })
+    .map(([k, v]) => `${k}=${sanitizeContextValue(v)}`)
     .join(", ");
 
 export async function safeSideEffect<T>(
@@ -56,7 +66,7 @@ export async function safeSideEffect<T>(
   try {
     return await fn();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = unknownToMessage(error);
     getLogger().error(
       `Agent non-critical side effect failed (${label}, ${summarizeContext(
         context,

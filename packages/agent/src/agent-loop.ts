@@ -10,22 +10,11 @@ import type {
   AgentTool,
   AgentToolOutput,
 } from "./types";
+import { unknownToMessage } from "@maus-inc/utilities";
 
 /** Render a tool's successful result to a string. */
 const stringifyToolResult = (result: unknown): string =>
   typeof result === "string" ? result : JSON.stringify(result ?? {});
-
-/** Coerce an unknown thrown value into a readable string without producing
- * `[object Object]` for a plain object. */
-const safeStringify = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  if (value instanceof Error) return value.message;
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
-};
 
 export class AgentLoop {
   private config: AgentConfig;
@@ -181,7 +170,7 @@ export class AgentLoop {
       // as a tool-result message so the model can recover or end cleanly.
       return {
         success: false,
-        failureReason: err instanceof Error ? err.message : safeStringify(err),
+        failureReason: unknownToMessage(err),
       };
     }
   }
@@ -207,24 +196,26 @@ export class AgentLoop {
         args: params,
       };
 
-      if (this.aborted) return;
-
+      // Once tool-call-start is emitted, always pair it with a tool-call-result
+      // (and history entry) even if abort wins mid-flight. Skipping the result
+      // leaves the assistant tool-call without a matching tool message.
       const { reason, ...toolParams } = params;
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
       if (!tool) {
         yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+        if (this.aborted) return;
         continue;
       }
 
       const output = await this.executeTool(tool, toolParams, reason);
-      if (this.aborted) return;
-
       const resultStr = output.success
         ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
 
       yield this.toolResult(tc, resultStr, history, !output.success);
+
+      if (this.aborted) return;
     }
   }
 

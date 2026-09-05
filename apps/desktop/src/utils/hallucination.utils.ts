@@ -169,6 +169,34 @@ export type TranscriptionSegment = {
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 
 /**
+ * True when adjacent segment texts lack any boundary whitespace (`\s`, including
+ * newlines and NBSP) and therefore need an inserted ASCII space. Detection is
+ * deliberately broader than the collapse step below so a trailing `\n` still
+ * counts as a separator and does not become `\n `.
+ */
+const needsSegmentSeparator = (left: string, right: string): boolean =>
+  !/\s$/.test(left) && !/^\s/.test(right);
+
+/**
+ * Rebuild kept segment text with pairwise spacing.
+ *
+ * Whisper-style verbose_json often embeds a leading space on each segment.
+ * Keep existing boundary whitespace and insert a single ASCII space only when
+ * adjacent kept segments have none (so mixed styles neither glue words nor
+ * double-space). The final collapse only touches space/tab runs so spoken
+ * structural newlines (and NBSP) survive into the transcript.
+ */
+export const joinKeptSegmentTexts = (texts: string[]): string => {
+  if (texts.length === 0) return "";
+  let joined = texts[0] ?? "";
+  for (const text of texts.slice(1)) {
+    joined += needsSegmentSeparator(joined, text) ? ` ${text}` : text;
+  }
+  // Space/tab only — do not collapse `\n` or NBSP here.
+  return joined.replace(/[ \t]+/g, " ").trim();
+};
+
+/**
  * Drop clearly-silent segments from a `verbose_json` response and concatenate
  * the remainder. Returns null (not "") when no segments are supplied so callers
  * can fall back to the exact provider text — providers that don't return
@@ -191,13 +219,9 @@ export const gateSilentSegments = (
       segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
   );
   // Nothing gated — keep the provider transcript (and its spacing) instead
-  // of rebuilding with a single-space join.
+  // of rebuilding from segments.
   if (kept.length === segments.length) {
     return null;
   }
-  return kept
-    .map((segment) => segment.text)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return joinKeptSegmentTexts(kept.map((segment) => segment.text));
 };

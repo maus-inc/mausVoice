@@ -227,7 +227,7 @@ describe("AgentLoop", () => {
   });
 
   it("aborts mid-loop and reports the aborted reason", async () => {
-    let resolveAbort: () => void = () => {};
+    let resolveAbort!: () => void;
     const abortGate = new Promise<void>((resolve) => {
       resolveAbort = resolve;
     });
@@ -256,6 +256,66 @@ describe("AgentLoop", () => {
     resolveAbort();
     const next = await gen.next();
     expect(next.value).toMatchObject({ type: "finish", reason: "aborted" });
+  });
+
+  it("still yields tool-call-result when abort wins after tool-call-start", async () => {
+    let resolveTool!: (value: { success: true; result: string }) => void;
+    const toolGate = new Promise<{ success: true; result: string }>(
+      (resolve) => {
+        resolveTool = resolve;
+      },
+    );
+    const slowTool: AgentTool = {
+      name: "slow",
+      description: "resolves after abort is signalled",
+      parameters: { type: "object", properties: {} },
+      execute: () => toolGate,
+    };
+    const { provider } = scriptedProvider([
+      [
+        {
+          type: "tool-call",
+          id: "call_abort",
+          name: "slow",
+          arguments: JSON.stringify({ reason: "r" }),
+        },
+      ],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [slowTool],
+      systemPrompt: "sys",
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+
+    // Drain through iteration-start and tool-call-start, then abort while the
+    // tool is still pending. The start event must still get a matching result.
+    expect((await gen.next()).value).toMatchObject({ type: "iteration-start" });
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-start",
+      toolCallId: "call_abort",
+    });
+    loop.abort();
+    resolveTool({ success: true, result: "done-after-abort" });
+
+    const resultEvent = await gen.next();
+    expect(resultEvent.value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "call_abort",
+      result: "done-after-abort",
+      isError: false,
+    });
+
+    const finish = await gen.next();
+    expect(finish.value).toMatchObject({ type: "finish", reason: "aborted" });
+    const finishMessages = (
+      finish.value as { messages?: Array<{ role: string; content?: string }> }
+    ).messages;
+    expect(
+      finishMessages?.some(
+        (m) => m.role === "tool" && m.content === "done-after-abort",
+      ),
+    ).toBe(true);
   });
 
   it("renders a plain text answer without tools as a single stop", async () => {

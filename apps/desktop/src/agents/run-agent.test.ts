@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isLogBreakingControl } from "@maus-inc/utilities";
 import { safeSideEffect } from "./run-agent";
 
 const { loggerMock } = vi.hoisted(() => ({
@@ -12,7 +13,25 @@ const { loggerMock } = vi.hoisted(() => ({
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
+/** Build a string with control code points via fromCodePoint so the source has
+ * no control literals and non-BMP numerics stay well-formed. */
+const withControls = (...parts: Array<string | number>): string =>
+  parts
+    .map((p) => (typeof p === "number" ? String.fromCodePoint(p) : p))
+    .join("");
+
+/** True when any log-breaking control remains (shared production predicate). */
+const hasLogBreakingControl = (value: string): boolean => {
+  for (const ch of value) {
+    if (isLogBreakingControl(ch)) return true;
+  }
+  return false;
+};
 describe("safeSideEffect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("returns the resolved value when the side effect succeeds", async () => {
     const result = await safeSideEffect(
       "label",
@@ -38,5 +57,26 @@ describe("safeSideEffect", () => {
     const message = String(loggerMock.error.mock.calls[0][0]);
     expect(message).toContain("tool-call-result.persist");
     expect(message).toContain("toolCallId=t-1");
+  });
+
+  it("collapses control characters in context values before logging", async () => {
+    // LF, TAB, VT, FF, and a C1 control (NEL U+0085) — no control literals in source.
+    const snippet = withControls(
+      "line1",
+      0x0a,
+      "line2",
+      0x09,
+      "line3",
+      0x0b,
+      0x0c,
+      0x85,
+      "end",
+    );
+    await safeSideEffect("label", { snippet }, () =>
+      Promise.reject(new Error("boom")),
+    );
+    const message = String(loggerMock.error.mock.calls[0][0]);
+    expect(hasLogBreakingControl(message)).toBe(false);
+    expect(message).toContain("snippet=line1 line2 line3 end");
   });
 });

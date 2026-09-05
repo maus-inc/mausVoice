@@ -4,7 +4,7 @@ import {
   Transcription,
   TranscriptionAudioSnapshot,
 } from "@maus-inc/types";
-import { countWords, dedup } from "@maus-inc/utilities";
+import { countWords, dedup, unknownToMessage } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import {
   getGenerateTextRepo,
@@ -235,10 +235,6 @@ export const transcribeAudio = async ({
 };
 
 /**
- * Post-process a raw transcript using LLM.
- * This is the second step - cleans up and formats the transcript based on tone.
- */
-/**
  * Parse and validate the LLM's JSON post-processing response. Returns the
  * cleaned transcript on success, or the raw transcript plus a warning on
  * any parse/validation failure.
@@ -261,7 +257,7 @@ const parseProcessedTranscript = (
     }
     return { transcript: validationResult.data.result.trim(), warning: null };
   } catch (e) {
-    const message = (e as Error).message;
+    const message = unknownToMessage(e);
     const truncationHint = /Unterminated string/i.test(message)
       ? " The model output may have been truncated at its token limit."
       : "";
@@ -374,6 +370,10 @@ export const postProcessTranscript = async ({
       metadata.postProcessMode =
         genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
       metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+      // Clear any prior failure flags so a successful run never leaves a
+      // stale postProcessFailed=true on an updated row.
+      metadata.postProcessFailed = false;
+      metadata.postProcessError = null;
       getLogger().verbose(
         "Post-process mode:",
         metadata.postProcessMode,

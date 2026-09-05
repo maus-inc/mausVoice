@@ -341,6 +341,9 @@ importers:
       '@maus-inc/types':
         specifier: workspace:*
         version: link:../types
+      '@maus-inc/utilities':
+        specifier: workspace:*
+        version: link:../utilities
     devDependencies:
       '@maus-inc/typescript-config':
         specifier: workspace:*
