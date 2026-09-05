@@ -1,3 +1,9 @@
+/**
+ * Single gate for the privacy modes that suppress persistence. Incognito mode is
+ * a stored preference, while an ephemeral session is scoped to one run of the
+ * app. Both are answered here so a new persistence call site has one helper to
+ * consult rather than two flags to remember.
+ */
 import { getAppState } from "../store";
 
 /**
@@ -8,13 +14,21 @@ export const isIncognitoModeEnabled = (): boolean => {
 };
 
 /**
- * Check whether data persistence is allowed (incognito mode is off).
+ * Check whether an ephemeral session is in progress. Unlike incognito mode
+ * this is scoped to one run of the app and is never persisted.
+ */
+export const isEphemeralSessionActive = (): boolean => {
+  return getAppState().local.ephemeralSessionActive;
+};
+
+/**
+ * Check whether data persistence is allowed. Persistence is suppressed while
+ * incognito mode is on or an ephemeral session is in progress.
  *
- * New persistence gates should call this helper. Existing call sites in
- * `transcribe.actions.ts` and `remote-transcript.actions.ts` still read
- * `incognitoModeEnabled` directly and should be migrated in a follow-up
- * to keep the privacy invariant centralized.
+ * Both paths that store a new transcription call this helper, the local
+ * `storeTranscription` and the remote transcript store, so the invariant lives
+ * in one place.
  */
 export const isPersistenceAllowed = (): boolean => {
-  return !isIncognitoModeEnabled();
+  return !isIncognitoModeEnabled() && !isEphemeralSessionActive();
 };

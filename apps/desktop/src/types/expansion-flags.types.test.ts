@@ -82,7 +82,40 @@ describe("expansion-flags.types", () => {
         "connectorsEnabled",
         "handsFreeToggleEnabled",
         "voiceWorkflowsEnabled",
+        "ephemeralSessionEnabled",
       ]);
+    });
+
+    it("gives every flag name a default", () => {
+      expect(Object.keys(DEFAULT_EXPANSION_FLAGS).sort()).toEqual(
+        [...EXPANSION_FLAG_NAMES].sort(),
+      );
+    });
+
+    it("defaults every flag to off", () => {
+      expect(Object.values(DEFAULT_EXPANSION_FLAGS)).toEqual(
+        EXPANSION_FLAG_NAMES.map(() => false),
+      );
+    });
+  });
+
+  describe("ephemeralSessionEnabled", () => {
+    it("defaults to off", () => {
+      expect(DEFAULT_EXPANSION_FLAGS.ephemeralSessionEnabled).toBe(false);
+    });
+
+    it("survives a serialize and parse round trip", () => {
+      const flags: ExpansionFlags = {
+        ...DEFAULT_EXPANSION_FLAGS,
+        ephemeralSessionEnabled: true,
+      };
+
+      const parsed = parseExpansionFlags(serializeExpansionFlags(flags));
+
+      expect(parsed.ephemeralSessionEnabled).toBe(true);
+      expect(isExpansionFlagEnabled(parsed, "ephemeralSessionEnabled")).toBe(
+        true,
+      );
     });
   });
 });

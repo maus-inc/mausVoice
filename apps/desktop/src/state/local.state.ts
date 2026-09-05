@@ -8,6 +8,7 @@ export type LocalState = {
   disablePillRewards: boolean;
   hasHiddenTrialExtensionCard: boolean;
   disableAutoStyleLoading?: boolean;
+  ephemeralSessionActive: boolean;
 };
 
 export const INITIAL_LOCAL_STATE: LocalState = {
@@ -20,4 +21,5 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   disablePillRewards: false,
   hasHiddenTrialExtensionCard: false,
   disableAutoStyleLoading: false,
+  ephemeralSessionActive: false,
 };
