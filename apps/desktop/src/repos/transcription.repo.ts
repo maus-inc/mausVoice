@@ -1,9 +1,4 @@
-import {
-  PostProcessingMode,
-  Transcription,
-  TranscriptionAudioSnapshot,
-  TranscriptionMode,
-} from "@maus-inc/types";
+import { Transcription, TranscriptionAudioSnapshot } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { orNull, orUndefined } from "../utils/nullable.utils";
@@ -23,27 +18,11 @@ const mapAudioSnapshot = (
 
 type LocalTranscriptionAudio = TranscriptionAudioSnapshot;
 
-type LocalTranscription = {
-  id: string;
-  transcript: string;
+type LocalTranscription = Omit<
+  Transcription,
+  "createdAt" | "createdByUserId" | "isDeleted"
+> & {
   timestamp: number;
-  audio?: LocalTranscriptionAudio | null;
-  modelSize?: string | null;
-  inferenceDevice?: string | null;
-  rawTranscript?: string | null;
-  sanitizedTranscript?: string | null;
-  transcriptionPrompt?: string | null;
-  postProcessPrompt?: string | null;
-  transcriptionApiKeyId?: string | null;
-  postProcessApiKeyId?: string | null;
-  transcriptionMode?: TranscriptionMode | null;
-  postProcessMode?: PostProcessingMode | null;
-  postProcessDevice?: string | null;
-  transcriptionDurationMs?: number | null;
-  postprocessDurationMs?: number | null;
-  warnings?: string[] | null;
-  remoteStatus?: string | null;
-  remoteDeviceId?: string | null;
 };
 
 export type TranscriptionAudioData = {
@@ -107,6 +86,9 @@ const toLocalTranscription = (
   transcriptionMode: orNull(transcription.transcriptionMode),
   postProcessMode: orNull(transcription.postProcessMode),
   postProcessDevice: orNull(transcription.postProcessDevice),
+  postProcessProvider: orNull(transcription.postProcessProvider),
+  postProcessFailed: transcription.postProcessFailed ?? null,
+  postProcessError: orNull(transcription.postProcessError),
   transcriptionDurationMs: orNull(transcription.transcriptionDurationMs),
   postprocessDurationMs: orNull(transcription.postprocessDurationMs),
   warnings: orNull(transcription.warnings),
@@ -134,6 +116,9 @@ const fromLocalTranscription = (
   transcriptionMode: orUndefined(transcription.transcriptionMode),
   postProcessMode: orUndefined(transcription.postProcessMode),
   postProcessDevice: orUndefined(transcription.postProcessDevice),
+  postProcessProvider: orUndefined(transcription.postProcessProvider),
+  postProcessFailed: transcription.postProcessFailed ?? undefined,
+  postProcessError: orUndefined(transcription.postProcessError),
   transcriptionDurationMs: orUndefined(transcription.transcriptionDurationMs),
   postprocessDurationMs: orUndefined(transcription.postprocessDurationMs),
   warnings: orUndefined(transcription.warnings),

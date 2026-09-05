@@ -74,37 +74,32 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  * Inputs for choosing the tone that post-processing applies to the utterance
  * being finalized.
  *
- * Semantics (manual mode):
- * - Prefer the tone snapshotted at STOP, so a mid-utterance switch (any
- *   channel) styles this utterance, not just the pill label.
- * - A switch that arrives after that snapshot lives only in
- *   `liveSelectedToneId` and is ignored while a stop/start snapshot exists.
- * - If both snapshots are missing (teardown/start race), fall back to the
- *   live selection so finalize never drops a known tone on the floor.
+ * Contract (manual mode): ONE style applies to the WHOLE utterance. The tone
+ * snapshotted when recording STARTED wins, so a switch made mid-dictation
+ * styles only the NEXT recording (matching what the pill label shows at the
+ * start). The stop snapshot is kept only as a race-safety fallback if the
+ * start snapshot was somehow not taken. Switches that arrive after stop live
+ * in `liveSelectedToneId` and are ignored for this utterance.
  *
  * Automatic mode prefers the app-target tone captured at stop. If the
  * focused app has no assigned tone, fall back to `liveSelectedToneId` so
  * finalize still has a concrete style (labeling and post-processing both
- * assume one). Manual mode never consults `appTargetToneId`: that value
- * is the automatic-mode assignment and must not override an explicit
- * manual selection. Styling mode is read at finalize, so a mid-session
- * toggle to automatic picks up the app tone via the automatic branch.
+ * assume one). Manual mode never consults `appTargetToneId`: that value is
+ * the automatic-mode assignment and must not override an explicit manual
+ * selection. Styling mode is read at finalize, so a mid-session toggle to
+ * automatic picks up the app tone via the automatic branch.
  *
  * Already-inserted realtime text is never restyled here: streamed sessions
- * skip post-processing in DictationStrategy, and a mid-stream switch
- * applies from the next interim segment only.
+ * skip post-processing in DictationStrategy, and a mid-stream switch applies
+ * from the next interim segment only.
  */
 export type FinalizeToneArgs = {
   stylingMode: StylingMode;
-  /** Manual selection when recording started. Fallback if stop is missing. */
+  /** Manual selection when recording started. The authoritative utterance style. */
   toneIdAtStart: string | null;
-  /** Manual selection snapshotted when stop was initiated. */
+  /** Manual selection snapshotted when stop was initiated. Fallback only. */
   toneIdAtStop: string | null;
-  /**
-   * Live selection at the moment we ask.
-   * Manual: last-resort fallback when both snapshots are missing.
-   * Automatic: last-resort fallback when the app has no assigned tone.
-   */
+  /** Live selection at the moment we ask. Last-resort fallback. */
   liveSelectedToneId: string | null;
   /** App-target tone captured at stop. Automatic mode only. */
   appTargetToneId: string | null;
@@ -113,7 +108,7 @@ export type FinalizeToneArgs = {
 /**
  * Tone used for the FINAL post-processed output of the current utterance.
  *
- * Manual: `toneIdAtStop ?? toneIdAtStart ?? liveSelectedToneId`.
+ * Manual: `toneIdAtStart ?? toneIdAtStop ?? liveSelectedToneId`.
  * Never `appTargetToneId` — that belongs only to automatic mode.
  * Automatic: `appTargetToneId ?? liveSelectedToneId`.
  */
@@ -123,7 +118,7 @@ export const getEffectiveToneIdAtFinalize = (
   if (args.stylingMode !== "manual") {
     return args.appTargetToneId ?? args.liveSelectedToneId;
   }
-  return args.toneIdAtStop ?? args.toneIdAtStart ?? args.liveSelectedToneId;
+  return args.toneIdAtStart ?? args.toneIdAtStop ?? args.liveSelectedToneId;
 };
 
 /**

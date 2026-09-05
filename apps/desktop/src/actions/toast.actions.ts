@@ -11,6 +11,8 @@ function getActionLabel(action: ToastAction): string {
       return intl.formatMessage({ defaultMessage: "Fix" });
     case "surface_window":
       return intl.formatMessage({ defaultMessage: "Open" });
+    case "open_transcriptions":
+      return intl.formatMessage({ defaultMessage: "Open history" });
     case "confirm_cancel_transcription":
       return intl.formatMessage({ defaultMessage: "Yes, cancel" });
   }

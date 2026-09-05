@@ -2467,6 +2467,16 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
     crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
 }
 
+/// Mirror the TS interactionFeedbackVolume preference into Rust so the
+/// thock gain is applied on the warm path AND the fallback path. The
+/// Rust side clamps to a safe range, so an out-of-range value from the
+/// frontend can never blow out the sink.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_feedback_volume(volume: f32) {
+    crate::system::audio_feedback::set_interaction_feedback_volume(volume);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn play_audio(clip: AudioClip) -> Result<(), String> {
@@ -3863,6 +3873,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 
         // Never inherit the user's shell environment wholesale; clear dangerous vars.
         cmd.env_clear();
+        // skipcq: RS-W1015 - PATH is read to re-seed a scrubbed child env.
         if let Ok(path) = std::env::var("PATH") {
             cmd.env("PATH", path);
         }
@@ -4457,13 +4468,13 @@ pub async fn download_and_open_mac_installer(
         written = match installer_account_chunk(written, chunk.len() as u64) {
             Ok(next) => next,
             Err(err) => {
-                drop(file);
+                drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
                 let _ = std::fs::remove_file(&dest);
                 return Err(err);
             }
         };
         if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file);
+            drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
             let _ = std::fs::remove_file(&dest);
             return Err(err.to_string());
         }
@@ -4472,7 +4483,7 @@ pub async fn download_and_open_mac_installer(
         let _ = std::fs::remove_file(&dest);
         return Err(err.to_string());
     }
-    drop(file);
+    drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
 
     // Verify the downloaded DMG against its detached minisign signature
     // BEFORE opening it. On any failure (missing/invalid key, missing or
@@ -4610,9 +4621,25 @@ pub async fn floating_window_create(
     .title(title.clone())
     .always_on_top(true)
     .skip_taskbar(true)
+    .visible(true)
     .decorations(args.decorations.unwrap_or(true))
     .resizable(args.resizable.unwrap_or(true))
     .focused(args.focused.unwrap_or(false));
+
+    // Windows: apply the same renderer-backgrounding mitigations the main
+    // window uses, so a composer webview cannot be suspended before it has
+    // rendered (the reported "white tab flashes then vanishes" failure).
+    // Tauri only accepts this method on Windows; guard by cfg so other
+    // platforms still compile.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=CalculateNativeWinOcclusion \
+             --disable-renderer-backgrounding \
+             --disable-background-timer-throttling \
+             --disable-backgrounding-occluded-windows",
+        );
+    }
 
     if args.transparent.unwrap_or(false) {
         builder = builder.transparent(true);
@@ -4628,7 +4655,28 @@ pub async fn floating_window_create(
         builder = builder.position(x, y);
     }
 
-    builder.build().map_err(|err| err.to_string())?;
+    builder.build().map_err(|err| {
+        let detail = err.to_string();
+        // WebView2 returns HRESULT 0x8007139F (E_UNEXPECTED / "The group or
+        // resource is not in the correct state") when a second webview is
+        // created before the runtime is ready or on a broken install. Surface
+        // a sanitized, actionable message. `label` is always a server-generated
+        // "floating-{n}" (see FloatingWindowState::next_label), never caller
+        // text, so interpolating it cannot inject content into the toast.
+        log::error!(
+            "floating_window_create failed (label={label}): {detail}"
+        );
+        if detail.to_ascii_lowercase().contains("0x8007139f")
+            || detail.to_ascii_lowercase().contains("webview2")
+        {
+            format!(
+                "Could not open the review window (WebView2 error). \
+                 The transcript was saved to history. Try again or open it in the main app. ({label})"
+            )
+        } else {
+            detail
+        }
+    })?;
 
     Ok(FloatingWindowInfo {
         id: label,
@@ -4799,12 +4847,13 @@ mod tests {
         static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = PATH_GUARD.lock().unwrap();
 
+        // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
         let original = std::env::var("PATH").ok();
         // Simulate a process environment that has no PATH at all.
         // `set_var`/`remove_var` are unsafe since 1.87.
         #[allow(unused_unsafe)]
         unsafe {
-            std::env::remove_var("PATH");
+            std::env::remove_var("PATH"); // skipcq: RS-W1015 - fixed OS contract.
         }
 
         let result = run_terminal_command("ls".to_string()).await;
@@ -4813,8 +4862,8 @@ mod tests {
         #[allow(unused_unsafe)]
         unsafe {
             match original {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
+                Some(value) => std::env::set_var("PATH", value), // skipcq: RS-W1015 - fixed OS contract.
+                None => std::env::remove_var("PATH"), // skipcq: RS-W1015 - fixed OS contract.
             }
         }
         drop(_guard);

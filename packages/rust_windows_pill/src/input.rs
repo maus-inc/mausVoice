@@ -19,6 +19,14 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // Loading owns the current operation; another body click
+                    // must not emit feedback or start a second action.
+                    if !rust_pill_shared::can_emit_interaction_feedback(
+                        true,
+                        state.phase.get() == crate::ipc::Phase::Loading,
+                    ) {
+                        return;
+                    }
                     send_haptic("press");
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);

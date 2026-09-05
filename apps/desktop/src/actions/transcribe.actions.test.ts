@@ -3,15 +3,27 @@ import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { transcribeAudio } from "./transcribe.actions";
 
+// One second of a low-amplitude tone. The energy-based silence gate
+// short-circuits all-zero (digital silence) samples before reaching the
+// provider, so tests that exercise the provider path must pass real audio.
+const makeToneSamples = (sampleRate = 16000): Float32Array => {
+  const samples = new Float32Array(sampleRate);
+  for (let i = 0; i < samples.length; i++) {
+    samples[i] = 0.1 * Math.sin((2 * Math.PI * 220 * i) / sampleRate);
+  }
+  return samples;
+};
+
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
     error: vi.fn(),
     verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
-      fn(),
-    ),
+    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) => {
+      const result = await fn();
+      return result;
+    }),
   },
 }));
 
@@ -54,7 +66,7 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     // The prefs guard resolves the stale selection to local mode; the
     // dispatch warning is logged before any network/provider call happens.
     const result = await transcribeAudio({
-      samples: new Float32Array(16000),
+      samples: makeToneSamples(),
       sampleRate: 16000,
     }).catch((e: unknown) => e);
 
@@ -89,7 +101,7 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     vi.spyOn(globalThis, "fetch").mockRejectedValue("socket exploded");
 
     const error = await transcribeAudio({
-      samples: new Float32Array(16000),
+      samples: makeToneSamples(),
       sampleRate: 16000,
     }).catch((e: unknown) => e);
 
@@ -114,7 +126,7 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     setAppState(state, true);
 
     const error = await transcribeAudio({
-      samples: new Float32Array(16000),
+      samples: makeToneSamples(),
       sampleRate: 16000,
     }).catch((e: unknown) => e);
 

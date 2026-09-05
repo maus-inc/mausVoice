@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
+import { showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
+import { getLogger } from "./log.utils";
 
 export type ComposerResult = {
   requestId: string;
@@ -23,6 +25,16 @@ export type Size = {
 };
 
 const COMPOSER_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * If the composer webview never reports `composer-ready`, the user sees a
+ * blank page (the reported "white flash" / "killed itself with an error"
+ * failure class). Bail out before the full timeout so the caller can fall
+ * back to history recovery instead of waiting 5 minutes. The page still
+ * has time to mount and call `composer-ready`; the grace period is just a
+ * safety net for an unresponsive webview.
+ */
+const COMPOSER_READY_TIMEOUT_MS = 15_000;
 
 // Gap (logical px) kept between the native pill and the composer window so the
 // composer never overlaps the pill.
@@ -120,33 +132,125 @@ export const getComposerWindowPosition = (
   return computeComposerRect(cachedPillRect, composerSize, cachedPillMonitor);
 };
 
-/** Open the local composer popout and wait for its Insert/Cancel decision. */
+/**
+ * Tracks the currently open review window, if any. The paste/output path
+ * awaits one review at a time, but a second dictation or a stale caller can
+ * race; reusing the live window prevents a broken duplicate WebView2 window
+ * (the Windows "white flash then vanishes" failure class).
+ */
+let activeComposer: { windowId: string; requestId: string } | null = null;
+
+/**
+ * Open the review-before-insert popout for one transcript and resolve
+ * with the edited text, null on cancel/close/failure. Guards against a
+ * second concurrent window.
+ */
 export const reviewTextInComposer = async (
   text: string,
 ): Promise<string | null> => {
+  // If a review is already in flight, focus its window best-effort and do
+  // not open a second WebView2 window. The guard is set synchronously at
+  // entry (before any await) so a racing second dictation cannot slip
+  // through while the first window is still being created.
+  if (activeComposer) {
+    if (activeComposer.windowId) {
+      WebviewWindow.getByLabel(activeComposer.windowId)
+        .then((existing) => existing?.setFocus())
+        .catch(() => undefined);
+    }
+    getLogger().warning(
+      "reviewTextInComposer: a composer window is already open; focusing it",
+    );
+    return null;
+  }
+
   const requestId = createId();
   const route = `composer?requestId=${encodeURIComponent(requestId)}`;
   let windowId: string | null = null;
   let unlisten: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
+  let unlistenReady: (() => void) | undefined;
+
+  // Reserve the slot synchronously so concurrent calls are rejected.
+  activeComposer = { windowId: "", requestId };
 
   try {
     await invoke("composer_register_text", { requestId, text });
-    const result = await new Promise<string | null>((resolve, reject) => {
+    const result = await new Promise<string | null>((resolve) => {
       let settled = false;
       let timeoutId: number | null = null;
+      let readyTimeoutId: number | null = null;
+      // The `composer-ready` listener may fire before the window-creation
+      // await chain completes and schedules the timeout. A flag — not a
+      // nullable timeout id — is the only race-free readiness signal: the
+      // listener sets it the moment the page mounts, and the setTimeout
+      // call only schedules itself when the flag is still false. The
+      // previous nullable-id guard let a fast-mounting page be killed 15s
+      // later because the listener had no timeout id to clear at the
+      // moment it fired.
+      let composerReady = false;
+      const armReadyTimeout = () => {
+        if (composerReady) return;
+        readyTimeoutId = window.setTimeout(() => {
+          readyTimeoutId = null;
+          getLogger().error(
+            "reviewTextInComposer: composer-ready timeout (webview likely blank)",
+          );
+          // Destroy the blank surface immediately rather than waiting for
+          // the outer finally: that path queues teardown behind
+          // composer_discard_text, an IPC to the very webview that just
+          // proved itself wedged. The later destroy is a harmless no-op.
+          if (windowId) {
+            void invoke("floating_window_destroy", { id: windowId }).catch(
+              () => {},
+            );
+          }
+          void showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not open the review window. Your transcript was saved to history.",
+            }),
+            toastType: "error",
+            duration: 8000,
+            action: "open_transcriptions",
+          });
+          finish(null);
+        }, COMPOSER_READY_TIMEOUT_MS);
+      };
       const finish = (value: string | null) => {
         if (settled) return;
         settled = true;
+        activeComposer = null;
         if (timeoutId !== null) {
           window.clearTimeout(timeoutId);
           timeoutId = null;
+        }
+        if (readyTimeoutId !== null) {
+          window.clearTimeout(readyTimeoutId);
+          readyTimeoutId = null;
         }
         resolve(value);
       };
 
       void (async () => {
         try {
+          // Track composer readiness separately from the user-decision
+          // timeout. If the webview never emits `composer-ready`, the page
+          // never mounted (blank white surface). Bail out with a Cancel
+          // result and surface the recovery toast so the user does not have
+          // to wait the full 5 minutes or restart the app.
+          unlistenReady = await listen<{ requestId: string }>(
+            "composer-ready",
+            (event) => {
+              if (event.payload.requestId !== requestId) return;
+              composerReady = true;
+              if (readyTimeoutId !== null) {
+                window.clearTimeout(readyTimeoutId);
+                readyTimeoutId = null;
+              }
+            },
+          );
+
           unlisten = await listen<ComposerResult>(
             "composer-result",
             (event) => {
@@ -194,6 +298,13 @@ export const reviewTextInComposer = async (
             },
           );
           windowId = created.id;
+          activeComposer = { windowId: created.id, requestId };
+
+          // A second transcript while a composer is open must not create a
+          // broken duplicate window. If a composer window already exists the
+          // caller (the paste tool) runs one review at a time and awaits it,
+          // so reaching here means no live review is pending; we still guard
+          // against a stale label by focusing the created window.
 
           // A user closing the popout is a Cancel decision. Without this
           // listener the caller waits for the five-minute timeout and keeps
@@ -205,18 +316,51 @@ export const reviewTextInComposer = async (
             });
           }
 
+          // Start the ready-timeout AFTER the window exists. `armReadyTimeout`
+          // is a no-op if the page already mounted during the awaits above,
+          // so a fast-mounting composer is never killed by its own safety
+          // net. If the page never mounts, surface a recovery toast (the
+          // transcript is already in history via the calling pipeline)
+          // and resolve null so the paste/insert path is skipped, matching
+          // the window-creation-failure contract.
+          armReadyTimeout();
+
           timeoutId = window.setTimeout(() => {
             finish(null);
           }, COMPOSER_TIMEOUT_MS);
         } catch (error) {
-          reject(error);
+          // WebView2 creation failure (the Windows "white flash then
+          // disappears" report). Do NOT silently fall back to insertion
+          // when review-before-insert is enabled: return null so the caller
+          // skips insertion and keeps the transcript in history. The Rust
+          // command already logged a sanitized error with the window label.
+          const message =
+            error instanceof Error ? error.message : String(error);
+          getLogger().error(
+            `reviewTextInComposer window creation failed: ${message}`,
+          );
+          // Surface a visible recovery action: the transcript was retained
+          // in history, and the "Open history" button brings the main
+          // window to the transcriptions list so the user does not lose it.
+          void showToast({
+            message: getIntl().formatMessage({
+              defaultMessage:
+                "Could not open the review window. Your transcript was saved to history.",
+            }),
+            toastType: "error",
+            duration: 8000,
+            action: "open_transcriptions",
+          });
+          finish(null);
         }
       })();
     });
     return result;
   } finally {
+    activeComposer = null;
     unlisten?.();
     unlistenClose?.();
+    unlistenReady?.();
     await invoke("composer_discard_text", { requestId }).catch(() => {
       // The composer may already have consumed the request.
     });
