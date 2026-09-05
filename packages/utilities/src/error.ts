@@ -4,10 +4,33 @@ const REDACTED = "[redacted]";
 
 const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 const PROVIDER_KEY_PREFIX = /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
-const LABELED_SECRET_QUOTED =
-  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*"(?:\\.|[^"\\])*"/gi;
-const LABELED_SECRET_BARE =
-  /\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\s*([:=])\s*[^\s,;]+/gi;
+const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access_token|refresh_token)\b"?`;
+const LABELED_SECRET_QUOTED = new RegExp(
+  String.raw`${SECRET_LABEL}\s*([:=])\s*"(?:\\.|[^"\\])*"`,
+  "gi",
+);
+const LABELED_SECRET_BARE = new RegExp(
+  String.raw`${SECRET_LABEL}\s*([:=])\s*([^\s,;})]+)`,
+  "gi",
+);
+/**
+ * Bare values that describe the field instead of carrying a credential
+ * (`api_key=required`, `authorization: missing`). Left readable so validation
+ * messages stay useful. Anything else after a secret label is redacted.
+ */
+const PLACEHOLDER_VALUES = new Set([
+  "required",
+  "missing",
+  "invalid",
+  "expired",
+  "revoked",
+  "null",
+  "undefined",
+  "none",
+  "empty",
+  "true",
+  "false",
+]);
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -25,7 +48,13 @@ const redactSensitiveTokens = (message: string): string =>
     .replace(BEARER_TOKEN, "Bearer [redacted]")
     .replace(PROVIDER_KEY_PREFIX, REDACTED)
     .replace(LABELED_SECRET_QUOTED, "$1$2[redacted]")
-    .replace(LABELED_SECRET_BARE, "$1$2[redacted]");
+    .replace(
+      LABELED_SECRET_BARE,
+      (match, label: string, sep: string, value: string) =>
+        PLACEHOLDER_VALUES.has(value.toLowerCase())
+          ? match
+          : `${label}${sep}${REDACTED}`,
+    );
 
 const capLength = (message: string): string =>
   message.length > MAX_ERROR_MESSAGE_LENGTH

@@ -196,7 +196,14 @@ impl WhisperModel {
                     ),
                 ]
             }
-            _ => Vec::new(),
+            // whisper.cpp ggml models are single blobs fetched through
+            // `download_url()` and verified by `whisper_cpp_sha256()`.
+            Self::Tiny
+            | Self::Base
+            | Self::Small
+            | Self::Medium
+            | Self::Large
+            | Self::Turbo => Vec::new(),
         }
     }
 
@@ -240,7 +247,11 @@ impl WhisperModel {
             Self::Turbo => {
                 Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69")
             }
-            _ => None,
+            // ONNX models pin per-artifact digests in `artifact_set()`.
+            Self::ParakeetCtc06B
+            | Self::ParakeetTdt06B
+            | Self::Canary1B
+            | Self::SenseVoice => None,
         }
     }
 

@@ -261,9 +261,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // The capability itself is omitted from stable binaries. Keeping this
             // behind the same compile-time feature makes the environment variable
             // intentionally ineffective if it is set for a release build.
-            #[cfg(feature = "debug-assist")]
             // skipcq: RS-W1015 - devtools opt-in is a fixed env-var contract.
-                if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
+            #[cfg(feature = "debug-assist")]
+            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();

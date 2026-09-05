@@ -64,11 +64,11 @@ const summarizeContext = (context: Record<string, string>): string =>
     .map(([k, v]) => `${k}=${quoteValueForLog(v)}`)
     .join(", ");
 
-export async function safeSideEffect<T>(
+export const safeSideEffect = async <T>(
   label: string,
   context: Record<string, string>,
   fn: () => Promise<T>,
-): Promise<T | null> {
+): Promise<T | null> => {
   try {
     return await fn();
   } catch (error) {
@@ -82,7 +82,7 @@ export async function safeSideEffect<T>(
     );
     return null;
   }
-}
+};
 
 /**
  * Drive one agent conversation to completion on the desktop adapter.

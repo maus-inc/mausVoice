@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
 import { vendorManualChunk } from "./scripts/vendor-manual-chunk.mjs";
@@ -11,6 +11,62 @@ export const getGladiaBrowserPeer = (source: string) =>
     (peer) => source === peer || source.startsWith(`${peer}/`),
   );
 
+export const isGladiaSdkModule = (importer: string | undefined): boolean =>
+  importer?.includes("@gladiaio/sdk") ?? false;
+
+// Gladia's isomorphic SDK contains guarded dynamic imports for Node-only
+// file uploads and network fallbacks. Tauri always provides browser
+// fetch/WebSocket and passes File objects, but Rollup would otherwise
+// bundle optional `undici`/`ws` peers and externalize dozens of Node
+// built-ins. Replace only imports originating inside the SDK, and fail the
+// build if the SDK is in the graph but no stub applied: a bumped SDK that
+// switches to `node:`-prefixed builtins would otherwise silently bundle
+// `undici`/`ws` outside the CSP-governed webview transport.
+const gladiaBrowserPeerStubs = (): Plugin => {
+  let sawGladiaSdk = false;
+  let appliedPeerStubs = 0;
+  return {
+    name: "gladia-browser-peer-stubs",
+    enforce: "pre",
+    buildStart() {
+      sawGladiaSdk = false;
+      appliedPeerStubs = 0;
+    },
+    resolveId(source, importer) {
+      const fromSdk = isGladiaSdkModule(importer);
+      sawGladiaSdk ||= fromSdk;
+      const peer = getGladiaBrowserPeer(source);
+      if (fromSdk && peer) {
+        appliedPeerStubs += 1;
+        return `\0gladia-browser-peer:${peer}`;
+      }
+      return null;
+    },
+    buildEnd() {
+      if (sawGladiaSdk && appliedPeerStubs === 0) {
+        throw new Error(
+          "gladia-browser-peer-stubs: @gladiaio/sdk was bundled but no peer stub was applied; check getGladiaBrowserPeer against the SDK's current imports.",
+        );
+      }
+    },
+    load(id) {
+      if (id === "\0gladia-browser-peer:undici") {
+        return "export class Agent {}; export const setGlobalDispatcher = () => {};";
+      }
+      if (id === "\0gladia-browser-peer:ws") {
+        return "export const WebSocket = globalThis.WebSocket;";
+      }
+      if (id === "\0gladia-browser-peer:fs") {
+        return "export const readFileSync = () => { throw new Error('Node file uploads are unavailable in the desktop webview'); };";
+      }
+      if (id === "\0gladia-browser-peer:path") {
+        return "export const basename = () => { throw new Error('Node paths are unavailable in the desktop webview'); };";
+      }
+      return null;
+    },
+  };
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => {
   const { formatjsOverrideIdFn } = await import("./scripts/formatjs-id.mjs");
@@ -22,37 +78,7 @@ export default defineConfig(async () => {
     // load — leaving a blank white window with no script execution.
     base: "./",
     plugins: [
-      // Gladia's isomorphic SDK contains guarded dynamic imports for Node-only
-      // file uploads and network fallbacks. Tauri always provides browser
-      // fetch/WebSocket and passes File objects, but Rollup would otherwise
-      // bundle optional `undici`/`ws` peers and externalize dozens of Node
-      // built-ins. Replace only imports originating inside the SDK.
-      {
-        name: "gladia-browser-peer-stubs",
-        enforce: "pre",
-        resolveId(source, importer) {
-          const peer = getGladiaBrowserPeer(source);
-          if (importer?.includes("@gladiaio/sdk") && peer) {
-            return `\0gladia-browser-peer:${peer}`;
-          }
-          return null;
-        },
-        load(id) {
-          if (id === "\0gladia-browser-peer:undici") {
-            return "export class Agent {}; export const setGlobalDispatcher = () => {};";
-          }
-          if (id === "\0gladia-browser-peer:ws") {
-            return "export const WebSocket = globalThis.WebSocket;";
-          }
-          if (id === "\0gladia-browser-peer:fs") {
-            return "export const readFileSync = () => { throw new Error('Node file uploads are unavailable in the desktop webview'); };";
-          }
-          if (id === "\0gladia-browser-peer:path") {
-            return "export const basename = () => { throw new Error('Node paths are unavailable in the desktop webview'); };";
-          }
-          return null;
-        },
-      },
+      gladiaBrowserPeerStubs(),
       react({
         babel: {
           plugins: [

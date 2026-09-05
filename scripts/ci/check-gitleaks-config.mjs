@@ -7,8 +7,9 @@
 //
 // It guards the structure of the config: the preamble must be a detection rule
 // (not an allowlist exemption), must not carry a `keywords` pre-filter that
-// would short-circuit Base64-only keys, and `useDefault` must not be wrongly
-// nested under `[allowlist]`. Run with:
+// would short-circuit Base64-only keys, `useDefault` must not be wrongly
+// nested under `[allowlist]`, and the default rule set must not be switched
+// off at the top level. Run with:
 //   node scripts/ci/check-gitleaks-config.mjs
 
 import { readFileSync } from "node:fs";
@@ -51,6 +52,17 @@ if (allowlist.includes("useDefault")) {
   fail(
     "gitleaks.toml: `useDefault` is nested inside [allowlist], where Gitleaks " +
       "ignores it. Remove it from [allowlist].",
+  );
+}
+
+// (e) A top-level `useDefault = false` disables every built-in Gitleaks rule
+// and silently weakens the whole-repo scan to the single updater-key rule.
+const firstTable = raw.search(/^\s*\[/m);
+const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
+if (/^\s*useDefault\s*=\s*false\b/m.test(topLevel)) {
+  fail(
+    "gitleaks.toml: top-level `useDefault = false` disables the default " +
+      "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",
   );
 }
 
@@ -104,5 +116,6 @@ if (!re.test(fixture)) {
 console.log(
   "OK: gitleaks.toml config-structure guard passed — the updater private-key " +
     "preamble is a detection rule (not an allowlist exemption), has no " +
-    "`keywords` pre-filter, and `useDefault` is not nested in [allowlist].",
+    "`keywords` pre-filter, `useDefault` is not nested in [allowlist], and " +
+    "the default rule set stays enabled.",
 );
