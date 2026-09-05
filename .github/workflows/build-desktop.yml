@@ -14,13 +14,8 @@ on:
       - ".nvmrc"
       - ".github/scripts/install-desktop-linux-deps.sh"
       - ".github/workflows/build-desktop.yml"
-
-# Least privilege: this workflow only compiles and bundles; it never writes to
-# the repository or publishes releases.
-permissions:
-  contents: read
-  actions: write
-
+      - "branding/mausvoice-sidebar-installerimg.png"
+      - "scripts/generate-windows-installer-sidebar.mjs"
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:
@@ -32,6 +27,9 @@ jobs:
     name: Build Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -62,13 +60,13 @@ jobs:
             require_gpu_sidecar: false
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
 
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -135,6 +133,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The NSIS wizard sidebar bitmap must exist before the Tauri bundle
+      # step. The tauri wrapper regenerates it immediately before every
+      # build, but CI regenerates it here too so the bundle step never
+      # depends on that path.
+      - name: Generate NSIS sidebar image
+        if: matrix.tauri_platform == 'windows'
+        run: node scripts/generate-windows-installer-sidebar.mjs
+
       - name: Build frontend and dependencies
         env:
           TAURI_PLATFORM: ${{ matrix.tauri_platform }}
@@ -150,23 +156,17 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
           CMAKE_OSX_DEPLOYMENT_TARGET: "13.3"
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          TAURI_SIGNING_PRIVATE_KEY: "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg=="
-          TAURI_CI_PUBKEY: "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ2NTZFNDMzMzYyMjBCMzgKUldRNEN5STJNK1JXUmpWRDMzem12QUtjVkFxWERXanl0ZVRCWi9JOTd3bmRFRVFuQkp1QmpiN0EK"
         working-directory: apps/desktop
-        run: |
-          node -e "
-            const fs = require('fs');
-            const p = 'src-tauri/tauri.conf.json';
-            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-            if (c.plugins?.updater?.pubkey === '__UPDATER_PUBLIC_KEY__') {
-              c.plugins.updater.pubkey = process.env.TAURI_CI_PUBKEY;
-            }
-            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
-          "
-          pnpm run tauri build --ci ${{ matrix.args }}
+        # This job only validates that the app compiles and bundles. It signs
+        # nothing: `createUpdaterArtifacts` is false in the committed config,
+        # so no signing key is needed and none may be committed here.
+        # `--features debug-assist` opts CI artifacts into the compile-time
+        # DevTools surface so QA can inspect them. Stable releases must NOT use
+        # this feature (see release.yml), which removes DevTools at compile time.
+        run: pnpm run tauri build --ci --features debug-assist ${{ matrix.args }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v5
         with:
           name: mausvoice-${{ matrix.tauri_platform }}
           path: |

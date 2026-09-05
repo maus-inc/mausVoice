@@ -46,10 +46,11 @@ pub async fn upsert_user_preferences(
              active_dictation_language,
              additional_dictation_languages,
              preferred_microphone,
-             ignore_update_dialog,
-             incognito_mode_enabled,
+              ignore_update_dialog,
+              incognito_mode_enabled,
              incognito_mode_include_in_stats,
-             dictation_limit_minutes,
+             preserve_audio_on_failure,
+              dictation_limit_minutes,
              dictation_pill_visibility,
              use_new_backend,
              realtime_output_enabled,
@@ -62,9 +63,20 @@ pub async fn upsert_user_preferences(
              insertion_method,
              typing_speed_ms,
              pill_reset_monitor_strategy,
-             always_request_admin_on_startup
-         )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40)
+             always_request_admin_on_startup,
+             pill_placement,
+             hands_free_delay_ms,
+             in_dictation_style_switching_enabled,
+             hallucination_filter_enabled,
+             review_before_insert,
+             agent_enabled_tools,
+             agent_max_iterations,
+             agent_permission_timeout_ms,
+             spoken_commands_enabled,
+             auto_learn_dictionary_enabled,
+             auto_learn_from_edits_enabled
+          )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -90,7 +102,8 @@ pub async fn upsert_user_preferences(
             preferred_microphone = excluded.preferred_microphone,
             ignore_update_dialog = excluded.ignore_update_dialog,
             incognito_mode_enabled = excluded.incognito_mode_enabled,
-            incognito_mode_include_in_stats = excluded.incognito_mode_include_in_stats,
+             incognito_mode_include_in_stats = excluded.incognito_mode_include_in_stats,
+             preserve_audio_on_failure = excluded.preserve_audio_on_failure,
             dictation_limit_minutes = excluded.dictation_limit_minutes,
             dictation_pill_visibility = excluded.dictation_pill_visibility,
             use_new_backend = excluded.use_new_backend,
@@ -104,8 +117,19 @@ pub async fn upsert_user_preferences(
             insertion_method = excluded.insertion_method,
             typing_speed_ms = excluded.typing_speed_ms,
             pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup",
-    )
+            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
+            pill_placement = excluded.pill_placement,
+            hands_free_delay_ms = excluded.hands_free_delay_ms,
+            in_dictation_style_switching_enabled = excluded.in_dictation_style_switching_enabled,
+            hallucination_filter_enabled = excluded.hallucination_filter_enabled,
+            review_before_insert = excluded.review_before_insert,
+            agent_enabled_tools = excluded.agent_enabled_tools,
+            agent_max_iterations = excluded.agent_max_iterations,
+            agent_permission_timeout_ms = excluded.agent_permission_timeout_ms,
+            spoken_commands_enabled = excluded.spoken_commands_enabled,
+            auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled,
+            auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled",
+        )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
     .bind(&preferences.transcription_api_key_id)
@@ -132,6 +156,7 @@ pub async fn upsert_user_preferences(
     .bind(preferences.ignore_update_dialog)
     .bind(preferences.incognito_mode_enabled)
     .bind(preferences.incognito_mode_include_in_stats)
+    .bind(preferences.preserve_audio_on_failure)
     .bind(preferences.dictation_limit_minutes)
     .bind(&preferences.dictation_pill_visibility)
     .bind(preferences.use_new_backend)
@@ -146,6 +171,17 @@ pub async fn upsert_user_preferences(
     .bind(preferences.typing_speed_ms)
     .bind(&preferences.pill_reset_monitor_strategy)
     .bind(preferences.always_request_admin_on_startup)
+    .bind(&preferences.pill_placement)
+    .bind(preferences.hands_free_delay_ms)
+    .bind(preferences.in_dictation_style_switching_enabled)
+    .bind(preferences.hallucination_filter_enabled)
+    .bind(preferences.review_before_insert)
+    .bind(&preferences.agent_enabled_tools)
+    .bind(preferences.agent_max_iterations)
+    .bind(preferences.agent_permission_timeout_ms)
+    .bind(preferences.spoken_commands_enabled)
+    .bind(preferences.auto_learn_dictionary_enabled)
+    .bind(preferences.auto_learn_from_edits_enabled)
     .execute(&pool)
     .await?;
 
@@ -184,6 +220,7 @@ pub async fn fetch_user_preferences(
             ignore_update_dialog,
             incognito_mode_enabled,
             incognito_mode_include_in_stats,
+            preserve_audio_on_failure,
             dictation_limit_minutes,
             dictation_pill_visibility,
             use_new_backend,
@@ -197,7 +234,18 @@ pub async fn fetch_user_preferences(
             insertion_method,
             typing_speed_ms,
             pill_reset_monitor_strategy,
-            always_request_admin_on_startup
+            always_request_admin_on_startup,
+            pill_placement,
+            hands_free_delay_ms,
+            in_dictation_style_switching_enabled,
+            hallucination_filter_enabled,
+            review_before_insert,
+            agent_enabled_tools,
+            agent_max_iterations,
+            agent_permission_timeout_ms,
+            spoken_commands_enabled,
+            auto_learn_dictionary_enabled,
+            auto_learn_from_edits_enabled
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -289,6 +337,10 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("incognito_mode_include_in_stats")
             .map(|v| v != 0)
             .unwrap_or(false),
+        preserve_audio_on_failure: row
+            .try_get::<i64, _>("preserve_audio_on_failure")
+            .map(|v| v != 0)
+            .unwrap_or(true),
         dictation_limit_minutes: row
             .try_get::<i64, _>("dictation_limit_minutes")
             .unwrap_or(DEFAULT_DICTATION_LIMIT_MINUTES),
@@ -333,6 +385,46 @@ pub async fn fetch_user_preferences(
             .unwrap_or_else(|_| "current".to_string()),
         always_request_admin_on_startup: row
             .try_get::<i64, _>("always_request_admin_on_startup")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        pill_placement: row
+            .try_get::<String, _>("pill_placement")
+            .unwrap_or_else(|_| "bottom".to_string()),
+        hands_free_delay_ms: row
+            .try_get::<Option<i64>, _>("hands_free_delay_ms")
+            .unwrap_or(None),
+        in_dictation_style_switching_enabled: row
+            .try_get::<i64, _>("in_dictation_style_switching_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
+        hallucination_filter_enabled: row
+            .try_get::<i64, _>("hallucination_filter_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(true),
+        review_before_insert: row
+            .try_get::<Option<i64>, _>("review_before_insert")
+            .ok()
+            .flatten()
+            .map(|v| v != 0),
+        agent_enabled_tools: row
+            .try_get::<Option<String>, _>("agent_enabled_tools")
+            .unwrap_or(None),
+        agent_max_iterations: row
+            .try_get::<i64, _>("agent_max_iterations")
+            .unwrap_or(20),
+        agent_permission_timeout_ms: row
+            .try_get::<i64, _>("agent_permission_timeout_ms")
+            .unwrap_or(60_000),
+        spoken_commands_enabled: row
+            .try_get::<i64, _>("spoken_commands_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(true),
+        auto_learn_dictionary_enabled: row
+            .try_get::<i64, _>("auto_learn_dictionary_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(true),
+        auto_learn_from_edits_enabled: row
+            .try_get::<i64, _>("auto_learn_from_edits_enabled")
             .map(|v| v != 0)
             .unwrap_or(false),
     });

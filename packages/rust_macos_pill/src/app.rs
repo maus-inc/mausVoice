@@ -18,7 +18,7 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,6 +53,34 @@ unsafe fn screens() -> id {
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
+/// y-down coordinate space Tauri uses for window positions. `primary_top` is
+/// the AppKit y of the primary screen's top edge, so windows on screens above
+/// the primary correctly come out with negative y values.
+unsafe fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
+    Rect {
+        x: rect.origin.x,
+        y: primary_top - (rect.origin.y + rect.size.height),
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+/// Reads the pill window's screen rect and the visible frame of the monitor it
+/// lives on, already flipped into Tauri's top-down coordinate space, so the
+/// desktop can anchor the composer next to the real pill.
+unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+    let frame = window_frame(window);
+    let screen: id = msg_send![window, screen];
+    let primary_screens = screens();
+    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    let rect = to_top_down(frame, primary_top);
+    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    (rect, monitor)
 }
 
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
@@ -362,6 +390,15 @@ fn perform_tick() {
                     }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
+                    ctx.state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&ctx.state);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
@@ -375,25 +412,26 @@ fn perform_tick() {
                     ctx.state.style_count.set(count);
                     *ctx.state.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *ctx.state.flash_action.borrow_mut() = action;
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
+                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
-                    ctx.state.flash_visible.set(false);
-                    ctx.state.flash_timer.set(0.0);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
+                    clear_flash(&ctx.state);
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -407,6 +445,8 @@ fn perform_tick() {
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -458,7 +498,12 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);
@@ -558,7 +603,12 @@ fn end_drag(state: &PillState, window: id) {
         state.saved_x.set(frame.origin.x);
         state.saved_y.set(frame.origin.y);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (rect, monitor) = unsafe { pill_geometry(window) };
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(rect),
+            monitor: Some(monitor),
+        });
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
@@ -606,6 +656,17 @@ fn update_hover(view: id, ctx: &AppContext) {
 }
 
 // ── Animation tick ────────────────────────────────────────────────
+
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
@@ -674,14 +735,18 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
@@ -725,11 +790,17 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         } else {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
@@ -761,6 +832,9 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.dragging.get(),
     );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state, dt);
 
@@ -1327,6 +1401,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
@@ -1364,6 +1439,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -1392,6 +1469,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),

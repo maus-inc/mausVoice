@@ -3,6 +3,18 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
+/// Axis-aligned screen rectangle in logical pixels. Coordinates are top-left
+/// origin, y-down — the same space Tauri uses for window placement on Windows.
+/// The desktop anchors the composer next to the pill using `rect` (the pill
+/// window itself) and `monitor` (the work area it lives on).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
@@ -19,7 +31,6 @@ pub enum Phase {
     Loading,
     Paused,
 }
-
 
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -76,22 +87,41 @@ pub enum InMessage {
         #[serde(default)]
         seq: u64,
     },
-    Levels { levels: Vec<f32> },
-    StyleInfo { count: u32, name: String },
-    Visibility { visibility: Visibility },
-    WindowSize { size: String },
+    Levels {
+        levels: Vec<f32>,
+    },
+    StyleInfo {
+        count: u32,
+        name: String,
+    },
+    Visibility {
+        visibility: Visibility,
+    },
+    WindowSize {
+        size: String,
+    },
     Toast {
         message: String,
         toast_type: Option<String>,
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
+        #[serde(default)]
+        reject_action: Option<String>,
+        #[serde(default)]
+        reject_action_label: Option<String>,
     },
     DismissToast,
-    Fireworks { message: String },
-    Flame { message: String },
+    Fireworks {
+        message: String,
+    },
+    Flame {
+        message: String,
+    },
     FlashBlue,
-    BroadcastTranscript { text: String },
+    BroadcastTranscript {
+        text: String,
+    },
     AssistantState {
         active: bool,
         input_mode: String,
@@ -109,6 +139,10 @@ pub enum InMessage {
         #[serde(default)]
         strategy: ResetStrategy,
     },
+    /// User preference for which screen edge the pill anchors to.
+    PillPlacement {
+        placement: String,
+    },
     Quit,
 }
 
@@ -116,14 +150,22 @@ pub enum InMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutMessage {
     Ready,
-    Hover { hovered: bool },
+    Hover {
+        hovered: bool,
+    },
     Click,
-    StyleSwitch { direction: String },
+    StyleSwitch {
+        direction: String,
+    },
     AgentTalk,
     AssistantClose,
     EnableTypeMode,
-    TypedMessage { text: String },
-    OpenConversation { conversation_id: String },
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
     ResolvePermission {
         permission_id: String,
         status: String,
@@ -132,8 +174,19 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-    ToastAction { action: String },
-    PositionChanged { has_saved_position: bool },
+    ToastAction {
+        action: String,
+    },
+    /// Haptic/audio feedback request for the desktop process.
+    /// `kind` values: "press", "deep", "release".
+    HapticFeedback {
+        kind: String,
+    },
+    PositionChanged {
+        has_saved_position: bool,
+        rect: Option<Rect>,
+        monitor: Option<Rect>,
+    },
 }
 
 pub fn send(msg: &OutMessage) {

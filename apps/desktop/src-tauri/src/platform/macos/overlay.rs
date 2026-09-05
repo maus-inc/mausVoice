@@ -73,6 +73,17 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(_app: &tauri::AppHandle, placement: &str) {
+    // The macOS pill (rust_macos_pill) is the embedded in-process pill and
+    // currently only supports a bottom-anchored layout, so the user's
+    // `pillPlacement` preference is recorded by the host but not pushed to
+    // the native pill yet. The overlay.rs surface stays consistent across
+    // platforms so the host code does not need to special-case macOS.
+    log::debug!("Pill placement preference received: {placement}");
+}
+
+/// Logs style info instead of forwarding it: the macOS pill is rendered by
+/// SwiftUI in-process and reads style state from the app store directly.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
         pill.send(InMessage::StyleInfo {
@@ -104,10 +115,7 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
-pub fn notify_reset_position(
-    app: &tauri::AppHandle,
-    strategy: &str,
-) -> Result<(), String> {
+pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor
     } else {
@@ -172,19 +180,35 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
                 OutMessage::StyleSwitch { direction } => {
-                    if direction == "forward" {
-                        let _ = app.emit_to("main", "tone-switch-forward", ());
-                    } else if direction == "backward" {
-                        let _ = app.emit_to("main", "tone-switch-backward", ());
+                    match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {
+                        Some(direction) => {
+                            crate::pill_process::emit_pill_style_switch(&app, direction);
+                        }
+                        None => {
+                            log::warn!("Ignoring unknown pill style-switch direction: {direction}");
+                        }
                     }
                 }
                 OutMessage::ToastAction { action } => {
                     let payload = serde_json::json!({ "action": action });
                     let _ = app.emit_to("main", "toast-action", payload);
                 }
+                OutMessage::HapticFeedback { kind } => {
+                    crate::system::audio_feedback::play_thock(&kind);
+                }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged { has_saved_position } => {
-                    let payload = serde_json::json!({ "hasSavedPosition": has_saved_position });
+                OutMessage::PositionChanged { has_saved_position, rect, monitor } => {
+                    let rect_json = rect.map(|r| {
+                        serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
+                    });
+                    let monitor_json = monitor.map(|m| {
+                        serde_json::json!({ "x": m.x, "y": m.y, "width": m.width, "height": m.height })
+                    });
+                    let payload = serde_json::json!({
+                        "hasSavedPosition": has_saved_position,
+                        "rect": rect_json,
+                        "monitor": monitor_json,
+                    });
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }

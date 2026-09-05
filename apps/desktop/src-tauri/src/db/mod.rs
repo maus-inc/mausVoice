@@ -1,4 +1,5 @@
 pub mod api_key_queries;
+pub mod open;
 pub mod app_target_queries;
 pub mod chat_message_queries;
 pub mod conversation_queries;
@@ -143,6 +144,34 @@ pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
     include_str!("migrations/073_pill_reset_monitor_strategy.sql");
 pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
     include_str!("migrations/074_always_request_admin_on_startup.sql");
+pub const TONE_STRUCTURED_FIELDS_MIGRATION_SQL: &str =
+    include_str!("migrations/075_tone_structured_fields.sql");
+pub const FEATURE_PREFERENCES_MIGRATION_SQL: &str =
+    include_str!("migrations/076_feature_preferences.sql");
+pub const SPOKEN_COMMANDS_MIGRATION_SQL: &str =
+    include_str!("migrations/077_spoken_commands_enabled.sql");
+pub const POST_PROCESS_ATTRIBUTION_MIGRATION_SQL: &str =
+    include_str!("migrations/078_post_process_attribution.sql");
+pub const INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL: &str =
+    include_str!("migrations/079_interaction_feedback_volume.sql");
+/// Adds the `preserve_audio_on_failure` column to `user_preferences`.
+pub const PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL: &str =
+    include_str!("migrations/081_preserve_audio_on_failure.sql");
+/// Adds the `transcription_path` column to `api_keys`.
+pub const API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL: &str =
+    include_str!("migrations/082_api_key_transcription_path.sql");
+/// Adds the `pill_placement` and `hands_free_delay_ms` columns to
+/// `user_preferences`.
+pub const PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL: &str =
+    include_str!("migrations/083_pill_placement_and_hands_free_delay.sql");
+
+/// Adds the `auto_learn_dictionary_enabled` column to
+/// `user_preferences`.
+pub const AUTO_LEARN_DICTIONARY_MIGRATION_SQL: &str =
+    include_str!("migrations/084_auto_learn_dictionary.sql");
+/// Adds the `auto_learn_from_edits_enabled` preference column (default off).
+pub const AUTO_LEARN_FROM_EDITS_MIGRATION_SQL: &str =
+    include_str!("migrations/085_auto_learn_from_edits.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -576,6 +605,66 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 74,
             description: "add_always_request_admin_on_startup",
             sql: ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 75,
+            description: "add_tone_structured_fields",
+            sql: TONE_STRUCTURED_FIELDS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 76,
+            description: "add_feature_preferences",
+            sql: FEATURE_PREFERENCES_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 77,
+            description: "add_spoken_commands_enabled",
+            sql: SPOKEN_COMMANDS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 78,
+            description: "add_post_process_attribution",
+            sql: POST_PROCESS_ATTRIBUTION_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 79,
+            description: "add_interaction_feedback_volume",
+            sql: INTERACTION_FEEDBACK_VOLUME_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 81,
+            description: "add_preserve_audio_on_failure",
+            sql: PRESERVE_AUDIO_ON_FAILURE_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 82,
+            description: "add_api_key_transcription_path",
+            sql: API_KEY_TRANSCRIPTION_PATH_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 83,
+            description: "add_pill_placement_and_hands_free_delay",
+            sql: PILL_PLACEMENT_AND_HANDS_FREE_DELAY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 84,
+            description: "add_auto_learn_dictionary_enabled",
+            sql: AUTO_LEARN_DICTIONARY_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 85,
+            description: "add_auto_learn_from_edits",
+            sql: AUTO_LEARN_FROM_EDITS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

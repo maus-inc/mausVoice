@@ -1,5 +1,6 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
+import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
@@ -62,6 +63,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
           language: whisperLanguage,
           initialPrompt: prompt || undefined,
           deviceId: getTranscriptionSidecarDeviceId(settings.device),
+          hallucinationFilterEnabled:
+            state.userPrefs?.hallucinationFilterEnabled !== false,
         });
 
       this.session = sidecarSession;
@@ -102,11 +105,20 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       getLogger().info(`[local-stream-session] finalizing streaming session`);
       const output = await this.session.finalize();
+      const segments = output.segments ?? [];
+      // Narrow fallback: only when the sidecar didn't emit per-segment
+      // metadata (ONNX branch). If segments were emitted but the filter
+      // dropped them all, keep the empty result so silence-hallucination
+      // filtering still wins.
+      const filteredText =
+        segments.length === 0
+          ? (output.text ?? "")
+          : filterLocalTranscriptionSegments(segments);
       getLogger().info(
-        `[local-stream-session] streaming finalize succeeded (${output.text.length} chars)`,
+        `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
       );
       return {
-        rawTranscript: output.text.trim() || null,
+        rawTranscript: filteredText.trim() || null,
         metadata: {
           modelSize: output.model,
           inferenceDevice: output.inferenceDevice,

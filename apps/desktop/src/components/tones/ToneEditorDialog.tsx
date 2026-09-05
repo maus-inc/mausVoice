@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import { Tone } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { setAppTargetTone } from "../../actions/app-target.actions";
 import {
   closeToneEditorDialog,
@@ -27,6 +27,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 const MAX_PROMPT_LEN = 8000;
 
 export const ToneEditorDialog = () => {
+  const intl = useIntl();
   const toneEditor = useAppStore((state) => state.toneEditor);
   const toneById = useAppStore((state) => state.toneById);
 
@@ -47,7 +48,15 @@ export const ToneEditorDialog = () => {
   }, []);
 
   const handleCreate = useCallback(
-    async (name: string, promptTemplate: string) => {
+    async (
+      name: string,
+      promptTemplate: string,
+      structured?: {
+        category?: string;
+        outputLength?: string;
+        exampleInputOutput?: string;
+      },
+    ) => {
       const nextSortOrder =
         tones.length > 0 ? tones[tones.length - 1].sortOrder + 1 : 0;
 
@@ -58,6 +67,9 @@ export const ToneEditorDialog = () => {
         isSystem: false,
         createdAt: Date.now(),
         sortOrder: nextSortOrder,
+        category: structured?.category,
+        outputLength: structured?.outputLength,
+        exampleInputOutput: structured?.exampleInputOutput,
       };
 
       await upsertTone(newTone);
@@ -81,6 +93,9 @@ export const ToneEditorDialog = () => {
   const tone = isEditMode && editingTone ? editingTone : null;
   const [name, setName] = useState("");
   const [promptTemplate, setPromptTemplate] = useState("");
+  const [category, setCategory] = useState("");
+  const [outputLength, setOutputLength] = useState("");
+  const [exampleInputOutput, setExampleInputOutput] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -89,9 +104,15 @@ export const ToneEditorDialog = () => {
     if (isEditMode && tone) {
       setName(tone.name);
       setPromptTemplate(tone.promptTemplate);
+      setCategory(tone.category ?? "");
+      setOutputLength(tone.outputLength ?? "");
+      setExampleInputOutput(tone.exampleInputOutput ?? "");
     } else if (toneEditor.mode === "create") {
       setName("");
       setPromptTemplate("");
+      setCategory("");
+      setOutputLength("");
+      setExampleInputOutput("");
     }
   }, [isEditMode, tone, toneEditor.mode, toneEditor.open]);
 
@@ -104,7 +125,11 @@ export const ToneEditorDialog = () => {
   const hasChanges =
     isEditMode &&
     tone &&
-    (name !== tone.name || promptTemplate !== tone.promptTemplate);
+    (name !== tone.name ||
+      promptTemplate !== tone.promptTemplate ||
+      category !== (tone.category ?? "") ||
+      outputLength !== (tone.outputLength ?? "") ||
+      exampleInputOutput !== (tone.exampleInputOutput ?? ""));
 
   const handleSave = useCallback(async () => {
     const trimmedName = name.trim();
@@ -121,9 +146,16 @@ export const ToneEditorDialog = () => {
           ...tone,
           name: trimmedName,
           promptTemplate: trimmedPrompt,
+          category: category.trim() || undefined,
+          outputLength: outputLength.trim() || undefined,
+          exampleInputOutput: exampleInputOutput.trim() || undefined,
         });
       } else {
-        await handleCreate(trimmedName, trimmedPrompt);
+        await handleCreate(trimmedName, trimmedPrompt, {
+          category: category.trim() || undefined,
+          outputLength: outputLength.trim() || undefined,
+          exampleInputOutput: exampleInputOutput.trim() || undefined,
+        });
       }
       handleClose();
     } finally {
@@ -132,6 +164,9 @@ export const ToneEditorDialog = () => {
   }, [
     name,
     promptTemplate,
+    category,
+    outputLength,
+    exampleInputOutput,
     isEditMode,
     tone,
     handleEditSave,
@@ -210,8 +245,48 @@ export const ToneEditorDialog = () => {
               value={name}
               onChange={(event) => setName(event.target.value)}
               fullWidth
-              placeholder="Casual, Formal, Business..."
+              placeholder={intl.formatMessage({
+                defaultMessage: "Casual, Formal, Business...",
+              })}
               slotProps={{ htmlInput: { maxLength: 120 } }}
+            />
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                label={<FormattedMessage defaultMessage="Category" />}
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+                fullWidth
+                placeholder={intl.formatMessage({
+                  defaultMessage: "Writing, notes, developer...",
+                })}
+                slotProps={{ htmlInput: { maxLength: 80 } }}
+              />
+              <TextField
+                label={<FormattedMessage defaultMessage="Output length" />}
+                value={outputLength}
+                onChange={(event) => setOutputLength(event.target.value)}
+                fullWidth
+                placeholder={intl.formatMessage({
+                  defaultMessage: "1–3 sentences",
+                })}
+                slotProps={{ htmlInput: { maxLength: 120 } }}
+              />
+            </Stack>
+
+            <TextField
+              label={
+                <FormattedMessage defaultMessage="Example input and output" />
+              }
+              value={exampleInputOutput}
+              onChange={(event) => setExampleInputOutput(event.target.value)}
+              multiline
+              rows={3}
+              fullWidth
+              placeholder={intl.formatMessage({
+                defaultMessage: "Input: ... Output: ...",
+              })}
+              slotProps={{ htmlInput: { maxLength: 1200 } }}
             />
 
             <TextField
@@ -221,7 +296,10 @@ export const ToneEditorDialog = () => {
               multiline
               rows={7}
               fullWidth
-              placeholder="Make it sound like a professional but friendly email. Use jargon and fun words."
+              placeholder={intl.formatMessage({
+                defaultMessage:
+                  "Make it sound like a professional but friendly email. Use jargon and fun words.",
+              })}
               slotProps={{ htmlInput: { maxLength: MAX_PROMPT_LEN } }}
               helperText={
                 <Typography

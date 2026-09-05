@@ -165,7 +165,7 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             draw_loading(ctx, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(ctx, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(ctx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -308,16 +308,43 @@ fn draw_loading(
     draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
 }
 
-fn draw_idle_label(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.4 * expand_t);
-    ctx.select_font_face("Satoshi", false, true);
+fn draw_idle_label(ctx: &Ctx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(12.0);
-    let text = "Click to dictate";
-    let extents = ctx.text_extents(text);
-    let tx = rx + (pill_w - extents.width) / 2.0 - extents.x_bearing;
-    let ty = ry + (pill_h - extents.height) / 2.0 - extents.y_bearing;
-    ctx.move_to(tx, ty);
-    ctx.show_text(text);
+
+    let drag_t = state.drag_label_t.get();
+    let text_idle = rust_pill_shared::LABEL_IDLE_TEXT;
+    let text_drag = rust_pill_shared::LABEL_DRAG_TEXT;
+
+    // Pre-measure for stable centering
+    let ext_idle = ctx.text_extents(text_idle);
+    let ext_drag = ctx.text_extents(text_drag);
+
+    let base_y = ry + (pill_h - ext_idle.height) / 2.0 - ext_idle.y_bearing;
+
+    // Crossfade with slight vertical slide (shared constants)
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+    let (y_idle_offset, y_drag_offset) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    // Idle label slides slightly up as it fades
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, alpha_idle);
+        let tx = rx + (pill_w - ext_idle.width) / 2.0 - ext_idle.x_bearing;
+        ctx.save();
+        ctx.move_to(tx, y_idle_offset);
+        ctx.show_text(text_idle);
+        ctx.restore();
+    }
+
+    // Drag label slides slightly down as it fades in
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, alpha_drag);
+        let tx = rx + (pill_w - ext_drag.width) / 2.0 - ext_drag.x_bearing;
+        ctx.save();
+        ctx.move_to(tx, y_drag_offset);
+        ctx.show_text(text_drag);
+        ctx.restore();
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -361,7 +388,7 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
 
     // Style name text
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    ctx.select_font_face("Satoshi", false, true);
+    ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(13.0);
     let text_extents = ctx.text_extents(&style_name);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
@@ -404,7 +431,9 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(13.0);
@@ -418,7 +447,23 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     } else {
         0.0
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let reject_w = if let Some(ref label) = *reject_label {
+        ctx.select_font_face("Satoshi", false, true);
+        ctx.set_font_size(11.0);
+        let ext = ctx.text_extents(label);
+        ext.width + FLASH_ACTION_PADDING_H * 2.0
+    } else {
+        0.0
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_extents.width + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -447,7 +492,7 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
     ctx.select_font_face("Satoshi", false, true);
     ctx.set_font_size(12.0);
-    let text_left = if has_action {
+    let text_left = if has_action || has_reject {
         full_x + FLASH_PADDING_H
     } else {
         full_x + (flash_w - text_extents.width) / 2.0
@@ -456,6 +501,38 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let ty = full_y + (FLASH_HEIGHT - text_extents.height) / 2.0 - text_extents.y_bearing;
     ctx.move_to(tx, ty);
     ctx.show_text(&message);
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(ref label) = *reject_label {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        gfx::rounded_rect(ctx, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
+        ctx.fill();
+
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
+        ctx.select_font_face("Satoshi", false, true);
+        ctx.set_font_size(11.0);
+        let label_ext = ctx.text_extents(label);
+        let lx = btn_x + (reject_w - label_ext.width) / 2.0 - label_ext.x_bearing;
+        let ly = btn_y + (FLASH_ACTION_HEIGHT - label_ext.height) / 2.0 - label_ext.y_bearing;
+        ctx.move_to(lx, ly);
+        ctx.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: reject_w,
+            h: FLASH_ACTION_HEIGHT,
+            action: ClickAction::FlashReject,
+        });
+    }
 
     // Action button
     if let Some(ref label) = *action_label {
@@ -1403,9 +1480,9 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     }
 
     if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Core Graphics cannot stroke directly.
+        // One resampled perimeter drives the shadow, the comet and the head,
+        // so the layers can never drift apart and no geometry is built more
+        // than once per frame.
         let mut points = state.ring_points.borrow_mut();
         rust_pill_shared::resample_perimeter(
             &path,
@@ -1415,57 +1492,87 @@ fn draw_long_press_ring(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             &mut points,
         );
 
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
+        // Degenerate geometry cannot occur with the shared perimeter (this
+        // block is only entered when `head_len > 0`), but the shadow slice
+        // and head placement below must never index an empty buffer — which
+        // `RingLayers::new` reports as `None`.
+        if let Some(layers) = rust_pill_shared::RingLayers::new(
+            &points, head_len, total_len, progress, arm_t, alpha,
+        ) {
+            // Shadow layer: a soft dark halo behind the silver ring so it stays
+            // readable on light backdrops. Core Graphics has no cheap blur on
+            // the render path, so the ring path is stroked several times with
+            // growing widths and shrinking alphas — the passes sum to a
+            // falloff that is darkest right under the ring and gone within a
+            // few pixels. Widths, alphas and the arc's extent all come from
+            // the shared plan; only the stroking is platform code.
+            for (width, layer_alpha) in layers.shadow_passes() {
+                ctx.set_line_width(width);
+                ctx.set_source_rgba(0.0, 0.0, 0.0, layer_alpha);
+                ctx.new_sub_path();
+                ctx.move_to(points[0].0, points[0].1);
+                for p in &points[1..=layers.head_index] {
+                    ctx.line_to(p.0, p.1);
+                }
+                ctx.stroke();
             }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            ctx.set_line_width(
-                rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            );
-            ctx.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            ctx.new_sub_path();
-            ctx.move_to(x1, y1);
-            ctx.line_to(x2, y2);
-            ctx.stroke();
-        }
 
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
+            // Dark underlay beneath the comet head so the soft silver blob
+            // also separates from a light backdrop; mirrors the head's disc
+            // shading.
+            for disc in layers.underlay_discs() {
+                ctx.set_source_rgba(0.0, 0.0, 0.0, disc.alpha);
+                ctx.new_sub_path();
+                ctx.arc(disc.cx, disc.cy, disc.radius, 0.0, TAU);
+                ctx.fill();
+            }
+
+            // Primary layer: the comet. Brightness is envelope × glimmer
+            // evaluated per evenly-spaced segment — the portable stand-in for
+            // a gradient along a path, which Core Graphics cannot stroke
+            // directly.
+            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > head_len {
+                    break;
+                }
+                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+                if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
+                    continue;
+                }
+                ctx.set_line_width(
+                    rust_pill_shared::RING_CORE_WIDTH
+                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
+                );
                 ctx.set_source_rgba(
                     LONG_PRESS_OUTLINE_COLOR.0,
                     LONG_PRESS_OUTLINE_COLOR.1,
                     LONG_PRESS_OUTLINE_COLOR.2,
-                    head_alpha * falloff * 0.5,
+                    a,
                 );
                 ctx.new_sub_path();
-                ctx.arc(hx, hy, rr, 0.0, TAU);
+                ctx.move_to(x1, y1);
+                ctx.line_to(x2, y2);
+                ctx.stroke();
+            }
+
+            // Secondary layer: the soft head. Concentric discs approximate a
+            // radial falloff without allocating a gradient every frame. It
+            // dissolves and blooms before completion so nothing bright is left
+            // at the seam — once it has, the shared plan yields no discs.
+            for disc in layers.head_discs() {
+                ctx.set_source_rgba(
+                    LONG_PRESS_OUTLINE_COLOR.0,
+                    LONG_PRESS_OUTLINE_COLOR.1,
+                    LONG_PRESS_OUTLINE_COLOR.2,
+                    disc.alpha,
+                );
+                ctx.new_sub_path();
+                ctx.arc(disc.cx, disc.cy, disc.radius, 0.0, TAU);
                 ctx.fill();
             }
         }

@@ -24,6 +24,10 @@ import {
   ollamaTestIntegration,
 } from "../../utils/ollama.utils";
 import { OPENAI_COMPATIBLE_DEFAULT_URL } from "../../utils/openai-compatible.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../../utils/secure-fetch.utils";
 import { speachesTestIntegration } from "../../utils/speaches.utils";
 import type { ApiKeyListContext } from "./ApiKeyList";
 
@@ -73,23 +77,29 @@ function requireApiKey(apiKey: SettingsApiKey): string {
 }
 
 function standardTestConfig(
-  testFn: (args: { apiKey: string }) => Promise<boolean>,
+  testFn: (args: {
+    apiKey: string;
+    customFetch?: typeof globalThis.fetch;
+  }) => Promise<boolean>,
 ): ProviderFormConfig["testIntegration"] {
-  return (apiKey) => testFn({ apiKey: requireApiKey(apiKey) });
+  return (apiKey) =>
+    testFn({ apiKey: requireApiKey(apiKey), customFetch: secureFetch });
 }
 
 const STANDARD_PROVIDERS: Record<
   string,
   {
     displayName: string;
-    testFn: (args: { apiKey: string }) => Promise<boolean>;
+    testFn: (args: {
+      apiKey: string;
+      customFetch?: typeof globalThis.fetch;
+    }) => Promise<boolean>;
   }
 > = {
   groq: { displayName: "Groq", testFn: groqTestIntegration },
   openai: { displayName: "OpenAI", testFn: openaiTestIntegration },
   openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
-  assemblyai: { displayName: "AssemblyAI", testFn: assemblyaiTestIntegration },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
   elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
   deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
@@ -107,6 +117,27 @@ function buildStandardConfig(provider: string): ProviderFormConfig {
     testIntegration: standardTestConfig(entry.testFn),
   };
 }
+
+const ASSEMBLYAI_MODEL_FIELD: ProviderFieldDescriptor = {
+  key: "transcriptionModel",
+  label: <FormattedMessage defaultMessage="Model" />,
+  placeholder: "universal-3-5-pro",
+  helperText: (
+    <FormattedMessage defaultMessage="AssemblyAI speech model. Universal-3.5 Pro keeps Universal-2 as a fallback; leave empty to use the AssemblyAI default." />
+  ),
+  required: false,
+};
+
+const ASSEMBLYAI_CONFIG: ProviderFormConfig = {
+  displayName: "AssemblyAI",
+  fields: [API_KEY_FIELD, ASSEMBLYAI_MODEL_FIELD],
+  testIntegration: (apiKey) =>
+    assemblyaiTestIntegration({
+      apiKey: requireApiKey(apiKey),
+      model: apiKey.transcriptionModel ?? null,
+      customFetch: secureFetch,
+    }),
+};
 
 const OLLAMA_CONFIG: ProviderFormConfig = {
   displayName: "Ollama",
@@ -133,7 +164,7 @@ const OLLAMA_CONFIG: ProviderFormConfig = {
 function getOpenAICompatibleConfig(
   context: ApiKeyListContext,
 ): ProviderFormConfig {
-  const fields: ProviderFieldDescriptor[] = [
+  let fields: ProviderFieldDescriptor[] = [
     {
       key: "baseUrl",
       label: <FormattedMessage defaultMessage="Base URL" />,
@@ -146,15 +177,26 @@ function getOpenAICompatibleConfig(
     OPTIONAL_API_KEY_FIELD,
   ];
   if (context === "transcription") {
-    fields.push({
-      key: "transcriptionModel",
-      label: <FormattedMessage defaultMessage="Model" />,
-      placeholder: "whisper-1",
-      helperText: (
-        <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
-      ),
-      required: false,
-    });
+    fields = fields.concat([
+      {
+        key: "transcriptionModel",
+        label: <FormattedMessage defaultMessage="Model" />,
+        placeholder: "whisper-1",
+        helperText: (
+          <FormattedMessage defaultMessage="Transcription model name (e.g. whisper-1, gpt-4o-transcribe)" />
+        ),
+        required: false,
+      },
+      {
+        key: "transcriptionPath",
+        label: <FormattedMessage defaultMessage="Transcription path" />,
+        placeholder: "/audio/transcriptions",
+        helperText: (
+          <FormattedMessage defaultMessage="Replaces only the path after the base URL. For Open WebUI, enter /v1/audio/transcriptions and turn off Include /v1 path; otherwise leave empty." />
+        ),
+        required: false,
+      },
+    ]);
   }
   return {
     displayName: "OpenAI Compatible",
@@ -165,6 +207,7 @@ function getOpenAICompatibleConfig(
       openaiCompatibleTestIntegration({
         baseUrl: apiKey.baseUrl || OPENAI_COMPATIBLE_DEFAULT_URL,
         apiKey: apiKey.keyFull || undefined,
+        customFetch: createOpenAICompatibleFetch(apiKey.id),
       }),
   };
 }
@@ -223,6 +266,7 @@ const AZURE_OPENAI_CONFIG: ProviderFormConfig = {
     return azureOpenAITestIntegration({
       apiKey: key,
       endpoint: apiKey.baseUrl,
+      customFetch: secureFetch,
     });
   },
 };
@@ -265,6 +309,7 @@ export function getProviderFormConfig(
     return context === "transcription" ? AZURE_STT_CONFIG : AZURE_OPENAI_CONFIG;
   }
   if (provider === "ollama") return OLLAMA_CONFIG;
+  if (provider === "assemblyai") return ASSEMBLYAI_CONFIG;
   if (provider === "openai-compatible")
     return getOpenAICompatibleConfig(context);
   if (provider === "speaches") return SPEACHES_CONFIG;

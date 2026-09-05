@@ -37,6 +37,18 @@ pub struct Transcription {
     pub post_process_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_device: Option<String>,
+    /// Provider slug (e.g. "cerebras") selected for post-processing,
+    /// persisted even when the request fails so history attributes the
+    /// attempt instead of showing "no provider selected".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_provider: Option<String>,
+    /// True when a post-processing request was attempted and failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_failed: Option<bool>,
+    /// Sanitized, non-secret error message from a failed post-processing
+    /// request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -8,6 +8,7 @@ export const API_KEY_PROVIDERS = [
   "assemblyai",
   "elevenlabs",
   "deepgram",
+  "gladia",
   "openrouter",
   "ollama",
   "openai-compatible",
@@ -34,4 +35,5 @@ export type ApiKey = {
   baseUrl?: string | null;
   azureRegion?: string | null;
   includeV1Path?: boolean | null;
+  transcriptionPath?: string | null;
 };

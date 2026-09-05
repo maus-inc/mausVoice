@@ -41,7 +41,7 @@ export const useParamSyncer = <V extends Nullable<string>[]>({
           const next = new URLSearchParams(prev);
           queryParamNames.forEach((k, i) => {
             const v = storeVals[i];
-            if (v && v !== "") next.set(k, v);
+            if (v) next.set(k, v);
             else next.delete(k);
           });
           return next;

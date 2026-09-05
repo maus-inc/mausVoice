@@ -4,14 +4,16 @@ import {
   Transcription,
   TranscriptionAudioSnapshot,
 } from "@maus-inc/types";
-import { countWords, dedup } from "@maus-inc/utilities";
+import { countWords, dedup, unknownToMessage } from "@maus-inc/utilities";
 import dayjs from "dayjs";
 import {
   getGenerateTextRepo,
   getTranscribeAudioRepo,
   getTranscriptionRepo,
 } from "../repos";
+import type { GenerateTextOutput } from "../repos/generate-text.repo";
 import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
+import type { AppState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
 import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
@@ -25,6 +27,7 @@ import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
+import { orFalse, orNull } from "../utils/nullable.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -35,6 +38,10 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
   PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
+import {
+  applyHallucinationFiltering,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
 import { getToneById, getToneConfig } from "../utils/tone.utils";
 import {
   getMyEffectiveUserId,
@@ -60,9 +67,13 @@ export type TranscribeAudioMetadata = {
 };
 
 export type TranscribeAudioResult = {
+  /** Exact provider output before replacements or hallucination filtering. */
   rawTranscript: string;
+  /** Text used by post-processing and output routing. */
+  sanitizedTranscript: string;
   warnings: string[];
   metadata: TranscribeAudioMetadata;
+  segments?: TranscriptionSegment[] | null;
 };
 
 export type PostProcessInput = {
@@ -74,9 +85,14 @@ export type PostProcessInput = {
 export type PostProcessMetadata = {
   postProcessPrompt?: string | null;
   postProcessApiKeyId?: string | null;
+  postProcessProvider?: string | null;
   postProcessMode?: PostProcessingMode | null;
   postProcessDevice?: string | null;
   postprocessDurationMs?: number | null;
+  /** True when a post-processing request was attempted and failed. */
+  postProcessFailed?: boolean | null;
+  /** Sanitized, non-secret error message from a failed post-processing request. */
+  postProcessError?: string | null;
 };
 
 export type PostProcessResult = {
@@ -148,6 +164,8 @@ export const transcribeAudio = async ({
       sampleRate,
       prompt: transcriptionPrompt,
       language: whisperLanguage,
+      hallucinationFilterEnabled:
+        state.userPrefs?.hallucinationFilterEnabled !== false,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -161,10 +179,41 @@ export const transcribeAudio = async ({
     );
   }
   const transcribeDuration = performance.now() - transcribeStart;
+  warnings.push(...(transcribeOutput.warnings ?? []));
+  if (transcribeOutput.warnings && transcribeOutput.warnings.length > 0) {
+    getLogger().warning(
+      `Provider transcription warnings: ${transcribeOutput.warnings.join("; ")}`,
+    );
+  }
   const rawTranscript = transcribeOutput.text.trim();
+  // Hallucination mitigation: when the user disables the filter we preserve the
+  // raw provider transcript EXACTLY (no probability gating, no phrase
+  // filtering). Otherwise we drop near-certain-silence segments via
+  // `gateSilentSegments` and filter known silence phrases. Long audio that is
+  // split into multiple provider chunks is gated per-chunk in the repo before
+  // merging, so `transcribeOutput.segments` here covers the single-segment case
+  // (and is undefined, triggering a fall back to the raw text, when the
+  // provider returned no verbose segments).
+  const hallucinationFilterEnabled =
+    state.userPrefs?.hallucinationFilterEnabled !== false;
+
+  // Multi-chunk audio already gated and overlap-merged in the repo. Passing
+  // flattened segments here would rebuild text and reintroduce overlap dupes.
+  const sanitizedTranscript = applyHallucinationFiltering(
+    rawTranscript,
+    transcribeOutput.segments,
+    dictationLanguage,
+    hallucinationFilterEnabled,
+  );
+
+  if (rawTranscript !== sanitizedTranscript) {
+    getLogger().info(
+      "Removed a known silence hallucination from transcription",
+    );
+  }
 
   getLogger().info(
-    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
+    `Transcription complete in ${Math.round(transcribeDuration)}ms (${rawTranscript.length} raw chars, ${sanitizedTranscript.length} sanitized chars, mode=${transcribeOutput.metadata?.transcriptionMode ?? "unknown"})`,
   );
 
   metadata.modelSize =
@@ -180,138 +229,305 @@ export const transcribeAudio = async ({
 
   return {
     rawTranscript,
+    sanitizedTranscript,
     warnings: dedup(warnings),
     metadata,
+    segments: transcribeOutput.segments ?? null,
   };
 };
 
 /**
- * Post-process a raw transcript using LLM.
- * This is the second step - cleans up and formats the transcript based on tone.
+ * Parse and validate the LLM's JSON post-processing response. Returns the
+ * cleaned transcript on success, or the raw transcript plus a warning on
+ * any parse/validation failure.
  */
-export const postProcessTranscript = async ({
+const parseProcessedTranscript = (
+  raw: string,
+  fallback: string,
+): { transcript: string; warning: string | null } => {
+  try {
+    const parsed = unwrapNestedLlmResponse(
+      parsePostProcessingJson(raw) as Record<string, unknown>,
+      "processedTranscription",
+    );
+    const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
+    if (!validationResult.success) {
+      return {
+        transcript: fallback,
+        warning: `Post-processing response validation failed: ${validationResult.error.message}`,
+      };
+    }
+    return { transcript: validationResult.data.result.trim(), warning: null };
+  } catch (e) {
+    const message = unknownToMessage(e);
+    const truncationHint = /Unterminated string/i.test(message)
+      ? " The model output may have been truncated at its token limit."
+      : "";
+    return {
+      transcript: fallback,
+      warning: `Failed to parse post-processing response: ${message}.${truncationHint}`,
+    };
+  }
+};
+
+type RunPostProcessingRequestArgs = {
+  state: AppState;
+  rawTranscript: string;
+  toneId: Nullable<string>;
+  toneName: Nullable<string>;
+  dictationLanguageOverride?: string;
+  genRepo: NonNullable<ReturnType<typeof getGenerateTextRepo>["repo"]>;
+  genApiKeyId: Nullable<string>;
+  genProvider: Nullable<string>;
+  metadata: PostProcessMetadata;
+  warnings: string[];
+};
+
+const fallbackValue = (value: Nullable<string>, fallback: string): string =>
+  value ?? fallback;
+
+const resolvePostProcessingLanguage = async (
+  state: AppState,
+  override?: string,
+): Promise<string> =>
+  override
+    ? coerceToDictationLanguage(override)
+    : await loadMyEffectiveDictationLanguage(state);
+
+const buildPostProcessingRequest = (
+  state: AppState,
+  rawTranscript: string,
+  toneId: Nullable<string>,
+  dictationLanguage: string,
+): { system: string; prompt: string } => {
+  const toneConfig = getToneConfig(state, toneId);
+  const input: PostProcessingPromptInput = {
+    transcript: rawTranscript,
+    userName: getMyUserName(state),
+    dictationLanguage,
+    tone: toneConfig,
+  };
+  return {
+    system: buildSystemPostProcessingTonePrompt(input),
+    prompt: buildPostProcessingPrompt(input),
+  };
+};
+
+const applyPostProcessSuccess = (
+  genOutput: GenerateTextOutput,
+  processedTranscript: string,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+  postprocessStart: number,
+): string => {
+  const postprocessDuration = performance.now() - postprocessStart;
+  metadata.postprocessDurationMs = Math.round(postprocessDuration);
+
+  getLogger().info(
+    `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
+  );
+  getLogger().verbose("LLM raw output length:", genOutput.text.length);
+
+  const parseResult = parseProcessedTranscript(
+    genOutput.text,
+    processedTranscript,
+  );
+  const nextTranscript = parseResult.transcript;
+  if (parseResult.warning) {
+    getLogger().warning(parseResult.warning);
+    warnings.push(parseResult.warning);
+  } else {
+    getLogger().verbose("Processed transcript length:", nextTranscript.length);
+  }
+
+  metadata.postProcessMode =
+    genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
+  metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+  // Clear any prior failure flags so a successful run never leaves a
+  // stale postProcessFailed=true on an updated row.
+  metadata.postProcessFailed = false;
+  metadata.postProcessError = null;
+  getLogger().verbose(
+    "Post-process mode:",
+    metadata.postProcessMode,
+    "device:",
+    metadata.postProcessDevice,
+  );
+  return nextTranscript;
+};
+
+const recordPostProcessFailure = (
+  error: unknown,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+  postprocessStart: number,
+): void => {
+  const postprocessDuration = performance.now() - postprocessStart;
+  metadata.postprocessDurationMs = Math.round(postprocessDuration);
+  metadata.postProcessFailed = true;
+  const message = unknownToMessage(error) || "Post-processing failed";
+  metadata.postProcessError = message;
+  getLogger().error(`Post-processing request failed: ${message}`);
+  warnings.push(message);
+};
+
+// Caller-owned output budget for post-processing. Kept next to the request
+// so the extracted helper cannot silently drop it again.
+const POST_PROCESS_MAX_TOKENS = 600;
+
+const beginPostProcessingRequest = ({
+  metadata,
+  toneName,
+  genApiKeyId,
+  genProvider,
+}: {
+  metadata: PostProcessMetadata;
+  toneName: Nullable<string>;
+  genApiKeyId: Nullable<string>;
+  genProvider: Nullable<string>;
+}): void => {
+  getLogger().verbose(
+    `Post-processing with tone=${fallbackValue(toneName, "default")}, provider=${fallbackValue(genProvider, "none")}, apiKeyId=${fallbackValue(genApiKeyId, "none")}`,
+  );
+
+  // Persist attribution BEFORE the network request so a 402, timeout, or
+  // cancellation still records which provider was selected. We never reset
+  // this to "none" on failure; that would hide the user's choice.
+  metadata.postProcessApiKeyId = genApiKeyId;
+  metadata.postProcessProvider = genProvider;
+  metadata.postProcessMode = "api";
+};
+
+const runPostProcessingRequest = async ({
+  state,
   rawTranscript,
   toneId,
-  dictationLanguage: dictationLanguageOverride,
-}: PostProcessInput): Promise<PostProcessResult> => {
-  const state = getAppState();
+  toneName,
+  dictationLanguageOverride,
+  genRepo,
+  genApiKeyId,
+  genProvider,
+  metadata,
+  warnings,
+}: RunPostProcessingRequestArgs): Promise<string> => {
+  beginPostProcessingRequest({
+    metadata,
+    toneName,
+    genApiKeyId,
+    genProvider,
+  });
 
-  const metadata: PostProcessMetadata = {};
-  const warnings: string[] = [];
+  const dictationLanguage = await resolvePostProcessingLanguage(
+    state,
+    dictationLanguageOverride,
+  );
+  const { system, prompt } = buildPostProcessingRequest(
+    state,
+    rawTranscript,
+    toneId,
+    dictationLanguage,
+  );
+  metadata.postProcessPrompt = prompt;
+  getLogger().verbose(
+    "Post-process language:",
+    dictationLanguage,
+    "toneName:",
+    fallbackValue(toneName, "unknown"),
+  );
+  getLogger().verbose(
+    "Post-process prompt length:",
+    prompt.length,
+    "system length:",
+    system.length,
+  );
 
-  const {
-    repo: genRepo,
-    apiKeyId: genApiKeyId,
-    warnings: genWarnings,
-  } = getGenerateTextRepo();
-  warnings.push(...genWarnings);
-
-  const tone = getToneById(state, toneId);
-  const toneProcessingDisabled = tone?.shouldDisablePostProcessing ?? false;
-
-  let processedTranscript = rawTranscript;
-  if (toneProcessingDisabled) {
-    getLogger().info(`Post-processing disabled for tone=${toneId}`);
-    metadata.postProcessMode = "none";
-  } else if (genRepo) {
-    getLogger().verbose(
-      `Post-processing with tone=${toneId ?? "default"}, apiKeyId=${genApiKeyId ?? "none"}`,
-    );
-    const dictationLanguage = dictationLanguageOverride
-      ? coerceToDictationLanguage(dictationLanguageOverride)
-      : await loadMyEffectiveDictationLanguage(state);
-    const toneConfig = getToneConfig(state, toneId);
-    getLogger().verbose(
-      "Post-process language:",
-      dictationLanguage,
-      "toneName:",
-      tone?.name ?? "unknown",
-    );
-
-    const promptInput: PostProcessingPromptInput = {
-      transcript: rawTranscript,
-      userName: getMyUserName(state),
-      dictationLanguage,
-      tone: toneConfig,
-    };
-    const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
-    const ppPrompt = buildPostProcessingPrompt(promptInput);
-    getLogger().verbose(
-      "Post-process prompt length:",
-      ppPrompt.length,
-      "system length:",
-      ppSystem.length,
-    );
-
-    const postprocessStart = performance.now();
-    getLogger().verbose("Calling LLM for post-processing");
+  const postprocessStart = performance.now();
+  getLogger().verbose("Calling LLM for post-processing");
+  getLogger().verbose(
+    `Post-processing budget: maxTokens=${POST_PROCESS_MAX_TOKENS}`,
+  );
+  try {
     const genOutput = await genRepo.generateText({
-      system: ppSystem,
-      prompt: ppPrompt,
+      system,
+      prompt,
       jsonResponse: {
         name: "transcription_cleaning",
         description: "JSON response with the processed transcription",
         schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
       },
+      maxTokens: POST_PROCESS_MAX_TOKENS,
     });
-    const postprocessDuration = performance.now() - postprocessStart;
-    metadata.postprocessDurationMs = Math.round(postprocessDuration);
-
-    getLogger().info(
-      `Post-processing complete in ${Math.round(postprocessDuration)}ms`,
+    return applyPostProcessSuccess(
+      genOutput,
+      rawTranscript,
+      metadata,
+      warnings,
+      postprocessStart,
     );
-    getLogger().verbose("LLM raw output length:", genOutput.text.length);
+  } catch (error) {
+    // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
+    // the raw transcript and the selected-provider attribution; do not
+    // throw into the dictation pipeline or wait for the unrelated 60s
+    // timeout. The sanitized message never includes the key, auth header,
+    // or transcript.
+    recordPostProcessFailure(error, metadata, warnings, postprocessStart);
+    return rawTranscript;
+  }
+};
 
-    try {
-      const parsed = unwrapNestedLlmResponse(
-        parsePostProcessingJson(genOutput.text) as Record<string, unknown>,
-        "processedTranscription",
-      );
-
-      const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
-      if (!validationResult.success) {
-        getLogger().warning(
-          "Post-processing validation failed:",
-          validationResult.error.message,
-        );
-        warnings.push(
-          `Post-processing response validation failed: ${validationResult.error.message}`,
-        );
-      } else {
-        processedTranscript = validationResult.data.result.trim();
-        getLogger().verbose(
-          "Processed transcript length:",
-          processedTranscript.length,
-        );
-      }
-    } catch (e) {
-      getLogger().error("Failed to parse post-processing response:", e);
-      const message = (e as Error).message;
-      const truncationHint = /Unterminated string/i.test(message)
-        ? " The model output may have been truncated at its token limit."
-        : "";
-      warnings.push(
-        `Failed to parse post-processing response: ${message}.${truncationHint}`,
-      );
-    }
-
-    metadata.postProcessPrompt = ppPrompt;
-    metadata.postProcessApiKeyId = genApiKeyId;
-    metadata.postProcessMode = genOutput.metadata?.postProcessingMode || null;
-    metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
-    getLogger().verbose(
-      "Post-process mode:",
-      metadata.postProcessMode,
-      "device:",
-      metadata.postProcessDevice,
-    );
-  } else {
+const applyPostProcessing = async (
+  { rawTranscript, toneId, dictationLanguage }: PostProcessInput,
+  state: AppState,
+  gen: ReturnType<typeof getGenerateTextRepo>,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+): Promise<string> => {
+  const tone = getToneById(state, toneId);
+  if (tone?.shouldDisablePostProcessing) {
+    getLogger().info(`Post-processing disabled for tone=${toneId}`);
+    metadata.postProcessMode = "none";
+    return rawTranscript;
+  }
+  if (!gen.repo) {
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
+    return rawTranscript;
   }
+  return await runPostProcessingRequest({
+    state,
+    rawTranscript,
+    toneId,
+    toneName: tone?.name ?? null,
+    dictationLanguageOverride: dictationLanguage,
+    genRepo: gen.repo,
+    genApiKeyId: gen.apiKeyId,
+    genProvider: gen.provider,
+    metadata,
+    warnings,
+  });
+};
+
+export const postProcessTranscript = async (
+  input: PostProcessInput,
+): Promise<PostProcessResult> => {
+  const state = getAppState();
+
+  const metadata: PostProcessMetadata = {};
+  const warnings: string[] = [];
+
+  const gen = getGenerateTextRepo();
+  warnings.push(...gen.warnings);
+
+  const transcript = await applyPostProcessing(
+    input,
+    state,
+    gen,
+    metadata,
+    warnings,
+  );
 
   return {
-    transcript: processedTranscript,
+    transcript,
     warnings: dedup(warnings),
     metadata,
   };
@@ -334,27 +550,139 @@ export type StoreTranscriptionOutput = {
   wordCount: number;
 };
 
+const getSampleCount = (samples: StopRecordingResponse["samples"]): number =>
+  samples ? samples.length : 0;
+
+const getWordsAdded = (transcript: string | null): number =>
+  transcript ? countWords(transcript) : 0;
+
+const recordUsageWords = async (wordsAdded: number): Promise<void> => {
+  if (wordsAdded <= 0) {
+    return;
+  }
+  try {
+    await addWordsToCurrentUser(wordsAdded);
+  } catch (error) {
+    console.error("Failed to update usage metrics", error);
+  }
+};
+
+const persistAudioSnapshot = async (
+  transcriptionId: string,
+  samples: number[] | Float32Array,
+  sampleRate: number,
+): Promise<TranscriptionAudioSnapshot | undefined> => {
+  try {
+    return await invoke<TranscriptionAudioSnapshot>(
+      "store_transcription_audio",
+      {
+        id: transcriptionId,
+        samples,
+        sampleRate,
+      },
+    );
+  } catch (error) {
+    console.error("Failed to persist audio snapshot", error);
+    return undefined;
+  }
+};
+
+const buildTranscriptionRecord = ({
+  input,
+  transcriptionId,
+  audioSnapshot,
+  transcriptionFailed,
+  createdAt,
+  createdByUserId,
+}: {
+  input: StoreTranscriptionInput;
+  transcriptionId: string;
+  audioSnapshot: TranscriptionAudioSnapshot | undefined;
+  transcriptionFailed: boolean;
+  createdAt: string;
+  createdByUserId: string;
+}): Transcription => ({
+  id: transcriptionId,
+  transcript: !transcriptionFailed
+    ? (input.transcript ?? "")
+    : "[Transcription Failed]",
+  createdAt,
+  createdByUserId,
+  isDeleted: false,
+  audio: audioSnapshot,
+  modelSize: orNull(input.transcriptionMetadata.modelSize),
+  inferenceDevice: orNull(input.transcriptionMetadata.inferenceDevice),
+  rawTranscript: input.rawTranscript ?? input.transcript ?? "",
+  sanitizedTranscript: orNull(input.sanitizedTranscript),
+  transcriptionPrompt: orNull(input.transcriptionMetadata.transcriptionPrompt),
+  postProcessPrompt: orNull(input.postProcessMetadata.postProcessPrompt),
+  transcriptionApiKeyId: orNull(
+    input.transcriptionMetadata.transcriptionApiKeyId,
+  ),
+  postProcessApiKeyId: orNull(input.postProcessMetadata.postProcessApiKeyId),
+  transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
+  postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
+  postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
+  postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
+  postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
+  postProcessError: orNull(input.postProcessMetadata.postProcessError),
+  transcriptionDurationMs: orNull(
+    input.transcriptionMetadata.transcriptionDurationMs,
+  ),
+  postprocessDurationMs: orNull(
+    input.postProcessMetadata.postprocessDurationMs,
+  ),
+  warnings: input.warnings.length > 0 ? input.warnings : null,
+  remoteStatus: orNull(input.remoteStatus),
+  remoteDeviceId: orNull(input.remoteDeviceId),
+});
+
+const persistTranscription = async (
+  transcription: Transcription,
+): Promise<Transcription | null> => {
+  try {
+    const stored =
+      await getTranscriptionRepo().createTranscription(transcription);
+    produceAppState((draft) => {
+      draft.transcriptionById[stored.id] = stored;
+      const existingIds = draft.transcriptions.transcriptionIds.filter(
+        (identifier) => identifier !== stored.id,
+      );
+      draft.transcriptions.transcriptionIds = [stored.id, ...existingIds];
+    });
+    return stored;
+  } catch (error) {
+    console.error("Failed to store transcription", error);
+    showErrorSnackbar("Unable to save transcription. Please try again.");
+    return null;
+  }
+};
+
+const purgeStaleAudioSnapshots = async (): Promise<void> => {
+  try {
+    const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
+    if (purgedIds.length === 0) {
+      return;
+    }
+    produceAppState((draft) => {
+      for (const purgedId of purgedIds) {
+        const purged = draft.transcriptionById[purgedId];
+        if (purged) {
+          delete purged.audio;
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Failed to purge stale audio snapshots", error);
+  }
+};
+
 export const storeTranscription = async (
   input: StoreTranscriptionInput,
 ): Promise<StoreTranscriptionOutput> => {
   getLogger().verbose("Storing transcription record");
   const rate = input.audio.sampleRate;
-
-  const sampleCount = (() => {
-    const samples = input.audio.samples as unknown;
-    if (Array.isArray(samples)) {
-      return samples.length;
-    }
-
-    if (
-      samples &&
-      typeof (samples as { length?: number }).length === "number"
-    ) {
-      return (samples as { length: number }).length;
-    }
-
-    return 0;
-  })();
+  const sampleCount = getSampleCount(input.audio.samples);
 
   if (rate == null || Number.isNaN(rate)) {
     getLogger().error("Received audio payload without sample rate");
@@ -362,137 +690,76 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: 0 };
   }
 
+  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
+  const transcriptionFailed =
+    input.rawTranscript === null && input.warnings.length > 0;
+
   if (rate <= 0 || sampleCount === 0) {
-    getLogger().warning(
-      `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
-    );
-    return { transcription: null, wordCount: 0 };
+    if (hasText) {
+      getLogger().warning(
+        `Storing text record with empty audio (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else if (transcriptionFailed) {
+      getLogger().warning(
+        `Storing transcription-failure marker (rate=${rate}, sampleCount=${sampleCount})`,
+      );
+    } else {
+      getLogger().warning(
+        `Skipping store: rate=${rate}, sampleCount=${sampleCount}`,
+      );
+      return { transcription: null, wordCount: 0 };
+    }
   }
 
   const state = getAppState();
-  const incognitoEnabled = state.userPrefs?.incognitoModeEnabled ?? false;
-  const includeInStats = state.userPrefs?.incognitoModeIncludeInStats ?? false;
-  const wordsAdded = input.transcript ? countWords(input.transcript) : 0;
+  const incognitoEnabled = orFalse(state.userPrefs?.incognitoModeEnabled);
+  const includeInStats = orFalse(state.userPrefs?.incognitoModeIncludeInStats);
+  const preserveAudioOnFailure =
+    state.userPrefs?.preserveAudioOnFailure ?? true;
+  const wordsAdded = getWordsAdded(input.transcript);
+  const transcriptionId = createId();
 
   if (incognitoEnabled) {
     getLogger().verbose(
       `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
     );
     if (wordsAdded > 0 && includeInStats) {
-      try {
-        await addWordsToCurrentUser(wordsAdded);
-      } catch (error) {
-        console.error("Failed to update usage metrics", error);
-      }
+      await recordUsageWords(wordsAdded);
     }
 
     return { transcription: null, wordCount: wordsAdded };
   }
 
-  // Coerce the samples to an Array regardless of whether the IPC layer
-  // returned a plain Array or a typed-array-like. The rate<=0 / empty
-  // short-circuit above already guarantees this path is non-empty.
+  // Skip the audio write entirely when the user has opted out of retaining
+  // failed recordings, so we don't leak a WAV on disk with no DB pointer to
+  // ever purge it from.
+  const shouldPersistAudio =
+    rate > 0 &&
+    sampleCount > 0 &&
+    !(transcriptionFailed && !preserveAudioOnFailure);
   const payloadSamples = Array.isArray(input.audio.samples)
     ? input.audio.samples
     : Array.from(input.audio.samples ?? []);
+  const audioSnapshot = shouldPersistAudio
+    ? await persistAudioSnapshot(transcriptionId, payloadSamples, rate)
+    : undefined;
 
-  const transcriptionId = createId();
-
-  let audioSnapshot: TranscriptionAudioSnapshot | undefined;
-  if (!incognitoEnabled) {
-    try {
-      audioSnapshot = await invoke<TranscriptionAudioSnapshot>(
-        "store_transcription_audio",
-        {
-          id: transcriptionId,
-          samples: payloadSamples,
-          sampleRate: rate,
-        },
-      );
-    } catch (error) {
-      console.error("Failed to persist audio snapshot", error);
-    }
-  }
-
-  const transcriptionFailed =
-    input.rawTranscript === null && input.warnings.length > 0;
-
-  const transcription: Transcription = {
-    id: transcriptionId,
-    transcript: !transcriptionFailed
-      ? (input.transcript ?? "")
-      : "[Transcription Failed]",
+  const transcription = buildTranscriptionRecord({
+    input,
+    transcriptionId,
+    audioSnapshot,
+    transcriptionFailed,
     createdAt: dayjs().toISOString(),
     createdByUserId: getMyEffectiveUserId(state),
-    isDeleted: false,
-    audio: audioSnapshot,
-    modelSize: input.transcriptionMetadata.modelSize ?? null,
-    inferenceDevice: input.transcriptionMetadata.inferenceDevice ?? null,
-    rawTranscript: input.rawTranscript ?? input.transcript ?? "",
-    sanitizedTranscript: input.sanitizedTranscript ?? null,
-    transcriptionPrompt:
-      input.transcriptionMetadata.transcriptionPrompt ?? null,
-    postProcessPrompt: input.postProcessMetadata.postProcessPrompt ?? null,
-    transcriptionApiKeyId:
-      input.transcriptionMetadata.transcriptionApiKeyId ?? null,
-    postProcessApiKeyId: input.postProcessMetadata.postProcessApiKeyId ?? null,
-    transcriptionMode: input.transcriptionMetadata.transcriptionMode ?? null,
-    postProcessMode: input.postProcessMetadata.postProcessMode ?? null,
-    postProcessDevice: input.postProcessMetadata.postProcessDevice ?? null,
-    transcriptionDurationMs:
-      input.transcriptionMetadata.transcriptionDurationMs ?? null,
-    postprocessDurationMs:
-      input.postProcessMetadata.postprocessDurationMs ?? null,
-    warnings: input.warnings.length > 0 ? input.warnings : null,
-    remoteStatus: input.remoteStatus ?? null,
-    remoteDeviceId: input.remoteDeviceId ?? null,
-  };
+  });
 
-  let storedTranscription: Transcription;
-
-  try {
-    storedTranscription =
-      await getTranscriptionRepo().createTranscription(transcription);
-  } catch (error) {
-    console.error("Failed to store transcription", error);
-    showErrorSnackbar("Unable to save transcription. Please try again.");
+  const storedTranscription = await persistTranscription(transcription);
+  if (!storedTranscription) {
     return { transcription: null, wordCount: 0 };
   }
 
-  produceAppState((draft) => {
-    draft.transcriptionById[storedTranscription.id] = storedTranscription;
-    const existingIds = draft.transcriptions.transcriptionIds.filter(
-      (identifier) => identifier !== storedTranscription.id,
-    );
-    draft.transcriptions.transcriptionIds = [
-      storedTranscription.id,
-      ...existingIds,
-    ];
-  });
-
-  if (wordsAdded > 0) {
-    try {
-      await addWordsToCurrentUser(wordsAdded);
-    } catch (error) {
-      console.error("Failed to update usage metrics", error);
-    }
-  }
-
-  try {
-    const purgedIds = await getTranscriptionRepo().purgeStaleAudio();
-    if (purgedIds.length > 0) {
-      produceAppState((draft) => {
-        for (const purgedId of purgedIds) {
-          const purged = draft.transcriptionById[purgedId];
-          if (purged) {
-            delete purged.audio;
-          }
-        }
-      });
-    }
-  } catch (error) {
-    console.error("Failed to purge stale audio snapshots", error);
-  }
+  await recordUsageWords(wordsAdded);
+  await purgeStaleAudioSnapshots();
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
 };

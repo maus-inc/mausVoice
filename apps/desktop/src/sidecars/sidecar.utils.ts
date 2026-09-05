@@ -1,4 +1,4 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 
 export type Deferred<T> = {
   promise: Promise<T>;

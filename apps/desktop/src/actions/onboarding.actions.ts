@@ -9,6 +9,7 @@ import {
 import { getAppState, produceAppState } from "../store";
 import { CURRENT_COHORT } from "../utils/analytics.utils";
 import { DEFAULT_DICTATION_LIMIT_MINUTES } from "../utils/dictation-limit.utils";
+import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   EMAIL_TONE_ID,
@@ -188,6 +189,7 @@ export const submitOnboarding = async () => {
       ignoreUpdateDialog: false,
       incognitoModeEnabled: false,
       incognitoModeIncludeInStats: false,
+      preserveAudioOnFailure: true,
       dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
       dictationPillVisibility: "persistent",
       realtimeOutputEnabled: false,
@@ -201,7 +203,18 @@ export const submitOnboarding = async () => {
       insertionMethod: null,
       typingSpeedMs: null,
       pillResetMonitorStrategy: "current",
+      pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
+      handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+      inDictationStyleSwitchingEnabled: false,
+      hallucinationFilterEnabled: true,
+      reviewBeforeInsert: null,
+      agentEnabledTools: null,
+      agentMaxIterations: 20,
+      agentPermissionTimeoutMs: 60_000,
+      spokenCommandsEnabled: true,
+      autoLearnDictionaryEnabled: true,
+      autoLearnFromEditsEnabled: false,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

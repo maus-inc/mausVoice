@@ -1,5 +1,12 @@
 import OpenAI from "openai";
-import { retry, countWords } from "@maus-inc/utilities";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
+import { retry } from "@maus-inc/utilities";
+import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
+import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -24,10 +31,31 @@ export const OPENROUTER_FAVORITE_MODELS = [
   "openai/gpt-oss-20b",
 ] as const;
 
-/**
- * Default model for testing and fallback
- */
-export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
+/** Default generation model when no selection is saved. */
+export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
+
+// OpenRouter routes requests to many providers; most reject `json_schema`
+// and only accept the legacy `json_object` shape. Use `json_schema` only for
+// models that explicitly support structured outputs upstream.
+const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
+  "openai/gpt-4o",
+  "openai/gpt-4o-mini",
+  "openai/gpt-4-turbo",
+  "openai/gpt-3.5-turbo",
+  "openai/gpt-5.2",
+  "openai/gpt-5.3",
+  "openai/gpt-5.4",
+  "openai/gpt-oss-20b",
+  "openai/gpt-oss-120b",
+  "moonshotai/kimi-k2-instruct-0905",
+]);
+
+const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
+  buildJsonSchemaResponseFormat(
+    model,
+    JSON_SCHEMA_SUPPORTED_MODELS,
+    jsonResponse,
+  );
 
 /**
  * Create OpenAI client configured for OpenRouter
@@ -135,6 +163,7 @@ export type OpenRouterGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   providerRouting?: OpenRouterProviderRouting;
   customFetch?: CustomFetch;
+  maxTokens?: number;
 };
 
 export type OpenRouterGenerateTextOutput = {
@@ -154,41 +183,31 @@ export const openrouterGenerateTextResponse = async ({
   jsonResponse,
   providerRouting,
   customFetch,
+  maxTokens,
 }: OpenRouterGenerateTextArgs): Promise<OpenRouterGenerateTextOutput> => {
   return retry({
     retries: 3,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-      messages.push({ role: "user", content: prompt });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt,
+      });
 
-      // Build the request with optional provider routing
-      const requestParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
+      const response_format = buildResponseFormat(model, jsonResponse);
+
+      const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       };
 
-      // Add provider routing if specified
       if (providerRouting) {
         requestParams.provider = providerRouting;
       }
@@ -196,19 +215,10 @@ export const openrouterGenerateTextResponse = async ({
       const response = await client.chat.completions.create(requestParams);
 
       console.log("openrouter llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenRouter");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      return {
-        text: result,
-        tokensUsed: response.usage?.total_tokens ?? countWords(result),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenRouter",
+      });
     },
   });
 };
@@ -222,33 +232,50 @@ export type OpenRouterTestIntegrationArgs = {
   customFetch?: CustomFetch;
 };
 
-/**
- * Test if an OpenRouter API key is valid by making a simple chat completion.
- */
+/** Test authentication without depending on a fixed inference model. */
 export const openrouterTestIntegration = async ({
   apiKey,
   customFetch,
 }: OpenRouterTestIntegrationArgs): Promise<boolean> => {
   const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
+};
 
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: 'Reply with the single word "Hello."',
-      },
-    ],
-    model: OPENROUTER_DEFAULT_MODEL,
-    temperature: 0,
-    max_tokens: 32,
+// ============================================================================
+// Transcribe Audio
+// ============================================================================
+
+export type OpenRouterTranscriptionArgs = {
+  apiKey: string;
+  model: string;
+  blob: ArrayBuffer | Buffer;
+  ext: string;
+  prompt?: string;
+  language?: string;
+};
+
+export type OpenRouterTranscribeAudioOutput = {
+  text: string;
+  wordsUsed: number;
+};
+
+export const openrouterTranscribeAudio = async ({
+  apiKey,
+  model,
+  blob,
+  ext,
+  prompt,
+  language,
+}: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
+  return openaiCompatibleTranscribeAudio({
+    client: createClient(apiKey),
+    blob,
+    model,
+    ext,
+    prompt,
+    language,
   });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenRouter");
-  }
-
-  const content = response.choices[0]?.message?.content ?? "";
-  return content.toLowerCase().includes("hello");
 };
 
 // ============================================================================

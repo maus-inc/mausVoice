@@ -13,6 +13,8 @@ import type {
 import { getIsAssistantModeEnabled } from "../utils/assistant-mode.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
+import { filterKnownSilenceHallucinations } from "../utils/string.utils";
+import { getMyDictationLanguage } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
 
 export class AgentStrategy extends BaseStrategy {
@@ -78,8 +80,29 @@ export class AgentStrategy extends BaseStrategy {
     }
 
     try {
-      getLogger().info(`Sending chat message (${rawTranscript.length} chars)`);
-      await sendChatMessage(this.conversationId, rawTranscript);
+      const sanitizedTranscript =
+        getAppState().userPrefs?.hallucinationFilterEnabled === false
+          ? rawTranscript
+          : filterKnownSilenceHallucinations(
+              rawTranscript,
+              getMyDictationLanguage(getAppState()),
+            );
+      if (!sanitizedTranscript.trim()) {
+        getLogger().info(
+          "Skipping empty chat message after hallucination filtering",
+        );
+        return {
+          shouldContinue: false,
+          transcript: null,
+          sanitizedTranscript: null,
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+        };
+      }
+      getLogger().info(
+        `Sending chat message (${sanitizedTranscript.length} chars)`,
+      );
+      await sendChatMessage(this.conversationId, sanitizedTranscript);
 
       return {
         shouldContinue: true,

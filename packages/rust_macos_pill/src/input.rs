@@ -13,7 +13,19 @@ fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     // since the flash can be wider than the draw area (it extends into the
     // content-offset margins). The FlashAction region has exact coordinates.
     let regions = state.click_regions.borrow();
-    regions.iter().any(|r| matches!(r.action, ClickAction::FlashAction) && r.contains(x, y))
+    regions.iter().any(|r| {
+        matches!(
+            r.action,
+            ClickAction::FlashAction | ClickAction::FlashReject
+        ) && r.contains(x, y)
+    })
+}
+
+/// A23: Dispatch haptic/audio feedback to the desktop process.
+fn send_haptic(kind: &str) {
+    ipc::send(&OutMessage::HapticFeedback {
+        kind: kind.to_string(),
+    });
 }
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
@@ -27,6 +39,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // Loading owns the current operation; another body click
+                    // must not emit feedback or start a second action.
+                    if !rust_pill_shared::can_emit_interaction_feedback(
+                        true,
+                        state.phase.get() == Phase::Loading,
+                    ) {
+                        return;
+                    }
+                    send_haptic("press");
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);
                     } else {
@@ -34,9 +55,11 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
                 }
                 ClickAction::StyleBackward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
@@ -52,12 +75,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ipc::send(&OutMessage::EnableTypeMode);
                 }
                 ClickAction::CancelDictation => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::CancelDictation);
                 }
                 ClickAction::PauseDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::PauseDictation);
                 }
                 ClickAction::ResumeDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::ResumeDictation);
                 }
                 ClickAction::PermissionAllow(id) => {
@@ -86,10 +112,27 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     if let Some(ref action) = *state.flash_action.borrow() {
                         ipc::send(&OutMessage::ToastAction { action: action.clone() });
                     }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
+                }
+                ClickAction::FlashReject => {
+                    if let Some(ref action) = *state.flash_reject_action.borrow() {
+                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                    }
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
                 }
             }
             return;

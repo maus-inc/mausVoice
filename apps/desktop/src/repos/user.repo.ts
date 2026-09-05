@@ -1,8 +1,30 @@
 import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
+import { orFalse, orNull, orUndefined, orValue } from "../utils/nullable.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
+
+const getOnboardedAt = (isOnboarded: boolean): string | null =>
+  isOnboarded ? nowIso() : null;
+
+const parseActiveToneIds = (
+  activeToneIds: string | null | undefined,
+): User["activeToneIds"] => {
+  if (!activeToneIds) {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(activeToneIds);
+    if (!Array.isArray(parsed) || parsed.some((id) => typeof id !== "string")) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    // Malformed stored JSON must not break loading the user record.
+    return null;
+  }
+};
 
 type LocalUser = {
   id: string;
@@ -17,6 +39,7 @@ type LocalUser = {
   wordsThisMonthMonth: string | null;
   wordsTotal: number;
   playInteractionChime?: boolean;
+  interactionFeedbackVolume?: number | null;
   hasFinishedTutorial?: boolean;
   cohort?: string | null;
   stylingMode?: string | null;
@@ -40,28 +63,27 @@ const fromLocalUser = (localUser: LocalUser): User => {
     createdAt: nowIso(),
     updatedAt: nowIso(),
     name: localUser.name,
-    bio: bio.length > 0 ? bio : null,
-    company: localUser.company ?? null,
-    title: localUser.title ?? null,
+    bio: bio || null,
+    company: orNull(localUser.company),
+    title: orNull(localUser.title),
     onboarded: isOnboarded,
-    onboardedAt: isOnboarded ? nowIso() : null,
+    onboardedAt: getOnboardedAt(isOnboarded),
     timezone: null,
-    preferredMicrophone: localUser.preferredMicrophone ?? null,
-    preferredLanguage: localUser.preferredLanguage ?? null,
-    wordsThisMonth: localUser.wordsThisMonth ?? 0,
-    wordsThisMonthMonth: localUser.wordsThisMonthMonth ?? null,
-    wordsTotal: localUser.wordsTotal ?? 0,
+    preferredMicrophone: orNull(localUser.preferredMicrophone),
+    preferredLanguage: orNull(localUser.preferredLanguage),
+    wordsThisMonth: orValue(localUser.wordsThisMonth, 0),
+    wordsThisMonthMonth: orNull(localUser.wordsThisMonthMonth),
+    wordsTotal: orValue(localUser.wordsTotal, 0),
     playInteractionChime,
-    hasFinishedTutorial: localUser.hasFinishedTutorial ?? false,
-    cohort: localUser.cohort ?? null,
+    interactionFeedbackVolume: orNull(localUser.interactionFeedbackVolume),
+    hasFinishedTutorial: orFalse(localUser.hasFinishedTutorial),
+    cohort: orNull(localUser.cohort),
     stylingMode: (localUser.stylingMode as User["stylingMode"]) ?? null,
-    selectedToneId: localUser.selectedToneId ?? null,
-    activeToneIds: localUser.activeToneIds
-      ? JSON.parse(localUser.activeToneIds)
-      : null,
-    streak: localUser.streak ?? undefined,
-    streakRecordedAt: localUser.streakRecordedAt ?? undefined,
-    referralSource: localUser.referralSource ?? undefined,
+    selectedToneId: orNull(localUser.selectedToneId),
+    activeToneIds: parseActiveToneIds(localUser.activeToneIds),
+    streak: orUndefined(localUser.streak),
+    streakRecordedAt: orUndefined(localUser.streakRecordedAt),
+    referralSource: orUndefined(localUser.referralSource),
   };
 };
 
@@ -78,6 +100,7 @@ const toLocalUser = (user: User): LocalUser => ({
   wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
   wordsTotal: user.wordsTotal,
   playInteractionChime: user.playInteractionChime,
+  interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
   hasFinishedTutorial: user.hasFinishedTutorial,
   cohort: user.cohort ?? null,
   stylingMode: user.stylingMode ?? null,

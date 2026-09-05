@@ -10,12 +10,15 @@ import {
   azureOpenaiStreamChat,
   claudeGenerateTextResponse,
   claudeStreamChat,
+  CLAUDE_MODELS,
   ClaudeModel,
   cerebrasGenerateTextResponse,
   cerebrasStreamChat,
+  CEREBRAS_MODELS,
   CerebrasModel,
   deepseekGenerateTextResponse,
   deepseekStreamChat,
+  DEEPSEEK_MODELS,
   DeepseekModel,
   GeminiGenerateTextModel,
   geminiGenerateTextResponse,
@@ -39,6 +42,7 @@ export type GenerateTextInput = {
   system?: Nullable<string>;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
 };
 
 export type GenerateTextMetadata = {
@@ -64,9 +68,14 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.groqApiKey = apiKey;
-    this.model = GENERATE_TEXT_MODELS.includes(model as GenerateTextModel)
-      ? (model as GenerateTextModel)
-      : "openai/gpt-oss-20b";
+    // Membership test runs against the widened list because
+    // `GenerateTextModel` also carries runtime-discovered model ids, which
+    // are not in the literal `GENERATE_TEXT_MODELS` tuple.
+    const allowedModels: readonly string[] = GENERATE_TEXT_MODELS;
+    this.model =
+      model !== null && allowedModels.includes(model)
+        ? (model as GenerateTextModel)
+        : "openai/gpt-oss-20b";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -89,6 +98,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        maxTokens: input.maxTokens,
       });
     } catch (error) {
       if (this.model === this.fallbackModel) {
@@ -101,6 +111,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
+        maxTokens: input.maxTokens,
       });
     }
   }
@@ -131,6 +142,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -172,6 +184,7 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -215,6 +228,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -261,6 +275,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       providerRouting: this.providerRouting,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -301,6 +316,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -329,7 +345,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as DeepseekModel) ?? "deepseek-chat";
+    this.model = (model as DeepseekModel) ?? DEEPSEEK_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -339,6 +355,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -376,6 +393,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -403,7 +421,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as ClaudeModel) ?? "claude-sonnet-4-20250514";
+    this.model = (model as ClaudeModel) ?? CLAUDE_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -413,6 +431,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {
@@ -440,7 +459,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as CerebrasModel) ?? "zai-glm-4.7";
+    this.model = (model as CerebrasModel) ?? CEREBRAS_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -450,6 +469,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
     });
 
     return {

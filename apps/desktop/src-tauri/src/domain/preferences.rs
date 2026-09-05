@@ -56,6 +56,8 @@ pub struct UserPreferences {
     pub incognito_mode_enabled: bool,
     #[serde(default)]
     pub incognito_mode_include_in_stats: bool,
+    #[serde(default = "default_preserve_audio_on_failure")]
+    pub preserve_audio_on_failure: bool,
     #[serde(default = "default_dictation_limit_minutes")]
     pub dictation_limit_minutes: i64,
     #[serde(default = "default_dictation_pill_visibility")]
@@ -88,6 +90,59 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// Where the dictation pill anchors on screen. Accepted values are
+    /// "top" or "bottom"; any other value is treated as the default
+    /// "bottom" so legacy data never breaks the UI.
+    #[serde(default = "default_pill_placement")]
+    pub pill_placement: String,
+    /// Delay (ms) between a hands-free stop and the actual paste/type
+    /// action. NULL disables the delay (immediate paste on stop).
+    #[serde(default)]
+    pub hands_free_delay_ms: Option<i64>,
+    #[serde(default)]
+    pub in_dictation_style_switching_enabled: bool,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    pub hallucination_filter_enabled: bool,
+    #[serde(default)]
+    pub review_before_insert: Option<bool>,
+    #[serde(default)]
+    pub agent_enabled_tools: Option<String>,
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: i64,
+    #[serde(default = "default_agent_permission_timeout_ms")]
+    pub agent_permission_timeout_ms: i64,
+    /// Deterministic spoken formatting / scratch-that. Default on.
+    #[serde(default = "default_true")]
+    pub spoken_commands_enabled: bool,
+    /// Automatically add corrected names and words as glossary terms when
+    /// the user edits a transcription. Enabled by default.
+    #[serde(default = "default_auto_learn_dictionary_enabled")]
+    pub auto_learn_dictionary_enabled: bool,
+    /// Watch the target app after dictation and offer to add corrected names
+    /// as glossary terms. Disabled by default because it polls the focused
+    /// text field through the accessibility APIs.
+    #[serde(default)]
+    pub auto_learn_from_edits_enabled: bool,
+}
+
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
+fn default_agent_max_iterations() -> i64 {
+    20
+}
+
+fn default_agent_permission_timeout_ms() -> i64 {
+    60_000
+}
+
+fn default_auto_learn_dictionary_enabled() -> bool {
+    true
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -104,4 +159,12 @@ fn default_dictation_limit_minutes() -> i64 {
 
 fn default_dictation_audio_dim() -> f64 {
     1.0
+}
+
+fn default_preserve_audio_on_failure() -> bool {
+    true
+}
+
+fn default_pill_placement() -> String {
+    "bottom".to_string()
 }

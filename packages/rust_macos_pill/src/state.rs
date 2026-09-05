@@ -20,6 +20,7 @@ pub(crate) enum ClickAction {
     PermissionAlwaysAllow(String),
     SendButton,
     FlashAction,
+    FlashReject,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +125,7 @@ pub(crate) struct PillState {
     pub(crate) tooltip_t: Cell<f64>,
     pub(crate) tooltip_velocity: Cell<f64>,
     pub(crate) tooltip_width: Cell<f64>,
+    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
     pub(crate) ui_scale: f64,
 
     // Window sizing
@@ -179,6 +181,8 @@ pub(crate) struct PillState {
     pub(crate) flash_is_error: Cell<bool>,
     pub(crate) flash_action: RefCell<Option<String>>,
     pub(crate) flash_action_label: RefCell<Option<String>>,
+    pub(crate) flash_reject_action: RefCell<Option<String>>,
+    pub(crate) flash_reject_action_label: RefCell<Option<String>>,
 
     // Fireworks
     pub(crate) fireworks_active: Cell<bool>,
@@ -228,6 +232,8 @@ pub(crate) struct PillState {
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
+    pub(crate) drag_label_t: Cell<f64>,
+    pub(crate) drag_label_velocity: Cell<f64>,
 
     // Master alpha for the long-press outline. Driven by the tick: pinned at
     // 1 while the gesture is held, eased to 0 over LONG_PRESS_RING_FADE after
