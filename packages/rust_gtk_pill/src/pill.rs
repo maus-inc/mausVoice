@@ -892,12 +892,14 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
 }
 
 fn clear_flash(state: &PillState) {
-    state.flash_visible.set(false);
-    state.flash_timer.set(0.0);
-    *state.flash_action.borrow_mut() = None;
-    *state.flash_action_label.borrow_mut() = None;
-    *state.flash_reject_action.borrow_mut() = None;
-    *state.flash_reject_action_label.borrow_mut() = None;
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
 }
 
 fn tick(state: &PillState) {
@@ -1074,7 +1076,7 @@ fn tick_flash(state: &PillState, tooltip_revealed: bool) {
     }
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
-        state.flash_action.borrow().is_some(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_revealed,
     );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);

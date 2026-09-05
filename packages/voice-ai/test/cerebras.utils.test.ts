@@ -7,6 +7,6 @@ createOpenAICompatibleGenerateTests({
     return mod;
   },
   functionName: "cerebrasGenerateTextResponse",
-  defaultModel: "llama3.1-8b",
+  defaultModel: "gpt-oss-120b",
   maxTokensKey: "max_tokens",
 });

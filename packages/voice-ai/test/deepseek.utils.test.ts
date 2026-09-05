@@ -7,6 +7,6 @@ createOpenAICompatibleGenerateTests({
     return mod;
   },
   functionName: "deepseekGenerateTextResponse",
-  defaultModel: "deepseek-chat",
+  defaultModel: "deepseek-v4-flash",
   maxTokensKey: "max_tokens",
 });

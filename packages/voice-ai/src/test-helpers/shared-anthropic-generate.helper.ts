@@ -54,7 +54,7 @@ export function createAnthropicGenerateTests({
     it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
       const createMessage = buildCreateMessage();
 
-      const { createMessage: cm } = await runTestCase(createMessage, {
+      await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "hello",
       });
@@ -68,7 +68,7 @@ export function createAnthropicGenerateTests({
     it("forwards caller-owned maxTokens to max_tokens when provided", async () => {
       const createMessage = buildCreateMessage();
 
-      const { createMessage: cm } = await runTestCase(createMessage, {
+      await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "hello",
         maxTokens: forwardedMaxTokens,
@@ -93,7 +93,7 @@ export function createAnthropicGenerateTests({
         },
       };
 
-      const { createMessage: cm } = await runTestCase(createMessage, {
+      await runTestCase(createMessage, {
         apiKey: "test-key",
         prompt: "transcribe this",
         jsonResponse,

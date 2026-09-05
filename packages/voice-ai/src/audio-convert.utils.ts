@@ -21,8 +21,8 @@ export const convertFloat32ToBase64PCM16 = (
   const pcm16 = convertFloat32ToPCM16(float32Array);
   const bytes = new Uint8Array(pcm16);
   let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]!);
+  for (const byte of bytes) {
+    binary += String.fromCodePoint(byte);
   }
   return btoa(binary);
 };

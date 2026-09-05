@@ -1,10 +1,47 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-const buildCreateCompletion = (content: string, usage = { total_tokens: 5 }) =>
+const DEFAULT_USAGE = { total_tokens: 5 };
+
+const buildCreateCompletion = (
+  content: string,
+  usage: { total_tokens: number } = DEFAULT_USAGE,
+) =>
   vi.fn().mockResolvedValue({
     choices: [{ message: { content } }],
     usage,
   });
+
+async function runOpenAICompatTestCase(
+  {
+    loadModule,
+    functionName,
+  }: {
+    loadModule: () => Promise<Record<string, unknown>>;
+    functionName: string;
+  },
+  createCompletion: ReturnType<typeof buildCreateCompletion>,
+  params: Record<string, unknown>,
+) {
+  const chat = { completions: { create: createCompletion } };
+
+  vi.doMock("openai", () => ({
+    default: class MockOpenAI {
+      chat = chat;
+    },
+    AzureOpenAI: class MockAzureOpenAI {
+      chat = chat;
+    },
+  }));
+
+  const mod = await loadModule();
+  const fn = mod[functionName] as (
+    params: Record<string, unknown>,
+  ) => Promise<unknown>;
+
+  await fn(params);
+
+  return { createCompletion };
+}
 
 export function createOpenAICompatibleGenerateTests({
   describeName,
@@ -46,43 +83,22 @@ export function createOpenAICompatibleGenerateTests({
       },
     };
 
-    async function runTestCase(
+    const runTestCase = (
       createCompletion: ReturnType<typeof buildCreateCompletion>,
       params: Record<string, unknown>,
-    ) {
-      vi.doMock("openai", () => ({
-        default: class MockOpenAI {
-          chat = {
-            completions: {
-              create: createCompletion,
-            },
-          };
-        },
-        AzureOpenAI: class MockAzureOpenAI {
-          chat = {
-            completions: {
-              create: createCompletion,
-            },
-          };
-        },
-      }));
-
-      const mod = await loadModule();
-      const fn = mod[functionName] as (
-        params: Record<string, unknown>,
-      ) => Promise<unknown>;
-
-      await fn(params);
-
-      return { createCompletion };
-    }
+    ) =>
+      runOpenAICompatTestCase(
+        { loadModule, functionName },
+        createCompletion,
+        params,
+      );
 
     it("uses the hardcoded max_tokens when maxTokens is undefined", async () => {
       const createCompletion = buildCreateCompletion(
         JSON.stringify({ result: "ok" }),
       );
 
-      const { createCompletion: cc } = await runTestCase(createCompletion, {
+      await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hello",
@@ -100,7 +116,7 @@ export function createOpenAICompatibleGenerateTests({
         JSON.stringify({ result: "ok" }),
       );
 
-      const { createCompletion: cc } = await runTestCase(createCompletion, {
+      await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hello",
@@ -119,7 +135,7 @@ export function createOpenAICompatibleGenerateTests({
         JSON.stringify({ result: "ok" }),
       );
 
-      const { createCompletion: cc } = await runTestCase(createCompletion, {
+      await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hi",
@@ -135,7 +151,7 @@ export function createOpenAICompatibleGenerateTests({
     it("omits response_format when jsonResponse is not set", async () => {
       const createCompletion = buildCreateCompletion("ok");
 
-      const { createCompletion: cc } = await runTestCase(createCompletion, {
+      await runTestCase(createCompletion, {
         apiKey: "test-key",
         model: defaultModel,
         prompt: "hi",

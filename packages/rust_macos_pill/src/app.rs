@@ -658,12 +658,14 @@ fn update_hover(view: id, ctx: &AppContext) {
 // ── Animation tick ────────────────────────────────────────────────
 
 fn clear_flash(state: &PillState) {
-    state.flash_visible.set(false);
-    state.flash_timer.set(0.0);
-    *state.flash_action.borrow_mut() = None;
-    *state.flash_action_label.borrow_mut() = None;
-    *state.flash_reject_action.borrow_mut() = None;
-    *state.flash_reject_action_label.borrow_mut() = None;
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
 }
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs
@@ -796,7 +798,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
     let flash_target = rust_pill_shared::flash_banner_target(
         state.flash_visible.get(),
-        state.flash_action.borrow().is_some(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_target > 0.5,
     );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
