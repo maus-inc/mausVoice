@@ -137,4 +137,9 @@ describe("updaterRulePattern", () => {
     assert.equal(updaterRulePattern(`regex = 'x'\n`), null);
     assert.equal(updaterRulePattern(`${idLine}\nentropy = 3.5\n`), null);
   });
+
+  it("never attributes a later rule's regex to the updater rule", () => {
+    const toml = `[[rules]]\n${idLine}\nentropy = 3.5\n\n[[rules]]\nid = "another-rule"\nregex = 'dW50cnVzdGVk'\n`;
+    assert.equal(updaterRulePattern(toml), null);
+  });
 });

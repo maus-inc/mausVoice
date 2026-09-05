@@ -128,7 +128,12 @@ export function updaterRulePattern(rules) {
     UPDATER_RULE_ID_LINE.test(line.trim()),
   );
   if (idLineIndex === -1) return null;
-  const afterId = lines.slice(idLineIndex + 1).join("\n");
+  const afterIdLine = lines.slice(idLineIndex + 1).join("\n");
+  // The regex must belong to the updater rule itself. Stop at the next
+  // [[rules]] table so a regex from a later rule is never attributed to it.
+  const nextRulesTable = indexOfOutsideStrings(afterIdLine, "[[rules]]");
+  const afterId =
+    nextRulesTable === -1 ? afterIdLine : afterIdLine.slice(0, nextRulesTable);
   const keyMatch = /^[ \t]*regex[ \t]*=[ \t]*/m.exec(afterId);
   if (!keyMatch) return null;
   const valueStart = keyMatch.index + keyMatch[0].length;

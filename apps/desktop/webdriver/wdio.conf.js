@@ -43,6 +43,8 @@ const npmCliCandidates = [
     "bin",
     "npm-cli.js",
   ),
+  // Distros that ship npm as a separate system package (Debian, Ubuntu).
+  "/usr/share/nodejs/npm/bin/npm-cli.js",
 ];
 const npmCliPath = npmCliCandidates.find((candidate) =>
   fs.existsSync(candidate),
