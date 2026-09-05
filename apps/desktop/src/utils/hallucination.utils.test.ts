@@ -160,6 +160,19 @@ describe("applyHallucinationFiltering", () => {
     );
   });
 
+  it("inserts a space only where mixed kept segments lack a boundary", () => {
+    const raw = "Hello world today";
+    const segments = [
+      { text: "Hello", noSpeechProb: 0.1 },
+      { text: "noise", noSpeechProb: 0.99 },
+      { text: "world", noSpeechProb: 0.1 },
+      { text: " today", noSpeechProb: 0.1 },
+    ];
+    expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
+      "Hello world today",
+    );
+  });
+
   it("keeps a genuine standalone Best regards. sign-off under the filter", () => {
     const raw = "Please review the doc. Best regards.";
     expect(applyHallucinationFiltering(raw, undefined, "en", true)).toBe(

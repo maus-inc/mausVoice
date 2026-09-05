@@ -196,15 +196,15 @@ export const gateSilentSegments = (
     return null;
   }
   // Whisper-style verbose_json often embeds a leading space on each segment.
-  // Concatenate when boundary whitespace is already present so dropping a
-  // silent middle segment does not insert an extra space; otherwise join with
-  // a single space so providers that omit boundary whitespace stay readable.
+  // Join pairwise: keep existing boundary whitespace, and insert a single
+  // space only when adjacent kept segments have none (so mixed styles do not
+  // glue words or double-space). Collapse runs of space/tab only — leave
+  // newlines from spoken structural commands intact.
   const texts = kept.map((segment) => segment.text);
-  const hasBoundaryWhitespace = texts.some(
-    (text, index) =>
-      (index > 0 && /^\s/.test(text)) ||
-      (index < texts.length - 1 && /\s$/.test(text)),
-  );
-  const joined = hasBoundaryWhitespace ? texts.join("") : texts.join(" ");
+  const joined = texts.reduce((result, text, index) => {
+    if (index === 0) return text;
+    const hasBoundaryWhitespace = /^\s/.test(text) || /\s$/.test(result);
+    return `${result}${hasBoundaryWhitespace ? "" : " "}${text}`;
+  }, "");
   return joined.replace(/[ \t]+/g, " ").trim();
 };

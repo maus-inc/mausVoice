@@ -144,8 +144,10 @@ const updateStoredTranscription = async (
     transcriptionMode: metadata.transcriptionMode ?? null,
     postProcessMode: metadata.postProcessMode ?? null,
     postProcessDevice: metadata.postProcessDevice ?? null,
+    // Match create-path sentinels: null = not attempted, true = failed,
+    // false = succeeded (set explicitly on the success path).
     postProcessProvider: metadata.postProcessProvider ?? null,
-    postProcessFailed: metadata.postProcessFailed ?? false,
+    postProcessFailed: metadata.postProcessFailed ?? null,
     postProcessError: metadata.postProcessError ?? null,
     warnings: warnings.length > 0 ? warnings : null,
   });

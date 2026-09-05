@@ -24,12 +24,17 @@ import {
   incrementDictationBacklogNonce,
 } from "../utils/output-routing.utils";
 import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import { withTimeout } from "../utils/timeout.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
 import {
   getMyDictationLanguage,
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
+
+/** Cap how long start waits on focused-app resolution so a hung native call
+ * cannot block recording indefinitely. Misses leave currentAppId null. */
+const LOAD_APP_TARGET_TIMEOUT_MS = 1500;
 
 /**
  * Thin wrapper around the Tauri `check_focused_paste_target` command.
@@ -256,7 +261,11 @@ export class DictationStrategy extends BaseStrategy {
 
   async loadAppTarget(): Promise<void> {
     try {
-      const appTarget = await tryRegisterCurrentAppTarget();
+      const appTarget = await withTimeout(
+        tryRegisterCurrentAppTarget(),
+        LOAD_APP_TARGET_TIMEOUT_MS,
+        "loadAppTarget",
+      );
       this.currentAppId = appTarget?.id ?? null;
     } catch {
       getLogger().verbose("Failed to resolve current app target at start");
@@ -264,10 +273,9 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async onBeforeStart(): Promise<void> {
-    // Initialize session backlog state and resolve the focused app before any
-    // interim paste uses currentAppId. Style seeding happens in
-    // DictationSideEffects after loadManualStyleForCurrentApp; this await only
-    // owns app-id routing for the paste path.
+    // Initialize session backlog state, then block (with timeout) until the
+    // focused app id is known so interim paste has currentAppId. Style seeding
+    // is owned by DictationSideEffects after loadManualStyleForCurrentApp.
     clearDictationBacklog();
     incrementDictationBacklogNonce();
     await this.loadAppTarget();

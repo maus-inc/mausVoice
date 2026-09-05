@@ -227,7 +227,7 @@ describe("AgentLoop", () => {
   });
 
   it("aborts mid-loop and reports the aborted reason", async () => {
-    let resolveAbort: () => void = () => {};
+    let resolveAbort!: () => void;
     const abortGate = new Promise<void>((resolve) => {
       resolveAbort = resolve;
     });
@@ -259,10 +259,7 @@ describe("AgentLoop", () => {
   });
 
   it("still yields tool-call-result when abort wins after tool-call-start", async () => {
-    let resolveTool: (value: {
-      success: true;
-      result: string;
-    }) => void = () => {};
+    let resolveTool!: (value: { success: true; result: string }) => void;
     const toolGate = new Promise<{ success: true; result: string }>(
       (resolve) => {
         resolveTool = resolve;

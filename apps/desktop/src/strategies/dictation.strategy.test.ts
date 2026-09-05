@@ -132,7 +132,7 @@ describe("DictationStrategy backlog lifecycle", () => {
   });
 
   it("awaits app-target resolution before onBeforeStart completes", async () => {
-    let resolveTarget: (value: { id: string } | null) => void = () => {};
+    let resolveTarget!: (value: { id: string } | null) => void;
     const targetGate = new Promise<{ id: string } | null>((resolve) => {
       resolveTarget = resolve;
     });
