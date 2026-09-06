@@ -103,7 +103,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
-      return { response, model: this.model as string };
+      return { response, model: this.model };
     } catch (error) {
       if (this.model === this.fallbackModel) {
         throw error;
@@ -117,7 +117,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
-      return { response, model: this.fallbackModel as string };
+      return { response, model: this.fallbackModel };
     }
   }
 
