@@ -172,8 +172,6 @@ pub const AUTO_LEARN_DICTIONARY_MIGRATION_SQL: &str =
 /// Adds the `auto_learn_from_edits_enabled` preference column (default off).
 pub const AUTO_LEARN_FROM_EDITS_MIGRATION_SQL: &str =
     include_str!("migrations/085_auto_learn_from_edits.sql");
-/// Adds the `post_process_model` column to `transcriptions` so history can
-/// attribute which LLM model performed post-processing.
 pub const TRANSCRIPTION_POST_PROCESS_MODEL_MIGRATION_SQL: &str =
     include_str!("migrations/086_transcription_post_process_model.sql");
 

@@ -19,6 +19,7 @@ import {
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
 import {
   dismissToast,
+  runToast,
   showCompletionToast,
   showPersistentToast,
 } from "./toast.actions";
@@ -188,15 +189,13 @@ const releaseRetranscribeGeneration = (
   }
 };
 
-const ignoreToastFailure = (error: unknown): void => {
-  console.error("Retranscribe toast failed", error);
-};
-
-const runToast = (work: Promise<void>): void => {
-  void work.catch(ignoreToastFailure);
-};
-
 let ownsRetranscribeNativeToast = false;
+/**
+ * Bumped whenever a new batch of retranscribe loading feedback starts. A
+ * completion toast whose generation is stale must not replace the newer
+ * batch's loading toast.
+ */
+let retranscribeFeedbackGeneration = 0;
 
 const retranscribeFeedbackCopy = () => {
   const intl = getIntl();
@@ -217,6 +216,7 @@ const showRetranscribeLoadingFeedback = () => {
   const { loading } = retranscribeFeedbackCopy();
   showSnackbar(loading, { duration: RETRANSCRIBE_LOADING_SNACKBAR_MS });
   ownsRetranscribeNativeToast = true;
+  retranscribeFeedbackGeneration += 1;
   runToast(showPersistentToast(loading, RETRANSCRIBE_LOADING_SNACKBAR_MS));
 };
 
@@ -226,10 +226,19 @@ const showRetranscribeSuccessFeedback = () => {
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.
   ownsRetranscribeNativeToast = false;
+  // The dismiss is a round trip, so a new batch can start loading feedback
+  // before it resolves. Only show this completion toast while it is still the
+  // newest feedback, or it would replace the newer run's loading toast.
+  const generation = retranscribeFeedbackGeneration;
+  const showComplete = () => {
+    if (generation !== retranscribeFeedbackGeneration) {
+      return undefined;
+    }
+    return showCompletionToast(complete);
+  };
   // Show the completion toast even when the dismiss round trip fails, so a
   // transient IPC error cannot leave the user without the finished state.
   // Both handlers go on one `then` so the chain stays a single tick long.
-  const showComplete = () => showCompletionToast(complete);
   runToast(dismissToast().then(showComplete, showComplete));
 };
 

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
-import { showToast } from "../actions/toast.actions";
+import { runToast, showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
 import { getLogger } from "./log.utils";
 
@@ -205,15 +205,17 @@ export const reviewTextInComposer = async (
               () => {},
             );
           }
-          void showToast({
-            message: getIntl().formatMessage({
-              defaultMessage:
-                "Could not open the review window. Your transcript was saved to history.",
+          runToast(
+            showToast({
+              message: getIntl().formatMessage({
+                defaultMessage:
+                  "Could not open the review window. Your transcript was saved to history.",
+              }),
+              toastType: "error",
+              duration: 8000,
+              action: "open_transcriptions",
             }),
-            toastType: "error",
-            duration: 8000,
-            action: "open_transcriptions",
-          });
+          );
           finish(null);
         }, COMPOSER_READY_TIMEOUT_MS);
       };
@@ -342,15 +344,17 @@ export const reviewTextInComposer = async (
           // Surface a visible recovery action: the transcript was retained
           // in history, and the "Open history" button brings the main
           // window to the transcriptions list so the user does not lose it.
-          void showToast({
-            message: getIntl().formatMessage({
-              defaultMessage:
-                "Could not open the review window. Your transcript was saved to history.",
+          runToast(
+            showToast({
+              message: getIntl().formatMessage({
+                defaultMessage:
+                  "Could not open the review window. Your transcript was saved to history.",
+              }),
+              toastType: "error",
+              duration: 8000,
+              action: "open_transcriptions",
             }),
-            toastType: "error",
-            duration: 8000,
-            action: "open_transcriptions",
-          });
+          );
           finish(null);
         }
       })();

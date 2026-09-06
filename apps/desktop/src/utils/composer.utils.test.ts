@@ -125,7 +125,7 @@ const mocks = vi.hoisted(() => {
   const invoke = vi.fn();
   const getByLabel = vi.fn();
   const listen = vi.fn();
-  const showToast = vi.fn();
+  const showToast = vi.fn(async () => {});
   return { invoke, getByLabel, listen, showToast };
 });
 
@@ -172,7 +172,11 @@ vi.mock("../i18n/intl", () => {
   };
 });
 vi.mock("../actions/toast.actions", () => ({
-  showToast: (...args: unknown[]) => mocks.showToast(...args),
+  showToast: (...args: Parameters<typeof mocks.showToast>) =>
+    mocks.showToast(...args),
+  runToast: (work: Promise<void>) => {
+    void work.catch(() => undefined);
+  },
 }));
 vi.mock("./log.utils", () => ({
   getLogger: () => ({
@@ -191,6 +195,7 @@ describe("reviewTextInComposer", () => {
     mocks.getByLabel.mockReset();
     mocks.listen.mockReset();
     mocks.showToast.mockReset();
+    mocks.showToast.mockImplementation(async () => {});
     // Default: register/discard/destroy succeed; creation returns a window.
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") return { id: "floating-1" };
@@ -269,6 +274,7 @@ describe("reviewTextInComposer cleanup", () => {
     mocks.getByLabel.mockReset();
     mocks.listen.mockReset();
     mocks.showToast.mockReset();
+    mocks.showToast.mockImplementation(async () => {});
     mocks.invoke.mockResolvedValue(undefined);
     mocks.getByLabel.mockResolvedValue(null);
     mocks.listen.mockResolvedValue(vi.fn());
@@ -325,6 +331,7 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
     mocks.getByLabel.mockReset();
     mocks.listen.mockReset();
     mocks.showToast.mockReset();
+    mocks.showToast.mockImplementation(async () => {});
     mocks.invoke.mockResolvedValue(undefined);
     mocks.getByLabel.mockResolvedValue(null);
     mocks.listen.mockResolvedValue(vi.fn());

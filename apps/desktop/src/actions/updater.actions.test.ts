@@ -13,7 +13,12 @@ const { updaterMock, toastMock, invokeMock } = vi.hoisted(() => ({
     relaunchApp: vi.fn(async () => {}),
     isReadOnlyFilesystemInstallError: vi.fn(() => false),
   },
-  toastMock: { showToast: vi.fn(async () => {}) },
+  toastMock: {
+    showToast: vi.fn(async () => {}),
+    runToast: (work: Promise<void>) => {
+      void work.catch(() => undefined);
+    },
+  },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));

@@ -77,6 +77,17 @@ export async function dismissToast(): Promise<void> {
 }
 
 /**
+ * Fire a toast without awaiting it. Native toast IPC can reject, and a bare
+ * `void showToast(...)` would surface that as an unhandled rejection, so the
+ * failure is logged and swallowed here instead.
+ */
+export const runToast = (work: Promise<void>): void => {
+  void work.catch((error: unknown) => {
+    console.error("Toast command failed", error);
+  });
+};
+
+/**
  * In-flight toast. The native pill treats a missing duration as 2.5s
  * (`FLASH_DURATION`), so callers that want the toast to outlive a long job
  * must pass an explicit duration.

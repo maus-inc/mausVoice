@@ -41,6 +41,9 @@ vi.mock("../repos", () => ({
 
 vi.mock("./toast.actions", () => ({
   showToast: vi.fn(() => Promise.resolve()),
+  runToast: (work: Promise<void>) => {
+    void work.catch(() => undefined);
+  },
 }));
 
 vi.mock("../utils/log.utils", () => ({
