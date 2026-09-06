@@ -72,6 +72,11 @@ export const deleteConversation = async (id: string): Promise<void> => {
   // The flag stays set until the in-memory store is cleared, so a
   // send that races with produceAppState below still bails.
   deletingConversationIds.add(id);
+  // Stop any agent loop still running for this conversation. The run is not
+  // part of the send queue, so waiting for the queue would never stop it;
+  // without this abort a mid-run delete keeps spending LLM iterations and
+  // persists assistant messages against a row that is about to vanish.
+  abortAgent(id);
   try {
     // Wait for the in-flight send so its updateConversation cannot
     // fire after the repo delete. The queue's own rejection is
