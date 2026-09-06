@@ -35,6 +35,7 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { createMutationQueue } from "../utils/mutation-queue";
+import { pushPillPlacementToNative } from "./windows-sync.actions";
 import { sendPillFireworks, sendPillFlame } from "../utils/overlay.utils";
 import {
   getMyEffectiveUserId,
@@ -693,7 +694,7 @@ export const setPillPlacement = async (
     preferences.pillPlacement = placement;
   }, "Failed to save pill placement preference. Please try again.");
   try {
-    await invoke("set_pill_placement", { placement });
+    await pushPillPlacementToNative(placement);
   } catch (error) {
     getLogger().warning(
       `Failed to push pill placement to native pill: ${error}`,
