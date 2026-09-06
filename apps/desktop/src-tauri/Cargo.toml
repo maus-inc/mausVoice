@@ -122,7 +122,6 @@ windows = { version = "0.61.3", features = [
     "Win32_System_Power",
     "Win32_System_Console",
     "Win32_System_RemoteDesktop",
-    "Win32_System_StationsAndDesktops",
     "Win32_Security",
     "Win32_Media_Audio",
     "Win32_Media_Audio_Endpoints",
