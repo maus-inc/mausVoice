@@ -144,4 +144,6 @@ jobs:
         # generator example and fails on any diff. Guards against a command
         # added to app.rs/commands.rs without a matching bindings.ts entry
         # (or vice versa), which previously shipped silently.
+        env:
+          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         run: bash scripts/check-bindings.sh
