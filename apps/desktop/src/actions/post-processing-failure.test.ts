@@ -106,13 +106,16 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.metadata.postProcessError).toBeNull();
   });
 
-  it("captures the resolved post-processing model from generate-text metadata", async () => {
+  it.each([
+    ["captures the resolved model", "qwen-3-235b", "qwen-3-235b"],
+    ["leaves the model null when the repo reports none", undefined, null],
+  ])("%s", async (_name, reportedModel, expected) => {
     genRepo.generateText.mockResolvedValueOnce({
       text: JSON.stringify({ result: "Hello, world." }),
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Cerebras",
-        model: "qwen-3-235b",
+        ...(reportedModel === undefined ? {} : { model: reportedModel }),
       },
     });
 
@@ -121,23 +124,6 @@ describe("postProcessTranscript provider attribution on failure", () => {
       toneId: null,
     });
 
-    expect(result.metadata.postProcessModel).toBe("qwen-3-235b");
-  });
-
-  it("leaves the post-processing model null when the repo reports none", async () => {
-    genRepo.generateText.mockResolvedValueOnce({
-      text: JSON.stringify({ result: "Hello, world." }),
-      metadata: {
-        postProcessingMode: "api",
-        inferenceDevice: "API • Cerebras",
-      },
-    });
-
-    const result = await postProcessTranscript({
-      rawTranscript: "hello world",
-      toneId: null,
-    });
-
-    expect(result.metadata.postProcessModel).toBeNull();
+    expect(result.metadata.postProcessModel).toBe(expected);
   });
 });
