@@ -106,6 +106,37 @@ function section(text, startMarker, endMarker) {
   return end === -1 ? text.slice(after) : text.slice(after, end);
 }
 
+// True when the top-level section (before the first table) assigns
+// `useDefault = false` as a real TOML key outside any string. Prose like
+// `description = """ ... useDefault = false ... """` is content, not config,
+// and must never trip the guard (a false positive would block CI over a
+// comment).
+export function hasTopLevelUseDefaultFalse(topLevel) {
+  let cursor = 0;
+  while (cursor < topLevel.length) {
+    const at = indexOfOutsideStrings(topLevel, "useDefault", cursor);
+    if (at === -1) return false;
+    const before = topLevel[at - 1];
+    const after = topLevel[at + "useDefault".length];
+    const isWholeKey =
+      (before === undefined || /[\s=]/.test(before)) &&
+      (after === undefined || /[\s=]/.test(after));
+    if (!isWholeKey) {
+      cursor = at + 1;
+      continue;
+    }
+    const eq = indexOfOutsideStrings(topLevel, "=", at + "useDefault".length);
+    if (eq === -1) return false;
+    // Whitespace and # comments were already stripped, so the value begins
+    // immediately after the `=` token (possibly after spaces).
+    const valueStart = eq + 1;
+    const value = topLevel.slice(valueStart).trimStart().split(/\s+/)[0] ?? "";
+    if (value === "false") return true;
+    cursor = eq + 1;
+  }
+  return false;
+}
+
 // Everything from the first structural `[[rules]]` table to EOF, or null.
 export function rulesSection(raw) {
   const start = indexOfOutsideStrings(raw, "[[rules]]");
@@ -170,10 +201,7 @@ function main() {
   // and silently weakens the whole-repo scan to the single updater-key rule.
   const firstTable = indexOfOutsideStrings(raw, "[");
   const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
-  const useDefaultDisabled = topLevel
-    .split("\n")
-    .some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()));
-  if (useDefaultDisabled) {
+  if (hasTopLevelUseDefaultFalse(topLevel)) {
     fail(
       "gitleaks.toml: top-level `useDefault = false` disables the default " +
         "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",

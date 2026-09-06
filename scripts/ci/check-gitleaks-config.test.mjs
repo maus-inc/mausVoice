@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  hasTopLevelUseDefaultFalse,
   indexOfOutsideStrings,
   stripTomlComments,
   updaterRulePattern,
@@ -90,6 +91,40 @@ describe("indexOfOutsideStrings", () => {
 
   it("returns -1 for an unclosed string instead of matching inside it", () => {
     assert.equal(indexOfOutsideStrings(`a = "[allowlist]`, "[allowlist]"), -1);
+  });
+});
+
+describe("hasTopLevelUseDefaultFalse", () => {
+  it("detects the real top-level assignment (spaced and compact)", () => {
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault = false\n"), true);
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault=false\n"), true);
+  });
+
+  it("ignores prose inside a multi-line description string", () => {
+    const topLevel = [
+      'description = """',
+      "Do not set useDefault = false here;",
+      "this is documentation, not TOML.",
+      '"""',
+      "",
+    ].join("\n");
+    assert.equal(hasTopLevelUseDefaultFalse(topLevel), false);
+  });
+
+  it("ignores a single-line string value containing the text", () => {
+    assert.equal(
+      hasTopLevelUseDefaultFalse('description = "useDefault = false"\n'),
+      false,
+    );
+    assert.equal(
+      hasTopLevelUseDefaultFalse("description = 'useDefault = false'\n"),
+      false,
+    );
+  });
+
+  it("does not match a longer key or a different boolean", () => {
+    assert.equal(hasTopLevelUseDefaultFalse("useDefaultX = false\n"), false);
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault = true\n"), false);
   });
 });
 
