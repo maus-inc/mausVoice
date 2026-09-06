@@ -226,7 +226,11 @@ const showRetranscribeSuccessFeedback = () => {
   // The completion toast carries its own short duration, so the long-lived
   // loading toast is no longer ours once it is replaced.
   ownsRetranscribeNativeToast = false;
-  runToast(dismissToast().then(() => showCompletionToast(complete)));
+  // Show the completion toast even when the dismiss round trip fails, so a
+  // transient IPC error cannot leave the user without the finished state.
+  // Both handlers go on one `then` so the chain stays a single tick long.
+  const showComplete = () => showCompletionToast(complete);
+  runToast(dismissToast().then(showComplete, showComplete));
 };
 
 const dismissRetranscribeLoadingFeedback = () => {

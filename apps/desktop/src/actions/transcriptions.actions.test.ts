@@ -107,9 +107,9 @@ const mockSuccessfulPipeline = () => {
   );
   // vi.clearAllMocks() strips implementations, so these must be restored or
   // the toast helpers return undefined and their .then() chains reject.
-  showPersistentToast.mockResolvedValue(undefined);
-  showCompletionToast.mockResolvedValue(undefined);
-  dismissToast.mockResolvedValue(undefined);
+  showPersistentToast.mockResolvedValue();
+  showCompletionToast.mockResolvedValue();
+  dismissToast.mockResolvedValue();
 };
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -365,6 +365,19 @@ describe("retranscribeTranscription feedback", () => {
 
     // The long-lived loading toast must be dismissed, not left to expire.
     expect(dismissToast).toHaveBeenCalledTimes(1);
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+  });
+
+  it("still shows the completion toast when the dismiss fails", async () => {
+    seedTranscription("a");
+    // A failed dismiss round trip must not suppress the finished state.
+    vi.mocked(dismissToast).mockRejectedValueOnce(new Error("pill offline"));
+
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
     expect(showCompletionToast).toHaveBeenCalledWith(
       "Retranscription complete",
     );
