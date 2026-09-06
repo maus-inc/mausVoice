@@ -1,288 +1,292 @@
 # Reviewed state
 
-## What was reviewed
+Pull request: mausVoice #63, titled "superfixer pre 1.6 realease"
+Repository: maus-inc/mausVoice
+Base branch: main
+Original PR head: fix/superfix-review-findings at 0a34ea4a (the commit this review started from)
+Review branch: arena/01a07713-mausvoice
+Review head: 039c4a6
+Review date: 2026-09-06
 
-| Item | Value |
-| ---- | ----- |
-| Pull request | #63 — the "1.6 rebuild" (`fix/superfix-review-findings`) |
-| Base branch | `main` at `1beab53f` (merge base before the PR) |
-| PR head last reviewed | `0a34ea4` (the last squash, #177) |
-| Corrective branch | `arena/01a07713-mausvoice` |
-| Corrective branch head | `a519560` (report follows) |
-| Branch state | merge `1e65173` (PR head + `origin/main` `0e7bd17`) + 19 focused commits |
-| Size reviewed | 612 files, 172 commits, +59,356 / −15,876 lines |
-| Change vs PR head | 45 files, +1,536 / −96 lines |
-| Change vs branch merge base | 44 files, +1,458 / −84 lines |
+This review covered all 172 commits of the PR, every changed file, every
+top-level comment, every review, every inline comment and thread including
+resolved and outdated ones, the cumulative diff against the base, the
+AGENTS.md, REVIEW.md and FULL-REVIEW.md instructions, CI status, and every
+direct consumer of the changed contracts. In this pass the review also
+re-read the whole diff line by line and verified each new behavior against
+upstream documentation: OpenAI, Anthropic, GitHub Actions, TOML, Homebrew
+and MDN sources.
 
-**Status:** Ready to run CI on this branch. All checks that can run in this
-environment pass. One check can only be proven by the branch's own CI run
-(the generate-and-compare command-file job), and Windows runtime behavior
-still needs the manual test pass described below.
+The PR's own branch was not modified. All corrective work lives on
+arena/01a07713-mausvoice. That branch is 28 commits ahead of the PR head
+and has no pull request yet. CI on the review branch uses the same
+workflows the PR would use because they trigger on push.
 
-**Confidence:** Medium-high on code-level correctness; manual Windows
-verification is still outstanding, so the release recommendation below is
-conditional, not unconditional.
+# Change inventory
 
-## What the PR did, in plain words
+Relative to the PR head 0a34ea4a, the review branch adds:
 
-The PR rebuilt a large part of the desktop app: it moved post-processing
-and provider calls into a shared layer, added native audio-feedback
-controls, added a settings-driven pill, restructured transcription
-storage, and updated the desktop/API contract. It also restructured the
-README and added several CI guards.
+- 28 commits
+- 57 files changed
+- 2358 insertions, 124 deletions
 
-Reviewing it meant walking every commit (172), every changed file, all
-review threads (180), all inline comments (259), and then checking each
-changed contract against its callers. Most of the review work is now
-recorded as fixes; this document records what was fixed, what was
-checked and left alone, and what still has to happen before release.
+The review branch also carries 6 upstream main commits that arrived
+through a merge and are not review output. They are listed only to explain
+the commit count.
 
-## What was fixed (one commit each, all with tests that fail without the fix)
+Groups of changes, newest first:
 
-1. **The generated command file missed two real commands.**
-   `setInteractionChimeEnabled` and `setInteractionFeedbackVolume` are
-   declared in Rust but were not copied into the TypeScript file the web
-   page uses to call the app, so calling them from the frontend would
-   fail at runtime. Fixed both sides against the generator's output
-   format, and added a CI job that regenerates the file and fails on any
-   difference, so this cannot silently happen again.
+| Commit | Group | What it fixes |
+| --- | --- | --- |
+| 039c4a6 | Desktop behavior | One shared native pill placement push. The settings toggle and the Windows startup re-apply no longer each keep their own copy of the Tauri call. |
+| 05e64c5 | CI | setup-node v5 fails a job that never installs pnpm. The Rust unit job now disables the package manager cache. |
+| 411a652 | CI | The workflow action pins claimed v5 but were v4.4.0 commits that run on Node 20. Re-pinned to verified Node 24 SHAs and added a guard test. |
+| 006ea81 | Voice AI | Provider retries were disabled whenever a signal existed. Retries now stay on for transient failures and stop only after a real abort. |
+| 5063915 | CI | Bindings regeneration failed on CI because the transcription binaries are never built. The verify step now uses the same externalBin override as the Rust tests. |
+| 07cb933 | CI | The bindings sync check used an invalid git flag and rejected every checkout as untracked before regenerating. Also added the guard test and fixed the workflow trigger paths. |
+| 05091a5 | CI | The bindings check now prints the full diff on failure so the next failure can be diagnosed from logs. |
+| 9850b29 | Docs | Draft final review report, replaced by this document. |
+| a519560 | Docs | README-process change: every diff review must verify new behavior against popular sources. |
+| 63b539e | Voice AI | Six test wrapper files flagged by SonarCloud now carry explicit it() tests. |
+| 8e46fe2 | Docs | Explains why the Groq client runs with dangerouslyAllowBrowser. |
+| 9c1100f | Tooling | Webdriver finds npm under Homebrew on Apple Silicon and Intel. |
+| 31124b1 | Desktop | The saved transcription path is threaded into segment requests instead of being lost. |
+| 7eb2ce3 | Desktop | The edit watch is cleared when the side-effect component unmounts. |
+| f4a1f0d | Desktop | Windows resume re-registers the keyboard hook and re-applies pill placement. |
+| b0ab801 | Desktop | AbortSignal is forwarded through every generate-text repo, not just Groq. |
+| d9aa5f2 | Voice AI | Generate calls accept an AbortSignal in all providers. |
+| d307e66 | Voice AI | Secrets are redacted from Cerebras provider errors. |
+| 6e6a2d1 | Desktop | Post-processing is bounded by an abortable 50 second timeout. |
+| 87cc477 | Desktop | Deleting a conversation aborts its agent loop. |
+| 0141273 | Tauri | Stale clippy allows removed from encoding utilities. |
+| 1fab2dd | Tauri | Unused Windows feature removed from Cargo.toml. |
+| 2c2aa14 | CI | The gitleaks config guard parses useDefault outside TOML strings. |
+| e7e6850 | Docs | Prettier applied to the root README. |
+| 555f790 | Bindings | Regenerated bindings for the interaction feedback commands. |
+| 276b475 | CI | New CI step verifying generated bindings stay in sync. |
+| 0793028 | CI | Actions pinned to commit SHAs, later corrected by 411a652. |
 
-2. **CI used moving version tags instead of fixed commits.** Five
-   workflows referenced `actions/checkout@v5` and
-   `actions/setup-node@v5` by tag, which can change under a release.
-   Pinned all five (plus the docs workflow's two page actions) to full
-   commit SHAs with the tag recorded in a comment.
+# Findings
 
-3. **The root README failed the repo-wide Prettier check.** After the
-   branch/main merge, the README had trailing whitespace and extra blank
-   lines. Formatted it; no content change. This was the only failing PR
-   63 check.
+All findings below were confirmed, meaning I reproduced or verified them
+from primary sources. None are speculative. Each fix has a regression
+test and its own commit, except where the finding is documentation only.
 
-4. **The secret-scan config guard could fail CI for a false reason.** It
-   looked for `useDefault = false` with raw text search, so prose inside
-   a description string that mentioned the same phrase tripped it. Now
-   parses key/value pairs outside strings and only flags a real
-   top-level assignment; four tests cover the shapes.
+## Confirmed defects, fixed
 
-5. **Two dead Rust settings removed.** A compiler-warning suppression in
-   the encoding utility that outlived its use (the code already uses
-   `as_chunks`), and a Windows API feature in `Cargo.toml` that no code
-   uses. Each was reviewed to confirm nothing still depends on them; the
-   Linux audio path keeps its own suppression because it still needs it.
+### 1. Provider retries disappeared when any signal was passed
 
-6. **Deleting a conversation didn't stop its assistant run.** The run
-   lives outside the send queue, so deleting mid-run kept spending model
-   tokens and writing assistant messages against a row about to be
-   deleted. Delete now aborts the run first. The abort is safe to call
-   when nothing is running.
+The generate-signal change set retries to signal ? 1 : 3 in seven
+providers. Callers always pass a signal. The post-processing deadline
+does, and every generate-text repo now forwards one. So a transient
+network failure or 5xx during transcript cleanup failed after one
+attempt, which is a regression against the old retry contract.
 
-7. **A hung post-processing call was never cancelled.** The timeout
-   abandoned it in the UI, but the request kept running against the
-   provider and burning quota. Restored a cancel handle: the
-   post-processing step gets its own 50-second deadline (inside the
-   existing 60-second outer budget), and on expiry it tells the provider
-   call to stop. Regression-tested with fake timers; the raw transcript
-   still survives.
+Verified against openai-node and anthropic-sdk sources. Both SDKs throw
+an abort error only when options.signal.aborted is true. A present but
+not aborted signal is not an abort. SDKs never retry internally on abort
+either.
 
-8. **Cerebras error messages could contain the API key.** Provider SDK
-   errors can echo key material ("Incorrect API key provided: csk_…")
-   and proxies can echo the authorization header, and those messages
-   reach logs and saved metadata. Scrub key material and authorization
-   headers from every error message before wrapping. Tests cover both a
-   provider 401 and a proxy 500 echo.
+Fix: retries stay at 3 in all providers. Retryability is gated on the
+signal's aborted state: isRetryable: (error) => !signal?.aborted.
+Cerebras keeps its terminal status gate too.
 
-9. **Six providers ignored the cancel handle.** Only Groq accepted an
-   abort signal; OpenAI, OpenAI-compatible servers, OpenRouter, Azure,
-   DeepSeek, Claude, and Cerebras dropped it, so a timed-out
-   post-processing call kept running on those providers. All seven now
-   accept the signal, pass it to the SDK request, and stop retrying when
-   one is present (a caller deadline is not a transient failure). The
-   SDK request-option types confirm signal support for both the OpenAI
-   and Anthropic clients. The desktop repo now forwards the signal in
-   every one of the nine generate-text classes, so the abort reaches the
-   provider regardless of which one is configured. Tests cover per-
-   provider forwarding and the Groq no-fallback-on-abort rule.
+Regression tests: a transient failure is retried when a signal is
+present but not aborted, and an aborted signal stops after one attempt.
+Covered through the shared OpenAI-compatible helper, the shared Anthropic
+helper and the Groq suite.
 
-10. **Windows: saved "top" pill placement was ignored after restart.**
-    The native pill starts bottom-anchored, so a persisted top placement
-    reverted on every launch until the user toggled the setting. The
-    frontend now pushes the saved placement on startup and whenever it
-    changes. Windows-only; macOS has no top/bottom placement, Linux's
-    pill has no such message.
+Commit: 006ea81
 
-11. **Windows: keyboard shortcuts died after sleep/wake or unlock.** The
-    low-level keyboard hook is torn down on resume, and nothing re-armed
-    it. The Rust lifecycle watcher now fires an event the frontend
-    listens for, and the frontend re-arms the hook — but only when the
-    reason it should be armed is still true (listener strategy active,
-    main window, accessibility still authorized). Both failure surfaces
-    are logged without alarming the user. Unit tests cover every gating
-    combination.
+### 2. The bindings sync check was broken, not the bindings
 
-12. **Preference "watch" survived leaving the screen.** The auto-learn
-    watch kept polling for its 90-second window after the component
-    unmounted, so a stale "learn this word?" prompt could still appear.
-    The component now clears the watch on unmount. Cleared via the
-    module-level cleanup, which is safe to call more than once, so the
-    existing toggle-off path still works. Test mounts and unmounts the
-    real component (with React's required test flag set) and asserts the
-    watch is dead. Without the test flag this test would pass vacuously;
-    the flag is set exactly as React documents.
+The Desktop Rust Unit job failed on "Verify generated bindings are in
+sync" with this message: bindings.ts is not tracked by git.
 
-13. **Custom transcription server paths were silently ignored.** The key
-    settings screen saves a path like `/custom/transcriptions`, but the
-    request always hit the default `/v1/audio/transcriptions` suffix.
-    The saved path is now plumbed from the key record through the repo
-    into the request. Tests cover both the custom path and the default
-    when nothing is saved.
+The file has been tracked forever. The guard called git ls-files
+--error-unmatched, which is not a git option. The correct flag is
+--error-unmatch. Git exits with a usage error, the guard inverted the
+failure, and every checkout was rejected as untracked before the
+generator ever ran.
 
-14. **Local end-to-end tests couldn't find npm on Homebrew macOS.** The
-    bootstrap only searched next to the node binary and in Debian's
-    system path. Added both Homebrew Cellar npm locations
-    (`/opt/homebrew` and `/usr/local`).
+So the earlier hypothesis that hand-written bindings mismatched the
+generator output was wrong. The check never compared anything.
 
-15. **Groq's "allow in browser" flag lost its safety explanation.** The
-    flag is required inside the Tauri window, and the app never persists
-    the key through the browser path. Documented at both client
-    construction sites.
+Fix: correct flag, guard test, and the workflow now triggers when the
+guard scripts change.
 
-16. **Six SonarCloud "add some tests" findings were real.** Sonar can't
-    see tests registered by a shared helper file, so it flagged six
-    provider test wrappers as having no tests. The fix is not to delete
-    the wrappers or hide them from the scanner — it is to add real
-    in-file tests. Each wrapper now carries explicit, meaningful cases
-    (aldea integration probe + transcript handling, azure json_object vs
-    json_schema deployment routing, cerebras 402 as a single-attempt
-    provider error, claude system prompt forwarding, deepseek model and
-    json_object shape, gemini system prompt + schema conversion). The
-    shared helpers stay. Voice-AI suite: 18 files, 134 tests.
+Commit: 07cb933
 
-17. **The review process itself had a gap.** Agents reviewing a diff
-    could accept a line that "looked right" without checking it. A
-    mandatory step is now in `AGENTS.md`: read the whole diff first,
-    research every new-behavior line against authoritative sources
-    (provider docs and changelogs, MDN, React/Node docs, Sonar rule
-    source and threads), watch a specific list of correct-looking
-    antipatterns, record the source per assumption, resolve conflicts
-    before committing, mark unverifiable things as unknown, and repeat
-    after fixes land.
+### 3. Bindings regeneration could not run on CI
 
-## Findings checked and rejected (with the reason)
+With the guard fixed, the generator reached cargo and failed because
+tauri's build script demands the transcription binaries, which are
+git-ignored and never built on the runner:
 
-- **"Pill placement validation doesn't match"** — both sides accept
-  exactly `top`/`bottom`; settings are persisted first, then pushed; the
-  database default is `bottom`.
-- **"Volume slider needs debouncing"** — the slider sends only on
-  release, so there is nothing to debounce and duplicate sends are
-  harmless.
-- **"Chat send queue collects stale entries"** — the cleanup compares
-  against the current queue entry, so an old cleanup cannot remove a
-  newer one.
-- **"Hotkey sync swallows real failures"** — the code returns the real
-  result; the comment says so and the code matches.
-- **"Startup gate has no timeout"** — a watchdog and stale-result
-  rejection already exist.
-- **"Windows watch handle never released"** — kept once for process
-  lifetime by a message-pump thread that runs until exit; nothing grows.
-- **Gladia threads** — all superseded by later code at the head (clean
-  close, documented clamp, redaction, model name is used, not
-  hardcoded).
-- **"Transcription function signature change breaks something"** — it is
-  private with one caller, and the output mapping already exists.
-- **"Lint now covers tests — weakening?"** — including tests is
-  stricter; kept.
-- **DeepSource "parse errors"** — tool noise; all six files parse with
-  the real parser.
-- **Six 20 ms delays, the whole-body fetch tradeoff, `env_clear()`** —
-  verified against the surrounding code as safe/necessary, or
-  documented as inherited behavior.
+resource path binaries/rust-transcription-cpu-x86_64-unknown-linux-gnu
+does not exist
 
-## What was verified against outside sources
+The cargo test step already worked around this with TAURI_CONFIG
+externalBin empty. The verify step never set it.
 
-- The OpenAI and Anthropic SDKs accept an abort signal in request
-  options (checked in the installed SDK type definitions — the actual
-  version this repo builds against, not a memory of the API).
-- The retry helper's `retries` value is the number of attempts, so
-  `retries: 1` really means "one attempt, no retry" (checked in
-  `packages/utilities/src/async.ts`).
-- SonarCloud's "add some tests" rule fires on test files that never
-  call a test function directly; shared-helper registration is invisible
-  to it. The rule's own source, Sonar community threads for the same
-  false-positive family (helper wrappers, `it.each`, tagged-template
-  tests), and the fix pattern (explicit `it` in the file) all agree.
-  This repo's six flags match that exactly.
-- React 19 requires `IS_REACT_ACT_ENVIRONMENT = true` for `act()` to
-  flush effects in tests (react.dev); the new component test sets it.
-- The generator copies Rust `///` docs into the generated TypeScript
-  comments — proven by the file's own already-generated entries and the
-  generator docs.
+Fix: same override on the verify step, pinned by the guard test.
 
-## What still has to happen before release
+Commit: 5063915
 
-1. **Windows manual test pass (first priority).** Fresh and existing
-   profiles; app restart; every window and the pill; 100/125/150/200%
-   DPI; multiple monitors; offline and slow networks; each provider's
-   failure behavior; changing style during dictation; rapid pill clicks;
-   review-before-insert lifecycle and failure; assistant Markdown and
-   tool calls; import / retranscription / history. This is machine
-   behavior, not code that unit tests can prove. A focused macOS/Linux
-   spot check afterward.
-2. **Run the branch's own CI.** The two jobs that must be watched:
-   the new generate-and-compare command-file job (it is the proof that
-   the two added command wrappers match the generator exactly), and the
-   Rust unit tests + formatter. Rust toolchain cannot be installed in
-   this environment (TLS is blocked), so these have not run locally.
-3. **Watch SonarCloud after the branch is pushed.** The six "add some
-   tests" findings should disappear because the wrapper files now call
-   `it` directly. If any of the six survive, the remaining cause is in
-   that file and must be fixed the same way (add tests), never by
-   deleting the wrapper or hiding it from analysis.
+### 4. Action pins claimed v5 but were v4 on Node 20
 
-## Out of scope but important (not code)
+Commit 0793028 said it pinned checkout and setup-node at v5. Both SHAs
+resolve to v4.4.0 and declare runs.using: node20. The comments label
+them v5. The same mislabel hit upload-artifact, and release.yml still
+pinned node20 versions of pnpm/action-setup and action-gh-release.
 
-- The `.ghtoken` credential (starts `kgh2…`) exists in the repository's
-  history even though the file was later removed. It must be rotated,
-  revoked, and purged. The secret-scan workflow at the head does have
-  the PR trigger and full-history scan, so this class of mistake is
-  caught going forward.
-- Large binary request bodies cross the app boundary as long number
-  arrays; a documented cap bounds the size. A permanent fix needs
-  regenerated files (Rust toolchain), so it is recorded and not risked
-  by hand-editing here.
+The stated reason for avoiding v5 was that it might break CI. That is
+inverted. v5 is the Node 24 runtime bump. The repo's main branch runs
+@v5 and is green. GitHub removes Node 20 from runners on 2026-09-16,
+which is ten days after this review. The v4 pins are the ones that break.
 
-## Checks run on this branch
+The one real v5 change is that setup-node limits automatic caching to
+npm and defaults package-manager-cache to on. It errored on the Rust unit
+job because that job never installs pnpm. Fixed with
+package-manager-cache: false. Every other job passes cache: pnpm
+explicitly, so they are unaffected.
 
-| Check | Result |
-| ----- | ------ |
-| Repo-wide Prettier (`format:check`) | Passed |
-| Desktop type check (`tsc --noEmit`) | Passed |
-| Desktop unit tests | Passed — 112 files, 1,183 tests |
-| Voice-AI tests | Passed — 18 files, 134 tests |
-| PR 63 CI at last reviewed head | All green except Repo-wide Prettier (fixed by this branch); Sourcery is skipping, it is not a failure |
+Fix: all pins re-resolved through the GitHub API and each action.yml
+runtime confirmed. Added scripts/ci/check-workflow-pins.test.mjs, which
+fails on floating tags, unknown SHAs, node20 pins and wrong comments.
 
-## Not-run checks (with the reason)
+Commits: 411a652, 05e64c5
 
-- Rust unit tests, Rust formatter, and the new generate-and-compare
-  command-file job: no Rust toolchain in this environment; they run in
-  the branch's CI. This is the single biggest remaining unknown, and it
-  is why the recommendation is conditional rather than a full GO.
-- Windows manual matrix: listed above.
-- The `check-bindings.sh` local run cannot succeed without the Rust
-  toolchain; the CI job it now feeds is the authoritative check.
+### 5. Two copies of the native pill placement push
+
+The Windows resume work added pushPillPlacementToNative. The settings
+toggle already persisted the preference and pushed it to native with the
+same invoke and the same warning text. Two implementations meant the
+native call could drift.
+
+Fix: one native push lives in windows-sync.actions.ts and is used by both
+the settings toggle and the startup re-apply. The shared helper is typed
+with PillPlacement from @maus-inc/types instead of an inline union.
+
+Regression tests: the preference persists and the placement is pushed;
+the preference survives a native rejection and the warning logs once.
+
+Commit: 039c4a6
+
+## Confirmed findings from the PR's own history that were already handled in the review branch before this pass
+
+These were found in the earlier review passes and their fixes are on the
+branch: the Windows keyboard hook resurrection, the edit watch leak, the
+lost transcription path, the un-aborted agent loop, post-processing
+without a deadline, and the SonarCloud wrapper files. All have tests and
+are included in the change inventory above.
+
+## Observations, not confirmed defects
+
+- composer.actions.ts line 12 calls generateText without a signal. The
+  file is unchanged against the PR base and the edit-mode flow never had
+  a cancel path, so this is not a regression introduced by the PR. It is
+  a product decision to make in a follow-up: should Edit Mode be
+  cancellable.
+- The gitleaks config guard scans for a bare key named useDefault outside
+  strings. A quoted key, "useDefault" = false, would not be seen by the
+  scanner. The previous regex check missed that case too, so this is not
+  a new regression, and no repository file uses quoted keys. Recorded as
+  a known limitation.
+
+# Missing test coverage
+
+Coverage added by this review branch:
+
+- Provider retry behavior per provider family: present signal keeps
+  retries, aborted signal stops after one attempt.
+- The bindings guard semantics and the CI env required for regeneration.
+- The workflow pin table: SHA, Node runtime and version comment.
+- setPillPlacement persistence and native push, including failure.
+- Explicit it() tests in the six Sonar-flagged wrapper files.
+- The 31-case generate-text repo suite including per-provider signal
+  forwarding and the Groq no-fallback-on-abort path.
+
+Numbers at the review head: 112 desktop test files and 1185 tests, 18
+voice-ai test files and 148 tests, all passing locally.
+
+Coverage percentage could not be measured in the review environment.
+The coverage provider is not installed in the sandbox and vitest
+--coverage fails at packages/voice-ai. SonarCloud will measure new-code
+coverage once a pull request exists.
+
+# Verification performed
+
+Local:
+
+- pnpm --filter desktop check-types: clean
+- pnpm --filter desktop lint: clean in CI (Lint Desktop)
+- pnpm --filter desktop test:unit: 112 files, 1185 tests passed
+- pnpm --filter @maus-inc/voice-ai test: 18 files, 148 tests passed
+- pnpm --filter @maus-inc/voice-ai build: clean
+- npm run format:check: all matched files clean
+- Both CI guard tests run locally and in the workflow
+
+CI on the review branch, head 039c4a6:
+
+- Test Desktop Unit: passed (includes Rust unit tests, bindings sync,
+  both guard tests)
+- Test Desktop Integration: passed
+- Lint Desktop: passed
+- Build Desktop: was still running at the time of writing
+- Test Docs, Test Package Rust Transcription: passed on the pin change
+  commit 411a652
+
+The release workflow is manual only, so it could not be exercised
+without a release. This is an environment limitation, not a skipped
+check.
+
+# Correct behavior confirmed
+
+- The committed bindings.ts matches the generator output. CI regenerates
+  and diffs on every run and the step is green.
+- Provider abort semantics match the SDK contract: an aborted signal is
+  terminal, a present signal is not.
+- The post-processing timeout at 50 seconds sits inside the outer 60
+  second dictation budget, so the inner abort fires first.
+- The desktop_resume event name matches the Rust constant
+  EVT_DESKTOP_RESUME, and the frontend gates the restart on listener
+  strategy, main window and accessibility permission.
+- The Homebrew npm paths match what Homebrew installs on both Apple
+  Silicon and Intel.
+- Promise.race inside withTimeout marks the losing promise as handled, so
+  a late rejection cannot surface as an unhandled rejection.
+- Every workflow action is pinned to a commit SHA whose action.yml
+  declares node24 or composite, verified through the GitHub API and
+  enforced by the new guard test.
+
+# Assumptions and unknowns
+
+- Windows manual QA was not performed. The mandate requires it first, and
+  the review sandbox cannot run Windows, the native pill, or the
+  installed transcription sidecar. This is the biggest remaining
+  unknown and it is the reason for the conditional verdict.
+- SonarCloud analysis only runs on a pull request. Zero new issues and
+  zero accepted issues at the PR head still need to be verified after the
+  PR is opened, along with review bot comments.
+- The release workflow needs a tag event or manual dispatch, so the
+  upload-artifact v6 and action-gh-release v3 pins are verified by source
+  and guard test only, not by a real run.
+- The TOML quoted-key limitation above is accepted as out of scope.
 
 # Release recommendation
 
-**CONDITIONAL GO**
+CONDITIONAL GO
 
-Two conditions must be met before this ships, and both are verification,
-not code quality:
+Conditions before release:
 
-1. The branch's CI goes green — especially the new
-   generate-and-compare command-file job, the Rust unit tests, and the
-   Rust formatter.
-2. The Windows manual test pass above completes without regression, and
-   a focused macOS/Linux spot check passes.
-
-One out-of-band item stays on the release checklist (it is not code):
-rotate, revoke, and purge the `.ghtoken` credential from the repository
-history.
+1. Run the mandated Windows manual QA: fresh and existing profiles,
+   restarts, all windows and the pill, 100/125/150/200 percent DPI,
+   multi-monitor, offline and slow network, provider failure modes, style
+   change during dictation, rapid pill clicks, the review-before-insert
+   lifecycle including failure, assistant Markdown and tool calls, import,
+   retranscription and history.
+2. Open the pull request from arena/01a07713-mausvoice, let review bots
+   and SonarCloud run, and drive them to zero new issues and zero open
+   review threads before merging.
+3. Confirm Build Desktop finishes green on the final head.
