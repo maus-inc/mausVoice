@@ -33,15 +33,7 @@
 
 </div>
 
-## Documentation
 
-**New to mausVoice, looking for a feature, trying to find guidance, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
-
-<p align="center">
-  <a href="https://maus-inc.github.io/mausVoice/docs/"> 
-  <img src="docs/assets/readthedocsbtn.png" alt="mausVoice readthedocs button" width="320" />
-  </a>
-</p>
 
 <p align="center">
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
@@ -73,6 +65,19 @@
 | **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
 | **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
 | **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
+
+<br>
+<br>
+
+## Documentation
+
+**New to mausVoice, looking for a feature, trying to find guidance, tuning a provider, or building from source? Visit the complete [mausVoice Documentation](https://maus-inc.github.io/mausVoice/docs/).** It covers platform setup, daily dictation, every configuration area, provider behavior, privacy and local data, troubleshooting, and the repository architecture.
+
+<p align="center">
+  <a href="https://maus-inc.github.io/mausVoice/docs/"> 
+  <img src="docs/assets/readthedocsbtn.png" alt="mausVoice readthedocs button" width="320" />
+  </a>
+</p>
 
 <p align="center">
   <a href="https://github.com/maus-inc/mausVoice/releases">
