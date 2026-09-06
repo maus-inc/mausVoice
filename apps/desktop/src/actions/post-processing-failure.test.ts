@@ -126,4 +126,39 @@ describe("postProcessTranscript provider attribution on failure", () => {
 
     expect(result.metadata.postProcessModel).toBe(expected);
   });
+
+  it("aborts a hung provider request when the post-process deadline expires", async () => {
+    vi.useFakeTimers();
+    try {
+      let seenSignal: AbortSignal | undefined;
+      genRepo.generateText.mockImplementationOnce(
+        (input: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            seenSignal = input.signal;
+            input.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
+          }),
+      );
+
+      const running = postProcessTranscript({
+        rawTranscript: "hello world",
+        toneId: null,
+      });
+      await vi.advanceTimersByTimeAsync(50_001);
+      const result = await running;
+
+      // Deadline expiry must cancel the underlying request instead of
+      // leaving it running in the background, and fall back to the raw
+      // transcript with failure metadata.
+      expect(seenSignal?.aborted).toBe(true);
+      expect(result.transcript).toBe("hello world");
+      expect(result.metadata.postProcessFailed).toBe(true);
+      // The abort fires at the same tick as the deadline rejection; either
+      // surface is acceptable as long as the failure is recorded.
+      expect(result.metadata.postProcessError).toMatch(/timed out|aborted/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
