@@ -39,6 +39,9 @@ export type TranscriptionModel = (typeof TRANSCRIPTION_MODELS)[number];
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new Groq({
     apiKey: apiKey.trim(),
+    // Runs inside a Tauri WebView where the SDK's browser check would
+    // otherwise reject; the key is never persisted and the request goes
+    // through the desktop's secure-fetch bridge when customFetch is set.
     dangerouslyAllowBrowser: true,
     fetch: customFetch,
   });
@@ -196,6 +199,8 @@ export async function* groqStreamChat({
   const client = new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: "https://api.groq.com/openai/v1",
+    // Same WebView constraint as createClient above; requests are routed
+    // through the desktop secure-fetch bridge when customFetch is set.
     dangerouslyAllowBrowser: true,
     fetch: customFetch,
   });
