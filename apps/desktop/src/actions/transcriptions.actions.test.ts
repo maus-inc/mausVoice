@@ -44,14 +44,12 @@ vi.mock("./app.actions", () => ({
   showErrorSnackbar,
 }));
 
-vi.mock("./toast.actions", () => ({
+vi.mock("./toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
   showPersistentToast,
   showCompletionToast,
   dismissToast,
   showToast: vi.fn(async () => {}),
-  runToast: (work: Promise<void>) => {
-    void work.catch(() => undefined);
-  },
 }));
 
 // Spread the real module so helpers like detectLocale (pulled in through
