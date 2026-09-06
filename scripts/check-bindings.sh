@@ -25,6 +25,7 @@ bash scripts/bindings.sh
 if ! git diff --quiet -- "$TARGET"; then
   echo "ERROR: regenerating bindings.ts produced a diff. Commit the result or fix scripts/bindings.sh." >&2
   git --no-pager diff --stat -- "$TARGET"
+  git --no-pager diff -- "$TARGET"
   exit 1
 fi
 
