@@ -46,7 +46,10 @@ vi.mock("../actions/app.actions", () => ({
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
 }));
-vi.mock("../actions/toast.actions", () => ({ showToast: vi.fn() }));
+vi.mock("../actions/toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
+  showToast: vi.fn(),
+}));
 vi.mock("../actions/app-target.actions", () => ({
   tryRegisterCurrentAppTarget: vi.fn(async () => null),
 }));

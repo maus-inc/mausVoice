@@ -48,6 +48,8 @@ export type GenerateTextInput = {
 export type GenerateTextMetadata = {
   postProcessingMode?: Nullable<PostProcessingMode>;
   inferenceDevice?: Nullable<string>;
+  /** Resolved model id actually used for the request (post-fallback). */
+  model?: Nullable<string>;
 };
 
 export type GenerateTextOutput = {
@@ -79,20 +81,21 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await this.generateWithFallback(input);
+    const { response, model } = await this.generateWithFallback(input);
 
     return {
       text: response.text,
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Groq",
+        model,
       },
     };
   }
 
   private async generateWithFallback(input: GenerateTextInput) {
     try {
-      return await groqGenerateTextResponse({
+      const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
         model: this.model,
         prompt: input.prompt,
@@ -100,12 +103,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
+      return { response, model: this.model };
     } catch (error) {
       if (this.model === this.fallbackModel) {
         throw error;
       }
 
-      return groqGenerateTextResponse({
+      const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
         model: this.fallbackModel,
         prompt: input.prompt,
@@ -113,6 +117,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
+      return { response, model: this.fallbackModel };
     }
   }
 
@@ -150,6 +155,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • OpenAI",
+        model: this.model,
       },
     };
   }
@@ -163,21 +169,27 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
   }
 }
 
-export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
-  private ollamaUrl: string;
-  private model: string;
-  private apiKey: string;
+/**
+ * Ollama and the generic OpenAI-compatible endpoint speak the same wire
+ * protocol, so they differ only in their default API key and the device label
+ * shown in transcription history. Sharing the calls keeps one implementation.
+ */
+abstract class OpenAICompatibleBaseGenerateTextRepo extends BaseGenerateTextRepo {
+  protected baseUrl: string;
+  protected model: string;
+  protected apiKey: string;
+  protected abstract readonly inferenceDevice: string;
 
-  constructor(url: string, model: string, apiKey?: string) {
+  constructor(url: string, model: string, apiKey: string) {
     super();
-    this.ollamaUrl = url;
+    this.baseUrl = url;
     this.model = model;
-    this.apiKey = apiKey || "ollama";
+    this.apiKey = apiKey;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
     const response = await openaiGenerateTextResponse({
-      baseUrl: this.ollamaUrl,
+      baseUrl: this.baseUrl,
       apiKey: this.apiKey,
       model: this.model,
       prompt: input.prompt,
@@ -191,7 +203,8 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       text: response.text,
       metadata: {
         postProcessingMode: "api",
-        inferenceDevice: "API • Ollama",
+        inferenceDevice: this.inferenceDevice,
+        model: this.model,
       },
     };
   }
@@ -199,7 +212,7 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
   async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
     yield* openaiStreamChat({
       apiKey: this.apiKey,
-      baseUrl: this.ollamaUrl,
+      baseUrl: this.baseUrl,
       model: this.model,
       input,
       customFetch: tauriFetch,
@@ -207,47 +220,19 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
   }
 }
 
-export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
-  private baseUrl: string;
-  private model: string;
-  private apiKey: string;
+export class OllamaGenerateTextRepo extends OpenAICompatibleBaseGenerateTextRepo {
+  protected readonly inferenceDevice = "API • Ollama";
 
   constructor(url: string, model: string, apiKey?: string) {
-    super();
-    this.baseUrl = url;
-    this.model = model;
-    this.apiKey = apiKey || "";
+    super(url, model, apiKey || "ollama");
   }
+}
 
-  async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await openaiGenerateTextResponse({
-      baseUrl: this.baseUrl,
-      apiKey: this.apiKey,
-      model: this.model,
-      prompt: input.prompt,
-      system: input.system ?? undefined,
-      jsonResponse: input.jsonResponse,
-      customFetch: tauriFetch,
-      maxTokens: input.maxTokens,
-    });
+export class OpenAICompatibleGenerateTextRepo extends OpenAICompatibleBaseGenerateTextRepo {
+  protected readonly inferenceDevice = "API • OpenAI Compatible";
 
-    return {
-      text: response.text,
-      metadata: {
-        postProcessingMode: "api",
-        inferenceDevice: "API • OpenAI Compatible",
-      },
-    };
-  }
-
-  async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
-    yield* openaiStreamChat({
-      apiKey: this.apiKey,
-      baseUrl: this.baseUrl,
-      model: this.model,
-      input,
-      customFetch: tauriFetch,
-    });
+  constructor(url: string, model: string, apiKey?: string) {
+    super(url, model, apiKey || "");
   }
 }
 
@@ -283,6 +268,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • OpenRouter",
+        model: this.model,
       },
     };
   }
@@ -324,6 +310,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Azure OpenAI",
+        model: this.deploymentName,
       },
     };
   }
@@ -363,6 +350,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • DeepSeek",
+        model: this.model,
       },
     };
   }
@@ -401,6 +389,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Gemini",
+        model: this.model,
       },
     };
   }
@@ -439,6 +428,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Claude",
+        model: this.model,
       },
     };
   }
@@ -477,6 +467,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Cerebras",
+        model: this.model,
       },
     };
   }

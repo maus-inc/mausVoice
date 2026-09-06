@@ -13,13 +13,16 @@ const { updaterMock, toastMock, invokeMock } = vi.hoisted(() => ({
     relaunchApp: vi.fn(async () => {}),
     isReadOnlyFilesystemInstallError: vi.fn(() => false),
   },
-  toastMock: { showToast: vi.fn(async () => {}) },
+  toastMock: { showToast: vi.fn((): Promise<void> => Promise.resolve()) },
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 vi.mock("@maus-inc/desktop-utils", () => updaterMock);
-vi.mock("./toast.actions", () => toastMock);
+vi.mock("./toast.actions", async () => ({
+  ...toastMock,
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
+}));
 vi.mock("./app.actions", () => ({ showErrorSnackbar: vi.fn() }));
 // Only the platform probe is stubbed; app.state pulls other env helpers in
 // transitively, so the rest of the module must stay real.

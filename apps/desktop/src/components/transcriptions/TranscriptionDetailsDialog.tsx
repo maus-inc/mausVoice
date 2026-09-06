@@ -29,13 +29,10 @@ import { AppState } from "../../state/app.state";
 import { useAppStore } from "../../store";
 import { TranscriptionTextBlock } from "./TranscriptionTextBlock";
 
-const formatModelSizeLabel = (
-  modelSize?: string | null,
-  unknownLabel: React.ReactNode = "Unknown",
-): React.ReactNode => {
+const formatModelSizeLabel = (modelSize?: string | null): React.ReactNode => {
   const value = modelSize?.trim();
   if (!value) {
-    return unknownLabel;
+    return <FormattedMessage defaultMessage="Unknown" />;
   }
 
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -62,6 +59,39 @@ const resolveApiKeyLabel = (
   }
 
   return record.name;
+};
+
+const DetailField = ({
+  label,
+  value,
+}: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+}) => (
+  <Box>
+    <Typography variant="caption" sx={{ color: "text.secondary" }}>
+      {label}
+    </Typography>
+    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+      {value}
+    </Typography>
+  </Box>
+);
+
+const formatTextOrUnknown = (value?: string | null): React.ReactNode => {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? (
+    trimmed
+  ) : (
+    <FormattedMessage defaultMessage="Unknown" />
+  );
+};
+
+const formatDurationLabel = (ms?: number | null): string | null => {
+  if (ms == null) {
+    return null;
+  }
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
 };
 
 export const TranscriptionDetailsDialog = () => {
@@ -138,27 +168,24 @@ export const TranscriptionDetailsDialog = () => {
   );
 
   const modelSizeLabel = useMemo(
-    () => formatModelSizeLabel(transcription?.modelSize ?? null, "Unknown"),
+    () => formatModelSizeLabel(transcription?.modelSize),
     [transcription?.modelSize],
   );
 
-  const deviceLabel = useMemo(() => {
-    const value = transcription?.inferenceDevice?.trim();
-    return value && value.length > 0 ? (
-      value
-    ) : (
-      <FormattedMessage defaultMessage="Unknown" />
-    );
-  }, [transcription?.inferenceDevice]);
+  const deviceLabel = useMemo(
+    () => formatTextOrUnknown(transcription?.inferenceDevice),
+    [transcription?.inferenceDevice],
+  );
 
-  const postProcessDeviceLabel = useMemo(() => {
-    const value = transcription?.postProcessDevice?.trim();
-    return value && value.length > 0 ? (
-      value
-    ) : (
-      <FormattedMessage defaultMessage="Unknown" />
-    );
-  }, [transcription?.postProcessDevice]);
+  const postProcessDeviceLabel = useMemo(
+    () => formatTextOrUnknown(transcription?.postProcessDevice),
+    [transcription?.postProcessDevice],
+  );
+
+  const postProcessModelLabel = useMemo(
+    () => formatTextOrUnknown(transcription?.postProcessModel),
+    [transcription?.postProcessModel],
+  );
 
   const transcriptionPrompt = useMemo(() => {
     const prompt = transcription?.transcriptionPrompt?.trim();
@@ -186,23 +213,15 @@ export const TranscriptionDetailsDialog = () => {
 
   const finalTranscriptText = transcription?.transcript ?? "";
 
-  const transcriptionDurationLabel = useMemo(() => {
-    const ms = transcription?.transcriptionDurationMs;
-    if (ms == null) return null;
-    if (ms >= 1000) {
-      return `${(ms / 1000).toFixed(2)}s`;
-    }
-    return `${ms}ms`;
-  }, [transcription?.transcriptionDurationMs]);
+  const transcriptionDurationLabel = useMemo(
+    () => formatDurationLabel(transcription?.transcriptionDurationMs),
+    [transcription?.transcriptionDurationMs],
+  );
 
-  const postprocessDurationLabel = useMemo(() => {
-    const ms = transcription?.postprocessDurationMs;
-    if (ms == null) return null;
-    if (ms >= 1000) {
-      return `${(ms / 1000).toFixed(2)}s`;
-    }
-    return `${ms}ms`;
-  }, [transcription?.postprocessDurationMs]);
+  const postprocessDurationLabel = useMemo(
+    () => formatDurationLabel(transcription?.postprocessDurationMs),
+    [transcription?.postprocessDurationMs],
+  );
 
   const warnings = useMemo(() => {
     if (!transcription?.warnings) {
@@ -473,44 +492,20 @@ export const TranscriptionDetailsDialog = () => {
                   </Typography>
                   <Stack spacing={1.25} sx={{ mt: 1 }}>
                     {transcriptionDurationLabel && (
-                      <Box>
-                        <Typography
-                          variant="caption"
-                          sx={{
-                            color: "text.secondary",
-                          }}
-                        >
+                      <DetailField
+                        label={
                           <FormattedMessage defaultMessage="Transcription Duration" />
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontWeight: 600,
-                          }}
-                        >
-                          {transcriptionDurationLabel}
-                        </Typography>
-                      </Box>
+                        }
+                        value={transcriptionDurationLabel}
+                      />
                     )}
                     {postprocessDurationLabel && (
-                      <Box>
-                        <Typography
-                          variant="caption"
-                          sx={{
-                            color: "text.secondary",
-                          }}
-                        >
+                      <DetailField
+                        label={
                           <FormattedMessage defaultMessage="Post-processing Duration" />
-                        </Typography>
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontWeight: 600,
-                          }}
-                        >
-                          {postprocessDurationLabel}
-                        </Typography>
-                      </Box>
+                        }
+                        value={postprocessDurationLabel}
+                      />
                     )}
                   </Stack>
                 </Box>
@@ -529,78 +524,22 @@ export const TranscriptionDetailsDialog = () => {
                 <FormattedMessage defaultMessage="Transcription Step" />
               </Typography>
               <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Mode" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {transcriptionModeLabel}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Device" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {deviceLabel}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Model Size" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {modelSizeLabel}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="API Key" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {transcriptionApiKeyLabel}
-                  </Typography>
-                </Box>
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Mode" />}
+                  value={transcriptionModeLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Device" />}
+                  value={deviceLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Model Size" />}
+                  value={modelSizeLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="API Key" />}
+                  value={transcriptionApiKeyLabel}
+                />
                 <TranscriptionTextBlock
                   label={<FormattedMessage defaultMessage="Prompt" />}
                   value={transcriptionPrompt}
@@ -624,60 +563,22 @@ export const TranscriptionDetailsDialog = () => {
                 <FormattedMessage defaultMessage="Post-processing Step" />
               </Typography>
               <Stack spacing={1.25} sx={{ mt: 1 }}>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Mode" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {postProcessModeLabel}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="Processor" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {postProcessDeviceLabel}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      color: "text.secondary",
-                    }}
-                  >
-                    <FormattedMessage defaultMessage="API Key" />
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      fontWeight: 600,
-                    }}
-                  >
-                    {postProcessApiKeyLabel}
-                  </Typography>
-                </Box>
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Mode" />}
+                  value={postProcessModeLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Processor" />}
+                  value={postProcessDeviceLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="Model" />}
+                  value={postProcessModelLabel}
+                />
+                <DetailField
+                  label={<FormattedMessage defaultMessage="API Key" />}
+                  value={postProcessApiKeyLabel}
+                />
                 <TranscriptionTextBlock
                   label={<FormattedMessage defaultMessage="Prompt" />}
                   value={postProcessPrompt}

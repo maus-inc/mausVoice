@@ -172,6 +172,8 @@ pub const AUTO_LEARN_DICTIONARY_MIGRATION_SQL: &str =
 /// Adds the `auto_learn_from_edits_enabled` preference column (default off).
 pub const AUTO_LEARN_FROM_EDITS_MIGRATION_SQL: &str =
     include_str!("migrations/085_auto_learn_from_edits.sql");
+pub const TRANSCRIPTION_POST_PROCESS_MODEL_MIGRATION_SQL: &str =
+    include_str!("migrations/086_transcription_post_process_model.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -665,6 +667,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 85,
             description: "add_auto_learn_from_edits",
             sql: AUTO_LEARN_FROM_EDITS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 86,
+            description: "add_transcription_post_process_model",
+            sql: TRANSCRIPTION_POST_PROCESS_MODEL_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

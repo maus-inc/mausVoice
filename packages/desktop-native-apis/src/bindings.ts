@@ -627,6 +627,20 @@ async resolveAppPids(identity: AppIdentity) : Promise<Result<AppProcessMatch[], 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Re-registers the global keyboard hook. Used by the Windows resume
+ * handler in `platform::windows::lifecycle` to recover from a
+ * sleep/wake or session-unlock transition that tore down the
+ * low-level hook installed by `rdev::grab`.
+ */
+async restartKeyListener() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restart_key_listener") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resumeRecording() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("resume_recording") };
@@ -692,6 +706,14 @@ async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
 async setPhase(phase: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_phase", { phase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPillPlacement(placement: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_placement", { placement }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1227,7 +1249,26 @@ export type SystemCapabilities = { ramGb: number; cpuCores: number; gpus: GpuAda
 export type Term = { id: string; createdAt: number; createdByUserId: string; sourceValue: string; destinationValue: string; isReplacement: boolean; isDeleted: boolean }
 export type TextFieldInfo = { cursorPosition: number | null; selectionLength: number | null; textContent: string | null }
 export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number; category?: string | null; outputLength?: string | null; exampleInputOutput?: string | null }
-export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
+export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; 
+/**
+ * Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b").
+ */
+postProcessModel?: string | null; 
+/**
+ * Provider slug (e.g. "cerebras") selected for post-processing,
+ * persisted even when the request fails so history attributes the
+ * attempt instead of showing "no provider selected".
+ */
+postProcessProvider?: string | null; 
+/**
+ * True when a post-processing request was attempted and failed.
+ */
+postProcessFailed?: boolean | null; 
+/**
+ * Sanitized, non-secret error message from a failed post-processing
+ * request.
+ */
+postProcessError?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { 
 /**
  * Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
@@ -1259,13 +1300,7 @@ pillPlacement?: string;
  * Delay (ms) between a hands-free stop and the actual paste/type
  * action. NULL disables the delay (immediate paste on stop).
  */
-handsFreeDelayMs?: number | null; 
-inDictationStyleSwitchingEnabled?: boolean; 
-hallucinationFilterEnabled?: boolean; 
-reviewBeforeInsert?: boolean | null; 
-agentEnabledTools?: string | null; 
-agentMaxIterations?: number; 
-agentPermissionTimeoutMs?: number; 
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
 /**
  * Deterministic spoken formatting / scratch-that. Default on.
  */

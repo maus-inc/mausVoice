@@ -125,7 +125,8 @@ const mocks = vi.hoisted(() => {
   const invoke = vi.fn();
   const getByLabel = vi.fn();
   const listen = vi.fn();
-  const showToast = vi.fn();
+  // Resolves so `runToast` receives a real promise to attach its handler to.
+  const showToast = vi.fn((): Promise<void> => Promise.resolve());
   return { invoke, getByLabel, listen, showToast };
 });
 
@@ -171,8 +172,10 @@ vi.mock("../i18n/intl", () => {
     }),
   };
 });
-vi.mock("../actions/toast.actions", () => ({
-  showToast: (...args: unknown[]) => mocks.showToast(...args),
+vi.mock("../actions/toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
+  showToast: (...args: Parameters<typeof mocks.showToast>) =>
+    mocks.showToast(...args),
 }));
 vi.mock("./log.utils", () => ({
   getLogger: () => ({
@@ -185,12 +188,29 @@ vi.mock("./log.utils", () => ({
 
 import { reviewTextInComposer } from "./composer.utils";
 
+/**
+ * Reset every composer mock and restore the async toast implementation.
+ * `mockReset` strips implementations, so `showToast` must be re-stubbed or it
+ * returns undefined where the code under test awaits a promise.
+ */
+const resetComposerMocks = () => {
+  mocks.invoke.mockReset();
+  mocks.getByLabel.mockReset();
+  mocks.listen.mockReset();
+  mocks.showToast.mockReset();
+  mocks.showToast.mockImplementation(() => Promise.resolve());
+};
+
+/** Happy-path defaults: nothing fails and no window already exists. */
+const stubComposerDefaults = () => {
+  mocks.invoke.mockResolvedValue(undefined);
+  mocks.getByLabel.mockResolvedValue(null);
+  mocks.listen.mockResolvedValue(vi.fn());
+};
+
 describe("reviewTextInComposer", () => {
   beforeEach(() => {
-    mocks.invoke.mockReset();
-    mocks.getByLabel.mockReset();
-    mocks.listen.mockReset();
-    mocks.showToast.mockReset();
+    resetComposerMocks();
     // Default: register/discard/destroy succeed; creation returns a window.
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "floating_window_create") return { id: "floating-1" };
@@ -265,13 +285,8 @@ describe("reviewTextInComposer", () => {
 
 describe("reviewTextInComposer cleanup", () => {
   beforeEach(() => {
-    mocks.invoke.mockReset();
-    mocks.getByLabel.mockReset();
-    mocks.listen.mockReset();
-    mocks.showToast.mockReset();
-    mocks.invoke.mockResolvedValue(undefined);
-    mocks.getByLabel.mockResolvedValue(null);
-    mocks.listen.mockResolvedValue(vi.fn());
+    resetComposerMocks();
+    stubComposerDefaults();
   });
 
   it("destroys the window and discards its text when the user accepts", async () => {
@@ -321,13 +336,8 @@ describe("reviewTextInComposer cleanup", () => {
 
 describe("reviewTextInComposer ready-timeout safety net", () => {
   beforeEach(() => {
-    mocks.invoke.mockReset();
-    mocks.getByLabel.mockReset();
-    mocks.listen.mockReset();
-    mocks.showToast.mockReset();
-    mocks.invoke.mockResolvedValue(undefined);
-    mocks.getByLabel.mockResolvedValue(null);
-    mocks.listen.mockResolvedValue(vi.fn());
+    resetComposerMocks();
+    stubComposerDefaults();
   });
 
   it("destroys a blank composer window and toasts recovery when composer-ready never arrives", async () => {

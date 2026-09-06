@@ -44,14 +44,19 @@ vi.mock("./app.actions", () => ({
   showErrorSnackbar,
 }));
 
-vi.mock("./toast.actions", () => ({
+vi.mock("./toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
   showPersistentToast,
   showCompletionToast,
   dismissToast,
   showToast: vi.fn(async () => {}),
 }));
 
-vi.mock("../i18n/intl", () => ({
+// Spread the real module so helpers like detectLocale (pulled in through
+// user.utils) keep working; stubbing only getIntl made the whole success
+// path throw and silently skip the completion toast.
+vi.mock("../i18n/intl", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n/intl")>()),
   getIntl: () => ({
     formatMessage: (descriptor: { defaultMessage: string }) =>
       descriptor.defaultMessage,
@@ -60,6 +65,14 @@ vi.mock("../i18n/intl", () => ({
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
+
+/** A run that never settles, so it stays in flight for the whole test. */
+const neverSettles = () => new Promise<never>(() => undefined);
+
+/** Start a run whose rejection is irrelevant to the assertion under test. */
+const startIgnoredRun = (transcriptionId: string): void => {
+  retranscribeTranscription({ transcriptionId }).catch(() => undefined);
+};
 
 const sampleTranscription = (id: string): Transcription => ({
   id,
@@ -101,6 +114,11 @@ const mockSuccessfulPipeline = () => {
   updateTranscription.mockImplementation(
     async (transcription: Transcription) => transcription,
   );
+  // vi.clearAllMocks() strips implementations, so these must be restored or
+  // the toast helpers return undefined and their .then() chains reject.
+  showPersistentToast.mockResolvedValue();
+  showCompletionToast.mockResolvedValue();
+  dismissToast.mockResolvedValue();
 };
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -282,5 +300,249 @@ describe("retranscribeTranscription feedback", () => {
     expect(getAppState().transcriptions.retranscribeDialogTranscriptionId).toBe(
       "b",
     );
+  });
+
+  it("persists fresh durations and post-process model instead of stale ones", async () => {
+    produceAppState((draft) => {
+      draft.transcriptionById["a"] = {
+        ...sampleTranscription("a"),
+        transcriptionDurationMs: 99_000,
+        postprocessDurationMs: 88_000,
+        postProcessModel: "old-model",
+      };
+      draft.transcriptions.transcriptionIds = ["a"];
+    });
+
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: "hello",
+      sanitizedTranscript: "hello",
+      warnings: [],
+      metadata: { transcriptionDurationMs: 120 },
+    });
+    postProcessTranscript.mockResolvedValue({
+      transcript: "Hello there",
+      warnings: [],
+      metadata: {
+        postprocessDurationMs: 45,
+        postProcessModel: "openai/gpt-oss-20b",
+      },
+    });
+
+    await retranscribeTranscription({
+      transcriptionId: "a",
+      languageCode: "en",
+    });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionDurationMs: 120,
+        postprocessDurationMs: 45,
+        postProcessModel: "openai/gpt-oss-20b",
+      }),
+    );
+  });
+
+  it("clears stale durations when the new run reports none", async () => {
+    produceAppState((draft) => {
+      draft.transcriptionById["a"] = {
+        ...sampleTranscription("a"),
+        transcriptionDurationMs: 99_000,
+        postprocessDurationMs: 88_000,
+      };
+      draft.transcriptions.transcriptionIds = ["a"];
+    });
+
+    await retranscribeTranscription({
+      transcriptionId: "a",
+      languageCode: "en",
+    });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionDurationMs: null,
+        postprocessDurationMs: null,
+        postProcessModel: null,
+      }),
+    );
+  });
+
+  it("replaces the loading toast with the completion toast on success", async () => {
+    seedTranscription("a");
+
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The long-lived loading toast must be dismissed, not left to expire.
+    expect(dismissToast).toHaveBeenCalledTimes(1);
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+  });
+
+  it("still shows the completion toast when the dismiss fails", async () => {
+    seedTranscription("a");
+    // A failed dismiss round trip must not suppress the finished state.
+    vi.mocked(dismissToast).mockRejectedValueOnce(new Error("pill offline"));
+
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+  });
+
+  it("releases toast ownership after success so a stale run sends no dismiss", async () => {
+    seedTranscription("a");
+
+    let release:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const stale = retranscribeTranscription({ transcriptionId: "a" });
+
+    // A newer run for the same row completes first and owns the toast.
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    dismissToast.mockClear();
+
+    // The superseded run now settles. Success already released ownership, so
+    // it must not fire another dismiss at the native pill.
+    release?.({ samples: [0], sampleRate: 16000 });
+    await stale;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dismissToast).not.toHaveBeenCalled();
+  });
+
+  it("leaves the newer run's state intact when a superseded run settles", async () => {
+    seedTranscription("a");
+
+    let releaseStale:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    let releaseNewer:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          releaseStale = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          releaseNewer = resolve;
+        }),
+      );
+
+    const stale = retranscribeTranscription({ transcriptionId: "a" });
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    const newer = retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The superseded run settles while the newer run is still working. It must
+    // not clear the newer run's in-flight marker, or the row would look idle
+    // while a retranscription is genuinely still running.
+    releaseStale?.({ samples: [0], sampleRate: 16000 });
+    await stale;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getAppState().transcriptions.retranscribingIds).toContain("a");
+
+    // The newer run still finishes normally and frees the row for reuse.
+    releaseNewer?.({ samples: [0], sampleRate: 16000 });
+    await newer;
+    await vi.advanceTimersByTimeAsync(RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+
+    expect(getAppState().transcriptions.retranscribingIds).not.toContain("a");
+  });
+
+  it("does not double-dismiss when a later run fails after a success", async () => {
+    seedTranscription("a");
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    dismissToast.mockClear();
+
+    loadTranscriptionAudio.mockRejectedValueOnce(new Error("no audio"));
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Exactly one dismiss for the failing run's own loading toast.
+    expect(dismissToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses the orphaned loading toast when a superseded run is the last in flight", async () => {
+    seedTranscription("a");
+
+    let release:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const stale = retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A newer generation supersedes the first run but never finishes, so no
+    // success path ever runs and nothing else can clear the loading toast.
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("a");
+    await vi.advanceTimersByTimeAsync(0);
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    dismissToast.mockClear();
+    showCompletionToast.mockClear();
+
+    // The superseded run settles with nothing left in flight. It still owns the
+    // long-lived loading toast, so it must dismiss it rather than return early.
+    release?.({ samples: [0], sampleRate: 16000 });
+    await stale;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dismissToast).toHaveBeenCalledTimes(1);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale completion toast replace newer loading feedback", async () => {
+    seedTranscription("a");
+    seedTranscription("b");
+
+    // Hold the dismiss round trip open so a newer batch can start first.
+    let releaseDismiss: (() => void) | undefined;
+    dismissToast.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseDismiss = () => resolve();
+        }),
+    );
+
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A newer run starts and shows its own loading toast while the previous
+    // run's dismiss is still pending. It hangs, so it never completes itself.
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("b");
+    await vi.advanceTimersByTimeAsync(0);
+    showCompletionToast.mockClear();
+
+    // The earlier dismiss resolves last. Its completion toast is stale now and
+    // must not overwrite the newer run's loading toast.
+    releaseDismiss?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(showCompletionToast).not.toHaveBeenCalled();
   });
 });

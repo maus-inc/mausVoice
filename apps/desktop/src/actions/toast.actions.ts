@@ -31,29 +31,61 @@ export type ShowToastOptions = {
   rejectAction?: ToastAction;
 };
 
+/**
+ * Serializes native toast IPC. Each call to `sync_native_pill_assistant` is a
+ * separate round trip, so concurrent show/dismiss calls can arrive at the pill
+ * out of order and leave a dismissed toast on screen for its full duration.
+ * Chaining keeps the pill's view of the sequence identical to call order.
+ */
+let toastQueue: Promise<void> = Promise.resolve();
+
+const enqueueToastCommand = (
+  payload: Record<string, unknown>,
+): Promise<void> => {
+  const next = toastQueue.then(() =>
+    invoke<void>("sync_native_pill_assistant", {
+      payload: JSON.stringify(payload),
+    }),
+  );
+  // Keep the chain alive after a rejection so one failed toast cannot wedge
+  // every later one, while still surfacing the error to this caller.
+  toastQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+};
+
 export async function showToast(options: ShowToastOptions): Promise<void> {
   const durationSec = options.duration ? options.duration / 1000 : undefined;
-  await invoke("sync_native_pill_assistant", {
-    payload: JSON.stringify({
-      type: "toast",
-      message: options.message,
-      toast_type: options.toastType ?? "info",
-      duration: durationSec,
-      action: options.action ?? null,
-      action_label: options.action ? getActionLabel(options.action) : null,
-      reject_action: options.rejectAction ?? null,
-      reject_action_label: options.rejectAction
-        ? getActionLabel(options.rejectAction)
-        : null,
-    }),
+  await enqueueToastCommand({
+    type: "toast",
+    message: options.message,
+    toast_type: options.toastType ?? "info",
+    duration: durationSec,
+    action: options.action ?? null,
+    action_label: options.action ? getActionLabel(options.action) : null,
+    reject_action: options.rejectAction ?? null,
+    reject_action_label: options.rejectAction
+      ? getActionLabel(options.rejectAction)
+      : null,
   });
 }
 
 export async function dismissToast(): Promise<void> {
-  await invoke("sync_native_pill_assistant", {
-    payload: JSON.stringify({ type: "dismiss_toast" }),
-  });
+  await enqueueToastCommand({ type: "dismiss_toast" });
 }
+
+/**
+ * Fire a toast without awaiting it. Native toast IPC can reject, and a bare
+ * `void showToast(...)` would surface that as an unhandled rejection, so the
+ * failure is logged and swallowed here instead.
+ */
+export const runToast = (work: Promise<void>): void => {
+  void work.catch((error: unknown) => {
+    console.error("Toast command failed", error);
+  });
+};
 
 /**
  * In-flight toast. The native pill treats a missing duration as 2.5s

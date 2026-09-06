@@ -15,7 +15,7 @@ import {
   sendChatMessage,
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
-import { dismissToast, showToast } from "../../actions/toast.actions";
+import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
 import {
   resolveToolPermission,
@@ -1127,7 +1127,7 @@ export const DictationSideEffects = () => {
   const promptCancelTranscription = useCallback(() => {
     if (cancelPromptTimerRef.current) {
       clearCancelPromptTimer();
-      dismissToast();
+      runToast(dismissToast());
       abortRecording();
       return;
     }

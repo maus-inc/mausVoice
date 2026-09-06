@@ -39,7 +39,8 @@ vi.mock("../repos", () => ({
   }),
 }));
 
-vi.mock("./toast.actions", () => ({
+vi.mock("./toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
   showToast: vi.fn(() => Promise.resolve()),
 }));
 
