@@ -116,6 +116,10 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
+          # This job only runs node --test and cargo; it never installs pnpm,
+          # and setup-node v5's package-manager-cache (default on) errors when
+          # it cannot find the package manager binary.
+          package-manager-cache: false
       - name: Cache cargo
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
