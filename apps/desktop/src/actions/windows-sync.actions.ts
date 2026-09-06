@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { PillPlacement } from "@maus-inc/types";
 
 /**
  * Re-registers the global keyboard hook after a Windows sleep/wake or
@@ -39,7 +40,7 @@ export const restartKeyboardListenerOnResume = async (args: {
  * GTK pill protocol has no placement message.
  */
 export const pushPillPlacementToNative = async (
-  placement: "top" | "bottom",
+  placement: PillPlacement,
 ): Promise<void> => {
   await invoke("set_pill_placement", { placement });
 };
