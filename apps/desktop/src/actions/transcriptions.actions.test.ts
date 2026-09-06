@@ -51,7 +51,11 @@ vi.mock("./toast.actions", () => ({
   showToast: vi.fn(async () => {}),
 }));
 
-vi.mock("../i18n/intl", () => ({
+// Spread the real module so helpers like detectLocale (pulled in through
+// user.utils) keep working; stubbing only getIntl made the whole success
+// path throw and silently skip the completion toast.
+vi.mock("../i18n/intl", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n/intl")>()),
   getIntl: () => ({
     formatMessage: (descriptor: { defaultMessage: string }) =>
       descriptor.defaultMessage,
@@ -101,6 +105,11 @@ const mockSuccessfulPipeline = () => {
   updateTranscription.mockImplementation(
     async (transcription: Transcription) => transcription,
   );
+  // vi.clearAllMocks() strips implementations, so these must be restored or
+  // the toast helpers return undefined and their .then() chains reject.
+  showPersistentToast.mockResolvedValue(undefined);
+  showCompletionToast.mockResolvedValue(undefined);
+  dismissToast.mockResolvedValue(undefined);
 };
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -346,5 +355,61 @@ describe("retranscribeTranscription feedback", () => {
         postProcessModel: null,
       }),
     );
+  });
+
+  it("replaces the loading toast with the completion toast on success", async () => {
+    seedTranscription("a");
+
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The long-lived loading toast must be dismissed, not left to expire.
+    expect(dismissToast).toHaveBeenCalledTimes(1);
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+  });
+
+  it("releases toast ownership after success so a stale run sends no dismiss", async () => {
+    seedTranscription("a");
+
+    let release:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio.mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    const stale = retranscribeTranscription({ transcriptionId: "a" });
+
+    // A newer run for the same row completes first and owns the toast.
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    dismissToast.mockClear();
+
+    // The superseded run now settles. Success already released ownership, so
+    // it must not fire another dismiss at the native pill.
+    release?.({ samples: [0], sampleRate: 16000 });
+    await stale;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(dismissToast).not.toHaveBeenCalled();
+  });
+
+  it("does not double-dismiss when a later run fails after a success", async () => {
+    seedTranscription("a");
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+    dismissToast.mockClear();
+
+    loadTranscriptionAudio.mockRejectedValueOnce(new Error("no audio"));
+    await retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Exactly one dismiss for the failing run's own loading toast.
+    expect(dismissToast).toHaveBeenCalledTimes(1);
   });
 });

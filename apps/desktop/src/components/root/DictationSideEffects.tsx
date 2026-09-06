@@ -1127,7 +1127,7 @@ export const DictationSideEffects = () => {
   const promptCancelTranscription = useCallback(() => {
     if (cancelPromptTimerRef.current) {
       clearCancelPromptTimer();
-      dismissToast();
+      void dismissToast();
       abortRecording();
       return;
     }

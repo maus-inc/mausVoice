@@ -223,12 +223,21 @@ const showRetranscribeLoadingFeedback = () => {
 const showRetranscribeSuccessFeedback = () => {
   const { complete } = retranscribeFeedbackCopy();
   showSnackbar(complete, { mode: "success" });
-  ownsRetranscribeNativeToast = true;
-  // Dismiss the loading toast before showing the completion one
+  // The completion toast carries its own short duration, so the long-lived
+  // loading toast is no longer ours once it is replaced.
+  ownsRetranscribeNativeToast = false;
   runToast(dismissToast().then(() => showCompletionToast(complete)));
 };
 
-const syncRetranscribeFeedback = (event: "success" | "error") => {
+const dismissRetranscribeLoadingFeedback = () => {
+  if (!ownsRetranscribeNativeToast) {
+    return;
+  }
+  ownsRetranscribeNativeToast = false;
+  runToast(dismissToast());
+};
+
+const syncRetranscribeFeedback = (event: "success" | "error" | "abandoned") => {
   const inFlight = getAppState().transcriptions.retranscribingIds.length;
   if (inFlight > 0) {
     return;
@@ -237,11 +246,7 @@ const syncRetranscribeFeedback = (event: "success" | "error") => {
     showRetranscribeSuccessFeedback();
     return;
   }
-  if (!ownsRetranscribeNativeToast) {
-    return;
-  }
-  ownsRetranscribeNativeToast = false;
-  runToast(dismissToast());
+  dismissRetranscribeLoadingFeedback();
 };
 
 const performRetranscribe = async ({
@@ -270,6 +275,15 @@ const performRetranscribe = async ({
   });
 };
 
+/**
+ * A newer run for this row replaced us. The newer run owns the row state, so
+ * touching it here would clear its in-flight marker. Only release the shared
+ * loading toast, and only once nothing is left running.
+ */
+const abandonRetranscribeRun = (): void => {
+  syncRetranscribeFeedback("abandoned");
+};
+
 export const retranscribeTranscription = async (
   params: RetranscribeTranscriptionParams,
 ): Promise<void> => {
@@ -291,6 +305,7 @@ export const retranscribeTranscription = async (
   try {
     await performRetranscribe(params);
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+      abandonRetranscribeRun();
       return;
     }
     produceAppState((draft) => {
@@ -308,6 +323,7 @@ export const retranscribeTranscription = async (
     }, RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
   } catch (error) {
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
+      abandonRetranscribeRun();
       return;
     }
     produceAppState((draft) => {
