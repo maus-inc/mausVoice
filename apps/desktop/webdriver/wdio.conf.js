@@ -45,6 +45,10 @@ const npmCliCandidates = [
   ),
   // Distros that ship npm as a separate system package (Debian, Ubuntu).
   "/usr/share/nodejs/npm/bin/npm-cli.js",
+  // Homebrew's Node package (Apple Silicon and Intel): the npm CLI lives
+  // under the Cellar's lib/node_modules, not next to the node binary.
+  "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+  "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
 ];
 const npmCliPath = npmCliCandidates.find((candidate) =>
   fs.existsSync(candidate),
