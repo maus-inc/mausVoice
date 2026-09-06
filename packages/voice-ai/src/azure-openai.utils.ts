@@ -42,6 +42,7 @@ export type AzureOpenAIGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   maxTokens?: number;
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 const buildResponseFormat = (
@@ -82,9 +83,12 @@ export const azureOpenAIGenerateText = async ({
   jsonResponse,
   maxTokens,
   customFetch,
+  signal,
 }: AzureOpenAIGenerateTextArgs): Promise<AzureOpenAIGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    retries: signal ? 1 : 3,
     fn: async () => {
       const client = createClient(apiKey, endpoint, customFetch);
 
@@ -96,13 +100,16 @@ export const azureOpenAIGenerateText = async ({
 
       const response_format = buildResponseFormat(deploymentName, jsonResponse);
 
-      const response = await client.chat.completions.create({
-        messages,
-        model: deploymentName,
-        temperature: 1,
-        max_completion_tokens: maxTokens ?? 1024,
-        response_format,
-      });
+      const response = await client.chat.completions.create(
+        {
+          messages,
+          model: deploymentName,
+          temperature: 1,
+          max_completion_tokens: maxTokens ?? 1024,
+          response_format,
+        },
+        { signal },
+      );
 
       const content = response.choices?.[0]?.message?.content || "";
       return {

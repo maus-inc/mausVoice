@@ -164,6 +164,7 @@ export type OpenRouterGenerateTextArgs = {
   providerRouting?: OpenRouterProviderRouting;
   customFetch?: CustomFetch;
   maxTokens?: number;
+  signal?: AbortSignal;
 };
 
 export type OpenRouterGenerateTextOutput = {
@@ -184,9 +185,12 @@ export const openrouterGenerateTextResponse = async ({
   providerRouting,
   customFetch,
   maxTokens,
+  signal,
 }: OpenRouterGenerateTextArgs): Promise<OpenRouterGenerateTextOutput> => {
   return retry({
-    retries: 3,
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    retries: signal ? 1 : 3,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -212,7 +216,9 @@ export const openrouterGenerateTextResponse = async ({
         requestParams.provider = providerRouting;
       }
 
-      const response = await client.chat.completions.create(requestParams);
+      const response = await client.chat.completions.create(requestParams, {
+        signal,
+      });
 
       console.log("openrouter llm usage:", response.usage);
       return parseOpenAICompatibleGenerateTextResponse({

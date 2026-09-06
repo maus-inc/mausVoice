@@ -168,6 +168,7 @@ export type OpenAIGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   customFetch?: CustomFetch;
   maxTokens?: number;
+  signal?: AbortSignal;
 };
 
 export type OpenAIGenerateResponseOutput = {
@@ -185,9 +186,12 @@ export const openaiGenerateTextResponse = async ({
   jsonResponse,
   customFetch,
   maxTokens,
+  signal,
 }: OpenAIGenerateTextArgs): Promise<OpenAIGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    retries: signal ? 1 : 3,
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
@@ -199,14 +203,17 @@ export const openaiGenerateTextResponse = async ({
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
-      const response = await client.chat.completions.create({
-        messages,
-        model,
-        temperature: 1,
-        max_completion_tokens: maxTokens ?? 1024,
-        top_p: 1,
-        ...(response_format ? { response_format } : {}),
-      });
+      const response = await client.chat.completions.create(
+        {
+          messages,
+          model,
+          temperature: 1,
+          max_completion_tokens: maxTokens ?? 1024,
+          top_p: 1,
+          ...(response_format ? { response_format } : {}),
+        },
+        { signal },
+      );
 
       console.log("openai llm usage:", response.usage);
       return parseOpenAICompatibleGenerateTextResponse({
