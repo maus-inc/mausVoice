@@ -10,6 +10,10 @@ import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
+  pushPillPlacementToNative,
+  restartKeyboardListenerOnResume,
+} from "../../actions/windows-sync.actions";
+import {
   canRunPostElevationInit,
   runStartupElevationPreflight,
 } from "../../actions/elevation.actions";
@@ -65,7 +69,7 @@ import {
 import { registerMembers, registerUsers } from "../../utils/app.utils";
 import { setPillGeometry } from "../../utils/composer.utils";
 import { browserRouter } from "../../router";
-import { getIsDevMode } from "../../utils/env.utils";
+import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
@@ -189,6 +193,9 @@ export const AppSideEffects = () => {
   const interactionFeedbackVolume = useAppStore(
     (state) => getMyUser(state)?.interactionFeedbackVolume ?? 0.35,
   );
+  const pillPlacement = useAppStore(
+    (state) => getMyUserPreferences(state)?.pillPlacement ?? "bottom",
+  );
   const keyPermAuthorized = useAppStore((state) =>
     isPermissionAuthorized(getRec(state.permissions, "accessibility")?.state),
   );
@@ -308,6 +315,21 @@ export const AppSideEffects = () => {
       // remains the source of truth and is re-sent on the next change.
     });
   }, [isMainWindow, interactionFeedbackVolume]);
+
+  // The native Windows pill starts bottom-anchored in its static cell, so the
+  // persisted pillPlacement must be pushed on mount AND on change. Without
+  // the mount push a "top" user sees the pill fall back to bottom after every
+  // restart until they toggle the setting again. Windows-only: the macOS
+  // overlay ignores placement and the GTK pill protocol has no placement
+  // message. Main-window-only for the same process-global reason as above.
+  useEffect(() => {
+    if (!isMainWindow || !isWindows()) return;
+    void pushPillPlacementToNative(pillPlacement).catch((error: unknown) => {
+      getLogger().warning(
+        `Failed to push pill placement to native pill: ${error}`,
+      );
+    });
+  }, [isMainWindow, pillPlacement]);
 
   // Windows "Always run as administrator" pre-flight. Must stay ahead of
   // auth / Mixpanel / dashboard init — the gate in elevation.actions owns
@@ -461,6 +483,32 @@ export const AppSideEffects = () => {
       });
     },
   );
+
+  // A23 (Windows): rdev's low-level hook is torn down across sleep/wake and
+  // session-unlock. The Rust lifecycle watcher emits `desktop_resume`; this
+  // listener is the frontend half of that handshake and re-grabs the hook.
+  // State is read at fire time so a stale closure can never restart the
+  // listener after the strategy or permission flips.
+  useTauriListen<void>("desktop_resume", () => {
+    const resumeState = getAppState();
+    void restartKeyboardListenerOnResume({
+      hotkeyStrategy: resumeState.hotkeyStrategy,
+      isMainWindow,
+      keyPermAuthorized: isPermissionAuthorized(
+        getRec(resumeState.permissions, "accessibility")?.state,
+      ),
+    })
+      .then((restarted) => {
+        if (restarted) {
+          getLogger().info("Restarted keyboard listener after desktop resume");
+        }
+      })
+      .catch((error: unknown) => {
+        getLogger().warning(
+          `Failed to restart keyboard listener after desktop resume: ${error}`,
+        );
+      });
+  });
 
   useTauriListen<RemoteFinalTextReceivedPayload>(
     "remote_final_text_received",
