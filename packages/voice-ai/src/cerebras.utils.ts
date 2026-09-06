@@ -173,12 +173,14 @@ export const cerebrasGenerateTextResponse = async ({
   return retry({
     // An aborted request must not be retried; the abort is the caller's
     // deadline decision, not a transient failure worth another attempt.
-    retries: signal ? 1 : 3,
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
+    retries: 3,
     // A billing/auth/validation failure cannot be fixed by retrying. A 402
     // in particular must surface immediately with an actionable message.
     // The status may arrive either as a raw SDK error (before normalization)
     // or already wrapped, so inspect both shapes.
-    isRetryable: (error) => !isCerebrasTerminalError(error),
+    isRetryable: (error) => !signal?.aborted && !isCerebrasTerminalError(error),
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

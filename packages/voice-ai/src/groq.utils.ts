@@ -117,7 +117,11 @@ export const groqGenerateTextResponse = async ({
   customFetch,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
-    retries: signal ? 1 : 3,
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures. Only an actually aborted signal is
+    // terminal.
+    retries: 3,
+    isRetryable: (error) => !signal?.aborted,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
