@@ -141,6 +141,110 @@ describe("GenerateTextInput.maxTokens forwarding", () => {
   });
 });
 
+describe("GenerateTextInput.signal forwarding", () => {
+  const repoCases: [
+    name: string,
+    build: () => {
+      generateText: (i: {
+        prompt: string;
+        signal?: AbortSignal;
+      }) => Promise<unknown>;
+    },
+    spy: () => ReturnType<typeof vi.fn>,
+  ][] = [
+    [
+      "Groq",
+      () => new GroqGenerateTextRepo("k", null),
+      () => vi.mocked(groqGenerateTextResponse),
+    ],
+    [
+      "OpenAI",
+      () => new OpenAIGenerateTextRepo("k", null),
+      () => vi.mocked(openaiGenerateTextResponse),
+    ],
+    [
+      "OpenAI-compatible",
+      () =>
+        new OpenAICompatibleGenerateTextRepo(
+          "https://example.com",
+          "model",
+          "k",
+        ),
+      () => vi.mocked(openaiGenerateTextResponse),
+    ],
+    [
+      "OpenRouter",
+      () => new OpenRouterGenerateTextRepo("k", null),
+      () => vi.mocked(openrouterGenerateTextResponse),
+    ],
+    [
+      "Azure OpenAI",
+      () =>
+        new AzureOpenAIGenerateTextRepo(
+          "k",
+          "https://example.azure.com",
+          "gpt-4o-mini",
+        ),
+      () => vi.mocked(azureOpenAIGenerateText),
+    ],
+    [
+      "Cerebras",
+      () => new CerebrasGenerateTextRepo("k", null),
+      () => vi.mocked(cerebrasGenerateTextResponse),
+    ],
+    [
+      "Deepseek",
+      () => new DeepseekGenerateTextRepo("k", null),
+      () => vi.mocked(deepseekGenerateTextResponse),
+    ],
+    [
+      "Gemini",
+      () => new GeminiGenerateTextRepo("k", null),
+      () => vi.mocked(geminiGenerateTextResponse),
+    ],
+    [
+      "Claude",
+      () => new ClaudeGenerateTextRepo("k", null),
+      () => vi.mocked(claudeGenerateTextResponse),
+    ],
+  ];
+
+  it.each(repoCases)(
+    "%s forwards the caller's abort signal to the provider request",
+    async (_name, build, spy) => {
+      const mocked = spy();
+      mocked.mockResolvedValue(mockResponse("hi"));
+
+      const controller = new AbortController();
+      await build().generateText({
+        prompt: "p",
+        signal: controller.signal,
+      });
+
+      expect(mocked).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: controller.signal }),
+      );
+    },
+  );
+
+  it("Groq does not fall back to the backup model when the caller aborted", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockRejectedValueOnce(new Error("boom"));
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    await expect(
+      repo.generateText({ prompt: "p", signal: controller.signal }),
+    ).rejects.toThrow("boom");
+
+    // The abort is the caller's deadline decision: retrying (or falling back
+    // to a second model) would burn quota after the deadline already fired.
+    expect(mocked).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("default model fallback when no model is stored", () => {
   const cases: [
     name: string,

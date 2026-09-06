@@ -43,6 +43,13 @@ export type GenerateTextInput = {
   prompt: string;
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  /**
+   * Cancellation handle for the underlying provider request. Threaded through
+   * every provider so a timed out post-processing call stops consuming quota
+   * instead of running to completion in the background. Providers receiving a
+   * signal also stop retrying (a caller deadline is not a transient failure).
+   */
+  signal?: AbortSignal;
 };
 
 export type GenerateTextMetadata = {
@@ -102,10 +109,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
+        signal: input.signal,
       });
       return { response, model: this.model };
     } catch (error) {
-      if (this.model === this.fallbackModel) {
+      // An aborted request must never fall back: the abort is the caller's
+      // deadline decision, not a provider failure worth another attempt.
+      if (input.signal?.aborted || this.model === this.fallbackModel) {
         throw error;
       }
 
@@ -116,6 +126,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
+        signal: input.signal,
       });
       return { response, model: this.fallbackModel };
     }
@@ -148,6 +159,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -197,6 +209,7 @@ abstract class OpenAICompatibleBaseGenerateTextRepo extends BaseGenerateTextRepo
       jsonResponse: input.jsonResponse,
       customFetch: tauriFetch,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -261,6 +274,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       jsonResponse: input.jsonResponse,
       providerRouting: this.providerRouting,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -303,6 +317,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       prompt: input.prompt,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -343,6 +358,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -382,6 +398,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -421,6 +438,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
@@ -460,6 +478,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      signal: input.signal,
     });
 
     return {
