@@ -412,6 +412,49 @@ describe("retranscribeTranscription feedback", () => {
     expect(dismissToast).not.toHaveBeenCalled();
   });
 
+  it("leaves the newer run's state intact when a superseded run settles", async () => {
+    seedTranscription("a");
+
+    let releaseStale:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    let releaseNewer:
+      ((value: { samples: number[]; sampleRate: number }) => void) | undefined;
+    loadTranscriptionAudio
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          releaseStale = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          releaseNewer = resolve;
+        }),
+      );
+
+    const stale = retranscribeTranscription({ transcriptionId: "a" });
+    produceAppState((draft) => {
+      draft.transcriptions.retranscribingIds = [];
+    });
+    const newer = retranscribeTranscription({ transcriptionId: "a" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The superseded run settles while the newer run is still working. It must
+    // not clear the newer run's in-flight marker, or the row would look idle
+    // while a retranscription is genuinely still running.
+    releaseStale?.({ samples: [0], sampleRate: 16000 });
+    await stale;
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getAppState().transcriptions.retranscribingIds).toContain("a");
+
+    // The newer run still finishes normally and frees the row for reuse.
+    releaseNewer?.({ samples: [0], sampleRate: 16000 });
+    await newer;
+    await vi.advanceTimersByTimeAsync(RETRANSCRIPTION_SUCCESS_VISIBLE_MS);
+
+    expect(getAppState().transcriptions.retranscribingIds).not.toContain("a");
+  });
+
   it("does not double-dismiss when a later run fails after a success", async () => {
     seedTranscription("a");
     await retranscribeTranscription({ transcriptionId: "a" });
