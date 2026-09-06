@@ -283,4 +283,68 @@ describe("retranscribeTranscription feedback", () => {
       "b",
     );
   });
+
+  it("persists fresh durations and post-process model instead of stale ones", async () => {
+    produceAppState((draft) => {
+      draft.transcriptionById["a"] = {
+        ...sampleTranscription("a"),
+        transcriptionDurationMs: 99_000,
+        postprocessDurationMs: 88_000,
+        postProcessModel: "old-model",
+      };
+      draft.transcriptions.transcriptionIds = ["a"];
+    });
+
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: "hello",
+      sanitizedTranscript: "hello",
+      warnings: [],
+      metadata: { transcriptionDurationMs: 120 },
+    });
+    postProcessTranscript.mockResolvedValue({
+      transcript: "Hello there",
+      warnings: [],
+      metadata: {
+        postprocessDurationMs: 45,
+        postProcessModel: "openai/gpt-oss-20b",
+      },
+    });
+
+    await retranscribeTranscription({
+      transcriptionId: "a",
+      languageCode: "en",
+    });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionDurationMs: 120,
+        postprocessDurationMs: 45,
+        postProcessModel: "openai/gpt-oss-20b",
+      }),
+    );
+  });
+
+  it("clears stale durations when the new run reports none", async () => {
+    produceAppState((draft) => {
+      draft.transcriptionById["a"] = {
+        ...sampleTranscription("a"),
+        transcriptionDurationMs: 99_000,
+        postprocessDurationMs: 88_000,
+      };
+      draft.transcriptions.transcriptionIds = ["a"];
+    });
+
+    await retranscribeTranscription({
+      transcriptionId: "a",
+      languageCode: "en",
+    });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcriptionDurationMs: null,
+        postprocessDurationMs: null,
+        postProcessModel: null,
+      }),
+    );
+  });
 });

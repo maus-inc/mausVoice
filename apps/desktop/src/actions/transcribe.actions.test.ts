@@ -365,3 +365,48 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     expect(result.transcription).toBeNull();
   });
 });
+
+describe("storeTranscription post-process model persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invokeMock.mockReset();
+    createTranscriptionMock.mockReset();
+    purgeStaleAudioMock.mockReset();
+    purgeStaleAudioMock.mockResolvedValue([]);
+    createTranscriptionMock.mockImplementation(async (t) => t);
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("persists postProcessModel from the post-process metadata", async () => {
+    await storeTranscription(
+      buildInput({
+        postProcessMetadata: {
+          postProcessMode: "api" as const,
+          postProcessDevice: "API • Groq",
+          postProcessModel: "openai/gpt-oss-20b",
+          postprocessDurationMs: 42,
+        },
+      }),
+    );
+
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.postProcessModel).toBe("openai/gpt-oss-20b");
+    expect(stored.postprocessDurationMs).toBe(42);
+  });
+
+  it("persists null when no post-process model is reported", async () => {
+    await storeTranscription(buildInput());
+
+    const stored = createTranscriptionMock.mock.calls[0][0];
+    expect(stored.postProcessModel).toBeNull();
+  });
+});

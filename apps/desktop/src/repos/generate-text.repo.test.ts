@@ -233,3 +233,58 @@ describe("default model fallback when no model is stored", () => {
     },
   );
 });
+
+describe("generateText metadata reports the resolved model", () => {
+  it("Groq reports the configured model on the happy path", async () => {
+    vi.mocked(groqGenerateTextResponse).mockResolvedValue(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
+  });
+
+  it("Groq reports the fallback model when the primary model fails", async () => {
+    vi.mocked(groqGenerateTextResponse)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+  });
+
+  it("OpenAI reports the configured model", async () => {
+    vi.mocked(openaiGenerateTextResponse).mockResolvedValue(mockResponse("hi"));
+
+    const output = await new OpenAIGenerateTextRepo("k", null).generateText({
+      prompt: "p",
+    });
+
+    expect(output.metadata?.model).toBe("gpt-4o-mini");
+  });
+
+  it("Gemini reports the configured model", async () => {
+    vi.mocked(geminiGenerateTextResponse).mockResolvedValue(mockResponse("hi"));
+
+    const output = await new GeminiGenerateTextRepo(
+      "k",
+      "gemini-2.5-flash",
+    ).generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("gemini-2.5-flash");
+  });
+
+  it("Azure reports the deployment name as the model", async () => {
+    vi.mocked(azureOpenAIGenerateText).mockResolvedValue(mockResponse("hi"));
+
+    const output = await new AzureOpenAIGenerateTextRepo(
+      "k",
+      "https://example.openai.azure.com",
+      "my-deployment",
+    ).generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("my-deployment");
+  });
+});

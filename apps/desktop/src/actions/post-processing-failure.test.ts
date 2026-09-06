@@ -105,4 +105,39 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.metadata.postProcessFailed).toBe(false);
     expect(result.metadata.postProcessError).toBeNull();
   });
+
+  it("captures the resolved post-processing model from generate-text metadata", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Hello, world." }),
+      metadata: {
+        postProcessingMode: "api",
+        inferenceDevice: "API • Cerebras",
+        model: "qwen-3-235b",
+      },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.metadata.postProcessModel).toBe("qwen-3-235b");
+  });
+
+  it("leaves the post-processing model null when the repo reports none", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: JSON.stringify({ result: "Hello, world." }),
+      metadata: {
+        postProcessingMode: "api",
+        inferenceDevice: "API • Cerebras",
+      },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.metadata.postProcessModel).toBeNull();
+  });
 });

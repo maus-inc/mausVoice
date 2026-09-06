@@ -37,6 +37,9 @@ pub struct Transcription {
     pub post_process_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_device: Option<String>,
+    /// Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_model: Option<String>,
     /// Provider slug (e.g. "cerebras") selected for post-processing,
     /// persisted even when the request fails so history attributes the
     /// attempt instead of showing "no provider selected".

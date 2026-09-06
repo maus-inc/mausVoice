@@ -48,6 +48,8 @@ export type GenerateTextInput = {
 export type GenerateTextMetadata = {
   postProcessingMode?: Nullable<PostProcessingMode>;
   inferenceDevice?: Nullable<string>;
+  /** Resolved model id actually used for the request (post-fallback). */
+  model?: Nullable<string>;
 };
 
 export type GenerateTextOutput = {
@@ -79,20 +81,21 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
-    const response = await this.generateWithFallback(input);
+    const { response, model } = await this.generateWithFallback(input);
 
     return {
       text: response.text,
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Groq",
+        model,
       },
     };
   }
 
   private async generateWithFallback(input: GenerateTextInput) {
     try {
-      return await groqGenerateTextResponse({
+      const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
         model: this.model,
         prompt: input.prompt,
@@ -100,12 +103,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
+      return { response, model: this.model as string };
     } catch (error) {
       if (this.model === this.fallbackModel) {
         throw error;
       }
 
-      return groqGenerateTextResponse({
+      const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
         model: this.fallbackModel,
         prompt: input.prompt,
@@ -113,6 +117,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
       });
+      return { response, model: this.fallbackModel as string };
     }
   }
 
@@ -150,6 +155,7 @@ export class OpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • OpenAI",
+        model: this.model,
       },
     };
   }
@@ -192,6 +198,7 @@ export class OllamaGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Ollama",
+        model: this.model,
       },
     };
   }
@@ -236,6 +243,7 @@ export class OpenAICompatibleGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • OpenAI Compatible",
+        model: this.model,
       },
     };
   }
@@ -283,6 +291,7 @@ export class OpenRouterGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • OpenRouter",
+        model: this.model,
       },
     };
   }
@@ -324,6 +333,7 @@ export class AzureOpenAIGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Azure OpenAI",
+        model: this.deploymentName,
       },
     };
   }
@@ -363,6 +373,7 @@ export class DeepseekGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • DeepSeek",
+        model: this.model,
       },
     };
   }
@@ -401,6 +412,7 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Gemini",
+        model: this.model,
       },
     };
   }
@@ -439,6 +451,7 @@ export class ClaudeGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Claude",
+        model: this.model,
       },
     };
   }
@@ -477,6 +490,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       metadata: {
         postProcessingMode: "api",
         inferenceDevice: "API • Cerebras",
+        model: this.model,
       },
     };
   }

@@ -88,6 +88,8 @@ export type PostProcessMetadata = {
   postProcessProvider?: string | null;
   postProcessMode?: PostProcessingMode | null;
   postProcessDevice?: string | null;
+  /** Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b"). */
+  postProcessModel?: string | null;
   postprocessDurationMs?: number | null;
   /** True when a post-processing request was attempted and failed. */
   postProcessFailed?: boolean | null;
@@ -343,6 +345,7 @@ const applyPostProcessSuccess = (
   metadata.postProcessMode =
     genOutput.metadata?.postProcessingMode || metadata.postProcessMode;
   metadata.postProcessDevice = genOutput.metadata?.inferenceDevice || null;
+  metadata.postProcessModel = genOutput.metadata?.model || null;
   // Clear any prior failure flags so a successful run never leaves a
   // stale postProcessFailed=true on an updated row.
   metadata.postProcessFailed = false;
@@ -352,6 +355,8 @@ const applyPostProcessSuccess = (
     metadata.postProcessMode,
     "device:",
     metadata.postProcessDevice,
+    "model:",
+    metadata.postProcessModel,
   );
   return nextTranscript;
 };
@@ -623,6 +628,7 @@ const buildTranscriptionRecord = ({
   transcriptionMode: orNull(input.transcriptionMetadata.transcriptionMode),
   postProcessMode: orNull(input.postProcessMetadata.postProcessMode),
   postProcessDevice: orNull(input.postProcessMetadata.postProcessDevice),
+  postProcessModel: orNull(input.postProcessMetadata.postProcessModel),
   postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
   postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
   postProcessError: orNull(input.postProcessMetadata.postProcessError),

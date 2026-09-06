@@ -160,6 +160,15 @@ export const TranscriptionDetailsDialog = () => {
     );
   }, [transcription?.postProcessDevice]);
 
+  const postProcessModelLabel = useMemo(() => {
+    const value = transcription?.postProcessModel?.trim();
+    return value && value.length > 0 ? (
+      value
+    ) : (
+      <FormattedMessage defaultMessage="Unknown" />
+    );
+  }, [transcription?.postProcessModel]);
+
   const transcriptionPrompt = useMemo(() => {
     const prompt = transcription?.transcriptionPrompt?.trim();
     return prompt && prompt.length > 0 ? prompt : null;
@@ -658,6 +667,24 @@ export const TranscriptionDetailsDialog = () => {
                     }}
                   >
                     {postProcessDeviceLabel}
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      color: "text.secondary",
+                    }}
+                  >
+                    <FormattedMessage defaultMessage="Model" />
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                    }}
+                  >
+                    {postProcessModelLabel}
                   </Typography>
                 </Box>
                 <Box>

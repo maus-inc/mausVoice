@@ -144,12 +144,17 @@ const updateStoredTranscription = async (
     transcriptionMode: metadata.transcriptionMode ?? null,
     postProcessMode: metadata.postProcessMode ?? null,
     postProcessDevice: metadata.postProcessDevice ?? null,
+    postProcessModel: metadata.postProcessModel ?? null,
     // Match create-path sentinels: null = not attempted, true = failed,
     // false = succeeded (set explicitly on the success path).
     postProcessProvider: metadata.postProcessProvider ?? null,
     postProcessFailed: metadata.postProcessFailed ?? null,
     postProcessError: metadata.postProcessError ?? null,
     warnings: warnings.length > 0 ? warnings : null,
+    // Durations must be re-read from the fresh run; spreading the old record
+    // otherwise leaves stale timings in history after a retranscription.
+    transcriptionDurationMs: metadata.transcriptionDurationMs ?? null,
+    postprocessDurationMs: metadata.postprocessDurationMs ?? null,
   });
 };
 
