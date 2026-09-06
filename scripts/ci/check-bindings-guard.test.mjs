@@ -10,6 +10,10 @@ const SCRIPT = readFileSync(
   join(REPO_ROOT, "scripts", "check-bindings.sh"),
   "utf8",
 );
+const WORKFLOW = readFileSync(
+  join(REPO_ROOT, ".github", "workflows", "test-desktop-unit.yml"),
+  "utf8",
+);
 
 function git(args, cwd) {
   return execFileSync("git", args, {
@@ -17,6 +21,13 @@ function git(args, cwd) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+function stepOf(workflow, name) {
+  const start = workflow.indexOf(`- name: ${name}`);
+  assert.notEqual(start, -1, `workflow step ${name} must exist`);
+  const next = workflow.indexOf("\n      - name:", start + 1);
+  return workflow.slice(start, next === -1 ? workflow.length : next);
 }
 
 describe("check-bindings.sh tracked-file guard", () => {
@@ -63,6 +74,39 @@ describe("check-bindings.sh tracked-file guard", () => {
     writeFileSync(join(sandbox, "untracked.ts"), "export {};\n");
     assert.throws(() =>
       git(["ls-files", "--error-unmatch", "untracked.ts"], sandbox),
+    );
+  });
+
+  it("runs the generator with externalBin disabled like the Rust tests", () => {
+    // Regression: binding regeneration invokes tauri's build script, which
+    // fails in CI with "resource path binaries/rust-transcription-cpu-*"
+    // unless TAURI_CONFIG drops externalBin (the same env the cargo test
+    // step needs). The verify step must declare it too.
+    const verify = stepOf(WORKFLOW, "Verify generated bindings are in sync");
+    assert.match(
+      verify,
+      /TAURI_CONFIG:\s*'?{"bundle":{"externalBin":\[\]}}'?/,
+      "Verify generated bindings must set TAURI_CONFIG externalBin: []",
+    );
+  });
+
+  it("declares the checked scripts in the workflow trigger paths", () => {
+    // Regression: check-bindings.sh was missing from the path filter, so
+    // edits to the guard or generator never re-ran the workflow.
+    assert.match(
+      WORKFLOW,
+      /\n\s{6}- "scripts\/check-bindings\.sh"\n/,
+      "workflow must trigger on scripts/check-bindings.sh",
+    );
+    assert.match(
+      WORKFLOW,
+      /\n\s{6}- "scripts\/bindings\.sh"\n/,
+      "workflow must trigger on scripts/bindings.sh",
+    );
+    assert.match(
+      WORKFLOW,
+      /\n\s{6}- "scripts\/ci\/check-bindings-guard\.test\.mjs"\n/,
+      "workflow must trigger on the guard test",
     );
   });
 });
