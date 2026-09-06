@@ -66,6 +66,14 @@ vi.mock("../i18n/intl", async (importOriginal) => ({
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
 
+/** A run that never settles, so it stays in flight for the whole test. */
+const neverSettles = () => new Promise<never>(() => undefined);
+
+/** Start a run whose rejection is irrelevant to the assertion under test. */
+const startIgnoredRun = (transcriptionId: string): void => {
+  retranscribeTranscription({ transcriptionId }).catch(() => undefined);
+};
+
 const sampleTranscription = (id: string): Transcription => ({
   id,
   createdAt: "2026-08-01T00:00:00.000Z",
@@ -488,8 +496,8 @@ describe("retranscribeTranscription feedback", () => {
     produceAppState((draft) => {
       draft.transcriptions.retranscribingIds = [];
     });
-    loadTranscriptionAudio.mockReturnValueOnce(new Promise(() => {}));
-    void retranscribeTranscription({ transcriptionId: "a" }).catch(() => {});
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("a");
     await vi.advanceTimersByTimeAsync(0);
     produceAppState((draft) => {
       draft.transcriptions.retranscribingIds = [];
@@ -525,8 +533,8 @@ describe("retranscribeTranscription feedback", () => {
 
     // A newer run starts and shows its own loading toast while the previous
     // run's dismiss is still pending. It hangs, so it never completes itself.
-    loadTranscriptionAudio.mockReturnValueOnce(new Promise(() => {}));
-    void retranscribeTranscription({ transcriptionId: "b" }).catch(() => {});
+    loadTranscriptionAudio.mockReturnValueOnce(neverSettles());
+    startIgnoredRun("b");
     await vi.advanceTimersByTimeAsync(0);
     showCompletionToast.mockClear();
 
