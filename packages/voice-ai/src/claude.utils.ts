@@ -48,6 +48,7 @@ export type ClaudeGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   maxTokens?: number;
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type ClaudeGenerateResponseOutput = {
@@ -63,9 +64,12 @@ export const claudeGenerateTextResponse = async ({
   jsonResponse,
   maxTokens,
   customFetch,
+  signal,
 }: ClaudeGenerateTextArgs): Promise<ClaudeGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    retries: signal ? 1 : 3,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -74,12 +78,15 @@ export const claudeGenerateTextResponse = async ({
         finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
       }
 
-      const response = await client.messages.create({
-        model,
-        max_tokens: maxTokens ?? 1024,
-        system: system ?? undefined,
-        messages: [{ role: "user", content: finalPrompt }],
-      });
+      const response = await client.messages.create(
+        {
+          model,
+          max_tokens: maxTokens ?? 1024,
+          system: system ?? undefined,
+          messages: [{ role: "user", content: finalPrompt }],
+        },
+        { signal },
+      );
 
       console.log("claude llm usage:", response.usage);
 

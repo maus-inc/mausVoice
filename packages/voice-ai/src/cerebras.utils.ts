@@ -152,6 +152,7 @@ export type CerebrasGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   maxTokens?: number;
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type CerebrasGenerateResponseOutput = {
@@ -167,9 +168,12 @@ export const cerebrasGenerateTextResponse = async ({
   jsonResponse,
   maxTokens,
   customFetch,
+  signal,
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
   return retry({
-    retries: 3,
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    retries: signal ? 1 : 3,
     // A billing/auth/validation failure cannot be fixed by retrying. A 402
     // in particular must surface immediately with an actionable message.
     // The status may arrive either as a raw SDK error (before normalization)
@@ -194,6 +198,7 @@ export const cerebrasGenerateTextResponse = async ({
       };
       const response = await client.chat.completions.create(
         params as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        { signal },
       );
 
       console.log("cerebras llm usage:", response.usage);
