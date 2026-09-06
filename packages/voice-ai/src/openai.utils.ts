@@ -191,7 +191,10 @@ export const openaiGenerateTextResponse = async ({
   return retry({
     // An aborted request must not be retried; the abort is the caller's
     // deadline decision, not a transient failure worth another attempt.
-    retries: signal ? 1 : 3,
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
+    retries: 3,
+    isRetryable: (error) => !signal?.aborted,
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 

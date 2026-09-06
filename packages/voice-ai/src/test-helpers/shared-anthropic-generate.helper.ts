@@ -109,5 +109,49 @@ export function createAnthropicGenerateTests({
       expect(userMessage).toContain("transcribe this");
       expect(userMessage).toContain(JSON.stringify(jsonResponse.schema));
     });
+
+    it("retries a transient failure when a caller signal is present but not aborted", async () => {
+      // Regression: `retries: signal ? 1 : 3` treated signal presence as an
+      // abort and dropped every retry. Only an actually aborted signal is
+      // terminal.
+      const createMessage = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "ok" }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+
+      const controller = new AbortController();
+
+      await runTestCase(createMessage, {
+        apiKey: "test-key",
+        prompt: "hi",
+        signal: controller.signal,
+      });
+
+      expect(createMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry after the caller aborts", async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const createMessage = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("aborted"), { name: "AbortError" }),
+        );
+
+      await expect(
+        runTestCase(createMessage, {
+          apiKey: "test-key",
+          prompt: "hi",
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow("aborted");
+
+      expect(createMessage).toHaveBeenCalledTimes(1);
+    });
   });
 }
