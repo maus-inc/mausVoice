@@ -16,6 +16,38 @@ describe("openaiCompatibleTranscribeAudio", () => {
     fetchMock.mockReset();
   });
 
+  it("uses the custom transcription path when provided", async () => {
+    fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
+
+    await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+      transcriptionPath: "/custom/transcriptions",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0]!;
+    // The custom path replaces the default /audio/transcriptions suffix
+    // while staying under the versioned base (/v1) built by the repo.
+    expect(url).toBe("https://example.com/v1/custom/transcriptions");
+  });
+
+  it("defaults to the /v1/audio/transcriptions path when omitted", async () => {
+    fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
+
+    await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+    });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://example.com/v1/audio/transcriptions");
+  });
+
   it("prefers verbose_json so capable servers return no_speech_prob segments", async () => {
     fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
 
