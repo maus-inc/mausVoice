@@ -75,11 +75,43 @@ describe("normalizeCerebrasError", () => {
     expect(normalized.message).toBe("bad gateway");
   });
 
+  it("redacts key material echoed by a transient 5xx proxy error", () => {
+    const proxyError = Object.assign(
+      new Error("upstream 500: Authorization: Bearer csk_proxy12345"),
+      { status: 500 },
+    );
+    const normalized = normalizeCerebrasError(proxyError);
+    // Retriable, but the key must not survive to logs/metadata.
+    expect(normalized).not.toBeInstanceOf(CerebrasProviderError);
+    expect(normalized.message).not.toMatch(/csk_[A-Za-z0-9]/);
+    expect(normalized.message).toContain("[redacted]");
+  });
+
   it("wraps other terminal 4xx statuses", () => {
     const sdkError = Object.assign(new Error("unauthorized"), { status: 401 });
     const normalized = normalizeCerebrasError(sdkError);
     expect(normalized).toBeInstanceOf(CerebrasProviderError);
     expect((normalized as CerebrasProviderError).status).toBe(401);
+  });
+
+  it("redacts an API key embedded in a terminal SDK error message", () => {
+    // The OpenAI SDK echoes the supplied key in its 401 APIError message.
+    const sdkError = Object.assign(
+      new Error(
+        "Incorrect API key provided: csk_liveAbCd1234. You can find your API key at https://console.cerebras.ai",
+      ),
+      { status: 401 },
+    );
+
+    const normalized = normalizeCerebrasError(sdkError);
+
+    expect(normalized).toBeInstanceOf(CerebrasProviderError);
+    expect(normalized.message).toContain("Incorrect API key provided");
+    expect(normalized.message).not.toMatch(/csk_[A-Za-z0-9]/);
+    expect(normalized.message).toContain("[redacted]");
+    // A key truncated by the provider must not be reconstructed; the whole
+    // token is replaced, never partially preserved.
+    expect(normalized.message).not.toContain("csk_liveAbCd1234");
   });
 
   it("coerces a non-error throwable", () => {

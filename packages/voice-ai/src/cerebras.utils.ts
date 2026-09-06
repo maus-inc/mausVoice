@@ -44,6 +44,28 @@ export const isCerebrasTerminalStatus = (status: number): boolean =>
   status === 404 ||
   status === 422;
 
+/**
+ * Replace the literal API key and common authorization material anywhere in
+ * a provider message. The OpenAI SDK's own error strings can embed the key
+ * ("Incorrect API key provided: csk_..."), and some proxies echo the
+ * Authorization header. Never reveals the key value itself (no length/first
+ * characters), so a message like "key csk_ab" redacts the whole token.
+ */
+const CEREBRAS_SECRET_PATTERNS: RegExp[] = [
+  /csk_[A-Za-z0-9_-]+/g,
+  /sk-[A-Za-z0-9_-]+/gi,
+  /sk_[A-Za-z0-9_-]+/g,
+  /bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /authorization:\s*[^\s;,]+/gi,
+  /api[_-]?key[:=]\s*[A-Za-z0-9._~+/=-]+/gi,
+];
+
+export const redactCerebrasMessage = (message: string): string =>
+  CEREBRAS_SECRET_PATTERNS.reduce(
+    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
+    message,
+  );
+
 const readStatus = (error: unknown): number | undefined => {
   if (typeof error !== "object" || error === null || !("status" in error)) {
     return undefined;
@@ -89,16 +111,28 @@ export const normalizeCerebrasError = (error: unknown): Error => {
   }
 
   if (numericStatus !== undefined && isCerebrasTerminalStatus(numericStatus)) {
-    const message =
+    const rawMessage =
       error instanceof Error && error.message
         ? error.message
         : `Cerebras request failed with status ${numericStatus}`;
-    return new CerebrasProviderError(`Cerebras: ${message}`, numericStatus);
+    // Sanitize before wrapping: SDK APIError messages can contain the API
+    // key (e.g. "Incorrect API key provided: csk_..."). The key must never
+    // reach logs, snackbars, or persisted postProcessError metadata.
+    return new CerebrasProviderError(
+      `Cerebras: ${redactCerebrasMessage(rawMessage)}`,
+      numericStatus,
+    );
   }
 
   // Network/timeout/5xx: return a plain Error so the retry helper treats it
-  // as transient and tries again.
-  return error instanceof Error ? error : new Error(String(error));
+  // as transient and tries again. A proxy or server can still echo key
+  // material in these messages, so scrub it before it reaches logs or saved
+  // metadata; the original error is returned unchanged when clean.
+  if (error instanceof Error) {
+    const redacted = redactCerebrasMessage(error.message);
+    return redacted === error.message ? error : new Error(redacted);
+  }
+  return new Error(redactCerebrasMessage(String(error)));
 };
 
 const createClient = (apiKey: string, customFetch?: CustomFetch) => {
