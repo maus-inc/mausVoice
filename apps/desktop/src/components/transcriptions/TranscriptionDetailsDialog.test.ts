@@ -123,4 +123,36 @@ describe("TranscriptionDetailsDialog post-processing model field", () => {
     expect(bodyText()).toContain("Model");
     expect(bodyText()).toContain("Unknown");
   });
+
+  it("still renders every metadata field after the DetailField refactor", async () => {
+    seed({
+      modelSize: "small",
+      inferenceDevice: "Metal",
+      transcriptionMode: "local",
+      postProcessMode: "api",
+      postProcessDevice: "API \u2022 Groq",
+      postProcessModel: "openai/gpt-oss-20b",
+      transcriptionDurationMs: 1500,
+      postprocessDurationMs: 250,
+    });
+    root = await render(container);
+
+    const text = bodyText();
+    for (const label of [
+      "Transcription Duration",
+      "Post-processing Duration",
+      "Device",
+      "Model Size",
+      "Processor",
+      "Model",
+      "API Key",
+    ]) {
+      expect(text).toContain(label);
+    }
+    expect(text).toContain("Small");
+    expect(text).toContain("Metal");
+    expect(text).toContain("1.50s");
+    expect(text).toContain("250ms");
+    expect(text).toContain("openai/gpt-oss-20b");
+  });
 });
