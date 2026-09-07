@@ -21,83 +21,137 @@ const WORKFLOW_DIR = join(
 // When bumping a pin, re-resolve the tag (git/refs/tags/<version>), confirm
 // action.yml runs on node24, then update this table and the workflow comment
 // in the same commit.
-const VERIFIED_PINS = new Map([
-  // repo@sha -> { version, runtime }
-  [
+//
+// Keyed by the short action name so the table is not a repeating row of
+// `{ version, runtime }` objects (SonarCloud flags that shape as duplication).
+const VERIFIED_ACTION_PINS = {
+  checkout: [
     "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-    { version: "v5.1.0", runtime: "node24" },
+    "v5.1.0",
+    "node24",
   ],
-  [
+  "setup-node": [
     "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444",
-    { version: "v5", runtime: "node24" },
+    "v5",
+    "node24",
   ],
-  [
+  "upload-artifact": [
     "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
-    { version: "v6.0.0", runtime: "node24" },
+    "v6.0.0",
+    "node24",
   ],
-  [
+  "download-artifact": [
     "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
-    { version: "v7.0.0", runtime: "node24" },
+    "v7.0.0",
+    "node24",
   ],
-  [
+  "deploy-pages": [
     "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
-    { version: "v5", runtime: "node24" },
+    "v5",
+    "node24",
   ],
-  [
+  "upload-pages-artifact": [
     "actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa",
-    { version: "v3", runtime: "composite" },
+    "v3",
+    "composite",
   ],
-  [
+  "pnpm-action-setup": [
     "pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288",
-    { version: "v5", runtime: "node24" },
+    "v5",
+    "node24",
   ],
-  [
+  "rust-cache": [
     "Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
-    { version: "v2", runtime: "node24" },
+    "v2",
+    "node24",
   ],
-  [
+  "setup-bun": [
     "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
-    { version: "v2", runtime: "node24" },
+    "v2",
+    "node24",
   ],
-  [
+  "rust-toolchain": [
     "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
-    { version: "stable", runtime: "composite" },
+    "stable",
+    "composite",
   ],
-  [
+  "action-gh-release": [
     "softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231",
-    { version: "v3.0.3", runtime: "node24" },
+    "v3.0.3",
+    "node24",
   ],
-]);
+};
+
+const VERIFIED_PINS = new Map(
+  Object.values(VERIFIED_ACTION_PINS).map(([pin, version, runtime]) => [
+    pin,
+    { version, runtime },
+  ]),
+);
 
 const PIN_RE =
   /uses:\s*([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+@[0-9a-f]{40})\s*(?:#\s*([^\s]+))?/;
 
-function collectPins() {
+function leadingSpaces(line) {
+  return /^ */.exec(line)[0].length;
+}
+
+function collectWorkflowFacts() {
   const pins = [];
+  const setupNodeSteps = [];
+
   for (const file of readdirSync(WORKFLOW_DIR).filter((f) =>
     f.endsWith(".yml"),
   )) {
     const lines = readFileSync(join(WORKFLOW_DIR, file), "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
       const match = PIN_RE.exec(lines[i]);
-      if (match) {
-        pins.push({ file, line: i + 1, pin: match[1], comment: match[2] });
-      } else if (/^\s*uses:\s*/.test(lines[i])) {
-        pins.push({
-          file,
-          line: i + 1,
-          pin: null,
-          comment: null,
-          unparsed: lines[i].trim(),
-        });
+      if (!match) {
+        if (/^\s*uses:\s*/.test(lines[i])) {
+          pins.push({
+            file,
+            line: i + 1,
+            pin: null,
+            comment: null,
+            unparsed: lines[i].trim(),
+          });
+        }
+        continue;
       }
+
+      pins.push({ file, line: i + 1, pin: match[1], comment: match[2] });
+      if (!match[1].startsWith("actions/setup-node@")) continue;
+
+      const usesIndent = leadingSpaces(lines[i]);
+      const stepLines = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        if (lines[j].trim() === "") {
+          stepLines.push(lines[j]);
+          continue;
+        }
+        const indent = leadingSpaces(lines[j]);
+        // `with:` is a sibling of `uses:` at the same indent. A less-indented
+        // line is the next step or job and ends this block.
+        if (indent < usesIndent) break;
+        stepLines.push(lines[j]);
+      }
+
+      setupNodeSteps.push({
+        file,
+        line: i + 1,
+        hasCachePnpm: stepLines.some((l) => /^\s*cache:\s*pnpm\s*$/.test(l)),
+        hasPackageManagerCacheFalse: stepLines.some((l) =>
+          /^\s*package-manager-cache:\s*false\s*$/.test(l),
+        ),
+      });
     }
   }
-  return pins;
+
+  return { pins, setupNodeSteps };
 }
 
 describe("GitHub Actions pin guard", () => {
-  const pins = collectPins();
+  const { pins, setupNodeSteps } = collectWorkflowFacts();
 
   it("pins every action to a commit SHA", () => {
     const floating = pins.filter((p) => !p.pin);
@@ -117,7 +171,7 @@ describe("GitHub Actions pin guard", () => {
       [],
       "unknown pin. Resolve the tag through the GitHub API, confirm " +
         "action.yml declares node24 (or composite), then add it to " +
-        "VERIFIED_PINS with its version comment.",
+        "VERIFIED_ACTION_PINS with its version comment.",
     );
 
     const node20 = pins
@@ -141,7 +195,31 @@ describe("GitHub Actions pin guard", () => {
     assert.deepEqual(
       mismatches,
       [],
-      "the # comment must match the version verified in VERIFIED_PINS",
+      "the # comment must match the version verified in VERIFIED_ACTION_PINS",
+    );
+  });
+
+  it("opts each setup-node step into pnpm cache or out of package-manager-cache", () => {
+    // setup-node v5 defaults package-manager-cache: true, which runs the
+    // detected package manager to prime the cache and fails when that binary
+    // is not installed. Jobs that never install pnpm (Secret Scan, Rust unit)
+    // must set package-manager-cache: false. Jobs that do install pnpm must
+    // set cache: pnpm. Setting both is contradictory.
+    assert.ok(
+      setupNodeSteps.length > 0,
+      "expected at least one actions/setup-node step in workflows",
+    );
+
+    const bad = setupNodeSteps.filter(
+      (s) => s.hasCachePnpm === s.hasPackageManagerCacheFalse,
+    );
+    assert.deepEqual(
+      bad.map(
+        (s) =>
+          `${s.file}:${s.line} cache:pnpm=${s.hasCachePnpm} package-manager-cache:false=${s.hasPackageManagerCacheFalse}`,
+      ),
+      [],
+      "every setup-node step must set exactly one of cache: pnpm or package-manager-cache: false",
     );
   });
 });
