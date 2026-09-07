@@ -282,7 +282,7 @@ a pill-sized box. The pill state answers both questions now, `owns_panel` and
 The entry text was trimmed before it was sent, which quietly changed the
 transcript the user had lined up for their document. Trimming now only decides
 whether there is anything to send. Enter in the Windows entry had the reverse
-problem, clearing the box whether or not anything went out, so a whitespace
+problem, clearing the box even when nothing went out, so a whitespace
 entry lost the transcript for nothing. Commit `5fa27fd`.
 
 The macOS bridge hands its messages to the pill through a channel behind a
@@ -311,6 +311,20 @@ One thing the bots did not raise, found on a re-read of my own change. The
 macOS bridge sends audio levels on every frame, so logging each failed hand
 off would have written a warning sixty times a second once the pill was gone.
 The first failure is reported and the rest are left at debug level.
+
+CodeRabbit then found a leak in code this branch added. Every Foundation
+string the macOS pill makes with `NSString::alloc(nil).init_str(...)` is owned
+by this process, and Cocoa calls that take a string keep their own copy, so
+each one had to be released. None were. It showed up in `set_entry_text`,
+which runs once per review, but the same pattern draws every line of text in
+`gfx.rs`, so the pill was leaking a string on every frame it painted. All nine
+call sites now go through `with_ns_string` in
+`packages/rust_macos_pill/src/nsstring.rs`, which releases the string once the
+call that needed it has returned, and a contract test fails if a new caller
+allocates one directly. Two one-shot sites in
+`apps/desktop/src-tauri/src/platform/macos/permissions.rs` have the same shape
+but leak one small string per click on a settings link, so they are left for a
+change that can be checked with Instruments on a real machine.
 
 ## 7. Fixes, cause and test
 
@@ -365,14 +379,14 @@ A new piece of app state, `pendingPillReview`.
 
 Run here, all green.
 
-| Check                                   | Result                                                              |
-| --------------------------------------- | ------------------------------------------------------------------- |
-| Types across all packages               | Pass                                                                |
-| Desktop unit tests                      | Pass, 121 files and 1,275 tests, against 112 and 1,185 at the start |
-| Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                     |
-| Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                       |
-| Build                                   | Pass, 6 of 6 packages                                               |
-| Message extraction and translation sync | Pass and idempotent, a second run changes nothing                   |
+| Check                                   | Result                                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Types across all packages               | Pass                                                                                                                                   |
+| Desktop unit tests                      | `pnpm --filter desktop test:unit` on this branch head: pass, 122 files and 1,277 tests, against 112 and 1,185 at the start of the work |
+| Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                                                                                        |
+| Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                                                                                          |
+| Build                                   | Pass, 6 of 6 packages                                                                                                                  |
+| Message extraction and translation sync | Pass and idempotent, a second run changes nothing                                                                                      |
 
 Not run here, and why.
 

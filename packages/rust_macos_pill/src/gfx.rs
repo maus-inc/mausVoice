@@ -3,9 +3,11 @@ use std::cell::Cell;
 use std::ffi::c_void;
 
 use cocoa::base::{id, nil};
-use cocoa::foundation::{NSPoint, NSRect, NSSize, NSString};
+use cocoa::foundation::{NSPoint, NSRect, NSSize};
 #[allow(unused_imports)]
 use objc::runtime::Object;
+
+use crate::nsstring::with_ns_string;
 
 extern "C" {
     fn NSRectFillUsingOperation(rect: NSRect, op: usize);
@@ -239,15 +241,19 @@ impl Ctx {
                 blue:self.b.get()
                 alpha:self.a.get()
             ];
-            let font_key: id = NSString::alloc(nil).init_str("NSFont");
-            let color_key: id = NSString::alloc(nil).init_str("NSColor");
-            let keys: [id; 2] = [font_key, color_key];
-            let values: [id; 2] = [font, color];
-            msg_send![class!(NSDictionary),
-                dictionaryWithObjects:values.as_ptr()
-                forKeys:keys.as_ptr()
-                count:2usize
-            ]
+            with_ns_string("NSFont", |font_key| -> id {
+                with_ns_string("NSColor", |color_key| -> id {
+                    let keys: [id; 2] = [font_key, color_key];
+                    let values: [id; 2] = [font, color];
+                    // The dictionary keeps its own reference to each key, so
+                    // the two temporaries are released on the way out.
+                    msg_send![class!(NSDictionary),
+                        dictionaryWithObjects:values.as_ptr()
+                        forKeys:keys.as_ptr()
+                        count:2usize
+                    ]
+                })
+            })
         }
     }
 
@@ -255,29 +261,32 @@ impl Ctx {
         unsafe {
             let font = self.get_ns_font();
             let ascent: f64 = msg_send![font, ascender];
-            let font_key: id = NSString::alloc(nil).init_str("NSFont");
-            let attrs: id = msg_send![class!(NSDictionary),
-                dictionaryWithObject:font forKey:font_key];
-            let ns_text: id = NSString::alloc(nil).init_str(text);
-            let size: NSSize = msg_send![ns_text, sizeWithAttributes:attrs];
-            TextExtents {
-                width: size.width,
-                height: size.height,
-                x_bearing: 0.0,
-                y_bearing: -ascent,
-            }
+            with_ns_string("NSFont", |font_key| {
+                let attrs: id = msg_send![class!(NSDictionary),
+                    dictionaryWithObject:font forKey:font_key];
+                with_ns_string(text, |ns_text| {
+                    let size: NSSize = msg_send![ns_text, sizeWithAttributes:attrs];
+                    TextExtents {
+                        width: size.width,
+                        height: size.height,
+                        x_bearing: 0.0,
+                        y_bearing: -ascent,
+                    }
+                })
+            })
         }
     }
 
     pub fn show_text(&self, text: &str) {
         unsafe {
             let attrs = self.make_text_attrs();
-            let ns_text: id = NSString::alloc(nil).init_str(text);
             let font = self.get_ns_font();
             let ascent: f64 = msg_send![font, ascender];
             let top_y = self.pos_y.get() - ascent;
             let point = NSPoint::new(self.pos_x.get(), top_y);
-            let _: () = msg_send![ns_text, drawAtPoint:point withAttributes:attrs];
+            with_ns_string(text, |ns_text| {
+                let _: () = msg_send![ns_text, drawAtPoint:point withAttributes:attrs];
+            });
         }
     }
 
@@ -285,11 +294,12 @@ impl Ctx {
 
     pub fn draw_symbol(&self, name: &str, cx: f64, cy: f64, size: f64) {
         unsafe {
-            let sym_name = NSString::alloc(nil).init_str(name);
-            let image: id = msg_send![class!(NSImage),
-                imageWithSystemSymbolName:sym_name
-                accessibilityDescription:nil
-            ];
+            let image: id = with_ns_string(name, |sym_name| -> id {
+                msg_send![class!(NSImage),
+                    imageWithSystemSymbolName:sym_name
+                    accessibilityDescription:nil
+                ]
+            });
             if image == nil { return; }
 
             let config: id = msg_send![class!(NSImageSymbolConfiguration),

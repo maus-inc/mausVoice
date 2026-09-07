@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -18,6 +18,12 @@ export const PILL_CRATES = [
   { platform: "macos", crate: "packages/rust_macos_pill" },
   { platform: "gtk", crate: "packages/rust_gtk_pill" },
 ];
+
+/** Every file with `extension` in `dir`, as paths from the repository root. */
+export const listRepoSources = (dir: string, extension: string): string[] =>
+  readdirSync(path.join(REPO_ROOT, dir))
+    .filter((name) => name.endsWith(extension))
+    .map((name) => `${dir}/${name}`);
 
 /** Read a file by its path from the repository root. */
 export const readRepoSource = (file: string): string =>

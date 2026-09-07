@@ -9,7 +9,7 @@ use cocoa::appkit::{
     NSWindow, NSWindowCollectionBehavior,
 };
 use cocoa::base::{id, nil, NO, YES};
-use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
+use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize};
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel, BOOL};
 // Note: `Object` import kept for potential future use (currently only `&Object` is needed)
@@ -19,6 +19,7 @@ use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::nsstring::with_ns_string;
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -430,8 +431,9 @@ fn cancel_pending_review() -> bool {
 /// entry for review and to empty the field once it has been answered.
 pub(crate) fn set_entry_text(text: &str) {
     with_ctx(|ctx| unsafe {
-        let ns: id = NSString::alloc(nil).init_str(text);
-        let _: () = msg_send![ctx.entry, setStringValue:ns];
+        with_ns_string(text, |ns| {
+            let _: () = msg_send![ctx.entry, setStringValue:ns];
+        });
     });
 }
 
@@ -1486,8 +1488,9 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
 
-    let placeholder = NSString::alloc(nil).init_str("Type a message...");
-    let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    with_ns_string("Type a message...", |placeholder| {
+        let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    });
 
     let _: () = msg_send![entry, setTarget:view];
     let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];

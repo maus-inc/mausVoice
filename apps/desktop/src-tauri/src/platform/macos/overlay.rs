@@ -40,7 +40,7 @@ impl MacosPill {
     /// left at debug level.
     fn send_or_log(&self, msg: InMessage) {
         if let Err(err) = self.send(msg) {
-            if self.delivery_failed.swap(true, Ordering::Relaxed) {
+            if self.delivery_failed.fetch_or(true, Ordering::Relaxed) {
                 log::debug!("Native pill message not delivered: {err}");
             } else {
                 log::warn!("Native pill message not delivered: {err}");
