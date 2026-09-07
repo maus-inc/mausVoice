@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { expect } from "vitest";
 
 /**
  * Helpers for the contract tests that read Rust source.
@@ -27,16 +26,25 @@ export const readRepoSource = (file: string): string =>
 /**
  * Return everything from `marker` to the brace that closes the block it opens.
  *
- * Counting starts at the first brace after the marker rather than at the
- * marker itself, so a marker that carries braces of its own, or that grows
- * some when the code is reformatted, still yields the whole block.
+ * Brace counting starts at the first brace from the start of the marker
+ * onward, so a marker may carry the opening brace itself, as a match arm does,
+ * and a signature that grows a line break when the code is reformatted still
+ * yields the whole block.
+ *
+ * Throws when the marker is missing, when no block follows it, or when the
+ * braces do not balance, so a test that relies on this reports the reason
+ * rather than a confusing assertion further down.
  */
 export const extractRustBlock = (source: string, marker: string): string => {
   const start = source.indexOf(marker);
-  expect(start, `${marker} not found`).toBeGreaterThan(-1);
+  if (start === -1) {
+    throw new Error(`Marker not found in source: ${marker}`);
+  }
 
   const open = source.indexOf("{", start);
-  expect(open, `no block after ${marker}`).toBeGreaterThan(-1);
+  if (open === -1) {
+    throw new Error(`No block follows the marker: ${marker}`);
+  }
 
   let depth = 0;
   for (let i = open; i < source.length; i += 1) {
@@ -46,5 +54,5 @@ export const extractRustBlock = (source: string, marker: string): string => {
       if (depth === 0) return source.slice(start, i + 1);
     }
   }
-  throw new Error(`Unbalanced braces after ${marker}`);
+  throw new Error(`Unbalanced braces after the marker: ${marker}`);
 };
