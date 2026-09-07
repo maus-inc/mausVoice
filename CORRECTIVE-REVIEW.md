@@ -120,8 +120,10 @@ The card on the pill cannot edit text in place. Edit opens the composer. Putting
 a real multi-line editor in the pill means a much larger change in all three
 native crates.
 
-The card does not scroll, so a long transcript is cut off after eight lines with
-a marker. The full text is always available through Edit and in history.
+The card itself does not scroll. It is sized to the room the panel has, so a
+long transcript is cut with a marker on the last line it can show, at most
+eight. The panel around it does scroll while a review is open. The full text is
+always available through Edit and in history.
 
 The buttons on the pill say Insert, Edit, Copy and Cancel in English, the same
 way the existing permission card is hardcoded. The pill has no translation
@@ -131,7 +133,7 @@ Release signing that fails closed is still missing from this branch.
 
 ## 5. What I got wrong in my own first pass, and fixed
 
-I re-read my own changes line by line and found four mistakes worth naming.
+I re-read my own changes line by line and found six mistakes worth naming.
 
 The pill could hide the very card it was asked to show. If the pill visibility
 setting is Hidden or While active, the pill hides as soon as the phase returns
@@ -151,6 +153,30 @@ registered first and a failure falls back to the composer window, and a card
 that goes unanswered for five minutes gives up and leaves the transcript in
 history, which is exactly what the composer window already does. Commit
 `ab206e0`, with two new tests.
+
+The card was taller than the panel it lives in, which is the worst of the six.
+The expanded panel leaves 138 pixels between the header and the pill. My card
+asked for up to 262, so any transcript longer than about two lines put Insert,
+Edit, Copy and Cancel behind the pill, and the panel refused to scroll while a
+review was open, so there was no way to reach them. I found this by working the
+geometry out on paper rather than by running it, since there is no Rust
+toolchain here. The card is now sized to the space it has, the line count comes
+from one function in the shared crate so the three renderers cannot drift, and
+the marker for cut text sits on the last line shown instead of taking a line of
+its own. A pending review also makes the panel scrollable now. Because
+scrolling can move a card out of view, click regions from the scrollable
+content are dropped when their centre leaves the visible band, so an invisible
+button cannot take a click. That last part also fixes the same hazard for
+permission cards. Commit `1446827`, with tests on the sizing function that use
+the real panel geometry.
+
+Both bridges guessed at a review decision they could not read. A missing or
+unknown action became cancel and a missing id became an empty string, so a wire
+mistake would have thrown away the transcript the card was asking about, with
+nothing logged. Both now go through one checked parser that requires an id and
+a known action and drops anything else with a warning, which leaves the card on
+the pill so the click can be repeated. Commit `0d3f2b6`, with parse tests for
+every accepted action and every way a line can be unreadable.
 
 Small things in the same pass. The new drawing function had taken over a clippy
 exception that belonged to the permission card next to it, it measured its
@@ -173,6 +199,8 @@ locales.
 | `8633a6c` | The review travels inside the assistant state message the pill already receives, and comes back as a decision tagged with the review id        | Seven cases: insert, cancel, copy, edit, queueing, a stale decision and an unknown action        |
 | `8ae2e6b` | One shared rule for when the pill is on screen, which now counts a waiting review                                                              | Four cases in the shared crate, including a hidden pill that must still show a review            |
 | `ab206e0` | Listen before queueing, fall back to the composer if listening fails, and expire a card after five minutes                                     | Two new cases: the listener fails, and nobody answers                                            |
+| `0d3f2b6` | One checked parser for the decision the pill sends, on both bridges. An unreadable line is logged and dropped instead of read as cancel        | Parse tests for each action and for a missing id, an unknown action, a wrong type and bad JSON   |
+| `1446827` | The review card is sized to the panel, the panel scrolls while a review is open, and click regions outside the visible band are dropped        | Tests on the shared sizing function, including the panel geometry that exposed the bug           |
 
 Throughout: no `any`, no new `unwrap`, no fixed sleeps, and no silent fallbacks,
 since every fallback logs. Stale replies are matched by id. The platform
