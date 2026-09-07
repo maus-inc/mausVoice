@@ -190,11 +190,28 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
                 OutMessage::ReviewDecision { review_id, action } => {
-                    let payload = serde_json::json!({
-                        "reviewId": review_id,
-                        "action": action,
-                    });
-                    let _ = app.emit_to("main", "pill-review-decision", payload);
+                    // Validate before forwarding, for the same reason the
+                    // subprocess bridge does: an action the desktop cannot read
+                    // must not be turned into a guess that discards the
+                    // transcript.
+                    match crate::pill_process::PillReviewAction::parse(&action) {
+                        Some(action) if !review_id.is_empty() => {
+                            let payload = serde_json::json!({
+                                "reviewId": review_id,
+                                "action": action.as_str(),
+                            });
+                            if let Err(err) =
+                                app.emit_to("main", "pill-review-decision", payload)
+                            {
+                                log::error!(
+                                    "Failed to deliver a pill review decision: {err}"
+                                );
+                            }
+                        }
+                        _ => log::warn!(
+                            "Ignoring an unreadable review decision from the macOS pill"
+                        ),
+                    }
                 }
                 OutMessage::StyleSwitch { direction } => {
                     match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {

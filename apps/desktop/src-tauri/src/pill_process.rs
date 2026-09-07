@@ -370,16 +370,16 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
                     } else if line.contains("\"review_decision\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            let review_id =
-                                val.get("review_id").and_then(|v| v.as_str()).unwrap_or("");
-                            let action =
-                                val.get("action").and_then(|v| v.as_str()).unwrap_or("cancel");
+                        if let Some((review_id, action)) = parse_review_decision(&line) {
                             let payload = serde_json::json!({
                                 "reviewId": review_id,
-                                "action": action,
+                                "action": action.as_str(),
                             });
-                            let _ = app.emit_to("main", "pill-review-decision", payload);
+                            if let Err(err) =
+                                app.emit_to("main", "pill-review-decision", payload)
+                            {
+                                log::error!("Failed to deliver a pill review decision: {err}");
+                            }
                         }
                     } else if line.contains("\"style_switch\"") {
                         if let Some(direction) = parse_style_switch_direction(&line) {
@@ -485,6 +485,74 @@ pub(crate) fn parse_style_switch_direction(line: &str) -> Option<PillStyleSwitch
     }
 }
 
+/// What the user chose on the review card shown on the pill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PillReviewAction {
+    Insert,
+    Copy,
+    Edit,
+    Cancel,
+}
+
+impl PillReviewAction {
+    /// Case-insensitive so a casing drift cannot silently drop a decision.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "insert" => Some(Self::Insert),
+            "copy" => Some(Self::Copy),
+            "edit" => Some(Self::Edit),
+            "cancel" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Insert => "insert",
+            Self::Copy => "copy",
+            Self::Edit => "edit",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// Parsed `review_decision` from a pill stdout line.
+///
+/// The id and the action are both required. A malformed line is dropped
+/// instead of guessed at, because assuming an action would throw away the very
+/// transcript the user is being asked about. Dropping it leaves the card on the
+/// pill, so the click can simply be repeated.
+pub(crate) fn parse_review_decision(line: &str) -> Option<(String, PillReviewAction)> {
+    let trimmed = line.trim();
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!("Ignoring unparseable pill line {trimmed:?}: {error}");
+            return None;
+        }
+    };
+    if value.get("type").and_then(|v| v.as_str()) != Some("review_decision") {
+        return None;
+    }
+    let review_id = value
+        .get("review_id")
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty());
+    let Some(review_id) = review_id else {
+        log::warn!("Ignoring pill review decision with no review id: {trimmed}");
+        return None;
+    };
+    let Some(action) = value
+        .get("action")
+        .and_then(|v| v.as_str())
+        .and_then(PillReviewAction::parse)
+    else {
+        log::warn!("Ignoring unknown pill review action from line: {trimmed}");
+        return None;
+    };
+    Some((review_id.to_string(), action))
+}
+
 /// Tauri event names the pill bridge emits for a chevron click. These must
 /// stay in sync with the `useTauriListen` event strings in
 /// `DictationSideEffects.tsx` (currently the hard-coded `"tone-switch-forward"`
@@ -561,5 +629,66 @@ mod style_switch_parse_tests {
             parse_style_switch_direction(r#"{"type":"style_info","name":"forward"}"#),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod review_decision_parse_tests {
+    use super::{parse_review_decision, PillReviewAction};
+
+    #[test]
+    fn parses_every_decision() {
+        for (raw, expected) in [
+            ("insert", PillReviewAction::Insert),
+            ("copy", PillReviewAction::Copy),
+            ("edit", PillReviewAction::Edit),
+            ("cancel", PillReviewAction::Cancel),
+        ] {
+            let line =
+                format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
+            assert_eq!(
+                parse_review_decision(&line),
+                Some(("r1".to_string(), expected))
+            );
+            assert_eq!(expected.as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            parse_review_decision(
+                "{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"
+            ),
+            Some(("r1".to_string(), PillReviewAction::Insert))
+        );
+    }
+
+    #[test]
+    fn drops_a_decision_it_cannot_read_instead_of_guessing() {
+        // A missing or unknown action must never fall back to cancel: that
+        // would discard the transcript the card is asking about.
+        assert_eq!(
+            parse_review_decision(r#"{"type":"review_decision","review_id":"r1"}"#),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"delete"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(r#"{"type":"review_decision","action":"insert"}"#),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"","action":"insert"}"#
+            ),
+            None
+        );
+        assert_eq!(parse_review_decision(r#"{"type":"click"}"#), None);
+        assert_eq!(parse_review_decision("not json"), None);
     }
 }
