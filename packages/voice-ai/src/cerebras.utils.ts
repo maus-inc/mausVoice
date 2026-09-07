@@ -52,12 +52,12 @@ export const isCerebrasTerminalStatus = (status: number): boolean =>
  * characters), so a message like "key csk_ab" redacts the whole token.
  */
 const CEREBRAS_SECRET_PATTERNS: RegExp[] = [
-  /csk_[A-Za-z0-9_-]+/g,
-  /sk-[A-Za-z0-9_-]+/gi,
-  /sk_[A-Za-z0-9_-]+/g,
-  /bearer\s+[A-Za-z0-9._~+/=-]+/gi,
+  /\bcsk_[a-z0-9_-]+/gi,
+  /\bsk-[a-z0-9_-]+/gi,
+  /\bsk_[a-z0-9_-]+/gi,
+  /bearer\s+[a-z0-9._~+/=-]+/gi,
   /authorization:\s*[^\s;,]+/gi,
-  /api[_-]?key[:=]\s*[A-Za-z0-9._~+/=-]+/gi,
+  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
 ];
 
 export const redactCerebrasMessage = (message: string): string =>

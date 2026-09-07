@@ -26,6 +26,7 @@ import {
   cerebrasTestIntegration,
   isCerebrasTerminalStatus,
   normalizeCerebrasError,
+  redactCerebrasMessage,
 } from "./cerebras.utils";
 
 describe("Cerebras provider", () => {
@@ -46,6 +47,26 @@ describe("Cerebras provider", () => {
         baseURL: "https://api.cerebras.ai/v1",
         fetch: customFetch,
       }),
+    );
+  });
+});
+
+describe("redactCerebrasMessage", () => {
+  it("redacts sk- keys without matching inside identifiers like task-123", () => {
+    expect(redactCerebrasMessage("key sk-liveAbCd1234 used")).toBe(
+      "key [redacted] used",
+    );
+    expect(redactCerebrasMessage("ticket task-123 is open")).toBe(
+      "ticket task-123 is open",
+    );
+  });
+
+  it("redacts bearer tokens case-insensitively without leaking the value", () => {
+    expect(redactCerebrasMessage("Authorization: Bearer Abc_123")).toContain(
+      "[redacted]",
+    );
+    expect(redactCerebrasMessage("Authorization: Bearer Abc_123")).not.toMatch(
+      /Abc_123/,
     );
   });
 });
