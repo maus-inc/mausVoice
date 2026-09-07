@@ -47,7 +47,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ) {
                         return;
                     }
-                    send_haptic("press");
+                    // The recording chime owns the pill-body click. The
+                    // desktop side plays start/stop clips for the same event,
+                    // so emitting a thock here doubled the sound.
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);
                     } else {
