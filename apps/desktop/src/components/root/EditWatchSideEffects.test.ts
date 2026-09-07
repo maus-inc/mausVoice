@@ -51,7 +51,7 @@ vi.mock("../../utils/log.utils", () => ({
 vi.mock("../../store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector({}),
   getAppState: () => ({ autoLearn: { proposal: null } }),
-  produceAppState: () => {},
+  produceAppState: vi.fn(),
 }));
 
 let container: HTMLDivElement;
