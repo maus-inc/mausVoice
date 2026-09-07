@@ -295,6 +295,23 @@ the lost message. Commit `192366b`.
 The remaining four repeated the same two points on other lines, and are
 covered by the same commits.
 
+CodeSpect then looked at the two test files those commits added and found the
+duplication that came with them. Each contract test that reads Rust source
+carried its own copy of the repository root, the file reader and a brace
+walker, five copies in all, and the newest two were close enough for the
+duplication check to count them. All five now share
+`apps/desktop/test/helpers/rust-source.utils.ts`, and the walker starts
+counting at the first brace from the marker onward so a marker that carries
+its own brace still yields the whole block. It reports a missing marker or an
+unbalanced block by throwing rather than by calling a test assertion inside a
+helper, and it has its own tests. Commits `0ed1ea8` and the follow up that
+hardened the helper.
+
+One thing the bots did not raise, found on a re-read of my own change. The
+macOS bridge sends audio levels on every frame, so logging each failed hand
+off would have written a warning sixty times a second once the pill was gone.
+The first failure is reported and the rest are left at debug level.
+
 ## 7. Fixes, cause and test
 
 | Commit    | The fix                                                                                                                                                                 | Test that guards it                                                                                                 |
@@ -351,7 +368,7 @@ Run here, all green.
 | Check                                   | Result                                                              |
 | --------------------------------------- | ------------------------------------------------------------------- |
 | Types across all packages               | Pass                                                                |
-| Desktop unit tests                      | Pass, 120 files and 1,270 tests, against 112 and 1,185 at the start |
+| Desktop unit tests                      | Pass, 121 files and 1,275 tests, against 112 and 1,185 at the start |
 | Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                     |
 | Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                       |
 | Build                                   | Pass, 6 of 6 packages                                               |
