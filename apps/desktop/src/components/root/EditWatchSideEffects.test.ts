@@ -29,7 +29,7 @@ vi.mock("../../utils/user.utils", () => ({
 }));
 
 vi.mock("../../hooks/toast.hooks", () => ({
-  useToastAction: () => {},
+  useToastAction: () => undefined,
 }));
 
 // Keep the probe observation-only: decide no corrections so the poll exits
@@ -44,9 +44,7 @@ vi.mock("../../utils/log.utils", () => ({
     warning: vi.fn(),
     error: vi.fn(),
     verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
-      fn(),
-    ),
+    stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
   }),
 }));
 
