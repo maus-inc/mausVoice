@@ -193,7 +193,7 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return false;
     }
 
@@ -223,7 +223,7 @@ pub(crate) fn handle_scroll(state: &PillState, delta: f64) {
     // conversation, and its buttons have to be reachable. The compact test
     // mirrors the one the panel is drawn with.
     let has_review = state.assistant_review.borrow().is_some();
-    let owns_panel = state.assistant_active.get() || has_review;
+    let owns_panel = state.owns_panel();
     let is_compact = state.assistant_compact.get() && !has_review;
     if !owns_panel || is_compact {
         return;

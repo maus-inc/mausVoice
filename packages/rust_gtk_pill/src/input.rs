@@ -17,7 +17,7 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
@@ -56,7 +56,7 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return false;
     }
 
@@ -259,7 +259,7 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
     // conversation, and its buttons have to be reachable. The compact test
     // mirrors the one the panel is drawn with.
     let has_review = state.assistant_review.borrow().is_some();
-    let owns_panel = state.assistant_active.get() || has_review;
+    let owns_panel = state.owns_panel();
     let is_compact = state.assistant_compact.get() && !has_review;
     if !owns_panel || is_compact {
         return;
@@ -347,7 +347,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
     let dh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
 
-    if state.assistant_active.get() {
+    if state.owns_panel() {
         let rect = cairo::RectangleInt::new(
             ox as i32, oy as i32,
             dw.ceil() as i32, dh.ceil() as i32,
@@ -420,10 +420,7 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let is_active = state.phase.get() != Phase::Idle;
     // A pending review draws buttons in the panel area, so the clickable
     // region has to cover the panel even when the assistant is not running.
-    let owns_panel =
-        state.assistant_active.get() || state.assistant_review.borrow().is_some();
-
-    if owns_panel || hovered || is_active {
+    if state.owns_panel() || hovered || is_active {
         set_expanded_input_region(gdk_window, state);
     } else {
         let dw = state.draw_width.get();

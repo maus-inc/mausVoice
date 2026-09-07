@@ -818,12 +818,7 @@ fn tick(state: &PillState, dt: f64) {
     );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
-    let panel_target = if state.assistant_active.get() || state.assistant_review.borrow().is_some()
-    {
-        1.0
-    } else {
-        0.0
-    };
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
     spring_anim(
         &state.panel_open_t,
         &state.panel_open_velocity,
@@ -846,7 +841,7 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(
         &state.draw_width,
@@ -1136,7 +1131,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
     let should_show = rust_pill_shared::should_show_pill(
         state.visibility.get().into(),
         state.phase.get() != Phase::Idle,
-        state.assistant_active.get() || state.assistant_review.borrow().is_some(),
+        state.owns_panel(),
     );
 
     unsafe {
@@ -1197,7 +1192,7 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         && cy >= screen_pill_y - pad
         && cy <= screen_pill_y + pill_h + pad;
 
-    let in_panel = if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
+    let in_panel = if state.owns_panel() {
         let panel_x = win_rect.left as f64 + ox;
         let panel_y = win_rect.top as f64 + oy;
         cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh
@@ -1361,7 +1356,9 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // panel/typing modes fill the canvas, so they keep whole-window
         // clamping.
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation && !state.assistant_active.get() {
+            if state.effective_window_mode() == WindowMode::Dictation
+                && !state.assistant_active.get()
+            {
                 let fx = (cox + px).round() as i32;
                 let fy = (coy + py).round() as i32;
                 let fw = pw.round().max(1.0) as i32;

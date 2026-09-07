@@ -673,7 +673,7 @@ fn perform_tick() {
         let should_show = rust_pill_shared::should_show_pill(
             ctx.state.visibility.get().into(),
             ctx.state.phase.get() != Phase::Idle,
-            ctx.state.assistant_active.get() || ctx.state.assistant_review.borrow().is_some(),
+            ctx.state.owns_panel(),
         );
         unsafe {
             if should_show {
@@ -860,12 +860,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     // Panel open/close (spring)
     // A pending review holds the panel open on its own: the transcript must
     // stay visible until the user answers it.
-    let panel_target =
-        if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
-            1.0
-        } else {
-            0.0
-        };
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
@@ -874,7 +869,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
     spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
@@ -1366,7 +1361,7 @@ fn reposition_window(window: id, state: &PillState) {
         // coordinates, while the view is flipped y-down, so a view-space top
         // edge at `fy` maps to screen y = origin.y + win_h − fy.)
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation
+            if state.effective_window_mode() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
                 (

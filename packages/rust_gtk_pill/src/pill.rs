@@ -722,7 +722,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         let should_show = rust_pill_shared::should_show_pill(
             state_tick.visibility.get().into(),
             state_tick.phase.get() != Phase::Idle,
-            state_tick.assistant_active.get() || state_tick.assistant_review.borrow().is_some(),
+            state_tick.owns_panel(),
         );
         if should_show {
             win_tick.show();
@@ -988,7 +988,7 @@ fn tick(state: &PillState) {
     // A pending review holds the panel open on its own: the transcript must
     // stay visible until the user answers it.
     let panel_target =
-        if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
+        if state.owns_panel() {
             1.0
         } else {
             0.0
@@ -1001,7 +1001,7 @@ fn tick(state: &PillState) {
     spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
     spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);

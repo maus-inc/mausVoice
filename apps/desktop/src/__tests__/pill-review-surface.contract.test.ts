@@ -50,4 +50,36 @@ describe("native pill review surface", () => {
       expect(source).not.toContain("let center = region.y + region.h / 2.0;");
     },
   );
+
+  it.each(PLATFORMS)(
+    "gives the panel the window while a review is pending on $platform",
+    ({ crate }) => {
+      const state = read(`${crate}/src/state.rs`);
+      const ownsPanel = extractBlock(state, "pub(crate) fn owns_panel(&self)");
+      expect(ownsPanel).toContain("assistant_review");
+
+      const mode = extractBlock(
+        state,
+        "pub(crate) fn effective_window_mode(&self)",
+      );
+      expect(mode).toContain("WindowMode::AssistantTyping");
+
+      // Hit testing must never gate the panel on the assistant alone: a review
+      // opens the panel with no assistant session running.
+      const input = read(`${crate}/src/input.rs`);
+      expect(input).not.toContain(
+        "state.assistant_active.get() || state.panel_open_t.get()",
+      );
+    },
+  );
+
+  it("shapes the clickable Linux window around panel ownership", () => {
+    const input = read("packages/rust_gtk_pill/src/input.rs");
+    const region = extractBlock(
+      input,
+      "pub(crate) fn set_expanded_input_region(",
+    );
+
+    expect(region).toContain("state.owns_panel()");
+  });
 });

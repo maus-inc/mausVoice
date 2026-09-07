@@ -290,6 +290,30 @@ impl PillState {
             .map(|review| review.id.clone())
     }
 
+    /// Whether the panel, rather than the bare pill, owns the window.
+    ///
+    /// The assistant owns it while it runs, and a transcript under review owns
+    /// it too: the review draws its buttons in the panel area, so hit testing,
+    /// hover and the clickable window region all have to cover the panel even
+    /// when no assistant session is open.
+    pub(crate) fn owns_panel(&self) -> bool {
+        self.assistant_active.get() || self.assistant_review.borrow().is_some()
+    }
+
+    /// The window mode to lay the content out in.
+    ///
+    /// A transcript under review needs the panel and its entry whatever size
+    /// the desktop last asked for. The review and the window size arrive as two
+    /// independent messages, so the pill decides its own room rather than
+    /// drawing a panel into a pill-sized box until the other message lands.
+    pub(crate) fn effective_window_mode(&self) -> WindowMode {
+        if self.assistant_review.borrow().is_some() {
+            WindowMode::AssistantTyping
+        } else {
+            self.window_mode.get()
+        }
+    }
+
     /// Whether the panel shows its text entry.
     ///
     /// Assistant type mode owns the entry, and so does a transcript under
