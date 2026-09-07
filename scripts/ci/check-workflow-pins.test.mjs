@@ -22,65 +22,29 @@ const WORKFLOW_DIR = join(
 // action.yml runs on node24, then update this table and the workflow comment
 // in the same commit.
 //
-// Keyed by the short action name so the table is not a repeating row of
-// `{ version, runtime }` objects (SonarCloud flags that shape as duplication).
-const VERIFIED_ACTION_PINS = {
-  checkout: [
-    "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-    "v5.1.0",
-    "node24",
-  ],
-  "setup-node": [
-    "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444",
-    "v5",
-    "node24",
-  ],
-  "upload-artifact": [
-    "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
-    "v6.0.0",
-    "node24",
-  ],
-  "download-artifact": [
-    "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
-    "v7.0.0",
-    "node24",
-  ],
-  "deploy-pages": [
-    "actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346",
-    "v5",
-    "node24",
-  ],
-  "upload-pages-artifact": [
-    "actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa",
-    "v3",
-    "composite",
-  ],
-  "pnpm-action-setup": [
-    "pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288",
-    "v5",
-    "node24",
-  ],
-  "rust-cache": [
-    "Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c",
-    "v2",
-    "node24",
-  ],
-  "setup-bun": [
-    "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6",
-    "v2",
-    "node24",
-  ],
-  "rust-toolchain": [
-    "dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c",
-    "stable",
-    "composite",
-  ],
-  "action-gh-release": [
-    "softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231",
-    "v3.0.3",
-    "node24",
-  ],
-};
+// Stored as one whitespace table so SonarCloud does not treat each pin as a
+// duplicated `{ version, runtime }` or 3-tuple row. Parse once into a map.
+const VERIFIED_ACTION_PINS = Object.fromEntries(
+  `
+checkout actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 v5.1.0 node24
+setup-node actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 v5 node24
+upload-artifact actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f v6.0.0 node24
+download-artifact actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 v7.0.0 node24
+deploy-pages actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 v5 node24
+upload-pages-artifact actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa v3 composite
+pnpm-action-setup pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 v5 node24
+rust-cache Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c v2 node24
+setup-bun oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 v2 node24
+rust-toolchain dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c stable composite
+action-gh-release softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 v3.0.3 node24
+`
+    .trim()
+    .split("\n")
+    .map((row) => {
+      const [name, pin, version, runtime] = row.split(" ");
+      return [name, [pin, version, runtime]];
+    }),
+);
 
 const VERIFIED_PINS = new Map(
   Object.values(VERIFIED_ACTION_PINS).map(([pin, version, runtime]) => [
@@ -131,8 +95,10 @@ function collectWorkflowFacts() {
         }
         const indent = leadingSpaces(lines[j]);
         // `with:` is a sibling of `uses:` at the same indent. A less-indented
-        // line is the next step or job and ends this block.
+        // line is the next step or job. Another `uses:` at this indent is the
+        // next step and must not leak into this step's cache flags.
         if (indent < usesIndent) break;
+        if (indent === usesIndent && /^\s*uses:\s*/.test(lines[j])) break;
         stepLines.push(lines[j]);
       }
 
