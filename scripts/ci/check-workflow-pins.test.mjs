@@ -41,7 +41,13 @@ action-gh-release softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956ea
     .trim()
     .split("\n")
     .map((row) => {
-      const [name, pin, version, runtime] = row.split(" ");
+      const tokens = row.trim().split(/\s+/);
+      if (tokens.length !== 4) {
+        throw new Error(
+          `pin table row must have 4 whitespace-separated fields: ${row}`,
+        );
+      }
+      const [name, pin, version, runtime] = tokens;
       return [name, [pin, version, runtime]];
     }),
 );
