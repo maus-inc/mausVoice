@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
+import {
+  createOpenAICompatibleGenerateTests,
+  mockOpenAIChatCreate,
+  resetOpenAIChatCreateMock,
+} from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "cerebrasGenerateTextResponse",
@@ -13,22 +17,7 @@ createOpenAICompatibleGenerateTests({
 });
 
 describe("cerebrasGenerateTextResponse error contract", () => {
-  afterEach(() => {
-    vi.doUnmock("openai");
-    vi.resetModules();
-  });
-
-  const mockCreate = (create: ReturnType<typeof vi.fn>) => {
-    vi.doMock("openai", () => ({
-      default: class MockOpenAI {
-        chat = {
-          completions: {
-            create,
-          },
-        };
-      },
-    }));
-  };
+  afterEach(resetOpenAIChatCreateMock);
 
   it("surfaces a 402 as a provider error and does not retry", async () => {
     let attempts = 0;
@@ -39,7 +28,7 @@ describe("cerebrasGenerateTextResponse error contract", () => {
       });
       throw error;
     });
-    mockCreate(create);
+    mockOpenAIChatCreate(create);
 
     const { cerebrasGenerateTextResponse, CerebrasProviderError } =
       await import("../src/cerebras.utils");
@@ -61,7 +50,7 @@ describe("cerebrasGenerateTextResponse error contract", () => {
       .mockRejectedValue(
         Object.assign(new Error("402 status code (no body)"), { status: 402 }),
       );
-    mockCreate(create);
+    mockOpenAIChatCreate(create);
 
     const { cerebrasGenerateTextResponse, CerebrasProviderError } =
       await import("../src/cerebras.utils");

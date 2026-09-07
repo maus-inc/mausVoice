@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createOpenAICompatibleGenerateTests } from "../src/test-helpers/shared-openai-compat-generate.helper";
+import {
+  createOpenAICompatibleGenerateTests,
+  mockOpenAIChatCreate,
+  resetOpenAIChatCreateMock,
+} from "../src/test-helpers/shared-openai-compat-generate.helper";
 
 createOpenAICompatibleGenerateTests({
   describeName: "deepseekGenerateTextResponse",
@@ -13,29 +17,14 @@ createOpenAICompatibleGenerateTests({
 });
 
 describe("deepseekGenerateTextResponse request shape", () => {
-  afterEach(() => {
-    vi.doUnmock("openai");
-    vi.resetModules();
-  });
-
-  const mockCreate = (create: ReturnType<typeof vi.fn>) => {
-    vi.doMock("openai", () => ({
-      default: class MockOpenAI {
-        chat = {
-          completions: {
-            create,
-          },
-        };
-      },
-    }));
-  };
+  afterEach(resetOpenAIChatCreateMock);
 
   it("defaults to deepseek-v4-flash when no model is configured", async () => {
     const create = vi.fn().mockResolvedValue({
       choices: [{ message: { content: "ok" } }],
       usage: { total_tokens: 5 },
     });
-    mockCreate(create);
+    mockOpenAIChatCreate(create);
 
     const { deepseekGenerateTextResponse } =
       await import("../src/deepseek.utils");
@@ -56,7 +45,7 @@ describe("deepseekGenerateTextResponse request shape", () => {
       choices: [{ message: { content: "ok" } }],
       usage: { total_tokens: 5 },
     });
-    mockCreate(create);
+    mockOpenAIChatCreate(create);
 
     const { deepseekGenerateTextResponse } =
       await import("../src/deepseek.utils");

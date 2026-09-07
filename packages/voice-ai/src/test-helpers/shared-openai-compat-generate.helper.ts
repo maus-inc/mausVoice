@@ -11,6 +11,23 @@ const buildCreateCompletion = (
     usage,
   });
 
+export function mockOpenAIChatCreate(create: ReturnType<typeof vi.fn>) {
+  const chat = { completions: { create } };
+  vi.doMock("openai", () => ({
+    default: class MockOpenAI {
+      chat = chat;
+    },
+    AzureOpenAI: class MockAzureOpenAI {
+      chat = chat;
+    },
+  }));
+}
+
+export function resetOpenAIChatCreateMock() {
+  vi.doUnmock("openai");
+  vi.resetModules();
+}
+
 async function runOpenAICompatTestCase(
   {
     loadModule,
@@ -22,16 +39,7 @@ async function runOpenAICompatTestCase(
   createCompletion: ReturnType<typeof buildCreateCompletion>,
   params: Record<string, unknown>,
 ) {
-  const chat = { completions: { create: createCompletion } };
-
-  vi.doMock("openai", () => ({
-    default: class MockOpenAI {
-      chat = chat;
-    },
-    AzureOpenAI: class MockAzureOpenAI {
-      chat = chat;
-    },
-  }));
+  mockOpenAIChatCreate(createCompletion);
 
   const mod = await loadModule();
   const fn = mod[functionName] as (
