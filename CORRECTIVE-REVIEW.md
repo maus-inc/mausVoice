@@ -321,7 +321,11 @@ which runs once per review, but the same pattern draws every line of text in
 call sites now go through `with_ns_string` in
 `packages/rust_macos_pill/src/nsstring.rs`, which releases the string once the
 call that needed it has returned, and a contract test fails if a new caller
-allocates one directly. Two one-shot sites in
+allocates one directly. The release hangs off a guard, so it also runs if the
+call it wraps panics, and two tests in the crate itself prove it on both paths
+by holding a reference of their own and reading the count that is left. Those
+run in the macOS lint job, which is the one job that builds this crate's tests.
+Two one-shot sites in
 `apps/desktop/src-tauri/src/platform/macos/permissions.rs` have the same shape
 but leak one small string per click on a settings link, so they are left for a
 change that can be checked with Instruments on a real machine.
