@@ -105,6 +105,15 @@ const openReview = (id: string): QueuedReview | null => {
   return current;
 };
 
+/**
+ * What to answer with: the text the pill sent back, or the transcript as it
+ * arrived when the entry was emptied. An empty entry is not an edit.
+ */
+const reviewAnswerText = (
+  review: PendingPillReview,
+  editedText: string | null,
+): string => (editedText?.trim() ? editedText : review.text);
+
 /** Finish the review with `id` and hand `text` back to the caller. */
 const settle = (id: string, text: string | null): void => {
   if (!openReview(id)) return;
@@ -147,9 +156,7 @@ const applyDecision = async (
   const current = openReview(id);
   if (!current || current.busy) return;
   current.busy = true;
-  // The pill sends back whatever its entry held, so an edit made in the panel
-  // is what gets used. An empty entry falls back to nothing to insert.
-  const text = editedText?.trim() ? editedText : current.review.text;
+  const text = reviewAnswerText(current.review, editedText);
 
   try {
     if (action === "copy") {

@@ -341,13 +341,20 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
     }
 }
 
-/// Read what a text field currently holds.
+/// Read what a text field currently holds. An empty field, and a field that
+/// hands back nothing at all, both read as an empty string.
 ///
 /// # Safety
 /// `field` must be a live `NSTextField`.
 unsafe fn field_string(field: id) -> String {
     let ns_text: id = msg_send![field, stringValue];
+    if ns_text.is_null() {
+        return String::new();
+    }
     let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
+    if cstr.is_null() {
+        return String::new();
+    }
     std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string()
 }
 

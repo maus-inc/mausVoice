@@ -550,7 +550,8 @@ pub(crate) fn parse_review_decision(
     };
     let raw_action = value.get("action").and_then(|v| v.as_str());
     let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
-        log::warn!("Ignoring pill review decision with an unknown action: {raw_action:?}");
+        let token = raw_action.unwrap_or("<missing>");
+        log::warn!("Ignoring pill review decision with an unknown action: {token}");
         return None;
     };
     let text = value
