@@ -1,5 +1,5 @@
 use crate::gfx::{self, Ctx};
-use crate::ipc::{Phase, PillPermission, PillReview, PillStreaming};
+use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
@@ -138,9 +138,9 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = gfx::lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -803,10 +803,13 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    // A pending review always needs the full panel: its card does not fit the
-    // compact surface.
-    let is_compact = state.assistant_compact.get() && state.assistant_review.borrow().is_none();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() { REVIEW_ACTIONS_HEIGHT } else { 0.0 };
 
     let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
     let panel_x = (ww - panel_w) / 2.0;
@@ -843,7 +846,7 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
         let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
         } else {
             py + panel_h
         };
@@ -900,6 +903,20 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
             w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                ctx,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar
         if is_typing {
@@ -1052,13 +1069,11 @@ fn draw_transcript(
         y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
     }
 
-    if let Some(ref review) = *review {
-        y += 12.0;
-        // The card cannot scroll inside itself, so it is sized against the
-        // panel's usable height. Anything taller would push its buttons behind
-        // the pill with no way to reach them.
-        let card_space = (area_h - top_pad - bottom_pad).max(0.0);
-        y = draw_review_card(ctx, state, review, area_x, y, area_w, card_space, alpha);
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(ctx, state, area_x, y, area_w, alpha);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;
@@ -1138,76 +1153,59 @@ fn draw_thinking_text(
     y + 20.0
 }
 
-/// Review-before-insert card: the finished transcript plus the four decisions
-/// the user can take on it. The transcript is wrapped and capped so a long
-/// dictation cannot push the buttons off the panel; the full text always
-/// remains available through "Edit" (which opens the composer window) and in
-/// history.
-#[allow(clippy::too_many_arguments)]
-fn draw_review_card(
-    ctx: &Ctx, state: &PillState, review: &PillReview,
-    x: f64, y: f64, w: f64, max_h: f64, alpha: f64,
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(
+    ctx: &Ctx, state: &PillState,
+    x: f64, y: f64, w: f64, alpha: f64,
 ) -> f64 {
-    ctx.select_font_face("Satoshi", false, false);
-    ctx.set_font_size(14.0);
-    let lines = wrap_text(ctx, &review.text, w - REVIEW_CARD_PADDING * 2.0);
-    // Everything in the card that is not transcript: the padding above the
-    // title, the title itself, the gap before the buttons and the button row.
-    let chrome = REVIEW_CARD_PADDING * 3.0 + REVIEW_TITLE_HEIGHT + PERM_BUTTON_HEIGHT;
-    // Fit the transcript to the room the panel actually has. The card does not
-    // scroll, so a taller one would push its buttons behind the pill.
-    let shown = rust_pill_shared::review_card_lines(
-        max_h,
-        chrome,
-        REVIEW_LINE_HEIGHT,
-        lines.len(),
-        REVIEW_MAX_LINES,
-    );
-    let truncated = lines.len() > shown;
-
-    let card_h = chrome + shown as f64 * REVIEW_LINE_HEIGHT;
-
-    gfx::rounded_rect(ctx, x, y, w, card_h, 12.0);
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.06 * alpha);
-    ctx.fill();
-
-    gfx::rounded_rect(ctx, x + 0.5, y + 0.5, w - 1.0, card_h - 1.0, 11.5);
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.12 * alpha);
-    ctx.set_line_width(1.0);
-    ctx.stroke();
-
-    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
     ctx.select_font_face("Satoshi", false, true);
-    ctx.set_font_size(12.0);
-    ctx.move_to(x + REVIEW_CARD_PADDING, y + 18.0);
-    ctx.show_text("Review transcript");
+    ctx.set_font_size(11.0);
+    ctx.move_to(x, y + 12.0);
+    ctx.show_text("REVIEW TRANSCRIPT");
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
 
     ctx.select_font_face("Satoshi", false, false);
     ctx.set_font_size(14.0);
     ctx.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
-    let mut text_y = y + REVIEW_CARD_PADDING + REVIEW_TITLE_HEIGHT;
-    for (index, line) in lines.iter().take(shown).enumerate() {
-        ctx.move_to(x + REVIEW_CARD_PADDING, text_y + REVIEW_LINE_HEIGHT * 0.75);
-        // The cut is marked on the last line shown, so the ellipsis costs no
-        // extra height. The whole transcript stays available through Edit.
-        if truncated && index + 1 == shown {
-            ctx.show_text(&format!("{line}…"));
-        } else {
-            ctx.show_text(line);
-        }
+    let text = state.entry_text.borrow();
+    for line in wrap_text(ctx, text.as_str(), w) {
+        ctx.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        ctx.show_text(&line);
         text_y += REVIEW_LINE_HEIGHT;
     }
 
-    let btn_y = y + card_h - PERM_BUTTON_HEIGHT - REVIEW_CARD_PADDING;
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+#[allow(clippy::too_many_arguments)]
+fn draw_review_actions(
+    ctx: &Ctx, state: &PillState, review_id: &str,
+    panel_x: f64, y: f64, panel_w: f64, alpha: f64,
+) {
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(11.0);
+    ctx.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
+    ctx.show_text("Edit below, then press Enter to insert");
+
     // Rendered right to left so "Insert" (the default action) sits closest to
-    // the edge of the card, matching the permission card's layout.
+    // the edge of the panel, matching the permission card's layout.
     let buttons = [
-        ("Insert", ClickAction::ReviewInsert(review.id.clone()), 0.92),
-        ("Edit", ClickAction::ReviewEdit(review.id.clone()), 0.7),
-        ("Copy", ClickAction::ReviewCopy(review.id.clone()), 0.7),
-        ("Cancel", ClickAction::ReviewCancel(review.id.clone()), 0.5),
+        ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
+        ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
     ];
-    let mut btn_x = x + w - REVIEW_CARD_PADDING;
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
 
     for (label, action, text_alpha) in buttons {
         let btn_w = PERM_BUTTON_WIDTH * 0.8;
@@ -1238,8 +1236,6 @@ fn draw_review_card(
 
         btn_x -= PERM_BUTTON_GAP;
     }
-
-    y + card_h
 }
 
 #[allow(clippy::too_many_arguments)]

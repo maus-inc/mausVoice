@@ -312,8 +312,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
         let (x, y) = event.position();
-        let is_typing = state_press.assistant_active.get()
-            && *state_press.assistant_input_mode.borrow() == "type";
+        let is_typing = state_press.is_typing();
         if is_typing {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
@@ -387,8 +386,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
     window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.assistant_active.get()
-            && *state_focus_in.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_in.is_typing();
         if is_typing {
             entry_focus_in.grab_focus();
         }
@@ -398,8 +396,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_out = state.clone();
     let entry_focus_out = entry.clone();
     window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.assistant_active.get()
-            && *state_focus_out.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_out.is_typing();
         if is_typing {
             entry_focus_out.select_region(0, 0);
         }
@@ -426,12 +423,11 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_entry = state.clone();
     entry.connect_activate(move |e| {
-        let text = e.text().to_string();
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            ipc::send(&OutMessage::TypedMessage { text: trimmed.to_string() });
+        // Enter submits: an insert decision while a transcript is under
+        // review, a message to the assistant otherwise.
+        *state_entry.entry_text.borrow_mut() = e.text().to_string();
+        if input::submit_entry(&state_entry) {
             e.set_text("");
-            *state_entry.entry_text.borrow_mut() = String::new();
         }
     });
 
@@ -571,7 +567,17 @@ pub fn run(receiver: Receiver<InMessage>) {
                         .as_ref()
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
                     *state_tick.assistant_review.borrow_mut() = review;
+
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *state_tick.entry_text.borrow_mut() = text.clone();
+                        entry_tick.set_text(&text);
+                    }
 
                     if (active && !was_active)
                         || (review_id.is_some() && review_id != previous_review_id)
@@ -614,9 +620,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         tick(&state_tick);
 
         // Show/hide entry for typing mode
-        let is_typing = state_tick.assistant_active.get()
-            && *state_tick.assistant_input_mode.borrow() == "type";
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
+        let is_typing = state_tick.is_typing();
+        if is_typing {
+            // Recomputed every frame rather than once on show. The window is
+            // resized by one message and the state that opens the entry by
+            // another, so a size that lands second would otherwise leave the
+            // entry sitting at the old geometry.
             let (ox, oy) = state_tick.content_offset();
             let dw = state_tick.draw_width.get();
             let dh = state_tick.draw_height.get();
@@ -641,6 +650,8 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_tick.set_margin_end(margin_end);
             entry_tick.set_margin_bottom(margin_bottom);
             entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+        }
+        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
             entry_tick.set_visible(true);
             entry_tick.show();
             match backend_tick {

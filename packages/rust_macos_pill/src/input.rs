@@ -31,11 +31,34 @@ fn send_haptic(kind: &str) {
 /// Report a review decision back to the desktop. The id travels with the
 /// decision so a late click on a card that has already been replaced is
 /// discarded instead of applied to the next transcript.
-fn send_review_decision(review_id: &str, action: &str) {
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) {
     ipc::send(&OutMessage::ReviewDecision {
         review_id: review_id.to_string(),
         action: action.to_string(),
+        text,
     });
+}
+
+/// Send whatever the entry holds.
+///
+/// While a transcript is under review the entry holds that transcript, so
+/// submitting it is the insert decision and carries any edit the user made.
+/// Otherwise it is a message for the assistant. An empty entry sends nothing,
+/// because there is nothing to insert or say.
+///
+/// Returns true when something was sent, so the caller can clear the platform
+/// text control only then.
+pub(crate) fn submit_entry(state: &PillState) -> bool {
+    let text = state.entry_text.borrow().trim().to_string();
+    if text.is_empty() {
+        return false;
+    }
+    match state.pending_review_id() {
+        Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
+        None => ipc::send(&OutMessage::TypedMessage { text }),
+    }
+    *state.entry_text.borrow_mut() = String::new();
+    true
 }
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
@@ -90,14 +113,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         .as_ref()
                         .map(|review| review.id.clone());
                     match review_id {
-                        Some(review_id) => send_review_decision(&review_id, "cancel"),
+                        Some(review_id) => send_review_decision(&review_id, "cancel", None),
                         None => ipc::send(&OutMessage::AssistantClose),
                     }
                 }
-                ClickAction::ReviewInsert(id) => send_review_decision(id, "insert"),
-                ClickAction::ReviewCopy(id) => send_review_decision(id, "copy"),
-                ClickAction::ReviewEdit(id) => send_review_decision(id, "edit"),
-                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel"),
+                ClickAction::ReviewInsert(id) => {
+                    // The entry is the transcript, edits included. An empty one
+                    // has nothing to insert, so the card simply stays up.
+                    let text = state.entry_text.borrow().trim().to_string();
+                    if !text.is_empty() {
+                        send_review_decision(id, "insert", Some(text));
+                    }
+                }
+                ClickAction::ReviewCopy(id) => {
+                    let text = state.entry_text.borrow().trim().to_string();
+                    send_review_decision(id, "copy", Some(text));
+                }
+                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
                 ClickAction::OpenInNew => {
                     if let Some(ref id) = *state.assistant_conversation_id.borrow() {
                         ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
@@ -135,11 +167,7 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     });
                 }
                 ClickAction::SendButton => {
-                    let text = state.entry_text.borrow().trim().to_string();
-                    if !text.is_empty() {
-                        ipc::send(&OutMessage::TypedMessage { text });
-                        *state.entry_text.borrow_mut() = String::new();
-                    }
+                    submit_entry(state);
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {

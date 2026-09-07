@@ -45,7 +45,7 @@ import {
 import { getAppState } from "../store";
 
 type DecisionListener = (event: {
-  payload: { reviewId: string; action: string };
+  payload: { reviewId: string; action: string; text?: string | null };
 }) => void;
 
 let decide: DecisionListener | null = null;
@@ -111,15 +111,50 @@ describe("reviewTranscriptOnPill", () => {
     });
   });
 
-  it("returns the edited text from the composer on Edit", async () => {
-    mocks.reviewTextInComposer.mockResolvedValue("edited text");
+  it("inserts the text edited in the pill panel, not the original", async () => {
     const pending = reviewTranscriptOnPill("rough text");
     await flush(() => getAppState().pendingPillReview !== null);
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "edit" } });
+    decide?.({
+      payload: {
+        reviewId: currentReviewId(),
+        action: "insert",
+        text: "edited in the pill",
+      },
+    });
 
-    await expect(pending).resolves.toBe("edited text");
-    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("rough text");
+    await expect(pending).resolves.toBe("edited in the pill");
+    // Editing happens on the pill, so no window is opened for it.
+    expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
+  });
+
+  it("copies the edited text rather than the original on Copy", async () => {
+    const pending = reviewTranscriptOnPill("rough text");
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    decide?.({
+      payload: {
+        reviewId: currentReviewId(),
+        action: "copy",
+        text: "edited before copying",
+      },
+    });
+
+    await expect(pending).resolves.toBeNull();
+    expect(mocks.invoke).toHaveBeenCalledWith("copy_to_clipboard", {
+      text: "edited before copying",
+    });
+  });
+
+  it("falls back to the transcript when the pill sends an empty edit", async () => {
+    const pending = reviewTranscriptOnPill("original words");
+    await flush(() => getAppState().pendingPillReview !== null);
+
+    decide?.({
+      payload: { reviewId: currentReviewId(), action: "insert", text: "   " },
+    });
+
+    await expect(pending).resolves.toBe("original words");
   });
 
   it("queues a second transcript behind the one on the pill", async () => {

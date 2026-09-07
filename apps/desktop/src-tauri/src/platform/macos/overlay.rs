@@ -189,7 +189,11 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     });
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
-                OutMessage::ReviewDecision { review_id, action } => {
+                OutMessage::ReviewDecision {
+                    review_id,
+                    action,
+                    text,
+                } => {
                     // Validate before forwarding, for the same reason the
                     // subprocess bridge does: an action the desktop cannot read
                     // must not be turned into a guess that discards the
@@ -199,6 +203,7 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                             let payload = serde_json::json!({
                                 "reviewId": review_id,
                                 "action": action.as_str(),
+                                "text": text,
                             });
                             if let Err(err) =
                                 app.emit_to("main", "pill-review-decision", payload)

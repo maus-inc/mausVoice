@@ -11,12 +11,13 @@ import { runToast, showToast } from "./toast.actions";
 /**
  * Review-before-insert on the native pill.
  *
- * The transcript is shown on the pill itself (the surface the user is already
- * looking at) instead of a separate window that opens away from the caret. The
- * pill renders one review at a time, so concurrent transcripts queue here and
- * are presented in arrival order; the queue never drops one silently.
+ * The transcript opens in the pill's own assistant panel, the surface the user
+ * is already looking at, with the text loaded into the panel's entry so it can
+ * be edited in place. Nothing opens in a separate window. The pill shows one
+ * transcript at a time, so concurrent ones queue here and are presented in
+ * arrival order; the queue never drops one silently.
  */
-export type PillReviewAction = "insert" | "copy" | "edit" | "cancel";
+export type PillReviewAction = "insert" | "copy" | "cancel";
 
 export type PendingPillReview = {
   id: string;
@@ -123,6 +124,7 @@ const copyReviewToClipboard = async (text: string): Promise<void> => {
 const applyDecision = async (
   id: string,
   action: PillReviewAction,
+  editedText: string | null,
 ): Promise<void> => {
   const current = head();
   if (!current || current.review.id !== id) {
@@ -133,7 +135,9 @@ const applyDecision = async (
   }
   if (current.busy) return;
   current.busy = true;
-  const { text } = current.review;
+  // The pill sends back whatever its entry held, so an edit made in the panel
+  // is what gets used. An empty entry falls back to nothing to insert.
+  const text = editedText?.trim() ? editedText : current.review.text;
 
   switch (action) {
     case "insert":
@@ -146,35 +150,25 @@ const applyDecision = async (
       await copyReviewToClipboard(text);
       settle(id, null);
       return;
-    case "edit": {
-      // The pill has no text field sized for a transcript, so editing happens
-      // in the composer window and the result returns through the same path
-      // as an accepted review.
-      const edited = await reviewTextInComposer(text);
-      settle(id, edited?.trim() ? edited : null);
-      return;
-    }
   }
 };
 
 const isPillReviewAction = (value: unknown): value is PillReviewAction =>
-  value === "insert" ||
-  value === "copy" ||
-  value === "edit" ||
-  value === "cancel";
+  value === "insert" || value === "copy" || value === "cancel";
 
 const startListening = (): Promise<void> => {
-  listenerSetup ??= listen<{ reviewId: string; action: string }>(
-    "pill-review-decision",
-    (event) => {
-      const { reviewId, action } = event.payload;
-      if (!isPillReviewAction(action)) {
-        getLogger().warning(`Unknown pill review action: ${action}`);
-        return;
-      }
-      void applyDecision(reviewId, action);
-    },
-  )
+  listenerSetup ??= listen<{
+    reviewId: string;
+    action: string;
+    text?: string | null;
+  }>("pill-review-decision", (event) => {
+    const { reviewId, action, text } = event.payload;
+    if (!isPillReviewAction(action)) {
+      getLogger().warning(`Unknown pill review action: ${action}`);
+      return;
+    }
+    void applyDecision(reviewId, action, text ?? null);
+  })
     .then((unlisten) => {
       unlistenDecision = unlisten;
     })
@@ -230,9 +224,9 @@ export const cancelAllPillReviews = (): void => {
 /**
  * Review a transcript before it is inserted.
  *
- * The native pill owns the review when it is running; the composer window
- * remains the surface on builds that fall back to the Tauri overlay (and is
- * still used for "Edit", which needs a real text field).
+ * The native pill owns the review, editing included. The composer window is
+ * only reached when there is no native pill at all, which is the fallback
+ * build where the pill surface does not exist.
  */
 export const reviewTranscriptBeforeInsert = async (
   text: string,

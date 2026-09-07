@@ -370,10 +370,11 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
                     } else if line.contains("\"review_decision\"") {
-                        if let Some((review_id, action)) = parse_review_decision(&line) {
+                        if let Some((review_id, action, text)) = parse_review_decision(&line) {
                             let payload = serde_json::json!({
                                 "reviewId": review_id,
                                 "action": action.as_str(),
+                                "text": text,
                             });
                             if let Err(err) =
                                 app.emit_to("main", "pill-review-decision", payload)
@@ -485,12 +486,11 @@ pub(crate) fn parse_style_switch_direction(line: &str) -> Option<PillStyleSwitch
     }
 }
 
-/// What the user chose on the review card shown on the pill.
+/// What the user chose for the transcript shown on the pill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PillReviewAction {
     Insert,
     Copy,
-    Edit,
     Cancel,
 }
 
@@ -500,7 +500,6 @@ impl PillReviewAction {
         match raw.trim().to_ascii_lowercase().as_str() {
             "insert" => Some(Self::Insert),
             "copy" => Some(Self::Copy),
-            "edit" => Some(Self::Edit),
             "cancel" => Some(Self::Cancel),
             _ => None,
         }
@@ -510,7 +509,6 @@ impl PillReviewAction {
         match self {
             Self::Insert => "insert",
             Self::Copy => "copy",
-            Self::Edit => "edit",
             Self::Cancel => "cancel",
         }
     }
@@ -520,9 +518,15 @@ impl PillReviewAction {
 ///
 /// The id and the action are both required. A malformed line is dropped
 /// instead of guessed at, because assuming an action would throw away the very
-/// transcript the user is being asked about. Dropping it leaves the card on the
-/// pill, so the click can simply be repeated.
-pub(crate) fn parse_review_decision(line: &str) -> Option<(String, PillReviewAction)> {
+/// transcript the user is being asked about. Dropping it leaves the transcript
+/// on the pill, so the click can simply be repeated.
+///
+/// The text is what the pill's entry held at the time, so an edit made in the
+/// panel is what gets inserted. It is absent for decisions that do not carry
+/// one.
+pub(crate) fn parse_review_decision(
+    line: &str,
+) -> Option<(String, PillReviewAction, Option<String>)> {
     let trimmed = line.trim();
     let value: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(value) => value,
@@ -550,7 +554,11 @@ pub(crate) fn parse_review_decision(line: &str) -> Option<(String, PillReviewAct
         log::warn!("Ignoring unknown pill review action from line: {trimmed}");
         return None;
     };
-    Some((review_id.to_string(), action))
+    let text = value
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|text| text.to_string());
+    Some((review_id.to_string(), action, text))
 }
 
 /// Tauri event names the pill bridge emits for a chevron click. These must
@@ -641,17 +649,30 @@ mod review_decision_parse_tests {
         for (raw, expected) in [
             ("insert", PillReviewAction::Insert),
             ("copy", PillReviewAction::Copy),
-            ("edit", PillReviewAction::Edit),
             ("cancel", PillReviewAction::Cancel),
         ] {
             let line =
                 format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
             assert_eq!(
                 parse_review_decision(&line),
-                Some(("r1".to_string(), expected))
+                Some(("r1".to_string(), expected, None))
             );
             assert_eq!(expected.as_str(), raw);
         }
+    }
+
+    #[test]
+    fn keeps_the_text_edited_on_the_pill() {
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"insert","text":"edited words"}"#
+            ),
+            Some((
+                "r1".to_string(),
+                PillReviewAction::Insert,
+                Some("edited words".to_string())
+            ))
+        );
     }
 
     #[test]
@@ -660,7 +681,7 @@ mod review_decision_parse_tests {
             parse_review_decision(
                 "{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"
             ),
-            Some(("r1".to_string(), PillReviewAction::Insert))
+            Some(("r1".to_string(), PillReviewAction::Insert, None))
         );
     }
 

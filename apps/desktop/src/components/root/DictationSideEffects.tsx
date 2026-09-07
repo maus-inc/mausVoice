@@ -1502,9 +1502,10 @@ export const DictationSideEffects = () => {
     if (!isMainWindow) return;
     let size: string;
     if (hasPendingReview) {
-      // The review card lives in the assistant panel, so the pill window has
-      // to be large enough to show it even outside an assistant session.
-      size = "assistant_expanded";
+      // A transcript under review opens the assistant panel with its entry, so
+      // the window needs the same room as typing to the assistant, even
+      // outside an assistant session.
+      size = "assistant_typing";
     } else if (activeRecordingMode !== "agent") {
       size = "dictation";
     } else if (assistantInputMode === "type") {

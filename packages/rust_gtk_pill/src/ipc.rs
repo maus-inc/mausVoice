@@ -183,11 +183,17 @@ pub enum OutMessage {
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".
     HapticFeedback { kind: String },
-    /// The user's decision on the transcript shown in the review card.
-    /// `action` is one of "insert", "copy", "edit", "cancel".
+    /// The user's decision on the transcript under review.
+    /// `action` is one of "insert", "copy", "cancel".
+    ///
+    /// `text` carries what the entry holds when the decision is "insert", so
+    /// an edit made in the panel is what gets typed. It is left out for the
+    /// other decisions.
     ReviewDecision {
         review_id: String,
         action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     PositionChanged {
         has_saved_position: bool,

@@ -56,7 +56,6 @@ pub(crate) enum ClickAction {
     /// transcript so a decision can never be applied to a newer one.
     ReviewInsert(String),
     ReviewCopy(String),
-    ReviewEdit(String),
     ReviewCancel(String),
     SendButton,
     FlashAction,
@@ -283,6 +282,25 @@ pub(crate) struct PillState {
 }
 
 impl PillState {
+    /// The transcript waiting for a review decision, if there is one.
+    pub(crate) fn pending_review_id(&self) -> Option<String> {
+        self.assistant_review
+            .borrow()
+            .as_ref()
+            .map(|review| review.id.clone())
+    }
+
+    /// Whether the panel shows its text entry.
+    ///
+    /// Assistant type mode owns the entry, and so does a transcript under
+    /// review: the entry is where the transcript is edited before it is
+    /// inserted, so the review reuses the assistant surface instead of opening
+    /// a window of its own.
+    pub(crate) fn is_typing(&self) -> bool {
+        (self.assistant_active.get() && *self.assistant_input_mode.borrow() == "type")
+            || self.assistant_review.borrow().is_some()
+    }
+
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();

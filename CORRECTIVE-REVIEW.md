@@ -62,7 +62,7 @@ nothing is renumbered on the head (E2).
 | Transcription providers | Groq, OpenAI, Deepgram, ElevenLabs, Mistral, Cerebras, Gladia and any OpenAI-compatible endpoint                                                                                               |
 | Post-processing         | Tone pipeline, provider metadata, failure recording, 50 second timeout                                                                                                                         |
 | History                 | Retranscribe with guards against stale results, duration refresh, audio storage                                                                                                                |
-| Review before insert    | A separate composer window before this branch. Now a card on the pill                                                                                                                          |
+| Review before insert    | A separate composer window before this branch. Now the pill's own assistant panel, with the transcript in its entry                                                                            |
 | Remote send and receive | Pairing and delivery of the final text                                                                                                                                                         |
 | Spoken commands         | Formatting commands and a filter for hallucinated silence                                                                                                                                      |
 | Updater and signing     | Manifest rules and a secret guard. Signing that fails closed is deliberately absent                                                                                                            |
@@ -81,9 +81,9 @@ nothing is renumbered on the head (E2).
 
 ### 4.2 Behaviour that was incomplete, now finished
 
-| Ref | Finding                                                  | Evidence | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Commit    |
-| --- | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| F   | Review before insert opened a window away from the caret | E2       | The transcript is now shown on the pill, with Insert, Edit, Copy and Cancel. Each decision carries the id of the review it answers, a second transcript queues behind the first, closing the panel counts as cancel, and the pill body is inert while a card is open. Edit still opens the composer, which is the only surface with a real text field, and the edited text goes back through the caller's normal insert path. Builds without the native pill keep the composer | `8633a6c` |
+| Ref | Finding                                                  | Evidence | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Commit               |
+| --- | -------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| F   | Review before insert opened a window away from the caret | E2       | The transcript now opens the pill's own assistant panel, the same surface that morphs out of the pill for the assistant, with the text loaded into the panel's entry so it can be edited in place. Insert, Copy and Cancel sit above the entry, Enter inserts, Escape cancels, closing the panel cancels, and the pill body is inert until the transcript is answered. Each decision carries the id it answers and the text as edited, and a second transcript queues behind the first. Builds with no native pill at all still fall back to the composer window | `8633a6c`, `PENDING` |
 
 ### 4.3 A decision you asked for, now implemented
 
@@ -116,18 +116,15 @@ The macOS pill plays a click on Pause and Resume. Windows and Linux stay silent
 there. It is not a double sound, since the desktop plays nothing for those
 buttons, so this is a difference between platforms for you to settle.
 
-The card on the pill cannot edit text in place. Edit opens the composer. Putting
-a real multi-line editor in the pill means a much larger change in all three
-native crates.
+The transcript is edited on one line in the panel's entry, the same field the
+assistant is typed into. The whole text is shown above it, wrapped and
+scrolling, and it updates as it is edited. A multi-line editor in the pill would
+mean replacing the text control in all three native crates, which is a much
+larger change for a surface that usually holds a sentence or two.
 
-The card itself does not scroll. It is sized to the room the panel has, so a
-long transcript is cut with a marker on the last line it can show, at most
-eight. The panel around it does scroll while a review is open. The full text is
-always available through Edit and in history.
-
-The buttons on the pill say Insert, Edit, Copy and Cancel in English, the same
-way the existing permission card is hardcoded. The pill has no translation
-system of its own.
+The buttons on the pill say Insert, Copy and Cancel in English, the same way the
+existing permission card is hardcoded. The pill has no translation system of its
+own.
 
 Release signing that fails closed is still missing from this branch.
 
@@ -201,6 +198,7 @@ locales.
 | `ab206e0` | Listen before queueing, fall back to the composer if listening fails, and expire a card after five minutes                                     | Two new cases: the listener fails, and nobody answers                                            |
 | `0d3f2b6` | One checked parser for the decision the pill sends, on both bridges. An unreadable line is logged and dropped instead of read as cancel        | Parse tests for each action and for a missing id, an unknown action, a wrong type and bad JSON   |
 | `1446827` | The review card is sized to the panel, the panel scrolls while a review is open, and click regions outside the visible band are dropped        | Tests on the shared sizing function, including the panel geometry that exposed the bug           |
+| `PENDING` | The review moved into the pill's own panel and entry: the transcript is edited in place, Enter and Escape work, and no window opens for it     | Three cases on the edited text coming back from the pill, plus the parse test for the text field |
 
 Throughout: no `any`, no new `unwrap`, no fixed sleeps, and no silent fallbacks,
 since every fallback logs. Stale replies are matched by id. The platform
@@ -250,14 +248,16 @@ Not run here, and why.
 ## 9. What to check before release
 
 Build the three pill crates on Windows, macOS and Linux and run clippy on all
-four Rust crates. This is the first compile of the review card code.
+four Rust crates. This is the first compile of the review code.
 
 Click the pill body while paused, while idle and while recording, and count the
 sounds on each platform. There should be exactly one per click.
 
-Run review before insert on the native pill: insert, copy, edit, cancel, close
-the panel, and let a second dictation finish while a card is open so you can see
-it queue. Also set the pill to Hidden and confirm the card still appears.
+Run review before insert on the native pill: edit the text in the entry, then
+insert with Enter and with the button, copy, cancel, press Escape, close the
+panel, and let a second dictation finish while one is open so you can see it
+queue. Also set the pill to Hidden and confirm the panel still appears. Check
+that no separate window opens at any point.
 
 Open the composer next to the pill on first use, on more than one monitor, with
 a pill that has never been dragged.

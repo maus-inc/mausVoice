@@ -194,10 +194,7 @@ extern "C" fn accepts_first_responder(_this: &Object, _sel: Sel) -> BOOL {
 }
 
 extern "C" fn can_become_key_window(_this: &Object, _sel: Sel) -> BOOL {
-    let is_typing = with_ctx(|ctx| {
-        ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type"
-    });
+    let is_typing = with_ctx(|ctx| ctx.state.is_typing());
     if is_typing.unwrap_or(false) { YES } else { NO }
 }
 
@@ -340,14 +337,23 @@ extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
         unsafe {
             let ns_text: id = msg_send![sender, stringValue];
             let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-            let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                ipc::send(&OutMessage::TypedMessage { text });
-                let empty: id = NSString::alloc(nil).init_str("");
-                let _: () = msg_send![sender, setStringValue:empty];
-                *ctx.state.entry_text.borrow_mut() = String::new();
-            }
+            let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string();
+            *ctx.state.entry_text.borrow_mut() = text;
         }
+        // Enter submits: an insert decision while a transcript is under review,
+        // a message to the assistant otherwise.
+        if input::submit_entry(&ctx.state) {
+            set_entry_text("");
+        }
+    });
+}
+
+/// Put `text` in the panel's text field. Used to load a transcript into the
+/// entry for review and to empty the field once it has been answered.
+pub(crate) fn set_entry_text(text: &str) {
+    with_ctx(|ctx| unsafe {
+        let ns: id = NSString::alloc(nil).init_str(text);
+        let _: () = msg_send![ctx.entry, setStringValue:ns];
     });
 }
 
@@ -489,7 +495,17 @@ fn perform_tick() {
                         .as_ref()
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
                     *ctx.state.assistant_review.borrow_mut() = review;
+
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *ctx.state.entry_text.borrow_mut() = text.clone();
+                        set_entry_text(&text);
+                    }
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
                     ctx.state.assistant_compact.set(compact);
@@ -554,8 +570,7 @@ fn perform_tick() {
         tick(&ctx.state, ctx.window, dt);
 
         // Show/hide entry for typing mode
-        let is_typing = ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type";
+        let is_typing = ctx.state.is_typing();
         unsafe {
             let entry = ctx.entry;
             let entry_hidden: BOOL = msg_send![entry, isHidden];
