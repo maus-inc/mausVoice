@@ -770,9 +770,9 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
-    // Capture the live tone at stop as a race-safety fallback. The whole
-    // utterance is styled by the tone snapshotted at recording START, so a
-    // mid-dictation style switch only affects the next recording.
+    // Capture the live tone at stop: this is the style the whole utterance is
+    // finalized with, so a mid-dictation style switch restyles the entire
+    // transcript (and, being persisted, starts the next recording too).
     utteranceTonesRef.current.snapshotAtStop(
       getToneIdToUse(getAppState(), {
         currentAppToneId: null,
@@ -939,9 +939,9 @@ export const DictationSideEffects = () => {
         await loadManualStyleForCurrentApp();
       }
 
-      // Seed the start snapshot after app-based style load. This is the
-      // authoritative style for the whole utterance; a mid-dictation switch
-      // styles the next recording only. Stop captures a fallback snapshot.
+      // Seed the start snapshot after app-based style load. It is the
+      // fallback style for the utterance; the snapshot taken at stop (which
+      // includes any mid-dictation switch) is the authoritative one.
       utteranceTonesRef.current.seed(
         getToneIdToUse(getAppState(), {
           currentAppToneId: null,

@@ -74,12 +74,14 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  * Inputs for choosing the tone that post-processing applies to the utterance
  * being finalized.
  *
- * Contract (manual mode): ONE style applies to the WHOLE utterance. The tone
- * snapshotted when recording STARTED wins, so a switch made mid-dictation
- * styles only the NEXT recording (matching what the pill label shows at the
- * start). The stop snapshot is kept only as a race-safety fallback if the
- * start snapshot was somehow not taken. Switches that arrive after stop live
- * in `liveSelectedToneId` and are ignored for this utterance.
+ * Contract (manual mode): ONE style applies to the WHOLE utterance, and the
+ * latest style chosen while recording wins. The tone snapshotted when STOP was
+ * initiated is that style, so switching mid-dictation restyles the entire
+ * final transcript (not just the words spoken after the switch) and, because
+ * the switch also writes `user.selectedToneId`, it becomes the default for the
+ * next recording. Switches that arrive after stop live in `liveSelectedToneId`
+ * and are ignored for this utterance; `toneIdAtStart` is the last-resort
+ * fallback if no stop snapshot was taken.
  *
  * Automatic mode prefers the app-target tone captured at stop. If the
  * focused app has no assigned tone, fall back to `liveSelectedToneId` so
@@ -95,11 +97,14 @@ export const resolveInDictationArrowStyleSwitch = (args: {
  */
 export type FinalizeToneArgs = {
   stylingMode: StylingMode;
-  /** Manual selection when recording started. The authoritative utterance style. */
+  /** Manual selection when recording started. Fallback only. */
   toneIdAtStart: string | null;
-  /** Manual selection snapshotted when stop was initiated. Fallback only. */
+  /**
+   * Manual selection snapshotted when stop was initiated, including any
+   * mid-dictation switch. The authoritative utterance style.
+   */
   toneIdAtStop: string | null;
-  /** Live selection at the moment we ask. Last-resort fallback. */
+  /** Live selection at the moment we ask. Fallback when stop never snapshotted. */
   liveSelectedToneId: string | null;
   /** App-target tone captured at stop. Automatic mode only. */
   appTargetToneId: string | null;
@@ -108,7 +113,7 @@ export type FinalizeToneArgs = {
 /**
  * Tone used for the FINAL post-processed output of the current utterance.
  *
- * Manual: `toneIdAtStart ?? toneIdAtStop ?? liveSelectedToneId`.
+ * Manual: `toneIdAtStop ?? liveSelectedToneId ?? toneIdAtStart`.
  * Never `appTargetToneId` — that belongs only to automatic mode.
  * Automatic: `appTargetToneId ?? liveSelectedToneId`.
  */
@@ -118,7 +123,7 @@ export const getEffectiveToneIdAtFinalize = (
   if (args.stylingMode !== "manual") {
     return args.appTargetToneId ?? args.liveSelectedToneId;
   }
-  return args.toneIdAtStart ?? args.toneIdAtStop ?? args.liveSelectedToneId;
+  return args.toneIdAtStop ?? args.liveSelectedToneId ?? args.toneIdAtStart;
 };
 
 /**
