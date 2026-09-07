@@ -20,6 +20,10 @@ const sendQueuesByConversationId = new Map<string, Promise<void>>();
 // call against a conversation that is about to disappear.
 const deletingConversationIds = new Set<string>();
 
+export function abortAgent(conversationId: string): void {
+  abortAgentLoop(conversationId);
+}
+
 export const loadConversations = async (): Promise<void> => {
   produceAppState((draft) => {
     draft.chat.status = "loading";
@@ -377,8 +381,4 @@ export const sendChatMessage = async (
     return;
   }
   await runAgentForConversation(conversationId);
-};
-
-export const abortAgent = (conversationId: string): void => {
-  abortAgentLoop(conversationId);
 };
