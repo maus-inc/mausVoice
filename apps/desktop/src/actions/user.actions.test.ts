@@ -52,7 +52,7 @@ const minimalToolInfo = (id: string): ToolInfo =>
 describe("setPillPlacement", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue(undefined);
+    invokeMock.mockImplementation(() => Promise.resolve());
   });
 
   it("persists the preference and pushes the same placement to native", async () => {

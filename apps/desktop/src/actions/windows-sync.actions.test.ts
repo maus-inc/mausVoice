@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("restartKeyboardListenerOnResume", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue(undefined);
+    invokeMock.mockImplementation(() => Promise.resolve());
   });
 
   it("restarts the listener when strategy is listener, main window, and authorized", async () => {
@@ -87,7 +87,7 @@ describe("restartKeyboardListenerOnResume", () => {
 describe("pushPillPlacementToNative", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue(undefined);
+    invokeMock.mockImplementation(() => Promise.resolve());
   });
 
   it("pushes the persisted placement to the native pill process", async () => {
