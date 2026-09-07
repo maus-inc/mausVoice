@@ -173,7 +173,18 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
           onClick={handleClick}
           disabled={disabled}
           disableRipple={disableRipple}
-          sx={{ position: "relative", zIndex: 1 }}
+          sx={{
+            position: "relative",
+            zIndex: 1,
+            // Keep press feedback in CSS rather than mounting a Motion node for
+            // every ListTile in the app. This is cheaper for long lists and
+            // preserves the same tactile response for sidebar navigation.
+            transformOrigin: "center",
+            transition: "transform 90ms cubic-bezier(0.33, 1, 0.68, 1)",
+            "&:active:not(:disabled)": {
+              transform: "scale(0.975)",
+            },
+          }}
         >
           <Stack
             direction="row"
