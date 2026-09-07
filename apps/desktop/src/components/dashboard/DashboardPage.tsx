@@ -56,7 +56,10 @@ export default function DashboardPage() {
           <AnimatePresence initial={false} mode="popLayout">
             <Box
               component={motion.div}
-              key={location.key ?? `${location.pathname}${location.search}`}
+              key={
+                location.key ??
+                `${location.pathname}${location.search}${location.hash}`
+              }
               initial={reduceMotion ? false : { opacity: 0, x: 8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={reduceMotion ? undefined : { opacity: 0, x: -6 }}

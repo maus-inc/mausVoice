@@ -188,13 +188,13 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
               }),
               "transform 90ms var(--ease-out-cubic)",
             ].join(", "),
-            "&:active:not(:disabled), &:focus-visible:not(:disabled), &.Mui-focusVisible:not(:disabled)":
+            "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
               {
                 transform: "scale(0.975)",
               },
             "@media (prefers-reduced-motion: reduce)": {
               transition: "none",
-              "&:active:not(:disabled), &:focus-visible:not(:disabled), &.Mui-focusVisible:not(:disabled)":
+              "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
                 {
                   transform: "none",
                 },
