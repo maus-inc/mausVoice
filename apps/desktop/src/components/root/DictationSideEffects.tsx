@@ -87,6 +87,7 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -1425,7 +1426,16 @@ export const DictationSideEffects = () => {
   });
 
   useTauriListen<void>("on-click-dictate", () => {
-    if (isMainWindow && isDictationInteractable) {
+    const intent = resolvePillBodyClickIntent({
+      isMainWindow,
+      isDictationInteractable,
+      isPaused: isPausedRef.current,
+    });
+    if (intent === "resume") {
+      void resumeDictation();
+      return;
+    }
+    if (intent === "toggle") {
       debouncedToggle("dictation", dictationController);
     }
   });
