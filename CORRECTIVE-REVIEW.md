@@ -326,6 +326,14 @@ allocates one directly. Two one-shot sites in
 but leak one small string per click on a settings link, so they are left for a
 change that can be checked with Instruments on a real machine.
 
+The first build after that fix failed, and the failure is worth naming. The
+macOS pill crate is built twice, once as the library the desktop app embeds and
+once as a standalone binary, and each of the two roots lists its own modules. I
+added the new string helper to the library root only, so the binary could not
+find it. There is no Rust toolchain in this workspace, so nothing here would
+have caught that before the push. A new contract test now reads the module
+files of all three pill crates and fails if any root leaves one of them out.
+
 ## 7. Fixes, cause and test
 
 | Commit    | The fix                                                                                                                                                                 | Test that guards it                                                                                                 |
@@ -382,7 +390,7 @@ Run here, all green.
 | Check                                   | Result                                                                                                                                 |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Types across all packages               | Pass                                                                                                                                   |
-| Desktop unit tests                      | `pnpm --filter desktop test:unit` on this branch head: pass, 122 files and 1,277 tests, against 112 and 1,185 at the start of the work |
+| Desktop unit tests                      | `pnpm --filter desktop test:unit` on this branch head: pass, 123 files and 1,280 tests, against 112 and 1,185 at the start of the work |
 | Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                                                                                        |
 | Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                                                                                          |
 | Build                                   | Pass, 6 of 6 packages                                                                                                                  |
