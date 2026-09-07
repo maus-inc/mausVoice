@@ -285,7 +285,9 @@ export const AppSideEffects = () => {
   }, []);
 
   useEffect(() => {
-    void initLogging();
+    initLogging().catch((error: unknown) => {
+      console.warn("[AppSideEffects] logging init failed", error);
+    });
   }, []);
 
   // A23: Keep the native thock gate in sync with the persisted
@@ -324,7 +326,7 @@ export const AppSideEffects = () => {
   // message. Main-window-only for the same process-global reason as above.
   useEffect(() => {
     if (!isMainWindow || !isWindows()) return;
-    void pushPillPlacementToNative(pillPlacement).catch((error: unknown) => {
+    pushPillPlacementToNative(pillPlacement).catch((error: unknown) => {
       getLogger().warning(
         `Failed to push pill placement to native pill: ${error}`,
       );
@@ -858,9 +860,16 @@ export const AppSideEffects = () => {
 
     return () => {
       clearTimeout(timeoutId);
-      void listeners.then((unlisteners) => {
-        unlisteners.forEach((unlisten) => unlisten());
-      });
+      listeners
+        .then((unlisteners) => {
+          unlisteners.forEach((unlisten) => unlisten());
+        })
+        .catch((error: unknown) => {
+          console.warn(
+            "[AppSideEffects] window listener cleanup failed",
+            error,
+          );
+        });
     };
   }, [intl]);
 
