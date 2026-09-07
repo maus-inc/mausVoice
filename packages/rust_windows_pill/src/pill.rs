@@ -1823,14 +1823,17 @@ fn handle_edit_message(msg: &MSG) -> bool {
 
             if msg.wParam.0 == VK_RETURN.0 as usize {
                 // Enter submits: an insert decision while a transcript is under
-                // review, a message to the assistant otherwise.
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        input::submit_entry(state);
-                    }
+                // review, a message to the assistant otherwise. Nothing was
+                // sent when the entry holds only blanks, so the text has to
+                // stay put instead of being wiped for no result.
+                let sent = STATE.with(|s| match *s.borrow() {
+                    Some(ref state) => input::submit_entry(state),
+                    None => false,
                 });
-                unsafe {
-                    let _ = SetWindowTextW(edit, w!(""));
+                if sent {
+                    unsafe {
+                        let _ = SetWindowTextW(edit, w!(""));
+                    }
                 }
                 return true;
             } else if msg.wParam.0 == VK_ESCAPE.0 as usize {

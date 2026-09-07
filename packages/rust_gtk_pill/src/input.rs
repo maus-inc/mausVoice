@@ -105,8 +105,11 @@ pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<S
 /// Returns true when something was sent, so the caller can clear the platform
 /// text control only then.
 pub(crate) fn submit_entry(state: &PillState) -> bool {
-    let text = state.entry_text.borrow().trim().to_string();
-    if text.is_empty() {
+    // Send the text exactly as the user left it. Spacing at either end can be
+    // deliberate when the transcript lands in a document, so trimming is only
+    // ever used to decide whether there is anything to send.
+    let text = state.entry_text.borrow().clone();
+    if text.trim().is_empty() {
         return false;
     }
     match state.pending_review_id() {
@@ -173,15 +176,16 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::ReviewInsert(id) => {
-                    // The entry is the transcript, edits included. An empty one
-                    // has nothing to insert, so the card simply stays up.
-                    let text = state.entry_text.borrow().trim().to_string();
-                    if !text.is_empty() {
+                    // The entry is the transcript, edits included, and it
+                    // travels exactly as the user left it. An empty one has
+                    // nothing to insert, so the card simply stays up.
+                    let text = state.entry_text.borrow().clone();
+                    if !text.trim().is_empty() {
                         send_review_decision(id, "insert", Some(text));
                     }
                 }
                 ClickAction::ReviewCopy(id) => {
-                    let text = state.entry_text.borrow().trim().to_string();
+                    let text = state.entry_text.borrow().clone();
                     send_review_decision(id, "copy", Some(text));
                 }
                 ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),

@@ -82,4 +82,28 @@ describe("native pill review surface", () => {
 
     expect(region).toContain("state.owns_panel()");
   });
+
+  it.each(PLATFORMS)(
+    "sends the entry text as typed on $platform",
+    ({ crate }) => {
+      const input = read(`${crate}/src/input.rs`);
+      const submit = extractBlock(input, "pub(crate) fn submit_entry(");
+
+      expect(submit).toContain("state.entry_text.borrow().clone()");
+      // Trimming is only allowed to answer "is there anything to send".
+      expect(submit).not.toContain("borrow().trim().to_string()");
+      expect(submit).toContain("text.trim().is_empty()");
+    },
+  );
+
+  it("keeps the Windows entry text when nothing was sent", () => {
+    const pill = read("packages/rust_windows_pill/src/pill.rs");
+    const handler = extractBlock(pill, "fn handle_edit_message(msg: &MSG)");
+
+    // Clearing the control has to follow a decision actually leaving the pill,
+    // otherwise a blank-looking entry erases the transcript for nothing.
+    expect(handler).toMatch(
+      /if sent \{\s*unsafe \{\s*let _ = SetWindowTextW\(edit, w!\(""\)\);/,
+    );
+  });
 });
