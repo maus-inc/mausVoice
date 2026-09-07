@@ -189,6 +189,13 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     });
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                 }
+                OutMessage::ReviewDecision { review_id, action } => {
+                    let payload = serde_json::json!({
+                        "reviewId": review_id,
+                        "action": action,
+                    });
+                    let _ = app.emit_to("main", "pill-review-decision", payload);
+                }
                 OutMessage::StyleSwitch { direction } => {
                     match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {
                         Some(direction) => {

@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
+use crate::ipc::{
+    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
+};
 use crate::constants::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +50,12 @@ pub(crate) enum ClickAction {
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),
+    /// Review-before-insert decisions. The id identifies the reviewed
+    /// transcript so a decision can never be applied to a newer one.
+    ReviewInsert(String),
+    ReviewCopy(String),
+    ReviewEdit(String),
+    ReviewCancel(String),
     SendButton,
     InputField,
     FlashAction,
@@ -141,6 +149,7 @@ pub(crate) struct PillState {
     pub(crate) assistant_messages: RefCell<Vec<PillMessage>>,
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
+    pub(crate) assistant_review: RefCell<Option<PillReview>>,
 
     pub(crate) panel_open_t: Cell<f64>,
     pub(crate) panel_open_velocity: Cell<f64>,
@@ -307,6 +316,9 @@ impl PillState {
 
         // Assistant panel has shimmer and streaming content
         if self.assistant_active.get() { return true; }
+
+        // A pending review keeps the panel on screen until it is answered.
+        if self.assistant_review.borrow().is_some() { return true; }
 
         false
     }

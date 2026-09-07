@@ -1,5 +1,5 @@
 use crate::gfx::{self, Ctx};
-use crate::ipc::{Phase, PillPermission, PillStreaming};
+use crate::ipc::{Phase, PillPermission, PillReview, PillStreaming};
 
 use crate::constants::*;
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
@@ -803,7 +803,9 @@ fn draw_assistant_panel(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    let is_compact = state.assistant_compact.get();
+    // A pending review always needs the full panel: its card does not fit the
+    // compact surface.
+    let is_compact = state.assistant_compact.get() && state.assistant_review.borrow().is_none();
     let is_typing = *state.assistant_input_mode.borrow() == "type";
 
     let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
@@ -966,8 +968,9 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() {
+    if messages.is_empty() && permissions.is_empty() && review.is_none() {
         return;
     }
 
@@ -1044,6 +1047,11 @@ fn draw_transcript(
         y = draw_permission_card(ctx, state, perm, area_x, y, area_w, alpha);
     }
 
+    if let Some(ref review) = *review {
+        y += 12.0;
+        y = draw_review_card(ctx, state, review, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
 
@@ -1111,6 +1119,103 @@ fn draw_thinking_text(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Review-before-insert card: the finished transcript plus the four decisions
+/// the user can take on it. The transcript is wrapped and capped so a long
+/// dictation cannot push the buttons off the panel; the full text always
+/// remains available through "Edit" (which opens the composer window) and in
+/// history.
+fn draw_review_card(
+    ctx: &Ctx, state: &PillState, review: &PillReview,
+    x: f64, y: f64, w: f64, alpha: f64,
+) -> f64 {
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+    let lines = wrap_text(ctx, &review.text, w - REVIEW_CARD_PADDING * 2.0);
+    let shown = lines.len().min(REVIEW_MAX_LINES);
+    let truncated = lines.len() > shown;
+
+    let text_h = shown as f64 * REVIEW_LINE_HEIGHT;
+    let card_h = REVIEW_CARD_PADDING
+        + REVIEW_TITLE_HEIGHT
+        + text_h
+        + if truncated { REVIEW_LINE_HEIGHT } else { 0.0 }
+        + PERM_BUTTON_HEIGHT
+        + REVIEW_CARD_PADDING * 2.0;
+
+    gfx::rounded_rect(ctx, x, y, w, card_h, 12.0);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.06 * alpha);
+    ctx.fill();
+
+    gfx::rounded_rect(ctx, x + 0.5, y + 0.5, w - 1.0, card_h - 1.0, 11.5);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.12 * alpha);
+    ctx.set_line_width(1.0);
+    ctx.stroke();
+
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.82 * alpha);
+    ctx.select_font_face("Satoshi", false, true);
+    ctx.set_font_size(12.0);
+    ctx.move_to(x + REVIEW_CARD_PADDING, y + 18.0);
+    ctx.show_text("Review transcript");
+
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(14.0);
+    ctx.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
+    let mut text_y = y + REVIEW_CARD_PADDING + REVIEW_TITLE_HEIGHT;
+    for line in lines.iter().take(shown) {
+        ctx.move_to(x + REVIEW_CARD_PADDING, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        ctx.show_text(line);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+    if truncated {
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+        ctx.move_to(x + REVIEW_CARD_PADDING, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        ctx.show_text("…");
+    }
+
+    let btn_y = y + card_h - PERM_BUTTON_HEIGHT - REVIEW_CARD_PADDING;
+    // Rendered right to left so "Insert" (the default action) sits closest to
+    // the edge of the card, matching the permission card's layout.
+    let buttons = [
+        ("Insert", ClickAction::ReviewInsert(review.id.clone()), 0.92),
+        ("Edit", ClickAction::ReviewEdit(review.id.clone()), 0.7),
+        ("Copy", ClickAction::ReviewCopy(review.id.clone()), 0.7),
+        ("Cancel", ClickAction::ReviewCancel(review.id.clone()), 0.5),
+    ];
+    let mut btn_x = x + w - REVIEW_CARD_PADDING;
+
+    for (label, action, text_alpha) in buttons {
+        let btn_w = PERM_BUTTON_WIDTH * 0.8;
+        btn_x -= btn_w;
+
+        gfx::rounded_rect(ctx, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
+        ctx.fill();
+
+        gfx::rounded_rect(ctx, btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5);
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+        ctx.set_line_width(1.0);
+        ctx.stroke();
+
+        ctx.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(11.0);
+        let ext = ctx.text_extents(label);
+        ctx.move_to(
+            btn_x + (btn_w - ext.width) / 2.0 - ext.x_bearing,
+            btn_y + (PERM_BUTTON_HEIGHT - ext.height) / 2.0 - ext.y_bearing,
+        );
+        ctx.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
+
+    y + card_h
+}
+
 fn draw_permission_card(
     ctx: &Ctx, state: &PillState, perm: &PillPermission,
     x: f64, y: f64, w: f64, alpha: f64,

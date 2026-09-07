@@ -123,6 +123,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         draw_w_velocity: Cell::new(0.0),
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
+        assistant_review: RefCell::new(None),
         assistant_input_mode: RefCell::new("voice".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
@@ -638,8 +639,16 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             messages,
             streaming,
             permissions,
+            review,
         } => {
             let was_active = state.assistant_active.get();
+            let previous_review_id = state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            *state.assistant_review.borrow_mut() = review;
             state.assistant_active.set(active);
             *state.assistant_input_mode.borrow_mut() = input_mode;
             state.assistant_compact.set(compact);
@@ -648,7 +657,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.assistant_messages.borrow_mut() = messages;
             *state.assistant_streaming.borrow_mut() = streaming;
             *state.assistant_permissions.borrow_mut() = permissions;
-            if active && !was_active {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id)
+            {
                 state.should_stick.set(true);
                 state.scroll_offset.set(0.0);
             }
@@ -792,7 +802,8 @@ fn tick(state: &PillState, dt: f64) {
     );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
-    let panel_target = if state.assistant_active.get() {
+    let panel_target = if state.assistant_active.get() || state.assistant_review.borrow().is_some()
+    {
         1.0
     } else {
         0.0

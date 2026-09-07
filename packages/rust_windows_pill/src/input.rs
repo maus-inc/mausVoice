@@ -9,6 +9,16 @@ pub(crate) fn send_haptic(kind: &str) {
     });
 }
 
+/// Report a review decision back to the desktop. The id travels with the
+/// decision so a late click on a card that has already been replaced is
+/// discarded instead of applied to the next transcript.
+fn send_review_decision(review_id: &str, action: &str) {
+    ipc::send(&OutMessage::ReviewDecision {
+        review_id: review_id.to_string(),
+        action: action.to_string(),
+    });
+}
+
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
     let (ox, oy) = state.content_offset();
     let x = x - ox;
@@ -19,6 +29,12 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // A pending review owns the pill surface: the transcript
+                    // must be answered (or cancelled) before a body click can
+                    // start dictation or an assistant turn again.
+                    if state.assistant_review.borrow().is_some() {
+                        return;
+                    }
                     // Loading owns the current operation; another body click
                     // must not emit feedback or start a second action.
                     if !rust_pill_shared::can_emit_interaction_feedback(
@@ -45,8 +61,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
-                    ipc::send(&OutMessage::AssistantClose);
+                    // Closing the panel while a transcript is under review is
+                    // a cancel decision, not a silent dismissal: the desktop
+                    // needs an answer to release the queued reviews.
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    match review_id {
+                        Some(review_id) => send_review_decision(&review_id, "cancel"),
+                        None => ipc::send(&OutMessage::AssistantClose),
+                    }
                 }
+                ClickAction::ReviewInsert(id) => send_review_decision(id, "insert"),
+                ClickAction::ReviewCopy(id) => send_review_decision(id, "copy"),
+                ClickAction::ReviewEdit(id) => send_review_decision(id, "edit"),
+                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel"),
                 ClickAction::OpenInNew => {
                     if let Some(ref id) = *state.assistant_conversation_id.borrow() {
                         ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });

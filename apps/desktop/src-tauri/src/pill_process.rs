@@ -369,6 +369,18 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             });
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
+                    } else if line.contains("\"review_decision\"") {
+                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
+                            let review_id =
+                                val.get("review_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let action =
+                                val.get("action").and_then(|v| v.as_str()).unwrap_or("cancel");
+                            let payload = serde_json::json!({
+                                "reviewId": review_id,
+                                "action": action,
+                            });
+                            let _ = app.emit_to("main", "pill-review-decision", payload);
+                        }
                     } else if line.contains("\"style_switch\"") {
                         if let Some(direction) = parse_style_switch_direction(&line) {
                             emit_pill_style_switch(&app, direction);

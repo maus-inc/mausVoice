@@ -94,6 +94,13 @@ pub(crate) const PERM_BUTTON_WIDTH: f64 = 80.0;
 pub(crate) const PERM_BUTTON_HEIGHT: f64 = 26.0;
 pub(crate) const PERM_BUTTON_GAP: f64 = 6.0;
 
+// Review-before-insert card.
+pub(crate) const REVIEW_CARD_PADDING: f64 = 12.0;
+pub(crate) const REVIEW_TITLE_HEIGHT: f64 = 20.0;
+pub(crate) const REVIEW_LINE_HEIGHT: f64 = 20.0;
+/// Transcript lines shown in the card before it truncates with an ellipsis.
+pub(crate) const REVIEW_MAX_LINES: usize = 8;
+
 // ── Window sizes for each mode ────────────────────────────────────
 pub(crate) const WINDOW_W_COMPACT: i32 = 452;
 pub(crate) const WINDOW_H_COMPACT: i32 = 144;

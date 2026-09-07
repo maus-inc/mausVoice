@@ -68,6 +68,15 @@ pub struct PillStreaming {
     pub is_streaming: bool,
 }
 
+/// Review-before-insert state: one finished transcript waiting for the user
+/// to decide what happens to it. Reviews are queued by the desktop, so the
+/// pill only ever holds the one it is currently showing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PillReview {
+    pub id: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PillPermission {
     pub id: String,
@@ -131,6 +140,9 @@ pub enum InMessage {
         messages: Vec<PillMessage>,
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
+        /// Transcript awaiting a review decision, if any.
+        #[serde(default)]
+        review: Option<PillReview>,
     },
     /// Clears the saved position; `strategy` picks which monitor the pill
     /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
@@ -189,6 +201,12 @@ pub enum OutMessage {
     /// `kind` values: "press", "deep", "release".
     HapticFeedback {
         kind: String,
+    },
+    /// The user's decision on the transcript shown in the review card.
+    /// `action` is one of "insert", "copy", "edit", "cancel".
+    ReviewDecision {
+        review_id: String,
+        action: String,
     },
     PositionChanged {
         has_saved_position: bool,

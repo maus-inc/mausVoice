@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
+use crate::ipc::{
+    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
+};
 
 use crate::constants::*;
 use crate::pill::Backend;
@@ -50,6 +52,12 @@ pub(crate) enum ClickAction {
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),
+    /// Review-before-insert decisions. The id identifies the reviewed
+    /// transcript so a decision can never be applied to a newer one.
+    ReviewInsert(String),
+    ReviewCopy(String),
+    ReviewEdit(String),
+    ReviewCancel(String),
     SendButton,
     FlashAction,
     FlashReject,
@@ -141,6 +149,7 @@ pub(crate) struct PillState {
     pub(crate) assistant_messages: RefCell<Vec<PillMessage>>,
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
+    pub(crate) assistant_review: RefCell<Option<PillReview>>,
 
     // Assistant UI animation
     pub(crate) panel_open_t: Cell<f64>,

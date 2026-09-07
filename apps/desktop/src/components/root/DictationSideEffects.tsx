@@ -1494,10 +1494,18 @@ export const DictationSideEffects = () => {
     );
   });
 
+  const hasPendingReview = useAppStore(
+    (state) => state.pendingPillReview !== null,
+  );
+
   useEffect(() => {
     if (!isMainWindow) return;
     let size: string;
-    if (activeRecordingMode !== "agent") {
+    if (hasPendingReview) {
+      // The review card lives in the assistant panel, so the pill window has
+      // to be large enough to show it even outside an assistant session.
+      size = "assistant_expanded";
+    } else if (activeRecordingMode !== "agent") {
       size = "dictation";
     } else if (assistantInputMode === "type") {
       size = "assistant_typing";
@@ -1507,7 +1515,12 @@ export const DictationSideEffects = () => {
       size = "assistant_compact";
     }
     invoke("set_pill_window_size", { size }).catch(console.error);
-  }, [activeRecordingMode, pillHasContent, assistantInputMode]);
+  }, [
+    activeRecordingMode,
+    pillHasContent,
+    assistantInputMode,
+    hasPendingReview,
+  ]);
 
   // Sync style info to native GTK4 pill
   const pillStyleCount = useAppStore((state) => {

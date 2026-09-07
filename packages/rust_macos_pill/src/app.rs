@@ -479,8 +479,17 @@ fn perform_tick() {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = ctx.state.assistant_active.get();
+                    let previous_review_id = ctx
+                        .state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    *ctx.state.assistant_review.borrow_mut() = review;
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
                     ctx.state.assistant_compact.set(compact);
@@ -490,7 +499,9 @@ fn perform_tick() {
                     *ctx.state.assistant_streaming.borrow_mut() = streaming;
                     *ctx.state.assistant_permissions.borrow_mut() = permissions;
 
-                    if active && !was_active {
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         ctx.state.should_stick.set(true);
                         ctx.state.scroll_offset.set(0.0);
                     }
@@ -758,7 +769,14 @@ fn tick(state: &PillState, window: id, dt: f64) {
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target =
+        if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
+            1.0
+        } else {
+            0.0
+        };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
@@ -1424,6 +1442,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),

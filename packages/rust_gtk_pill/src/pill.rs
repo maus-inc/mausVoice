@@ -133,6 +133,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -553,6 +554,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
@@ -563,8 +565,17 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.assistant_messages.borrow_mut() = messages;
                     *state_tick.assistant_streaming.borrow_mut() = streaming;
                     *state_tick.assistant_permissions.borrow_mut() = permissions;
+                    let previous_review_id = state_tick
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    *state_tick.assistant_review.borrow_mut() = review;
 
-                    if active && !was_active {
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         state_tick.should_stick.set(true);
                         state_tick.scroll_offset.set(0.0);
                     }
@@ -944,7 +955,14 @@ fn tick(state: &PillState) {
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target =
+        if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
+            1.0
+        } else {
+            0.0
+        };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
 
     // Keyboard button (spring)

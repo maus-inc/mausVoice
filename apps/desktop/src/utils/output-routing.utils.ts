@@ -7,7 +7,7 @@ import { beginEditWatch } from "../actions/edit-watch.actions";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
-import { reviewTextInComposer } from "./composer.utils";
+import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
@@ -66,7 +66,7 @@ const reviewOutputText = async (
   // misclassified as a hang and skip history persistence. True phase
   // decoupling needs the review wait lifted out of stopRecording and is
   // tracked as a follow-up.
-  return reviewTextInComposer(text);
+  return reviewTranscriptBeforeInsert(text);
 };
 
 const insertLocalOutput = async (
