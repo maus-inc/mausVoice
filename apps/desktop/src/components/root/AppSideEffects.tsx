@@ -952,7 +952,9 @@ export const AppSideEffects = () => {
   // even if the pill answers after the request times out.
   useEffect(() => {
     if (!isMainWindow) return;
-    void ensurePillGeometry();
+    ensurePillGeometry().catch((error: unknown) => {
+      getLogger().error(`Failed to read the pill geometry: ${error}`);
+    });
   }, [isMainWindow]);
 
   useTauriListen<{

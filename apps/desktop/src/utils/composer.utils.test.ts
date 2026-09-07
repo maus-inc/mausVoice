@@ -204,7 +204,7 @@ const resetComposerMocks = () => {
 
 /** Happy-path defaults: nothing fails and no window already exists. */
 const stubComposerDefaults = () => {
-  mocks.invoke.mockResolvedValue(undefined);
+  mocks.invoke.mockImplementation(() => Promise.resolve());
   mocks.getByLabel.mockResolvedValue(null);
   mocks.listen.mockResolvedValue(vi.fn());
 };
@@ -429,7 +429,7 @@ describe("ensurePillGeometry", () => {
 
   it("asks the pill for its geometry and caches the reply", async () => {
     const listeners = installPerEventListener();
-    mocks.invoke.mockResolvedValue(undefined);
+    mocks.invoke.mockImplementation(() => Promise.resolve());
 
     const pending = ensurePillGeometry();
     await flush(() => Boolean(listeners.get("pill-position-changed")?.[0]));
@@ -453,13 +453,13 @@ describe("ensurePillGeometry", () => {
   it("registers the listener before requesting the geometry", async () => {
     const listeners = installPerEventListener();
     let listenerAtRequest = false;
-    mocks.invoke.mockImplementation(async (cmd: string) => {
+    mocks.invoke.mockImplementation((cmd: string) => {
       if (cmd === "request_pill_position") {
         listenerAtRequest = Boolean(
           listeners.get("pill-position-changed")?.[0],
         );
       }
-      return undefined;
+      return Promise.resolve();
     });
 
     const pending = ensurePillGeometry();
@@ -491,7 +491,7 @@ describe("ensurePillGeometry", () => {
       { x: 300, y: 200, width: 120, height: 40 },
       { x: 0, y: 0, width: 1920, height: 1080 },
     );
-    mocks.invoke.mockResolvedValue(undefined);
+    mocks.invoke.mockImplementation(() => Promise.resolve());
 
     await expect(ensurePillGeometry()).resolves.toBe(true);
     expect(mocks.invoke).not.toHaveBeenCalled();
@@ -501,7 +501,7 @@ describe("ensurePillGeometry", () => {
     vi.useFakeTimers();
     try {
       installPerEventListener();
-      mocks.invoke.mockResolvedValue(undefined);
+      mocks.invoke.mockImplementation(() => Promise.resolve());
 
       const pending = ensurePillGeometry();
       for (let i = 0; i < 10; i += 1) {

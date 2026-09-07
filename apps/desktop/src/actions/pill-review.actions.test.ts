@@ -7,10 +7,11 @@ const mocks = vi.hoisted(() => {
   return { invoke, listen, reviewTextInComposer };
 });
 
-vi.mock("@tauri-apps/api/core", () => ({
+// Keep the real module apart from `invoke`: other modules pulled in by the
+// action import `Channel` from it.
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
   invoke: (...args: unknown[]) => mocks.invoke(...args),
-  Resource: class {},
-  Channel: class {},
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => mocks.listen(...args),
@@ -66,13 +67,13 @@ describe("reviewTranscriptOnPill", () => {
   beforeEach(() => {
     cancelAllPillReviews();
     mocks.invoke.mockReset();
-    mocks.invoke.mockResolvedValue(undefined);
+    mocks.invoke.mockImplementation(() => Promise.resolve());
     mocks.reviewTextInComposer.mockReset();
     decide = null;
     mocks.listen.mockReset();
-    mocks.listen.mockImplementation(async (_event: string, cb: unknown) => {
+    mocks.listen.mockImplementation((_event: string, cb: unknown) => {
       decide = cb as DecisionListener;
-      return vi.fn();
+      return Promise.resolve(vi.fn());
     });
   });
 

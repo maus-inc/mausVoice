@@ -69,7 +69,9 @@ describe("provider form config coverage", () => {
       "transcription",
     );
 
-    expect(spy.mock.calls[0]![0]).toMatchObject({ apiKey: "secret" });
+    const [firstCall] = spy.mock.calls;
+    expect(firstCall).toBeDefined();
+    expect(firstCall?.[0]).toMatchObject({ apiKey: "secret" });
   });
 });
 

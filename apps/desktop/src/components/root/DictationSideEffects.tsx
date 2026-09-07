@@ -88,6 +88,7 @@ import {
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
+import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -202,6 +203,17 @@ const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
  *  has focused an editable target so accumulated backlog can be drained. */
 const BACKLOG_DRAIN_POLL_MS = 1_000;
 const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
+
+/**
+ * Resuming is started from event listeners that cannot await it, so a failure
+ * that escapes its own error handling is written to the log instead of
+ * becoming an unhandled rejection.
+ */
+const logResumeFailure = (resuming: Promise<void>): void => {
+  resuming.catch((error: unknown) => {
+    getLogger().error(`Failed to resume dictation: ${error}`);
+  });
+};
 
 export const DictationSideEffects = () => {
   const intl = useIntl();
@@ -1415,7 +1427,7 @@ export const DictationSideEffects = () => {
 
   useTauriListen<void>("resume-dictation", () => {
     if (!isMainWindow) return;
-    void resumeDictation();
+    logResumeFailure(resumeDictation());
   });
 
   useToastAction(async (payload) => {
@@ -1432,7 +1444,7 @@ export const DictationSideEffects = () => {
       isPaused: isPausedRef.current,
     });
     if (intent === "resume") {
-      void resumeDictation();
+      logResumeFailure(resumeDictation());
       return;
     }
     if (intent === "toggle") {
@@ -1500,21 +1512,12 @@ export const DictationSideEffects = () => {
 
   useEffect(() => {
     if (!isMainWindow) return;
-    let size: string;
-    if (hasPendingReview) {
-      // A transcript under review opens the assistant panel with its entry, so
-      // the window needs the same room as typing to the assistant, even
-      // outside an assistant session.
-      size = "assistant_typing";
-    } else if (activeRecordingMode !== "agent") {
-      size = "dictation";
-    } else if (assistantInputMode === "type") {
-      size = "assistant_typing";
-    } else if (pillHasContent) {
-      size = "assistant_expanded";
-    } else {
-      size = "assistant_compact";
-    }
+    const size = resolvePillWindowSize({
+      hasPendingReview,
+      isAgentRecording: activeRecordingMode === "agent",
+      isAssistantTyping: assistantInputMode === "type",
+      pillHasContent,
+    });
     invoke("set_pill_window_size", { size }).catch(console.error);
   }, [
     activeRecordingMode,

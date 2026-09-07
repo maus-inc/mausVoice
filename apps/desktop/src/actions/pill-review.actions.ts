@@ -45,15 +45,38 @@ let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 const head = (): QueuedReview | undefined => queue[0];
 
-const publishHead = (): void => {
+const stopListening = (): void => {
+  unlistenDecision?.();
+  unlistenDecision = null;
+  listenerSetup = null;
+};
+
+/**
+ * Move the queue on and show whatever is left at its head.
+ *
+ * `answer` finishes the review currently on the pill and is only passed by
+ * callers that have already checked it is still the open one. Publishing
+ * happens before the answer is handed back, so the caller that resumes sees
+ * the queue as it now stands. Every transition clears the unanswered-review
+ * timer and arms a fresh one, so a timer that does fire always belongs to the
+ * review still on the pill. The timer calls back in here, which is why one
+ * function owns both halves of the transition.
+ */
+const advanceQueue = (answer?: { text: string | null }): void => {
   if (timeoutId !== null) {
     clearTimeout(timeoutId);
     timeoutId = null;
   }
+
+  const answered = answer ? queue.shift() : undefined;
   const current = head()?.review ?? null;
   produceAppState((draft) => {
     draft.pendingPillReview = current;
   });
+  answered?.resolve(answer?.text ?? null);
+  if (queue.length === 0) {
+    stopListening();
+  }
   if (!current) return;
 
   const { id } = current;
@@ -62,35 +85,30 @@ const publishHead = (): void => {
     getLogger().warning(
       `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
     );
-    settle(id, null);
+    advanceQueue({ text: null });
   }, REVIEW_TIMEOUT_MS);
 };
 
 /**
- * Finish the review with `id` and hand `text` back to the caller. Decisions
- * that do not match the review currently on the pill are ignored: a click that
- * lands just after the card was replaced must never resolve the new review.
+ * The queued review that `id` refers to, or null when it is no longer the one
+ * on the pill. A click that lands just after the transcript was replaced must
+ * never answer for the new one.
  */
-const settle = (id: string, text: string | null): void => {
+const openReview = (id: string): QueuedReview | null => {
   const current = head();
-  if (!current || current.review.id !== id) {
+  if (current?.review.id !== id) {
     getLogger().warning(
       `Ignoring pill review decision for a review that is no longer open (${id})`,
     );
-    return;
+    return null;
   }
-  queue.shift();
-  publishHead();
-  current.resolve(text);
-  if (queue.length === 0) {
-    stopListening();
-  }
+  return current;
 };
 
-const stopListening = (): void => {
-  unlistenDecision?.();
-  unlistenDecision = null;
-  listenerSetup = null;
+/** Finish the review with `id` and hand `text` back to the caller. */
+const settle = (id: string, text: string | null): void => {
+  if (!openReview(id)) return;
+  advanceQueue({ text });
 };
 
 const copyReviewToClipboard = async (text: string): Promise<void> => {
@@ -126,30 +144,23 @@ const applyDecision = async (
   action: PillReviewAction,
   editedText: string | null,
 ): Promise<void> => {
-  const current = head();
-  if (!current || current.review.id !== id) {
-    getLogger().warning(
-      `Ignoring pill review decision for a review that is no longer open (${id})`,
-    );
-    return;
-  }
-  if (current.busy) return;
+  const current = openReview(id);
+  if (!current || current.busy) return;
   current.busy = true;
   // The pill sends back whatever its entry held, so an edit made in the panel
   // is what gets used. An empty entry falls back to nothing to insert.
   const text = editedText?.trim() ? editedText : current.review.text;
 
-  switch (action) {
-    case "insert":
-      settle(id, text);
-      return;
-    case "cancel":
-      settle(id, null);
-      return;
-    case "copy":
+  try {
+    if (action === "copy") {
       await copyReviewToClipboard(text);
-      settle(id, null);
-      return;
+    }
+    settle(id, action === "insert" ? text : null);
+  } catch (error) {
+    // Leave the review open so the click can be repeated, rather than
+    // stranding the transcript behind a busy flag nobody can clear.
+    current.busy = false;
+    throw error;
   }
 };
 
@@ -167,7 +178,9 @@ const startListening = (): Promise<void> => {
       getLogger().warning(`Unknown pill review action: ${action}`);
       return;
     }
-    void applyDecision(reviewId, action, text ?? null);
+    applyDecision(reviewId, action, text ?? null).catch((error: unknown) => {
+      getLogger().error(`Could not apply the pill review decision: ${error}`);
+    });
   })
     .then((unlisten) => {
       unlistenDecision = unlisten;
@@ -206,7 +219,7 @@ export const reviewTranscriptOnPill = async (
   const decision = new Promise<string | null>((resolve) => {
     queue.push({ review, resolve, busy: false });
   });
-  publishHead();
+  advanceQueue();
 
   return decision;
 };
@@ -217,8 +230,9 @@ export const cancelAllPillReviews = (): void => {
     const pending = queue.shift();
     pending?.resolve(null);
   }
-  publishHead();
-  stopListening();
+  // Clears the pill, drops the timer and stops listening, since the queue is
+  // now empty.
+  advanceQueue();
 };
 
 /**
