@@ -528,10 +528,12 @@ pub(crate) fn parse_review_decision(
     line: &str,
 ) -> Option<(String, PillReviewAction, Option<String>)> {
     let trimmed = line.trim();
+    // The line carries the user's transcript, so none of the diagnostics below
+    // repeat it. Logs travel with bug reports.
     let value: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(value) => value,
         Err(error) => {
-            log::warn!("Ignoring unparseable pill line {trimmed:?}: {error}");
+            log::warn!("Ignoring unparseable pill line: {error}");
             return None;
         }
     };
@@ -543,15 +545,12 @@ pub(crate) fn parse_review_decision(
         .and_then(|v| v.as_str())
         .filter(|id| !id.is_empty());
     let Some(review_id) = review_id else {
-        log::warn!("Ignoring pill review decision with no review id: {trimmed}");
+        log::warn!("Ignoring pill review decision with no review id");
         return None;
     };
-    let Some(action) = value
-        .get("action")
-        .and_then(|v| v.as_str())
-        .and_then(PillReviewAction::parse)
-    else {
-        log::warn!("Ignoring unknown pill review action from line: {trimmed}");
+    let raw_action = value.get("action").and_then(|v| v.as_str());
+    let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
+        log::warn!("Ignoring pill review decision with an unknown action: {raw_action:?}");
         return None;
     };
     let text = value
