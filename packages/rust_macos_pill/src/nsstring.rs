@@ -14,7 +14,14 @@ use objc::{msg_send, sel, sel_impl};
 /// Run `body` with a temporary `NSString` holding `text`, then release it.
 ///
 /// The release is tied to a guard rather than written after the call, so it
-/// still runs if `body` panics on its way out.
+/// still runs if `body` panics on its way out. A release only lowers a
+/// reference count, so sending one while a panic unwinds is safe in a way that
+/// heavier work in a `Drop` would not be.
+///
+/// `body` borrows the string for the length of the call and no longer. It may
+/// hand the string to Cocoa, which copies or retains whatever it keeps, and it
+/// may return some other object, but it must not return this string or store
+/// it anywhere that outlives the call.
 pub(crate) unsafe fn with_ns_string<R>(text: &str, body: impl FnOnce(id) -> R) -> R {
     struct Owned(id);
 
