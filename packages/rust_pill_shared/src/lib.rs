@@ -124,6 +124,30 @@ pub const fn should_show_pill(
     }
 }
 
+/// How many transcript lines the review card can show.
+///
+/// The card has no scrollbar of its own, so it is sized against the room the
+/// panel actually has. `chrome_h` is everything in the card that is not
+/// transcript: padding, the title and the button row. Returning more lines than
+/// fit would push the buttons behind the pill where they cannot be clicked.
+///
+/// Always returns at least one line, so an unreadably small panel still shows
+/// the card rather than an empty box.
+pub fn review_card_lines(
+    available_h: f64,
+    chrome_h: f64,
+    line_h: f64,
+    line_count: usize,
+    max_lines: usize,
+) -> usize {
+    if line_h <= 0.0 {
+        return 1;
+    }
+    let room = (available_h - chrome_h) / line_h;
+    let room = if room >= 1.0 { room.floor() as usize } else { 1 };
+    line_count.min(max_lines).min(room).max(1)
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -1830,6 +1854,31 @@ mod tests {
     fn flash_banner_stays_hidden_when_not_visible() {
         assert_eq!(flash_banner_target(false, false, false), 0.0);
         assert_eq!(flash_banner_target(false, true, true), 0.0);
+    }
+
+    #[test]
+    fn review_card_shows_every_line_when_there_is_room() {
+        assert_eq!(review_card_lines(400.0, 82.0, 20.0, 3, 8), 3);
+    }
+
+    #[test]
+    fn review_card_never_exceeds_the_hard_cap() {
+        assert_eq!(review_card_lines(4000.0, 82.0, 20.0, 40, 8), 8);
+    }
+
+    #[test]
+    fn review_card_shrinks_to_the_panel() {
+        // The expanded panel leaves 138px between the header and the pill,
+        // which is two lines once the card's own chrome is paid for. Asking for
+        // eight there would put the buttons behind the pill.
+        assert_eq!(review_card_lines(138.0, 82.0, 20.0, 8, 8), 2);
+    }
+
+    #[test]
+    fn review_card_always_shows_one_line() {
+        assert_eq!(review_card_lines(0.0, 82.0, 20.0, 8, 8), 1);
+        assert_eq!(review_card_lines(-50.0, 82.0, 20.0, 8, 8), 1);
+        assert_eq!(review_card_lines(138.0, 82.0, 0.0, 8, 8), 1);
     }
 
     #[test]

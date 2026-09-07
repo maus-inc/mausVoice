@@ -1223,6 +1223,11 @@ fn draw_transcript(
     cr.rectangle(area_x, area_y, area_w, area_h);
     cr.clip();
 
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
+
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
@@ -1294,11 +1299,26 @@ fn draw_transcript(
 
     if let Some(ref review) = *review {
         y += 12.0;
-        y = draw_review_card(cr, state, review, area_x, y, area_w, alpha);
+        // The card cannot scroll inside itself, so it is sized against the
+        // panel's usable height. Anything taller would push its buttons behind
+        // the pill with no way to reach them.
+        let card_space = (area_h - top_pad - bottom_pad).max(0.0);
+        y = draw_review_card(cr, state, review, area_x, y, area_w, card_space, alpha);
     }
 
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Drop the regions that scrolled out of the panel. A button the user cannot
+    // see must not take their click.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter(|region| {
+            let center = region.y + region.h / 2.0;
+            center >= area_y && center <= area_y + area_h
+        }));
+    }
 
     cr.restore().ok();
 }
@@ -1365,23 +1385,29 @@ fn draw_thinking_text(
 /// dictation cannot push the buttons off the panel; the full text always
 /// remains available through "Edit" (which opens the composer window) and in
 /// history.
+#[allow(clippy::too_many_arguments)]
 fn draw_review_card(
     cr: &cairo::Context, state: &PillState, review: &PillReview,
-    x: f64, y: f64, w: f64, alpha: f64,
+    x: f64, y: f64, w: f64, max_h: f64, alpha: f64,
 ) -> f64 {
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
     let lines = wrap_text(cr, &review.text, w - REVIEW_CARD_PADDING * 2.0);
-    let shown = lines.len().min(REVIEW_MAX_LINES);
+    // Everything in the card that is not transcript: the padding above the
+    // title, the title itself, the gap before the buttons and the button row.
+    let chrome = REVIEW_CARD_PADDING * 3.0 + REVIEW_TITLE_HEIGHT + PERM_BUTTON_HEIGHT;
+    // Fit the transcript to the room the panel actually has. The card does not
+    // scroll, so a taller one would push its buttons behind the pill.
+    let shown = rust_pill_shared::review_card_lines(
+        max_h,
+        chrome,
+        REVIEW_LINE_HEIGHT,
+        lines.len(),
+        REVIEW_MAX_LINES,
+    );
     let truncated = lines.len() > shown;
 
-    let text_h = shown as f64 * REVIEW_LINE_HEIGHT;
-    let card_h = REVIEW_CARD_PADDING
-        + REVIEW_TITLE_HEIGHT
-        + text_h
-        + if truncated { REVIEW_LINE_HEIGHT } else { 0.0 }
-        + PERM_BUTTON_HEIGHT
-        + REVIEW_CARD_PADDING * 2.0;
+    let card_h = chrome + shown as f64 * REVIEW_LINE_HEIGHT;
 
     rounded_rect(cr, x, y, w, card_h, 12.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.06 * alpha);
@@ -1402,15 +1428,16 @@ fn draw_review_card(
     cr.set_font_size(14.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
     let mut text_y = y + REVIEW_CARD_PADDING + REVIEW_TITLE_HEIGHT;
-    for line in lines.iter().take(shown) {
+    for (index, line) in lines.iter().take(shown).enumerate() {
         cr.move_to(x + REVIEW_CARD_PADDING, text_y + REVIEW_LINE_HEIGHT * 0.75);
-        let _ = cr.show_text(line);
+        // The cut is marked on the last line shown, so the ellipsis costs no
+        // extra height. The whole transcript stays available through Edit.
+        if truncated && index + 1 == shown {
+            let _ = cr.show_text(&format!("{line}…"));
+        } else {
+            let _ = cr.show_text(line);
+        }
         text_y += REVIEW_LINE_HEIGHT;
-    }
-    if truncated {
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        cr.move_to(x + REVIEW_CARD_PADDING, text_y + REVIEW_LINE_HEIGHT * 0.75);
-        let _ = cr.show_text("…");
     }
 
     let btn_y = y + card_h - PERM_BUTTON_HEIGHT - REVIEW_CARD_PADDING;

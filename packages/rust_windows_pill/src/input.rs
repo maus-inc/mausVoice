@@ -190,7 +190,13 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
 }
 
 pub(crate) fn handle_scroll(state: &PillState, delta: f64) {
-    if !state.assistant_active.get() || state.assistant_compact.get() {
+    // A pending review makes the panel scrollable too. The card can sit below a
+    // conversation, and its buttons have to be reachable. The compact test
+    // mirrors the one the panel is drawn with.
+    let has_review = state.assistant_review.borrow().is_some();
+    let owns_panel = state.assistant_active.get() || has_review;
+    let is_compact = state.assistant_compact.get() && !has_review;
+    if !owns_panel || is_compact {
         return;
     }
 

@@ -128,7 +128,8 @@ pub(crate) const PERM_BUTTON_GAP: f64 = 6.0;
 pub(crate) const REVIEW_CARD_PADDING: f64 = 12.0;
 pub(crate) const REVIEW_TITLE_HEIGHT: f64 = 20.0;
 pub(crate) const REVIEW_LINE_HEIGHT: f64 = 20.0;
-/// Transcript lines shown in the card before it truncates with an ellipsis.
+/// Upper bound on transcript lines in the review card. The card also shrinks
+/// to whatever the panel has room for, so this is a ceiling, not a promise.
 pub(crate) const REVIEW_MAX_LINES: usize = 8;
 
 // ── Window sizes for each mode ────────────────────────────────────

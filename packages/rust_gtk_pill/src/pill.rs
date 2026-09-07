@@ -1386,7 +1386,6 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
     }
 }
 
-
 #[cfg(test)]
 mod geometry_tests {
     use super::*;
