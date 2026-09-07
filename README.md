@@ -1,5 +1,9 @@
+<div align="center"><sub>Leave a ⭐</sub></div>
+
+<br>
 <div align="center">
   
+
 <img src="docs/assets/mausVoicetopbanner.png" alt="mausVoice top-banner" width="700" />
 
   <br>
