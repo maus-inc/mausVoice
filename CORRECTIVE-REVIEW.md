@@ -1,196 +1,246 @@
-# Corrective review of PR #63 (`fix/superfix-review-findings`)
+# Corrective review of PR 63
 
-Branch: `arena/01a07c29-mausvoice`, cut from PR #63 head `9e01cbbc3cd79afc0a3b0527be1aa467013a2b24`.
-Reviewed state: base `0e7bd17458de54c126183a21a4c70c44032b00cb`, 175 commits, 624 changed files
-(+62 701 / −16 204: 221 added, 14 deleted, 389 modified), MERGEABLE / UNSTABLE.
+Branch `arena/01a07c29-mausvoice`, cut from the head of PR 63,
+`9e01cbbc3cd79afc0a3b0527be1aa467013a2b24`.
+Reviewed state: base `0e7bd17458de54c126183a21a4c70c44032b00cb`, 175 commits,
+624 changed files, 62,701 lines added and 16,204 removed, 221 files added, 14
+deleted, 389 modified. The pull request is open and mergeable.
 
----
+## 1. How the review was done
 
-## 1. Method and evidence levels
+Every claim below carries an evidence level, so you can see how much weight it
+holds without re-reading the code.
 
-Every claim below carries an evidence level. Nothing above E3 was inferred from a
-commit message or a review comment alone.
+| Level | What it means                                                                     |
+| ----- | --------------------------------------------------------------------------------- |
+| E0    | Someone claimed it in a comment, commit message or bug report. No code read yet.  |
+| E1    | The code was found and read in one place, and the behaviour follows from reading. |
+| E2    | The whole path was traced, from the event that starts it to the effect it has.    |
+| E3    | The path was traced and a test that actually ran confirmed or contradicted it.    |
+| E4    | A test reproduced it. The test fails before the fix and passes after it.          |
+| E5    | Checked on a running desktop build. Nothing here reaches E5. Section 8 says why.  |
 
-| Level | Meaning                                                                        |
-| ----- | ------------------------------------------------------------------------------ |
-| E0    | Claim exists (comment, commit message, bug report) with no code inspected      |
-| E1    | Code located, behaviour inferred by reading a single site                      |
-| E2    | Full call path traced from event source to effect                              |
-| E3    | Call path traced **and** contradicted or confirmed by a test that was executed |
-| E4    | Reproduced by an executed test that fails before the fix and passes after it   |
-| E5    | Verified on a running desktop build (impossible in this environment, see §7)   |
+Read in full: all 175 commits, 65 issue comments, more than 60 reviews, 263
+inline comments across 184 review threads, the whole cumulative diff,
+`AGENTS.md`, `FULL-REVIEW.md`, `REVIEW.md`, the package scripts, the Cargo
+manifests and the CI workflows.
 
-Sources read in full: all 175 commits, 65 issue comments, 60+ reviews, 263 inline
-comments across 184 review threads (99+ resolved, 37 unresolved), the cumulative
-diff, `AGENTS.md`, `FULL-REVIEW.md`, `REVIEW.md`, package scripts, Cargo manifests
-and the CI workflows.
+## 2. What the 175 commits actually are
 
----
+They are not 175 separate changes. They are five feature branches joined onto
+one trunk, plus a long tail of review fixes.
 
-## 2. Commit-by-commit shape of PR #63
+| Group            | Commits                           | Content                                                                                                        |
+| ---------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Integration      | 4 merges of main, 4 branch merges | Re-merges of main and of the feature branches                                                                  |
+| Feature work     | 4 commits                         | Spoken formatting commands with a silence filter, the assistant on the pill, remote send, review before insert |
+| Review fixes     | 86 commits                        | Mostly driven by bots and review rounds, including several reverts of earlier fixes on the branch              |
+| Tests            | 9 commits                         | Added alongside their fixes                                                                                    |
+| CI, chores, docs | 17 commits                        | Workflow hardening, secret scanning rules, migration numbering                                                 |
 
-The 175 commits are not independent changes; they are five feature branches
-integrated onto one trunk plus their review-fix tails.
+Three things follow from that shape.
 
-| Group              | Commits                             | Content                                                                                                                                                                     |
-| ------------------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Integration merges | 4 `Merge branch 'main'`, 4 `merge:` | Repeated re-merges of `main` and of the feature branches (#137, #142, #145, spoken commands, 1.6 rebuild)                                                                   |
-| Feature work       | 4 `feat:`                           | Spoken formatting commands + silence hallucination filter, native pill assistant surface, remote sender/receiver, review-before-insert composer                             |
-| Review-fix tail    | 86 `fix:`                           | Overwhelmingly bot-driven (SonarCloud, DeepSource, CodeRabbit, Sourcery) and human review rounds; several `Revert` commits for changes that broke other reviewers' findings |
-| Tests              | 9 `test:`                           | Mostly added with their fix commits                                                                                                                                         |
-| CI / chore / docs  | 17                                  | Workflow hardening, gitleaks rules, DeepSource suppressions, migration renumbering (`077` so #63 keeps `075`/`076`)                                                         |
+The branch leaves something out on purpose. The pull request body records that
+commit `248ca2c` from PR 59, which makes release signing fail closed, was
+deliberately not carried over. That is a decision, not a defect, but it blocks a
+release (E1).
 
-Consequences that matter for this audit:
+Several fixes on the branch revert earlier fixes on the same branch. Every area
+that was reverted was re-checked against the current head rather than trusted
+from history.
 
-- The branch carries **deliberate omissions**. The PR body records that PR #59's
-  commit `248ca2c` (fail-closed release signing) was intentionally left out. That
-  is a product decision, not a defect, but it is a release-blocking one (E1).
-- Several fixes landed as _reverts of earlier fixes_ on the same branch. Each
-  reverted area was re-checked on HEAD rather than trusting the history.
-- Migration numbering is append-only and was corrected mid-branch (`077`); no
-  renumbering remains on HEAD (E2).
+Migrations are append-only again. The numbering was corrected mid-branch and
+nothing is renumbered on the head (E2).
 
----
+## 3. What the branch ships
 
-## 3. Feature inventory (as of PR #63 head)
+| Area                    | State at the head of PR 63                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The pill                | Three native crates for Windows, macOS and Linux, with shared logic in `rust_pill_shared`. Phases, style bar, cancel, pause, resume, assistant panel, permission cards, toasts, drag and reset |
+| Assistant on the pill   | Streaming replies, tool calls, permission prompts, typing mode, open in the app                                                                                                                |
+| Dictation               | Manual and automatic styling, style switching while recording, pause and resume, backlog, limits                                                                                               |
+| Transcription providers | Groq, OpenAI, Deepgram, ElevenLabs, Mistral, Cerebras, Gladia and any OpenAI-compatible endpoint                                                                                               |
+| Post-processing         | Tone pipeline, provider metadata, failure recording, 50 second timeout                                                                                                                         |
+| History                 | Retranscribe with guards against stale results, duration refresh, audio storage                                                                                                                |
+| Review before insert    | A separate composer window before this branch. Now a card on the pill                                                                                                                          |
+| Remote send and receive | Pairing and delivery of the final text                                                                                                                                                         |
+| Spoken commands         | Formatting commands and a filter for hallucinated silence                                                                                                                                      |
+| Updater and signing     | Manifest rules and a secret guard. Signing that fails closed is deliberately absent                                                                                                            |
 
-| Area                                | State on HEAD                                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native pill (Windows / macOS / GTK) | Three separate crates, shared logic in `rust_pill_shared`; phases, style bar, cancel/pause/resume, assistant panel, permission cards, toasts, drag + reset position |
-| Assistant on the pill               | Streaming, tool calls, permission prompts, typing mode, open-in-app                                                                                                 |
-| Dictation                           | Manual/automatic styling, in-dictation style switching (pill chevrons, arrows, hotkeys), pause/resume, backlog, limits                                              |
-| Transcription providers             | Groq, OpenAI, Deepgram, ElevenLabs, Mistral, Cerebras, Gladia, custom OpenAI-compatible                                                                             |
-| Post-processing                     | Tone/style pipeline, provider metadata capture, failure recording, 50 s timeout                                                                                     |
-| History                             | Retranscribe with generation guards, duration refresh, audio storage                                                                                                |
-| Review before insert                | Composer popout window (before this branch), now the native pill review card                                                                                        |
-| Remote sender/receiver              | Pairing and final-text delivery                                                                                                                                     |
-| Spoken commands                     | Formatting commands + silence hallucination filter                                                                                                                  |
-| Updater / signing                   | Manifest rules, gitleaks guard; fail-closed signing deliberately omitted                                                                                            |
+## 4. Findings
 
----
+### 4.1 Real defects, now fixed
 
-## 4. Findings and classification
+| Ref | Finding                                               | Evidence | Cause                                                                                                                                                                   | Commit    |
+| --- | ----------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| A   | Settings, API keys, crashes when Gladia can be chosen | E4       | Gladia is listed as an API key provider and reports that it supports transcription models, but the form config had no Gladia entry, so the list read a name off nothing | `f93f2bb` |
+| C   | Clicking the pill body while paused ends the session  | E4       | The click always went to the start and stop toggle. Resume only existed on the side button                                                                              | `14d438a` |
+| D   | Two sounds for one click on the pill body             | E2       | The pill played its own click feedback while the desktop played the recording chime for the same click                                                                  | `2c7e2a3` |
+| E   | The review window opens in the middle of the screen   | E4       | The pill only published its position after a drag, so the first review of a session had no position to sit next to                                                      | `1f38d0d` |
+| J   | The repo-wide formatting check was red                | E3       | Trailing whitespace in `README.md`                                                                                                                                      | `ee3045d` |
 
-### 4.1 Confirmed defects (fixed on this branch)
+### 4.2 Behaviour that was incomplete, now finished
 
-| #   | Finding                                                                      | Evidence | Root cause                                                                                                                                                                                                                                                 | Fix commit |
-| --- | ---------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| A   | Opening **Settings → API keys** crashes when Gladia is a candidate provider  | E4       | `gladia` is in `API_KEY_PROVIDERS` and `GladiaModelProviderRepo.supportsTranscriptionModels()` is true, so `ApiKeyList` renders `getProviderFormConfig("gladia").displayName`, but `STANDARD_PROVIDERS` had no `gladia` entry → `TypeError` on `undefined` | `f93f2bb`  |
-| C   | Clicking the pill body while **paused** ends the session instead of resuming | E4       | `on-click-dictate` routed unconditionally into `ActivationController.toggle()`; the resume control existed only on the side button                                                                                                                         | `14d438a`  |
-| D   | **Two sounds** per pill-body click                                           | E2       | The pill emitted `haptic_feedback("press")` while the desktop played the start/stop recording clip for the same click                                                                                                                                      | `2c7e2a3`  |
-| E   | Review window opens **centred on screen**, not next to the pill              | E4       | `PositionChanged` was only emitted on drag-end / reset / X11 move, so the geometry cache was empty on first use and `getComposerWindowPosition()` returned null                                                                                            | `1f38d0d`  |
-| J   | Repo-wide Prettier check red on PR head                                      | E3       | Trailing whitespace in `README.md`                                                                                                                                                                                                                         | `ee3045d`  |
+| Ref | Finding                                                  | Evidence | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Commit    |
+| --- | -------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| F   | Review before insert opened a window away from the caret | E2       | The transcript is now shown on the pill, with Insert, Edit, Copy and Cancel. Each decision carries the id of the review it answers, a second transcript queues behind the first, closing the panel counts as cancel, and the pill body is inert while a card is open. Edit still opens the composer, which is the only surface with a real text field, and the edited text goes back through the caller's normal insert path. Builds without the native pill keep the composer | `8633a6c` |
 
-### 4.2 Confirmed incomplete behaviour (completed on this branch)
+### 4.3 A decision you asked for, now implemented
 
-| #   | Finding                                                                                         | Evidence | Change                                                                                                                                                                                                                                                                                                                                                                                        | Commit    |
-| --- | ----------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| F   | Review before insert lived in a separate window that opens away from the caret and steals focus | E2       | Review is now a state of the native pill: `Insert / Edit / Copy / Cancel`, id-tagged decisions, a queue for a second transcript, panel-close counts as cancel, pill body inert while a review is open. `Edit` still opens the composer (the only surface with a real text field) and its result flows through the caller's normal insertion path. Non-native overlay builds keep the composer | `8633a6c` |
+| Ref | Decision                                                                                       | What changed                                                                                                                    | Commit    |
+| --- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| B   | Switching style while recording should restyle the whole transcript and stick for the next one | When finalising in manual mode, the style captured at stop now wins over the one captured at start. Automatic mode is unchanged | `44f886d` |
 
-### 4.3 Product decision implemented on request
+### 4.4 Claims that were already correct, so nothing changed
 
-| #   | Decision                                                                                                                     | Change                                                                                                                                                                                                                                  | Commit    |
-| --- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| B   | A style switch made **during** dictation must style the whole final transcript and become the default for the next recording | `getEffectiveToneIdAtFinalize` (manual mode) now prefers the stop snapshot over the start snapshot: `toneIdAtStop ?? liveSelectedToneId ?? toneIdAtStart`. Automatic mode unchanged. Doc comments and tests updated to the new contract | `44f886d` |
+| Claim                                                      | Evidence | Result                                                                                            |
+| ---------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| The generated bindings have drifted from the Rust commands | E3       | All 130 handlers appear in all three lists and nothing called from TypeScript is missing          |
+| Post-processing loses which provider and model it used     | E2       | Both are captured before the request and kept on failure                                          |
+| Cerebras payment errors are mishandled and leak secrets    | E2       | They are mapped to a clear message and redacted                                                   |
+| Retranscription loses durations and races itself           | E2       | Durations are refreshed and stale results are discarded                                           |
+| Retrying post-processing creates a second history row      | E2       | It writes back to the same row                                                                    |
+| Markdown rendering is unsafe                               | E2       | No raw HTML is enabled, and pill text goes through a plain-text converter with a length cap       |
+| The composer can open blank or twice                       | E3       | A readiness timeout, a recovery message and a single-flight guard are already there               |
+| The Windows pill sticks to the top of the screen           | E2       | The pill placement code is correct. That report is really the composer window, which is finding E |
 
-### 4.4 Already correct on HEAD (no change made)
+### 4.5 Needs to be checked on a real machine, so left alone
 
-| Claim                                                                         | Evidence | Result                                                                                                                             |
-| ----------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Bindings drift between `invoke_handler`, `collect_commands` and `bindings.ts` | E3       | 130 handlers in all three lists, no TS-invoked command missing                                                                     |
-| Post-processing provider/model attribution lost on failure                    | E2       | Captured before the request and preserved on failure                                                                               |
-| Cerebras 402 / empty body mishandled, secrets in logs                         | E2       | Mapped and redacted                                                                                                                |
-| Retranscription loses durations / races                                       | E2       | Durations refreshed, generation guards in place                                                                                    |
-| Post-processing retry duplicates the History row (question D)                 | E2       | `performRetranscribe` writes back to the same row via `updateStoredTranscription`; no duplicate is created                         |
-| Markdown rendering unsafe                                                     | E2       | `react-markdown` + `remark-gfm`, no `rehype-raw`; pill text goes through `markdownToPillText` with a 600-char cap                  |
-| Composer blank-window / duplicate-window handling                             | E3       | Ready timeout, recovery toast and single-flight guard already present                                                              |
-| Windows pill "sticks to the top of the screen"                                | E2       | `default_pill_y` / `reposition_to_cursor_monitor` are correct; the centre-of-screen report maps to the composer window (finding E) |
+| Ref | Claim                                                                            | Why it was not fixed                                                                                                                                                                                                                                                                     |
+| --- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H   | The assistant stops after a tool call with an error about an invalid resource id | The agent loop and all three provider mappings were traced and no unguarded call was found. The wording of the error comes from Tauri's own resource table, which points at something disposed in a native call rather than at the loop. Fixing it from reading alone would be guesswork |
 
-### 4.5 Runtime verification required (not fixed, deliberately)
+### 4.6 Decisions left to you
 
-| #   | Claim                                                              | Why no fix                                                                                                                                                                                                                                                                                                                          |
-| --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| H   | Assistant "dies after a tool call", `The resource id N is invalid` | E2 tracing of `AgentLoop`, `run-agent.ts` and the OpenAI/Claude/Gemini tool-message mapping found no unguarded call site. The error text comes from Tauri's resource table, which points at a disposed channel/resource in a native call, not at the agent loop. Fixing this without a debug-build stack trace would be speculation |
+The macOS pill plays a click on Pause and Resume. Windows and Linux stay silent
+there. It is not a double sound, since the desktop plays nothing for those
+buttons, so this is a difference between platforms for you to settle.
 
-### 4.6 Open product decisions (reported, not changed)
+The card on the pill cannot edit text in place. Edit opens the composer. Putting
+a real multi-line editor in the pill means a much larger change in all three
+native crates.
 
-1. **macOS-only thock on Pause/Resume.** The macOS pill emits `press` on the pause and resume buttons; Windows and GTK are silent. Not a duplicate (the desktop plays no clip for pause/resume), so this is a cross-platform inconsistency for you to settle, not a defect.
-2. **In-pill text editing.** The review card cannot edit text in place; `Edit` opens the composer window. Giving the pill a real multi-line editor is a much larger change in all three native crates.
-3. **Fail-closed release signing** (PR #59 `248ca2c`) is still deliberately absent from this branch.
+The card does not scroll, so a long transcript is cut off after eight lines with
+a marker. The full text is always available through Edit and in history.
 
----
+The buttons on the pill say Insert, Edit, Copy and Cancel in English, the same
+way the existing permission card is hardcoded. The pill has no translation
+system of its own.
 
-## 5. Fixes shipped, with root cause and regression test
+Release signing that fails closed is still missing from this branch.
 
-| Commit    | Root-cause fix                                                                                                                                                                              | Regression test                                                                                                                        |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `f93f2bb` | Registered `gladia` in the API-key form config and typed the standard map as `Record<StandardProvider, …>` so a missing provider is a compile error; the runtime throw is now descriptive   | `api-key-provider-config.test.ts` iterates `API_KEY_PROVIDERS` × both contexts. Verified failing with the entry removed                |
-| `14d438a` | Extracted `resolvePillBodyClickIntent` and routed a paused body click to `resumeDictation`                                                                                                  | `pill-click.utils.test.ts` (4 cases: paused, idle, non-main window, stopping)                                                          |
-| `2c7e2a3` | Removed `send_haptic("press")` from `ClickAction::Pill` in all three crates; the loading guard, style thock and cancel thock are untouched                                                  | `pill-click-feedback.contract.test.ts` parses the `ClickAction::Pill` arm of each crate and asserts no haptic and a kept loading guard |
-| `1f38d0d` | New `request_position` pill message + `request_pill_position` command; the app asks for the geometry once its listener is live. Composer placement logic unchanged                          | `composer.utils.test.ts`: caches the reply, listener-before-request ordering, timeout fallback, cached-geometry short circuit          |
-| `44f886d` | Manual-mode finalize prefers the stop snapshot                                                                                                                                              | `dictation-style.utils.test.ts` rewritten to the new contract, including the end-to-end snapshot-store case                            |
-| `ee3045d` | Prettier on `README.md`                                                                                                                                                                     | `pnpm run format:check` is green                                                                                                       |
-| `8633a6c` | Review state carried inside the existing assistant-state message; `review_decision` answered with the review id; TS queue with a busy flag, stale-id rejection and unknown-action rejection | `pill-review.actions.test.ts` (7 cases: insert, cancel, copy, edit, queueing, stale decision, unknown action)                          |
+## 5. What I got wrong in my own first pass, and fixed
 
-Constraints held throughout: no `any`, no `unwrap()` added, no fixed sleeps (the
-geometry wait resolves on the real event and is only bounded by a timeout), no
-silent fallbacks (every fallback logs), ids used for all stale-async decisions,
-platform adapters kept separate, no test/lint/type/CSP/capability/validation or
-signing rule weakened.
+I re-read my own changes line by line and found four mistakes worth naming.
 
----
+The pill could hide the very card it was asked to show. If the pill visibility
+setting is Hidden or While active, the pill hides as soon as the phase returns
+to idle, and a review card arrives exactly then. On Linux the clickable area
+also shrank back to the pill body, so the buttons could not be pressed even when
+drawn. The rule for when the pill is on screen was written out three times, once
+per platform, so I moved it into the shared crate as one function that also
+counts a waiting review as a reason to stay visible, and the Linux click area
+and the Windows hover test now follow the same rule. Commit `8ae2e6b`, with
+tests in the shared crate.
 
-## 6. Interface changes
+A review could be queued that nobody could answer. The transcript was put in the
+queue before the listener for decisions was registered, so if registering failed
+the caller waited forever. There was also no upper bound, so a card the user
+walked away from held up the insert path for good. The listener is now
+registered first and a failure falls back to the composer window, and a card
+that goes unanswered for five minutes gives up and leaves the transcript in
+history, which is exactly what the composer window already does. Commit
+`ab206e0`, with two new tests.
 
-- New Tauri command `request_pill_position` (registered in `app.rs`, exported via
-  Specta in `examples/gen_bindings.rs`, hand-written into `bindings.ts` in the exact
-  generator format and position — CI `scripts/check-bindings.sh` is the authority
-  that this matches, since `cargo` cannot run here).
-- New pill IPC in message: `request_position`.
-- Extended pill IPC in message: `assistant_state.review` (optional, `#[serde(default)]`,
-  so an older pill binary ignores it).
-- New pill IPC out message: `review_decision { review_id, action }`, surfaced to the
-  frontend as the `pill-review-decision` event.
-- New app state slice: `pendingPillReview`.
+Small things in the same pass. The new drawing function had taken over a clippy
+exception that belonged to the permission card next to it, it measured its
+button labels with `unwrap`, the same Tauri command was called by hand in two
+places instead of through the generated bindings, an exported helper was never
+used, and the new user-facing message had not been extracted or translated. All
+of that is corrected, and the new message is now translated into all nine
+locales.
 
----
+## 6. Fixes, cause and test
 
-## 7. Verification
+| Commit    | The fix                                                                                                                                        | Test that guards it                                                                              |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `f93f2bb` | Gladia registered in the API key form config, and the map typed so a missing provider fails to compile instead of throwing at runtime          | A test walks every provider in both contexts. It fails if the entry is removed                   |
+| `14d438a` | A small pure function decides what a pill body click means, and a paused click resumes                                                         | Four cases: paused, idle, other window, already stopping                                         |
+| `2c7e2a3` | The pill no longer plays its own sound for a body click on any platform. The loading guard, the style click and the cancel click are untouched | A test reads the click handler of all three crates and asserts no sound and a kept loading guard |
+| `1f38d0d` | A new message asks the pill to publish its position, and the app asks once at startup. The placement maths is unchanged                        | Four cases, including listener before request, timeout fallback and the cached path              |
+| `44f886d` | Finalising in manual mode prefers the style captured at stop                                                                                   | The style tests were rewritten to the new contract                                               |
+| `ee3045d` | Formatting on `README.md`                                                                                                                      | The repo formatting check is green                                                               |
+| `8633a6c` | The review travels inside the assistant state message the pill already receives, and comes back as a decision tagged with the review id        | Seven cases: insert, cancel, copy, edit, queueing, a stale decision and an unknown action        |
+| `8ae2e6b` | One shared rule for when the pill is on screen, which now counts a waiting review                                                              | Four cases in the shared crate, including a hidden pill that must still show a review            |
+| `ab206e0` | Listen before queueing, fall back to the composer if listening fails, and expire a card after five minutes                                     | Two new cases: the listener fails, and nobody answers                                            |
 
-Run in this environment:
+Throughout: no `any`, no new `unwrap`, no fixed sleeps, and no silent fallbacks,
+since every fallback logs. Stale replies are matched by id. The platform
+adapters stay separate. No test, lint, type, content-security, capability,
+validation or signing rule was weakened.
 
-| Check                                                | Result                                             |
-| ---------------------------------------------------- | -------------------------------------------------- |
-| `pnpm run check-types` (all packages)                | PASS                                               |
-| `pnpm --filter desktop run test:unit`                | PASS — 115 files, 1241 tests (baseline 112 / 1185) |
-| `pnpm --filter desktop run lint` (prettier + oxlint) | PASS — 0 warnings, 0 errors                        |
-| `pnpm run format:check`                              | PASS (was failing on `README.md` at PR head)       |
-| `pnpm exec turbo run build --filter=desktop^...`     | PASS — 6/6                                         |
+## 7. Interfaces that changed
 
-Not run, environment limitations:
+A new Tauri command, `request_pill_position`, registered in `app.rs`, exported
+through Specta and written into `bindings.ts` in the exact shape and position
+the generator uses. The desktop calls it through the generated binding, so the
+type checker validates that hand-written entry.
 
-| Check                                                                   | Reason                                                                                                                                                                                                    |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cargo build` / `cargo clippy -- -D warnings` (desktop + 3 pill crates) | No Rust toolchain: `sh.rustup.rs`, `static.rust-lang.org`, `crates.io` and `index.crates.io` are all unreachable from this sandbox. Every Rust change in this branch is compiled for the first time by CI |
-| `pnpm gen:bindings`                                                     | Shells out to `cargo`; `bindings.ts` was hand-edited to match the generator output and is validated by `scripts/check-bindings.sh` in CI                                                                  |
-| `pnpm --filter desktop run test:integration`                            | Requires `GROQ_API_KEY`; fails identically on the unmodified PR head                                                                                                                                      |
-| `pnpm --filter desktop run test:webdriver`                              | `pnpm install` cannot run postinstall scripts here (chromedriver download is blocked)                                                                                                                     |
-| Any desktop-runtime behaviour                                           | No display, no packaged app                                                                                                                                                                               |
+A new message to the pill, `request_position`.
 
----
+An extra optional field on the assistant state message, `review`, so an older
+pill binary simply ignores it.
 
-## 8. Recommended checks before release
+A new message from the pill, `review_decision`, carrying the review id and the
+action, surfaced to the app as the `pill-review-decision` event.
 
-1. Windows, macOS and Linux: build the pill crates (this is the first compile of the
-   review-card code) and run `cargo clippy -- -D warnings` on all four crates.
-2. Pill-body click while paused resumes; click while idle starts; click while
-   recording stops; exactly one sound per click on each platform.
-3. Review before insert with the native pill: insert, copy, edit, cancel, panel close,
-   and a second dictation finishing while a review is open (it must queue).
-4. Composer placement next to the pill on first use, including a multi-monitor layout
-   with negative coordinates and a pill that has never been dragged.
-5. Style switch mid-dictation: the whole transcript comes back in the new style and the
-   next recording starts on it.
-6. Settings → API keys with a Gladia key configured.
-7. Assistant tool-call termination (finding H) with a debug build and a stack trace for
-   `The resource id N is invalid`.
+A new piece of app state, `pendingPillReview`.
+
+## 8. Verification
+
+Run here, all green.
+
+| Check                                   | Result                                                              |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| Types across all packages               | Pass                                                                |
+| Desktop unit tests                      | Pass, 115 files and 1,243 tests, against 112 and 1,185 at the start |
+| Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                     |
+| Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                       |
+| Build                                   | Pass, 6 of 6 packages                                               |
+| Message extraction and translation sync | Pass and idempotent, a second run changes nothing                   |
+
+Not run here, and why.
+
+| Check                              | Reason                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rust build, clippy and crate tests | There is no Rust toolchain in this sandbox and the Rust download hosts are unreachable, so every Rust change on this branch is compiled first by CI |
+| Regenerating the bindings          | That script runs cargo. The entry was written by hand to match the generator and the CI check is the authority                                      |
+| Desktop integration tests          | They need a Groq API key, and they fail the same way on the unmodified head                                                                         |
+| WebDriver tests                    | Installing them needs a download that is blocked here                                                                                               |
+| Anything that needs a running app  | No display and no packaged build                                                                                                                    |
+
+## 9. What to check before release
+
+Build the three pill crates on Windows, macOS and Linux and run clippy on all
+four Rust crates. This is the first compile of the review card code.
+
+Click the pill body while paused, while idle and while recording, and count the
+sounds on each platform. There should be exactly one per click.
+
+Run review before insert on the native pill: insert, copy, edit, cancel, close
+the panel, and let a second dictation finish while a card is open so you can see
+it queue. Also set the pill to Hidden and confirm the card still appears.
+
+Open the composer next to the pill on first use, on more than one monitor, with
+a pill that has never been dragged.
+
+Switch style in the middle of a dictation and confirm the whole transcript comes
+back in the new style and the next recording starts on it.
+
+Open Settings, API keys, with a Gladia key configured.
+
+Reproduce the assistant stopping after a tool call on a debug build and capture
+the stack trace for the invalid resource id.
+
+Static review does not prove desktop-runtime behavior. The required platform and
+end-to-end checks remain necessary before release.
