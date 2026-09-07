@@ -11,6 +11,7 @@ import {
   deepseekTestIntegration,
   elevenlabsTestIntegration,
   geminiTestIntegration,
+  gladiaTestIntegration,
   groqTestIntegration,
   openaiCompatibleTestIntegration,
   openaiTestIntegration,
@@ -86,8 +87,22 @@ function standardTestConfig(
     testFn({ apiKey: requireApiKey(apiKey), customFetch: secureFetch });
 }
 
+/**
+ * Providers that `getProviderFormConfig` routes to a dedicated config instead
+ * of the shared API-key-only form. Every other `ApiKeyProvider` value must
+ * have a `STANDARD_PROVIDERS` entry, which the `Record` type below enforces at
+ * compile time: adding a provider to `API_KEY_PROVIDERS` without a form config
+ * fails `check-types` instead of throwing
+ * "Cannot read properties of undefined (reading 'displayName')" when the AI
+ * Transcription settings page renders the provider list.
+ */
+type DedicatedConfigProvider =
+  "azure" | "ollama" | "assemblyai" | "openai-compatible" | "speaches";
+
+type StandardProvider = Exclude<ApiKeyProvider, DedicatedConfigProvider>;
+
 const STANDARD_PROVIDERS: Record<
-  string,
+  StandardProvider,
   {
     displayName: string;
     testFn: (args: {
@@ -101,6 +116,7 @@ const STANDARD_PROVIDERS: Record<
   openrouter: { displayName: "OpenRouter", testFn: openrouterTestIntegration },
   aldea: { displayName: "Aldea", testFn: aldeaTestIntegration },
   deepgram: { displayName: "Deepgram", testFn: deepgramTestIntegration },
+  gladia: { displayName: "Gladia", testFn: gladiaTestIntegration },
   elevenlabs: { displayName: "ElevenLabs", testFn: elevenlabsTestIntegration },
   deepseek: { displayName: "DeepSeek", testFn: deepseekTestIntegration },
   gemini: { displayName: "Gemini", testFn: geminiTestIntegration },
@@ -109,8 +125,18 @@ const STANDARD_PROVIDERS: Record<
   xai: { displayName: "xAI Grok", testFn: xaiTestIntegration },
 };
 
-function buildStandardConfig(provider: string): ProviderFormConfig {
-  const entry = STANDARD_PROVIDERS[provider]!;
+function buildStandardConfig(provider: ApiKeyProvider): ProviderFormConfig {
+  const entry = STANDARD_PROVIDERS[provider as StandardProvider];
+  // A persisted key can carry a provider string this build does not know
+  // (a downgrade, or a row written by a newer version). The type-level
+  // `Record<StandardProvider, ...>` already blocks the in-repo case, so this
+  // guard only covers foreign data — and it names the provider instead of
+  // failing later on `undefined.displayName`.
+  if (!entry) {
+    throw new Error(
+      `Unsupported API key provider "${provider}": no form configuration is registered for it.`,
+    );
+  }
   return {
     displayName: entry.displayName,
     fields: [API_KEY_FIELD],
