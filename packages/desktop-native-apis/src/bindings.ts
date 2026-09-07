@@ -594,6 +594,24 @@ async requestMicrophonePermission() : Promise<Result<PermissionStatus, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Ask the native pill overlay to re-publish its current geometry.
+ * 
+ * The pill emits `pill-position-changed` on its own only after the user drags
+ * it, so a session that never moved the pill left the desktop without any
+ * geometry and windows anchored to the pill (the review composer) opened at
+ * the OS-chosen centre of the screen. The frontend calls this once its
+ * listener is registered, which makes the anchor available from the first
+ * use instead of the second.
+ */
+async requestPillPosition() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_pill_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetKeyListenerState() : Promise<void> {
     await TAURI_INVOKE("reset_key_listener_state");
 },

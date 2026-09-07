@@ -205,6 +205,17 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
+/// Ask the pill to re-publish its geometry so the desktop can anchor windows
+/// to it before the user has ever moved it.
+pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<PillProcess>>() {
+        Some(pill) => pill
+            .send(r#"{"type":"request_position"}"#)
+            .map_err(|err| format!("failed to request pill position: {err}")),
+        None => Err("Pill position requested with no managed pill process".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     match app.try_state::<std::sync::Arc<PillProcess>>() {
         Some(pill) => {

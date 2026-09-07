@@ -666,6 +666,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 monitor,
             });
         }
+        InMessage::RequestPosition => {
+            let hwnd = HWND_CELL.with(|c| c.get());
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: state.has_saved_position.get(),
+                rect: Some(rect),
+                monitor,
+            });
+        }
         InMessage::PillPlacement { placement } => {
             let code = if placement == "top" {
                 PILL_PLACEMENT_TOP

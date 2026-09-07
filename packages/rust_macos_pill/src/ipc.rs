@@ -134,6 +134,14 @@ pub enum InMessage {
         #[serde(default)]
         strategy: ResetStrategy,
     },
+    /// Ask the pill to re-publish its current geometry.
+    ///
+    /// The pill only emits `PositionChanged` when the user moves it, so a
+    /// freshly started session has no geometry on the desktop side and
+    /// windows anchored to the pill (the review composer) fall back to the
+    /// OS-centred placement. The desktop asks for the geometry once the
+    /// listener is live instead of waiting for the first drag.
+    RequestPosition,
     Quit,
 }
 

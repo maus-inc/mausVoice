@@ -505,6 +505,14 @@ fn perform_tick() {
                         monitor: Some(monitor),
                     });
                 }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: ctx.state.has_saved_position.get(),
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
+                }
                 InMessage::Quit => {
                     ctx.quit.set(true);
                 }

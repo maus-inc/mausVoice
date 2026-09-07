@@ -115,6 +115,16 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     }
 }
 
+pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => {
+            pill.send(InMessage::RequestPosition);
+            Ok(())
+        }
+        None => Err("Pill position requested with no managed macOS pill".to_string()),
+    }
+}
+
 pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
     let strategy = if strategy == "cursor" {
         ResetStrategy::Cursor

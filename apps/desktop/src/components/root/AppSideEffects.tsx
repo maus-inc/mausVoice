@@ -67,7 +67,10 @@ import {
   getMixpanel,
 } from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
-import { setPillGeometry } from "../../utils/composer.utils";
+import {
+  ensurePillGeometry,
+  setPillGeometry,
+} from "../../utils/composer.utils";
 import { browserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
@@ -942,6 +945,15 @@ export const AppSideEffects = () => {
       getLogger().error(`Failed to reset pill position: ${error}`);
     });
   });
+
+  // The pill publishes its geometry when the user moves it, which left the
+  // first window anchored to the pill (the review composer) with nothing to
+  // anchor to and centred by the OS. Ask for the geometry once at startup so
+  // the anchor is available from the first use.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    void ensurePillGeometry();
+  }, [isMainWindow]);
 
   useTauriListen<{
     hasSavedPosition: boolean;

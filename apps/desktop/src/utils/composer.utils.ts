@@ -133,6 +133,87 @@ export const getComposerWindowPosition = (
 };
 
 /**
+ * How long to wait for the pill to answer a geometry request before falling
+ * back to the OS placement. The pill replies from its next frame, so this is a
+ * safety net for a wedged or non-native overlay, not a pacing delay: the
+ * happy path resolves on the `pill-position-changed` event, never on a timer.
+ */
+const PILL_GEOMETRY_TIMEOUT_MS = 1_000;
+
+type PillPositionEvent = {
+  hasSavedPosition: boolean;
+  rect?: Rect;
+  monitor?: Rect;
+};
+
+/**
+ * Make sure the pill geometry cache is warm before a window is anchored to it.
+ *
+ * The native pill publishes `pill-position-changed` only when the user moves
+ * it, so the very first review of a session had no geometry to anchor to and
+ * the composer opened wherever the OS decided (the reported "composer opens in
+ * the centre of the screen" behaviour). Asking the pill to re-publish its
+ * geometry closes that gap without waiting for a drag.
+ *
+ * Returns true when the cache holds a usable rect and monitor. On any failure
+ * (no native pill, no answer in time) it logs and returns false, and the
+ * caller keeps the OS-chosen placement.
+ */
+export const ensurePillGeometry = async (): Promise<boolean> => {
+  if (cachedPillRect && cachedPillMonitor) return true;
+
+  let unlisten: (() => void) | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    let settle: (published: boolean) => void = () => {};
+    const published = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+
+    // Register first, request second: the pill answers immediately and a
+    // Tauri event with no listener is dropped, so the reverse order would
+    // lose the only reply we get.
+    unlisten = await listen<PillPositionEvent>(
+      "pill-position-changed",
+      (event) => {
+        const { rect, monitor } = event.payload;
+        if (!rect || !monitor) {
+          settle(false);
+          return;
+        }
+        setPillGeometry(rect, monitor);
+        settle(true);
+      },
+    );
+
+    await invoke("request_pill_position");
+
+    const timedOut = new Promise<boolean>((resolve) => {
+      timeoutId = setTimeout(() => {
+        getLogger().warning(
+          "Native pill did not report its geometry in time; using the OS window placement",
+        );
+        resolve(false);
+      }, PILL_GEOMETRY_TIMEOUT_MS);
+    });
+
+    return await Promise.race([published, timedOut]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().warning(
+      `Could not read the native pill geometry (${message}); using the OS window placement`,
+    );
+    return false;
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+    unlisten?.();
+  }
+};
+
+/**
  * Tracks the currently open review window, if any. The paste/output path
  * awaits one review at a time, but a second dictation or a stale caller can
  * race; reusing the live window prevents a broken duplicate WebView2 window
@@ -280,9 +361,11 @@ export const reviewTextInComposer = async (
           // separate native process (not a WebviewWindow), so there is no
           // "pill" window label to query for its position. Instead we anchor to
           // the pill's geometry via the `pill-position-changed` event
-          // (forwarded into `setPillGeometry`). When the pill geometry is known
-          // we place the composer adjacent to the pill; otherwise we omit
-          // x/y and let the OS choose a centered position.
+          // (forwarded into `setPillGeometry`). The pill publishes that event
+          // on a move and on request; the app warms the cache at startup via
+          // `ensurePillGeometry` so the first review is anchored too. If the
+          // geometry is still unknown we omit x/y and let the OS choose a
+          // centered position rather than delaying the window.
 
           const composerPosition = getComposerWindowPosition({
             width: args.width as number,

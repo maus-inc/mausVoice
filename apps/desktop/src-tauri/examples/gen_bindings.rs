@@ -78,6 +78,7 @@ fn main() {
         request_accessibility_permission,
         request_admin_relaunch,
         request_microphone_permission,
+        request_pill_position,
         reset_key_listener_state,
         reset_pill_position,
         resolve_app_pids,

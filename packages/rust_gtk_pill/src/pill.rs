@@ -581,6 +581,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                         monitor,
                     });
                 }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: state_tick.has_saved_position.get(),
+                        rect,
+                        monitor,
+                    });
+                }
                 InMessage::Quit => {
                     quit_tick.set(true);
                 }
