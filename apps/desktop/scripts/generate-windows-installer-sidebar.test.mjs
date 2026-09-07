@@ -9,6 +9,8 @@ import {
   TARGET_HEIGHT,
   TARGET_WIDTH,
   chooseBackground,
+  computeContainFit,
+  countNonOpaquePixels,
   decodeBmp,
   decodeImage,
   decodePng,
@@ -345,6 +347,70 @@ describe("chooseBackground", () => {
   });
 });
 
+describe("countNonOpaquePixels", () => {
+  it("reports zero for fully opaque art", () => {
+    expect(countNonOpaquePixels(solidImage(3, 2, [1, 2, 3]))).toEqual({
+      transparent: 0,
+      semi: 0,
+      total: 6,
+    });
+  });
+
+  it("separates fully transparent from semi-transparent pixels", () => {
+    const image = solidImage(2, 2, [9, 9, 9]);
+    image.rgba[3] = 0; // first pixel fully transparent
+    image.rgba[7] = 128; // second pixel semi-transparent
+    expect(countNonOpaquePixels(image)).toEqual({
+      transparent: 1,
+      semi: 1,
+      total: 4,
+    });
+  });
+});
+
+describe("computeContainFit", () => {
+  it("covers the canvas exactly at the panel aspect", () => {
+    expect(computeContainFit({ width: 328, height: 628 })).toMatchObject({
+      fitWidth: TARGET_WIDTH,
+      fitHeight: TARGET_HEIGHT,
+      offsetX: 0,
+      offsetY: 0,
+      fullBleed: true,
+    });
+  });
+
+  it("centres off-aspect art and reports the letterbox", () => {
+    // 320x200 scales to 164x102, centred vertically (offsetY 106). 164/320
+    // is not exact in binary floating point, so 200 x scale rounds to 102.
+    expect(computeContainFit({ width: 320, height: 200 })).toMatchObject({
+      fitWidth: 164,
+      fitHeight: 102,
+      offsetX: 0,
+      offsetY: 106,
+      fullBleed: false,
+    });
+  });
+});
+
+describe("committed sidebar art", () => {
+  it("is fully opaque at the exact panel aspect (no flatten/letterbox bands)", () => {
+    // Guards the fix for the dark bands on the installer's Welcome/Finish
+    // sidebar: transparent margins flatten into flat dark strips and
+    // off-aspect art letterboxes, both visible on the near-black panel.
+    const artPath = join(
+      repoRoot,
+      "branding",
+      "mausvoice-sidebar-installerimg.png",
+    );
+    const image = decodePng(readFileSync(artPath));
+    expect(countNonOpaquePixels(image)).toMatchObject({
+      transparent: 0,
+      semi: 0,
+    });
+    expect(computeContainFit(image).fullBleed).toBe(true);
+  });
+});
+
 describe("drawContainFit + encodeBmp24", () => {
   it("copies exact-fit art without resampling", () => {
     const canvas = drawContainFit(
@@ -363,7 +429,7 @@ describe("drawContainFit + encodeBmp24", () => {
       [10, 20, 30],
     );
     const image = { width: TARGET_WIDTH, height: TARGET_HEIGHT, rgba: canvas };
-    // 320x200 scales to 164x103 (offsetY 105): rows 5 and 309 at x=82 are
+    // 320x200 scales to 164x102 (offsetY 106): rows 5 and 309 at x=82 are
     // letterbox, the centre is art. Avoid the blend rows at the fit edges.
     expect(px(image, 82, 5)).toEqual([10, 20, 30, 255]);
     expect(px(image, 82, 309)).toEqual([10, 20, 30, 255]);
@@ -409,6 +475,49 @@ describe("generator CLI", () => {
     expect(bmp.readInt32LE(18)).toBe(TARGET_WIDTH);
     expect(bmp.readInt32LE(22)).toBe(TARGET_HEIGHT);
     expect(bmp.readUInt16LE(28)).toBe(24);
+  });
+
+  it("reports full-bleed opaque art with no warnings", () => {
+    const source = join(dir, "bleed.png");
+    const output = join(dir, "bleed.bmp");
+    // 82x157 is exactly the 164:314 panel aspect; alpha 255 throughout.
+    const samples = [];
+    for (let i = 0; i < 82 * 157; i += 1) {
+      samples.push(40, 41, 43, 255);
+    }
+    writeFileSync(source, buildPng(82, 157, 6, samples));
+    const stdout = execFileSync(process.execPath, [generatorPath], {
+      env: {
+        ...process.env,
+        MAUSVOICE_SIDEBAR_SOURCE: source,
+        MAUSVOICE_SIDEBAR_OUTPUT: output,
+      },
+      encoding: "utf8",
+    });
+    expect(stdout).toContain("full-bleed, no letterbox");
+    expect(stdout).not.toContain("NOTE:");
+  });
+
+  it("warns when the art has transparent pixels to flatten", () => {
+    const source = join(dir, "transparent.png");
+    const output = join(dir, "transparent.bmp");
+    // 8x8 RGBA with half the pixels fully transparent.
+    const samples = [];
+    for (let i = 0; i < 64; i += 1) {
+      samples.push(120, 120, 120, i % 2 === 0 ? 255 : 0);
+    }
+    writeFileSync(source, buildPng(8, 8, 6, samples));
+    const stdout = execFileSync(process.execPath, [generatorPath], {
+      env: {
+        ...process.env,
+        MAUSVOICE_SIDEBAR_SOURCE: source,
+        MAUSVOICE_SIDEBAR_OUTPUT: output,
+      },
+      encoding: "utf8",
+    });
+    expect(stdout).toContain("32 fully transparent");
+    expect(stdout).toContain("flattened");
+    expect(readFileSync(output).readInt32LE(18)).toBe(TARGET_WIDTH);
   });
 
   it("fails with the art contract when the source is missing", () => {

@@ -444,6 +444,25 @@ export function chooseBackground(image) {
   return [Math.round(r / n), Math.round(g / n), Math.round(b / n)];
 }
 
+/**
+ * Count the pixels the BMP flattening must invent. BMPs store no alpha, so
+ * every non-opaque pixel is composited over the letterbox colour. A few
+ * anti-aliased edge pixels are harmless, but transparent margins (a canvas
+ * bigger than the artwork) flatten into flat bands around the art - the
+ * "black part" seen on the installer's Welcome/Finish sidebar.
+ */
+export function countNonOpaquePixels(image) {
+  let transparent = 0;
+  let semi = 0;
+  const { rgba } = image;
+  for (let o = 3; o < rgba.length; o += 4) {
+    const alpha = rgba[o];
+    if (alpha === 0) transparent += 1;
+    else if (alpha < 255) semi += 1;
+  }
+  return { transparent, semi, total: rgba.length / 4 };
+}
+
 /** Composite the art over the background colour in place (no halos). */
 function compositeOverBackground(image, background) {
   const { rgba } = image;
@@ -479,19 +498,34 @@ function sampleBilinear(image, x, y, out, outOffset) {
 }
 
 /**
- * Contain-fit the art onto the target canvas, centred, with the letterbox
- * background everywhere else. An exact-size source short-circuits to a copy.
+ * Contain-fit geometry of the art on the target canvas: fitted size,
+ * centring offsets, and whether the art covers the canvas completely.
+ * Shared by the rasteriser and the build log so the log can report
+ * "full-bleed" instead of naming a letterbox colour that paints zero pixels.
  */
-export function drawContainFit(image, background) {
-  const canvas = new Uint8Array(TARGET_WIDTH * TARGET_HEIGHT * 4);
+export function computeContainFit(image) {
   const scale = Math.min(
     TARGET_WIDTH / image.width,
     TARGET_HEIGHT / image.height,
   );
   const fitWidth = Math.max(1, Math.round(image.width * scale));
   const fitHeight = Math.max(1, Math.round(image.height * scale));
-  const offsetX = Math.floor((TARGET_WIDTH - fitWidth) / 2);
-  const offsetY = Math.floor((TARGET_HEIGHT - fitHeight) / 2);
+  return {
+    fitWidth,
+    fitHeight,
+    offsetX: Math.floor((TARGET_WIDTH - fitWidth) / 2),
+    offsetY: Math.floor((TARGET_HEIGHT - fitHeight) / 2),
+    fullBleed: fitWidth === TARGET_WIDTH && fitHeight === TARGET_HEIGHT,
+  };
+}
+
+/**
+ * Contain-fit the art onto the target canvas, centred, with the letterbox
+ * background everywhere else. An exact-size source short-circuits to a copy.
+ */
+export function drawContainFit(image, background) {
+  const canvas = new Uint8Array(TARGET_WIDTH * TARGET_HEIGHT * 4);
+  const { fitWidth, fitHeight, offsetX, offsetY } = computeContainFit(image);
   const exactFit =
     image.width === TARGET_WIDTH &&
     image.height === TARGET_HEIGHT &&
@@ -624,6 +658,21 @@ function main() {
     );
   }
 
+  const opacity = countNonOpaquePixels(image);
+  if (opacity.transparent + opacity.semi > 0) {
+    const pct = (
+      (100 * (opacity.transparent + opacity.semi)) /
+      opacity.total
+    ).toFixed(1);
+    console.log(
+      `NOTE: ${opacity.transparent} fully transparent + ${opacity.semi} ` +
+        `semi-transparent pixels (${pct}% of the art) will be flattened ` +
+        "onto the letterbox colour - transparent margins show up as flat " +
+        "dark bands in the installer. Re-export full-bleed opaque art at " +
+        `the ${TARGET_WIDTH}x${TARGET_HEIGHT} aspect to render edge to edge.`,
+    );
+  }
+
   const background = chooseBackground(image);
   compositeOverBackground(image, background);
   const canvas = drawContainFit(image, background);
@@ -634,9 +683,12 @@ function main() {
   verifyOutput(OUTPUT);
 
   const hex = background.map((v) => v.toString(16).padStart(2, "0")).join("");
+  const bleed = computeContainFit(image).fullBleed
+    ? "full-bleed, no letterbox"
+    : `letterbox #${hex}`;
   console.log(
     `Wrote ${OUTPUT} (${TARGET_WIDTH}x${TARGET_HEIGHT}, 24-bit BMP, ` +
-      `${bmp.length} bytes; letterbox #${hex})`,
+      `${bmp.length} bytes; ${bleed})`,
   );
 }
 
