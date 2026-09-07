@@ -216,15 +216,20 @@ could reach it. That chain is now a pure function with its own tests. A
 decision that fails also clears its busy flag now, so the click can be
 repeated instead of the transcript sitting behind a flag nobody can clear.
 
-A second round ran on the fixes themselves and found three more things.
-CodeSpect pointed out that the new macOS helper handed the pointer from
-UTF8String straight to CStr, which is undefined behaviour if the field ever
-hands back nothing, and that the unknown action warning printed the Rust debug
-form of an option, so it reached the log as Some("x"). Both are corrected in
-commit `438ae23`, which also moves the answer text into a named helper.
-DeepSource then reported the two queue functions at complexity seven. One of
-them came down to five; the other is the queue transition, and the reason it
-stays whole is below.
+Two more rounds ran on the fixes themselves. In
+`packages/rust_macos_pill/src/app.rs`, the helper `field_string` passed the
+pointer from `UTF8String` straight to `CStr::from_ptr`; it now checks that
+pointer and the string value for null first, and reads the bytes with
+`to_string_lossy`, so text that is not valid UTF-8 keeps its readable
+characters instead of the whole entry reading as empty. In
+`parse_review_decision` in `apps/desktop/src-tauri/src/pill_process.rs`, the
+unknown action warning printed the Rust debug form of an option, so it reached
+the log as `Some("x")`; it now prints the token itself, capped at 32
+characters so a malformed line cannot write an unbounded string into the log.
+Commits `438ae23` and `1829845`. `applyDecision` came down to five in the same
+two commits, by moving the answer text into `reviewAnswerText` and by clearing
+the busy flag in a `finally` rather than a catch and a rethrow. The other
+queue function stays whole, for the reason below.
 
 Three suggestions I did not take, with the reason.
 
@@ -257,24 +262,25 @@ without reading the code that plays it. Brace counting stays.
 
 ## 7. Fixes, cause and test
 
-| Commit    | The fix                                                                                                                                        | Test that guards it                                                                              |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `f93f2bb` | Gladia registered in the API key form config, and the map typed so a missing provider fails to compile instead of throwing at runtime          | A test walks every provider in both contexts. It fails if the entry is removed                   |
-| `14d438a` | A small pure function decides what a pill body click means, and a paused click resumes                                                         | Four cases: paused, idle, other window, already stopping                                         |
-| `2c7e2a3` | The pill no longer plays its own sound for a body click on any platform. The loading guard, the style click and the cancel click are untouched | A test reads the click handler of all three crates and asserts no sound and a kept loading guard |
-| `1f38d0d` | A new message asks the pill to publish its position, and the app asks once at startup. The placement maths is unchanged                        | Four cases, including listener before request, timeout fallback and the cached path              |
-| `44f886d` | Finalising in manual mode prefers the style captured at stop                                                                                   | The style tests were rewritten to the new contract                                               |
-| `ee3045d` | Formatting on `README.md`                                                                                                                      | The repo formatting check is green                                                               |
-| `8633a6c` | The review travels inside the assistant state message the pill already receives, and comes back as a decision tagged with the review id        | Seven cases: insert, cancel, copy, edit, queueing, a stale decision and an unknown action        |
-| `8ae2e6b` | One shared rule for when the pill is on screen, which now counts a waiting review                                                              | Four cases in the shared crate, including a hidden pill that must still show a review            |
-| `ab206e0` | Listen before queueing, fall back to the composer if listening fails, and expire a card after five minutes                                     | Two new cases: the listener fails, and nobody answers                                            |
-| `0d3f2b6` | One checked parser for the decision the pill sends, on both bridges. An unreadable line is logged and dropped instead of read as cancel        | Parse tests for each action and for a missing id, an unknown action, a wrong type and bad JSON   |
-| `1446827` | The review card is sized to the panel, the panel scrolls while a review is open, and click regions outside the visible band are dropped        | Tests on the shared sizing function, including the panel geometry that exposed the bug           |
-| `864ab34` | The review moved into the pill's own panel and entry: the transcript is edited in place, Enter and Escape work, and no window opens for it     | Three cases on the edited text coming back from the pill, plus the parse test for the text field |
-| `b1fe214` | Escape answers a review on macOS and Linux as well as Windows, and the macOS entry mirrors each keystroke into state                           | A contract test reads all three crates and fails if a platform loses its Escape path             |
-| `897e259` | The review decision parser logs the error and the action token, never the line, because the line holds the transcript                          | A contract test fails if a diagnostic in the parser repeats the line again                       |
-| `084bdd6` | One transition through the review queue, one stale id guard, and the pill window size decided by a pure function                               | Five cases on the window size function, and the existing eleven review cases still pass          |
-| `438ae23` | The macOS field reader checks both pointers, the unknown action is logged as a token, and the answer text has a name                           | The eleven review cases cover the answer text, empty edit included                               |
+| Commit    | The fix                                                                                                                                                                 | Test that guards it                                                                              |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `f93f2bb` | Gladia registered in the API key form config, and the map typed so a missing provider fails to compile instead of throwing at runtime                                   | A test walks every provider in both contexts. It fails if the entry is removed                   |
+| `14d438a` | A small pure function decides what a pill body click means, and a paused click resumes                                                                                  | Four cases: paused, idle, other window, already stopping                                         |
+| `2c7e2a3` | The pill no longer plays its own sound for a body click on any platform. The loading guard, the style click and the cancel click are untouched                          | A test reads the click handler of all three crates and asserts no sound and a kept loading guard |
+| `1f38d0d` | A new message asks the pill to publish its position, and the app asks once at startup. The placement maths is unchanged                                                 | Four cases, including listener before request, timeout fallback and the cached path              |
+| `44f886d` | Finalising in manual mode prefers the style captured at stop                                                                                                            | The style tests were rewritten to the new contract                                               |
+| `ee3045d` | Formatting on `README.md`                                                                                                                                               | The repo formatting check is green                                                               |
+| `8633a6c` | The review travels inside the assistant state message the pill already receives, and comes back as a decision tagged with the review id                                 | Seven cases: insert, cancel, copy, edit, queueing, a stale decision and an unknown action        |
+| `8ae2e6b` | One shared rule for when the pill is on screen, which now counts a waiting review                                                                                       | Four cases in the shared crate, including a hidden pill that must still show a review            |
+| `ab206e0` | Listen before queueing, fall back to the composer if listening fails, and expire a card after five minutes                                                              | Two new cases: the listener fails, and nobody answers                                            |
+| `0d3f2b6` | One checked parser for the decision the pill sends, on both bridges. An unreadable line is logged and dropped instead of read as cancel                                 | Parse tests for each action and for a missing id, an unknown action, a wrong type and bad JSON   |
+| `1446827` | The review card is sized to the panel, the panel scrolls while a review is open, and click regions outside the visible band are dropped                                 | Tests on the shared sizing function, including the panel geometry that exposed the bug           |
+| `864ab34` | The review moved into the pill's own panel and entry: the transcript is edited in place, Enter and Escape work, and no window opens for it                              | Three cases on the edited text coming back from the pill, plus the parse test for the text field |
+| `b1fe214` | Escape answers a review on macOS and Linux as well as Windows, and the macOS entry mirrors each keystroke into state                                                    | A contract test reads all three crates and fails if a platform loses its Escape path             |
+| `897e259` | The review decision parser logs the error and the action token, never the line, because the line holds the transcript                                                   | A contract test fails if a diagnostic in the parser repeats the line again                       |
+| `084bdd6` | One transition through the review queue, one stale id guard, and the pill window size decided by a pure function                                                        | Five cases on the window size function, and the existing eleven review cases still pass          |
+| `438ae23` | `field_string` in `rust_macos_pill/src/app.rs` checks both pointers, `parse_review_decision` in `pill_process.rs` logs the action token, and the answer text has a name | The eleven review cases cover the answer text, empty edit included                               |
+| `1829845` | The same field reader keeps text that is not valid UTF-8, the logged token is capped at 32 characters, and the busy flag clears in a `finally`                          | The log privacy contract test, and the eleven review cases                                       |
 
 Throughout: no `any`, no new `unwrap`, no fixed sleeps, and no silent fallbacks,
 since every fallback logs. Stale replies are matched by id. The platform
