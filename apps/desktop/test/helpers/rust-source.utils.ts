@@ -19,11 +19,13 @@ export const PILL_CRATES = [
   { platform: "gtk", crate: "packages/rust_gtk_pill" },
 ];
 
+/** Every entry in `dir`, as paths from the repository root. */
+export const listRepoEntries = (dir: string): string[] =>
+  readdirSync(path.join(REPO_ROOT, dir)).map((name) => `${dir}/${name}`);
+
 /** Every file with `extension` in `dir`, as paths from the repository root. */
 export const listRepoSources = (dir: string, extension: string): string[] =>
-  readdirSync(path.join(REPO_ROOT, dir))
-    .filter((name) => name.endsWith(extension))
-    .map((name) => `${dir}/${name}`);
+  listRepoEntries(dir).filter((file) => file.endsWith(extension));
 
 /** Read a file by its path from the repository root. */
 export const readRepoSource = (file: string): string =>
