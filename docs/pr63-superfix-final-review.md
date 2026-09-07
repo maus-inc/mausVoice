@@ -4,9 +4,9 @@ Pull request: mausVoice #63, titled "superfixer pre 1.6 realease"
 Repository: maus-inc/mausVoice
 Base branch: main
 Original PR head: fix/superfix-review-findings at 0a34ea4a (the commit this review started from)
-Review branch: arena/01a07713-mausvoice
+Review branch: arena/01a07b8d-mausvoice
 Review head: the final commit of this branch, which is this report
-Review date: 2026-09-06, rebased and reopened 2026-09-07
+Review date: 2026-09-07
 
 This review covered all 172 commits of the PR, every changed file, every
 top-level comment, every review, every inline comment and thread including
@@ -18,22 +18,29 @@ upstream documentation: OpenAI, Anthropic, GitHub Actions, TOML, Homebrew
 and MDN sources.
 
 The PR's own branch was not modified. All corrective work lives on
-arena/01a07713-mausvoice. That branch is 27 commits ahead of the PR head
-and is submitted as a corrective pull request. CI on the review branch
-uses the same workflows the PR would use because they trigger on push.
+arena/01a07b8d-mausvoice, continued from arena/01a07713-mausvoice at
+6eec3eea. That branch is 32 commits ahead of the PR head and is submitted
+as a corrective pull request against fix/superfix-review-findings. CI on
+the review branch uses the same workflows the PR would use because they
+trigger on push.
 
 # Change inventory
 
 Relative to the PR head 0a34ea4a, the review branch adds:
 
-- 27 commits
+- 32 commits
 - 55 files changed
-- 2275 insertions, 107 deletions
+- 2392 insertions, 187 deletions
 
 Groups of changes, newest first:
 
 | Commit | Group | What it fixes |
 | --- | --- | --- |
+| (this report) | Docs | Final review report with post-fix results, including the Secret Scan cache fix and the SonarCloud duplication cleanup. |
+| e52c5930 | Voice AI tests | Shared OpenAI chat mock for Cerebras and Deepseek wrapper tests. The explicit it() bodies stay. |
+| 694ab900 | Voice AI tests | Azure deployment coverage uses it.each instead of two copy-pasted it() blocks. |
+| a295c5a5 | Desktop tests | One generate-text provider case table shared by the maxTokens and signal suites. |
+| 2b796c5e | CI | setup-node v5 fails Secret Scan because that job never installs pnpm. The job now disables the package manager cache, and the pin guard requires every setup-node step to set cache: pnpm or package-manager-cache: false, never both. |
 | 2f08b1c2 | Desktop behavior | One shared native pill placement push. The settings toggle and the Windows startup re-apply no longer each keep their own copy of the Tauri call. |
 | 54c5f687 | CI | setup-node v5 fails a job that never installs pnpm. The Rust unit job now disables the package manager cache. |
 | eb450b3e | CI | The workflow action pins claimed v5 but were v4.4.0 commits that run on Node 20. Re-pinned to verified Node 24 SHAs and added a guard test. |
@@ -143,8 +150,8 @@ which is ten days after this review. The v4 pins are the ones that break.
 The one real v5 change is that setup-node limits automatic caching to
 npm and defaults package-manager-cache to on. It errored on the Rust unit
 job because that job never installs pnpm. Fixed with
-package-manager-cache: false. Every other job passes cache: pnpm
-explicitly, so they are unaffected.
+package-manager-cache: false. Every other job that installs pnpm passes
+cache: pnpm explicitly.
 
 Fix: all pins re-resolved through the GitHub API and each action.yml
 runtime confirmed. Added scripts/ci/check-workflow-pins.test.mjs, which
@@ -167,6 +174,44 @@ Regression tests: the preference persists and the placement is pushed;
 the preference survives a native rejection and the warning logs once.
 
 Commit: 2f08b1c2
+
+### 6. Secret Scan failed on setup-node's default package-manager cache
+
+After the Node 24 pin bump, Secret Scan failed at Setup Node on run
+34111948547 (and the previous head 076c28b, run 34110505847). The job
+pins setup-node v5 with node-version-file: .nvmrc and no cache config.
+v5 defaults package-manager-cache to true, which runs the detected
+package manager to prime the cache. This job never installs pnpm, so
+the step errors.
+
+The Rust unit job already opted out with package-manager-cache: false.
+Secret Scan now does the same. The pin guard was extended so every
+setup-node step must set exactly one of cache: pnpm or
+package-manager-cache: false. The pin table was re-keyed by short action
+name and the two scanners were merged into collectWorkflowFacts so the
+new cache check does not create its own duplication.
+
+Commit: 2b796c5a
+
+### 7. SonarCloud Quality Gate failed on new-code duplication
+
+PR analysis on head 6eec3eea reported 9.9 percent duplication on new
+code (limit 3 percent): 193 duplicated lines in 7 blocks.
+
+- generate-text.repo.test.ts declared the same 9-provider table twice.
+- azure-openai.utils.test.ts had two it() blocks that differed only in
+  deployment name and response_format.
+- cerebras.utils.test.ts and deepseek.utils.test.ts copied the
+  afterEach reset and mockCreate helper.
+- check-workflow-pins.test.mjs repeated a { version, runtime } row
+  shape in VERIFIED_PINS.
+
+Fixes keep every explicit it() in the wrapper files. The generate-text
+suites share one providerCases table. Azure uses it.each. Cerebras and
+Deepseek import mockOpenAIChatCreate from the existing helper. The pin
+table is keyed by short action name.
+
+Commits: a295c5a5, 694ab900, e52c5930, 2b796c5e
 
 ## Confirmed findings from the PR's own history that were already handled in the review branch before this pass
 
@@ -196,7 +241,9 @@ Coverage added by this review branch:
 - Provider retry behavior per provider family: present signal keeps
   retries, aborted signal stops after one attempt.
 - The bindings guard semantics and the CI env required for regeneration.
-- The workflow pin table: SHA, Node runtime and version comment.
+- The workflow pin table: SHA, Node runtime, version comment, and the
+  setup-node cache contract (cache: pnpm xor package-manager-cache:
+  false).
 - setPillPlacement persistence and native push, including failure.
 - Explicit it() tests in the six Sonar-flagged wrapper files.
 - The 31-case generate-text repo suite including per-provider signal
@@ -220,20 +267,16 @@ Local:
 - pnpm --filter @maus-inc/voice-ai test: 18 files, 148 tests passed
 - pnpm --filter @maus-inc/voice-ai build: clean
 - npm run format:check: all matched files clean
-- Both CI guard tests run locally and in the workflow
+- Both CI guard tests run locally, including the new setup-node cache
+  contract
 
-CI on the review branch, head 076c28b (identical code to the final head
-93e14d79, except the dropped out-of-scope README commit and this report):
-
-- Test Desktop Unit: passed (includes Rust unit tests, bindings sync,
-  both guard tests)
-- Test Desktop Integration: passed
-- Lint Desktop: passed
-- Build Desktop: passed on Windows, Linux and macOS
-- Test Docs, Test Package Rust Transcription: passed
-
-The final head 93e14d79 triggers the same workflows again on push, and
-they are verified before any merge decision.
+CI on the review branch at earlier heads (05e64c5, 039c4a6, 411a652)
+was green for Test Desktop Unit, Test Desktop Integration, Lint Desktop,
+Build Desktop (Windows, Linux, macOS), Test Docs and Test Package Rust
+Transcription. Head 6eec3eea had Secret Scan red (the cache defect
+above) and SonarCloud duplication above the gate. Those two are fixed
+on this head. Every workflow must be re-confirmed green on the pushed
+head before merge.
 
 # Correct behavior confirmed
 
@@ -253,6 +296,9 @@ they are verified before any merge decision.
 - Every workflow action is pinned to a commit SHA whose action.yml
   declares node24 or composite, verified through the GitHub API and
   enforced by the new guard test.
+- Every setup-node step either caches pnpm or disables
+  package-manager-cache. Secret Scan and the Rust unit job take the
+  disable path because they never install pnpm.
 
 # Assumptions and unknowns
 
@@ -261,7 +307,7 @@ they are verified before any merge decision.
   installed transcription sidecar. This is the biggest remaining
   unknown and it is the reason for the conditional verdict.
 - SonarCloud analysis runs on the opened pull request. Zero new issues
-  and zero accepted issues at the head still need to be confirmed after
+  and a passing quality gate at the head still need to be confirmed after
   the review bots finish, along with review bot comments.
 - The release workflow needs a tag event or manual dispatch, so the
   upload-artifact v6 and action-gh-release v3 pins are verified by source
@@ -280,7 +326,11 @@ Conditions before release:
    change during dictation, rapid pill clicks, the review-before-insert
    lifecycle including failure, assistant Markdown and tool calls, import,
    retranscription and history.
-2. The pull request from arena/01a07713-mausvoice is open. Let review
-   bots and SonarCloud run, and drive them to zero new issues and zero
-   open review threads before merging.
-3. Confirm Build Desktop finishes green on the final head.
+2. The pull request from arena/01a07b8d-mausvoice is open against
+   fix/superfix-review-findings. Let review bots and SonarCloud run, and
+   drive them to zero new issues and zero open review threads before
+   merging.
+3. Confirm every workflow is green on the final head: Secret Scan,
+   Format and i18n, Test Desktop Unit (including the guard tests), Test
+   Desktop Integration, Lint Desktop, Build Desktop on Windows, Linux and
+   macOS, Test Docs, and Test Package Rust Transcription.
