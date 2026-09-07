@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  extractRustBlock,
+  readRepoSource,
+} from "../../test/helpers/rust-source.utils";
 
 /**
  * Contract: a pill message that never arrives is reported, not swallowed.
@@ -11,32 +14,12 @@ import { describe, expect, it } from "vitest";
  * child process and already report a failed write, so the in-process macOS
  * pill has to report a failed hand off the same way.
  */
-const REPO_ROOT = path.resolve(__dirname, "../../../..");
-
 const MACOS_OVERLAY = "apps/desktop/src-tauri/src/platform/macos/overlay.rs";
 const PILL_PROCESS = "apps/desktop/src-tauri/src/pill_process.rs";
 
-const read = (file: string): string =>
-  readFileSync(path.join(REPO_ROOT, file), "utf8");
-
-const extractBlock = (source: string, marker: string): string => {
-  const start = source.indexOf(marker);
-  expect(start, `${marker} not found`).toBeGreaterThan(-1);
-
-  let depth = 0;
-  for (let i = start; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, i + 1);
-    }
-  }
-  throw new Error(`Unbalanced braces after ${marker}`);
-};
-
 describe("native pill message delivery", () => {
   it("tells the caller when a macOS pill message could not be handed over", () => {
-    const overlay = read(MACOS_OVERLAY);
+    const overlay = readRepoSource(MACOS_OVERLAY);
 
     expect(overlay).toContain(
       "fn send(&self, msg: InMessage) -> Result<(), String>",
@@ -49,7 +32,10 @@ describe("native pill message delivery", () => {
   it.each(["notify_request_position", "notify_reset_position"])(
     "passes a failed %s back to the command on macOS",
     (fn) => {
-      const block = extractBlock(read(MACOS_OVERLAY), `pub fn ${fn}(`);
+      const block = extractRustBlock(
+        readRepoSource(MACOS_OVERLAY),
+        `pub fn ${fn}(`,
+      );
 
       expect(block).toContain("=> pill.send(");
       // The old shape sent nothing and answered Ok anyway.
@@ -60,7 +46,10 @@ describe("native pill message delivery", () => {
   it.each(["notify_request_position", "notify_reset_position"])(
     "keeps the same promise as the child process pill for %s",
     (fn) => {
-      const block = extractBlock(read(PILL_PROCESS), `pub fn ${fn}(`);
+      const block = extractRustBlock(
+        readRepoSource(PILL_PROCESS),
+        `pub fn ${fn}(`,
+      );
 
       expect(block).toContain("Result<(), String>");
     },

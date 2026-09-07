@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { readRepoSource } from "../../test/helpers/rust-source.utils";
 
 /**
  * Contract: Escape answers a transcript under review on every platform.
@@ -10,8 +10,6 @@ import { describe, expect, it } from "vitest";
  * expiry. Escape is the documented way out, and it has to work on all three
  * pills, not only the one it was written on first.
  */
-const REPO_ROOT = path.resolve(__dirname, "../../../..");
-
 const CANCEL_DECISION = 'send_review_decision(&review_id, "cancel", None)';
 
 const ESCAPE_HANDLERS = [
@@ -41,7 +39,7 @@ describe("Escape cancels a pill review", () => {
   it.each(ESCAPE_HANDLERS)(
     "is wired on the $platform pill",
     ({ file, key, cancel }) => {
-      const source = readFileSync(path.join(REPO_ROOT, file), "utf8");
+      const source = readRepoSource(file);
 
       expect(source).toContain(key);
       expect(source).toContain(cancel);

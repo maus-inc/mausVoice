@@ -1,6 +1,10 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  extractRustBlock,
+  PILL_CRATES,
+  readRepoSource,
+} from "../../test/helpers/rust-source.utils";
 
 /**
  * Contract: the review surface behaves the same on all three native pills.
@@ -12,37 +16,11 @@ import { describe, expect, it } from "vitest";
  * And the text the user sends is the text they left in the entry, spacing
  * included, because the transcript is going into their document.
  */
-const REPO_ROOT = path.resolve(__dirname, "../../../..");
-
-const PLATFORMS = [
-  { platform: "windows", crate: "packages/rust_windows_pill" },
-  { platform: "macos", crate: "packages/rust_macos_pill" },
-  { platform: "gtk", crate: "packages/rust_gtk_pill" },
-];
-
-const read = (file: string): string =>
-  readFileSync(path.join(REPO_ROOT, file), "utf8");
-
-const extractBlock = (source: string, marker: string): string => {
-  const start = source.indexOf(marker);
-  expect(start, `${marker} not found`).toBeGreaterThan(-1);
-
-  let depth = 0;
-  for (let i = start; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(start, i + 1);
-    }
-  }
-  throw new Error(`Unbalanced braces after ${marker}`);
-};
-
 describe("native pill review surface", () => {
-  it.each(PLATFORMS)(
+  it.each(PILL_CRATES)(
     "clips scrolled click targets to the visible panel on $platform",
     ({ crate }) => {
-      const source = read(`${crate}/src/draw.rs`);
+      const source = readRepoSource(`${crate}/src/draw.rs`);
 
       expect(source).toContain("rust_pill_shared::clip_span_to_band(");
       // The centre test kept the hidden half of a half-scrolled button
@@ -51,14 +29,17 @@ describe("native pill review surface", () => {
     },
   );
 
-  it.each(PLATFORMS)(
+  it.each(PILL_CRATES)(
     "gives the panel the window while a review is pending on $platform",
     ({ crate }) => {
-      const state = read(`${crate}/src/state.rs`);
-      const ownsPanel = extractBlock(state, "pub(crate) fn owns_panel(&self)");
+      const state = readRepoSource(`${crate}/src/state.rs`);
+      const ownsPanel = extractRustBlock(
+        state,
+        "pub(crate) fn owns_panel(&self)",
+      );
       expect(ownsPanel).toContain("assistant_review");
 
-      const mode = extractBlock(
+      const mode = extractRustBlock(
         state,
         "pub(crate) fn effective_window_mode(&self)",
       );
@@ -66,7 +47,7 @@ describe("native pill review surface", () => {
 
       // Hit testing must never gate the panel on the assistant alone: a review
       // opens the panel with no assistant session running.
-      const input = read(`${crate}/src/input.rs`);
+      const input = readRepoSource(`${crate}/src/input.rs`);
       expect(input).not.toContain(
         "state.assistant_active.get() || state.panel_open_t.get()",
       );
@@ -74,8 +55,8 @@ describe("native pill review surface", () => {
   );
 
   it("shapes the clickable Linux window around panel ownership", () => {
-    const input = read("packages/rust_gtk_pill/src/input.rs");
-    const region = extractBlock(
+    const input = readRepoSource("packages/rust_gtk_pill/src/input.rs");
+    const region = extractRustBlock(
       input,
       "pub(crate) fn set_expanded_input_region(",
     );
@@ -83,11 +64,11 @@ describe("native pill review surface", () => {
     expect(region).toContain("state.owns_panel()");
   });
 
-  it.each(PLATFORMS)(
+  it.each(PILL_CRATES)(
     "sends the entry text as typed on $platform",
     ({ crate }) => {
-      const input = read(`${crate}/src/input.rs`);
-      const submit = extractBlock(input, "pub(crate) fn submit_entry(");
+      const input = readRepoSource(`${crate}/src/input.rs`);
+      const submit = extractRustBlock(input, "pub(crate) fn submit_entry(");
 
       expect(submit).toContain("state.entry_text.borrow().clone()");
       // Trimming is only allowed to answer "is there anything to send".
@@ -97,8 +78,8 @@ describe("native pill review surface", () => {
   );
 
   it("keeps the Windows entry text when nothing was sent", () => {
-    const pill = read("packages/rust_windows_pill/src/pill.rs");
-    const handler = extractBlock(pill, "fn handle_edit_message(msg: &MSG)");
+    const pill = readRepoSource("packages/rust_windows_pill/src/pill.rs");
+    const handler = extractRustBlock(pill, "fn handle_edit_message(msg: &MSG)");
 
     // Clearing the control has to follow a decision actually leaving the pill,
     // otherwise a blank-looking entry erases the transcript for nothing.

@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  extractRustBlock,
+  readRepoSource,
+} from "../../test/helpers/rust-source.utils";
 
 /**
  * Contract: the review decision parser never writes the transcript to the log.
@@ -11,23 +14,12 @@ import { describe, expect, it } from "vitest";
  * transcript with it. The parser is allowed to log why it dropped a line, but
  * only from the error and the short action token.
  */
-const PILL_PROCESS_FILE = path.resolve(
-  __dirname,
-  "../../src-tauri/src/pill_process.rs",
-);
-
-const extractFunctionBody = (source: string, signature: string): string => {
-  const start = source.indexOf(signature);
-  expect(start, `${signature} not found`).toBeGreaterThan(-1);
-  const end = source.indexOf("\n}\n", start);
-  expect(end, `end of ${signature} not found`).toBeGreaterThan(start);
-  return source.slice(start, end);
-};
+const PILL_PROCESS = "apps/desktop/src-tauri/src/pill_process.rs";
 
 describe("pill review decision logging", () => {
   it("keeps the transcript out of the log", () => {
-    const source = readFileSync(PILL_PROCESS_FILE, "utf8");
-    const body = extractFunctionBody(
+    const source = readRepoSource(PILL_PROCESS);
+    const body = extractRustBlock(
       source,
       "pub(crate) fn parse_review_decision(",
     );
