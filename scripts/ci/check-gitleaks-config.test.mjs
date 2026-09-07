@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   hasTopLevelUseDefaultFalse,
+  hasUseDefaultFalse,
   indexOfOutsideStrings,
   stripTomlComments,
+  tomlTableBody,
   updaterRulePattern,
 } from "./check-gitleaks-config.mjs";
 
@@ -176,5 +178,37 @@ describe("updaterRulePattern", () => {
   it("never attributes a later rule's regex to the updater rule", () => {
     const toml = `[[rules]]\n${idLine}\nentropy = 3.5\n\n[[rules]]\nid = "another-rule"\nregex = 'dW50cnVzdGVk'\n`;
     assert.equal(updaterRulePattern(toml), null);
+  });
+});
+
+describe("hasUseDefaultFalse quoted keys", () => {
+  it("detects quoted keys", () => {
+    assert.equal(hasUseDefaultFalse('"useDefault" = false\n'), true);
+    assert.equal(hasUseDefaultFalse("'useDefault' = false\n"), true);
+    assert.equal(hasUseDefaultFalse('"useDefault"=false\n'), true);
+    assert.equal(hasUseDefaultFalse('"useDefault" = true\n'), false);
+  });
+});
+
+describe("tomlTableBody [extend]", () => {
+  it("reads useDefault from [extend] and ignores a dotted sibling", () => {
+    const withExtend = [
+      "[extend]",
+      "useDefault = false",
+      "[allowlist]",
+      'description = "x"',
+      "",
+    ].join("\n");
+    assert.equal(
+      hasUseDefaultFalse(tomlTableBody(withExtend, "[extend]")),
+      true,
+    );
+
+    const quoted = ["[extend]", '"useDefault" = false', ""].join("\n");
+    assert.equal(hasUseDefaultFalse(tomlTableBody(quoted, "[extend]")), true);
+
+    const dotted = ["[extend.foo]", "useDefault = false", ""].join("\n");
+    assert.equal(tomlTableBody(dotted, "[extend]"), "");
+    assert.equal(hasUseDefaultFalse(tomlTableBody(dotted, "[extend]")), false);
   });
 });
