@@ -19,7 +19,7 @@ and MDN sources.
 
 The PR's own branch was not modified. All corrective work lives on
 arena/01a07b8d-mausvoice, continued from arena/01a07713-mausvoice at
-6eec3eea. That branch is 32 commits ahead of the PR head and is submitted
+6eec3eea. That branch is 34 commits ahead of the PR head and is submitted
 as a corrective pull request against fix/superfix-review-findings. CI on
 the review branch uses the same workflows the PR would use because they
 trigger on push.
@@ -28,15 +28,16 @@ trigger on push.
 
 Relative to the PR head 0a34ea4a, the review branch adds:
 
-- 32 commits
+- 34 commits
 - 55 files changed
-- 2392 insertions, 187 deletions
+- 2368 insertions, 187 deletions
 
 Groups of changes, newest first:
 
 | Commit | Group | What it fixes |
 | --- | --- | --- |
 | (this report) | Docs | Final review report with post-fix results, including the Secret Scan cache fix and the SonarCloud duplication cleanup. |
+| 194e9fee | CI | Action pin list stored as one whitespace table so SonarCloud does not count 3-tuple rows as duplication. collectWorkflowFacts now stops at the next uses: sibling. |
 | e52c5930 | Voice AI tests | Shared OpenAI chat mock for Cerebras and Deepseek wrapper tests. The explicit it() bodies stay. |
 | 694ab900 | Voice AI tests | Azure deployment coverage uses it.each instead of two copy-pasted it() blocks. |
 | a295c5a5 | Desktop tests | One generate-text provider case table shared by the maxTokens and signal suites. |
@@ -204,14 +205,15 @@ code (limit 3 percent): 193 duplicated lines in 7 blocks.
 - cerebras.utils.test.ts and deepseek.utils.test.ts copied the
   afterEach reset and mockCreate helper.
 - check-workflow-pins.test.mjs repeated a { version, runtime } row
-  shape in VERIFIED_PINS.
+  shape in VERIFIED_PINS, then a 3-tuple row shape after the first
+  restructure.
 
 Fixes keep every explicit it() in the wrapper files. The generate-text
 suites share one providerCases table. Azure uses it.each. Cerebras and
 Deepseek import mockOpenAIChatCreate from the existing helper. The pin
-table is keyed by short action name.
+list is one whitespace table parsed into a map.
 
-Commits: a295c5a5, 694ab900, e52c5930, 2b796c5e
+Commits: a295c5a5, 694ab900, e52c5930, 2b796c5e, 194e9fee
 
 ## Confirmed findings from the PR's own history that were already handled in the review branch before this pass
 
@@ -313,6 +315,14 @@ head before merge.
   upload-artifact v6 and action-gh-release v3 pins are verified by source
   and guard test only, not by a real run.
 - The TOML quoted-key limitation above is accepted as out of scope.
+
+# Release recommendation
+
+CONDITIONAL GO
+
+Conditions before release:
+
+1. Run the mandated Windows manual Qve is accepted as out of scope.
 
 # Release recommendation
 
