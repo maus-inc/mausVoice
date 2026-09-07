@@ -550,7 +550,10 @@ pub(crate) fn parse_review_decision(
     };
     let raw_action = value.get("action").and_then(|v| v.as_str());
     let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
-        let token = raw_action.unwrap_or("<missing>");
+        // A valid action is one short word, so the token is capped: a
+        // malformed line must not be able to write an unbounded string into
+        // the log.
+        let token: String = raw_action.unwrap_or("<missing>").chars().take(32).collect();
         log::warn!("Ignoring pill review decision with an unknown action: {token}");
         return None;
     };

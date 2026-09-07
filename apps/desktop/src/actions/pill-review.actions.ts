@@ -163,11 +163,12 @@ const applyDecision = async (
       await copyReviewToClipboard(text);
     }
     settle(id, action === "insert" ? text : null);
-  } catch (error) {
-    // Leave the review open so the click can be repeated, rather than
-    // stranding the transcript behind a busy flag nobody can clear.
+  } finally {
+    // A failure leaves the review open so the click can be repeated, rather
+    // than stranding the transcript behind a busy flag nobody can clear. On
+    // the way out through success the review has already left the queue, so
+    // clearing the flag there changes nothing.
     current.busy = false;
-    throw error;
   }
 };
 

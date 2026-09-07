@@ -341,8 +341,9 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
     }
 }
 
-/// Read what a text field currently holds. An empty field, and a field that
-/// hands back nothing at all, both read as an empty string.
+/// Read what a text field currently holds. A field that hands back nothing at
+/// all reads as an empty string, and bytes that are not valid UTF-8 are
+/// replaced rather than dropping the whole entry.
 ///
 /// # Safety
 /// `field` must be a live `NSTextField`.
@@ -355,7 +356,7 @@ unsafe fn field_string(field: id) -> String {
     if cstr.is_null() {
         return String::new();
     }
-    std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string()
+    std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned()
 }
 
 extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
