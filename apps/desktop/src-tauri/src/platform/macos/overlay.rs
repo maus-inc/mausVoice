@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 
@@ -13,6 +13,10 @@ static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct MacosPill {
     sender: Mutex<mpsc::Sender<InMessage>>,
+    /// Set by the first message that could not be handed over. Audio levels
+    /// are sent on every frame, so a pill that has gone away would otherwise
+    /// write a warning sixty times a second.
+    delivery_failed: AtomicBool,
 }
 
 impl MacosPill {
@@ -32,10 +36,15 @@ impl MacosPill {
     }
 
     /// Send a message whose sender has nothing to do about a failure. The
-    /// message is still lost, so it is logged rather than dropped in silence.
+    /// message is still lost, so the first one is reported and the rest are
+    /// left at debug level.
     fn send_or_log(&self, msg: InMessage) {
         if let Err(err) = self.send(msg) {
-            log::warn!("Native pill message not delivered: {err}");
+            if self.delivery_failed.swap(true, Ordering::Relaxed) {
+                log::debug!("Native pill message not delivered: {err}");
+            } else {
+                log::warn!("Native pill message not delivered: {err}");
+            }
         }
     }
 }
@@ -49,6 +58,7 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
 
     let pill = std::sync::Arc::new(MacosPill {
         sender: Mutex::new(in_tx),
+        delivery_failed: AtomicBool::new(false),
     });
     app.manage(pill);
 
