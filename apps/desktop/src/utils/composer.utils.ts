@@ -4,6 +4,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getIntl } from "../i18n/intl";
 import { runToast, showToast } from "../actions/toast.actions";
 import { createId } from "./id.utils";
+import { requestPillPosition } from "./native-pill.utils";
 import { getLogger } from "./log.utils";
 
 export type ComposerResult = {
@@ -187,7 +188,7 @@ export const ensurePillGeometry = async (): Promise<boolean> => {
       },
     );
 
-    await invoke("request_pill_position");
+    await requestPillPosition();
 
     const timedOut = new Promise<boolean>((resolve) => {
       timeoutId = setTimeout(() => {
@@ -357,16 +358,11 @@ export const reviewTextInComposer = async (
             focused: true,
           };
 
-          // The composer is a Tauri webview window, but the dictation pill is a
-          // separate native process (not a WebviewWindow), so there is no
-          // "pill" window label to query for its position. Instead we anchor to
-          // the pill's geometry via the `pill-position-changed` event
-          // (forwarded into `setPillGeometry`). The pill publishes that event
-          // on a move and on request; the app warms the cache at startup via
-          // `ensurePillGeometry` so the first review is anchored too. If the
-          // geometry is still unknown we omit x/y and let the OS choose a
-          // centered position rather than delaying the window.
-
+          // The pill is a separate native process, not a webview window, so
+          // there is no window label to query: the composer anchors to the
+          // geometry published on `pill-position-changed`, which the app warms
+          // up at startup with `ensurePillGeometry`. If it is still unknown,
+          // x/y are omitted and the OS places the window.
           const composerPosition = getComposerWindowPosition({
             width: args.width as number,
             height: args.height as number,

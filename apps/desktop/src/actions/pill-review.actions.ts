@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getIntl } from "../i18n/intl";
-import { getAppState, produceAppState } from "../store";
+import { produceAppState } from "../store";
 import { reviewTextInComposer } from "../utils/composer.utils";
 import { isNativePillAvailable } from "../utils/native-pill.utils";
 import { createId } from "../utils/id.utils";
@@ -26,25 +26,43 @@ export type PendingPillReview = {
 type QueuedReview = {
   review: PendingPillReview;
   resolve: (text: string | null) => void;
-  /**
-   * Set while a decision is being carried out (the editor is open, the
-   * clipboard write is in flight). Further clicks on the same card are
-   * ignored instead of starting the work twice.
-   */
+  /** Set while a decision runs, so a second click cannot start it twice. */
   busy: boolean;
 };
+
+/**
+ * How long a card may sit unanswered on the pill. Same cap as the composer
+ * window: an ignored review must not block the dictation output path forever.
+ * The transcript stays in history, so nothing is lost when it expires.
+ */
+const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
 const queue: QueuedReview[] = [];
 let unlistenDecision: (() => void) | null = null;
 let listenerSetup: Promise<void> | null = null;
+let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 const head = (): QueuedReview | undefined => queue[0];
 
 const publishHead = (): void => {
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
   const current = head()?.review ?? null;
   produceAppState((draft) => {
     draft.pendingPillReview = current;
   });
+  if (!current) return;
+
+  const { id } = current;
+  timeoutId = setTimeout(() => {
+    timeoutId = null;
+    getLogger().warning(
+      `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
+    );
+    settle(id, null);
+  }, REVIEW_TIMEOUT_MS);
 };
 
 /**
@@ -80,7 +98,7 @@ const copyReviewToClipboard = async (text: string): Promise<void> => {
     runToast(
       showToast({
         message: getIntl().formatMessage({
-          defaultMessage: "Transcript copied to the clipboard",
+          defaultMessage: "Transcript copied to clipboard",
         }),
         toastType: "info",
         duration: 3000,
@@ -129,10 +147,9 @@ const applyDecision = async (
       settle(id, null);
       return;
     case "edit": {
-      // Editing happens in the composer window: the pill has no text input
-      // sized for a full transcript. The edited text is returned to the
-      // caller, so it is inserted through the same path as an accepted
-      // review (typing, pasting or remote delivery).
+      // The pill has no text field sized for a transcript, so editing happens
+      // in the composer window and the result returns through the same path
+      // as an accepted review.
       const edited = await reviewTextInComposer(text);
       settle(id, edited?.trim() ? edited : null);
       return;
@@ -146,21 +163,26 @@ const isPillReviewAction = (value: unknown): value is PillReviewAction =>
   value === "edit" ||
   value === "cancel";
 
-const startListening = async (): Promise<void> => {
-  if (listenerSetup) return listenerSetup;
-  listenerSetup = (async () => {
-    unlistenDecision = await listen<{ reviewId: string; action: string }>(
-      "pill-review-decision",
-      (event) => {
-        const { reviewId, action } = event.payload;
-        if (!isPillReviewAction(action)) {
-          getLogger().warning(`Unknown pill review action: ${action}`);
-          return;
-        }
-        void applyDecision(reviewId, action);
-      },
-    );
-  })();
+const startListening = (): Promise<void> => {
+  listenerSetup ??= listen<{ reviewId: string; action: string }>(
+    "pill-review-decision",
+    (event) => {
+      const { reviewId, action } = event.payload;
+      if (!isPillReviewAction(action)) {
+        getLogger().warning(`Unknown pill review action: ${action}`);
+        return;
+      }
+      void applyDecision(reviewId, action);
+    },
+  )
+    .then((unlisten) => {
+      unlistenDecision = unlisten;
+    })
+    .catch((error: unknown) => {
+      // Let the next review try again instead of caching the failure.
+      listenerSetup = null;
+      throw error;
+    });
   return listenerSetup;
 };
 
@@ -173,15 +195,23 @@ const startListening = async (): Promise<void> => {
 export const reviewTranscriptOnPill = async (
   text: string,
 ): Promise<string | null> => {
+  // Listen before the card is published, so a very fast click cannot land
+  // before we can hear it. Without a listener the user could never answer, so
+  // a failure here falls back to the composer window rather than queueing a
+  // review nobody can resolve.
+  try {
+    await startListening();
+  } catch (error) {
+    getLogger().error(
+      `Could not listen for pill review decisions: ${error}; reviewing in the composer instead`,
+    );
+    return reviewTextInComposer(text);
+  }
+
   const review: PendingPillReview = { id: createId(), text };
   const decision = new Promise<string | null>((resolve) => {
     queue.push({ review, resolve, busy: false });
   });
-
-  // Register the decision listener before the pill can answer. The card is
-  // only published to the pill once the listener is live, so a very fast
-  // click cannot land before we are listening for it.
-  await startListening();
   publishHead();
 
   return decision;
@@ -196,10 +226,6 @@ export const cancelAllPillReviews = (): void => {
   publishHead();
   stopListening();
 };
-
-/** True when a transcript is currently displayed on the pill for review. */
-export const hasPendingPillReview = (): boolean =>
-  getAppState().pendingPillReview !== null;
 
 /**
  * Review a transcript before it is inserted.

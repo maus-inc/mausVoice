@@ -946,10 +946,10 @@ export const AppSideEffects = () => {
     });
   });
 
-  // The pill publishes its geometry when the user moves it, which left the
-  // first window anchored to the pill (the review composer) with nothing to
-  // anchor to and centred by the OS. Ask for the geometry once at startup so
-  // the anchor is available from the first use.
+  // The pill only publishes its geometry when the user moves it, so the first
+  // window anchored to it opened wherever the OS decided. Ask once at startup;
+  // the `pill-position-changed` listener below caches whatever comes back,
+  // even if the pill answers after the request times out.
   useEffect(() => {
     if (!isMainWindow) return;
     void ensurePillGeometry();

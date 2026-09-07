@@ -178,6 +178,7 @@
   "copy_text": "Text kopieren",
   "copy_transcript": "Transkript kopieren",
   "could_not_check_for_updates_check_your_connection_and_try_ag": "Updates konnten nicht geprüft werden. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "Das Transkript konnte nicht kopiert werden. Es ist in deinem Verlauf gespeichert.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Das Überprüfungsfenster konnte nicht geöffnet werden. Dein Transkript wurde im Verlauf gespeichert.",
   "could_not_resume_dictation": "Diktat konnte nicht fortgesetzt werden",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {Transkription} other {Transkriptionen}}",

@@ -159,6 +159,33 @@ describe("reviewTranscriptOnPill", () => {
     await expect(pending).resolves.toBeNull();
   });
 
+  it("falls back to the composer when the decision listener cannot be registered", async () => {
+    mocks.listen.mockRejectedValueOnce(new Error("no event bus"));
+    mocks.reviewTextInComposer.mockResolvedValue("from the composer");
+
+    await expect(reviewTranscriptOnPill("stranded")).resolves.toBe(
+      "from the composer",
+    );
+    // Nothing was queued, so the next review can still use the pill.
+    expect(getAppState().pendingPillReview).toBeNull();
+    expect(mocks.reviewTextInComposer).toHaveBeenCalledWith("stranded");
+  });
+
+  it("gives up on a review nobody answers instead of blocking the insert", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = reviewTranscriptOnPill("ignored");
+      await flush(() => getAppState().pendingPillReview !== null);
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      await expect(pending).resolves.toBeNull();
+      expect(getAppState().pendingPillReview).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores an unknown action instead of resolving the review", async () => {
     const pending = reviewTranscriptOnPill("safe");
     await flush(() => getAppState().pendingPillReview !== null);

@@ -178,6 +178,7 @@
   "copy_text": "Copia testo",
   "copy_transcript": "Copia trascrizione",
   "could_not_check_for_updates_check_your_connection_and_try_ag": "Impossibile cercare aggiornamenti. Controlla la connessione e riprova.",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "Impossibile copiare la trascrizione. È salvata nella tua cronologia.",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "Impossibile aprire la finestra di revisione. La trascrizione è stata salvata nella cronologia.",
   "could_not_resume_dictation": "Impossibile riprendere la dettatura",
   "count_count_plural_one_transcription_other_transcriptions": "{count} {count, plural, one {trascrizione} other {trascrizioni}}",

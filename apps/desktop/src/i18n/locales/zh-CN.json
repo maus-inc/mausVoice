@@ -178,6 +178,7 @@
   "copy_text": "复制文本",
   "copy_transcript": "复制转录",
   "could_not_check_for_updates_check_your_connection_and_try_ag": "无法检查更新。请检查网络连接后重试。",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "无法复制转录文本。它已保存在你的历史记录中。",
   "could_not_open_the_review_window_your_transcript_was_saved_t": "无法打开审阅窗口。你的转录文本已保存到历史记录。",
   "could_not_resume_dictation": "无法恢复听写",
   "count_count_plural_one_transcription_other_transcriptions": "{count} 个转录",
