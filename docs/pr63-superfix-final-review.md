@@ -19,7 +19,7 @@ and MDN sources.
 
 The PR's own branch was not modified. All corrective work lives on
 arena/01a07b8d-mausvoice, continued from arena/01a07713-mausvoice at
-6eec3eea. That branch is 34 commits ahead of the PR head and is submitted
+6eec3eea. That branch is 45 commits ahead of the PR head and is submitted
 as a corrective pull request against fix/superfix-review-findings. CI on
 the review branch uses the same workflows the PR would use because they
 trigger on push.
@@ -28,15 +28,27 @@ trigger on push.
 
 Relative to the PR head 0a34ea4a, the review branch adds:
 
-- 34 commits
-- 55 files changed
-- 2368 insertions, 187 deletions
+- 46 commits
+- 57 files changed
+- 2548 insertions, 204 deletions
 
 Groups of changes, newest first:
 
 | Commit | Group | What it fixes |
 | --- | --- | --- |
-| (this report) | Docs | Final review report with post-fix results, including the Secret Scan cache fix and the SonarCloud duplication cleanup. |
+| (this report) | Docs | Final review report with post-fix results, including the Secret Scan cache fix, the SonarCloud duplication cleanup, and the PR 180 review-thread fixes. |
+| f27b4bf | Desktop tests | Transcribe tests read mock calls with optional chaining instead of non-null asserts. |
+| 1b1ad14 | Voice AI tests | Aldea integration status checks share one it.each table. |
+| 0a7f16f | Desktop tests | EditWatch mocks return undefined instead of empty method bodies. |
+| 71ea097 | Desktop tests | invoke mocks no longer pass redundant undefined to mockResolvedValue. |
+| e4477a8 | Docs | AGENTS.md: Part I of FULL-REVIEW.md and AGENTS.md take precedence over Parts II to IV. |
+| 8c61c4c | CI | Pin table rows split on any whitespace and must have four fields. |
+| 423d1bb | Desktop | AppSideEffects fire-and-forget promises use catch instead of the void operator. |
+| 01d44b7 | Voice AI | Cerebras secret regexes use word boundaries and drop duplicate A-Z classes under the i flag. |
+| e5810e1 | CI | gitleaks guard rejects useDefault = false under [extend], including quoted keys. |
+| b04713a | Utilities | retry() rechecks isRetryable after the delay so an abort during the wait is terminal. |
+| 8f30f0e | Desktop | abortAgent is a function declaration so deleteConversation can call it. |
+| 73ee70e | Docs | Pin-table collapse and corrected counts. |
 | 194e9fee | CI | Action pin list stored as one whitespace table so SonarCloud does not count 3-tuple rows as duplication. collectWorkflowFacts now stops at the next uses: sibling. |
 | e52c5930 | Voice AI tests | Shared OpenAI chat mock for Cerebras and Deepseek wrapper tests. The explicit it() bodies stay. |
 | 694ab900 | Voice AI tests | Azure deployment coverage uses it.each instead of two copy-pasted it() blocks. |
@@ -192,7 +204,7 @@ package-manager-cache: false. The pin table was re-keyed by short action
 name and the two scanners were merged into collectWorkflowFacts so the
 new cache check does not create its own duplication.
 
-Commit: 2b796c5a
+Commit: 2b796c5e
 
 ### 7. SonarCloud Quality Gate failed on new-code duplication
 
@@ -230,11 +242,6 @@ are included in the change inventory above.
   a cancel path, so this is not a regression introduced by the PR. It is
   a product decision to make in a follow-up: should Edit Mode be
   cancellable.
-- The gitleaks config guard scans for a bare key named useDefault outside
-  strings. A quoted key, "useDefault" = false, would not be seen by the
-  scanner. The previous regex check missed that case too, so this is not
-  a new regression, and no repository file uses quoted keys. Recorded as
-  a known limitation.
 
 # Missing test coverage
 
@@ -250,6 +257,10 @@ Coverage added by this review branch:
 - Explicit it() tests in the six Sonar-flagged wrapper files.
 - The 31-case generate-text repo suite including per-provider signal
   forwarding and the Groq no-fallback-on-abort path.
+- retry() does not call fn again when isRetryable becomes false during
+  the delay.
+- gitleaks quoted keys and [extend] useDefault = false are rejected.
+- Cerebras sk- redaction does not match inside identifiers like task-123.
 
 Numbers at the review head: 112 desktop test files and 1185 tests, 18
 voice-ai test files and 148 tests, all passing locally.
@@ -314,23 +325,14 @@ head before merge.
 - The release workflow needs a tag event or manual dispatch, so the
   upload-artifact v6 and action-gh-release v3 pins are verified by source
   and guard test only, not by a real run.
-- The TOML quoted-key limitation above is accepted as out of scope.
-
 # Release recommendation
 
 CONDITIONAL GO
 
 Conditions before release:
 
-1. Run the mandated Windows manual Qve is accepted as out of scope.
-
-# Release recommendation
-
-CONDITIONAL GO
-
-Conditions before release:
-
-1. Run the mandated Windows manual QA: fresh and existing profiles,
+1. Windows manual QA must pass, and the result must be recorded on the
+   pull request, before merge. Cover fresh and existing profiles,
    restarts, all windows and the pill, 100/125/150/200 percent DPI,
    multi-monitor, offline and slow network, provider failure modes, style
    change during dictation, rapid pill clicks, the review-before-insert
