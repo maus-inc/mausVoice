@@ -20,30 +20,29 @@ describe("aldeaTestIntegration", () => {
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response("", { status }));
 
-  it("reports the endpoint reachable on a 200 response", async () => {
-    mockFetch(200);
+  it.each([
+    {
+      status: 200,
+      expected: true,
+      title: "reports the endpoint reachable on a 200 response",
+    },
+    {
+      status: 400,
+      expected: true,
+      title:
+        "treats a 400 as reachable (invalid key, not a connectivity failure)",
+    },
+    {
+      status: 500,
+      expected: false,
+      title: "reports a server error as not usable",
+    },
+  ])("$title", async ({ status, expected }) => {
+    mockFetch(status);
     const { aldeaTestIntegration } = await import("../src/aldea.utils");
 
     await expect(aldeaTestIntegration({ apiKey: "aldea-key" })).resolves.toBe(
-      true,
-    );
-  });
-
-  it("treats a 400 as reachable (invalid key, not a connectivity failure)", async () => {
-    mockFetch(400);
-    const { aldeaTestIntegration } = await import("../src/aldea.utils");
-
-    await expect(aldeaTestIntegration({ apiKey: "aldea-key" })).resolves.toBe(
-      true,
-    );
-  });
-
-  it("reports a server error as not usable", async () => {
-    mockFetch(500);
-    const { aldeaTestIntegration } = await import("../src/aldea.utils");
-
-    await expect(aldeaTestIntegration({ apiKey: "aldea-key" })).resolves.toBe(
-      false,
+      expected,
     );
   });
 
