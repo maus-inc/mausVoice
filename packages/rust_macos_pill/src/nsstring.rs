@@ -12,9 +12,20 @@ use cocoa::foundation::NSString;
 use objc::{msg_send, sel, sel_impl};
 
 /// Run `body` with a temporary `NSString` holding `text`, then release it.
+///
+/// The release is tied to a guard rather than written after the call, so it
+/// still runs if `body` panics on its way out.
 pub(crate) unsafe fn with_ns_string<R>(text: &str, body: impl FnOnce(id) -> R) -> R {
-    let ns: id = NSString::alloc(nil).init_str(text);
-    let result = body(ns);
-    let _: () = msg_send![ns, release];
-    result
+    struct Owned(id);
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            unsafe {
+                let _: () = msg_send![self.0, release];
+            }
+        }
+    }
+
+    let owned = Owned(NSString::alloc(nil).init_str(text));
+    body(owned.0)
 }

@@ -33,6 +33,7 @@ describe("macOS pill Foundation strings", () => {
       "pub(crate) unsafe fn with_ns_string",
     );
 
-    expect(helper).toContain("msg_send![ns, release]");
+    expect(helper).toContain("impl Drop");
+    expect(helper).toMatch(/msg_send!\[[^\]]+, release\]/);
   });
 });
