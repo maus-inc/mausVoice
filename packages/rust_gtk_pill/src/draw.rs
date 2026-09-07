@@ -1360,7 +1360,6 @@ fn draw_thinking_text(
     y + 20.0
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Review-before-insert card: the finished transcript plus the four decisions
 /// the user can take on it. The transcript is wrapped and capped so a long
 /// dictation cannot push the buttons off the panel; the full text always
@@ -1441,11 +1440,16 @@ fn draw_review_card(
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
         cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
-        let ext = cr.text_extents(label).unwrap();
-        cr.move_to(
-            btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
-            btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
-        );
+        // Cairo only fails to measure when the font backend is in an error
+        // state. Draw the label at a sane offset rather than dropping it.
+        let (label_x, label_y) = match cr.text_extents(label) {
+            Ok(ext) => (
+                btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
+                btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
+            ),
+            Err(_) => (btn_x + 8.0, btn_y + PERM_BUTTON_HEIGHT * 0.7),
+        };
+        cr.move_to(label_x, label_y);
         let _ = cr.show_text(label);
 
         state.click_regions.borrow_mut().push(ClickRegion {
@@ -1458,6 +1462,7 @@ fn draw_review_card(
     y + card_h
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
     cr: &cairo::Context, state: &PillState, perm: &PillPermission,
     x: f64, y: f64, w: f64, alpha: f64,

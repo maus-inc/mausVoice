@@ -92,6 +92,38 @@ pub const fn can_emit_interaction_feedback(
     action_available && !is_loading
 }
 
+/// The user's preference for when the pill is on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillVisibility {
+    Hidden,
+    WhileActive,
+    Persistent,
+}
+
+/// Shared pill visibility policy, used by every platform pill.
+///
+/// | preference    | idle    | recording | pill owns the surface |
+/// |---------------|---------|-----------|-----------------------|
+/// | `Hidden`      | hidden  | hidden    | visible               |
+/// | `WhileActive` | hidden  | visible   | visible               |
+/// | `Persistent`  | visible | visible   | visible               |
+///
+/// `owns_surface` covers assistant mode and a transcript waiting for a review
+/// decision. Both put something on the pill that the user has to answer, so
+/// they override the preference: hiding the pill would leave the user with no
+/// way to respond and the desktop waiting forever.
+pub const fn should_show_pill(
+    preference: PillVisibility,
+    is_active: bool,
+    owns_surface: bool,
+) -> bool {
+    match preference {
+        PillVisibility::Hidden => owns_surface,
+        PillVisibility::WhileActive => is_active || owns_surface,
+        PillVisibility::Persistent => true,
+    }
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -1798,6 +1830,31 @@ mod tests {
     fn flash_banner_stays_hidden_when_not_visible() {
         assert_eq!(flash_banner_target(false, false, false), 0.0);
         assert_eq!(flash_banner_target(false, true, true), 0.0);
+    }
+
+    #[test]
+    fn hidden_pill_stays_hidden_while_recording() {
+        assert!(!should_show_pill(PillVisibility::Hidden, true, false));
+        assert!(!should_show_pill(PillVisibility::Hidden, false, false));
+    }
+
+    #[test]
+    fn hidden_pill_still_shows_when_it_owns_the_surface() {
+        assert!(should_show_pill(PillVisibility::Hidden, false, true));
+        assert!(should_show_pill(PillVisibility::Hidden, true, true));
+    }
+
+    #[test]
+    fn while_active_shows_only_when_busy() {
+        assert!(!should_show_pill(PillVisibility::WhileActive, false, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, true, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, false, true));
+    }
+
+    #[test]
+    fn persistent_always_shows() {
+        assert!(should_show_pill(PillVisibility::Persistent, false, false));
+        assert!(should_show_pill(PillVisibility::Persistent, true, false));
     }
 
     #[test]

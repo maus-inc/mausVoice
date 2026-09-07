@@ -1118,7 +1118,6 @@ fn draw_thinking_text(
     y + 20.0
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Review-before-insert card: the finished transcript plus the four decisions
 /// the user can take on it. The transcript is wrapped and capped so a long
 /// dictation cannot push the buttons off the panel; the full text always
@@ -1216,6 +1215,7 @@ fn draw_review_card(
     y + card_h
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
     ctx: &Ctx, state: &PillState, perm: &PillPermission,
     x: f64, y: f64, w: f64, alpha: f64,

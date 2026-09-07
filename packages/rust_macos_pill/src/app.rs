@@ -578,14 +578,11 @@ fn perform_tick() {
         }
 
         // Visibility
-        let visibility = ctx.state.visibility.get();
-        let is_active = ctx.state.phase.get() != Phase::Idle;
-        let is_assistant = ctx.state.assistant_active.get();
-        let should_show = match visibility {
-            Visibility::Hidden => is_assistant,
-            Visibility::WhileActive => is_active || is_assistant,
-            Visibility::Persistent => true,
-        };
+        let should_show = rust_pill_shared::should_show_pill(
+            ctx.state.visibility.get().into(),
+            ctx.state.phase.get() != Phase::Idle,
+            ctx.state.assistant_active.get() || ctx.state.assistant_review.borrow().is_some(),
+        );
         unsafe {
             if should_show {
                 let _: () = msg_send![ctx.window, orderFront:nil];

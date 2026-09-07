@@ -23,6 +23,16 @@ pub enum Visibility {
     Persistent,
 }
 
+impl From<Visibility> for rust_pill_shared::PillVisibility {
+    fn from(value: Visibility) -> Self {
+        match value {
+            Visibility::Hidden => Self::Hidden,
+            Visibility::WhileActive => Self::WhileActive,
+            Visibility::Persistent => Self::Persistent,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {

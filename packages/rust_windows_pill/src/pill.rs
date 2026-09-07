@@ -1117,15 +1117,11 @@ fn tick_transcript(state: &PillState, dt: f64) {
 }
 
 fn update_visibility(hwnd: HWND, state: &PillState) {
-    let visibility = state.visibility.get();
-    let is_active = state.phase.get() != Phase::Idle;
-    let is_assistant = state.assistant_active.get();
-
-    let should_show = match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    };
+    let should_show = rust_pill_shared::should_show_pill(
+        state.visibility.get().into(),
+        state.phase.get() != Phase::Idle,
+        state.assistant_active.get() || state.assistant_review.borrow().is_some(),
+    );
 
     unsafe {
         if should_show {
@@ -1185,7 +1181,7 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         && cy >= screen_pill_y - pad
         && cy <= screen_pill_y + pill_h + pad;
 
-    let in_panel = if state.assistant_active.get() {
+    let in_panel = if state.assistant_active.get() || state.assistant_review.borrow().is_some() {
         let panel_x = win_rect.left as f64 + ox;
         let panel_y = win_rect.top as f64 + oy;
         cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh

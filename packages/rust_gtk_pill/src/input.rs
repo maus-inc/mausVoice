@@ -384,9 +384,12 @@ fn union_side_controls(
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let hovered = state.hovered.get();
     let is_active = state.phase.get() != Phase::Idle;
-    let is_assistant = state.assistant_active.get();
+    // A pending review draws buttons in the panel area, so the clickable
+    // region has to cover the panel even when the assistant is not running.
+    let owns_panel =
+        state.assistant_active.get() || state.assistant_review.borrow().is_some();
 
-    if is_assistant || hovered || is_active {
+    if owns_panel || hovered || is_active {
         set_expanded_input_region(gdk_window, state);
     } else {
         let dw = state.draw_width.get();
