@@ -48,75 +48,74 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("GenerateTextInput.maxTokens forwarding", () => {
-  const forwardingCases: [
-    name: string,
-    build: () => {
-      generateText: (i: {
-        prompt: string;
-        maxTokens?: number;
-      }) => Promise<unknown>;
-    },
-    spy: () => ReturnType<typeof vi.fn>,
-  ][] = [
-    [
-      "Groq",
-      () => new GroqGenerateTextRepo("k", null),
-      () => vi.mocked(groqGenerateTextResponse),
-    ],
-    [
-      "OpenAI",
-      () => new OpenAIGenerateTextRepo("k", null),
-      () => vi.mocked(openaiGenerateTextResponse),
-    ],
-    [
-      "OpenAI-compatible",
-      () =>
-        new OpenAICompatibleGenerateTextRepo(
-          "https://example.com",
-          "model",
-          "k",
-        ),
-      () => vi.mocked(openaiGenerateTextResponse),
-    ],
-    [
-      "OpenRouter",
-      () => new OpenRouterGenerateTextRepo("k", null),
-      () => vi.mocked(openrouterGenerateTextResponse),
-    ],
-    [
-      "Azure OpenAI",
-      () =>
-        new AzureOpenAIGenerateTextRepo(
-          "k",
-          "https://example.azure.com",
-          "gpt-4o-mini",
-        ),
-      () => vi.mocked(azureOpenAIGenerateText),
-    ],
-    [
-      "Cerebras",
-      () => new CerebrasGenerateTextRepo("k", null),
-      () => vi.mocked(cerebrasGenerateTextResponse),
-    ],
-    [
-      "Deepseek",
-      () => new DeepseekGenerateTextRepo("k", null),
-      () => vi.mocked(deepseekGenerateTextResponse),
-    ],
-    [
-      "Gemini",
-      () => new GeminiGenerateTextRepo("k", null),
-      () => vi.mocked(geminiGenerateTextResponse),
-    ],
-    [
-      "Claude",
-      () => new ClaudeGenerateTextRepo("k", null),
-      () => vi.mocked(claudeGenerateTextResponse),
-    ],
-  ];
+type ProviderCase = [
+  name: string,
+  build: () => {
+    generateText: (i: {
+      prompt: string;
+      maxTokens?: number;
+      signal?: AbortSignal;
+    }) => Promise<unknown>;
+  },
+  spy: () => ReturnType<typeof vi.fn>,
+];
 
-  it.each(forwardingCases)(
+const providerCases: ProviderCase[] = [
+  [
+    "Groq",
+    () => new GroqGenerateTextRepo("k", null),
+    () => vi.mocked(groqGenerateTextResponse),
+  ],
+  [
+    "OpenAI",
+    () => new OpenAIGenerateTextRepo("k", null),
+    () => vi.mocked(openaiGenerateTextResponse),
+  ],
+  [
+    "OpenAI-compatible",
+    () =>
+      new OpenAICompatibleGenerateTextRepo("https://example.com", "model", "k"),
+    () => vi.mocked(openaiGenerateTextResponse),
+  ],
+  [
+    "OpenRouter",
+    () => new OpenRouterGenerateTextRepo("k", null),
+    () => vi.mocked(openrouterGenerateTextResponse),
+  ],
+  [
+    "Azure OpenAI",
+    () =>
+      new AzureOpenAIGenerateTextRepo(
+        "k",
+        "https://example.azure.com",
+        "gpt-4o-mini",
+      ),
+    () => vi.mocked(azureOpenAIGenerateText),
+  ],
+  [
+    "Cerebras",
+    () => new CerebrasGenerateTextRepo("k", null),
+    () => vi.mocked(cerebrasGenerateTextResponse),
+  ],
+  [
+    "Deepseek",
+    () => new DeepseekGenerateTextRepo("k", null),
+    () => vi.mocked(deepseekGenerateTextResponse),
+  ],
+  [
+    "Gemini",
+    () => new GeminiGenerateTextRepo("k", null),
+    () => vi.mocked(geminiGenerateTextResponse),
+  ],
+  [
+    "Claude",
+    () => new ClaudeGenerateTextRepo("k", null),
+    () => vi.mocked(claudeGenerateTextResponse),
+  ],
+];
+
+describe("GenerateTextInput.maxTokens forwarding", () => {
+  it.each(providerCases)(
     "%s forwards maxTokens to the underlying call",
     async (_name, build, spy) => {
       const mocked = spy();
@@ -142,74 +141,7 @@ describe("GenerateTextInput.maxTokens forwarding", () => {
 });
 
 describe("GenerateTextInput.signal forwarding", () => {
-  const repoCases: [
-    name: string,
-    build: () => {
-      generateText: (i: {
-        prompt: string;
-        signal?: AbortSignal;
-      }) => Promise<unknown>;
-    },
-    spy: () => ReturnType<typeof vi.fn>,
-  ][] = [
-    [
-      "Groq",
-      () => new GroqGenerateTextRepo("k", null),
-      () => vi.mocked(groqGenerateTextResponse),
-    ],
-    [
-      "OpenAI",
-      () => new OpenAIGenerateTextRepo("k", null),
-      () => vi.mocked(openaiGenerateTextResponse),
-    ],
-    [
-      "OpenAI-compatible",
-      () =>
-        new OpenAICompatibleGenerateTextRepo(
-          "https://example.com",
-          "model",
-          "k",
-        ),
-      () => vi.mocked(openaiGenerateTextResponse),
-    ],
-    [
-      "OpenRouter",
-      () => new OpenRouterGenerateTextRepo("k", null),
-      () => vi.mocked(openrouterGenerateTextResponse),
-    ],
-    [
-      "Azure OpenAI",
-      () =>
-        new AzureOpenAIGenerateTextRepo(
-          "k",
-          "https://example.azure.com",
-          "gpt-4o-mini",
-        ),
-      () => vi.mocked(azureOpenAIGenerateText),
-    ],
-    [
-      "Cerebras",
-      () => new CerebrasGenerateTextRepo("k", null),
-      () => vi.mocked(cerebrasGenerateTextResponse),
-    ],
-    [
-      "Deepseek",
-      () => new DeepseekGenerateTextRepo("k", null),
-      () => vi.mocked(deepseekGenerateTextResponse),
-    ],
-    [
-      "Gemini",
-      () => new GeminiGenerateTextRepo("k", null),
-      () => vi.mocked(geminiGenerateTextResponse),
-    ],
-    [
-      "Claude",
-      () => new ClaudeGenerateTextRepo("k", null),
-      () => vi.mocked(claudeGenerateTextResponse),
-    ],
-  ];
-
-  it.each(repoCases)(
+  it.each(providerCases)(
     "%s forwards the caller's abort signal to the provider request",
     async (_name, build, spy) => {
       const mocked = spy();
