@@ -136,6 +136,38 @@ function assignmentIsFalse(text, valueStart) {
   return value === "false";
 }
 
+function isTomlQuote(ch) {
+  return ch === '"' || ch === "'";
+}
+
+function quotedKeySpan(text, start) {
+  const end = stringEnd(text, start);
+  const delim = quoteLengthAt(text, start);
+  return { end, key: text.slice(start + delim, end - delim) };
+}
+
+function quotedKeyAssignedFalse(text, end) {
+  const rest = text.slice(end);
+  const eq = /^\s*=\s*/.exec(rest);
+  if (!eq) return false;
+  return assignmentIsFalse(rest, eq[0].length);
+}
+
+function isBareUseDefaultKey(text, cursor) {
+  if (!text.startsWith("useDefault", cursor)) return false;
+  const before = text[cursor - 1];
+  const after = text[cursor + "useDefault".length];
+  const boundBefore = before === undefined || /[\s=]/.test(before);
+  const boundAfter = after === undefined || /[\s=]/.test(after);
+  return boundBefore && boundAfter;
+}
+
+function bareUseDefaultFalseAt(text, cursor) {
+  const eq = indexOfOutsideStrings(text, "=", cursor + "useDefault".length);
+  if (eq === -1) return { next: -1, isFalse: false };
+  return { next: eq + 1, isFalse: assignmentIsFalse(text, eq + 1) };
+}
+
 // True when a section assigns `useDefault = false` as a real TOML key,
 // including quoted keys (`"useDefault" = false`). Prose like
 // `description = """ ... useDefault = false ... """` is content, not config,
@@ -144,37 +176,21 @@ function assignmentIsFalse(text, valueStart) {
 export function hasUseDefaultFalse(text) {
   let cursor = 0;
   while (cursor < text.length) {
-    const ch = text[cursor];
-    if (ch === '"' || ch === "'") {
+    if (isTomlQuote(text[cursor])) {
       const start = cursor;
-      const end = stringEnd(text, start);
-      const delim = quoteLengthAt(text, start);
-      const key = text.slice(start + delim, end - delim);
-      if (key === "useDefault") {
-        const rest = text.slice(end);
-        const eq = /^\s*=\s*/.exec(rest);
-        if (eq && assignmentIsFalse(rest, eq[0].length)) return true;
+      const { end, key } = quotedKeySpan(text, start);
+      if (key === "useDefault" && quotedKeyAssignedFalse(text, end)) {
+        return true;
       }
       cursor = Math.max(end, start + 1);
       continue;
     }
-    if (text.startsWith("useDefault", cursor)) {
-      const before = text[cursor - 1];
-      const after = text[cursor + "useDefault".length];
-      const isWholeKey =
-        (before === undefined || /[\s=]/.test(before)) &&
-        (after === undefined || /[\s=]/.test(after));
-      if (isWholeKey) {
-        const eq = indexOfOutsideStrings(
-          text,
-          "=",
-          cursor + "useDefault".length,
-        );
-        if (eq === -1) return false;
-        if (assignmentIsFalse(text, eq + 1)) return true;
-        cursor = eq + 1;
-        continue;
-      }
+    if (isBareUseDefaultKey(text, cursor)) {
+      const { next, isFalse } = bareUseDefaultFalseAt(text, cursor);
+      if (next === -1) return false;
+      if (isFalse) return true;
+      cursor = next;
+      continue;
     }
     cursor += 1;
   }
