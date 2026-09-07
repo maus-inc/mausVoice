@@ -1324,14 +1324,18 @@ fn draw_transcript(
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
 
-    // Drop the regions that scrolled out of the panel. A button the user cannot
-    // see must not take their click.
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
     {
         let mut regions = state.click_regions.borrow_mut();
         let scrolled = regions.split_off(region_start);
-        regions.extend(scrolled.into_iter().filter(|region| {
-            let center = region.y + region.h / 2.0;
-            center >= area_y && center <= area_y + area_h
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) =
+                rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
         }));
     }
 
