@@ -862,7 +862,9 @@ export const AppSideEffects = () => {
       clearTimeout(timeoutId);
       listeners
         .then((unlisteners) => {
-          unlisteners.forEach((unlisten) => unlisten());
+          unlisteners.forEach((unlisten) => {
+            unlisten();
+          });
         })
         .catch((error: unknown) => {
           console.warn(
