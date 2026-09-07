@@ -28,7 +28,7 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url] = fetchMock.mock.calls[0]!;
+    const [url] = fetchMock.mock.calls[0] ?? [];
     // The custom path replaces the default /audio/transcriptions suffix
     // while staying under the versioned base (/v1) built by the repo.
     expect(url).toBe("https://example.com/v1/custom/transcriptions");
@@ -44,7 +44,7 @@ describe("openaiCompatibleTranscribeAudio", () => {
       ext: "wav",
     });
 
-    const [url] = fetchMock.mock.calls[0]!;
+    const [url] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("https://example.com/v1/audio/transcriptions");
   });
 
@@ -82,12 +82,12 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [, firstInit] = fetchMock.mock.calls[0]!;
-    const [, secondInit] = fetchMock.mock.calls[1]!;
-    expect((firstInit!.body as FormData).get("response_format")).toBe(
+    const [, firstInit] = fetchMock.mock.calls[0] ?? [];
+    const [, secondInit] = fetchMock.mock.calls[1] ?? [];
+    expect((firstInit?.body as FormData).get("response_format")).toBe(
       "verbose_json",
     );
-    expect((secondInit!.body as FormData).get("response_format")).toBe("json");
+    expect((secondInit?.body as FormData).get("response_format")).toBe("json");
     expect(result.text).toBe("recovered text");
   });
 

@@ -857,7 +857,7 @@ describe("OpenAI-compatible transcription path override", () => {
 
     expect(output.text).toBe("hello");
     expect(transcribeUtilMock).toHaveBeenCalledTimes(1);
-    expect(transcribeUtilMock.mock.calls[0]![0]).toMatchObject({
+    expect(transcribeUtilMock.mock.calls[0]?.[0]).toMatchObject({
       transcriptionPath: "/custom/transcriptions",
     });
   });
