@@ -225,6 +225,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             | gdk::EventMask::BUTTON_PRESS_MASK
             | gdk::EventMask::BUTTON_RELEASE_MASK
             | gdk::EventMask::FOCUS_CHANGE_MASK
+            | gdk::EventMask::KEY_PRESS_MASK
             | gdk::EventMask::SCROLL_MASK
             | gdk::EventMask::SMOOTH_SCROLL_MASK,
     );
@@ -434,6 +435,24 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_entry_changed = state.clone();
     entry.connect_changed(move |e| {
         *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
+    });
+
+    let state_escape = state.clone();
+    window.connect_key_press_event(move |_, event| {
+        // Escape while a transcript is under review is a cancel decision, the
+        // same as on the Windows pill: the desktop is waiting for an answer.
+        // The window sees the key before the focused entry does, so this works
+        // whether or not the entry holds the keyboard.
+        if event.keyval() != gdk::keys::constants::Escape {
+            return glib::Propagation::Proceed;
+        }
+        match state_escape.pending_review_id() {
+            Some(review_id) => {
+                input::send_review_decision(&review_id, "cancel", None);
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
     });
 
     let receiver = Rc::new(RefCell::new(receiver));

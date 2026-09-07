@@ -167,6 +167,15 @@ fn register_pill_view_class() -> &'static Class {
         decl.add_method(sel!(tick:), tick_callback as extern "C" fn(&Object, Sel, id));
         decl.add_method(sel!(hitTest:), hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id);
         decl.add_method(sel!(textFieldAction:), text_field_action as extern "C" fn(&Object, Sel, id));
+        decl.add_method(
+            sel!(controlTextDidChange:),
+            control_text_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(control:textView:doCommandBySelector:),
+            control_do_command as extern "C" fn(&Object, Sel, id, id, Sel) -> BOOL,
+        );
+        decl.add_method(sel!(cancelOperation:), cancel_operation as extern "C" fn(&Object, Sel, id));
     }
 
     decl.register()
@@ -332,13 +341,20 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
     }
 }
 
+/// Read what a text field currently holds.
+///
+/// # Safety
+/// `field` must be a live `NSTextField`.
+unsafe fn field_string(field: id) -> String {
+    let ns_text: id = msg_send![field, stringValue];
+    let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
+    std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string()
+}
+
 extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
     with_ctx(|ctx| {
         unsafe {
-            let ns_text: id = msg_send![sender, stringValue];
-            let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-            let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string();
-            *ctx.state.entry_text.borrow_mut() = text;
+            *ctx.state.entry_text.borrow_mut() = field_string(sender);
         }
         // Enter submits: an insert decision while a transcript is under review,
         // a message to the assistant otherwise.
@@ -346,6 +362,60 @@ extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
             set_entry_text("");
         }
     });
+}
+
+/// Mirror every keystroke into state, the way the GTK pill does on `changed`.
+///
+/// The field only fires its action once the edit is committed, so without this
+/// the buttons on the review panel would answer with the text as it stood at
+/// the last frame instead of the text on screen.
+extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: id) {
+    with_ctx(|ctx| unsafe {
+        let control: id = msg_send![notification, object];
+        *ctx.state.entry_text.borrow_mut() = field_string(control);
+    });
+}
+
+/// Escape while a transcript is under review cancels it, the same as on the
+/// Windows pill. The field editor holds the keyboard while the entry is being
+/// edited, and it routes Escape here as `cancelOperation:`. Every other command
+/// keeps its standard behaviour.
+extern "C" fn control_do_command(
+    _this: &Object,
+    _sel: Sel,
+    _control: id,
+    _text_view: id,
+    command: Sel,
+) -> BOOL {
+    if command != sel!(cancelOperation:) {
+        return NO;
+    }
+    if cancel_pending_review() {
+        YES
+    } else {
+        NO
+    }
+}
+
+/// Escape when the panel, rather than its entry, holds the keyboard.
+///
+/// The chain deliberately stops here: an Escape with no review to answer must
+/// not travel up to the panel, which would close the pill window.
+extern "C" fn cancel_operation(_this: &Object, _sel: Sel, _sender: id) {
+    cancel_pending_review();
+}
+
+/// Send a cancel decision for the transcript under review, if there is one.
+/// Returns whether a review was cancelled.
+fn cancel_pending_review() -> bool {
+    with_ctx(|ctx| match ctx.state.pending_review_id() {
+        Some(review_id) => {
+            input::send_review_decision(&review_id, "cancel", None);
+            true
+        }
+        None => false,
+    })
+    .unwrap_or(false)
 }
 
 /// Put `text` in the panel's text field. Used to load a transcript into the
@@ -583,12 +653,11 @@ fn perform_tick() {
                 let _: () = msg_send![ctx.window, resignKeyWindow];
             }
 
-            // Sync entry text to state
+            // Sync entry text to state. `controlTextDidChange:` already does
+            // this on every keystroke; this covers changes the delegate does
+            // not see, such as a paste routed by the system.
             if is_typing {
-                let ns_text: id = msg_send![entry, stringValue];
-                let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-                let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string();
-                *ctx.state.entry_text.borrow_mut() = text;
+                *ctx.state.entry_text.borrow_mut() = field_string(entry);
             }
         }
 
@@ -1419,6 +1488,10 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 
     let _: () = msg_send![entry, setTarget:view];
     let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];
+    // The view is also the field's editing delegate: it mirrors each keystroke
+    // into state and turns Escape into a cancel decision while a transcript is
+    // under review.
+    let _: () = msg_send![entry, setDelegate:view];
     let _: () = msg_send![entry, setHidden:YES];
     let _: () = msg_send![view, addSubview:entry];
 
