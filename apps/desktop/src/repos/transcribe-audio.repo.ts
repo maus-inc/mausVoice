@@ -742,6 +742,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
+  private transcriptionPath?: string;
   private customFetch: typeof secureFetch;
 
   constructor(
@@ -749,11 +750,13 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
     baseUrl: string,
     model: string,
     apiKey?: string,
+    transcriptionPath?: string,
   ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
+    this.transcriptionPath = transcriptionPath;
     this.customFetch = createOpenAICompatibleFetch(apiKeyId);
   }
 
@@ -771,6 +774,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         ext: "wav",
         prompt: input.prompt ?? undefined,
         language: input.language,
+        transcriptionPath: this.transcriptionPath,
         customFetch: this.customFetch,
       });
 

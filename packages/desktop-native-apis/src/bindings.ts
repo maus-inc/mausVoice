@@ -695,6 +695,23 @@ async setDashboardMenuLabels(openLabel: string, hideLabel: string) : Promise<Res
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * A23: Mirror the TS playInteractionChime preference into Rust so the
+ * native thock path (pill overlays call audio_feedback::play_thock directly,
+ * bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+ */
+async setInteractionChimeEnabled(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_chime_enabled", { enabled });
+},
+/**
+ * Mirror the TS interactionFeedbackVolume preference into Rust so the
+ * thock gain is applied on the warm path AND the fallback path. The
+ * Rust side clamps to a safe range, so an out-of-range value from the
+ * frontend can never blow out the sink.
+ */
+async setInteractionFeedbackVolume(volume: number) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_feedback_volume", { volume });
+},
 async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_menu_icon", { variant }) };

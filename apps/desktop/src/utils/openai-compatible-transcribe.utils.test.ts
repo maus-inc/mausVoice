@@ -11,9 +11,49 @@ import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.
 const makeResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
 
+const requestBodyAt = (index: number): FormData => {
+  const init = fetchMock.mock.calls[index]?.[1];
+  if (init == null || !(init.body instanceof FormData)) {
+    throw new Error(`expected FormData body at call ${index}`);
+  }
+  return init.body;
+};
+
 describe("openaiCompatibleTranscribeAudio", () => {
   beforeEach(() => {
     fetchMock.mockReset();
+  });
+
+  it("uses the custom transcription path when provided", async () => {
+    fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
+
+    await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+      transcriptionPath: "/custom/transcriptions",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    // The custom path replaces the default /audio/transcriptions suffix
+    // while staying under the versioned base (/v1) built by the repo.
+    expect(url).toBe("https://example.com/v1/custom/transcriptions");
+  });
+
+  it("defaults to the /v1/audio/transcriptions path when omitted", async () => {
+    fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
+
+    await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+    });
+
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("https://example.com/v1/audio/transcriptions");
   });
 
   it("prefers verbose_json so capable servers return no_speech_prob segments", async () => {
@@ -27,9 +67,7 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(result.text).toBe("hello world");
-    const [, init] = fetchMock.mock.calls[0] ?? [];
-    const body = init?.body as FormData;
-    expect(body.get("response_format")).toBe("verbose_json");
+    expect(requestBodyAt(0).get("response_format")).toBe("verbose_json");
   });
 
   it("falls back to json when the server rejects verbose_json with a 4xx", async () => {
@@ -50,12 +88,8 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [, firstInit] = fetchMock.mock.calls[0]!;
-    const [, secondInit] = fetchMock.mock.calls[1]!;
-    expect((firstInit!.body as FormData).get("response_format")).toBe(
-      "verbose_json",
-    );
-    expect((secondInit!.body as FormData).get("response_format")).toBe("json");
+    expect(requestBodyAt(0).get("response_format")).toBe("verbose_json");
+    expect(requestBodyAt(1).get("response_format")).toBe("json");
     expect(result.text).toBe("recovered text");
   });
 

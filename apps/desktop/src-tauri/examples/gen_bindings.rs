@@ -87,6 +87,8 @@ fn main() {
         run_native_setup,
         run_terminal_command,
         set_dashboard_menu_labels,
+        set_interaction_chime_enabled,
+        set_interaction_feedback_volume,
         set_menu_icon,
         set_phase,
         set_pill_placement,

@@ -163,4 +163,75 @@ describe("groqGenerateTextResponse", () => {
       response_format: { type: "json_object" },
     });
   });
+
+  it("retries a transient failure when a caller signal is present but not aborted", async () => {
+    // Regression: `retries: signal ? 1 : 3` treated signal presence as an
+    // abort and dropped every retry. Only an actually aborted signal is
+    // terminal.
+    const createCompletion = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ECONNRESET"))
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: "ok" } }],
+        usage: { total_tokens: 5 },
+      });
+
+    vi.resetModules();
+    vi.doMock("groq-sdk/index", () => ({
+      default: class MockGroq {
+        chat = {
+          completions: {
+            create: createCompletion,
+          },
+        };
+      },
+      toFile: vi.fn(),
+    }));
+
+    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+
+    const controller = new AbortController();
+    await groqGenerateTextResponse({
+      apiKey: "test-key",
+      prompt: "hi",
+      signal: controller.signal,
+    });
+
+    expect(createCompletion).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry after the caller aborts", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const createCompletion = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("aborted"), { name: "AbortError" }),
+      );
+
+    vi.resetModules();
+    vi.doMock("groq-sdk/index", () => ({
+      default: class MockGroq {
+        chat = {
+          completions: {
+            create: createCompletion,
+          },
+        };
+      },
+      toFile: vi.fn(),
+    }));
+
+    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+
+    await expect(
+      groqGenerateTextResponse({
+        apiKey: "test-key",
+        prompt: "hi",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("aborted");
+
+    expect(createCompletion).toHaveBeenCalledTimes(1);
+  });
 });

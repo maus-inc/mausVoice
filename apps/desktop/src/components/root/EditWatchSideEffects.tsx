@@ -28,6 +28,12 @@ export const EditWatchSideEffects = () => {
     }
   }, [enabled]);
 
+  // The watch is transient polling state (90s window) owned by this
+  // component. Unmounting without clearing it left a stale snapshot that
+  // could still propose a term after the app left the dictation screen or
+  // shut the side-effect tree down.
+  useEffect(() => () => endEditWatch(), []);
+
   useIntervalAsync(POLL_INTERVAL_MS, async () => {
     await pollEditWatch();
   }, [enabled]);

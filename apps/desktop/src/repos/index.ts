@@ -373,6 +373,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
           fullUrl,
           model,
           providerApiKey,
+          apiKeyRecord.transcriptionPath ?? undefined,
         );
         break;
       }

@@ -274,6 +274,20 @@ pnpm --filter @repo/agent test
 
 Before push, also run `pnpm run build`, `pnpm run check-types`, and the linter. Do not edit tests to hide a defect. Add a regression test for bug fixes where it makes sense and keep `.out-of-scope/` and `apps/docs` accurate.
 
+## Diff web-research review (mandatory)
+
+This step applies to every diff review, pass, or repass, including the pre-push loop, `REVIEW.md` passes, and any claim that a changed diff is clean. Do not skip it for small diffs. A line that looks correct is exactly the line that hides the newest pattern, so the search is highest value on code that passes a first read.
+
+Procedure:
+
+1. Read the complete diff against the baseline first, every file and every line, including comments, tests, config, workflows, and generated files. Do not judge a line before seeing the full diff.
+2. For each changed line that implements new behavior or a new API shape, research it against popular authoritative sources before accepting it. Use the provider's own docs and changelogs (OpenAI, Anthropic, Groq, Gemini, Azure, DeepSeek, Cerebras, Tauri, Specta, Vitest), MDN, React and Node docs, Sonar rule source, and the rule's community threads. Cite each source. Verify the assumed API shape, default, error code, abort behavior, retry semantics, and deprecation status instead of trusting memory or a comment.
+3. Watch specifically for antipatterns that look correct: aborted requests silently retried, fallbacks that hide the original failure, signal handling that only exists in one provider, `Response` bodies reused across retries, unhandled `Body has already been read`, model fallbacks that accept a wrong base URL or wrong model family, unchecked casts, broad `any`, reliance on `.toString()` for binary data, unvalidated redirects, unbounded buffers, and stale persisted-state assumptions.
+4. Record the research result per assumption in the session memory: what was checked, the source, and the conclusion. A claim of a correct pattern must list the source it was verified against.
+5. If a source contradicts the code or the repo convention, resolve it before committing. Part I of FULL-REVIEW.md and AGENTS.md take precedence over Parts II to IV of FULL-REVIEW.md on a real conflict. Document the deviation in the review report.
+6. Do not claim a diff is verified from popular sources unless every changed line was read and every new-behavior line was researched. Mark anything unverifiable as an assumption or unknown, never as confirmed.
+7. Repeat this pass at least once after fixes land, because the fix can introduce the same class of problem in a new shape.
+
 ## Triage and briefs, short version
 
 For triage, read the full issue or PR, check `.out-of-scope/*.md`, verify the claim by reproducing or running tests, then recommend category and state. For `ready-for-agent`, post a brief that describes desired behavior and acceptance criteria. It must stay valid if files move. No paths, no line numbers.

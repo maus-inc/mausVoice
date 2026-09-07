@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  hasTopLevelUseDefaultFalse,
+  hasUseDefaultFalse,
   indexOfOutsideStrings,
   stripTomlComments,
+  tomlTableBody,
   updaterRulePattern,
 } from "./check-gitleaks-config.mjs";
 
@@ -93,6 +96,40 @@ describe("indexOfOutsideStrings", () => {
   });
 });
 
+describe("hasTopLevelUseDefaultFalse", () => {
+  it("detects the real top-level assignment (spaced and compact)", () => {
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault = false\n"), true);
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault=false\n"), true);
+  });
+
+  it("ignores prose inside a multi-line description string", () => {
+    const topLevel = [
+      'description = """',
+      "Do not set useDefault = false here;",
+      "this is documentation, not TOML.",
+      '"""',
+      "",
+    ].join("\n");
+    assert.equal(hasTopLevelUseDefaultFalse(topLevel), false);
+  });
+
+  it("ignores a single-line string value containing the text", () => {
+    assert.equal(
+      hasTopLevelUseDefaultFalse('description = "useDefault = false"\n'),
+      false,
+    );
+    assert.equal(
+      hasTopLevelUseDefaultFalse("description = 'useDefault = false'\n"),
+      false,
+    );
+  });
+
+  it("does not match a longer key or a different boolean", () => {
+    assert.equal(hasTopLevelUseDefaultFalse("useDefaultX = false\n"), false);
+    assert.equal(hasTopLevelUseDefaultFalse("useDefault = true\n"), false);
+  });
+});
+
 describe("updaterRulePattern", () => {
   const idLine = `id = "tauri-minisign-updater-private-key"`;
 
@@ -141,5 +178,37 @@ describe("updaterRulePattern", () => {
   it("never attributes a later rule's regex to the updater rule", () => {
     const toml = `[[rules]]\n${idLine}\nentropy = 3.5\n\n[[rules]]\nid = "another-rule"\nregex = 'dW50cnVzdGVk'\n`;
     assert.equal(updaterRulePattern(toml), null);
+  });
+});
+
+describe("hasUseDefaultFalse quoted keys", () => {
+  it("detects quoted keys", () => {
+    assert.equal(hasUseDefaultFalse('"useDefault" = false\n'), true);
+    assert.equal(hasUseDefaultFalse("'useDefault' = false\n"), true);
+    assert.equal(hasUseDefaultFalse('"useDefault"=false\n'), true);
+    assert.equal(hasUseDefaultFalse('"useDefault" = true\n'), false);
+  });
+});
+
+describe("tomlTableBody [extend]", () => {
+  it("reads useDefault from [extend] and ignores a dotted sibling", () => {
+    const withExtend = [
+      "[extend]",
+      "useDefault = false",
+      "[allowlist]",
+      'description = "x"',
+      "",
+    ].join("\n");
+    assert.equal(
+      hasUseDefaultFalse(tomlTableBody(withExtend, "[extend]")),
+      true,
+    );
+
+    const quoted = ["[extend]", '"useDefault" = false', ""].join("\n");
+    assert.equal(hasUseDefaultFalse(tomlTableBody(quoted, "[extend]")), true);
+
+    const dotted = ["[extend.foo]", "useDefault = false", ""].join("\n");
+    assert.equal(tomlTableBody(dotted, "[extend]"), "");
+    assert.equal(hasUseDefaultFalse(tomlTableBody(dotted, "[extend]")), false);
   });
 });

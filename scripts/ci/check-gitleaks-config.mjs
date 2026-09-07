@@ -106,6 +106,99 @@ function section(text, startMarker, endMarker) {
   return end === -1 ? text.slice(after) : text.slice(after, end);
 }
 
+// Body of a TOML table whose header is exactly `header` (for example
+// "[extend]"), not a dotted sibling like "[extend.foo]". Empty when the
+// table is absent.
+export function tomlTableBody(raw, header) {
+  let from = 0;
+  while (from <= raw.length) {
+    const at = indexOfOutsideStrings(raw, header, from);
+    if (at === -1) return "";
+    const after = at + header.length;
+    const next = raw[after];
+    if (
+      next !== undefined &&
+      next !== "\r" &&
+      next !== "\n" &&
+      !/[ \t]/.test(next)
+    ) {
+      from = at + 1;
+      continue;
+    }
+    const end = indexOfOutsideStrings(raw, "\n[", after);
+    return end === -1 ? raw.slice(after) : raw.slice(after, end);
+  }
+  return "";
+}
+
+function assignmentIsFalse(text, valueStart) {
+  const value = text.slice(valueStart).trimStart().split(/\s+/)[0] ?? "";
+  return value === "false";
+}
+
+function isTomlQuote(ch) {
+  return ch === '"' || ch === "'";
+}
+
+function quotedKeySpan(text, start) {
+  const end = stringEnd(text, start);
+  const delim = quoteLengthAt(text, start);
+  return { end, key: text.slice(start + delim, end - delim) };
+}
+
+function quotedKeyAssignedFalse(text, end) {
+  const rest = text.slice(end);
+  const eq = /^\s*=\s*/.exec(rest);
+  if (!eq) return false;
+  return assignmentIsFalse(rest, eq[0].length);
+}
+
+function isBareUseDefaultKey(text, cursor) {
+  if (!text.startsWith("useDefault", cursor)) return false;
+  const before = text[cursor - 1];
+  const after = text[cursor + "useDefault".length];
+  const boundBefore = before === undefined || /[\s=]/.test(before);
+  const boundAfter = after === undefined || /[\s=]/.test(after);
+  return boundBefore && boundAfter;
+}
+
+function bareUseDefaultFalseAt(text, cursor) {
+  const eq = indexOfOutsideStrings(text, "=", cursor + "useDefault".length);
+  if (eq === -1) return { next: -1, isFalse: false };
+  return { next: eq + 1, isFalse: assignmentIsFalse(text, eq + 1) };
+}
+
+// True when a section assigns `useDefault = false` as a real TOML key,
+// including quoted keys (`"useDefault" = false`). Prose like
+// `description = """ ... useDefault = false ... """` is content, not config,
+// and must never trip the guard (a false positive would block CI over a
+// comment).
+export function hasUseDefaultFalse(text) {
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (isTomlQuote(text[cursor])) {
+      const start = cursor;
+      const { end, key } = quotedKeySpan(text, start);
+      if (key === "useDefault" && quotedKeyAssignedFalse(text, end)) {
+        return true;
+      }
+      cursor = Math.max(end, start + 1);
+      continue;
+    }
+    if (isBareUseDefaultKey(text, cursor)) {
+      const { next, isFalse } = bareUseDefaultFalseAt(text, cursor);
+      if (next === -1) return false;
+      if (isFalse) return true;
+      cursor = next;
+      continue;
+    }
+    cursor += 1;
+  }
+  return false;
+}
+
+export const hasTopLevelUseDefaultFalse = hasUseDefaultFalse;
+
 // Everything from the first structural `[[rules]]` table to EOF, or null.
 export function rulesSection(raw) {
   const start = indexOfOutsideStrings(raw, "[[rules]]");
@@ -170,12 +263,18 @@ function main() {
   // and silently weakens the whole-repo scan to the single updater-key rule.
   const firstTable = indexOfOutsideStrings(raw, "[");
   const topLevel = firstTable === -1 ? raw : raw.slice(0, firstTable);
-  const useDefaultDisabled = topLevel
-    .split("\n")
-    .some((line) => /^useDefault\s*=\s*false\b/.test(line.trim()));
-  if (useDefaultDisabled) {
+  if (hasUseDefaultFalse(topLevel)) {
     fail(
       "gitleaks.toml: top-level `useDefault = false` disables the default " +
+        "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",
+    );
+  }
+
+  // Gitleaks also honours useDefault under [extend]. That assignment is not
+  // top-level, so the slice above would miss `[extend] useDefault = false`.
+  if (hasUseDefaultFalse(tomlTableBody(raw, "[extend]"))) {
+    fail(
+      "gitleaks.toml: `[extend] useDefault = false` disables the default " +
         "rule set. Remove it so the whole-repo scan keeps the built-in detectors.",
     );
   }
@@ -230,8 +329,8 @@ function main() {
   console.log(
     "OK: gitleaks.toml config-structure guard passed — the updater private-key " +
       "preamble is a detection rule (not an allowlist exemption), has no " +
-      "`keywords` pre-filter, `useDefault` is not nested in [allowlist], and " +
-      "the default rule set stays enabled.",
+      "`keywords` pre-filter, `useDefault` is not nested in [allowlist] or " +
+      "[extend], and the default rule set stays enabled.",
   );
 }
 

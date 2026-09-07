@@ -41,6 +41,7 @@ export type DeepseekGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   maxTokens?: number;
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type DeepseekGenerateResponseOutput = {
@@ -56,9 +57,15 @@ export const deepseekGenerateTextResponse = async ({
   jsonResponse,
   maxTokens,
   customFetch,
+  signal,
 }: DeepseekGenerateTextArgs): Promise<DeepseekGenerateResponseOutput> => {
   return retry({
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
     retries: 3,
+    isRetryable: (error) => !signal?.aborted,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -68,14 +75,17 @@ export const deepseekGenerateTextResponse = async ({
         prompt: finalPrompt,
       });
 
-      const response = await client.chat.completions.create({
-        messages,
-        model,
-        temperature: 1,
-        max_tokens: maxTokens ?? 1024,
-        top_p: 1,
-        response_format: jsonResponse ? { type: "json_object" } : undefined,
-      });
+      const response = await client.chat.completions.create(
+        {
+          messages,
+          model,
+          temperature: 1,
+          max_tokens: maxTokens ?? 1024,
+          top_p: 1,
+          response_format: jsonResponse ? { type: "json_object" } : undefined,
+        },
+        { signal },
+      );
 
       console.log("deepseek llm usage:", response.usage);
       return parseOpenAICompatibleGenerateTextResponse({

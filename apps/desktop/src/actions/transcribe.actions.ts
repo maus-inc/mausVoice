@@ -28,6 +28,7 @@ import {
   mapDictationLanguageToWhisperLanguage,
 } from "../utils/language.utils";
 import { orFalse, orNull } from "../utils/nullable.utils";
+import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
@@ -380,6 +381,18 @@ const recordPostProcessFailure = (
 // so the extracted helper cannot silently drop it again.
 const POST_PROCESS_MAX_TOKENS = 600;
 
+/**
+ * Deadline for one post-processing request. The dictation pipeline wraps
+ * handleTranscript in a 60s budget (HANDLE_TRANSCRIPT_TIMEOUT_MS), so this
+ * must stay below it: the inner timeout fires first, aborts the provider
+ * request, and falls back to the raw transcript — the outer wrapper only
+ * covers a case where even the failure handler hangs. Without this a hung
+ * provider call kept running to completion in the background after the UI
+ * had already moved on (the original AbortSignal path was dropped in the
+ * 1.6 rebuild).
+ */
+const POST_PROCESS_TIMEOUT_MS = 50_000;
+
 const beginPostProcessingRequest = ({
   metadata,
   toneName,
@@ -451,17 +464,24 @@ const runPostProcessingRequest = async ({
   getLogger().verbose(
     `Post-processing budget: maxTokens=${POST_PROCESS_MAX_TOKENS}`,
   );
+  const postProcessAbort = new AbortController();
   try {
-    const genOutput = await genRepo.generateText({
-      system,
-      prompt,
-      jsonResponse: {
-        name: "transcription_cleaning",
-        description: "JSON response with the processed transcription",
-        schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-      },
-      maxTokens: POST_PROCESS_MAX_TOKENS,
-    });
+    const genOutput = await withTimeout(
+      genRepo.generateText({
+        system,
+        prompt,
+        jsonResponse: {
+          name: "transcription_cleaning",
+          description: "JSON response with the processed transcription",
+          schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
+        },
+        maxTokens: POST_PROCESS_MAX_TOKENS,
+        signal: postProcessAbort.signal,
+      }),
+      POST_PROCESS_TIMEOUT_MS,
+      "Post-processing request",
+      () => postProcessAbort.abort(),
+    );
     return applyPostProcessSuccess(
       genOutput,
       rawTranscript,

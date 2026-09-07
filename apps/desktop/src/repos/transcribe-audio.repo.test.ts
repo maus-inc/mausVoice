@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { getModelProviderRepo, getTranscribeAudioRepo } from ".";
+
+const transcribeUtilMock = vi.hoisted(() => vi.fn());
+vi.mock("../utils/openai-compatible-transcribe.utils", () => ({
+  openaiCompatibleTranscribeAudio: (...args: unknown[]) =>
+    transcribeUtilMock(...args),
+}));
 import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
@@ -814,6 +820,46 @@ describe("OpenAI-compatible transcription path override", () => {
     const { repo } = getTranscribeAudioRepo();
 
     expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
+  });
+
+  it("plumbs the saved transcription path into the segment request", async () => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "compat-key";
+    state.apiKeyById["compat-key"] = {
+      id: "compat-key",
+      name: "Compat",
+      provider: "openai-compatible",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "ck",
+      baseUrl: "http://localhost:8080",
+      transcriptionModel: "whisper-1",
+      transcriptionPath: "/custom/transcriptions",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+    expect(repo).toBeInstanceOf(OpenAICompatibleTranscribeAudioRepo);
+    transcribeUtilMock.mockResolvedValue({ text: "hello", segments: [] });
+
+    // The previous wiring read the field but never passed it on, so a custom
+    // path saved in the key dialog silently resolved to the default
+    // /v1/audio/transcriptions suffix.
+    const output = await (
+      repo as OpenAICompatibleTranscribeAudioRepo
+    ).transcribeAudio({
+      // Loud enough to pass the near-silence gate so the segment request
+      // actually reaches the mocked transport.
+      samples: new Float32Array(1600).fill(0.5),
+      sampleRate: 16000,
+      language: "en",
+    });
+
+    expect(output.text).toBe("hello");
+    expect(transcribeUtilMock).toHaveBeenCalledTimes(1);
+    expect(transcribeUtilMock.mock.calls[0]?.[0]).toMatchObject({
+      transcriptionPath: "/custom/transcriptions",
+    });
   });
 });
 

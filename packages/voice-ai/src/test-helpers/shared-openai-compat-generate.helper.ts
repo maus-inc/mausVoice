@@ -11,6 +11,23 @@ const buildCreateCompletion = (
     usage,
   });
 
+export function mockOpenAIChatCreate(create: ReturnType<typeof vi.fn>) {
+  const chat = { completions: { create } };
+  vi.doMock("openai", () => ({
+    default: class MockOpenAI {
+      chat = chat;
+    },
+    AzureOpenAI: class MockAzureOpenAI {
+      chat = chat;
+    },
+  }));
+}
+
+export function resetOpenAIChatCreateMock() {
+  vi.doUnmock("openai");
+  vi.resetModules();
+}
+
 async function runOpenAICompatTestCase(
   {
     loadModule,
@@ -22,16 +39,7 @@ async function runOpenAICompatTestCase(
   createCompletion: ReturnType<typeof buildCreateCompletion>,
   params: Record<string, unknown>,
 ) {
-  const chat = { completions: { create: createCompletion } };
-
-  vi.doMock("openai", () => ({
-    default: class MockOpenAI {
-      chat = chat;
-    },
-    AzureOpenAI: class MockAzureOpenAI {
-      chat = chat;
-    },
-  }));
+  mockOpenAIChatCreate(createCompletion);
 
   const mod = await loadModule();
   const fn = mod[functionName] as (
@@ -161,6 +169,55 @@ export function createOpenAICompatibleGenerateTests({
       expect(
         createCompletion.mock.calls[0][0]?.response_format,
       ).toBeUndefined();
+    });
+
+    it("retries a transient failure when a caller signal is present but not aborted", async () => {
+      // Regression: `retries: signal ? 1 : 3` treated signal presence as an
+      // abort and dropped every retry, even though callers always attach a
+      // signal (e.g. the post-processing deadline). Only an actually aborted
+      // signal is terminal.
+      const createCompletion = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("ECONNRESET"))
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: "ok" } }],
+          usage: DEFAULT_USAGE,
+        });
+
+      const controller = new AbortController();
+
+      await runTestCase(createCompletion, {
+        apiKey: "test-key",
+        model: defaultModel,
+        prompt: "hi",
+        signal: controller.signal,
+        ...extraParams,
+      });
+
+      expect(createCompletion).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not retry after the caller aborts", async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const createCompletion = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("aborted"), { name: "AbortError" }),
+        );
+
+      await expect(
+        runTestCase(createCompletion, {
+          apiKey: "test-key",
+          model: defaultModel,
+          prompt: "hi",
+          signal: controller.signal,
+          ...extraParams,
+        }),
+      ).rejects.toThrow("aborted");
+
+      expect(createCompletion).toHaveBeenCalledTimes(1);
     });
   });
 }

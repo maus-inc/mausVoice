@@ -26,9 +26,11 @@ const repoMocks = vi.hoisted(() => ({
   rejectNextList: false,
 }));
 
+const abortAgentLoopMock = vi.hoisted(() => vi.fn());
+
 vi.mock("../agents", () => ({
   runAgent: runAgentMock,
-  abortAgentLoop: vi.fn(),
+  abortAgentLoop: abortAgentLoopMock,
   CHAT_AGENT_CONFIG: { agentType: "chat" },
 }));
 
@@ -440,5 +442,16 @@ describe("deleteConversation", () => {
     await sendChatMessage("conv-1", "After failed delete");
     expect(messageStorage.size).toBe(1);
     expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts a running agent as soon as the delete starts", async () => {
+    // The agent run lives outside the send queue, so deleteConversation must
+    // stop the loop itself. Without this, a conversation deleted mid-run
+    // keeps burning LLM iterations and persisting assistant messages against
+    // a row that no longer exists.
+    await deleteConversation("conv-1");
+
+    expect(abortAgentLoopMock).toHaveBeenCalledTimes(1);
+    expect(abortAgentLoopMock).toHaveBeenCalledWith("conv-1");
   });
 });
