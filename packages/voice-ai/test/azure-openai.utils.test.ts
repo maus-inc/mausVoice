@@ -51,9 +51,20 @@ describe("azureOpenAIGenerateText deployment coverage", () => {
     }));
   };
 
-  it("falls back to json_object for deployments without json_schema support", async () => {
-    // User-deployed models (Llama, Phi, …) are not in the Azure allow-list, so
-    // the request must use json_object or the provider rejects it outright.
+  // User-deployed models (Llama, Phi, ...) are not in the Azure allow-list, so
+  // the request must use json_object or the provider rejects it outright.
+  it.each([
+    [
+      "falls back to json_object for deployments without json_schema support",
+      "llama-3.3-70b",
+      "json_object",
+    ],
+    [
+      "uses json_schema for a supported deployment",
+      "gpt-4o-mini",
+      "json_schema",
+    ],
+  ] as const)("%s", async (_title, deploymentName, responseType) => {
     const create = vi.fn().mockResolvedValue({
       choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
       usage: { total_tokens: 5 },
@@ -66,38 +77,14 @@ describe("azureOpenAIGenerateText deployment coverage", () => {
     await azureOpenAIGenerateText({
       apiKey: "test-key",
       endpoint: "https://test.azure.com",
-      deploymentName: "llama-3.3-70b",
+      deploymentName,
       prompt: "hi",
       jsonResponse: AZURE_JSON_SCHEMA,
     });
 
     expect(create.mock.calls[0]?.[0]).toMatchObject({
-      model: "llama-3.3-70b",
-      response_format: { type: "json_object" },
-    });
-  });
-
-  it("uses json_schema for a supported deployment", async () => {
-    const create = vi.fn().mockResolvedValue({
-      choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
-      usage: { total_tokens: 5 },
-    });
-    mockAzureCreate(create);
-
-    const { azureOpenAIGenerateText } =
-      await import("../src/azure-openai.utils");
-
-    await azureOpenAIGenerateText({
-      apiKey: "test-key",
-      endpoint: "https://test.azure.com",
-      deploymentName: "gpt-4o-mini",
-      prompt: "hi",
-      jsonResponse: AZURE_JSON_SCHEMA,
-    });
-
-    expect(create.mock.calls[0]?.[0]).toMatchObject({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_schema" },
+      model: deploymentName,
+      response_format: { type: responseType },
     });
   });
 });
