@@ -493,7 +493,7 @@ export const AppSideEffects = () => {
   // listener after the strategy or permission flips.
   useTauriListen<void>("desktop_resume", () => {
     const resumeState = getAppState();
-    void restartKeyboardListenerOnResume({
+    restartKeyboardListenerOnResume({
       hotkeyStrategy: resumeState.hotkeyStrategy,
       isMainWindow,
       keyPermAuthorized: isPermissionAuthorized(
