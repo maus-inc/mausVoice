@@ -455,8 +455,8 @@ export function countNonOpaquePixels(image) {
   let transparent = 0;
   let semi = 0;
   const { rgba } = image;
-  for (let o = 3; o < rgba.length; o += 4) {
-    const alpha = rgba[o];
+  for (let alphaOffset = 3; alphaOffset < rgba.length; alphaOffset += 4) {
+    const alpha = rgba[alphaOffset];
     if (alpha === 0) transparent += 1;
     else if (alpha < 255) semi += 1;
   }
@@ -508,8 +508,10 @@ export function computeContainFit(image) {
     TARGET_WIDTH / image.width,
     TARGET_HEIGHT / image.height,
   );
-  const fitWidth = Math.max(1, Math.round(image.width * scale));
-  const fitHeight = Math.max(1, Math.round(image.height * scale));
+  // Floor keeps the contain promise: fitted edges never pass the panel, and
+  // float error on the binding edge only costs one letterbox pixel row.
+  const fitWidth = Math.max(1, Math.floor(image.width * scale));
+  const fitHeight = Math.max(1, Math.floor(image.height * scale));
   return {
     fitWidth,
     fitHeight,
@@ -522,15 +524,18 @@ export function computeContainFit(image) {
 /**
  * Contain-fit the art onto the target canvas, centred, with the letterbox
  * background everywhere else. An exact-size source short-circuits to a copy.
+ * Callers that already hold the geometry pass it in so it is computed once;
+ * otherwise it is derived from the image.
  */
-export function drawContainFit(image, background) {
+export function drawContainFit(
+  image,
+  background,
+  fit = computeContainFit(image),
+) {
   const canvas = new Uint8Array(TARGET_WIDTH * TARGET_HEIGHT * 4);
-  const { fitWidth, fitHeight, offsetX, offsetY } = computeContainFit(image);
+  const { fitWidth, fitHeight, offsetX, offsetY } = fit;
   const exactFit =
-    image.width === TARGET_WIDTH &&
-    image.height === TARGET_HEIGHT &&
-    fitWidth === TARGET_WIDTH &&
-    fitHeight === TARGET_HEIGHT;
+    image.width === TARGET_WIDTH && image.height === TARGET_HEIGHT;
 
   for (let y = 0; y < TARGET_HEIGHT; y += 1) {
     for (let x = 0; x < TARGET_WIDTH; x += 1) {
@@ -675,7 +680,8 @@ function main() {
 
   const background = chooseBackground(image);
   compositeOverBackground(image, background);
-  const canvas = drawContainFit(image, background);
+  const fit = computeContainFit(image);
+  const canvas = drawContainFit(image, background, fit);
   const bmp = encodeBmp24(canvas);
 
   mkdirSync(dirname(OUTPUT), { recursive: true });
@@ -683,7 +689,7 @@ function main() {
   verifyOutput(OUTPUT);
 
   const hex = background.map((v) => v.toString(16).padStart(2, "0")).join("");
-  const bleed = computeContainFit(image).fullBleed
+  const bleed = fit.fullBleed
     ? "full-bleed, no letterbox"
     : `letterbox #${hex}`;
   console.log(

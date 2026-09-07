@@ -380,15 +380,50 @@ describe("computeContainFit", () => {
   });
 
   it("centres off-aspect art and reports the letterbox", () => {
-    // 320x200 scales to 164x102, centred vertically (offsetY 106). 164/320
-    // is not exact in binary floating point, so 200 x scale rounds to 102.
-    expect(computeContainFit({ width: 320, height: 200 })).toMatchObject({
+    // 320x200 scales to 164x102, centred vertically (offsetY 106). Floor
+    // keeps the contain promise even when float error puts the binding
+    // edge a hair under its target.
+    const fit = computeContainFit({ width: 320, height: 200 });
+    expect(fit).toMatchObject({
       fitWidth: 164,
       fitHeight: 102,
       offsetX: 0,
       offsetY: 106,
       fullBleed: false,
     });
+    // Contain promise, independent of rounding: fitted edges never pass
+    // the panel and the offsets centre the art inside it.
+    expect(fit.fitWidth).toBeLessThanOrEqual(TARGET_WIDTH);
+    expect(fit.fitHeight).toBeLessThanOrEqual(TARGET_HEIGHT);
+    expect(fit.offsetX + fit.fitWidth).toBeLessThanOrEqual(TARGET_WIDTH);
+    expect(fit.offsetY + fit.fitHeight).toBeLessThanOrEqual(TARGET_HEIGHT);
+  });
+
+  it("never lets fitted edges pass the panel", () => {
+    const sizes = [
+      [165, 316],
+      [329, 628],
+      [1, 1],
+      [2000, 10],
+      [10, 2000],
+      [163, 313],
+      [164, 314],
+      [328, 628],
+    ];
+    for (const [width, height] of sizes) {
+      const fit = computeContainFit({ width, height });
+      expect(fit.fitWidth).toBeGreaterThanOrEqual(1);
+      expect(fit.fitHeight).toBeGreaterThanOrEqual(1);
+      expect(fit.fitWidth).toBeLessThanOrEqual(TARGET_WIDTH);
+      expect(fit.fitHeight).toBeLessThanOrEqual(TARGET_HEIGHT);
+      expect(fit.offsetX).toBeGreaterThanOrEqual(0);
+      expect(fit.offsetY).toBeGreaterThanOrEqual(0);
+      expect(fit.offsetX + fit.fitWidth).toBeLessThanOrEqual(TARGET_WIDTH);
+      expect(fit.offsetY + fit.fitHeight).toBeLessThanOrEqual(TARGET_HEIGHT);
+      expect(fit.fullBleed).toBe(
+        fit.fitWidth === TARGET_WIDTH && fit.fitHeight === TARGET_HEIGHT,
+      );
+    }
   });
 });
 
@@ -421,6 +456,14 @@ describe("drawContainFit + encodeBmp24", () => {
     expect(Array.from(canvas.subarray(canvas.length - 4))).toEqual([
       200, 100, 50, 255,
     ]);
+  });
+
+  it("reuses caller-provided geometry instead of recomputing it", () => {
+    const art = solidImage(320, 200, [180, 30, 60]);
+    const fit = computeContainFit(art);
+    const derived = drawContainFit(art, [10, 20, 30]);
+    const provided = drawContainFit(art, [10, 20, 30], fit);
+    expect(Buffer.from(derived).equals(Buffer.from(provided))).toBe(true);
   });
 
   it("contain-fits landscape art and letterboxes with the background", () => {
