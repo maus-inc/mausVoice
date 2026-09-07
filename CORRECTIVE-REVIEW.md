@@ -390,7 +390,7 @@ Run here, all green.
 | Check                                   | Result                                                                                                                                 |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Types across all packages               | Pass                                                                                                                                   |
-| Desktop unit tests                      | `pnpm --filter desktop test:unit` on this branch head: pass, 123 files and 1,283 tests, against 112 and 1,185 at the start of the work |
+| Desktop unit tests                      | `pnpm --filter desktop test:unit` on this branch head: pass, 123 files and 1,284 tests, against 112 and 1,185 at the start of the work |
 | Desktop lint, formatting and oxlint     | Pass, no warnings and no errors                                                                                                        |
 | Repo-wide formatting                    | Pass, and it was failing at the head of PR 63                                                                                          |
 | Build                                   | Pass, 6 of 6 packages                                                                                                                  |

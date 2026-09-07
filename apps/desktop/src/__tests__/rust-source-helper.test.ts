@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { extractRustBlock } from "../../test/helpers/rust-source.utils";
+import {
+  extractRustBlock,
+  listRepoEntries,
+} from "../../test/helpers/rust-source.utils";
 
 /**
  * The contract tests that read Rust source all cut their block out with this
@@ -54,5 +57,14 @@ describe("extractRustBlock", () => {
     expect(() => extractRustBlock("const A: u8 = 1;", "const A")).toThrow(
       "No block follows",
     );
+  });
+});
+
+describe("listRepoEntries", () => {
+  it("returns repository paths with a forward slash on every platform", () => {
+    const entries = listRepoEntries("packages/rust_macos_pill/src");
+
+    expect(entries).toContain("packages/rust_macos_pill/src/nsstring.rs");
+    expect(entries.filter((entry) => entry.includes("\\"))).toEqual([]);
   });
 });

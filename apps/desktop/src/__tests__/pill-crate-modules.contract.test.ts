@@ -25,11 +25,13 @@ import {
  */
 const ROOT_FILES = ["lib.rs", "main.rs"];
 
+const DECLARATION = /^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*);/;
+
 const moduleName = (file: string): string =>
   path.basename(file).replace(/\.rs$/, "");
 
-const declaresModule = (source: string, module: string): boolean =>
-  new RegExp(`^\\s*(pub(\\([^)]*\\))?\\s+)?mod ${module};`, "m").test(source);
+const declaredModules = (source: string): string[] =>
+  source.split("\n").flatMap((line) => DECLARATION.exec(line)?.[1] ?? []);
 
 describe("native pill crate modules", () => {
   it.each(PILL_CRATES)(
@@ -58,10 +60,8 @@ describe("native pill crate modules", () => {
       expect(modules.length).toBeGreaterThan(0);
 
       for (const root of roots) {
-        const source = readRepoSource(root);
-        const missing = modules.filter(
-          (module) => !declaresModule(source, module),
-        );
+        const declared = declaredModules(readRepoSource(root));
+        const missing = modules.filter((module) => !declared.includes(module));
 
         expect({ root, missing }).toEqual({ root, missing: [] });
       }

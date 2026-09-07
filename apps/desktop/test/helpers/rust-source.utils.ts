@@ -19,7 +19,14 @@ export const PILL_CRATES = [
   { platform: "gtk", crate: "packages/rust_gtk_pill" },
 ];
 
-/** Every entry in `dir`, as paths from the repository root. */
+/**
+ * Every entry in `dir`, as paths from the repository root.
+ *
+ * The paths are joined with a forward slash on every platform, the way git
+ * writes them, because callers compare them against path literals spelled the
+ * same way. Reading one back goes through `readRepoSource`, which resolves it
+ * against the repository root with the separator the platform wants.
+ */
 export const listRepoEntries = (dir: string): string[] =>
   readdirSync(path.join(REPO_ROOT, dir)).map((name) => `${dir}/${name}`);
 
