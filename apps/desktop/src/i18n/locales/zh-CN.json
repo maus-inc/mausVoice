@@ -690,6 +690,7 @@
   "theme_mode": "主题：{mode}",
   "theme_settings": "主题设置",
   "thinking": "思考中…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "此操作无法撤销。您的所有数据将被永久删除。",
   "this_action_permanently_removes_local_data": "此操作会永久移除本地数据",
   "this_device_summary_recommended_recommended": "此设备：{summary} · 推荐：{recommended}",

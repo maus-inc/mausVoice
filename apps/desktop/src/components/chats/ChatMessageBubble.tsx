@@ -1,11 +1,13 @@
-import { useMemo } from "react";
-import { Box, Stack, Typography } from "@mui/material";
-import { Wrench } from "lucide-react";
+import { Box, IconButton, Stack, Typography } from "@mui/material";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Check, Copy, Wrench } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import Markdown from "react-markdown";
 import { FormattedMessage, useIntl } from "react-intl";
 import remarkGfm from "remark-gfm";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
+import { springPop } from "../../styles/motion";
 import {
   isEditableTarget,
   useContextMenu,
@@ -24,26 +26,36 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
 
   const intl = useIntl();
   const ctxMenu = useContextMenu();
+  const reduceMotion = useReducedMotion();
+  const [hovered, setHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
   const content = message?.content ?? "";
+
+  const copyContent = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+      showSnackbar(
+        intl.formatMessage({ defaultMessage: "Copied successfully" }),
+        { mode: "success" },
+      );
+    } catch (error) {
+      showErrorSnackbar(error);
+    }
+  }, [content, intl]);
+
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!content.trim()) return [];
     return [
       {
         label: intl.formatMessage({ defaultMessage: "Copy message" }),
-        onClick: async () => {
-          try {
-            await navigator.clipboard.writeText(content);
-            showSnackbar(
-              intl.formatMessage({ defaultMessage: "Copied successfully" }),
-              { mode: "success" },
-            );
-          } catch (error) {
-            showErrorSnackbar(error);
-          }
+        onClick: () => {
+          void copyContent();
         },
       },
     ];
-  }, [content, intl]);
+  }, [content, intl, copyContent]);
 
   if (!message) {
     return null;
@@ -64,6 +76,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   if (message.role === "assistant" && isEmpty && !isStreaming) return null;
 
   const isMe = message.role === "user";
+  const showCopy = !isEmpty && (hovered || copied);
 
   return (
     <Stack
@@ -77,10 +90,23 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
       <AgentActivity messageId={id} />
       <Stack
         direction="row"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         sx={{
           justifyContent: isMe ? "flex-end" : "flex-start",
+          alignItems: "flex-end",
+          gap: 0.5,
         }}
       >
+        {!isMe && (
+          <MessageCopyButton
+            visible={showCopy}
+            copied={copied}
+            reduceMotion={!!reduceMotion}
+            onCopy={() => void copyContent()}
+            label={intl.formatMessage({ defaultMessage: "Copy message" })}
+          />
+        )}
         <Box
           sx={{
             maxWidth: "75%",
@@ -147,11 +173,74 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
             <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
           )}
         </Box>
+        {isMe && (
+          <MessageCopyButton
+            visible={showCopy}
+            copied={copied}
+            reduceMotion={!!reduceMotion}
+            onCopy={() => void copyContent()}
+            label={intl.formatMessage({ defaultMessage: "Copy message" })}
+          />
+        )}
       </Stack>
       {ctxMenu.renderMenu()}
     </Stack>
   );
 };
+
+const MessageCopyButton = ({
+  visible,
+  copied,
+  reduceMotion,
+  onCopy,
+  label,
+}: {
+  visible: boolean;
+  copied: boolean;
+  reduceMotion: boolean;
+  onCopy: () => void;
+  label: string;
+}) => (
+  <Box
+    sx={{
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? "auto" : "none",
+      transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+      "@media (prefers-reduced-motion: reduce)": {
+        transition: "none",
+      },
+      flexShrink: 0,
+      mb: 0.25,
+    }}
+  >
+    <IconButton size="small" onClick={onCopy} aria-label={label}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={copied ? "check" : "copy"}
+          initial={
+            reduceMotion
+              ? false
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+          exit={
+            reduceMotion
+              ? undefined
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          transition={springPop}
+          style={{ display: "inline-flex" }}
+        >
+          {copied ? (
+            <Check size={14} strokeWidth={2} />
+          ) : (
+            <Copy size={14} strokeWidth={2} />
+          )}
+        </motion.span>
+      </AnimatePresence>
+    </IconButton>
+  </Box>
+);
 
 const ToolResultBubble = ({
   toolName,

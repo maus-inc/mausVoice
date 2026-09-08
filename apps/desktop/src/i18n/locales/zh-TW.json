@@ -690,6 +690,7 @@
   "theme_mode": "主題：{mode}",
   "theme_settings": "主題設定",
   "thinking": "思考中…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "此操作無法復原。您的所有資料將被永久刪除。",
   "this_action_permanently_removes_local_data": "此操作會永久移除本機資料",
   "this_device_summary_recommended_recommended": "此裝置：{summary} · 建議：{recommended}",

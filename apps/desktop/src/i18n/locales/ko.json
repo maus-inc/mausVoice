@@ -690,6 +690,7 @@
   "theme_mode": "테마: {mode}",
   "theme_settings": "테마 설정",
   "thinking": "생각 중…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "이 작업은 취소할 수 없습니다. 모든 데이터가 영구적으로 삭제됩니다.",
   "this_action_permanently_removes_local_data": "이 작업은 로컬 데이터를 영구적으로 제거합니다",
   "this_device_summary_recommended_recommended": "이 기기: {summary} · 권장: {recommended}",

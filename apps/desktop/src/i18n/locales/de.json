@@ -690,6 +690,7 @@
   "theme_mode": "Design: {mode}",
   "theme_settings": "Design-Einstellungen",
   "thinking": "Denke nach…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Diese Aktion kann nicht rückgängig gemacht werden. Alle Ihre Daten werden dauerhaft gelöscht.",
   "this_action_permanently_removes_local_data": "Diese Aktion entfernt dauerhaft lokale Daten",
   "this_device_summary_recommended_recommended": "Dieses Gerät: {summary} · Empfohlen: {recommended}",

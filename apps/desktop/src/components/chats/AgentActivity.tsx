@@ -1,12 +1,15 @@
 /**
  * Pattern from siriwatknp/mui-treasury ai-reasoning.tsx:
  * button trigger, duration tracking, auto-open while streaming, auto-close 1s after.
+ * Motion: watermelon disclosure spring + assistant-ui thinking elapsed line.
  */
 import { Box, Stack, Typography } from "@mui/material";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
+import { springSnappy } from "../../styles/motion";
 import { useAppStore } from "../../store";
 
 type AgentActivityProps = {
@@ -40,6 +43,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const [duration, setDuration] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [hasAutoClosed, setHasAutoClosed] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   const isStreaming = streaming?.isStreaming ?? false;
 
@@ -55,6 +59,19 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
       );
       startTimeRef.current = null;
     }
+  }, [isStreaming]);
+
+  useEffect(() => {
+    if (!isStreaming) return;
+    const tick = () => {
+      if (startTimeRef.current == null) return;
+      setDuration(
+        Math.max(1, Math.ceil((Date.now() - startTimeRef.current) / 1000)),
+      );
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
   }, [isStreaming]);
 
   useEffect(() => {
@@ -102,7 +119,16 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
             }}
           >
             <Typography variant="caption" sx={{ color: "inherit" }}>
-              {isStreaming || duration === 0 ? (
+              {isStreaming ? (
+                duration > 0 ? (
+                  <FormattedMessage
+                    defaultMessage="Thinking · {seconds}s"
+                    values={{ seconds: duration }}
+                  />
+                ) : (
+                  <FormattedMessage defaultMessage="Thinking…" />
+                )
+              ) : duration === 0 ? (
                 <FormattedMessage defaultMessage="Thinking…" />
               ) : (
                 <FormattedMessage
@@ -111,33 +137,44 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
                 />
               )}
             </Typography>
-            <ChevronDown
-              size={16}
-              strokeWidth={1.9}
-              style={{
-                transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 200ms",
-              }}
-            />
-          </Box>
-          {isOpen && (
-            <Typography
-              variant="caption"
-              sx={{
-                mt: 1,
-                color: "text.secondary",
-                whiteSpace: "pre-wrap",
-                display: "block",
-                pl: 1,
-                borderLeft: 1,
-                borderColor: "divider",
-                maxHeight: 200,
-                overflow: "auto",
-              }}
+            <Box
+              component={reduceMotion ? "span" : motion.span}
+              animate={reduceMotion ? undefined : { rotate: isOpen ? 180 : 0 }}
+              transition={springSnappy}
+              style={{ display: "inline-flex" }}
             >
-              {reasoning}
-            </Typography>
-          )}
+              <ChevronDown size={16} strokeWidth={1.9} />
+            </Box>
+          </Box>
+          <AnimatePresence initial={false}>
+            {isOpen && (
+              <Typography
+                component={reduceMotion ? "span" : motion.span}
+                variant="caption"
+                {...(reduceMotion
+                  ? {}
+                  : {
+                      initial: { opacity: 0, height: 0 },
+                      animate: { opacity: 1, height: "auto" },
+                      exit: { opacity: 0, height: 0 },
+                      transition: springSnappy,
+                    })}
+                sx={{
+                  mt: 1,
+                  color: "text.secondary",
+                  whiteSpace: "pre-wrap",
+                  display: "block",
+                  pl: 1,
+                  borderLeft: 1,
+                  borderColor: "divider",
+                  maxHeight: 200,
+                  overflow: "auto",
+                }}
+              >
+                {reasoning}
+              </Typography>
+            )}
+          </AnimatePresence>
         </Box>
       )}
     </Stack>

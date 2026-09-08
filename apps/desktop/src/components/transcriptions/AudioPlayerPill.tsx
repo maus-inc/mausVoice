@@ -1,5 +1,7 @@
 import { Box, IconButton, Typography } from "@mui/material";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Pause, Play } from "lucide-react";
+import { springPop } from "../../styles/motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
@@ -34,6 +36,7 @@ export const AudioPlayerPill = ({
   actions,
 }: AudioPlayerPillProps) => {
   const intl = useIntl();
+  const reduceMotion = useReducedMotion();
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
@@ -302,11 +305,30 @@ export const AudioPlayerPill = ({
         disabled={disabled}
         sx={{ p: 0.5 }}
       >
-        {isPlaying ? (
-          <Pause size={16} strokeWidth={1.9} />
-        ) : (
-          <Play size={16} strokeWidth={1.9} />
-        )}
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={isPlaying ? "pause" : "play"}
+            initial={
+              reduceMotion
+                ? false
+                : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+            }
+            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+            exit={
+              reduceMotion
+                ? undefined
+                : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+            }
+            transition={springPop}
+            style={{ display: "inline-flex" }}
+          >
+            {isPlaying ? (
+              <Pause size={16} strokeWidth={1.9} />
+            ) : (
+              <Play size={16} strokeWidth={1.9} />
+            )}
+          </motion.span>
+        </AnimatePresence>
       </IconButton>
       <Typography
         variant="body2"

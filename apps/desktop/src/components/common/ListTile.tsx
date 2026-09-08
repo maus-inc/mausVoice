@@ -196,7 +196,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
             ].join(", "),
             "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
               {
-                transform: "scale(0.975)",
+                transform: "scale(0.96)",
               },
             "@media (prefers-reduced-motion: reduce)": {
               transition: "none",

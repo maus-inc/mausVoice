@@ -1,4 +1,3 @@
-import MicIcon from "@mui/icons-material/Mic";
 import {
   Box,
   Button,
@@ -9,6 +8,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { Mic } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -337,7 +337,7 @@ export const ComposerPage = () => {
               title={disabledReason ?? undefined}
               aria-describedby={disabledReason ? disabledReasonId : undefined}
             >
-              <MicIcon />
+              <Mic size={20} strokeWidth={2} />
             </IconButton>
             <Button
               variant="outlined"

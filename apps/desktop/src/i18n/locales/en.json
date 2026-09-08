@@ -690,6 +690,7 @@
   "theme_mode": "Theme: {mode}",
   "theme_settings": "Theme settings",
   "thinking": "Thinking…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "This action cannot be undone. All your data will be permanently deleted.",
   "this_action_permanently_removes_local_data": "This action permanently removes local data",
   "this_device_summary_recommended_recommended": "This device: {summary} · Recommended: {recommended}",

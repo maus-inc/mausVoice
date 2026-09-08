@@ -1,4 +1,4 @@
-import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import { Plus } from "lucide-react";
 import { Button } from "@mui/material";
 import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
@@ -87,7 +87,7 @@ export default function DictionaryPage() {
         action={
           <Button
             variant="text"
-            startIcon={<AddRoundedIcon />}
+            startIcon={<Plus size={16} strokeWidth={2} />}
             onClick={() => setIsAddDialogOpen(true)}
           >
             <FormattedMessage defaultMessage="Add" />

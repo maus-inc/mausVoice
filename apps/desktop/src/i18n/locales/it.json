@@ -690,6 +690,7 @@
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Impostazioni tema",
   "thinking": "Sto pensando…",
+  "thinking_seconds_s": "Thinking · {seconds}s",
   "this_action_cannot_be_undone_all_your_data_will_be_permanent": "Questa azione non può essere annullata. Tutti i tuoi dati verranno eliminati permanentemente.",
   "this_action_permanently_removes_local_data": "Questa azione rimuove permanentemente i dati locali",
   "this_device_summary_recommended_recommended": "Questo dispositivo: {summary} · Consigliato: {recommended}",

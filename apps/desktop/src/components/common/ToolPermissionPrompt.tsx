@@ -102,7 +102,7 @@ export const ToolPermissionPrompt = ({
           maxWidth: "75%",
           px: 2,
           py: 1.5,
-          borderRadius: 1,
+          borderRadius: 2.5,
           border: 1,
           borderColor: "divider",
           bgcolor: "level1",
