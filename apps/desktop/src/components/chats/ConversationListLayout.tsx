@@ -1,4 +1,4 @@
-import { AddRounded } from "@mui/icons-material";
+import { Plus } from "lucide-react";
 import {
   Box,
   IconButton,
@@ -57,7 +57,7 @@ export const ConversationListLayout = ({
           placement="top"
         >
           <IconButton size="small" color="primary" onClick={onNewChat}>
-            <AddRounded fontSize="small" />
+            <Plus size={16} strokeWidth={2} />
           </IconButton>
         </Tooltip>
       </Stack>

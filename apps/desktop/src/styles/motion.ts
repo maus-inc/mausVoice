@@ -24,4 +24,22 @@ export const springSoft = {
   mass: 0.9,
 };
 
+/** Watermelon layout morph (morphing-button / contextual-ai-bar). */
+export const springLayout = {
+  type: "spring" as const,
+  stiffness: 240,
+  damping: 18,
+  mass: 1.1,
+};
+
+/** Watermelon popLayout icon swap (copy-confirm / voice-transcribe). */
+export const springPop = {
+  type: "spring" as const,
+  duration: 0.3,
+  bounce: 0,
+};
+
+/** Press feedback floor used across chrome, switches, and icon buttons. */
+export const pressScale = 0.96;
+
 export const reducedMotionQuery = "(prefers-reduced-motion: reduce)";

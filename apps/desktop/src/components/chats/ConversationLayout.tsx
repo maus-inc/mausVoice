@@ -1,7 +1,9 @@
-import { SendRounded } from "@mui/icons-material";
 import { Box, IconButton, InputBase, Stack, Typography } from "@mui/material";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { LoaderCircle, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { springPop } from "../../styles/motion";
 import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
@@ -36,6 +38,7 @@ export const ConversationLayout = ({
   );
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const reduceMotion = useReducedMotion();
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -154,11 +157,13 @@ export const ConversationLayout = ({
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: 1,
-            p: 1,
-            borderRadius: 1,
+            gap: 0.75,
+            p: 0.5,
+            pl: 1.5,
+            borderRadius: 999,
             border: 1,
             borderColor: "divider",
+            bgcolor: "action.hover",
           }}
         >
           <InputBase
@@ -174,15 +179,53 @@ export const ConversationLayout = ({
                 handleSend();
               }
             }}
-            sx={{ px: 1 }}
+            sx={{ px: 0.5 }}
           />
           <IconButton
             onClick={handleSend}
             color="primary"
             size="small"
             disabled={sending}
+            sx={{
+              bgcolor: "background.paper",
+              border: 1,
+              borderColor: "divider",
+            }}
           >
-            <SendRounded />
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.span
+                key={sending ? "sending" : "send"}
+                initial={
+                  reduceMotion
+                    ? false
+                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+                }
+                animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                exit={
+                  reduceMotion
+                    ? undefined
+                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+                }
+                transition={springPop}
+                style={{ display: "inline-flex" }}
+              >
+                {sending ? (
+                  <motion.span
+                    animate={reduceMotion ? undefined : { rotate: 360 }}
+                    transition={
+                      reduceMotion
+                        ? undefined
+                        : { repeat: Infinity, duration: 0.7, ease: "linear" }
+                    }
+                    style={{ display: "inline-flex" }}
+                  >
+                    <LoaderCircle size={16} strokeWidth={2} />
+                  </motion.span>
+                ) : (
+                  <Send size={16} strokeWidth={2} />
+                )}
+              </motion.span>
+            </AnimatePresence>
           </IconButton>
         </Box>
       </Box>

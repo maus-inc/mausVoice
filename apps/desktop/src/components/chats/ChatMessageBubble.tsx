@@ -86,7 +86,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
             maxWidth: "75%",
             px: 2,
             py: 1,
-            borderRadius: 1,
+            borderRadius: 2.5,
             bgcolor: isMe ? "primary.main" : "level1",
             border: isMe ? "none" : 1,
             borderColor: "divider",

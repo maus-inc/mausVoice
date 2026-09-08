@@ -1,4 +1,4 @@
-import { AddRounded } from "@mui/icons-material";
+import { Plus } from "lucide-react";
 import { Box, Chip, Divider, Stack, Typography } from "@mui/material";
 import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -100,7 +100,7 @@ export default function ChatsPage() {
               <FormattedMessage defaultMessage="Start a conversation to get things going" />
             </Typography>
             <Chip
-              icon={<AddRounded />}
+              icon={<Plus size={16} strokeWidth={2} />}
               label={<FormattedMessage defaultMessage="Create new chat" />}
               variant="outlined"
               onClick={handleNewChat}

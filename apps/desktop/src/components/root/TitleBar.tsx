@@ -206,6 +206,6 @@ const controlSx = {
     color: "text.primary",
   },
   "&:active": {
-    transform: "scale(0.94)",
+    transform: "scale(0.96)",
   },
 } as const;

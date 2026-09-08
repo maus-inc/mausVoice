@@ -1,6 +1,8 @@
-import { CheckOutlined, ContentCopyOutlined } from "@mui/icons-material";
 import { IconButton, Stack, Typography } from "@mui/material";
-import { useCallback, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Check, Copy } from "lucide-react";
+import { useCallback, useState, type ReactNode } from "react";
+import { springPop } from "../../styles/motion";
 
 type CopyableCommandProps = {
   command: string;
@@ -8,11 +10,12 @@ type CopyableCommandProps = {
 
 export const CopyableCommand = ({ command }: CopyableCommandProps) => {
   const [copied, setCopied] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(command);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 1800);
   }, [command]);
 
   return (
@@ -40,23 +43,47 @@ export const CopyableCommand = ({ command }: CopyableCommandProps) => {
         {command}
       </Typography>
       <IconButton size="small" onClick={handleCopy} sx={{ flexShrink: 0 }}>
-        {copied ? (
-          <CheckOutlined
-            sx={{
-              fontSize: 16,
-              color: "success.main",
-              transition: "transform 0.2s ease, opacity 0.2s ease",
-            }}
-          />
-        ) : (
-          <ContentCopyOutlined
-            sx={{
-              fontSize: 16,
-              transition: "transform 0.2s ease, opacity 0.2s ease",
-            }}
-          />
-        )}
+        <AnimatePresence mode="popLayout" initial={false}>
+          <BoxMotion
+            key={copied ? "check" : "copy"}
+            reduceMotion={!!reduceMotion}
+          >
+            {copied ? (
+              <Check
+                size={16}
+                strokeWidth={2}
+                color="var(--mui-palette-success-main)"
+              />
+            ) : (
+              <Copy size={16} strokeWidth={2} />
+            )}
+          </BoxMotion>
+        </AnimatePresence>
       </IconButton>
     </Stack>
   );
 };
+
+const BoxMotion = ({
+  children,
+  reduceMotion,
+}: {
+  children: ReactNode;
+  reduceMotion: boolean;
+}) => (
+  <motion.span
+    initial={
+      reduceMotion ? false : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+    }
+    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+    exit={
+      reduceMotion
+        ? undefined
+        : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+    }
+    transition={springPop}
+    style={{ display: "inline-flex" }}
+  >
+    {children}
+  </motion.span>
+);
