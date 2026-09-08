@@ -38,6 +38,13 @@ export const ConfirmDialog = ({
   destructive,
   busy,
 }: ConfirmDialogProps) => {
+  const confirmContent = confirmLabel ?? (
+    <FormattedMessage defaultMessage="Confirm" />
+  );
+  const cancelContent = cancelLabel ?? (
+    <FormattedMessage defaultMessage="Cancel" />
+  );
+
   return (
     <Dialog
       open={isOpen}
@@ -56,7 +63,7 @@ export const ConfirmDialog = ({
           {...cancelButtonProps}
           disabled={busy || cancelButtonProps?.disabled}
         >
-          {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
+          {cancelContent}
         </Button>
         <Button
           variant="contained"
