@@ -87,6 +87,8 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
+import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -201,6 +203,17 @@ const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
  *  has focused an editable target so accumulated backlog can be drained. */
 const BACKLOG_DRAIN_POLL_MS = 1_000;
 const IN_DICTATION_STYLE_KEYS = ["LeftArrow", "RightArrow"];
+
+/**
+ * Resuming is started from event listeners that cannot await it, so a failure
+ * that escapes its own error handling is written to the log instead of
+ * becoming an unhandled rejection.
+ */
+const logResumeFailure = (resuming: Promise<void>): void => {
+  resuming.catch((error: unknown) => {
+    getLogger().error(`Failed to resume dictation: ${error}`);
+  });
+};
 
 export const DictationSideEffects = () => {
   const intl = useIntl();
@@ -769,9 +782,9 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
-    // Capture the live tone at stop as a race-safety fallback. The whole
-    // utterance is styled by the tone snapshotted at recording START, so a
-    // mid-dictation style switch only affects the next recording.
+    // Capture the live tone at stop: this is the style the whole utterance is
+    // finalized with, so a mid-dictation style switch restyles the entire
+    // transcript (and, being persisted, starts the next recording too).
     utteranceTonesRef.current.snapshotAtStop(
       getToneIdToUse(getAppState(), {
         currentAppToneId: null,
@@ -938,9 +951,9 @@ export const DictationSideEffects = () => {
         await loadManualStyleForCurrentApp();
       }
 
-      // Seed the start snapshot after app-based style load. This is the
-      // authoritative style for the whole utterance; a mid-dictation switch
-      // styles the next recording only. Stop captures a fallback snapshot.
+      // Seed the start snapshot after app-based style load. It is the
+      // fallback style for the utterance; the snapshot taken at stop (which
+      // includes any mid-dictation switch) is the authoritative one.
       utteranceTonesRef.current.seed(
         getToneIdToUse(getAppState(), {
           currentAppToneId: null,
@@ -1414,7 +1427,7 @@ export const DictationSideEffects = () => {
 
   useTauriListen<void>("resume-dictation", () => {
     if (!isMainWindow) return;
-    void resumeDictation();
+    logResumeFailure(resumeDictation());
   });
 
   useToastAction(async (payload) => {
@@ -1425,7 +1438,16 @@ export const DictationSideEffects = () => {
   });
 
   useTauriListen<void>("on-click-dictate", () => {
-    if (isMainWindow && isDictationInteractable) {
+    const intent = resolvePillBodyClickIntent({
+      isMainWindow,
+      isDictationInteractable,
+      isPaused: isPausedRef.current,
+    });
+    if (intent === "resume") {
+      logResumeFailure(resumeDictation());
+      return;
+    }
+    if (intent === "toggle") {
       debouncedToggle("dictation", dictationController);
     }
   });
@@ -1484,20 +1506,25 @@ export const DictationSideEffects = () => {
     );
   });
 
+  const hasPendingReview = useAppStore(
+    (state) => state.pendingPillReview !== null,
+  );
+
   useEffect(() => {
     if (!isMainWindow) return;
-    let size: string;
-    if (activeRecordingMode !== "agent") {
-      size = "dictation";
-    } else if (assistantInputMode === "type") {
-      size = "assistant_typing";
-    } else if (pillHasContent) {
-      size = "assistant_expanded";
-    } else {
-      size = "assistant_compact";
-    }
+    const size = resolvePillWindowSize({
+      hasPendingReview,
+      isAgentRecording: activeRecordingMode === "agent",
+      isAssistantTyping: assistantInputMode === "type",
+      pillHasContent,
+    });
     invoke("set_pill_window_size", { size }).catch(console.error);
-  }, [activeRecordingMode, pillHasContent, assistantInputMode]);
+  }, [
+    activeRecordingMode,
+    pillHasContent,
+    assistantInputMode,
+    hasPendingReview,
+  ]);
 
   // Sync style info to native GTK4 pill
   const pillStyleCount = useAppStore((state) => {

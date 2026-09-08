@@ -142,9 +142,9 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -1040,8 +1040,13 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         return;
     }
 
-    let is_compact = state.assistant_compact.get();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() { REVIEW_ACTIONS_HEIGHT } else { 0.0 };
 
     let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
     let panel_x = (ww - panel_w) / 2.0;
@@ -1080,7 +1085,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         // Scroll view spans the full panel height (minus input bar if typing).
         // Header, pill, and input are layered on top.
         let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
         } else {
             py + panel_h
         };
@@ -1134,6 +1139,20 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
             w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                cr,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar drawn on top of scroll view + gradients
         if is_typing {
@@ -1211,14 +1230,20 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() {
+    if messages.is_empty() && permissions.is_empty() && review.is_none() {
         return;
     }
 
     cr.save().ok();
     cr.rectangle(area_x, area_y, area_w, area_h);
     cr.clip();
+
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
@@ -1289,8 +1314,30 @@ fn draw_transcript(
         y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
     }
 
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(cr, state, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) =
+                rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
 
     cr.restore().ok();
 }
@@ -1350,6 +1397,95 @@ fn draw_thinking_text(
 
     cr.restore().ok();
     y + 20.0
+}
+
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(
+    cr: &cairo::Context, state: &PillState,
+    x: f64, y: f64, w: f64, alpha: f64,
+) -> f64 {
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(11.0);
+    cr.move_to(x, y + 12.0);
+    let _ = cr.show_text("REVIEW TRANSCRIPT");
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
+
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.set_font_size(14.0);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
+    let text = state.entry_text.borrow();
+    for line in wrap_text(cr, text.as_str(), w) {
+        cr.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        let _ = cr.show_text(&line);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+fn draw_review_actions(
+    cr: &cairo::Context, state: &PillState, review_id: &str,
+    panel_x: f64, y: f64, panel_w: f64, alpha: f64,
+) {
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.set_font_size(11.0);
+    cr.move_to(panel_x + PANEL_CONTENT_SIDE_INSET, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
+    let _ = cr.show_text("Edit below, then press Enter to insert");
+
+    // Rendered right to left so "Insert" (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
+    let buttons = [
+        ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
+        ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
+    ];
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
+
+    for (label, action, text_alpha) in buttons {
+        let btn_w = PERM_BUTTON_WIDTH * 0.8;
+        btn_x -= btn_w;
+
+        rounded_rect(cr, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
+        let _ = cr.fill();
+
+        rounded_rect(cr, btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5);
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+        cr.set_line_width(1.0);
+        let _ = cr.stroke();
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.set_font_size(11.0);
+        // Cairo only fails to measure when the font backend is in an error
+        // state. Draw the label at a sane offset rather than dropping it.
+        let (label_x, label_y) = match cr.text_extents(label) {
+            Ok(ext) => (
+                btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
+                btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
+            ),
+            Err(_) => (btn_x + 8.0, btn_y + PERM_BUTTON_HEIGHT * 0.7),
+        };
+        cr.move_to(label_x, label_y);
+        let _ = cr.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

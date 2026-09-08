@@ -133,6 +133,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -224,6 +225,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             | gdk::EventMask::BUTTON_PRESS_MASK
             | gdk::EventMask::BUTTON_RELEASE_MASK
             | gdk::EventMask::FOCUS_CHANGE_MASK
+            | gdk::EventMask::KEY_PRESS_MASK
             | gdk::EventMask::SCROLL_MASK
             | gdk::EventMask::SMOOTH_SCROLL_MASK,
     );
@@ -311,8 +313,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
         let (x, y) = event.position();
-        let is_typing = state_press.assistant_active.get()
-            && *state_press.assistant_input_mode.borrow() == "type";
+        let is_typing = state_press.is_typing();
         if is_typing {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
@@ -386,8 +387,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
     window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.assistant_active.get()
-            && *state_focus_in.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_in.is_typing();
         if is_typing {
             entry_focus_in.grab_focus();
         }
@@ -397,8 +397,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_out = state.clone();
     let entry_focus_out = entry.clone();
     window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.assistant_active.get()
-            && *state_focus_out.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_out.is_typing();
         if is_typing {
             entry_focus_out.select_region(0, 0);
         }
@@ -425,18 +424,35 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_entry = state.clone();
     entry.connect_activate(move |e| {
-        let text = e.text().to_string();
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            ipc::send(&OutMessage::TypedMessage { text: trimmed.to_string() });
+        // Enter submits: an insert decision while a transcript is under
+        // review, a message to the assistant otherwise.
+        *state_entry.entry_text.borrow_mut() = e.text().to_string();
+        if input::submit_entry(&state_entry) {
             e.set_text("");
-            *state_entry.entry_text.borrow_mut() = String::new();
         }
     });
 
     let state_entry_changed = state.clone();
     entry.connect_changed(move |e| {
         *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
+    });
+
+    let state_escape = state.clone();
+    window.connect_key_press_event(move |_, event| {
+        // Escape while a transcript is under review is a cancel decision, the
+        // same as on the Windows pill: the desktop is waiting for an answer.
+        // The window sees the key before the focused entry does, so this works
+        // whether or not the entry holds the keyboard.
+        if event.keyval() != gdk::keys::constants::Escape {
+            return glib::Propagation::Proceed;
+        }
+        match state_escape.pending_review_id() {
+            Some(review_id) => {
+                input::send_review_decision(&review_id, "cancel", None);
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
     });
 
     let receiver = Rc::new(RefCell::new(receiver));
@@ -553,6 +569,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
@@ -563,8 +580,27 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.assistant_messages.borrow_mut() = messages;
                     *state_tick.assistant_streaming.borrow_mut() = streaming;
                     *state_tick.assistant_permissions.borrow_mut() = permissions;
+                    let previous_review_id = state_tick
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
+                    *state_tick.assistant_review.borrow_mut() = review;
 
-                    if active && !was_active {
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *state_tick.entry_text.borrow_mut() = text.clone();
+                        entry_tick.set_text(&text);
+                    }
+
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         state_tick.should_stick.set(true);
                         state_tick.scroll_offset.set(0.0);
                     }
@@ -577,6 +613,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
                         has_saved_position: false,
+                        rect,
+                        monitor,
+                    });
+                }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: state_tick.has_saved_position.get(),
                         rect,
                         monitor,
                     });
@@ -595,9 +639,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         tick(&state_tick);
 
         // Show/hide entry for typing mode
-        let is_typing = state_tick.assistant_active.get()
-            && *state_tick.assistant_input_mode.borrow() == "type";
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
+        let is_typing = state_tick.is_typing();
+        if is_typing {
+            // Recomputed every frame rather than once on show. The window is
+            // resized by one message and the state that opens the entry by
+            // another, so a size that lands second would otherwise leave the
+            // entry sitting at the old geometry.
             let (ox, oy) = state_tick.content_offset();
             let dw = state_tick.draw_width.get();
             let dh = state_tick.draw_height.get();
@@ -622,6 +669,8 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_tick.set_margin_end(margin_end);
             entry_tick.set_margin_bottom(margin_bottom);
             entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+        }
+        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
             entry_tick.set_visible(true);
             entry_tick.show();
             match backend_tick {
@@ -670,10 +719,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         // previously keyed off `phase == Recording` alone, which ignored the
         // user's preference: a pill set to Hidden still appeared while
         // recording, and Persistent never showed when idle.
-        let should_show = should_show_pill(
-            state_tick.visibility.get(),
-            state_tick.phase.get(),
-            state_tick.assistant_active.get(),
+        let should_show = rust_pill_shared::should_show_pill(
+            state_tick.visibility.get().into(),
+            state_tick.phase.get() != Phase::Idle,
+            state_tick.owns_panel(),
         );
         if should_show {
             win_tick.show();
@@ -936,7 +985,14 @@ fn tick(state: &PillState) {
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target =
+        if state.owns_panel() {
+            1.0
+        } else {
+            0.0
+        };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
 
     // Keyboard button (spring)
@@ -945,7 +1001,7 @@ fn tick(state: &PillState) {
     spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
     spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);
@@ -1357,63 +1413,6 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
     } else {
         value.set(new_v);
         velocity.set(new_vel);
-    }
-}
-
-/// Shared pill visibility policy.
-///
-/// Every backend (X11, Layer Shell, Plain Wayland) resolves visibility through
-/// this one function, so the user's preference means the same thing everywhere.
-///
-/// | Visibility     | Idle   | Recording | Assistant |
-/// |----------------|--------|-----------|-----------|
-/// | `Hidden`       | hidden | hidden    | visible   |
-/// | `WhileActive`  | hidden | visible   | visible   |
-/// | `Persistent`   | visible| visible   | visible   |
-///
-/// Assistant mode is a deliberate exception: the pill is the assistant's own
-/// surface, so it shows even when the preference is `Hidden`.
-pub(crate) fn should_show_pill(
-    visibility: Visibility,
-    phase: Phase,
-    is_assistant: bool,
-) -> bool {
-    let is_active = phase != Phase::Idle;
-    match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    }
-}
-
-#[cfg(test)]
-mod visibility_tests {
-    use super::*;
-
-    #[test]
-    fn hidden_stays_hidden_while_recording() {
-        // The Wayland regression: a Hidden pill used to appear while recording.
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Recording, false));
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Idle, false));
-    }
-
-    #[test]
-    fn hidden_still_shows_for_assistant() {
-        assert!(should_show_pill(Visibility::Hidden, Phase::Idle, true));
-        assert!(should_show_pill(Visibility::Hidden, Phase::Recording, true));
-    }
-
-    #[test]
-    fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(Visibility::WhileActive, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Recording, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Idle, true));
-    }
-
-    #[test]
-    fn persistent_always_shows() {
-        assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
     }
 }
 

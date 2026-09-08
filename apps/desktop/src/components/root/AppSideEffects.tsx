@@ -67,7 +67,10 @@ import {
   getMixpanel,
 } from "../../utils/analytics.utils";
 import { registerMembers, registerUsers } from "../../utils/app.utils";
-import { setPillGeometry } from "../../utils/composer.utils";
+import {
+  ensurePillGeometry,
+  setPillGeometry,
+} from "../../utils/composer.utils";
 import { browserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import { createId } from "../../utils/id.utils";
@@ -942,6 +945,17 @@ export const AppSideEffects = () => {
       getLogger().error(`Failed to reset pill position: ${error}`);
     });
   });
+
+  // The pill only publishes its geometry when the user moves it, so the first
+  // window anchored to it opened wherever the OS decided. Ask once at startup;
+  // the `pill-position-changed` listener below caches whatever comes back,
+  // even if the pill answers after the request times out.
+  useEffect(() => {
+    if (!isMainWindow) return;
+    ensurePillGeometry().catch((error: unknown) => {
+      getLogger().error(`Failed to read the pill geometry: ${error}`);
+    });
+  }, [isMainWindow]);
 
   useTauriListen<{
     hasSavedPosition: boolean;

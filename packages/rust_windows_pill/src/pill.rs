@@ -123,6 +123,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         draw_w_velocity: Cell::new(0.0),
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
+        assistant_review: RefCell::new(None),
         assistant_input_mode: RefCell::new("voice".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
@@ -292,9 +293,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
-                    if state.assistant_active.get()
-                        && *state.assistant_input_mode.borrow() == "type"
-                    {
+                    if state.is_typing() {
                         focus_edit_control();
                     }
                     // Start long-press tracking if clicking on the pill body
@@ -372,10 +371,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
                         if ch == '\r' || ch == '\n' {
-                            let text = state.entry_text.borrow().trim().to_string();
-                            if !text.is_empty() {
-                                ipc::send(&OutMessage::TypedMessage { text });
-                                *state.entry_text.borrow_mut() = String::new();
+                            // Enter submits: an insert decision while a
+                            // transcript is under review, a message to the
+                            // assistant otherwise.
+                            if input::submit_entry(state) {
+                                set_edit_text("");
                             }
                         } else if ch == '\u{8}' {
                             // Backspace
@@ -393,10 +393,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if wparam.0 == VK_ESCAPE.0 as usize {
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
-                        if state.assistant_active.get()
-                            && *state.assistant_input_mode.borrow() == "type"
-                        {
-                            ipc::send(&OutMessage::AssistantClose);
+                        // Escape while a transcript is under review is a
+                        // cancel decision: the desktop is waiting for an answer.
+                        match state.pending_review_id() {
+                            Some(review_id) => {
+                                input::send_review_decision(&review_id, "cancel", None)
+                            }
+                            None => {
+                                if state.is_typing() {
+                                    ipc::send(&OutMessage::AssistantClose);
+                                }
+                            }
                         }
                     }
                 });
@@ -638,8 +645,26 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             messages,
             streaming,
             permissions,
+            review,
         } => {
             let was_active = state.assistant_active.get();
+            let previous_review_id = state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *state.assistant_review.borrow_mut() = review;
+
+            // The entry is the review surface: a new transcript loads into it
+            // for editing, and answering the review empties it again. An
+            // unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *state.entry_text.borrow_mut() = text.clone();
+                set_edit_text(&text);
+            }
             state.assistant_active.set(active);
             *state.assistant_input_mode.borrow_mut() = input_mode;
             state.assistant_compact.set(compact);
@@ -648,7 +673,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.assistant_messages.borrow_mut() = messages;
             *state.assistant_streaming.borrow_mut() = streaming;
             *state.assistant_permissions.borrow_mut() = permissions;
-            if active && !was_active {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id)
+            {
                 state.should_stick.set(true);
                 state.scroll_offset.set(0.0);
             }
@@ -662,6 +688,15 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             let (rect, monitor) = current_pill_geometry(hwnd);
             ipc::send(&OutMessage::PositionChanged {
                 has_saved_position: false,
+                rect: Some(rect),
+                monitor,
+            });
+        }
+        InMessage::RequestPosition => {
+            let hwnd = HWND_CELL.with(|c| c.get());
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: state.has_saved_position.get(),
                 rect: Some(rect),
                 monitor,
             });
@@ -783,11 +818,7 @@ fn tick(state: &PillState, dt: f64) {
     );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
-    let panel_target = if state.assistant_active.get() {
-        1.0
-    } else {
-        0.0
-    };
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
     spring_anim(
         &state.panel_open_t,
         &state.panel_open_velocity,
@@ -810,7 +841,7 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(
         &state.draw_width,
@@ -1097,15 +1128,11 @@ fn tick_transcript(state: &PillState, dt: f64) {
 }
 
 fn update_visibility(hwnd: HWND, state: &PillState) {
-    let visibility = state.visibility.get();
-    let is_active = state.phase.get() != Phase::Idle;
-    let is_assistant = state.assistant_active.get();
-
-    let should_show = match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    };
+    let should_show = rust_pill_shared::should_show_pill(
+        state.visibility.get().into(),
+        state.phase.get() != Phase::Idle,
+        state.owns_panel(),
+    );
 
     unsafe {
         if should_show {
@@ -1119,7 +1146,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
 }
 
 fn update_typing_focus(_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get() && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.is_typing();
     let was_typing = TYPING_ACTIVE.with(|t| t.get());
 
     if is_typing && !was_typing {
@@ -1165,7 +1192,7 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         && cy >= screen_pill_y - pad
         && cy <= screen_pill_y + pill_h + pad;
 
-    let in_panel = if state.assistant_active.get() {
+    let in_panel = if state.owns_panel() {
         let panel_x = win_rect.left as f64 + ox;
         let panel_y = win_rect.top as f64 + oy;
         cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh
@@ -1329,7 +1356,9 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         // panel/typing modes fill the canvas, so they keep whole-window
         // clamping.
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation && !state.assistant_active.get() {
+            if state.effective_window_mode() == WindowMode::Dictation
+                && !state.assistant_active.get()
+            {
                 let fx = (cox + px).round() as i32;
                 let fy = (coy + py).round() as i32;
                 let fw = pw.round().max(1.0) as i32;
@@ -1793,22 +1822,30 @@ fn handle_edit_message(msg: &MSG) -> bool {
             let ctrl = unsafe { (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
 
             if msg.wParam.0 == VK_RETURN.0 as usize {
-                // Send the typed message
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        let text = state.entry_text.borrow().trim().to_string();
-                        if !text.is_empty() {
-                            ipc::send(&OutMessage::TypedMessage { text });
-                            *state.entry_text.borrow_mut() = String::new();
-                        }
-                    }
+                // Enter submits: an insert decision while a transcript is under
+                // review, a message to the assistant otherwise. Nothing was
+                // sent when the entry holds only blanks, so the text has to
+                // stay put instead of being wiped for no result.
+                let sent = STATE.with(|s| match *s.borrow() {
+                    Some(ref state) => input::submit_entry(state),
+                    None => false,
                 });
-                unsafe {
-                    let _ = SetWindowTextW(edit, w!(""));
+                if sent {
+                    unsafe {
+                        let _ = SetWindowTextW(edit, w!(""));
+                    }
                 }
                 return true;
             } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
-                ipc::send(&OutMessage::AssistantClose);
+                // Escape while a transcript is under review is a cancel
+                // decision: the desktop is waiting for an answer.
+                let review_id = STATE.with(|s| {
+                    s.borrow().as_ref().and_then(|state| state.pending_review_id())
+                });
+                match review_id {
+                    Some(review_id) => input::send_review_decision(&review_id, "cancel", None),
+                    None => ipc::send(&OutMessage::AssistantClose),
+                }
                 return true;
             } else if ctrl && msg.wParam.0 == 'A' as usize {
                 // Select all
@@ -1872,7 +1909,7 @@ fn ctrl_backspace(edit: HWND) {
 }
 
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get() && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.is_typing();
     let container = EDIT_CONTAINER.with(|c| c.get());
     let edit = EDIT_HWND.with(|e| e.get());
 

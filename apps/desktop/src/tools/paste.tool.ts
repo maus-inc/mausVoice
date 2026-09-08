@@ -6,7 +6,7 @@ import {
   setToolAlwaysAllow,
 } from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
-import { reviewTextInComposer } from "../utils/composer.utils";
+import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
@@ -19,7 +19,7 @@ export class PasteTool extends BaseTool {
     const requestedText = typeof params.text === "string" ? params.text : "";
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true
-        ? await reviewTextInComposer(requestedText)
+        ? await reviewTranscriptBeforeInsert(requestedText)
         : requestedText;
     if (!text?.trim()) {
       return { canceled: true };

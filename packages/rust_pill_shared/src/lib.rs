@@ -92,6 +92,58 @@ pub const fn can_emit_interaction_feedback(
     action_available && !is_loading
 }
 
+/// The user's preference for when the pill is on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillVisibility {
+    Hidden,
+    WhileActive,
+    Persistent,
+}
+
+/// Shared pill visibility policy, used by every platform pill.
+///
+/// | preference    | idle    | recording | pill owns the surface |
+/// |---------------|---------|-----------|-----------------------|
+/// | `Hidden`      | hidden  | hidden    | visible               |
+/// | `WhileActive` | hidden  | visible   | visible               |
+/// | `Persistent`  | visible | visible   | visible               |
+///
+/// `owns_surface` covers assistant mode and a transcript waiting for a review
+/// decision. Both put something on the pill that the user has to answer, so
+/// they override the preference: hiding the pill would leave the user with no
+/// way to respond and the desktop waiting forever.
+pub const fn should_show_pill(
+    preference: PillVisibility,
+    is_active: bool,
+    owns_surface: bool,
+) -> bool {
+    match preference {
+        PillVisibility::Hidden => owns_surface,
+        PillVisibility::WhileActive => is_active || owns_surface,
+        PillVisibility::Persistent => true,
+    }
+}
+
+/// Clip the vertical span of a click target to the band of the panel that is
+/// actually on screen.
+///
+/// Returns the visible top and height, or `None` when the target sits entirely
+/// outside the band. Scrolling moves buttons under the panel edge, and the part
+/// that slid out is painted over by the surrounding chrome, so it must stop
+/// taking clicks. Keeping or dropping the whole target by its centre point is
+/// not enough: a target that is half out would either lose its visible half or
+/// keep an invisible one, and the user would hit a button they cannot see.
+pub fn clip_span_to_band(y: f64, h: f64, band_y: f64, band_h: f64) -> Option<(f64, f64)> {
+    let top = y.max(band_y);
+    let bottom = (y + h).min(band_y + band_h);
+    let height = bottom - top;
+    if height > 0.0 {
+        Some((top, height))
+    } else {
+        None
+    }
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -1801,6 +1853,31 @@ mod tests {
     }
 
     #[test]
+    fn hidden_pill_stays_hidden_while_recording() {
+        assert!(!should_show_pill(PillVisibility::Hidden, true, false));
+        assert!(!should_show_pill(PillVisibility::Hidden, false, false));
+    }
+
+    #[test]
+    fn hidden_pill_still_shows_when_it_owns_the_surface() {
+        assert!(should_show_pill(PillVisibility::Hidden, false, true));
+        assert!(should_show_pill(PillVisibility::Hidden, true, true));
+    }
+
+    #[test]
+    fn while_active_shows_only_when_busy() {
+        assert!(!should_show_pill(PillVisibility::WhileActive, false, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, true, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, false, true));
+    }
+
+    #[test]
+    fn persistent_always_shows() {
+        assert!(should_show_pill(PillVisibility::Persistent, false, false));
+        assert!(should_show_pill(PillVisibility::Persistent, true, false));
+    }
+
+    #[test]
     fn style_tooltip_stays_hidden_while_paused_even_after_re_entry() {
         // Paused hides the tooltip regardless of the latch, and a resume
         // re-latches so the tooltip does not pop in under a parked pointer.
@@ -1810,5 +1887,52 @@ mod tests {
         assert_eq!(style_tooltip_target(&gate, false, 3, true, true, 1.0), 0.0);
         gate.set_take_running(true);
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_button_fully_inside_the_band_is_untouched() {
+        assert_eq!(clip_span_to_band(120.0, 44.0, 100.0, 200.0), Some((120.0, 44.0)));
+    }
+
+    #[test]
+    fn a_button_sliding_off_the_top_keeps_only_the_visible_strip() {
+        // 20 of the 44 points scrolled above the panel, so only the lower 24
+        // may take a click.
+        assert_eq!(clip_span_to_band(80.0, 44.0, 100.0, 200.0), Some((100.0, 24.0)));
+    }
+
+    #[test]
+    fn a_button_sliding_off_the_bottom_keeps_only_the_visible_strip() {
+        assert_eq!(clip_span_to_band(280.0, 44.0, 100.0, 200.0), Some((280.0, 20.0)));
+    }
+
+    #[test]
+    fn a_button_with_its_centre_inside_still_loses_its_hidden_half() {
+        // This is the case the centre test got wrong: the top half is off the
+        // panel, painted over by the chrome, and must not be clickable.
+        let (top, height) = clip_span_to_band(90.0, 44.0, 100.0, 200.0)
+            .expect("the lower half is still on screen");
+        assert_eq!(top, 100.0);
+        assert_eq!(height, 34.0);
+    }
+
+    #[test]
+    fn a_button_with_its_centre_outside_keeps_the_sliver_that_shows() {
+        // The mirror case: the centre test dropped this one even though a
+        // visible sliver is still on the panel.
+        assert_eq!(clip_span_to_band(70.0, 44.0, 100.0, 200.0), Some((100.0, 14.0)));
+    }
+
+    #[test]
+    fn a_button_scrolled_clear_of_the_band_is_dropped() {
+        assert_eq!(clip_span_to_band(20.0, 44.0, 100.0, 200.0), None);
+        assert_eq!(clip_span_to_band(400.0, 44.0, 100.0, 200.0), None);
+    }
+
+    #[test]
+    fn a_button_touching_a_band_edge_is_dropped() {
+        // Zero visible height is nothing to click.
+        assert_eq!(clip_span_to_band(56.0, 44.0, 100.0, 200.0), None);
+        assert_eq!(clip_span_to_band(300.0, 44.0, 100.0, 200.0), None);
     }
 }

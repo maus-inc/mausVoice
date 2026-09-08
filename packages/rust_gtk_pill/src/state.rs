@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
+use crate::ipc::{
+    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
+};
 
 use crate::constants::*;
 use crate::pill::Backend;
@@ -50,6 +52,11 @@ pub(crate) enum ClickAction {
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),
+    /// Review-before-insert decisions. The id identifies the reviewed
+    /// transcript so a decision can never be applied to a newer one.
+    ReviewInsert(String),
+    ReviewCopy(String),
+    ReviewCancel(String),
     SendButton,
     FlashAction,
     FlashReject,
@@ -141,6 +148,7 @@ pub(crate) struct PillState {
     pub(crate) assistant_messages: RefCell<Vec<PillMessage>>,
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
+    pub(crate) assistant_review: RefCell<Option<PillReview>>,
 
     // Assistant UI animation
     pub(crate) panel_open_t: Cell<f64>,
@@ -274,6 +282,49 @@ pub(crate) struct PillState {
 }
 
 impl PillState {
+    /// The transcript waiting for a review decision, if there is one.
+    pub(crate) fn pending_review_id(&self) -> Option<String> {
+        self.assistant_review
+            .borrow()
+            .as_ref()
+            .map(|review| review.id.clone())
+    }
+
+    /// Whether the panel, rather than the bare pill, owns the window.
+    ///
+    /// The assistant owns it while it runs, and a transcript under review owns
+    /// it too: the review draws its buttons in the panel area, so hit testing,
+    /// hover and the clickable window region all have to cover the panel even
+    /// when no assistant session is open.
+    pub(crate) fn owns_panel(&self) -> bool {
+        self.assistant_active.get() || self.assistant_review.borrow().is_some()
+    }
+
+    /// The window mode to lay the content out in.
+    ///
+    /// A transcript under review needs the panel and its entry whatever size
+    /// the desktop last asked for. The review and the window size arrive as two
+    /// independent messages, so the pill decides its own room rather than
+    /// drawing a panel into a pill-sized box until the other message lands.
+    pub(crate) fn effective_window_mode(&self) -> WindowMode {
+        if self.assistant_review.borrow().is_some() {
+            WindowMode::AssistantTyping
+        } else {
+            self.window_mode.get()
+        }
+    }
+
+    /// Whether the panel shows its text entry.
+    ///
+    /// Assistant type mode owns the entry, and so does a transcript under
+    /// review: the entry is where the transcript is edited before it is
+    /// inserted, so the review reuses the assistant surface instead of opening
+    /// a window of its own.
+    pub(crate) fn is_typing(&self) -> bool {
+        (self.assistant_active.get() && *self.assistant_input_mode.borrow() == "type")
+            || self.assistant_review.borrow().is_some()
+    }
+
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();

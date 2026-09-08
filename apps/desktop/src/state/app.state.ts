@@ -121,6 +121,12 @@ export type AppState = {
   login: LoginState;
   pillConversationId: Nullable<string>;
   assistantInputMode: AssistantInputMode;
+  /**
+   * Transcript currently shown on the native pill for review before insert.
+   * Only the review at the head of the queue is published here; the rest wait
+   * in `pill-review.actions`.
+   */
+  pendingPillReview: Nullable<{ id: string; text: string }>;
   chat: ChatState;
 
   snackbarMessage?: string;
@@ -193,6 +199,7 @@ export const INITIAL_APP_STATE: AppState = {
   supportsPasteKeybinds: "disabled",
   pillConversationId: null,
   assistantInputMode: "voice",
+  pendingPillReview: null,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,
   onboarding: INITIAL_ONBOARDING_STATE,

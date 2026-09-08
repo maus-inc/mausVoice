@@ -399,7 +399,7 @@ fn pill_pos_on_monitor(
             // screen edges; panel/typing modes fill the canvas, so they keep
             // whole-window clamping.
             let (min_x, min_y, max_x, max_y) =
-                if state.window_mode.get() == WindowMode::Dictation
+                if state.effective_window_mode() == WindowMode::Dictation
                     && !state.assistant_active.get()
                 {
                     let (px, py, pw, ph) = crate::draw::pill_position(

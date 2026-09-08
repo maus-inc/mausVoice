@@ -10,6 +10,7 @@ mod draw;
 mod gfx;
 mod input;
 mod ipc;
+mod nsstring;
 mod state;
 
 fn main() {

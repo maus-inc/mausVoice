@@ -24,7 +24,56 @@ vi.mock("@maus-inc/voice-ai", async (importOriginal) => {
 });
 
 import * as voiceAi from "@maus-inc/voice-ai";
+import { API_KEY_PROVIDERS } from "@maus-inc/types";
 import { getProviderFormConfig } from "./api-key-provider-config";
+
+describe("provider form config coverage", () => {
+  // Regression: `gladia` was a valid ApiKeyProvider with no STANDARD_PROVIDERS
+  // entry, so rendering the AI Transcription provider list threw
+  // "Cannot read properties of undefined (reading 'displayName')" and the
+  // route error boundary took over the page.
+  it.each(
+    API_KEY_PROVIDERS.flatMap((provider) =>
+      (["transcription", "post-processing"] as const).map(
+        (context) => [provider, context] as const,
+      ),
+    ),
+  )("%s has a usable form config in the %s list", (provider, context) => {
+    const config = getProviderFormConfig(provider, context);
+
+    expect(config.displayName.length).toBeGreaterThan(0);
+    expect(config.fields.length).toBeGreaterThan(0);
+    expect(typeof config.testIntegration).toBe("function");
+  });
+
+  it("names the provider when a foreign provider value has no config", () => {
+    expect(() =>
+      getProviderFormConfig(
+        "not-a-provider" as (typeof API_KEY_PROVIDERS)[number],
+        "transcription",
+      ),
+    ).toThrow(/not-a-provider/);
+  });
+
+  it("routes the Gladia test button through the Gladia integration check", async () => {
+    const spy = vi.mocked(voiceAi.gladiaTestIntegration);
+    spy.mockClear();
+
+    await getProviderFormConfig("gladia", "transcription").testIntegration(
+      {
+        id: "key-1",
+        keyFull: "secret",
+      } as Parameters<
+        ReturnType<typeof getProviderFormConfig>["testIntegration"]
+      >[0],
+      "transcription",
+    );
+
+    const [firstCall] = spy.mock.calls;
+    expect(firstCall).toBeDefined();
+    expect(firstCall?.[0]).toMatchObject({ apiKey: "secret" });
+  });
+});
 
 describe("getProviderFormConfig", () => {
   it("includes a transcription model field for AssemblyAI", () => {

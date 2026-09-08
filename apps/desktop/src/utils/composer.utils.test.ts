@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeComposerRect,
+  ensurePillGeometry,
   getComposerWindowPosition,
   setPillGeometry,
   type Rect,
@@ -203,7 +204,7 @@ const resetComposerMocks = () => {
 
 /** Happy-path defaults: nothing fails and no window already exists. */
 const stubComposerDefaults = () => {
-  mocks.invoke.mockResolvedValue(undefined);
+  mocks.invoke.mockImplementation(() => Promise.resolve());
   mocks.getByLabel.mockResolvedValue(null);
   mocks.listen.mockResolvedValue(vi.fn());
 };
@@ -408,4 +409,109 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
       vi.useRealTimers();
     }
   }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// ensurePillGeometry: the composer must be able to anchor to the pill on the
+// first review of a session, before the user has ever dragged the pill.
+// ---------------------------------------------------------------------------
+describe("ensurePillGeometry", () => {
+  beforeEach(() => {
+    resetComposerMocks();
+    setPillGeometry(null, null);
+  });
+
+  const flush = async (predicate: () => boolean) => {
+    for (let i = 0; i < 20 && !predicate(); i += 1) {
+      await Promise.resolve();
+    }
+  };
+
+  it("asks the pill for its geometry and caches the reply", async () => {
+    const listeners = installPerEventListener();
+    mocks.invoke.mockImplementation(() => Promise.resolve());
+
+    const pending = ensurePillGeometry();
+    await flush(() => Boolean(listeners.get("pill-position-changed")?.[0]));
+
+    expect(mocks.invoke).toHaveBeenCalledWith("request_pill_position");
+    listeners.get("pill-position-changed")?.[0]?.({
+      payload: {
+        hasSavedPosition: false,
+        rect: { x: 1200, y: 600, width: 120, height: 40 },
+        monitor: { x: 0, y: 0, width: 1920, height: 1080 },
+      },
+    });
+
+    await expect(pending).resolves.toBe(true);
+    expect(getComposerWindowPosition({ width: 560, height: 420 })).toEqual({
+      x: 1200,
+      y: 648,
+    });
+  });
+
+  it("registers the listener before requesting the geometry", async () => {
+    const listeners = installPerEventListener();
+    let listenerAtRequest = false;
+    mocks.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "request_pill_position") {
+        listenerAtRequest = Boolean(
+          listeners.get("pill-position-changed")?.[0],
+        );
+      }
+      return Promise.resolve();
+    });
+
+    const pending = ensurePillGeometry();
+    await flush(() => listenerAtRequest);
+    listeners.get("pill-position-changed")?.[0]?.({
+      payload: {
+        hasSavedPosition: true,
+        rect: { x: 10, y: 10, width: 120, height: 40 },
+        monitor: { x: 0, y: 0, width: 1920, height: 1080 },
+      },
+    });
+    await pending;
+
+    // A reply emitted before the listener exists is dropped by Tauri, which
+    // is exactly how the first composer lost its anchor.
+    expect(listenerAtRequest).toBe(true);
+  });
+
+  it("keeps the OS placement when the pill cannot answer", async () => {
+    mocks.listen.mockResolvedValue(vi.fn());
+    mocks.invoke.mockRejectedValue(new Error("no managed pill process"));
+
+    await expect(ensurePillGeometry()).resolves.toBe(false);
+    expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+  });
+
+  it("reuses the cached geometry without a second request", async () => {
+    setPillGeometry(
+      { x: 300, y: 200, width: 120, height: 40 },
+      { x: 0, y: 0, width: 1920, height: 1080 },
+    );
+    mocks.invoke.mockImplementation(() => Promise.resolve());
+
+    await expect(ensurePillGeometry()).resolves.toBe(true);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("gives up on the anchor when the pill never replies", async () => {
+    vi.useFakeTimers();
+    try {
+      installPerEventListener();
+      mocks.invoke.mockImplementation(() => Promise.resolve());
+
+      const pending = ensurePillGeometry();
+      for (let i = 0; i < 10; i += 1) {
+        await vi.advanceTimersByTimeAsync(200);
+      }
+
+      await expect(pending).resolves.toBe(false);
+      expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

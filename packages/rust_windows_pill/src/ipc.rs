@@ -23,6 +23,16 @@ pub enum Visibility {
     Persistent,
 }
 
+impl From<Visibility> for rust_pill_shared::PillVisibility {
+    fn from(value: Visibility) -> Self {
+        match value {
+            Visibility::Hidden => Self::Hidden,
+            Visibility::WhileActive => Self::WhileActive,
+            Visibility::Persistent => Self::Persistent,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Phase {
@@ -66,6 +76,15 @@ pub struct PillStreaming {
     pub tool_calls: Vec<PillToolCall>,
     pub reasoning: String,
     pub is_streaming: bool,
+}
+
+/// Review-before-insert state: one finished transcript waiting for the user
+/// to decide what happens to it. Reviews are queued by the desktop, so the
+/// pill only ever holds the one it is currently showing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PillReview {
+    pub id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +150,9 @@ pub enum InMessage {
         messages: Vec<PillMessage>,
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
+        /// Transcript awaiting a review decision, if any.
+        #[serde(default)]
+        review: Option<PillReview>,
     },
     /// Clears the saved position; `strategy` picks which monitor the pill
     /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
@@ -143,6 +165,14 @@ pub enum InMessage {
     PillPlacement {
         placement: String,
     },
+    /// Ask the pill to re-publish its current geometry.
+    ///
+    /// The pill only emits `PositionChanged` when the user moves it, so a
+    /// freshly started session has no geometry on the desktop side and
+    /// windows anchored to the pill (the review composer) fall back to the
+    /// OS-centred placement. The desktop asks for the geometry once the
+    /// listener is live instead of waiting for the first drag.
+    RequestPosition,
     Quit,
 }
 
@@ -181,6 +211,18 @@ pub enum OutMessage {
     /// `kind` values: "press", "deep", "release".
     HapticFeedback {
         kind: String,
+    },
+    /// The user's decision on the transcript under review.
+    /// `action` is one of "insert", "copy", "cancel".
+    ///
+    /// `text` carries what the entry holds when the decision is "insert", so
+    /// an edit made in the panel is what gets typed. It is left out for the
+    /// other decisions.
+    ReviewDecision {
+        review_id: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     PositionChanged {
         has_saved_position: bool,

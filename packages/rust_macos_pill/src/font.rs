@@ -6,8 +6,9 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use cocoa::base::{id, nil};
-use cocoa::foundation::NSString;
 use objc::{class, msg_send, sel, sel_impl};
+
+use crate::nsstring::with_ns_string;
 
 const SATOSHI_MEDIUM_TTF: &[u8] = include_bytes!("../fonts/Satoshi-Medium.ttf");
 
@@ -87,8 +88,9 @@ pub fn satoshi_font(size: f64, bold: bool) -> id {
             ]
         };
         for name in names {
-            let ns_name: id = NSString::alloc(nil).init_str(name);
-            let font: id = msg_send![class!(NSFont), fontWithName:ns_name size:size];
+            let font: id = with_ns_string(name, |ns_name| -> id {
+                msg_send![class!(NSFont), fontWithName:ns_name size:size]
+            });
             if font != nil {
                 return font;
             }

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 
@@ -13,12 +13,38 @@ static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct MacosPill {
     sender: Mutex<mpsc::Sender<InMessage>>,
+    /// Set by the first message that could not be handed over. Audio levels
+    /// are sent on every frame, so a pill that has gone away would otherwise
+    /// write a warning sixty times a second.
+    delivery_failed: AtomicBool,
 }
 
 impl MacosPill {
-    fn send(&self, msg: InMessage) {
-        if let Ok(sender) = self.sender.lock() {
-            let _ = sender.send(msg);
+    /// Hand a message to the pill thread.
+    ///
+    /// Both failures are real: a poisoned lock means another thread panicked
+    /// while holding the sender, and a closed channel means the pill is gone.
+    /// Either way the message was not delivered, so the caller is told.
+    fn send(&self, msg: InMessage) -> Result<(), String> {
+        let sender = self
+            .sender
+            .lock()
+            .map_err(|_| "macOS pill channel is poisoned".to_string())?;
+        sender
+            .send(msg)
+            .map_err(|_| "macOS pill is no longer receiving messages".to_string())
+    }
+
+    /// Send a message whose sender has nothing to do about a failure. The
+    /// message is still lost, so the first one is reported and the rest are
+    /// left at debug level.
+    fn send_or_log(&self, msg: InMessage) {
+        if let Err(err) = self.send(msg) {
+            if self.delivery_failed.fetch_or(true, Ordering::Relaxed) {
+                log::debug!("Native pill message not delivered: {err}");
+            } else {
+                log::warn!("Native pill message not delivered: {err}");
+            }
         }
     }
 }
@@ -32,6 +58,7 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
 
     let pill = std::sync::Arc::new(MacosPill {
         sender: Mutex::new(in_tx),
+        delivery_failed: AtomicBool::new(false),
     });
     app.manage(pill);
 
@@ -50,13 +77,13 @@ pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
             OverlayPhase::Paused => Phase::Paused,
         };
         let seq = PHASE_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-        pill.send(InMessage::Phase { phase, seq });
+        pill.send_or_log(InMessage::Phase { phase, seq });
     }
 }
 
 pub fn notify_audio_levels(app: &tauri::AppHandle, levels: &[f32]) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
-        pill.send(InMessage::Levels {
+        pill.send_or_log(InMessage::Levels {
             levels: levels.to_vec(),
         });
     }
@@ -69,7 +96,7 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
             "persistent" => Visibility::Persistent,
             _ => Visibility::WhileActive,
         };
-        pill.send(InMessage::Visibility { visibility });
+        pill.send_or_log(InMessage::Visibility { visibility });
     }
 }
 
@@ -86,7 +113,7 @@ pub fn notify_pill_placement(_app: &tauri::AppHandle, placement: &str) {
 /// SwiftUI in-process and reads style state from the app store directly.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
-        pill.send(InMessage::StyleInfo {
+        pill.send_or_log(InMessage::StyleInfo {
             count,
             name: name.to_string(),
         });
@@ -101,7 +128,7 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
             PillWindowSize::AssistantExpanded => "assistant_expanded",
             PillWindowSize::AssistantTyping => "assistant_typing",
         };
-        pill.send(InMessage::WindowSize {
+        pill.send_or_log(InMessage::WindowSize {
             size: size_str.to_string(),
         });
     }
@@ -109,9 +136,20 @@ pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
 
 pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
-        if let Ok(msg) = serde_json::from_str::<InMessage>(payload) {
-            pill.send(msg);
+        match serde_json::from_str::<InMessage>(payload) {
+            Ok(msg) => pill.send_or_log(msg),
+            // The payload is built by the desktop side, so a parse failure is a
+            // bug in that builder. Saying so beats a pill that quietly stops
+            // following the assistant.
+            Err(err) => log::warn!("Ignoring malformed assistant state: {err}"),
         }
+    }
+}
+
+pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<MacosPill>>() {
+        Some(pill) => pill.send(InMessage::RequestPosition),
+        None => Err("Pill position requested with no managed macOS pill".to_string()),
     }
 }
 
@@ -122,10 +160,7 @@ pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(
         ResetStrategy::Current
     };
     match app.try_state::<std::sync::Arc<MacosPill>>() {
-        Some(pill) => {
-            pill.send(InMessage::ResetPosition { strategy });
-            Ok(())
-        }
+        Some(pill) => pill.send(InMessage::ResetPosition { strategy }),
         None => Err("Reset position requested with no managed macOS pill".to_string()),
     }
 }
@@ -178,6 +213,35 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                         "alwaysAllow": always_allow,
                     });
                     let _ = app.emit_to("main", "overlay-resolve-permission", payload);
+                }
+                OutMessage::ReviewDecision {
+                    review_id,
+                    action,
+                    text,
+                } => {
+                    // Validate before forwarding, for the same reason the
+                    // subprocess bridge does: an action the desktop cannot read
+                    // must not be turned into a guess that discards the
+                    // transcript.
+                    match crate::pill_process::PillReviewAction::parse(&action) {
+                        Some(action) if !review_id.is_empty() => {
+                            let payload = serde_json::json!({
+                                "reviewId": review_id,
+                                "action": action.as_str(),
+                                "text": text,
+                            });
+                            if let Err(err) =
+                                app.emit_to("main", "pill-review-decision", payload)
+                            {
+                                log::error!(
+                                    "Failed to deliver a pill review decision: {err}"
+                                );
+                            }
+                        }
+                        _ => log::warn!(
+                            "Ignoring an unreadable review decision from the macOS pill"
+                        ),
+                    }
                 }
                 OutMessage::StyleSwitch { direction } => {
                     match crate::pill_process::PillStyleSwitchDirection::parse(&direction) {

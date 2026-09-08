@@ -3299,6 +3299,20 @@ pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<
     crate::system::tray::set_reset_pill_position_enabled(&app, enabled)
 }
 
+/// Ask the native pill overlay to re-publish its current geometry.
+///
+/// The pill emits `pill-position-changed` on its own only after the user drags
+/// it, so a session that never moved the pill left the desktop without any
+/// geometry and windows anchored to the pill (the review composer) opened at
+/// the OS-chosen centre of the screen. The frontend calls this once its
+/// listener is registered, which makes the anchor available from the first
+/// use instead of the second.
+#[tauri::command]
+#[specta::specta]
+pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
+    crate::platform::overlay::notify_request_position(&app)
+}
+
 /// Send a reset-position IPC message to the native pill overlay.
 ///
 /// Clears the pill's saved position so the next tick repositions it to the
