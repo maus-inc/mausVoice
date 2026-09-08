@@ -402,13 +402,13 @@ Run here, all green.
 
 Not run here, and why.
 
-| Check                              | Reason                                                                                                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rust build, clippy and crate tests | There is no Rust toolchain in this sandbox and the Rust download hosts are unreachable, so every Rust change on this branch is compiled first by CI |
-| Regenerating the bindings          | That script runs cargo. The entry was written by hand to match the generator and the CI check is the authority                                      |
-| Desktop integration tests          | They need a Groq API key, and they fail the same way on the unmodified head                                                                         |
-| WebDriver tests                    | Installing them needs a download that is blocked here                                                                                               |
-| Anything that needs a running app  | No display and no packaged build                                                                                                                    |
+| Check                              | Reason                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rust build, clippy and crate tests | There is no Rust toolchain in this sandbox and the Rust download hosts are unreachable, so every Rust change on this branch is compiled first by CI. On this head CI is green: clippy over all targets on the three platforms, the desktop build on the three platforms, and the crate tests, which include the two that measure the macOS string release |
+| Regenerating the bindings          | That script runs cargo. The entry was written by hand to match the generator and the CI check is the authority                                                                                                                                                                                                                                            |
+| Desktop integration tests          | They need a Groq API key, and they fail the same way on the unmodified head                                                                                                                                                                                                                                                                               |
+| WebDriver tests                    | Installing them needs a download that is blocked here                                                                                                                                                                                                                                                                                                     |
+| Anything that needs a running app  | No display and no packaged build                                                                                                                                                                                                                                                                                                                          |
 
 ## 10. What to check before release
 
