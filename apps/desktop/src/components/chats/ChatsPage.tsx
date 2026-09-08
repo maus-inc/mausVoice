@@ -9,6 +9,7 @@ import {
   loadChatMessages,
 } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
+import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { createId } from "../../utils/id.utils";
 import { ChatsSideEffects } from "./ChatsSideEffects";
 import { ConversationLayout } from "./ConversationLayout";
@@ -38,6 +39,7 @@ export default function ChatsPage() {
   };
 
   const intl = useIntl();
+  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "Chats" }));
 
   const handleNewChat = async () => {
     const now = new Date().toISOString();
