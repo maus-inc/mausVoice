@@ -1,0 +1,42 @@
+{
+  "name": "@maus-inc/preview",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pixel-accurate preview + spec-editing site for the mausVoice desktop UI. Reuses real components/theme from apps/desktop; additive surface, never changes production behavior.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5193",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5194",
+    "gen:specs": "node scripts/write-specs.mjs",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@maus-inc/desktop-native-apis": "workspace:*",
+    "@maus-inc/desktop-utils": "workspace:*",
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*",
+    "@mui/icons-material": "^9.3.1",
+    "@mui/material": "^9.3.1",
+    "@mui/system": "^9.3.0",
+    "@tauri-apps/api": "~2.10.1",
+    "framer-motion": "^12.38.0",
+    "lucide": "^1.31.0",
+    "morphicons": "^1.7.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-intl": "^7.1.14",
+    "react-markdown": "^10.1.0",
+    "react-router-dom": "^6.30.4",
+    "react-virtuoso": "^4.18.11"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "~5.9.3",
+    "vite": "^6.4.3"
+  }
+}
