@@ -12,6 +12,7 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
+import { MetalChrome } from "../common/MetalChrome";
 import { ConversationListItem } from "./ConversationListItem";
 
 type ConversationListLayoutProps = {
@@ -48,7 +49,7 @@ export const ConversationListLayout = ({
     return conversations.filter((conversation) => {
       const title = conversation.title.trim()
         ? conversation.title
-          : intl.formatMessage({ defaultMessage: "New conversation" });
+        : intl.formatMessage({ defaultMessage: "New conversation" });
       return title.toLowerCase().includes(needle);
     });
   }, [conversations, query, intl]);
@@ -90,28 +91,30 @@ export const ConversationListLayout = ({
         px: 1,
       }}
     >
-      <Button
-        onClick={onNewChat}
-        data-active={selectedId == null ? "true" : undefined}
-        startIcon={<Plus size={16} strokeWidth={2} />}
-        sx={{
-          justifyContent: "flex-start",
-          textTransform: "none",
-          fontWeight: 600,
-          borderRadius: 1.5,
-          px: 1.25,
-          py: 0.75,
-          color: "text.primary",
-          bgcolor: selectedId == null ? "action.selected" : "transparent",
-          border: 1,
-          borderColor: "divider",
-          "&:hover": {
-            bgcolor: "action.hover",
-          },
-        }}
-      >
-        <FormattedMessage defaultMessage="New Thread" />
-      </Button>
+      <MetalChrome>
+        <Button
+          onClick={onNewChat}
+          data-active={selectedId == null ? "true" : undefined}
+          startIcon={<Plus size={16} strokeWidth={2} />}
+          sx={{
+            justifyContent: "flex-start",
+            textTransform: "none",
+            fontWeight: 600,
+            borderRadius: 1.5,
+            px: 1.25,
+            py: 0.75,
+            color: "text.primary",
+            bgcolor: selectedId == null ? "action.selected" : "transparent",
+            border: 1,
+            borderColor: "divider",
+            "&:hover": {
+              bgcolor: "action.hover",
+            },
+          }}
+        >
+          <FormattedMessage defaultMessage="New Thread" />
+        </Button>
+      </MetalChrome>
 
       {conversations.length > 0 ? (
         <InputBase

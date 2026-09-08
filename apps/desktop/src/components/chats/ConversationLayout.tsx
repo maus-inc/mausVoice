@@ -8,6 +8,7 @@ import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
+import { MetalChrome } from "../common/MetalChrome";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ToolPermissionCard } from "./ToolPermissionCard";
 
@@ -181,52 +182,54 @@ export const ConversationLayout = ({
             }}
             sx={{ px: 0.5 }}
           />
-          <IconButton
-            onClick={handleSend}
-            color="primary"
-            size="small"
-            disabled={sending}
-            sx={{
-              bgcolor: "background.paper",
-              border: 1,
-              borderColor: "divider",
-            }}
-          >
-            <AnimatePresence mode="popLayout" initial={false}>
-              <motion.span
-                key={sending ? "sending" : "send"}
-                initial={
-                  reduceMotion
-                    ? false
-                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-                }
-                animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                exit={
-                  reduceMotion
-                    ? undefined
-                    : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-                }
-                transition={springPop}
-                style={{ display: "inline-flex" }}
-              >
-                {sending ? (
-                  <motion.span
-                    animate={reduceMotion ? undefined : { rotate: 360 }}
-                    transition={
-                      reduceMotion
-                        ? undefined
-                        : { repeat: Infinity, duration: 0.7, ease: "linear" }
-                    }
-                    style={{ display: "inline-flex" }}
-                  >
-                    <LoaderCircle size={16} strokeWidth={2} />
-                  </motion.span>
-                ) : (
-                  <Send size={16} strokeWidth={2} />
-                )}
-              </motion.span>
-            </AnimatePresence>
-          </IconButton>
+          <MetalChrome variant="circle">
+            <IconButton
+              onClick={handleSend}
+              color="primary"
+              size="small"
+              disabled={sending}
+              sx={{
+                bgcolor: "background.paper",
+                border: 1,
+                borderColor: "divider",
+              }}
+            >
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.span
+                  key={sending ? "sending" : "send"}
+                  initial={
+                    reduceMotion
+                      ? false
+                      : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+                  }
+                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                  exit={
+                    reduceMotion
+                      ? undefined
+                      : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+                  }
+                  transition={springPop}
+                  style={{ display: "inline-flex" }}
+                >
+                  {sending ? (
+                    <motion.span
+                      animate={reduceMotion ? undefined : { rotate: 360 }}
+                      transition={
+                        reduceMotion
+                          ? undefined
+                          : { repeat: Infinity, duration: 0.7, ease: "linear" }
+                      }
+                      style={{ display: "inline-flex" }}
+                    >
+                      <LoaderCircle size={16} strokeWidth={2} />
+                    </motion.span>
+                  ) : (
+                    <Send size={16} strokeWidth={2} />
+                  )}
+                </motion.span>
+              </AnimatePresence>
+            </IconButton>
+          </MetalChrome>
         </Box>
       </Box>
     </Stack>

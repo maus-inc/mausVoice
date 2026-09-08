@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import { Mic } from "lucide-react";
+import { MetalChrome } from "../common/MetalChrome";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -371,13 +372,15 @@ export const ComposerPage = () => {
             <Button variant="text" onClick={() => void finish(false)}>
               <FormattedMessage defaultMessage="Cancel" />
             </Button>
-            <Button
-              variant="contained"
-              onClick={() => void finish(true)}
-              disabled={isEditing || !text.trim()}
-            >
-              <FormattedMessage defaultMessage="Insert" />
-            </Button>
+            <MetalChrome>
+              <Button
+                variant="contained"
+                onClick={() => void finish(true)}
+                disabled={isEditing || !text.trim()}
+              >
+                <FormattedMessage defaultMessage="Insert" />
+              </Button>
+            </MetalChrome>
           </Stack>
         </Stack>
       </Paper>

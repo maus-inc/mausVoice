@@ -1,3 +1,4 @@
+import { MetalChrome } from "../common/MetalChrome";
 import { Check, Monitor, Moon, Sun } from "lucide-react";
 import {
   IconButton,
@@ -74,40 +75,45 @@ export const ThemeModeToggle = () => {
 
   return (
     <>
-      <IconButton
-        onClick={handleOpen}
-        aria-label={ariaLabel}
-        size="small"
-        title={tooltipTitle}
-        sx={{
-          width: 28,
-          height: 28,
-          borderRadius: 1.5,
-          color: "text.secondary",
-          // Motion per DESIGN.md: 120-180ms ease-out, no spring-bounce on tools.
-          transition: (theme) =>
-            theme.transitions.create(
-              ["background-color", "color", "transform"],
-              {
-                duration: 150,
-                easing: theme.transitions.easing.easeOut,
-              },
-            ),
-          "&:hover": { backgroundColor: "action.hover", color: "text.primary" },
-          "&:active": { transform: "scale(0.96)" },
-        }}
-      >
-        {/*
+      <MetalChrome variant="circle">
+        <IconButton
+          onClick={handleOpen}
+          aria-label={ariaLabel}
+          size="small"
+          title={tooltipTitle}
+          sx={{
+            width: 28,
+            height: 28,
+            borderRadius: 1.5,
+            color: "text.secondary",
+            // Motion per DESIGN.md: 120-180ms ease-out, no spring-bounce on tools.
+            transition: (theme) =>
+              theme.transitions.create(
+                ["background-color", "color", "transform"],
+                {
+                  duration: 150,
+                  easing: theme.transitions.easing.easeOut,
+                },
+              ),
+            "&:hover": {
+              backgroundColor: "action.hover",
+              color: "text.primary",
+            },
+            "&:active": { transform: "scale(0.96)" },
+          }}
+        >
+          {/*
           `snappy` is the least bouncy MorphIcon spring, which keeps the icon
           transition in line with the "no spring-bounce on a tool" motion rule.
         */}
-        <MorphIcon
-          icon={morphIcon}
-          size={18}
-          strokeWidth={1.9}
-          spring="snappy"
-        />
-      </IconButton>
+          <MorphIcon
+            icon={morphIcon}
+            size={18}
+            strokeWidth={1.9}
+            spring="snappy"
+          />
+        </IconButton>
+      </MetalChrome>
       <Menu
         anchorEl={anchorEl}
         open={open}

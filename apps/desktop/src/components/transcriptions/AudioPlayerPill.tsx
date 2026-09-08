@@ -4,6 +4,7 @@ import { Pause, Play } from "lucide-react";
 import { springPop } from "../../styles/motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
+import { MetalChrome } from "../common/MetalChrome";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { getTranscriptionRepo } from "../../repos";
 import {
@@ -294,42 +295,44 @@ export const AudioPlayerPill = ({
         alignSelf: "flex-start",
       }}
     >
-      <IconButton
-        aria-label={
-          isPlaying
-            ? intl.formatMessage({ defaultMessage: "Pause audio" })
-            : intl.formatMessage({ defaultMessage: "Play audio" })
-        }
-        size="small"
-        onClick={handlePlaybackToggle}
-        disabled={disabled}
-        sx={{ p: 0.5 }}
-      >
-        <AnimatePresence mode="popLayout" initial={false}>
-          <motion.span
-            key={isPlaying ? "pause" : "play"}
-            initial={
-              reduceMotion
-                ? false
-                : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-            }
-            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-            exit={
-              reduceMotion
-                ? undefined
-                : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-            }
-            transition={springPop}
-            style={{ display: "inline-flex" }}
-          >
-            {isPlaying ? (
-              <Pause size={16} strokeWidth={1.9} />
-            ) : (
-              <Play size={16} strokeWidth={1.9} />
-            )}
-          </motion.span>
-        </AnimatePresence>
-      </IconButton>
+      <MetalChrome variant="circle">
+        <IconButton
+          aria-label={
+            isPlaying
+              ? intl.formatMessage({ defaultMessage: "Pause audio" })
+              : intl.formatMessage({ defaultMessage: "Play audio" })
+          }
+          size="small"
+          onClick={handlePlaybackToggle}
+          disabled={disabled}
+          sx={{ p: 0.5 }}
+        >
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.span
+              key={isPlaying ? "pause" : "play"}
+              initial={
+                reduceMotion
+                  ? false
+                  : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+              }
+              animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+              exit={
+                reduceMotion
+                  ? undefined
+                  : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+              }
+              transition={springPop}
+              style={{ display: "inline-flex" }}
+            >
+              {isPlaying ? (
+                <Pause size={16} strokeWidth={1.9} />
+              ) : (
+                <Play size={16} strokeWidth={1.9} />
+              )}
+            </motion.span>
+          </AnimatePresence>
+        </IconButton>
+      </MetalChrome>
       <Typography
         variant="body2"
         sx={{
