@@ -349,7 +349,17 @@ export class DictationStrategy extends BaseStrategy {
         }
       }
 
-      if (transcript) {
+      if (postProcessMetadata.postProcessFailed) {
+        getLogger().warning(
+          "Post-processing failed; blocking automatic insertion and preserving transcript in history",
+        );
+        await showToast({
+          message: "Styling failed. Raw transcript saved to history.",
+          toastType: "error",
+          duration: 8000,
+          action: "open_transcriptions",
+        });
+      } else if (transcript) {
         await new Promise<void>((resolve) => setTimeout(resolve, 20));
         try {
           getLogger().verbose(
@@ -362,6 +372,9 @@ export class DictationStrategy extends BaseStrategy {
             mode: "dictation",
             currentAppId: args.currentApp?.id ?? null,
           });
+          if (result.delivered && result.deliveredText) {
+            transcript = result.deliveredText.trim();
+          }
           if (result.remote && result.delivered) {
             remoteStatus = "sent";
             showSnackbar("Transcript sent to paired receiver.", {

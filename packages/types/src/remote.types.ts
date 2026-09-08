@@ -72,6 +72,7 @@ export type RouteTranscriptOutputArgs = {
 export type RouteTranscriptOutputResult = {
   delivered: boolean;
   remote: boolean;
+  deliveredText?: Nullable<string>;
 };
 
 export type PairingRequest = {

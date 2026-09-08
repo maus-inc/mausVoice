@@ -260,4 +260,58 @@ describe("DictationStrategy backlog lifecycle", () => {
     // The failed delivery must not silently drop the newer segment.
     expect(backlog).toEqual(["alpha", "beta"]);
   });
+
+  it("updates transcript to reviewed text when output routing returns edited text", async () => {
+    const strategy = new DictationStrategy();
+    routeTranscriptOutputMock.mockResolvedValueOnce({
+      delivered: true,
+      remote: false,
+      deliveredText: "edited text",
+    });
+
+    const result = await strategy.handleTranscript({
+      rawTranscript: "original text",
+      toneId: null,
+      currentApp: null,
+    } as never);
+
+    expect(result.transcript).toBe("edited text");
+    expect(result.sanitizedTranscript).toBe("original text");
+  });
+
+  it("blocks insertion and shows error toast when post-processing fails", async () => {
+    const { postProcessTranscript } = await import(
+      "../actions/transcribe.actions"
+    );
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "fallback raw text",
+      warnings: ["402 payment required"],
+      metadata: {
+        postProcessFailed: true,
+        postProcessError: "402 payment required",
+      },
+    });
+
+    const { showToast } = await import("../actions/toast.actions");
+
+    const strategy = new DictationStrategy();
+    const result = await strategy.handleTranscript({
+      rawTranscript: "fallback raw text",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
+    // Insertion is blocked: routeTranscriptOutput is NOT called
+    expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
+    // Toast notification is shown
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Styling failed"),
+        toastType: "error",
+      }),
+    );
+    // Transcript is preserved for storage in history
+    expect(result.transcript).toBe("fallback raw text");
+    expect(result.postProcessMetadata.postProcessFailed).toBe(true);
+  });
 });

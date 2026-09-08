@@ -117,10 +117,12 @@ describe("routeTranscriptOutput hands-free delay", () => {
     await expect(olderRouting).resolves.toEqual({
       delivered: false,
       remote: false,
+      deliveredText: null,
     });
     await expect(newerRouting).resolves.toEqual({
       delivered: true,
       remote: false,
+      deliveredText: "newer words",
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith("paste", {
@@ -152,6 +154,7 @@ describe("routeTranscriptOutput hands-free delay", () => {
     await expect(olderRouting).resolves.toEqual({
       delivered: false,
       remote: false,
+      deliveredText: null,
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith(

@@ -166,29 +166,29 @@ export const applyWritingStyleSelectionNow = (toneId: string): boolean => {
   return true;
 };
 
+let styleSwitchNonce = 0;
+
 /**
  * Persist-assisted style switch: snapshot the current selection, write the
- * new one in memory, then persist. If persistence fails, restore the snapshot
- * explicitly — `updateUser`'s own rollback captured its `existing` after our
- * in-memory write, so it would otherwise "restore" the new value while SQLite
- * still holds the old one. The rejection is swallowed here because callers
- * fire-and-forget and `updateUser` already surfaced the error snackbar.
+ * new one in memory, then persist. If persistence fails, keep the in-memory
+ * selection. A monotonic nonce ensures out-of-order responses do not clobber
+ * newer selections.
  */
 const applyWritingStyleSelectionWithPersist = async (
   toneId: string,
 ): Promise<void> => {
+  const nonce = ++styleSwitchNonce;
   if (!applyWritingStyleSelectionNow(toneId)) {
     return;
   }
   try {
     await setSelectedToneId(toneId);
   } catch (error) {
-    // Keep the in-memory selection even when persistence fails.
-    // The user's choice must persist until an explicit save succeeds later.
-    // Do not restore previousId — that would revert the mid-dictation change.
-    getLogger().error(
-      `Style selection persist failed; in-memory selection remains: ${error}`,
-    );
+    if (nonce === styleSwitchNonce) {
+      getLogger().error(
+        `Style selection persist failed; in-memory selection remains: ${error}`,
+      );
+    }
   }
 };
 

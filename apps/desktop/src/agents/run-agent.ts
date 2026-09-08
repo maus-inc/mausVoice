@@ -496,13 +496,16 @@ async function executeWithPermission(
 
 /**
  * Poll app state until the user resolves a tool permission request,
- * or return denied when the conversation is aborted first.
+ * the timeout expires, or the conversation is aborted.
  */
 async function pollForPermission(
   conversationId: string,
   permissionId: string,
 ): Promise<"allowed" | "denied"> {
-  while (true) {
+  const timeoutMs =
+    getAppState().userPrefs?.agentPermissionTimeoutMs ?? 60_000;
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
     const state = getAppState().agentStateByConversationId[conversationId];
     if (state?.aborted) return "denied";
 
@@ -511,6 +514,7 @@ async function pollForPermission(
     if (result?.status === "denied") return "denied";
     await delayed(POLL_INTERVAL_MS);
   }
+  return "denied";
 }
 
 type ConversationMessageBlock = {

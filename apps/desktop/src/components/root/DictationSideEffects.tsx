@@ -259,8 +259,12 @@ export const DictationSideEffects = () => {
   const dictateCombos = useAppStore((state) =>
     getHotkeyCombosForAction(state, DICTATE_HOTKEY),
   );
+  const hasPendingReview = useAppStore(
+    (state) => state.pendingPillReview !== null,
+  );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
-  const isDictationInteractable = isDictationUnlocked && !isStopping;
+  const isDictationInteractable =
+    isDictationUnlocked && !isStopping && !hasPendingReview;
   const pillVisibility = useAppStore((state) =>
     getEffectivePillVisibility(state.userPrefs?.dictationPillVisibility),
   );
@@ -1086,6 +1090,11 @@ export const DictationSideEffects = () => {
       getLogger().verbose("Dictation not unlocked, ignoring start");
       return;
     }
+    if (state.pendingPillReview !== null) {
+      getLogger().info("Dictation blocked: review is pending");
+      playAlertSound();
+      return;
+    }
 
     getLogger().info("Starting dictation recording");
     trackDictationStart();
@@ -1105,6 +1114,11 @@ export const DictationSideEffects = () => {
     const state = getAppState();
     if (!getIsDictationUnlocked(state)) {
       getLogger().verbose("Dictation not unlocked, ignoring agent start");
+      return;
+    }
+    if (state.pendingPillReview !== null) {
+      getLogger().info("Agent start blocked: review is pending");
+      playAlertSound();
       return;
     }
 

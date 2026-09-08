@@ -38,7 +38,9 @@ const deliverRemoteOutput = async (
   args: RouteTranscriptOutputArgs,
   prefs: NonNullable<OutputContext["prefs"]>,
 ): Promise<RouteTranscriptOutputResult> => {
-  if (!args.text.trim()) return { delivered: false, remote: true };
+  if (!args.text.trim()) {
+    return { delivered: false, remote: true, deliveredText: null };
+  }
   await invoke<void>("remote_sender_deliver_final_text", {
     args: {
       targetDeviceId: prefs.remoteTargetDeviceId,
@@ -46,7 +48,7 @@ const deliverRemoteOutput = async (
       mode: args.mode,
     },
   });
-  return { delivered: true, remote: true };
+  return { delivered: true, remote: true, deliveredText: args.text };
 };
 
 const reviewOutputText = async (
@@ -106,12 +108,16 @@ export const routeTranscriptOutput = async (
       prefs,
       args.skipReview,
     );
-    if (!outputText?.trim()) return { delivered: false, remote: true };
+    if (!outputText?.trim()) {
+      return { delivered: false, remote: true, deliveredText: null };
+    }
     return deliverRemoteOutput({ ...args, text: outputText }, prefs);
   }
 
   const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
-  if (!outputText?.trim()) return { delivered: false, remote: false };
+  if (!outputText?.trim()) {
+    return { delivered: false, remote: false, deliveredText: null };
+  }
 
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
@@ -120,7 +126,7 @@ export const routeTranscriptOutput = async (
       setTimeout(resolve, handsFreeDelayMs);
     });
     if (sessionId !== handsFreeSessionId) {
-      return { delivered: false, remote: false };
+      return { delivered: false, remote: false, deliveredText: null };
     }
   }
 
@@ -133,7 +139,7 @@ export const routeTranscriptOutput = async (
     beginEditWatch(outputText);
   }
 
-  return { delivered: true, remote: false };
+  return { delivered: true, remote: false, deliveredText: outputText };
 };
 
 export const insertLocalTranscriptOutputViaPaste = async (
