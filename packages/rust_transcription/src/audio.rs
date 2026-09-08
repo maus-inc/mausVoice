@@ -129,15 +129,9 @@ pub fn resample_to_rate(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResampleError {
     /// Source or target rate is outside the supported band.
-    UnsupportedRate {
-        source_rate: u32,
-        target_rate: u32,
-    },
+    UnsupportedRate { source_rate: u32, target_rate: u32 },
     /// The requested ratio would allocate an unsafe number of coefficients.
-    RatioTooComplex {
-        source_rate: u32,
-        target_rate: u32,
-    },
+    RatioTooComplex { source_rate: u32, target_rate: u32 },
 }
 
 impl std::fmt::Display for ResampleError {
@@ -320,7 +314,9 @@ fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> 
         || guard.map.len() >= MAX_TABLE_CACHE_ENTRIES)
         && guard.map.len() > 1
     {
-        let Some(victim) = guard.order.pop() else { break };
+        let Some(victim) = guard.order.pop() else {
+            break;
+        };
         if let Some(evicted) = guard.map.remove(&victim) {
             guard.total_coeffs -= evicted.coeff_count;
         }
@@ -378,10 +374,7 @@ mod tests {
     #[test]
     fn identity_resampling_preserves_samples() {
         let samples = [0.0, 0.25, -0.5, 1.0];
-        assert_eq!(
-            resample_to_rate(&samples, 16_000, 16_000).unwrap(),
-            samples
-        );
+        assert_eq!(resample_to_rate(&samples, 16_000, 16_000).unwrap(), samples);
     }
 
     #[test]

@@ -134,9 +134,9 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -374,7 +374,9 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     let (text_w, _) = gfx.measure_text(&message, 12.0, true);
 
@@ -384,7 +386,21 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         0.0
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let reject_w = if let Some(ref label) = *reject_label {
+        let (rw, _) = gfx.measure_text(label, 11.0, true);
+        rw + FLASH_ACTION_PADDING_H * 2.0
+    } else {
+        0.0
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -409,7 +425,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         [bg_r, bg_g, bg_b, 0.92 * alpha]);
 
     // Message text
-    if has_action {
+    if has_action || has_reject {
         let (_, th) = gfx.measure_text(&message, 12.0, true);
         gfx.draw_text_top_left(&message, full_x + FLASH_PADDING_H,
             full_y + (FLASH_HEIGHT - th) / 2.0,
@@ -417,6 +433,31 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         gfx.draw_text_centered(&message, full_x, full_y, flash_w, FLASH_HEIGHT,
             12.0, true, [1.0, 1.0, 1.0, 0.9 * alpha]);
+    }
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(ref label) = *reject_label {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        gfx.fill_rounded_rect(btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS,
+            [1.0, 1.0, 1.0, 0.2 * alpha]);
+
+        gfx.draw_text_centered(label, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT,
+            11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: reject_w,
+            h: FLASH_ACTION_HEIGHT,
+            action: ClickAction::FlashReject,
+        });
     }
 
     // Action button
@@ -634,8 +675,13 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let panel_t = state.panel_open_t.get();
     if panel_t < 0.01 { return; }
 
-    let is_compact = state.assistant_compact.get();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() { REVIEW_ACTIONS_HEIGHT } else { 0.0 };
 
     let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
     let panel_x = (ww - panel_w) / 2.0;
@@ -662,7 +708,11 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let content_x = panel_x + PANEL_CONTENT_SIDE_INSET;
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
-        let scroll_bottom = if is_typing { py + panel_h - PANEL_INPUT_HEIGHT } else { py + panel_h };
+        let scroll_bottom = if is_typing {
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
+        } else {
+            py + panel_h
+        };
         let scroll_h = (scroll_bottom - py).max(0.0);
         state.viewport_height.set(scroll_h);
 
@@ -717,6 +767,20 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                gfx,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar
         if is_typing {
@@ -795,11 +859,17 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() { return; }
+    if messages.is_empty() && permissions.is_empty() && review.is_none() { return; }
 
     gfx.save();
     gfx.clip_rect(area_x, area_y, area_w, area_h);
+
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
@@ -854,8 +924,30 @@ fn draw_transcript(
         y = draw_permission_card(gfx, state, perm, area_x, y, area_w, alpha);
     }
 
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(gfx, state, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) =
+                rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
 
     gfx.restore();
 }
@@ -962,6 +1054,79 @@ fn draw_permission_card(
     }
 
     y + card_h
+}
+
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(
+    gfx: &Gfx, state: &PillState,
+    x: f64, y: f64, w: f64, alpha: f64,
+) -> f64 {
+    gfx.draw_text_top_left("REVIEW TRANSCRIPT", x, y, 11.0, true, false,
+        [1.0, 1.0, 1.0, 0.5 * alpha]);
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
+    let text = state.entry_text.borrow();
+    for line in wrap_text(gfx, text.as_str(), w) {
+        gfx.draw_text_top_left(&line, x, text_y, 14.0, false, false,
+            [1.0, 1.0, 1.0, 0.92 * alpha]);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+#[allow(clippy::too_many_arguments)]
+fn draw_review_actions(
+    gfx: &Gfx, state: &PillState, review_id: &str,
+    panel_x: f64, y: f64, panel_w: f64, alpha: f64,
+) {
+    gfx.draw_text_top_left(
+        "Edit below, then press Enter to insert",
+        panel_x + PANEL_CONTENT_SIDE_INSET,
+        y + (REVIEW_ACTIONS_HEIGHT - 14.0) / 2.0,
+        11.0, false, false,
+        [1.0, 1.0, 1.0, 0.45 * alpha],
+    );
+
+    // Rendered right to left so "Insert" (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
+    let buttons = [
+        ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
+        ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
+    ];
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
+
+    for (label, action, text_alpha) in buttons {
+        let btn_w = PERM_BUTTON_WIDTH * 0.8;
+        btn_x -= btn_w;
+
+        let hovered = is_mouse_over(state, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT);
+        let bg_alpha = if hovered { 0.18 } else { 0.08 };
+        let border_alpha = if hovered { 0.25 } else { 0.15 };
+        gfx.fill_rounded_rect(btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0,
+            [1.0, 1.0, 1.0, bg_alpha * alpha]);
+        gfx.stroke_rounded_rect(btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5,
+            [1.0, 1.0, 1.0, border_alpha * alpha], 1.0);
+
+        let text_a = if hovered { 1.0 } else { text_alpha };
+        gfx.draw_text_centered(label, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT,
+            11.0, false, [1.0, 1.0, 1.0, text_a * alpha]);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
 }
 
 fn draw_user_prompt_preview(

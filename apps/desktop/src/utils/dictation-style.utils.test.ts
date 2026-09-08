@@ -25,7 +25,10 @@ const manual = (
 });
 
 describe("getEffectiveToneIdAtFinalize", () => {
-  it("uses the stop-time selection when the user switches before stop", () => {
+  it("styles the whole utterance with a switch made mid-dictation", () => {
+    // Contract: one style applies to the WHOLE utterance and the latest
+    // style chosen while recording wins, so a mid-dictation switch restyles
+    // the entire final transcript rather than only the next recording.
     expect(
       getEffectiveToneIdAtFinalize(
         manual({
@@ -36,10 +39,7 @@ describe("getEffectiveToneIdAtFinalize", () => {
     ).toBe(SWITCHED);
   });
 
-  it("uses the stop-time selection when the switch happens during a realtime segment", () => {
-    // Streaming sessions skip post-processing of already-inserted text;
-    // the finalize tone still follows stop-time so any non-streamed
-    // leftover (and the stored label) match the newly selected profile.
+  it("applies a switch made during a streaming session to the final text", () => {
     expect(
       getEffectiveToneIdAtFinalize(
         manual({
@@ -85,27 +85,26 @@ describe("getEffectiveToneIdAtFinalize", () => {
     ).toBe(SWITCHED);
   });
 
-  it("falls back to the start-time tone when the stop snapshot is missing", () => {
+  it("falls back to the live selection when the stop snapshot is missing", () => {
     expect(
       getEffectiveToneIdAtFinalize(
         manual({
-          toneIdAtStop: null,
-          liveSelectedToneId: SWITCHED,
-        }),
-      ),
-    ).toBe(START);
-  });
-
-  it("falls back to the live selection when both snapshots are missing", () => {
-    expect(
-      getEffectiveToneIdAtFinalize(
-        manual({
-          toneIdAtStart: null,
           toneIdAtStop: null,
           liveSelectedToneId: SWITCHED,
         }),
       ),
     ).toBe(SWITCHED);
+  });
+
+  it("falls back to the start-time tone when stop and live are missing", () => {
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({
+          toneIdAtStop: null,
+          liveSelectedToneId: null,
+        }),
+      ),
+    ).toBe(START);
   });
 
   it("does not fall back to the app-target tone in manual mode", () => {
@@ -235,6 +234,23 @@ describe("createUtteranceToneSnapshots", () => {
     store.snapshotAtStop(SWITCHED);
     store.clear();
     expect(store.read()).toEqual({ start: null, stop: null });
+  });
+
+  it("carries a mid-dictation switch through finalize", () => {
+    // End-to-end contract: seed at start, the user switches while
+    // recording, stop captures the switched tone, and finalize styles the
+    // whole transcript with it. The switch also persists the selection, so
+    // the next recording starts on the switched style.
+    const store = createUtteranceToneSnapshots();
+    store.seed(START);
+    store.snapshotAtStop(SWITCHED);
+    const { start, stop } = store.read();
+
+    expect(
+      getEffectiveToneIdAtFinalize(
+        manual({ toneIdAtStart: start, toneIdAtStop: stop }),
+      ),
+    ).toBe(SWITCHED);
   });
 });
 

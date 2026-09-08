@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import {
+  getPrettyKeyName,
   getStyleSwitchActionNamesForKey,
   OPEN_CHAT_HOTKEY,
   syncHotkeyCombosToNative,
@@ -123,6 +124,32 @@ describe("syncHotkeyCombosToNative", () => {
   });
 });
 
+describe("getPrettyKeyName", () => {
+  it.each([
+    ["MetaLeft", "⊞ L"],
+    ["MetaRight", "⊞ R"],
+    ["ControlLeft", "Ctrl L"],
+    ["ControlRight", "Ctrl R"],
+    ["ShiftLeft", "Shift L"],
+    ["ShiftRight", "Shift R"],
+    ["AltLeft", "Alt L"],
+    ["AltRight", "Alt R"],
+    ["OptionLeft", "Alt L"],
+    ["KeyA", "A"],
+    ["Escape", "Escape"],
+    ["LeftArrow", "←"],
+    ["RightArrow", "→"],
+    ["UpArrow", "↑"],
+    ["DownArrow", "↓"],
+  ])("renders %s as %s", (input, expected) => {
+    expect(getPrettyKeyName(input)).toBe(expected);
+  });
+
+  it("preserves side suffix on bare Meta* without a side", () => {
+    expect(getPrettyKeyName("Meta")).toBe("⊞");
+  });
+});
+
 describe("getStyleSwitchActionNamesForKey", () => {
   it("maps a released physical key to its bound style-switch actions", () => {
     const state = {
@@ -162,13 +189,10 @@ describe("getStyleSwitchActionNamesForKey", () => {
     expect(getStyleSwitchActionNamesForKey(state, "KeyC")).toEqual([
       "switch-to-style:casual",
     ]);
-    // Actions added under an existing shared prefix must also be releasable.
     expect(getStyleSwitchActionNamesForKey(state, "KeyF")).toEqual([
       "switch-writing-style-custom",
     ]);
-    // A non-style action bound to a key must never be released as a style key.
     expect(getStyleSwitchActionNamesForKey(state, "KeyO")).toEqual([]);
-    // A key with no binding resolves to nothing.
     expect(getStyleSwitchActionNamesForKey(state, "KeyZ")).toEqual([]);
   });
 

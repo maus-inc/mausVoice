@@ -1,66 +1,43 @@
-import { convertFloat32ToPCM16 } from "@maus-inc/voice-ai";
+import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
+import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
-  StopRecordingResponse,
-  TranscriptionSession,
-  TranscriptionSessionResult,
-} from "../types/transcription-session.types";
-import {
-  combineStreamingTranscript,
-  createAudioChunkPump,
-} from "../utils/audio-chunking.utils";
+  createAudioChunkBuffer,
+  createReceivedChunkLogger,
+} from "./transcription-stream.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
 };
 
+const LOGGER_PREFIX = "AssemblyAI WebSocket";
+
 const startAssemblyAIStreaming = async (
   apiKey: string,
   sampleRate: number,
   onInterimResult?: (segment: string) => void,
 ): Promise<AssemblyAIStreamingSession> => {
-  getLogger().info(
-    "[AssemblyAI WebSocket] Starting with sample rate:",
-    sampleRate,
-  );
+  getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let unlisten: UnlistenFn | null = null;
-    let finalTranscript = "";
     let isFinalized = false;
-    let receivedChunkCount = 0;
+    const transcriptState = createTranscriptAccumulator();
+    const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
-    let currentTurn = 0;
-    let extra = "";
-    let sentChunkCount = 0;
-
-    const pump = createAudioChunkPump({
+    const buffer = createAudioChunkBuffer(() => ws, {
       sampleRate,
       minChunkDurationMs: 50,
       maxChunkDurationMs: 100,
-      canSend: () => !!ws && ws.readyState === WebSocket.OPEN,
-      sendChunk: (chunk) => {
-        const pcm16 = convertFloat32ToPCM16(chunk);
-        ws?.send(pcm16);
-        sentChunkCount++;
-        if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-          const durationMs = (chunk.length / sampleRate) * 1000;
-          getLogger().info(
-            `[AssemblyAI WebSocket] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-          );
-        }
-      },
-      onError: (error) => {
-        getLogger().error(
-          "[AssemblyAI WebSocket] Error sending buffered chunk:",
-          error,
-        );
-      },
+      loggerPrefix: LOGGER_PREFIX,
     });
 
-    const getText = () => combineStreamingTranscript(finalTranscript, extra);
+    let currentTurn = 0;
+
+    const getText = () => transcriptState.text();
 
     const cleanup = () => {
       if (unlisten) {
@@ -71,51 +48,45 @@ const startAssemblyAIStreaming = async (
         ws.close();
         ws = null;
       }
-      pump.resetBuffers();
+      buffer.reset();
     };
 
     const finalize = (): Promise<string> => {
       return new Promise((resolveFinalize) => {
-        // resolveFinalize(finalTranscript);
         getLogger().info(
-          "[AssemblyAI WebSocket] Finalize called, isFinalized:",
+          `[${LOGGER_PREFIX}] Finalize called, isFinalized:`,
           isFinalized,
           "ws state:",
           ws?.readyState,
         );
         if (isFinalized) {
           getLogger().info(
-            "[AssemblyAI WebSocket] Already finalized, returning transcript",
+            `[${LOGGER_PREFIX}] Already finalized, returning transcript`,
           );
           resolveFinalize(getText());
           return;
         }
 
         isFinalized = true;
-        pump.flushPendingSamples(true);
+        buffer.flush(true);
         getLogger().info(
-          "[AssemblyAI WebSocket] Total chunks sent:",
-          sentChunkCount,
+          `[${LOGGER_PREFIX}] Total chunks sent:`,
+          buffer.sentChunkCount(),
         );
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-          getLogger().info(
-            "[AssemblyAI WebSocket] Sending Terminate message...",
-          );
-          // Send termination message
+          getLogger().info(`[${LOGGER_PREFIX}] Sending Terminate message...`);
           ws.send(JSON.stringify({ type: "Terminate" }));
 
-          // Wait a bit for final transcript
           const timeout = setTimeout(() => {
             getLogger().info(
-              "[AssemblyAI WebSocket] Timeout reached, finalizing with transcript length:",
+              `[${LOGGER_PREFIX}] Timeout reached, finalizing with transcript length:`,
               getText().length,
             );
             cleanup();
             resolveFinalize(getText());
           }, 2000);
 
-          // Override onclose to resolve when WebSocket closes
           const originalOnClose = ws.onclose;
           const currentWs = ws;
           ws.onclose = () => {
@@ -124,22 +95,21 @@ const startAssemblyAIStreaming = async (
               originalOnClose.call(currentWs, {} as CloseEvent);
             cleanup();
             getLogger().info(
-              "[AssemblyAI WebSocket] WebSocket closed, finalizing with transcript length:",
+              `[${LOGGER_PREFIX}] WebSocket closed, finalizing with transcript length:`,
               getText().length,
             );
             resolveFinalize(getText());
           };
         } else {
           cleanup();
-          resolveFinalize(getText());
+          resolveFinalize(transcriptState.text());
         }
       });
     };
 
-    // Open WebSocket
     const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${apiKey}`;
     getLogger().info(
-      "[AssemblyAI WebSocket] Connecting (api key present:",
+      `[${LOGGER_PREFIX}] Connecting (api key present:`,
       Boolean(apiKey),
       "length:",
       apiKey?.length ?? 0,
@@ -148,36 +118,24 @@ const startAssemblyAIStreaming = async (
     ws = new WebSocket(wsUrl);
 
     ws.onopen = async () => {
-      getLogger().info("[AssemblyAI WebSocket] Connected, sending auth...");
-      // Auth is carried by the token query parameter in wsUrl; the first
-      // message sent over the socket is audio data, not credentials.
+      getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
 
-      // Listen for audio chunks from Rust
       try {
         getLogger().info(
-          "[AssemblyAI WebSocket] Setting up audio_chunk listener...",
+          `[${LOGGER_PREFIX}] Setting up audio_chunk listener...`,
         );
         unlisten = await listen<{ samples: number[] }>(
           "audio_chunk",
           (event) => {
-            receivedChunkCount++;
-            if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-              getLogger().info(
-                `[AssemblyAI WebSocket] Received chunk #${receivedChunkCount}, samples:`,
-                event.payload.samples.length,
-              );
-            }
+            receivedLogger.record(event.payload.samples.length);
             if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
               try {
-                const typedChunk =
-                  event.payload.samples instanceof Float32Array
-                    ? event.payload.samples
-                    : Float32Array.from(event.payload.samples);
-                pump.pushSamples(typedChunk);
-                pump.flushPendingSamples();
+                const typedChunk = ensureFloat32Array(event.payload.samples);
+                buffer.push(typedChunk);
+                buffer.flush(false);
               } catch (error) {
                 getLogger().error(
-                  "[AssemblyAI WebSocket] Error sending audio chunk:",
+                  `[${LOGGER_PREFIX}] Error sending audio chunk:`,
                   error,
                 );
               }
@@ -185,14 +143,11 @@ const startAssemblyAIStreaming = async (
           },
         );
 
-        getLogger().info(
-          "[AssemblyAI WebSocket] Session ready, listener attached",
-        );
-        // Session is ready
+        getLogger().info(`[${LOGGER_PREFIX}] Session ready, listener attached`);
         resolve({ finalize, cleanup });
       } catch (error) {
         getLogger().error(
-          "[AssemblyAI WebSocket] Error setting up listener:",
+          `[${LOGGER_PREFIX}] Error setting up listener:`,
           error,
         );
         cleanup();
@@ -203,8 +158,7 @@ const startAssemblyAIStreaming = async (
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        // Turn messages carry the user's transcript; log metadata only.
-        getLogger().info("[AssemblyAI WebSocket] Received message", {
+        getLogger().info(`[${LOGGER_PREFIX}] Received message`, {
           type: data.type,
           turnOrder: data.turn_order,
           endOfTurn: data.end_of_turn,
@@ -213,42 +167,38 @@ const startAssemblyAIStreaming = async (
         });
 
         if (data.type === "Turn" && data.end_of_turn) {
-          // Final formatted transcript
           const turnTranscript = data.transcript || "";
-          finalTranscript += (finalTranscript ? " " : "") + turnTranscript;
+          transcriptState.appendFinal(turnTranscript);
           getLogger().info(
-            "[AssemblyAI WebSocket] Final formatted transcript received, length:",
-            finalTranscript.length,
+            `[${LOGGER_PREFIX}] Final formatted transcript received, length:`,
+            transcriptState.finalLength(),
           );
           if (onInterimResult && turnTranscript) {
             onInterimResult(turnTranscript);
           }
           if (currentTurn === data.turn_order) {
-            extra = "";
+            transcriptState.setPartial("");
           }
         } else if (data.type === "Turn") {
           if (currentTurn != data.turn_order) {
             currentTurn = data.turn_order;
 
-            extra = data.transcript;
+            transcriptState.setPartial(data.transcript);
           }
         }
       } catch (error) {
-        getLogger().error(
-          "[AssemblyAI WebSocket] Error parsing message:",
-          error,
-        );
+        getLogger().error(`[${LOGGER_PREFIX}] Error parsing message:`, error);
       }
     };
 
     ws.onerror = (error) => {
-      getLogger().error("[AssemblyAI WebSocket] WebSocket error:", error);
+      getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
       cleanup();
       reject(new Error("WebSocket connection failed"));
     };
 
     ws.onclose = (event) => {
-      getLogger().info("[AssemblyAI WebSocket] WebSocket closed:", {
+      getLogger().info(`[${LOGGER_PREFIX}] WebSocket closed:`, {
         code: event.code,
         reason: event.reason,
       });
@@ -257,12 +207,14 @@ const startAssemblyAIStreaming = async (
   });
 };
 
-export class AssemblyAITranscriptionSession implements TranscriptionSession {
-  private session: AssemblyAIStreamingSession | null = null;
-  private apiKey: string;
-  private interimCallback: ((segment: string) => void) | null = null;
+export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession {
+  private readonly apiKey: string;
 
   constructor(apiKey: string) {
+    super({
+      providerLabel: "AssemblyAI",
+      inferenceDevice: "API • AssemblyAI (Streaming)",
+    });
     this.apiKey = apiKey;
   }
 
@@ -270,14 +222,12 @@ export class AssemblyAITranscriptionSession implements TranscriptionSession {
     return true;
   }
 
-  setInterimResultCallback(callback: (segment: string) => void): void {
-    this.interimCallback = callback;
-  }
-
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
       getLogger().info("[AssemblyAI] Starting streaming session...");
-      this.session = await startAssemblyAIStreaming(
+      // Must land in the inherited `streamSession` field: the base
+      // `finalize()` and `cleanup()` read that field, not any local one.
+      this.streamSession = await startAssemblyAIStreaming(
         this.apiKey,
         sampleRate,
         this.interimCallback ?? undefined,
@@ -285,64 +235,6 @@ export class AssemblyAITranscriptionSession implements TranscriptionSession {
       getLogger().info("[AssemblyAI] Streaming session started successfully");
     } catch (error) {
       getLogger().error("[AssemblyAI] Failed to start streaming:", error);
-      // Continue recording anyway - finalize will handle missing session
-    }
-  }
-
-  async finalize(
-    _audio: StopRecordingResponse,
-  ): Promise<TranscriptionSessionResult> {
-    if (!this.session) {
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: ["AssemblyAI streaming session was not established"],
-      };
-    }
-
-    try {
-      getLogger().info("[AssemblyAI] Finalizing streaming session...");
-      const finalizeStart = performance.now();
-      const transcript = await this.session.finalize();
-      const durationMs = Math.round(performance.now() - finalizeStart);
-
-      getLogger().info("[AssemblyAI] Transcript timing:", { durationMs });
-      getLogger().info(
-        "[AssemblyAI] Received transcript, length:",
-        transcript?.length ?? 0,
-      );
-
-      return {
-        rawTranscript: transcript || null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-          transcriptionDurationMs: durationMs,
-        },
-        warnings: [],
-      };
-    } catch (error) {
-      getLogger().error("[AssemblyAI] Failed to finalize session:", error);
-      return {
-        rawTranscript: null,
-        metadata: {
-          inferenceDevice: "API • AssemblyAI (Streaming)",
-          transcriptionMode: "api",
-        },
-        warnings: [
-          `AssemblyAI finalization failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        ],
-      };
-    }
-  }
-
-  cleanup(): void {
-    if (this.session) {
-      this.session.cleanup();
-      this.session = null;
     }
   }
 }

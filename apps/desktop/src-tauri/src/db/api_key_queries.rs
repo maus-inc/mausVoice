@@ -4,8 +4,8 @@ use crate::domain::{ApiKey, ApiKeyUpdateRequest};
 
 pub async fn insert_api_key(pool: SqlitePool, api_key: &ApiKey) -> Result<ApiKey, sqlx::Error> {
     sqlx::query(
-        "INSERT INTO api_keys (id, name, provider, created_at, salt, key_hash, key_ciphertext, key_suffix, transcription_model, post_processing_model, openrouter_config, base_url, azure_region, include_v1_path)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT INTO api_keys (id, name, provider, created_at, salt, key_hash, key_ciphertext, key_suffix, transcription_model, post_processing_model, openrouter_config, base_url, azure_region, include_v1_path, transcription_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
     )
     .bind(&api_key.id)
     .bind(&api_key.name)
@@ -21,6 +21,7 @@ pub async fn insert_api_key(pool: SqlitePool, api_key: &ApiKey) -> Result<ApiKey
     .bind(&api_key.base_url)
     .bind(&api_key.azure_region)
     .bind(api_key.include_v1_path)
+    .bind(api_key.transcription_path.as_ref())
     .execute(&pool)
     .await?;
 
@@ -29,7 +30,7 @@ pub async fn insert_api_key(pool: SqlitePool, api_key: &ApiKey) -> Result<ApiKey
 
 pub async fn fetch_api_keys(pool: SqlitePool) -> Result<Vec<ApiKey>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, name, provider, created_at, salt, key_hash, key_ciphertext, key_suffix, transcription_model, post_processing_model, openrouter_config, base_url, azure_region, include_v1_path
+        "SELECT id, name, provider, created_at, salt, key_hash, key_ciphertext, key_suffix, transcription_model, post_processing_model, openrouter_config, base_url, azure_region, include_v1_path, transcription_path
          FROM api_keys
          ORDER BY created_at DESC",
     )
@@ -53,6 +54,7 @@ pub async fn fetch_api_keys(pool: SqlitePool) -> Result<Vec<ApiKey>, sqlx::Error
             base_url: row.get::<Option<String>, _>("base_url"),
             azure_region: row.get::<Option<String>, _>("azure_region"),
             include_v1_path: row.get::<Option<bool>, _>("include_v1_path"),
+            transcription_path: row.get::<Option<String>, _>("transcription_path"),
         })
         .collect();
 
@@ -79,7 +81,8 @@ pub async fn update_api_key(
             openrouter_config = CASE WHEN ?9 IS NOT NULL THEN ?9 ELSE openrouter_config END,
             base_url = CASE WHEN ?10 IS NOT NULL THEN ?10 ELSE base_url END,
             azure_region = CASE WHEN ?11 IS NOT NULL THEN ?11 ELSE azure_region END,
-            include_v1_path = CASE WHEN ?12 IS NOT NULL THEN ?12 ELSE include_v1_path END
+            include_v1_path = CASE WHEN ?12 IS NOT NULL THEN ?12 ELSE include_v1_path END,
+            transcription_path = CASE WHEN ?13 IS NOT NULL THEN ?13 ELSE transcription_path END
          WHERE id = ?1",
     )
     .bind(&request.id)
@@ -94,6 +97,7 @@ pub async fn update_api_key(
     .bind(&request.base_url)
     .bind(&request.azure_region)
     .bind(request.include_v1_path)
+    .bind(request.transcription_path.as_ref())
     .execute(&pool)
     .await?;
 

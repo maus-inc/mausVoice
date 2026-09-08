@@ -302,6 +302,7 @@ export type GeminiGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
   /** Aborts the request and stops any retry loop when cancelled. */
   signal?: AbortSignal;
   customFetch?: CustomFetch;
@@ -318,6 +319,7 @@ export const geminiGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  maxTokens,
   signal,
   customFetch = fetch,
 }: GeminiGenerateTextArgs): Promise<GeminiGenerateResponseOutput> => {
@@ -334,6 +336,9 @@ export const geminiGenerateTextResponse = async ({
       }
 
       const generationConfig: Record<string, unknown> = {};
+      if (maxTokens !== undefined) {
+        generationConfig.maxOutputTokens = maxTokens;
+      }
       if (jsonResponse) {
         generationConfig.responseMimeType = "application/json";
         if (jsonResponse.schema) {
@@ -496,13 +501,15 @@ export type GeminiStreamChatArgs = {
   customFetch?: CustomFetch;
 };
 
-type GeminiStreamState = {
+type GeminiChunkState = {
   pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
   finishReason: LlmFinishReason;
-  promptTokens?: number;
-  completionTokens?: number;
+  promptTokens: number | undefined;
+  completionTokens: number | undefined;
   toolCallCounter: number;
 };
+
+type GeminiChunkEvent = { type: "text-delta"; text: string };
 
 const buildGeminiTools = (
   input: LlmChatInput,
@@ -519,16 +526,13 @@ const buildGeminiTools = (
   }));
 };
 
-const handleGeminiChunk = (
+const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
-  state: GeminiStreamState,
-): LlmStreamEvent[] => {
+  state: GeminiChunkState,
+): GeminiChunkEvent[] => {
+  const events: GeminiChunkEvent[] = [];
   const candidate = chunk.candidates?.[0];
-  if (!candidate) {
-    return [];
-  }
-
-  const events: LlmStreamEvent[] = [];
+  if (!candidate) return events;
   for (const part of candidate.content?.parts ?? []) {
     if (part.text) {
       events.push({ type: "text-delta", text: part.text });
@@ -661,19 +665,20 @@ export async function* geminiStreamChat({
     signal,
   );
 
-  const state: GeminiStreamState = {
+  const state: GeminiChunkState = {
     pendingToolCalls: [],
     finishReason: "other",
+    promptTokens: undefined,
+    completionTokens: undefined,
     toolCallCounter: 0,
   };
 
-  // A 200 response is not proof of an SSE stream: a proxy error page, a JSON
-  // body (missing `alt=sse`), or an empty body all parse to zero chunks and
-  // would otherwise surface as a successful, silent, empty completion.
   let sawStreamChunk = false;
   for await (const chunk of parseGeminiSse(response)) {
     sawStreamChunk = true;
-    yield* handleGeminiChunk(chunk, state);
+    for (const event of processGeminiChunk(chunk, state)) {
+      yield event;
+    }
   }
   if (!sawStreamChunk) {
     throw new Error(

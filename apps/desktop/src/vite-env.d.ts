@@ -10,6 +10,8 @@
  */
 interface Window {
   __mausVoiceEarlyUnhandledRejection?: (event: PromiseRejectionEvent) => void;
+  __mausVoiceEarlyError?: (event: ErrorEvent) => void;
+  __mausVoiceOverlayInstalled?: boolean;
 }
 
 interface ImportMetaEnv {

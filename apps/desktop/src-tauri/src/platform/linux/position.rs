@@ -15,6 +15,11 @@ pub fn set_overlay_position(
             let y = monitor.visible_y + monitor.visible_height - window_height - margin;
             (x, y)
         }
+        OverlayAnchor::TopCenter => {
+            let x = monitor.visible_x + (monitor.visible_width - window_width) / 2.0;
+            let y = monitor.visible_y + margin;
+            (x, y)
+        }
         OverlayAnchor::TopRight => {
             let x = monitor.visible_x + monitor.visible_width - window_width - margin;
             let y = monitor.visible_y + margin;
@@ -51,6 +56,11 @@ pub fn is_cursor_in_bounds(
         OverlayAnchor::BottomCenter => {
             let x = visible_x + (visible_width - bounds_width) / 2.0;
             let y = visible_y + visible_height - bounds_height - margin;
+            (x, y)
+        }
+        OverlayAnchor::TopCenter => {
+            let x = visible_x + (visible_width - bounds_width) / 2.0;
+            let y = visible_y + margin;
             (x, y)
         }
         OverlayAnchor::TopRight => {

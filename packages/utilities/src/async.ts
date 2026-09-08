@@ -18,9 +18,14 @@ export const retry = async <T>(args: {
       if (isRetryable && !isRetryable(error)) {
         throw error;
       }
-      if (i < retries - 1) {
-        await delayed(delay);
-      } else {
+      if (i >= retries - 1) {
+        throw error;
+      }
+      await delayed(delay);
+      // Re-check after the wait. The caller may abort during the delay, and
+      // isRetryable often reads signal.aborted. Skipping this check would
+      // still run the next fn() after the deadline.
+      if (isRetryable && !isRetryable(error)) {
         throw error;
       }
     }

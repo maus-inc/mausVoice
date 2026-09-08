@@ -409,11 +409,11 @@ describe("Gemini model path sanitization", () => {
     async (model) => {
       // A well-formed Response stands in so pre-guard behavior reaches the
       // network layer; the guard must reject before the fetch is attempted.
-      const customFetch = vi
-        .fn()
-        .mockResolvedValue(
-          jsonResponse({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
-        );
+      const customFetch = vi.fn().mockResolvedValue(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "x" }] } }],
+        }),
+      );
       await expect(
         geminiGenerateTextResponse({
           apiKey: "k",

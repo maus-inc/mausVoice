@@ -116,6 +116,9 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
+export const GLOSSARY_EXACT_SPELLING_INSTRUCTION =
+  "When the user's glossary contains a term, prefer that exact spelling even if the raw transcript differs.";
+
 const appendStructuredStyleGuidance = (
   prompt: string,
   tone: ToneConfig,
@@ -127,7 +130,6 @@ const appendStructuredStyleGuidance = (
       `Example input/output: ${tone.exampleInputOutput}`,
   ].filter((field): field is string => Boolean(field));
 
-  // Keep the exact legacy prompt when no structured fields were supplied.
   if (fields.length === 0) {
     return prompt;
   }
@@ -143,8 +145,10 @@ export const buildSystemPostProcessingTonePrompt = (
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
-    return appendHumanizeSkill(
-      appendStructuredStyleGuidance(systemPrompt, input.tone),
+    return (
+      appendHumanizeSkill(
+        appendStructuredStyleGuidance(systemPrompt, input.tone),
+      ) + `\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`
     );
   }
 
@@ -157,6 +161,7 @@ export const buildSystemPostProcessingTonePrompt = (
 ${stylePrompt}
 The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
+${GLOSSARY_EXACT_SPELLING_INSTRUCTION}
 `;
 
   return appendHumanizeSkill(

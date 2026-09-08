@@ -1,11 +1,44 @@
-use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
-use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 const AUTOSTART_HIDDEN_ARG: &str = "--mausvoice-autostart-hidden";
+/// Opt-in env var that opens the webview devtools on startup. Only read by
+/// debug-assist builds, so it is gated the same way to keep release clippy clean.
+#[cfg(feature = "debug-assist")]
+const DEVTOOLS_ENV_VAR: &str = "MAUSVOICE_ENABLE_DEVTOOLS";
+
+/// Maximum size of a single log file before the plugin rotates it.
+/// At 25 MB and `MAX_LOG_FILES` kept files, the total log directory is
+/// capped near 250 MB.
+const MAX_LOG_FILE_SIZE: u128 = 25 * 1024 * 1024;
+
+/// Number of rotated log files the plugin keeps on disk. Combined with
+/// `MAX_LOG_FILE_SIZE` this bounds the log directory to roughly 250 MB.
+const MAX_LOG_FILES: usize = 10;
+
+/// Returns the default log level, or the level requested through the
+/// `MAUSVOICE_LOG` environment variable when it parses to a known level.
+/// `debug` and `trace` are reachable for opt-in troubleshooting; the
+/// production default is `info` to keep file size and noise in check.
+const MAUSVOICE_LOG_ENV: &str = "MAUSVOICE_LOG";
+
+fn default_log_level() -> log::LevelFilter {
+    if let Ok(raw) = std::env::var(MAUSVOICE_LOG_ENV) {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "trace" => return log::LevelFilter::Trace,
+            "debug" => return log::LevelFilter::Debug,
+            "info" => return log::LevelFilter::Info,
+            "warn" | "warning" => return log::LevelFilter::Warn,
+            "error" => return log::LevelFilter::Error,
+            "off" => return log::LevelFilter::Off,
+            _ => {}
+        }
+    }
+    log::LevelFilter::Info
+}
 
 /// Minimum gap between two window-move log lines.
 const MOVE_LOG_THROTTLE: Duration = Duration::from_millis(250);
@@ -100,7 +133,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     Target::new(TargetKind::Stdout),
                     Target::new(TargetKind::Webview),
                 ])
-                .level(log::LevelFilter::Debug)
+                .max_file_size(MAX_LOG_FILE_SIZE)
+                .rotation_strategy(RotationStrategy::KeepSome(MAX_LOG_FILES))
+                .level(default_log_level())
                 .level_for("hyper_util", log::LevelFilter::Info)
                 .level_for("reqwest", log::LevelFilter::Info)
                 .timezone_strategy(TimezoneStrategy::UseLocal)
@@ -128,11 +163,11 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
         ))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_sql::Builder::new()
-                .add_migrations(crate::db::DB_CONNECTION, crate::db::migrations())
-                .build(),
-        )
+        // Migrations are applied in setup via `open_app_database`. Registering
+        // them on this plugin aborts process startup on a checksum mismatch or
+        // a half-applied migration, which is exactly when the user still needs
+        // a window.
+        .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(updater_builder.build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
@@ -151,9 +186,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             match event {
                 WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                     api.prevent_close();
-                    let _ = window
-                        .app_handle()
-                        .save_window_state(StateFlags::SIZE);
+                    let _ = window.app_handle().save_window_state(StateFlags::SIZE);
                     // Use the webview window for hide_main_window (which
                     // needs &WebviewWindow, not &Window from on_window_event).
                     if let Some(main_ww) = window.app_handle().get_webview_window("main") {
@@ -192,15 +225,24 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
 
             // Preserve GGML files from the old app-data/models location before
             // the desktop sidecars start using app-data/transcription-models.
-            crate::system::paths::migrate_legacy_models(app.handle())
-                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            if let Err(err) = crate::system::paths::migrate_legacy_models(app.handle()) {
+                log::error!("Failed to migrate legacy transcription models: {err}");
+            }
 
             // Record the Windows elevation state once. An unelevated low-level
             // keyboard hook cannot observe input delivered to a higher-integrity
             // window (UIPI), so this is the first thing to check when a user
             // reports hotkeys failing over an elevated app.
+            //
+            // Spin up the OS-level sleep/wake and session-unlock watcher so
+            // the global keyboard hook can be re-armed after resume. Without
+            // this the hotkey stops firing after a laptop sleep or a fast
+            // user-switch unlock.
             #[cfg(target_os = "windows")]
-            crate::platform::windows::permissions::log_elevation_state();
+            {
+                crate::platform::windows::permissions::log_elevation_state();
+                crate::platform::windows::lifecycle::start_watcher(app.handle());
+            }
 
             // Purge old log files, keeping the latest 10
             crate::system::diagnostics::purge_old_logs(app.handle());
@@ -208,19 +250,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // Write startup diagnostics for debugging
             crate::system::diagnostics::write_startup_diagnostics(app.handle());
 
-            let db_url = {
+            let db_path = {
                 let handle = app.handle();
-                crate::system::paths::database_url(handle)
+                crate::system::paths::database_path(handle)
                     .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
             };
 
-            let pool = tauri::async_runtime::block_on(async {
-                SqlitePoolOptions::new()
-                    .max_connections(5)
-                    .connect(&db_url)
-                    .await
-            })
-            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?;
+            let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());
@@ -265,8 +302,8 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // behind the same compile-time feature makes the environment variable
             // intentionally ineffective if it is set for a release build.
             #[cfg(feature = "debug-assist")]
-            if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
-                log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
+            if std::env::var(DEVTOOLS_ENV_VAR).is_ok() {
+                log::info!("{DEVTOOLS_ENV_VAR} detected, opening dev tools...");
                 if let Some(main_window) = app.get_webview_window("main") {
                     main_window.open_devtools();
                 }
@@ -339,6 +376,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::set_dashboard_menu_labels,
             crate::commands::set_pill_visibility_menu_state,
             crate::commands::set_reset_pill_position_enabled,
+            crate::commands::request_pill_position,
             crate::commands::reset_pill_position,
             crate::commands::set_tray_visible,
             crate::commands::api_key_create,
@@ -352,10 +390,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::clear_local_data,
             crate::commands::set_phase,
             crate::commands::set_pill_visibility,
+            crate::commands::set_pill_placement,
             crate::commands::notify_pill_style_info,
             crate::commands::sync_native_pill_assistant,
             crate::commands::start_key_listener,
             crate::commands::stop_key_listener,
+            crate::commands::restart_key_listener,
             crate::commands::sync_hotkey_combos,
             crate::commands::sync_compositor_hotkeys,
             crate::commands::reset_key_listener_state,
@@ -363,6 +403,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::retry_key_listener,
             crate::commands::play_audio,
             crate::commands::set_interaction_chime_enabled,
+            crate::commands::set_interaction_feedback_volume,
             crate::commands::get_text_field_info,
             crate::commands::get_screen_context,
             crate::commands::find_pid_by_window_title,

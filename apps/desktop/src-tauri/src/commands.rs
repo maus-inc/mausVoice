@@ -2218,6 +2218,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     } = api_key;
 
     let protected = protect_api_key(&key);
@@ -2238,6 +2239,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     };
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
@@ -2465,6 +2467,16 @@ pub async fn clear_local_data(
 #[specta::specta]
 pub fn set_interaction_chime_enabled(enabled: bool) {
     crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
+}
+
+/// Mirror the TS interactionFeedbackVolume preference into Rust so the
+/// thock gain is applied on the warm path AND the fallback path. The
+/// Rust side clamps to a safe range, so an out-of-range value from the
+/// frontend can never blow out the sink.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_feedback_volume(volume: f32) {
+    crate::system::audio_feedback::set_interaction_feedback_volume(volume);
 }
 
 #[tauri::command]
@@ -2939,6 +2951,23 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
+    validate_pill_placement(&placement)?;
+    crate::platform::overlay::notify_pill_placement(&app, &placement);
+    Ok(())
+}
+
+/// Accept-list for [`set_pill_placement`]; kept separate so the policy is
+/// unit-testable without an `AppHandle`.
+fn validate_pill_placement(placement: &str) -> Result<(), String> {
+    match placement {
+        "top" | "bottom" => Ok(()),
+        other => Err(format!("invalid pill placement: {other:?}")),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
     crate::platform::overlay::notify_style_info(&app, count, &name);
 }
@@ -2979,6 +3008,16 @@ pub fn get_key_listener_health() -> String {
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
     crate::platform::keyboard::start_key_listener(&app)
+}
+
+/// Re-registers the global keyboard hook. Used by the Windows resume
+/// handler in `platform::windows::lifecycle` to recover from a
+/// sleep/wake or session-unlock transition that tore down the
+/// low-level hook installed by `rdev::grab`.
+#[tauri::command]
+#[specta::specta]
+pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
+    retry_key_listener(app)
 }
 
 #[tauri::command]
@@ -3258,6 +3297,20 @@ pub fn set_pill_visibility_menu_state(app: AppHandle, label: String) -> Result<(
 #[specta::specta]
 pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     crate::system::tray::set_reset_pill_position_enabled(&app, enabled)
+}
+
+/// Ask the native pill overlay to re-publish its current geometry.
+///
+/// The pill emits `pill-position-changed` on its own only after the user drags
+/// it, so a session that never moved the pill left the desktop without any
+/// geometry and windows anchored to the pill (the review composer) opened at
+/// the OS-chosen centre of the screen. The frontend calls this once its
+/// listener is registered, which makes the anchor available from the first
+/// use instead of the second.
+#[tauri::command]
+#[specta::specta]
+pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
+    crate::platform::overlay::notify_request_position(&app)
 }
 
 /// Send a reset-position IPC message to the native pill overlay.
@@ -3863,6 +3916,7 @@ pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandR
 
         // Never inherit the user's shell environment wholesale; clear dangerous vars.
         cmd.env_clear();
+        // skipcq: RS-W1015 - PATH is read to re-seed a scrubbed child env.
         if let Ok(path) = std::env::var("PATH") {
             cmd.env("PATH", path);
         }
@@ -4457,13 +4511,13 @@ pub async fn download_and_open_mac_installer(
         written = match installer_account_chunk(written, chunk.len() as u64) {
             Ok(next) => next,
             Err(err) => {
-                drop(file);
+                drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
                 let _ = std::fs::remove_file(&dest);
                 return Err(err);
             }
         };
         if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file);
+            drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
             let _ = std::fs::remove_file(&dest);
             return Err(err.to_string());
         }
@@ -4472,7 +4526,7 @@ pub async fn download_and_open_mac_installer(
         let _ = std::fs::remove_file(&dest);
         return Err(err.to_string());
     }
-    drop(file);
+    drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
 
     // Verify the downloaded DMG against its detached minisign signature
     // BEFORE opening it. On any failure (missing/invalid key, missing or
@@ -4610,9 +4664,25 @@ pub async fn floating_window_create(
     .title(title.clone())
     .always_on_top(true)
     .skip_taskbar(true)
+    .visible(true)
     .decorations(args.decorations.unwrap_or(true))
     .resizable(args.resizable.unwrap_or(true))
     .focused(args.focused.unwrap_or(false));
+
+    // Windows: apply the same renderer-backgrounding mitigations the main
+    // window uses, so a composer webview cannot be suspended before it has
+    // rendered (the reported "white tab flashes then vanishes" failure).
+    // Tauri only accepts this method on Windows; guard by cfg so other
+    // platforms still compile.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=CalculateNativeWinOcclusion \
+             --disable-renderer-backgrounding \
+             --disable-background-timer-throttling \
+             --disable-backgrounding-occluded-windows",
+        );
+    }
 
     if args.transparent.unwrap_or(false) {
         builder = builder.transparent(true);
@@ -4628,7 +4698,28 @@ pub async fn floating_window_create(
         builder = builder.position(x, y);
     }
 
-    builder.build().map_err(|err| err.to_string())?;
+    builder.build().map_err(|err| {
+        let detail = err.to_string();
+        // WebView2 returns HRESULT 0x8007139F (E_UNEXPECTED / "The group or
+        // resource is not in the correct state") when a second webview is
+        // created before the runtime is ready or on a broken install. Surface
+        // a sanitized, actionable message. `label` is always a server-generated
+        // "floating-{n}" (see FloatingWindowState::next_label), never caller
+        // text, so interpolating it cannot inject content into the toast.
+        log::error!(
+            "floating_window_create failed (label={label}): {detail}"
+        );
+        if detail.to_ascii_lowercase().contains("0x8007139f")
+            || detail.to_ascii_lowercase().contains("webview2")
+        {
+            format!(
+                "Could not open the review window (WebView2 error). \
+                 The transcript was saved to history. Try again or open it in the main app. ({label})"
+            )
+        } else {
+            detail
+        }
+    })?;
 
     Ok(FloatingWindowInfo {
         id: label,
@@ -4799,12 +4890,13 @@ mod tests {
         static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = PATH_GUARD.lock().unwrap();
 
+        // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
         let original = std::env::var("PATH").ok();
         // Simulate a process environment that has no PATH at all.
         // `set_var`/`remove_var` are unsafe since 1.87.
         #[allow(unused_unsafe)]
         unsafe {
-            std::env::remove_var("PATH");
+            std::env::remove_var("PATH"); // skipcq: RS-W1015 - fixed OS contract.
         }
 
         let result = run_terminal_command("ls".to_string()).await;
@@ -4813,8 +4905,8 @@ mod tests {
         #[allow(unused_unsafe)]
         unsafe {
             match original {
-                Some(value) => std::env::set_var("PATH", value),
-                None => std::env::remove_var("PATH"),
+                Some(value) => std::env::set_var("PATH", value), // skipcq: RS-W1015 - fixed OS contract.
+                None => std::env::remove_var("PATH"), // skipcq: RS-W1015 - fixed OS contract.
             }
         }
         drop(_guard);
@@ -4971,6 +5063,19 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
+    }
+
+    #[test]
+    fn pill_placement_accepts_top_and_bottom_only() {
+        // Exercise the validator extracted from set_pill_placement so a
+        // regression in the accept-list (typo in the literal, removal of a
+        // branch, etc.) cannot ship silently — the previous test simply
+        // re-asserted the implementation against the implementation.
+        assert!(validate_pill_placement("top").is_ok());
+        assert!(validate_pill_placement("bottom").is_ok());
+        assert!(validate_pill_placement("center").is_err());
+        assert!(validate_pill_placement("").is_err());
+        assert!(validate_pill_placement("TOP").is_err());
     }
 
     #[test]

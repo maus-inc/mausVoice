@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
+  GLOSSARY_EXACT_SPELLING_INSTRUCTION,
   PostProcessingPromptInput,
 } from "./prompt.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
@@ -57,9 +58,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         systemPromptTemplate: "You are a custom assistant for the enterprise.",
       }),
     );
-    expect(result).toBe(
-      `You are a custom assistant for the enterprise.\n\n${HUMANIZE_SKILL_TEXT}`,
-    );
+    expect(result).toContain("You are a custom assistant for the enterprise.");
+    expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
+    expect(result).toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("substitutes variables in template system prompt", () => {
@@ -74,9 +75,9 @@ describe("buildSystemPostProcessingTonePrompt", () => {
         { userName: "Bob", dictationLanguage: "fr" },
       ),
     );
-    expect(result).toBe(
-      `You assist Bob with transcripts in Français.\n\n${HUMANIZE_SKILL_TEXT}`,
-    );
+    expect(result).toContain("You assist Bob with transcripts in Français.");
+    expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
+    expect(result).toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("falls back to default when template config has no systemPromptTemplate", () => {
@@ -88,6 +89,13 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     );
     expect(result).toContain("Clean up the provided transcript");
     expect(result).toContain("English");
+  });
+
+  it("includes the glossary exact-spelling instruction in the style system prompt", () => {
+    const result = buildSystemPostProcessingTonePrompt(
+      makeInput({ kind: "style", stylePrompt: "Be formal" }),
+    );
+    expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
   });
 });
 

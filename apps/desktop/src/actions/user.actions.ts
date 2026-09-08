@@ -2,6 +2,7 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
   User,
@@ -21,6 +22,10 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
+import {
+  DEFAULT_HANDS_FREE_DELAY_MS,
+  normalizeHandsFreeDelayMs,
+} from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -30,6 +35,7 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { createMutationQueue } from "../utils/mutation-queue";
+import { pushPillPlacementToNative } from "./windows-sync.actions";
 import { sendPillFireworks, sendPillFlame } from "../utils/overlay.utils";
 import {
   getMyEffectiveUserId,
@@ -107,9 +113,11 @@ export const createDefaultPreferences = (): UserPreferences => ({
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
 
   alwaysRequestAdminOnStartup: false,
   spokenCommandsEnabled: true,
@@ -123,12 +131,15 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
   inDictationStyleSwitchingEnabled: false,
   hallucinationFilterEnabled: true,
   reviewBeforeInsert: null,
   agentEnabledTools: null,
   agentMaxIterations: 20,
   agentPermissionTimeoutMs: 60_000,
+  autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits
@@ -454,8 +465,39 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
   );
   // A23: Mirror the pref into Rust so native pill thocks honor it too.
   // Fire-and-forget: the persisted value is the source of truth and the
-  // command only controls the in-memory flag used by audio_feedback.
-  invoke("set_interaction_chime_enabled", { enabled }).catch(() => {});
+  // command only controls the in-memory flag used by audio_feedback. The
+  // command can fail on a non-main window, which is expected and safe to
+  // ignore, but we still surface it for diagnostics.
+  invoke("set_interaction_chime_enabled", { enabled }).catch((error) =>
+    getLogger().verbose(`Failed to set interaction chime on pill: ${error}`),
+  );
+};
+
+export const setInteractionFeedbackVolume = async (
+  volume: number,
+): Promise<void> => {
+  // Persist the user-facing preference (clamped to [0.05, 0.5]) and mirror the
+  // same clamped value into Rust so the IPC payload matches the persisted
+  // record. The Rust side clamps again to its safe window as a
+  // defence-in-depth measure; this clamp guarantees the on-the-wire
+  // payload never exceeds the effective [0.05, 0.5] range. The Rust
+  // sink clamps playback to the same window, so clamping here keeps the
+  // persisted value, the IPC payload, and what the user actually hears
+  // identical — a slider at maximum must not silently play at half.
+  const clamped = Math.max(0.05, Math.min(0.5, volume));
+  await updateUser(
+    (user) => {
+      user.interactionFeedbackVolume = clamped;
+    },
+    "Unable to update interaction feedback volume. User not found.",
+    "Failed to save interaction feedback volume. Please try again.",
+  );
+  invoke("set_interaction_feedback_volume", { volume: clamped }).catch(
+    (error) =>
+      getLogger().verbose(
+        `Failed to set interaction feedback volume on pill: ${error}`,
+      ),
+  );
 };
 
 export const setUserName = async (name: string): Promise<void> => {
@@ -645,6 +687,21 @@ export const setPillResetMonitorStrategy = async (
   }, "Failed to save pill reset monitor strategy. Please try again.");
 };
 
+export const setPillPlacement = async (
+  placement: PillPlacement,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillPlacement = placement;
+  }, "Failed to save pill placement preference. Please try again.");
+  try {
+    await pushPillPlacementToNative(placement);
+  } catch (error) {
+    getLogger().warning(
+      `Failed to push pill placement to native pill: ${error}`,
+    );
+  }
+};
+
 export const setAlwaysRequestAdminOnStartup = async (
   enabled: boolean,
 ): Promise<void> => {
@@ -667,6 +724,31 @@ export const setDictationLimitMinutes = async (
   await updateUserPreferences((preferences) => {
     preferences.dictationLimitMinutes = normalizeDictationLimitMinutes(minutes);
   }, "Failed to save dictation limit preference. Please try again.");
+};
+
+export const setHandsFreeDelayMs = async (
+  delayMs: Nullable<number>,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.handsFreeDelayMs =
+      delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
+  }, "Failed to save hands-free delay preference. Please try again.");
+};
+
+export const setAutoLearnDictionaryEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnDictionaryEnabled = enabled;
+  }, "Failed to save auto-learn dictionary preference. Please try again.");
+};
+
+export const setAutoLearnFromEditsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnFromEditsEnabled = enabled;
+  }, "Failed to save learn-from-corrections preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (

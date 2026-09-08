@@ -7,9 +7,22 @@ export {
 } from "./hallucination.utils";
 
 /**
+ * Escapes regular expression metacharacters in `value` so it can be embedded
+ * as a literal pattern. Use this whenever a user-supplied string (for example
+ * a dictionary term's source value) is passed to `new RegExp`, `String.replace`
+ * with a regex, or any other regex-accepting API. Without escaping, a term
+ * like `C++` or `a.b` is interpreted as a regex pattern and either throws
+ * or matches the wrong span.
+ */
+const REGEXP_ESCAPE_PATTERN = /[.*+?^${}()|[\]\\]/g;
+
+export const escapeRegExp = (value: string): string =>
+  value.replace(REGEXP_ESCAPE_PATTERN, String.raw`\$&`);
+
+/**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,
- * deletions, or substitutions) required to change one string into the other.
+ * deletions, or substitutions) required to change one string into another.
  */
 export const editDistance = (a: string, b: string): number => {
   if (a.length === 0) return b.length;
@@ -149,42 +162,16 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
-type PreparedReplacementRule = {
+type PreparedRule = {
   rule: ReplacementRule;
   source: string;
   wordCount: number;
 };
 
-// Positions of the word segments; the odd indices in between are whitespace.
-const findWordPositions = (segments: string[]): number[] => {
-  const wordPositions: number[] = [];
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (segment && !/^\s+$/.test(segment)) {
-      wordPositions.push(i);
-    }
-  }
-  return wordPositions;
-};
-
-// Rules are matched as phrases, so a rule spans as many words as its source
-// does. Longer phrases are tried first so that "New York City" wins over a
-// "New York" rule at the same position.
-const prepareReplacementRules = (
-  rules: ReplacementRule[],
-): PreparedReplacementRule[] =>
-  rules
-    .map((rule) => ({
-      rule,
-      source: normalizePhrase(rule.sourceValue).toLowerCase(),
-      wordCount: countWords(rule.sourceValue),
-    }))
-    .filter((prepared) => prepared.source.length > 0);
-
-const findBestRuleMatch = (
-  preparedRules: PreparedReplacementRule[],
-  span: number,
+const findBestMatchingRule = (
+  preparedRules: PreparedRule[],
   normalizedCandidate: string,
+  span: number,
 ): ReplacementRule | null => {
   let bestMatch: ReplacementRule | null = null;
   let bestSimilarity = 0;
@@ -205,51 +192,6 @@ const findBestRuleMatch = (
   return bestMatch;
 };
 
-const appendUntil = (
-  result: string[],
-  segments: string[],
-  from: number,
-  until: number,
-): void => {
-  for (let i = from; i < until; i++) {
-    result.push(segments[i]);
-  }
-};
-
-const tryReplaceSpan = (
-  preparedRules: PreparedReplacementRule[],
-  segments: string[],
-  wordPositions: number[],
-  wordIndex: number,
-  startSegment: number,
-  span: number,
-): { text: string; nextSegmentIndex: number } | null => {
-  const endSegment = wordPositions[wordIndex + span - 1];
-  const candidate = segments.slice(startSegment, endSegment + 1).join("");
-  const { word, leadingPunctuation, trailingPunctuation } =
-    extractPunctuation(candidate);
-  if (!word) {
-    return null;
-  }
-
-  const bestMatch = findBestRuleMatch(
-    preparedRules,
-    span,
-    collapseWhitespace(word).toLowerCase(),
-  );
-  if (!bestMatch) {
-    return null;
-  }
-
-  const { word: destinationWord } = extractPunctuation(
-    bestMatch.destinationValue,
-  );
-  return {
-    text: leadingPunctuation + destinationWord + trailingPunctuation,
-    nextSegmentIndex: endSegment + 1,
-  };
-};
-
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -257,50 +199,91 @@ export const applyReplacements = (
   if (rules.length === 0) return text;
 
   const segments = text.split(/(\s+)/);
-  const wordPositions = findWordPositions(segments);
-  const preparedRules = prepareReplacementRules(rules);
+
+  // Positions of the word segments; the odd indices in between are whitespace.
+  const wordPositions: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment && !/^\s+$/.test(segment)) {
+      wordPositions.push(i);
+    }
+  }
+
+  // Rules are matched as phrases, so a rule spans as many words as its source
+  // does. Longer phrases are tried first so that "New York City" wins over a
+  // "New York" rule at the same position.
+  const preparedRules: PreparedRule[] = rules
+    .map((rule) => ({
+      rule,
+      source: normalizePhrase(rule.sourceValue).toLowerCase(),
+      wordCount: countWords(rule.sourceValue),
+    }))
+    .filter((prepared) => prepared.source.length > 0);
 
   if (preparedRules.length === 0) return text;
 
   const maxWordCount = Math.max(
     ...preparedRules.map((prepared) => prepared.wordCount),
   );
+
   const result: string[] = [];
   let segmentIndex = 0;
   let wordIndex = 0;
 
   while (wordIndex < wordPositions.length) {
     const startSegment = wordPositions[wordIndex];
-    appendUntil(result, segments, segmentIndex, startSegment);
-    const remainingWords = wordPositions.length - wordIndex;
-    let matchedSpan = 0;
 
-    for (let span = Math.min(maxWordCount, remainingWords); span >= 1; span--) {
-      const replacement = tryReplaceSpan(
+    // Emit whitespace (and anything else) preceding this word untouched.
+    while (segmentIndex < startSegment) {
+      result.push(segments[segmentIndex]);
+      segmentIndex++;
+    }
+
+    const remainingWords = wordPositions.length - wordIndex;
+    let matched = false;
+
+    for (
+      let span = Math.min(maxWordCount, remainingWords);
+      span >= 1 && !matched;
+      span--
+    ) {
+      const endSegment = wordPositions[wordIndex + span - 1];
+      const candidate = segments.slice(startSegment, endSegment + 1).join("");
+      const { word, leadingPunctuation, trailingPunctuation } =
+        extractPunctuation(candidate);
+
+      if (!word) continue;
+
+      const normalizedCandidate = collapseWhitespace(word).toLowerCase();
+      const bestMatch = findBestMatchingRule(
         preparedRules,
-        segments,
-        wordPositions,
-        wordIndex,
-        startSegment,
+        normalizedCandidate,
         span,
       );
-      if (replacement) {
-        result.push(replacement.text);
-        segmentIndex = replacement.nextSegmentIndex;
-        matchedSpan = span;
-        break;
+
+      if (bestMatch) {
+        const { word: destinationWord } = extractPunctuation(
+          bestMatch.destinationValue,
+        );
+        result.push(leadingPunctuation + destinationWord + trailingPunctuation);
+        segmentIndex = endSegment + 1;
+        wordIndex += span;
+        matched = true;
       }
     }
 
-    if (matchedSpan === 0) {
+    if (!matched) {
       result.push(segments[startSegment]);
       segmentIndex = startSegment + 1;
       wordIndex++;
-    } else {
-      wordIndex += matchedSpan;
     }
   }
 
-  appendUntil(result, segments, segmentIndex, segments.length);
+  // Emit any trailing whitespace.
+  while (segmentIndex < segments.length) {
+    result.push(segments[segmentIndex]);
+    segmentIndex++;
+  }
+
   return result.join("");
 };

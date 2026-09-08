@@ -196,7 +196,14 @@ impl WhisperModel {
                     ),
                 ]
             }
-            _ => Vec::new(),
+            // whisper.cpp ggml models are single blobs fetched through
+            // `download_url()` and verified by `whisper_cpp_sha256()`.
+            Self::Tiny
+            | Self::Base
+            | Self::Small
+            | Self::Medium
+            | Self::Large
+            | Self::Turbo => Vec::new(),
         }
     }
 
@@ -240,7 +247,11 @@ impl WhisperModel {
             Self::Turbo => {
                 Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69")
             }
-            _ => None,
+            // ONNX models pin per-artifact digests in `artifact_set()`.
+            Self::ParakeetCtc06B
+            | Self::ParakeetTdt06B
+            | Self::Canary1B
+            | Self::SenseVoice => None,
         }
     }
 
@@ -482,8 +493,17 @@ mod tests {
 
     #[test]
     fn whisper_cpp_downloads_are_revision_pinned_and_digest_checked() {
-        for slug in ["tiny", "base", "small", "medium", "large", "turbo"] {
-            let model = WhisperModel::from_slug(slug).expect("supported whisper slug must parse");
+        // Iterates every supported ggml variant so a newly added slug is
+        // pinned from day one; ONNX artifacts are checked in
+        // `onnx_primary_is_first_in_artifact_set`.
+        let ggml_models: Vec<(&str, WhisperModel)> = WhisperModel::supported()
+            .iter()
+            .filter_map(|slug| WhisperModel::from_slug(slug).map(|model| (*slug, model)))
+            .filter(|(_, model)| !model.is_onnx())
+            .collect();
+        assert!(ggml_models.len() >= 6, "expected the six whisper.cpp variants");
+
+        for (slug, model) in ggml_models {
             let url = model.download_url();
             assert!(
                 url.contains(&format!("/resolve/{}/", WhisperModel::WHISPER_CPP_REVISION)),

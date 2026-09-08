@@ -11,7 +11,7 @@ These providers use the standard one-key form, but support different tasks. Task
 
 ### Aldea
 
-Aldea is batch transcription only. mausVoice sends raw WAV bytes to `https://api.aldea.ai/v1/listen` with Bearer authentication, using 60-second segments, five-second overlaps, and batches of three concurrent calls. The implementation currently ignores the selected language and dictionary prompt. Its key test sends an empty body and treats either success or HTTP 400 as evidence that the endpoint was reached, so validate with real speech too.
+Aldea is batch transcription only. mausVoice sends raw WAV bytes to `https://api.aldea.ai/v1/listen` with Bearer authentication, using 60-second segments, five-second overlaps, and batches of three concurrent calls. The selected dictation language is forwarded as a `language` query parameter (`zh`, `zh-CN`, `en`, etc.); selecting **Auto** omits the parameter so Aldea chooses. The dictionary prompt is still not forwarded. Its key test sends an empty body and treats either success or HTTP 400 as evidence that the endpoint was reached, so validate with real speech too.
 
 ### ElevenLabs
 

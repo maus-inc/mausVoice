@@ -39,6 +39,7 @@ type LocalUser = {
   wordsThisMonthMonth: string | null;
   wordsTotal: number;
   playInteractionChime?: boolean;
+  interactionFeedbackVolume?: number | null;
   hasFinishedTutorial?: boolean;
   cohort?: string | null;
   stylingMode?: string | null;
@@ -74,6 +75,7 @@ const fromLocalUser = (localUser: LocalUser): User => {
     wordsThisMonthMonth: orNull(localUser.wordsThisMonthMonth),
     wordsTotal: orValue(localUser.wordsTotal, 0),
     playInteractionChime,
+    interactionFeedbackVolume: orNull(localUser.interactionFeedbackVolume),
     hasFinishedTutorial: orFalse(localUser.hasFinishedTutorial),
     cohort: orNull(localUser.cohort),
     stylingMode: (localUser.stylingMode as User["stylingMode"]) ?? null,
@@ -98,6 +100,7 @@ const toLocalUser = (user: User): LocalUser => ({
   wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
   wordsTotal: user.wordsTotal,
   playInteractionChime: user.playInteractionChime,
+  interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
   hasFinishedTutorial: user.hasFinishedTutorial,
   cohort: user.cohort ?? null,
   stylingMode: user.stylingMode ?? null,

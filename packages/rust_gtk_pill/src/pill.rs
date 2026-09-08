@@ -119,6 +119,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -132,6 +133,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -155,6 +157,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -221,6 +225,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             | gdk::EventMask::BUTTON_PRESS_MASK
             | gdk::EventMask::BUTTON_RELEASE_MASK
             | gdk::EventMask::FOCUS_CHANGE_MASK
+            | gdk::EventMask::KEY_PRESS_MASK
             | gdk::EventMask::SCROLL_MASK
             | gdk::EventMask::SMOOTH_SCROLL_MASK,
     );
@@ -308,8 +313,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
         let (x, y) = event.position();
-        let is_typing = state_press.assistant_active.get()
-            && *state_press.assistant_input_mode.borrow() == "type";
+        let is_typing = state_press.is_typing();
         if is_typing {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
@@ -383,8 +387,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
     window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.assistant_active.get()
-            && *state_focus_in.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_in.is_typing();
         if is_typing {
             entry_focus_in.grab_focus();
         }
@@ -394,8 +397,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_out = state.clone();
     let entry_focus_out = entry.clone();
     window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.assistant_active.get()
-            && *state_focus_out.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_out.is_typing();
         if is_typing {
             entry_focus_out.select_region(0, 0);
         }
@@ -422,18 +424,35 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_entry = state.clone();
     entry.connect_activate(move |e| {
-        let text = e.text().to_string();
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            ipc::send(&OutMessage::TypedMessage { text: trimmed.to_string() });
+        // Enter submits: an insert decision while a transcript is under
+        // review, a message to the assistant otherwise.
+        *state_entry.entry_text.borrow_mut() = e.text().to_string();
+        if input::submit_entry(&state_entry) {
             e.set_text("");
-            *state_entry.entry_text.borrow_mut() = String::new();
         }
     });
 
     let state_entry_changed = state.clone();
     entry.connect_changed(move |e| {
         *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
+    });
+
+    let state_escape = state.clone();
+    window.connect_key_press_event(move |_, event| {
+        // Escape while a transcript is under review is a cancel decision, the
+        // same as on the Windows pill: the desktop is waiting for an answer.
+        // The window sees the key before the focused entry does, so this works
+        // whether or not the entry holds the keyboard.
+        if event.keyval() != gdk::keys::constants::Escape {
+            return glib::Propagation::Proceed;
+        }
+        match state_escape.pending_review_id() {
+            Some(review_id) => {
+                input::send_review_decision(&review_id, "cancel", None);
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
     });
 
     let receiver = Rc::new(RefCell::new(receiver));
@@ -461,6 +480,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                     }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
+                    state_tick.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&state_tick);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
@@ -474,25 +502,26 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.style_count.set(count);
                     *state_tick.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *state_tick.flash_action.borrow_mut() = action;
                     *state_tick.flash_action_label.borrow_mut() = action_label;
+                    *state_tick.flash_reject_action.borrow_mut() = reject_action;
+                    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
-                    state_tick.flash_visible.set(false);
-                    state_tick.flash_timer.set(0.0);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
+                    clear_flash(&state_tick);
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -506,6 +535,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -538,6 +569,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
@@ -548,8 +580,27 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.assistant_messages.borrow_mut() = messages;
                     *state_tick.assistant_streaming.borrow_mut() = streaming;
                     *state_tick.assistant_permissions.borrow_mut() = permissions;
+                    let previous_review_id = state_tick
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
+                    *state_tick.assistant_review.borrow_mut() = review;
 
-                    if active && !was_active {
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *state_tick.entry_text.borrow_mut() = text.clone();
+                        entry_tick.set_text(&text);
+                    }
+
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         state_tick.should_stick.set(true);
                         state_tick.scroll_offset.set(0.0);
                     }
@@ -562,6 +613,14 @@ pub fn run(receiver: Receiver<InMessage>) {
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
                     ipc::send(&OutMessage::PositionChanged {
                         has_saved_position: false,
+                        rect,
+                        monitor,
+                    });
+                }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: state_tick.has_saved_position.get(),
                         rect,
                         monitor,
                     });
@@ -580,9 +639,12 @@ pub fn run(receiver: Receiver<InMessage>) {
         tick(&state_tick);
 
         // Show/hide entry for typing mode
-        let is_typing = state_tick.assistant_active.get()
-            && *state_tick.assistant_input_mode.borrow() == "type";
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
+        let is_typing = state_tick.is_typing();
+        if is_typing {
+            // Recomputed every frame rather than once on show. The window is
+            // resized by one message and the state that opens the entry by
+            // another, so a size that lands second would otherwise leave the
+            // entry sitting at the old geometry.
             let (ox, oy) = state_tick.content_offset();
             let dw = state_tick.draw_width.get();
             let dh = state_tick.draw_height.get();
@@ -607,6 +669,8 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_tick.set_margin_end(margin_end);
             entry_tick.set_margin_bottom(margin_bottom);
             entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+        }
+        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
             entry_tick.set_visible(true);
             entry_tick.show();
             match backend_tick {
@@ -655,10 +719,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         // previously keyed off `phase == Recording` alone, which ignored the
         // user's preference: a pill set to Hidden still appeared while
         // recording, and Persistent never showed when idle.
-        let should_show = should_show_pill(
-            state_tick.visibility.get(),
-            state_tick.phase.get(),
-            state_tick.assistant_active.get(),
+        let should_show = rust_pill_shared::should_show_pill(
+            state_tick.visibility.get().into(),
+            state_tick.phase.get() != Phase::Idle,
+            state_tick.owns_panel(),
         );
         if should_show {
             win_tick.show();
@@ -876,50 +940,25 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     }
 }
 
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
+
 fn tick(state: &PillState) {
     tick_long_press(state);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
-    let is_recording = phase == Phase::Recording;
     let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
 
-    // Audio levels
-    if is_recording {
-        let levels = state.pending_levels.borrow();
-        if !levels.is_empty() {
-            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
-            let avg = sum / levels.len() as f64;
-            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
-            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
-            let boosted = (combined.sqrt() * 1.35).min(1.0);
-            let target = state.target_level.get();
-            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
-        }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
-    } else {
-        state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4);
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
-        }
-    }
-
-    let current = state.current_level.get();
-    let target = state.target_level.get();
-    let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
-
-    let decayed = target * TARGET_DECAY_PER_FRAME;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
-
-    let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
-    let effective_level = level.max(base_level);
-    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    tick_audio_levels(state, phase);
 
     // Pill expand/collapse (spring)
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
@@ -931,18 +970,29 @@ fn tick(state: &PillState) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target =
+        if state.owns_panel() {
+            1.0
+        } else {
+            0.0
+        };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
 
     // Keyboard button (spring)
@@ -951,7 +1001,7 @@ fn tick(state: &PillState) {
     spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
     spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);
@@ -971,20 +1021,7 @@ fn tick(state: &PillState) {
     // Broadcast transcript
     tick_transcript(state);
 
-    // Flash message timer
-    if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - SPRING_DT;
-        if remaining <= 0.0 {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
-        } else {
-            state.flash_timer.set(remaining);
-        }
-    }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+    tick_flash(state, tooltip_target > 0.5);
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
@@ -1032,6 +1069,73 @@ fn tick(state: &PillState) {
         let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
         state.scroll_offset.set(max_scroll);
     }
+}
+
+/// Audio-level meters and the waveform phase they drive: pending input levels
+/// fold into the target level, decay toward silence when idle, and advance the
+/// wave animation at a level-dependent rate.
+fn tick_audio_levels(state: &PillState, phase: Phase) {
+    let is_recording = phase == Phase::Recording;
+    let is_loading = phase == Phase::Loading;
+
+    if is_recording {
+        let levels = state.pending_levels.borrow();
+        if !levels.is_empty() {
+            let sum: f64 = levels.iter().map(|v| *v as f64).sum();
+            let avg = sum / levels.len() as f64;
+            let peak = levels.iter().copied().fold(0.0_f32, f32::max) as f64;
+            let combined = (avg * 0.9 + peak * 0.85).min(1.0);
+            let boosted = (combined.sqrt() * 1.35).min(1.0);
+            let target = state.target_level.get();
+            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
+        }
+    } else if is_loading {
+        let target = state.target_level.get();
+        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+    } else {
+        state.target_level.set(0.0);
+        state.current_level.set(state.current_level.get() * 0.4);
+        if state.current_level.get() < 0.0002 {
+            state.current_level.set(0.0);
+        }
+    }
+
+    let current = state.current_level.get();
+    let target = state.target_level.get();
+    let new_current = current + (target - current) * LEVEL_SMOOTHING;
+    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+
+    let decayed = target * TARGET_DECAY_PER_FRAME;
+    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+
+    let level = state.current_level.get();
+    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let effective_level = level.max(base_level);
+    let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
+    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+}
+
+/// Flash banner (native pill toast) expiry and fade spring. An action-less
+/// banner yields the strip above the pill to a revealed style tooltip, so the
+/// banner and the selector never sit on top of each other.
+fn tick_flash(state: &PillState, tooltip_revealed: bool) {
+    if state.flash_visible.get() {
+        let remaining = state.flash_timer.get() - SPRING_DT;
+        if remaining <= 0.0 {
+            state.flash_visible.set(false);
+            state.flash_timer.set(0.0);
+            *state.flash_action.borrow_mut() = None;
+            *state.flash_action_label.borrow_mut() = None;
+        } else {
+            state.flash_timer.set(remaining);
+        }
+    }
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_revealed,
+    );
+    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
 }
 
 fn tick_long_press(state: &PillState) {
@@ -1309,63 +1413,6 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
     } else {
         value.set(new_v);
         velocity.set(new_vel);
-    }
-}
-
-/// Shared pill visibility policy.
-///
-/// Every backend (X11, Layer Shell, Plain Wayland) resolves visibility through
-/// this one function, so the user's preference means the same thing everywhere.
-///
-/// | Visibility     | Idle   | Recording | Assistant |
-/// |----------------|--------|-----------|-----------|
-/// | `Hidden`       | hidden | hidden    | visible   |
-/// | `WhileActive`  | hidden | visible   | visible   |
-/// | `Persistent`   | visible| visible   | visible   |
-///
-/// Assistant mode is a deliberate exception: the pill is the assistant's own
-/// surface, so it shows even when the preference is `Hidden`.
-pub(crate) fn should_show_pill(
-    visibility: Visibility,
-    phase: Phase,
-    is_assistant: bool,
-) -> bool {
-    let is_active = phase != Phase::Idle;
-    match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    }
-}
-
-#[cfg(test)]
-mod visibility_tests {
-    use super::*;
-
-    #[test]
-    fn hidden_stays_hidden_while_recording() {
-        // The Wayland regression: a Hidden pill used to appear while recording.
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Recording, false));
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Idle, false));
-    }
-
-    #[test]
-    fn hidden_still_shows_for_assistant() {
-        assert!(should_show_pill(Visibility::Hidden, Phase::Idle, true));
-        assert!(should_show_pill(Visibility::Hidden, Phase::Recording, true));
-    }
-
-    #[test]
-    fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(Visibility::WhileActive, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Recording, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Idle, true));
-    }
-
-    #[test]
-    fn persistent_always_shows() {
-        assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
     }
 }
 

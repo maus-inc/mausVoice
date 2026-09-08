@@ -1,4 +1,0 @@
-- Switch language from menu tray
-- Improve docs
-- Fix integration issue with groq
-- Allow multi word replacements

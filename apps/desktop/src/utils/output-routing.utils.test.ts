@@ -1,11 +1,170 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { insertLocalTranscriptOutputViaTyping } from "./output-routing.utils";
+import {
+  insertLocalTranscriptOutputViaTyping,
+  routeTranscriptOutput,
+} from "./output-routing.utils";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
   return { ...actual, invoke: invokeMock };
+});
+
+const { getAppStateMock, getPrefsMock } = vi.hoisted(() => ({
+  getAppStateMock: vi.fn(),
+  getPrefsMock: vi.fn(),
+}));
+vi.mock("../store", () => ({ getAppState: getAppStateMock }));
+vi.mock("./user.utils", () => ({
+  getMyUserPreferences: getPrefsMock,
+}));
+
+vi.mock("./log.utils", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
+
+vi.mock("./overlay.utils", () => ({
+  sendPillFlashMessage: vi.fn(),
+}));
+
+vi.mock("../i18n/intl", () => ({
+  getIntl: () => ({
+    formatMessage: (descriptor: { defaultMessage: string }) =>
+      descriptor.defaultMessage,
+  }),
+}));
+
+describe("routeTranscriptOutput hands-free delay", () => {
+  const baseState = {
+    appTargetById: {},
+    supportsPasteKeybinds: "none",
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue("pasted");
+    getAppStateMock.mockReturnValue(baseState);
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      typingSpeedMs: 5,
+      handsFreeDelayMs: 3000,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("waits for the configured delay before pasting a final transcript", async () => {
+    const routing = routeTranscriptOutput({
+      text: "final words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(invokeMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await routing;
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][0]).toBe("paste");
+    expect(invokeMock.mock.calls[0][1]).toMatchObject({
+      text: expect.stringContaining("final words"),
+      keybind: null,
+    });
+  });
+
+  it("pastes realtime interim segments immediately, bypassing the delay", async () => {
+    const routing = routeTranscriptOutput({
+      text: "interim ",
+      mode: "dictation",
+      currentAppId: null,
+      isInterim: true,
+    });
+
+    // Not a single timer tick is needed: interim delivery must not wait.
+    await routing;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "interim ",
+      keybind: null,
+    });
+  });
+
+  it("drops an older delayed transcript when a newer transcript completes", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+    });
+    await expect(newerRouting).resolves.toEqual({
+      delivered: true,
+      remote: false,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "newer words",
+      keybind: null,
+    });
+  });
+
+  it("lets a newer remote delivery cancel an older delayed local transcript", async () => {
+    const olderRouting = routeTranscriptOutput({
+      text: "older local words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    getPrefsMock.mockReturnValue({
+      remoteOutputEnabled: true,
+      remoteTargetDeviceId: "remote-device",
+    });
+    const newerRouting = routeTranscriptOutput({
+      text: "newer remote words",
+      mode: "dictation",
+      currentAppId: null,
+    });
+
+    await newerRouting;
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await expect(olderRouting).resolves.toEqual({
+      delivered: false,
+      remote: false,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith(
+      "remote_sender_deliver_final_text",
+      {
+        args: {
+          targetDeviceId: "remote-device",
+          text: "newer remote words",
+          mode: "dictation",
+        },
+      },
+    );
+  });
 });
 
 type Listener = (event?: { key?: string }) => void;

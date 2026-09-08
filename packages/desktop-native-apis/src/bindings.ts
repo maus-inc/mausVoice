@@ -594,6 +594,24 @@ async requestMicrophonePermission() : Promise<Result<PermissionStatus, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Ask the native pill overlay to re-publish its current geometry.
+ * 
+ * The pill emits `pill-position-changed` on its own only after the user drags
+ * it, so a session that never moved the pill left the desktop without any
+ * geometry and windows anchored to the pill (the review composer) opened at
+ * the OS-chosen centre of the screen. The frontend calls this once its
+ * listener is registered, which makes the anchor available from the first
+ * use instead of the second.
+ */
+async requestPillPosition() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_pill_position") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async resetKeyListenerState() : Promise<void> {
     await TAURI_INVOKE("reset_key_listener_state");
 },
@@ -622,6 +640,20 @@ async resetPillPosition(strategy: string | null) : Promise<Result<null, string>>
 async resolveAppPids(identity: AppIdentity) : Promise<Result<AppProcessMatch[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("resolve_app_pids", { identity }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Re-registers the global keyboard hook. Used by the Windows resume
+ * handler in `platform::windows::lifecycle` to recover from a
+ * sleep/wake or session-unlock transition that tore down the
+ * low-level hook installed by `rdev::grab`.
+ */
+async restartKeyListener() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("restart_key_listener") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -681,6 +713,23 @@ async setDashboardMenuLabels(openLabel: string, hideLabel: string) : Promise<Res
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * A23: Mirror the TS playInteractionChime preference into Rust so the
+ * native thock path (pill overlays call audio_feedback::play_thock directly,
+ * bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+ */
+async setInteractionChimeEnabled(enabled: boolean) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_chime_enabled", { enabled });
+},
+/**
+ * Mirror the TS interactionFeedbackVolume preference into Rust so the
+ * thock gain is applied on the warm path AND the fallback path. The
+ * Rust side clamps to a safe range, so an out-of-range value from the
+ * frontend can never blow out the sink.
+ */
+async setInteractionFeedbackVolume(volume: number) : Promise<void> {
+    await TAURI_INVOKE("set_interaction_feedback_volume", { volume });
+},
 async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_menu_icon", { variant }) };
@@ -692,6 +741,14 @@ async setMenuIcon(variant: MenuIconVariant) : Promise<Result<null, string>> {
 async setPhase(phase: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("set_phase", { phase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPillPlacement(placement: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_pill_placement", { placement }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1060,9 +1117,9 @@ details?: string | null }
 export type AccessibilityFocusTarget = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; backend?: string | null; jabStringPath?: JabElementId[] | null }
 export type AccessibilityWriteEntry = { appPid: number; elementIndexPath: number[]; fingerprintChain: ElementFingerprint[] | null; value: string; backend?: string | null; jabWriteMethod?: JabWriteMethod; jabStringPath?: JabElementId[] | null }
 export type AccessibilityWriteResult = { succeeded: number; failed: number; errors: string[] }
-export type ApiKeyCreateRequest = { id: string; name: string; provider: string; key: string; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
-export type ApiKeyUpdateRequest = { id: string; name?: string | null; key?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
-export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null }
+export type ApiKeyCreateRequest = { id: string; name: string; provider: string; key: string; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
+export type ApiKeyUpdateRequest = { id: string; name?: string | null; key?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
+export type ApiKeyView = { id: string; name: string; provider: string; createdAt: number; keySuffix?: string | null; keyFull?: string | null; transcriptionModel?: string | null; postProcessingModel?: string | null; openRouterConfig?: string | null; baseUrl?: string | null; azureRegion?: string | null; includeV1Path?: boolean | null; transcriptionPath?: string | null }
 /**
  * Stable, relaunch-surviving identifier for a host application. PIDs change
  * every launch; these fields do not. Populated by `get_focused_field_info`
@@ -1227,7 +1284,26 @@ export type SystemCapabilities = { ramGb: number; cpuCores: number; gpus: GpuAda
 export type Term = { id: string; createdAt: number; createdByUserId: string; sourceValue: string; destinationValue: string; isReplacement: boolean; isDeleted: boolean }
 export type TextFieldInfo = { cursorPosition: number | null; selectionLength: number | null; textContent: string | null }
 export type Tone = { id: string; name: string; promptTemplate: string; createdAt: number; sortOrder: number; category?: string | null; outputLength?: string | null; exampleInputOutput?: string | null }
-export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
+export type Transcription = { id: string; transcript: string; timestamp: number; audio?: TranscriptionAudioSnapshot | null; modelSize?: string | null; inferenceDevice?: string | null; rawTranscript?: string | null; sanitizedTranscript?: string | null; transcriptionPrompt?: string | null; postProcessPrompt?: string | null; transcriptionApiKeyId?: string | null; postProcessApiKeyId?: string | null; transcriptionMode?: string | null; postProcessMode?: string | null; postProcessDevice?: string | null; 
+/**
+ * Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b").
+ */
+postProcessModel?: string | null; 
+/**
+ * Provider slug (e.g. "cerebras") selected for post-processing,
+ * persisted even when the request fails so history attributes the
+ * attempt instead of showing "no provider selected".
+ */
+postProcessProvider?: string | null; 
+/**
+ * True when a post-processing request was attempted and failed.
+ */
+postProcessFailed?: boolean | null; 
+/**
+ * Sanitized, non-secret error message from a failed post-processing
+ * request.
+ */
+postProcessError?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { 
 /**
  * Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
@@ -1237,8 +1313,8 @@ pcm16Le: number[]; sampleRate: number }
 export type TranscriptionAudioSamplesData = { samples: number[]; sampleRate: number }
 export type TranscriptionAudioSnapshot = { filePath: string; durationMs: number }
 export type TrayLanguageMenuItem = { code: string; label: string; checked: boolean }
-export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null }
-export type UserPreferences = { userId: string; transcriptionMode?: string | null; transcriptionApiKeyId?: string | null; transcriptionDevice?: string | null; transcriptionModelSize?: string | null; postProcessingMode?: string | null; postProcessingApiKeyId?: string | null; postProcessingOllamaUrl?: string | null; postProcessingOllamaModel?: string | null; agentMode?: string | null; agentModeApiKeyId?: string | null; openclawGatewayUrl?: string | null; openclawToken?: string | null; activeToneId?: string | null; gotStartedAt?: number | null; gpuEnumerationEnabled?: boolean; pasteKeybind?: string | null; lastSeenFeature?: string | null; languageSwitchEnabled?: boolean; secondaryDictationLanguage?: string | null; activeDictationLanguage?: string | null; additionalDictationLanguages?: string[] | null; preferredMicrophone?: string | null; ignoreUpdateDialog?: boolean; incognitoModeEnabled?: boolean; incognitoModeIncludeInStats?: boolean; dictationLimitMinutes?: number; dictationPillVisibility?: string; useNewBackend?: boolean; realtimeOutputEnabled?: boolean; remoteOutputEnabled?: boolean; remoteTargetDeviceId?: string | null; remoteReceiverPort?: number | null; remoteReceiverAutoStart?: boolean; dictationAudioDim?: number; menuBarIconHidden?: boolean; insertionMethod?: string | null; typingSpeedMs?: number | null; 
+export type User = { id: string; name: string; bio: string; company?: string | null; title?: string | null; onboarded: boolean; preferredMicrophone?: string | null; preferredLanguage?: string | null; wordsThisMonth?: number; wordsThisMonthMonth?: string | null; wordsTotal?: number; playInteractionChime?: boolean; interactionFeedbackVolume?: number | null; hasFinishedTutorial?: boolean; hasMigratedPreferredMicrophone?: boolean; cohort?: string | null; stylingMode?: string | null; selectedToneId?: string | null; activeToneIds?: string | null; streak?: number | null; streakRecordedAt?: string | null; referralSource?: string | null }
+export type UserPreferences = { userId: string; transcriptionMode?: string | null; transcriptionApiKeyId?: string | null; transcriptionDevice?: string | null; transcriptionModelSize?: string | null; postProcessingMode?: string | null; postProcessingApiKeyId?: string | null; postProcessingOllamaUrl?: string | null; postProcessingOllamaModel?: string | null; agentMode?: string | null; agentModeApiKeyId?: string | null; openclawGatewayUrl?: string | null; openclawToken?: string | null; activeToneId?: string | null; gotStartedAt?: number | null; gpuEnumerationEnabled?: boolean; pasteKeybind?: string | null; lastSeenFeature?: string | null; languageSwitchEnabled?: boolean; secondaryDictationLanguage?: string | null; activeDictationLanguage?: string | null; additionalDictationLanguages?: string[] | null; preferredMicrophone?: string | null; ignoreUpdateDialog?: boolean; incognitoModeEnabled?: boolean; incognitoModeIncludeInStats?: boolean; preserveAudioOnFailure?: boolean; dictationLimitMinutes?: number; dictationPillVisibility?: string; useNewBackend?: boolean; realtimeOutputEnabled?: boolean; remoteOutputEnabled?: boolean; remoteTargetDeviceId?: string | null; remoteReceiverPort?: number | null; remoteReceiverAutoStart?: boolean; dictationAudioDim?: number; menuBarIconHidden?: boolean; insertionMethod?: string | null; typingSpeedMs?: number | null; 
 /**
  * Which monitor "Reset Pill Position" re-homes the pill onto:
  * "current" (the monitor the pill lives on) or "cursor".
@@ -1248,11 +1324,33 @@ pillResetMonitorStrategy?: string;
  * Request admin elevation (UAC) on every startup. Windows-only; off by
  * default so existing behavior is unchanged.
  */
-alwaysRequestAdminOnStartup?: boolean; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
+alwaysRequestAdminOnStartup?: boolean; 
+/**
+ * Where the dictation pill anchors on screen. Accepted values are
+ * "top" or "bottom"; any other value is treated as the default
+ * "bottom" so legacy data never breaks the UI.
+ */
+pillPlacement?: string; 
+/**
+ * Delay (ms) between a hands-free stop and the actual paste/type
+ * action. NULL disables the delay (immediate paste on stop).
+ */
+handsFreeDelayMs?: number | null; inDictationStyleSwitchingEnabled?: boolean; hallucinationFilterEnabled?: boolean; reviewBeforeInsert?: boolean | null; agentEnabledTools?: string | null; agentMaxIterations?: number; agentPermissionTimeoutMs?: number; 
 /**
  * Deterministic spoken formatting / scratch-that. Default on.
  */
-spokenCommandsEnabled?: boolean }
+spokenCommandsEnabled?: boolean; 
+/**
+ * Automatically add corrected names and words as glossary terms when
+ * the user edits a transcription. Enabled by default.
+ */
+autoLearnDictionaryEnabled?: boolean; 
+/**
+ * Watch the target app after dictation and offer to add corrected names
+ * as glossary terms. Disabled by default because it polls the focused
+ * text field through the accessibility APIs.
+ */
+autoLearnFromEditsEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/

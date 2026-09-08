@@ -4,6 +4,7 @@ import { getAppState, setAppState } from "../store";
 import {
   createDefaultPreferences,
   setAgentToolEnabled,
+  setPillPlacement,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
 } from "./user.actions";
@@ -26,6 +27,13 @@ const { loggerMock, prefsRepoMock } = vi.hoisted(() => {
   return { loggerMock, prefsRepoMock };
 });
 
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
+  return { ...actual, invoke: invokeMock };
+});
+
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("../repos", () => ({
@@ -40,6 +48,39 @@ const minimalToolInfo = (id: string): ToolInfo =>
     instructions: id,
     schema: {},
   }) as ToolInfo;
+
+describe("setPillPlacement", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(() => Promise.resolve());
+  });
+
+  it("persists the preference and pushes the same placement to native", async () => {
+    await setPillPlacement("top");
+
+    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ pillPlacement: "top" }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith("set_pill_placement", {
+      placement: "top",
+    });
+  });
+
+  it("keeps the preference saved when the native push fails and logs once", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("native down"));
+
+    await setPillPlacement("bottom");
+
+    // The preference write is the source of truth and must survive.
+    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ pillPlacement: "bottom" }),
+    );
+    expect(loggerMock.warning).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warning.mock.calls[0][0]).toContain(
+      "Failed to push pill placement to native pill",
+    );
+  });
+});
 
 describe("setAgentToolEnabled empty-registry guard", () => {
   beforeEach(() => {

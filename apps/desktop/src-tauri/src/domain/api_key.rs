@@ -24,6 +24,8 @@ pub struct ApiKey {
     pub azure_region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_v1_path: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, specta::Type)]
@@ -39,6 +41,8 @@ pub struct ApiKeyCreateRequest {
     pub azure_region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_v1_path: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, specta::Type)]
@@ -61,6 +65,8 @@ pub struct ApiKeyUpdateRequest {
     pub azure_region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_v1_path: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, specta::Type)]
@@ -86,6 +92,8 @@ pub struct ApiKeyView {
     pub azure_region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include_v1_path: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcription_path: Option<String>,
 }
 
 impl From<ApiKey> for ApiKeyView {
@@ -103,6 +111,7 @@ impl From<ApiKey> for ApiKeyView {
             base_url: api_key.base_url,
             azure_region: api_key.azure_region,
             include_v1_path: api_key.include_v1_path,
+            transcription_path: api_key.transcription_path,
         }
     }
 }

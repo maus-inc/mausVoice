@@ -4,7 +4,17 @@ import type {
   LlmMessage,
   LlmToolCall,
 } from "@maus-inc/types";
-import type { AgentConfig, AgentEvent } from "./types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentTool,
+  AgentToolOutput,
+} from "./types";
+import { unknownToMessage } from "@maus-inc/utilities";
+
+/** Render a tool's successful result to a string. */
+const stringifyToolResult = (result: unknown): string =>
+  typeof result === "string" ? result : JSON.stringify(result ?? {});
 
 export class AgentLoop {
   private config: AgentConfig;
@@ -145,6 +155,26 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  private async executeTool(
+    tool: AgentTool,
+    toolParams: Record<string, unknown>,
+    reason: unknown,
+  ): Promise<AgentToolOutput> {
+    try {
+      return await tool.execute({
+        params: toolParams,
+        reason: (reason as string) ?? "",
+      });
+    } catch (err) {
+      // A tool must never abort the whole agent loop. Surface the failure
+      // as a tool-result message so the model can recover or end cleanly.
+      return {
+        success: false,
+        failureReason: unknownToMessage(err),
+      };
+    }
+  }
+
   private async *processToolCalls(
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
@@ -166,41 +196,42 @@ export class AgentLoop {
         args: params,
       };
 
+      // Once tool-call-start is emitted, always pair it with a tool-call-result
+      // (and history entry) even if abort wins mid-flight. Skipping the result
+      // leaves the assistant tool-call without a matching tool message.
       const { reason, ...toolParams } = params;
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
       if (!tool) {
-        const error = `Unknown tool: ${tc.name}`;
-        history.push({ role: "tool", toolCallId: tc.id, content: error });
-        yield {
-          type: "tool-call-result",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          result: error,
-          isError: true,
-        };
+        yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+        if (this.aborted) return;
         continue;
       }
 
-      const output = await tool.execute({
-        params: toolParams,
-        reason: (reason as string) ?? "",
-      });
-
+      const output = await this.executeTool(tool, toolParams, reason);
       const resultStr = output.success
-        ? typeof output.result === "string"
-          ? output.result
-          : JSON.stringify(output.result ?? {})
+        ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
 
-      history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
-      yield {
-        type: "tool-call-result",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        result: resultStr,
-        isError: !output.success,
-      };
+      yield this.toolResult(tc, resultStr, history, !output.success);
+
+      if (this.aborted) return;
     }
+  }
+
+  private toolResult(
+    tc: LlmToolCall,
+    result: string,
+    history: LlmMessage[],
+    isError: boolean,
+  ): AgentEvent {
+    history.push({ role: "tool", toolCallId: tc.id, content: result });
+    return {
+      type: "tool-call-result",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      result,
+      isError,
+    };
   }
 }

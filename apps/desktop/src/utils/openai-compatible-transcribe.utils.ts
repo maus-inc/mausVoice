@@ -1,4 +1,8 @@
-import { normalizeOpenAICompatibleBaseUrl } from "./openai-compatible.utils";
+import {
+  buildOpenAICompatibleTranscriptionUrl,
+  normalizeOpenAICompatibleBaseUrl,
+  OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
+} from "./openai-compatible.utils";
 import { secureFetch } from "./secure-fetch.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
@@ -9,6 +13,7 @@ export type OpenAICompatibleTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  transcriptionPath?: string;
   customFetch?: typeof secureFetch;
 };
 
@@ -30,11 +35,14 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  transcriptionPath,
   customFetch = secureFetch,
 }: OpenAICompatibleTranscriptionArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
-  // Use the shared URL normalizer so trailing-slash stripping and any future
-  // URL normalisation logic stays consistent across the codebase.
-  const url = normalizeOpenAICompatibleBaseUrl(baseUrl);
+  const url = buildOpenAICompatibleTranscriptionUrl(
+    normalizeOpenAICompatibleBaseUrl(baseUrl),
+    false,
+    transcriptionPath ?? OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
+  );
 
   // Arbitrary user-configured OpenAI-compatible servers vary widely. We prefer
   // `verbose_json` so capable servers return `segments[].no_speech_prob` and
@@ -66,7 +74,7 @@ export const openaiCompatibleTranscribeAudio = async ({
   }
 
   const send = (format: "verbose_json" | "json" | null) =>
-    customFetch(`${url}/audio/transcriptions`, {
+    customFetch(url, {
       method: "POST",
       body: buildBody(format),
       headers,

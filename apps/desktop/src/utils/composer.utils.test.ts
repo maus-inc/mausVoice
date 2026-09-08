@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeComposerRect,
+  ensurePillGeometry,
   getComposerWindowPosition,
   setPillGeometry,
   type Rect,
@@ -114,5 +115,403 @@ describe("pill geometry integration", () => {
   it("returns null when no pill geometry is known, falling back to OS placement", () => {
     setPillGeometry(null, null);
     expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reviewTextInComposer failure / duplicate-window behaviour.
+// The Tauri and webview-window surfaces are mocked so these run in node.
+// ---------------------------------------------------------------------------
+const mocks = vi.hoisted(() => {
+  const invoke = vi.fn();
+  const getByLabel = vi.fn();
+  const listen = vi.fn();
+  // Resolves so `runToast` receives a real promise to attach its handler to.
+  const showToast = vi.fn((): Promise<void> => Promise.resolve());
+  return { invoke, getByLabel, listen, showToast };
+});
+
+/**
+ * Install a `listen` mock that records every listener by event name. Tests
+ * then trigger the desired listener by name. The real Tauri `listen`
+ * returns an unlisten handle; the mock does too.
+ */
+const installPerEventListener = () => {
+  const byEvent = new Map<
+    string,
+    Array<(event: { payload: unknown }) => void>
+  >();
+  mocks.listen.mockImplementation(
+    async (event: string, cb: (event: { payload: unknown }) => void) => {
+      const list = byEvent.get(event) ?? [];
+      list.push(cb);
+      byEvent.set(event, list);
+      return vi.fn();
+    },
+  );
+  return byEvent;
+};
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => mocks.invoke(...args),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => mocks.listen(...args),
+}));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  WebviewWindow: {
+    getByLabel: (...args: unknown[]) => mocks.getByLabel(...args),
+  },
+}));
+vi.mock("../i18n/intl", () => {
+  return {
+    getIntl: () => ({
+      formatMessage: (descriptor: unknown) => {
+        const m = descriptor as { defaultMessage?: string };
+        return m.defaultMessage ?? "";
+      },
+    }),
+  };
+});
+vi.mock("../actions/toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
+  showToast: (...args: Parameters<typeof mocks.showToast>) =>
+    mocks.showToast(...args),
+}));
+vi.mock("./log.utils", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    verbose: vi.fn(),
+  }),
+}));
+
+import { reviewTextInComposer } from "./composer.utils";
+
+/**
+ * Reset every composer mock and restore the async toast implementation.
+ * `mockReset` strips implementations, so `showToast` must be re-stubbed or it
+ * returns undefined where the code under test awaits a promise.
+ */
+const resetComposerMocks = () => {
+  mocks.invoke.mockReset();
+  mocks.getByLabel.mockReset();
+  mocks.listen.mockReset();
+  mocks.showToast.mockReset();
+  mocks.showToast.mockImplementation(() => Promise.resolve());
+};
+
+/** Happy-path defaults: nothing fails and no window already exists. */
+const stubComposerDefaults = () => {
+  mocks.invoke.mockImplementation(() => Promise.resolve());
+  mocks.getByLabel.mockResolvedValue(null);
+  mocks.listen.mockResolvedValue(vi.fn());
+};
+
+describe("reviewTextInComposer", () => {
+  beforeEach(() => {
+    resetComposerMocks();
+    // Default: register/discard/destroy succeed; creation returns a window.
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") return { id: "floating-1" };
+      return undefined;
+    });
+    mocks.getByLabel.mockResolvedValue(null);
+    mocks.listen.mockResolvedValue(vi.fn());
+  });
+
+  it("returns null and surfaces a recovery toast when window creation fails", async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        throw new Error("0x8007139F");
+      }
+      return undefined;
+    });
+    const result = await reviewTextInComposer("hello");
+    expect(result).toBeNull();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toastType: "error",
+        action: "open_transcriptions",
+      }),
+    );
+  });
+
+  it("does not open a second window while one is already live", async () => {
+    let created = 0;
+    const listeners = installPerEventListener();
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        created += 1;
+        return { id: `floating-${created}` };
+      }
+      return undefined;
+    });
+
+    // Start the first review but do NOT await it. The synchronous entry
+    // guard reserves the slot before any microtask runs, so the second
+    // call is rejected without creating another window.
+    const firstPromise = reviewTextInComposer("one");
+    // Flush the first await microtask boundary, then keep flushing until
+    // the inner block has issued the floating_window_create call. The
+    // first call awaits composer_register_text before floating_window_create,
+    // so one Promise.resolve is not enough.
+    for (let i = 0; i < 10 && created === 0; i += 1) {
+      await Promise.resolve();
+    }
+    const second = await reviewTextInComposer("two");
+
+    expect(second).toBeNull();
+    // Only one window was created (by the first, in-flight review).
+    expect(created).toBe(1);
+
+    // Resolve the first call via its composer-result listener so it does
+    // not leak the five-minute timeout. Drain microtasks first so the
+    // listener is registered.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
+    resultListener?.({
+      payload: { requestId: firstRequestId, accepted: false, text: "" },
+    });
+    await firstPromise;
+  });
+});
+
+describe("reviewTextInComposer cleanup", () => {
+  beforeEach(() => {
+    resetComposerMocks();
+    stubComposerDefaults();
+  });
+
+  it("destroys the window and discards its text when the user accepts", async () => {
+    const listeners = installPerEventListener();
+    let createdId = "";
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "floating_window_create") {
+        createdId = "floating-1";
+        return { id: createdId };
+      }
+      return undefined;
+    });
+
+    const promise = reviewTextInComposer("draft");
+    // Flush microtasks until the inner block has registered its
+    // `composer-result` listener (the call we're going to fire). The
+    // production code runs in a node environment, so we must not let
+    // it progress all the way to the `window.setTimeout(...)` ready
+    // guard — `window` is not defined in node.
+    for (let i = 0; i < 10; i += 1) {
+      await Promise.resolve();
+      if (listeners.get("composer-result")?.[0]) break;
+    }
+    const firstRequestId = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_register_text",
+    )?.[1]?.requestId as string;
+    const resultListener = listeners.get("composer-result")?.[0];
+    expect(resultListener).toBeDefined();
+    resultListener?.({
+      payload: { requestId: firstRequestId, accepted: true, text: "edited" },
+    });
+    const result = await promise;
+
+    expect(result).toBe("edited");
+    const destroyCall = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "floating_window_destroy",
+    );
+    expect(destroyCall?.[1]).toEqual({ id: createdId });
+    const discardCall = mocks.invoke.mock.calls.find(
+      (c: unknown[]) => c[0] === "composer_discard_text",
+    );
+    // The discard must target THIS review's registered request, not just
+    // any — a stale id would leak the text buffer for the next review.
+    expect(discardCall?.[1]).toMatchObject({ requestId: firstRequestId });
+  });
+});
+
+describe("reviewTextInComposer ready-timeout safety net", () => {
+  beforeEach(() => {
+    resetComposerMocks();
+    stubComposerDefaults();
+  });
+
+  it("destroys a blank composer window and toasts recovery when composer-ready never arrives", async () => {
+    // Production guards the blank-page failure class with a 15s
+    // `composer-ready` timer armed only after the floating window exists.
+    // Node has no `window`, so shim it onto globalThis with arrow wrappers
+    // that resolve at call time — vi.useFakeTimers then controls both.
+    vi.useFakeTimers();
+    const globalRef = globalThis as { window?: unknown };
+    const previousWindow = globalRef.window;
+    globalRef.window = {
+      setTimeout: (...args: Parameters<typeof setTimeout>) =>
+        setTimeout(...args),
+      clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+        clearTimeout(...args),
+    };
+
+    try {
+      installPerEventListener();
+      let createdId = "";
+      mocks.invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "floating_window_create") {
+          createdId = "floating-blank";
+          return { id: createdId };
+        }
+        return undefined;
+      });
+
+      // Fresh module instance: reviewTextInComposer guards on a
+      // module-level activeComposer slot that earlier tests in this file
+      // release asynchronously (their finally drains after the awaited
+      // promise settles), so a synchronous re-entry here can race and see
+      // the slot still occupied. A reset module has a pristine slot.
+      vi.resetModules();
+      const { reviewTextInComposer: freshReview } =
+        await import("./composer.utils");
+      const promise = freshReview("ghost");
+      // Drive the fake clock while flushing until the window exists (the
+      // point where the ready guard arms). The pre-create chain includes
+      // timer-backed awaits, so pure microtask flushes stall under
+      // vi.useFakeTimers. Never emit `composer-ready`.
+      for (let i = 0; i < 40 && !createdId; i += 1) {
+        await vi.advanceTimersByTimeAsync(5);
+      }
+      expect(createdId).toBe("floating-blank");
+      expect(mocks.showToast).not.toHaveBeenCalled();
+
+      // Cross the 15s safety net. The production constant is private;
+      // 15_000 mirrors COMPOSER_READY_TIMEOUT_MS in composer.utils.ts.
+      await vi.advanceTimersByTimeAsync(15_000);
+      const result = await promise;
+
+      expect(result).toBeNull();
+      expect(mocks.showToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toastType: "error",
+          action: "open_transcriptions",
+        }),
+      );
+      // The blank surface is destroyed immediately by the timeout
+      // callback, not left behind for the user to close manually.
+      const destroyCall = mocks.invoke.mock.calls.find(
+        (c: unknown[]) => c[0] === "floating_window_destroy",
+      );
+      expect(destroyCall?.[1]).toEqual({ id: "floating-blank" });
+    } finally {
+      globalRef.window = previousWindow;
+      vi.useRealTimers();
+    }
+  }, 20_000);
+});
+
+// ---------------------------------------------------------------------------
+// ensurePillGeometry: the composer must be able to anchor to the pill on the
+// first review of a session, before the user has ever dragged the pill.
+// ---------------------------------------------------------------------------
+describe("ensurePillGeometry", () => {
+  beforeEach(() => {
+    resetComposerMocks();
+    setPillGeometry(null, null);
+  });
+
+  const flush = async (predicate: () => boolean) => {
+    for (let i = 0; i < 20 && !predicate(); i += 1) {
+      await Promise.resolve();
+    }
+  };
+
+  it("asks the pill for its geometry and caches the reply", async () => {
+    const listeners = installPerEventListener();
+    mocks.invoke.mockImplementation(() => Promise.resolve());
+
+    const pending = ensurePillGeometry();
+    await flush(() => Boolean(listeners.get("pill-position-changed")?.[0]));
+
+    expect(mocks.invoke).toHaveBeenCalledWith("request_pill_position");
+    listeners.get("pill-position-changed")?.[0]?.({
+      payload: {
+        hasSavedPosition: false,
+        rect: { x: 1200, y: 600, width: 120, height: 40 },
+        monitor: { x: 0, y: 0, width: 1920, height: 1080 },
+      },
+    });
+
+    await expect(pending).resolves.toBe(true);
+    expect(getComposerWindowPosition({ width: 560, height: 420 })).toEqual({
+      x: 1200,
+      y: 648,
+    });
+  });
+
+  it("registers the listener before requesting the geometry", async () => {
+    const listeners = installPerEventListener();
+    let listenerAtRequest = false;
+    mocks.invoke.mockImplementation((cmd: string) => {
+      if (cmd === "request_pill_position") {
+        listenerAtRequest = Boolean(
+          listeners.get("pill-position-changed")?.[0],
+        );
+      }
+      return Promise.resolve();
+    });
+
+    const pending = ensurePillGeometry();
+    await flush(() => listenerAtRequest);
+    listeners.get("pill-position-changed")?.[0]?.({
+      payload: {
+        hasSavedPosition: true,
+        rect: { x: 10, y: 10, width: 120, height: 40 },
+        monitor: { x: 0, y: 0, width: 1920, height: 1080 },
+      },
+    });
+    await pending;
+
+    // A reply emitted before the listener exists is dropped by Tauri, which
+    // is exactly how the first composer lost its anchor.
+    expect(listenerAtRequest).toBe(true);
+  });
+
+  it("keeps the OS placement when the pill cannot answer", async () => {
+    mocks.listen.mockResolvedValue(vi.fn());
+    mocks.invoke.mockRejectedValue(new Error("no managed pill process"));
+
+    await expect(ensurePillGeometry()).resolves.toBe(false);
+    expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+  });
+
+  it("reuses the cached geometry without a second request", async () => {
+    setPillGeometry(
+      { x: 300, y: 200, width: 120, height: 40 },
+      { x: 0, y: 0, width: 1920, height: 1080 },
+    );
+    mocks.invoke.mockImplementation(() => Promise.resolve());
+
+    await expect(ensurePillGeometry()).resolves.toBe(true);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("gives up on the anchor when the pill never replies", async () => {
+    vi.useFakeTimers();
+    try {
+      installPerEventListener();
+      mocks.invoke.mockImplementation(() => Promise.resolve());
+
+      const pending = ensurePillGeometry();
+      for (let i = 0; i < 10; i += 1) {
+        await vi.advanceTimersByTimeAsync(200);
+      }
+
+      await expect(pending).resolves.toBe(false);
+      expect(getComposerWindowPosition({ width: 560, height: 420 })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

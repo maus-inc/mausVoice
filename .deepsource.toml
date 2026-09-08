@@ -1,0 +1,12 @@
+version = 1
+
+# The repo's Node tooling (apps/desktop/scripts/*.mjs, scripts/*.mjs) is
+# written as ES modules. Without this declaration DeepSource parses .mjs
+# files as classic scripts and reports bogus "'import' and 'export' may
+# appear only with sourceType: module" errors on every one of them.
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  module_system = "es-modules"

@@ -16,23 +16,22 @@
 // Run with: node scripts/ci/test-secret-history-scan.mjs
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  PREAMBLE_B64,
+  rulesSection,
+  stripTomlComments,
+  updaterRulePattern,
+} from "./check-gitleaks-config.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
 const configPath = resolve(repoRoot, "gitleaks.toml");
-const configRaw = await readFile(configPath);
-
-function readFile(p) {
-  return import("node:fs").then((fs) => fs.readFileSync(p, "utf8"));
-}
-
-// Base64 of "untrusted comment: rsign" — first line of every Tauri/Minisign
-// private key file, and the exact string the detection rule must match.
-const PREAMBLE_B64 = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu";
+const configRaw = readFileSync(configPath, "utf8");
 
 function fail(msg) {
   console.error(`::error::${msg}`);
@@ -40,12 +39,14 @@ function fail(msg) {
 }
 
 // ---- Parse the [[rules]] detection regex from gitleaks.toml ----
-const rulesBlock = configRaw.slice(configRaw.indexOf("[[rules]]"));
-const ruleMatch = rulesBlock.match(/regex\s*=\s*'''?([^']*)'''?/);
-if (!ruleMatch) fail("gitleaks.toml: could not find a [[rules]] regex value.");
+const rules = rulesSection(stripTomlComments(configRaw));
+if (rules === null) fail("gitleaks.toml: could not find a [[rules]] section.");
+const rulePattern = updaterRulePattern(rules);
+if (rulePattern === null)
+  fail("gitleaks.toml: could not find the updater-key rule regex value.");
 let re;
 try {
-  re = new RegExp(ruleMatch[1].trim());
+  re = new RegExp(rulePattern);
 } catch (err) {
   fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
 }

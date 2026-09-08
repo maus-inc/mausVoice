@@ -46,7 +46,10 @@ vi.mock("../actions/app.actions", () => ({
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
 }));
-vi.mock("../actions/toast.actions", () => ({ showToast: vi.fn() }));
+vi.mock("../actions/toast.actions", async () => ({
+  runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
+  showToast: vi.fn(),
+}));
 vi.mock("../actions/app-target.actions", () => ({
   tryRegisterCurrentAppTarget: vi.fn(async () => null),
 }));
@@ -129,6 +132,33 @@ describe("DictationStrategy backlog lifecycle", () => {
     });
     seedState();
     setTargetState("editable");
+  });
+
+  it("awaits app-target resolution before onBeforeStart completes", async () => {
+    let resolveTarget!: (value: { id: string } | null) => void;
+    const targetGate = new Promise<{ id: string } | null>((resolve) => {
+      resolveTarget = resolve;
+    });
+    const { tryRegisterCurrentAppTarget } =
+      await import("../actions/app-target.actions");
+    vi.mocked(tryRegisterCurrentAppTarget).mockReturnValueOnce(
+      targetGate as never,
+    );
+
+    const strategy = new DictationStrategy();
+    let settled = false;
+    const startPromise = strategy.onBeforeStart().then(() => {
+      settled = true;
+    });
+
+    await settle();
+    expect(settled).toBe(false);
+    expect(clearDictationBacklogMock).toHaveBeenCalledTimes(1);
+    expect(incrementDictationBacklogNonceMock).toHaveBeenCalledTimes(1);
+
+    resolveTarget({ id: "app-1" });
+    await startPromise;
+    expect(settled).toBe(true);
   });
 
   it("advances the session nonce on cleanup so stale drains self-invalidate", async () => {

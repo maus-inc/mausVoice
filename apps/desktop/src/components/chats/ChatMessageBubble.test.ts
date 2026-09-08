@@ -42,16 +42,9 @@ vi.mock("../common/OverflowTypography", () => ({
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-intl")>();
-  return {
-    ...actual,
-    useIntl: () => ({
-      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-        defaultMessage,
-    }),
-    FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-      defaultMessage,
-  };
+  const { reactIntlMockModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlMockModule(importOriginal);
 });
 
 import { ChatMessageBubble } from "./ChatMessageBubble";

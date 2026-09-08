@@ -29,6 +29,13 @@ pub struct TranscriptionInput {
 pub struct TranscriptionOutput {
     pub text: String,
     pub inference_device: String,
+    pub segments: Vec<TranscriptionSegment>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptionSegment {
+    pub text: String,
+    pub no_speech_prob: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +141,7 @@ impl TranscriptionEngine {
             return Ok(TranscriptionOutput {
                 text: String::new(),
                 inference_device,
+                segments: Vec::new(),
             });
         }
 
@@ -156,6 +164,7 @@ impl TranscriptionEngine {
             return Ok(TranscriptionOutput {
                 text,
                 inference_device: "CPU".to_string(),
+                segments: Vec::new(),
             });
         }
 
@@ -193,7 +202,7 @@ impl TranscriptionEngine {
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
-            let sanitized: String = prompt.chars().filter(|ch| *ch != '\0').collect();
+            let sanitized: String = prompt.matches(|ch| ch != '\0').collect();
             if !sanitized.is_empty() {
                 params.set_initial_prompt(&sanitized);
             }
@@ -203,12 +212,13 @@ impl TranscriptionEngine {
             .full(params, &processed)
             .map_err(|err| format!("failed to run whisper inference: {err}"))?;
 
-        let text = collect_transcription(&state)?;
+        let (text, segments) = collect_transcription(&state)?;
         let inference_device = device.name.clone();
 
         Ok(TranscriptionOutput {
             text,
             inference_device,
+            segments,
         })
     }
 
@@ -390,8 +400,11 @@ impl TranscriptionEngine {
     }
 }
 
-fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, String> {
-    let mut transcript = String::new();
+fn collect_transcription(
+    state: &whisper_rs::WhisperState,
+) -> Result<(String, Vec<TranscriptionSegment>), String> {
+    let mut transcript = String::default();
+    let mut segments = Vec::default();
 
     for segment in state.as_iter() {
         let piece = match segment.to_str() {
@@ -402,6 +415,12 @@ fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, Str
                 .unwrap_or_default(),
             Err(err) => return Err(format!("failed to read whisper segment: {err}")),
         };
+
+        let no_speech_prob = segment.no_speech_probability();
+        segments.push(TranscriptionSegment {
+            text: piece.clone(),
+            no_speech_prob,
+        });
 
         if piece.is_empty() {
             continue;
@@ -414,7 +433,7 @@ fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, Str
         transcript.push_str(&piece);
     }
 
-    Ok(transcript.trim().to_string())
+    Ok((transcript.trim().to_string(), segments))
 }
 
 fn is_near_silent(samples: &[f32], threshold: f32) -> bool {

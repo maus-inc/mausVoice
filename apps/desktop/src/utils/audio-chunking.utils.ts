@@ -1,3 +1,5 @@
+import { drainSamples as drainSamplesFromQueue } from "../sessions/audio-buffer.utils";
+
 export type AudioChunkPump = {
   pushSamples: (samples: Float32Array) => void;
   resetBuffers: () => void;
@@ -68,28 +70,10 @@ export const createAudioChunkPump = ({
   };
 
   const drainSamples = (targetCount: number): Float32Array => {
-    if (targetCount <= 0) {
-      return new Float32Array(0);
-    }
-    const output = new Float32Array(targetCount);
-    let filled = 0;
-
-    while (filled < targetCount && pendingChunks.length > 0) {
-      const current = pendingChunks[0];
-      const remaining = targetCount - filled;
-      if (current.length <= remaining) {
-        output.set(current, filled);
-        filled += current.length;
-        pendingChunks.shift();
-      } else {
-        output.set(current.subarray(0, remaining), filled);
-        pendingChunks[0] = current.subarray(remaining);
-        filled += remaining;
-      }
-    }
-
-    pendingSampleCount = Math.max(0, pendingSampleCount - filled);
-    return filled === targetCount ? output : output.subarray(0, filled);
+    const counter = { value: pendingSampleCount };
+    const drained = drainSamplesFromQueue(pendingChunks, counter, targetCount);
+    pendingSampleCount = counter.value;
+    return drained;
   };
 
   const shouldDrain = (force: boolean) =>

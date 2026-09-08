@@ -3,6 +3,7 @@ import {
   applyHallucinationFiltering,
   filterKnownSilenceHallucinations,
   isKnownSilenceHallucination,
+  joinKeptSegmentTexts,
 } from "./hallucination.utils";
 
 describe("silence hallucination filtering", () => {
@@ -133,6 +134,72 @@ describe("applyHallucinationFiltering", () => {
     ];
     expect(applyHallucinationFiltering(raw, segments, "en", true)).toBe(
       "Some speech.",
+    );
+  });
+
+  it.each([
+    {
+      name: "leading-space boundaries",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: " world", noSpeechProb: 0.99 },
+        { text: " today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello today",
+    },
+    {
+      name: "no boundary whitespace",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: "world", noSpeechProb: 0.99 },
+        { text: "today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello today",
+    },
+    {
+      name: "mixed kept boundaries",
+      segments: [
+        { text: "Hello", noSpeechProb: 0.1 },
+        { text: "noise", noSpeechProb: 0.99 },
+        { text: "world", noSpeechProb: 0.1 },
+        { text: " today", noSpeechProb: 0.1 },
+      ],
+      expected: "Hello world today",
+    },
+  ])(
+    "rebuilds kept segments with pairwise spacing ($name)",
+    ({ segments, expected }) => {
+      expect(
+        applyHallucinationFiltering("Hello world today", segments, "en", true),
+      ).toBe(expected);
+    },
+  );
+
+  it("treats newline as a boundary without inserting a space after it", () => {
+    // Spoken "new line" can leave a trailing `\n` on a kept segment. Detection
+    // uses `\s` so we do not emit `\n ` after the break.
+    expect(joinKeptSegmentTexts(["Hello\n", "world"])).toBe("Hello\nworld");
+    expect(
+      applyHallucinationFiltering(
+        "Hello\nnoise\nworld",
+        [
+          { text: "Hello\n", noSpeechProb: 0.1 },
+          { text: "noise", noSpeechProb: 0.99 },
+          { text: "world", noSpeechProb: 0.1 },
+        ],
+        "en",
+        true,
+      ),
+    ).toBe("Hello\nworld");
+  });
+
+  it("treats NBSP as a boundary and does not collapse it to ASCII space", () => {
+    const nbsp = "\u00a0";
+    expect(joinKeptSegmentTexts([`Hello${nbsp}`, "world"])).toBe(
+      `Hello${nbsp}world`,
+    );
+    expect(joinKeptSegmentTexts(["Hello", `${nbsp}world`])).toBe(
+      `Hello${nbsp}world`,
     );
   });
 

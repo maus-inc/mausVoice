@@ -37,6 +37,10 @@ fn row_to_transcription(row: SqliteRow) -> Result<Transcription, sqlx::Error> {
         transcription_mode: row.try_get::<Option<String>, _>("transcription_mode")?,
         post_process_mode: row.try_get::<Option<String>, _>("post_process_mode")?,
         post_process_device: row.try_get::<Option<String>, _>("post_process_device")?,
+        post_process_model: row.try_get::<Option<String>, _>("post_process_model")?,
+        post_process_provider: row.try_get::<Option<String>, _>("post_process_provider")?,
+        post_process_failed: row.try_get::<Option<bool>, _>("post_process_failed")?,
+        post_process_error: row.try_get::<Option<String>, _>("post_process_error")?,
         transcription_duration_ms: row.try_get::<Option<i64>, _>("transcription_duration_ms")?,
         postprocess_duration_ms: row.try_get::<Option<i64>, _>("postprocess_duration_ms")?,
         warnings,
@@ -67,13 +71,17 @@ pub async fn insert_transcription(
              transcription_mode,
              post_process_mode,
              post_process_device,
+             post_process_model,
+             post_process_provider,
+             post_process_failed,
+             post_process_error,
              transcription_duration_ms,
              postprocess_duration_ms,
              warnings_json,
              remote_status,
              remote_device_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
     )
     .bind(&transcription.id)
     .bind(&transcription.transcript)
@@ -96,6 +104,10 @@ pub async fn insert_transcription(
     .bind(transcription.transcription_mode.as_deref())
     .bind(transcription.post_process_mode.as_deref())
     .bind(transcription.post_process_device.as_deref())
+    .bind(transcription.post_process_model.as_deref())
+    .bind(transcription.post_process_provider.as_deref())
+    .bind(transcription.post_process_failed)
+    .bind(transcription.post_process_error.as_deref())
     .bind(transcription.transcription_duration_ms)
     .bind(transcription.postprocess_duration_ms)
     .bind(serialize_warnings(&transcription.warnings))
@@ -129,6 +141,10 @@ pub async fn fetch_transcriptions(
                 transcription_mode,
                 post_process_mode,
                 post_process_device,
+                post_process_model,
+                post_process_provider,
+                post_process_failed,
+                post_process_error,
                 transcription_duration_ms,
                 postprocess_duration_ms,
                 warnings_json,
@@ -173,11 +189,15 @@ pub async fn update_transcription(
              transcription_mode = ?14,
              post_process_mode = ?15,
              post_process_device = ?16,
-             transcription_duration_ms = ?17,
-             postprocess_duration_ms = ?18,
-             warnings_json = ?19,
-             remote_status = ?20,
-             remote_device_id = ?21
+             post_process_model = ?17,
+             post_process_provider = ?18,
+             post_process_failed = ?19,
+             post_process_error = ?20,
+             transcription_duration_ms = ?21,
+             postprocess_duration_ms = ?22,
+             warnings_json = ?23,
+             remote_status = ?24,
+             remote_device_id = ?25
          WHERE id = ?1",
     )
     .bind(&transcription.id)
@@ -201,6 +221,10 @@ pub async fn update_transcription(
     .bind(transcription.transcription_mode.as_deref())
     .bind(transcription.post_process_mode.as_deref())
     .bind(transcription.post_process_device.as_deref())
+    .bind(transcription.post_process_model.as_deref())
+    .bind(transcription.post_process_provider.as_deref())
+    .bind(transcription.post_process_failed)
+    .bind(transcription.post_process_error.as_deref())
     .bind(transcription.transcription_duration_ms)
     .bind(transcription.postprocess_duration_ms)
     .bind(serialize_warnings(&transcription.warnings))
@@ -226,6 +250,10 @@ pub async fn update_transcription(
                 transcription_mode,
                 post_process_mode,
                 post_process_device,
+                post_process_model,
+                post_process_provider,
+                post_process_failed,
+                post_process_error,
                 transcription_duration_ms,
                 postprocess_duration_ms,
                 warnings_json,

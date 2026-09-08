@@ -3,15 +3,19 @@ import type {
   RouteTranscriptOutputArgs,
   RouteTranscriptOutputResult,
 } from "@maus-inc/types";
+import { beginEditWatch } from "../actions/edit-watch.actions";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
-import { reviewTextInComposer } from "./composer.utils";
+import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
+import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
+
+let handsFreeSessionId = 0;
 
 type OutputContext = {
   state: ReturnType<typeof getAppState>;
@@ -53,7 +57,16 @@ const reviewOutputText = async (
   if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
     return text;
   }
-  return reviewTextInComposer(text);
+  // NOTE: the pill intentionally keeps its processing phase while this
+  // review is open. The review await sits inside the caller's
+  // handleTranscript chain, which also gates `isStoppingRef`, so
+  // advertising an idle pill here would promise interactions the flow
+  // cannot honor yet — and the wrapper's timeout must stay larger than
+  // the composer's own decision window so a long read can never be
+  // misclassified as a hang and skip history persistence. True phase
+  // decoupling needs the review wait lifted out of stopRecording and is
+  // tracked as a follow-up.
+  return reviewTranscriptBeforeInsert(text);
 };
 
 const insertLocalOutput = async (
@@ -85,6 +98,7 @@ export const routeTranscriptOutput = async (
 ): Promise<RouteTranscriptOutputResult> => {
   const context = getOutputContext(args);
   const { prefs } = context;
+  const sessionId = ++handsFreeSessionId;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
     const outputText = await reviewOutputText(
@@ -99,7 +113,26 @@ export const routeTranscriptOutput = async (
   const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
   if (!outputText?.trim()) return { delivered: false, remote: false };
 
+  const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
+
+  if (handsFreeDelayMs > 0 && !args.isInterim) {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, handsFreeDelayMs);
+    });
+    if (sessionId !== handsFreeSessionId) {
+      return { delivered: false, remote: false };
+    }
+  }
+
   await insertLocalOutput(context, outputText);
+
+  // After a final dictation lands in the target app, watch for corrections
+  // the user makes there and offer to learn them. Interim streamed segments
+  // are excluded: there is no single "final" paste to diff against.
+  if (!args.isInterim && args.mode === "dictation") {
+    beginEditWatch(outputText);
+  }
+
   return { delivered: true, remote: false };
 };
 

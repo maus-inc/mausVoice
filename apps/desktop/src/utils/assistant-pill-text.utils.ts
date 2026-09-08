@@ -54,10 +54,136 @@ const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const ELLIPSIS = "\u2026";
 
 /**
- * Collapse repeated whitespace (including newlines) to a single space,
- * then trim.
+ * Collapse runs of spaces/tabs (but NOT newlines) to a single space, trim
+ * each line, drop blank lines that stack up, then trim. We preserve a single
+ * newline between non-empty lines so multi-line constructs (lists, tables,
+ * headings) stay readable on the native pill instead of collapsing to one run.
  */
-const collapseWhitespace = (s: string): string => s.replace(/\s+/g, " ").trim();
+const collapseWhitespace = (s: string): string =>
+  s
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter((line, index, arr) => line !== "" || arr[index - 1] !== "")
+    .join("\n")
+    .trim();
+
+/**
+ * Remove the GFM separator row (`| --- | --- |`) from table rows and return
+ * true so the caller can skip it.
+ */
+const isTableSeparator = (cells: string[]): boolean =>
+  cells.length > 0 && cells.every((cell) => /^\s*:?-+:?\s*$/.test(cell));
+
+/**
+ * Split a GFM table row into trimmed cells, stripping a single leading and
+ * trailing pipe.
+ */
+const splitTableRow = (row: string): string[] => {
+  let trimmed = row.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map((cell) => cell.trim());
+};
+
+/**
+ * Convert a run of consecutive GFM table lines into one line per data row,
+ * each cell separated by " | ". The separator row is dropped. The header row
+ * is kept as the first line, matching how the main app renders it.
+ */
+const convertTables = (input: string): string => {
+  const lines = input.split("\n");
+  const out: string[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.includes("|") || i + 1 >= lines.length) {
+      out.push(line);
+      continue;
+    }
+
+    const headerCells = splitTableRow(line);
+    const sepCells = splitTableRow(lines[i + 1] ?? "");
+    const isTable = headerCells.length >= 2 && isTableSeparator(sepCells);
+    if (!isTable) {
+      out.push(line);
+      continue;
+    }
+
+    out.push(headerCells.join(" | "));
+    i += 1;
+    while (i + 1 < lines.length && lines[i + 1].includes("|")) {
+      const cells = splitTableRow(lines[i + 1]);
+      if (cells.length < 2) break;
+      out.push(cells.join(" | "));
+      i += 1;
+    }
+    out.push("");
+  }
+
+  return out.join("\n");
+};
+
+/**
+ * Single-pass linear scanner that removes HTML/XML tags. A `<` only opens a
+ * tag when it is followed by tag content (a letter, `/`, `!`, or `?`); a
+ * lone `<` (e.g. "a < b") is kept as literal text. No regex/backtracking,
+ * so runtime is linear even on adversarial input.
+ */
+const stripTagsOnce = (input: string): string => {
+  let out = "";
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i] as string;
+    if (ch !== "<") {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    const next = input[i + 1] ?? "";
+    const isTagStart = /[A-Za-z0-9/!?_-]/.test(next);
+    if (!isTagStart) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    // A tag needs a closing `>`. If there is none, the `<` was not a real
+    // tag (e.g. "a < b" or a truncated string): keep it as literal text.
+    const close = input.indexOf(">", i + 1);
+    if (close === -1) {
+      out += ch;
+      i += 1;
+      continue;
+    }
+    i = close + 1;
+  }
+  return out;
+};
+
+const decodeNumericEntity = (entity: string, codePoint: number): string =>
+  codePoint >= 0 && codePoint <= 0x10ffff
+    ? String.fromCodePoint(codePoint)
+    : entity;
+
+const unescapeEntities = (input: string): string =>
+  input
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replace(/&#(\d+);/g, (entity, decimal: string) =>
+      decodeNumericEntity(entity, Number(decimal)),
+    )
+    .replace(/&#x([0-9a-fA-F]+);/g, (entity, hex: string) =>
+      decodeNumericEntity(entity, Number.parseInt(hex, 16)),
+    );
+
+const stripHtml = (input: string): string => {
+  // Strip real tags, decode entities, then strip again so a source-encoded
+  // tag like `&lt;script&gt;` cannot re-materialise after decoding. Each
+  // pass is a single linear scan (no regex backtracking).
+  return stripTagsOnce(unescapeEntities(stripTagsOnce(input)));
+};
 
 /**
  * Clamp a string to `maxLen` characters, breaking at the last word boundary
@@ -295,10 +421,18 @@ export const markdownToPillText = (
   }
   text = text.replace(STRIKETHROUGH_RE, "$1");
 
+  // 9b. Convert GFM tables to pipe-separated lines (after block markers so
+  // header rows are not mistaken for headings).
+  text = convertTables(text);
+
+  // 9c. Strip any raw HTML. Model output is untrusted and the pill is plain
+  // text; tags must never render as active content.
+  text = stripHtml(text);
+
   // 10. Inline code to quoted text
   text = text.replace(INLINE_CODE_RE, '"$1"');
 
-  // 11. Collapse excessive whitespace
+  // 11. Collapse excessive whitespace (preserving one newline between lines).
   text = collapseWhitespace(text);
 
   // 12. Optional length clamp

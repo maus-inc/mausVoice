@@ -36,6 +36,7 @@ build
 dist
 .astro/
 apps/desktop/src/i18n/locales/.cache/
+apps/desktop/src-tauri/icons/nsis-sidebar.bmp
 apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 
 
@@ -114,3 +115,9 @@ HANDOFF.md
 # Secrets and local CI/log artifacts (must never be committed)
 .ghtoken
 /logs/
+#Agent 
+.mausagent/
+.kilo/
+
+# TypeScript incremental build state
+*.tsbuildinfo

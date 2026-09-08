@@ -5,6 +5,7 @@ pub mod input;
 pub mod jab;
 pub mod keyboard;
 pub mod keyboard_language;
+pub mod lifecycle;
 pub mod monitor;
 pub mod overlay;
 pub mod permissions;

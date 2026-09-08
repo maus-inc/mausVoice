@@ -14,6 +14,16 @@ export type AzureTranscribeAudioOutput = {
 
 const AZURE_LOCALE_REGEX = /^[a-z]{2,3}-[A-Z]{2}$/;
 
+const applyPhraseList = (
+  recognizer: sdk.SpeechRecognizer,
+  prompt: string | undefined,
+): void => {
+  if (!prompt) return;
+  const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(recognizer);
+  const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
+  phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
+};
+
 const mapToAzureLocale = (language?: string): string => {
   if (!language || language.trim() === "") {
     return "en-US";
@@ -149,13 +159,7 @@ export const azureTranscribeAudio = async ({
 
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
-    }
+    applyPhraseList(recognizer, prompt);
 
     recognizer.recognizeOnceAsync(
       (result) => {
@@ -243,13 +247,7 @@ export const createAzureStreamingSession = async ({
     const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
-    }
+    applyPhraseList(recognizer, prompt);
 
     let fullTranscript = "";
     let isFinalized = false;

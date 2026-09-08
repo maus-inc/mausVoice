@@ -28,9 +28,10 @@ describe("markdownToPillText", () => {
     expect(markdownToPillText("is*not*true")).toBe("is*not*true");
   });
 
-  it("strips horizontal rules", () => {
+  it("strips horizontal rules while preserving line breaks between blocks", () => {
     const input = ["A", "---", "B"].join(NL);
-    expect(markdownToPillText(input)).toBe("A B");
+    // The HR line is removed; a single blank line separates the blocks.
+    expect(markdownToPillText(input)).toBe(["A", "", "B"].join(NL));
   });
 
   it("strips reference links before fence processing", () => {
@@ -98,5 +99,87 @@ describe("streaming contract", () => {
     expect(naiveConcat).toContain("**"); // raw markers leak through chunk-append
 
     expect(markdownToPillText(chunk1 + chunk2)).toBe("bold text");
+  });
+});
+
+describe("tables and lists stay structured", () => {
+  it("renders a GFM table as one line per row with cells joined by pipes", () => {
+    const input = [
+      "| Name | Score |",
+      "| --- | --- |",
+      "| Ada | 9 |",
+      "| Linus | 10 |",
+    ].join(NL);
+    const result = markdownToPillText(input);
+    expect(result).toContain("Name | Score");
+    expect(result).toContain("Ada | 9");
+    expect(result).toContain("Linus | 10");
+    // The separator row must not leak through.
+    expect(result).not.toContain("---");
+  });
+
+  it("keeps each bullet on its own line", () => {
+    const input = ["- one", "- two", "- three"].join(NL);
+    const result = markdownToPillText(input);
+    const lines = result.split(NL);
+    expect(lines).toEqual(
+      expect.arrayContaining(["\u2022 one", "\u2022 two", "\u2022 three"]),
+    );
+  });
+});
+
+describe("unsafe HTML is neutralized", () => {
+  it("strips script and other tags without rendering them", () => {
+    const input =
+      "Safe <script>alert('x')</script> <img src=x onerror=alert(1)> text";
+    const result = markdownToPillText(input);
+    expect(result).not.toContain("<script>");
+    expect(result).not.toContain("onerror");
+    expect(result).toContain("Safe");
+    expect(result).toContain("text");
+  });
+
+  it("decodes entities only after stripping tags so encoded tags stay inert", () => {
+    // &lt;script&gt; must not turn back into <script> in the output.
+    const input = "Safe &lt;script&gt;alert(1)&lt;/script&gt; text";
+    const result = markdownToPillText(input);
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("Safe");
+  });
+
+  it("decodes numeric decimal and hex entities so encoded text does not leak", () => {
+    // Numeric entities are common in model output (e.g. en/em dashes) and
+    // numeric tag forms must be neutralized too, not re-emitted after the
+    // entity pass.
+    const input =
+      "Em dash &#8212; and hex &#x2014; plus &#60;script&#62;alert(1)&#60;/script&#62;";
+    const result = markdownToPillText(input);
+    expect(result).toContain("Em dash —");
+    expect(result).toContain("hex —");
+    expect(result).not.toContain("<script>");
+    expect(result).toContain("alert(1)");
+  });
+
+  it("handles a long run of opening-angle brackets without backtracking", () => {
+    // The tag scanner is single-pass; this would be a worst case for a
+    // backtracking regex but must complete immediately.
+    const input = "<".repeat(50_000) + "text";
+    const start = Date.now();
+    const result = markdownToPillText(input);
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(result).toContain("text");
+  });
+
+  it("strips HTML comments and CDATA sections rather than rendering them", () => {
+    // Pins the behavior for model-emitted comments/CDATA: the tag content
+    // between the opening `<` and the first `>` is removed, so the comment
+    // text never leaks into the pill.
+    const withComment = "before <!-- internal note --> after";
+    expect(markdownToPillText(withComment)).not.toContain("internal note");
+    expect(markdownToPillText(withComment)).toContain("before");
+    expect(markdownToPillText(withComment)).toContain("after");
+
+    const withCdata = "a <![CDATA[ raw ]]> b";
+    expect(markdownToPillText(withCdata)).not.toContain("raw");
   });
 });

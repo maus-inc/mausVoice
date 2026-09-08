@@ -49,6 +49,11 @@ static AUDIO_SENDER: OnceLock<Sender<AudioRequest>> = OnceLock::new();
 
 enum AudioRequest {
     Play(&'static [u8]),
+    /// Play a thock clip at the given volume (0.0..=1.0).
+    PlayThock {
+        bytes: &'static [u8],
+        volume: f32,
+    },
 }
 
 /// Initialize a dedicated audio thread at app startup for instant chime playback.
@@ -72,10 +77,18 @@ pub fn warm_audio_output() {
             }
             Err(err) => {
                 log::error!("Failed to create audio output: {err}");
-                // Still process requests, but they'll fail gracefully
+                // Still process requests, but they'll fail gracefully. The
+                // volume is applied per-sink in the no-device fallback too,
+                // so a thock never plays louder than the user-controlled
+                // `INTERACTION_FEEDBACK_VOLUME` (clamped to the safe window
+                // by `current_interaction_feedback_volume`).
                 for request in rx {
-                    let AudioRequest::Play(bytes) = request;
-                    play_clip_fallback(bytes);
+                    match request {
+                        AudioRequest::Play(bytes) => play_clip_fallback(bytes, None),
+                        AudioRequest::PlayThock { bytes, volume } => {
+                            play_clip_fallback(bytes, Some(volume))
+                        }
+                    }
                 }
                 return;
             }
@@ -86,6 +99,15 @@ pub fn warm_audio_output() {
             match request {
                 AudioRequest::Play(bytes) => {
                     if let Ok(sink) = Sink::try_new(&handle) {
+                        if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
+                            sink.append(source);
+                            sink.sleep_until_end();
+                        }
+                    }
+                }
+                AudioRequest::PlayThock { bytes, volume } => {
+                    if let Ok(sink) = Sink::try_new(&handle) {
+                        sink.set_volume(volume.clamp(0.0, 1.0));
                         if let Ok(source) = Decoder::new(Cursor::new(bytes)) {
                             sink.append(source);
                             sink.sleep_until_end();
@@ -126,20 +148,45 @@ pub fn play_alert_windows_11_clip() {
     play_clip(ALERT_WINDOWS_11_CLIP);
 }
 
-/// Thock haptic feedback (short low-frequency pulses for pill interactions).
+// Thock haptic feedback (short click transients for pill interactions).
+// The gain is read from `INTERACTION_FEEDBACK_VOLUME`, which the frontend
+// syncs from the user preference at startup and on slider commit. The
+// default lives in the atomic so a fresh process plays at the same level
+// the user last chose.
+/// Play the press-thock clip at the user-controlled gain.
 pub fn play_thock_press() {
-    play_clip(THOCK_PRESS_CLIP);
+    play_thock_clip(THOCK_PRESS_CLIP);
 }
 
+/// Play the deep-thock clip at the user-controlled gain.
 pub fn play_thock_deep() {
-    play_clip(THOCK_DEEP_CLIP);
+    play_thock_clip(THOCK_DEEP_CLIP);
 }
 
+/// Play the release-thock clip at the user-controlled gain.
 pub fn play_thock_release() {
-    play_clip(THOCK_RELEASE_CLIP);
+    play_thock_clip(THOCK_RELEASE_CLIP);
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
+/// Play a thock clip at the user-controlled haptic volume. Routed through
+/// the same warm/fallback path as other clips, but always sets the sink
+/// volume so the click transient never plays at full default.
+fn play_thock_clip(bytes: &'static [u8]) {
+    let volume = current_interaction_feedback_volume();
+    if let Some(sender) = AUDIO_SENDER.get() {
+        if sender
+            .send(AudioRequest::PlayThock { bytes, volume })
+            .is_ok()
+        {
+            return;
+        }
+    }
+    // Fallback path when the warm thread is down; still scale the sink so
+    // the clip does not play at full default volume.
+    play_clip_fallback(bytes, Some(volume));
+}
+
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Whether the user has enabled interaction chimes. Set from the frontend
 /// via the playInteractionChime preference. When false, thock playback is
@@ -149,6 +196,28 @@ pub static INTERACTION_CHIME_ENABLED: AtomicBool = AtomicBool::new(true);
 /// Set the interaction chime preference from the frontend.
 pub fn set_interaction_chime_enabled(enabled: bool) {
     INTERACTION_CHIME_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Thock playback gain. Stored as a 0..=1 f32 in a u32 (bit-cast) so it can
+/// live in a lock-free atomic. The frontend syncs the value at startup and
+/// whenever the Audio dialog slider commits. The read path clamps to a
+/// conservative safe range so an out-of-range or attacker-controlled value
+/// can never break audio.
+pub static INTERACTION_FEEDBACK_VOLUME: AtomicU32 = AtomicU32::new(0.35_f32.to_bits());
+
+const MIN_SAFE_VOLUME: f32 = 0.05;
+const MAX_SAFE_VOLUME: f32 = 0.5;
+
+fn current_interaction_feedback_volume() -> f32 {
+    f32::from_bits(INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed))
+        .clamp(MIN_SAFE_VOLUME, MAX_SAFE_VOLUME)
+}
+
+/// Update the thock gain from the frontend. Out-of-range values are clamped
+/// to [0, 1] on write so the user slider can never bypass the safe window.
+pub fn set_interaction_feedback_volume(volume: f32) {
+    let clamped = volume.clamp(0.0, 1.0);
+    INTERACTION_FEEDBACK_VOLUME.store(clamped.to_bits(), Ordering::Relaxed);
 }
 
 /// Minimum-interval gate for thock sounds. Drops requests that arrive
@@ -192,6 +261,9 @@ mod thock_limiter {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use super::super::{
+            current_interaction_feedback_volume, set_interaction_feedback_volume,
+        };
 
         #[test]
         fn first_thock_is_not_throttled() {
@@ -214,6 +286,36 @@ mod thock_limiter {
         fn clock_skew_backwards_is_safe() {
             // `saturating_sub` must not panic or un-throttle on a backwards clock.
             assert_eq!(should_throttle_at(1_900, 2_000), (true, 2_000));
+        }
+
+        #[test]
+        fn interaction_feedback_volume_clamps_to_safe_window() {
+            // The user-facing slider exposes the full 0..=1 range, but the
+            // sink gain must stay inside the conservative safe window so a
+            // user-set value can never blow out the speaker or go silent.
+            set_interaction_feedback_volume(0.0);
+            assert_eq!(current_interaction_feedback_volume(), 0.05);
+            set_interaction_feedback_volume(0.2);
+            assert_eq!(current_interaction_feedback_volume(), 0.2);
+            set_interaction_feedback_volume(0.35);
+            assert_eq!(current_interaction_feedback_volume(), 0.35);
+            set_interaction_feedback_volume(0.5);
+            assert_eq!(current_interaction_feedback_volume(), 0.5);
+            set_interaction_feedback_volume(0.9);
+            assert_eq!(current_interaction_feedback_volume(), 0.5);
+            set_interaction_feedback_volume(2.0);
+            assert_eq!(current_interaction_feedback_volume(), 0.5);
+        }
+
+        #[test]
+        fn sink_volume_clamp_keeps_values_in_range() {
+            // Mirrors the clamp applied before sink.set_volume so an
+            // out-of-range value can never blow out the sink or go negative.
+            let clamp = |v: f32| v.clamp(0.0, 1.0);
+            assert_eq!(clamp(-1.0), 0.0);
+            assert_eq!(clamp(2.0), 1.0);
+            let stored = current_interaction_feedback_volume();
+            assert_eq!(clamp(stored), stored);
         }
     }
 }
@@ -247,15 +349,24 @@ fn play_clip(bytes: &'static [u8]) {
     }
 
     // Fallback: spawn a new thread with its own stream
-    play_clip_fallback(bytes);
+    play_clip_fallback(bytes, None);
 }
 
-fn play_clip_fallback(bytes: &'static [u8]) {
+/// Fallback playback when the warm thread is unavailable. When `volume` is
+/// `Some`, the sink is scaled so a thock plays at the user-controlled
+/// gain (clamped to `[0.05, 0.5]` by `current_interaction_feedback_volume`)
+/// on the no-default-output path instead of reverting to 1.0.
+fn play_clip_fallback(bytes: &'static [u8], volume: Option<f32>) {
     thread::spawn(move || {
-        if let Ok((stream, handle)) = OutputStream::try_default() {
+        // The stream binding must stay alive for the whole closure: it is
+        // what keeps playback running until `sleep_until_end` finishes.
+        if let Ok((_stream, handle)) = OutputStream::try_default() {
             match Sink::try_new(&handle) {
                 Ok(sink) => match Decoder::new(Cursor::new(bytes)) {
                     Ok(source) => {
+                        if let Some(vol) = volume {
+                            sink.set_volume(vol.clamp(0.0, 1.0));
+                        }
                         sink.append(source);
                         sink.sleep_until_end();
                     }
@@ -267,8 +378,8 @@ fn play_clip_fallback(bytes: &'static [u8]) {
                     log::error!("Failed to create audio sink: {err}");
                 }
             }
-
-            drop(stream);
+            // `_stream` retires here, ending the fallback playback exactly
+            // as the previous explicit `drop` did.
         } else {
             log::error!("Failed to open default audio output stream");
         }

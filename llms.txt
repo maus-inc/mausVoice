@@ -23,7 +23,7 @@ pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-Prerequisites: Node from `.nvmrc` (v24; `engines.node` is `>=20`), pnpm 10.34.5, Rust toolchain (Tauri v2), CMake for whisper-rs.
+Prerequisites: Node 20+ (`.nvmrc` pins v24), pnpm 10, Rust toolchain (Tauri v2), CMake for whisper-rs.
 
 ## Architecture
 
@@ -75,8 +75,8 @@ SQLite, the local transcription sidecar, or external AI services
 ## API Keys & Configuration
 
 Two optional keys entered in-app (Settings):
-- **Deepgram** (streaming transcription) — https://console.deepgram.com/
-- **Groq** (LLM text cleanup) — https://console.groq.com/keys
+- **Deepgram** (streaming transcription): https://console.deepgram.com/
+- **Groq** (LLM text cleanup): https://console.groq.com/keys
 
 Keys are encrypted on disk. For fully offline use, leave both empty and use
 local Whisper.

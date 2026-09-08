@@ -6,6 +6,7 @@ import { useAppStore } from "../../store";
 import { AppSideEffects } from "./AppSideEffects";
 import { DictationSideEffects } from "./DictationSideEffects";
 import { ElevationDeclinedDialog } from "./ElevationDeclinedDialog";
+import { EditWatchSideEffects } from "./EditWatchSideEffects";
 import { KeyPressSideEffects } from "./KeyPressSideEffects";
 import { MigratorSideEffects } from "./MigratorSideEffects";
 import { SessionSideEffects } from "./SessionSideEffects";
@@ -32,6 +33,7 @@ export const AppWithLoading = () => {
           <UpdateDialog />
           <MigratorSideEffects />
           <DictationSideEffects />
+          <EditWatchSideEffects />
           <SessionSideEffects />
         </>
       )}

@@ -207,6 +207,8 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
 }
 
 /// The actual blocking recording loop. Runs on a dedicated thread.
+#[allow(unknown_lints)]
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
@@ -235,7 +237,7 @@ fn record_loop(
         .map(|c| c.as_c_str().to_str().unwrap_or_default());
 
     let simple = match psimple::Simple::new(
-        None,      // server (default)
+        None,        // server (default)
         "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)
@@ -280,8 +282,10 @@ fn record_loop(
 
         // Convert bytes to f32 samples (F32LE format)
         let samples: Vec<f32> = read_buf
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect();
 
         // Accumulate for final result

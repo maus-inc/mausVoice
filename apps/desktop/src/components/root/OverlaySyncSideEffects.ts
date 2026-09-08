@@ -42,6 +42,8 @@ type NativePillPayload = {
     description: string | null;
     reason: string | null;
   }[];
+  /** Transcript awaiting a review decision on the pill, if any. */
+  review: { id: string; text: string } | null;
 };
 
 const formatPromptPreview = (text: string): string | null => {
@@ -133,6 +135,7 @@ const buildNativePillPermissions = (
 
 type NativePillSyncState = {
   activeRecordingMode: AppState["activeRecordingMode"];
+  pendingPillReview: AppState["pendingPillReview"];
   assistantInputMode: AppState["assistantInputMode"];
   pillConversationId: AppState["pillConversationId"];
   chatMessageById: AppState["chatMessageById"];
@@ -144,6 +147,7 @@ type NativePillSyncState = {
 
 const selectNativePillState = (s: AppState): NativePillSyncState => ({
   activeRecordingMode: s.activeRecordingMode,
+  pendingPillReview: s.pendingPillReview,
   assistantInputMode: s.assistantInputMode,
   pillConversationId: s.pillConversationId,
   chatMessageById: s.chatMessageById,
@@ -169,6 +173,7 @@ const useNativePillAssistantSync = () => {
     }
     prevRef.current = state;
 
+    const review = state.pendingPillReview;
     const active = state.activeRecordingMode === "agent";
 
     const conversationId = state.pillConversationId ?? null;
@@ -205,7 +210,8 @@ const useNativePillAssistantSync = () => {
     const compact =
       state.assistantInputMode !== "type" &&
       messages.length === 0 &&
-      permissions.length === 0;
+      permissions.length === 0 &&
+      review === null;
 
     const payload: NativePillPayload = {
       type: "assistant_state",
@@ -217,6 +223,7 @@ const useNativePillAssistantSync = () => {
       messages: pillMessages,
       streaming,
       permissions,
+      review,
     };
 
     invoke("sync_native_pill_assistant", {

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   ContentBlockParam,
   MessageParam,
+  MessageStreamEvent,
   ToolChoiceAuto,
   ToolChoiceAny,
   ToolChoiceTool,
@@ -14,6 +15,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
+  LlmToolChoice,
   LlmTool,
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
@@ -44,7 +46,9 @@ export type ClaudeGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
   customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type ClaudeGenerateResponseOutput = {
@@ -58,10 +62,17 @@ export const claudeGenerateTextResponse = async ({
   system,
   prompt,
   jsonResponse,
+  maxTokens,
   customFetch,
+  signal,
 }: ClaudeGenerateTextArgs): Promise<ClaudeGenerateResponseOutput> => {
   return retry({
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
     retries: 3,
+    isRetryable: (error) => !signal?.aborted,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -70,12 +81,15 @@ export const claudeGenerateTextResponse = async ({
         finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
       }
 
-      const response = await client.messages.create({
-        model,
-        max_tokens: 1024,
-        system: system ?? undefined,
-        messages: [{ role: "user", content: finalPrompt }],
-      });
+      const response = await client.messages.create(
+        {
+          model,
+          max_tokens: maxTokens ?? 1024,
+          system: system ?? undefined,
+          messages: [{ role: "user", content: finalPrompt }],
+        },
+        { signal },
+      );
 
       console.log("claude llm usage:", response.usage);
 
@@ -195,6 +209,62 @@ export type ClaudeStreamChatArgs = {
   customFetch?: CustomFetch;
 };
 
+const mapClaudeToolChoice = (
+  choice: LlmToolChoice | undefined,
+  hasTools: boolean,
+): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
+  if (!choice || !hasTools) return undefined;
+  if (typeof choice === "string") {
+    switch (choice) {
+      case "auto":
+        return { type: "auto" };
+      case "required":
+        return { type: "any" };
+      case "none":
+        return undefined;
+    }
+  }
+  return { type: "tool", name: choice.name };
+};
+
+type ClaudeToolCall = { id: string; name: string; arguments: string };
+
+const processClaudeStreamEvent = (
+  event: MessageStreamEvent,
+  pendingToolCalls: ClaudeToolCall[],
+): string | undefined => {
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "text_delta"
+  ) {
+    return event.delta.text;
+  }
+
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "input_json_delta"
+  ) {
+    const last = pendingToolCalls[pendingToolCalls.length - 1];
+    if (last) {
+      last.arguments += event.delta.partial_json;
+    }
+    return undefined;
+  }
+
+  if (
+    event.type === "content_block_start" &&
+    event.content_block.type === "tool_use"
+  ) {
+    pendingToolCalls.push({
+      id: event.content_block.id,
+      name: event.content_block.name,
+      arguments: "",
+    });
+  }
+
+  return undefined;
+};
+
 type PendingClaudeToolCall = {
   id: string;
   name: string;
@@ -210,68 +280,6 @@ const toClaudeTool = (tool: LlmTool): Tool => ({
   }) as Tool["input_schema"],
 });
 
-const buildClaudeTools = (input: LlmChatInput): Tool[] | undefined => {
-  if (!input.tools || input.tools.length === 0) {
-    return undefined;
-  }
-  return input.tools.map(toClaudeTool);
-};
-
-const buildClaudeToolChoice = (
-  input: LlmChatInput,
-  tools?: Tool[],
-): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
-  if (!input.toolChoice || !tools) {
-    return undefined;
-  }
-  if (typeof input.toolChoice !== "string") {
-    return { type: "tool", name: input.toolChoice.name };
-  }
-  switch (input.toolChoice) {
-    case "auto":
-      return { type: "auto" };
-    case "required":
-      return { type: "any" };
-    case "none":
-      return undefined;
-  }
-};
-
-async function* claudeStreamEvents(
-  stream: MessageStream,
-  pendingToolCalls: PendingClaudeToolCall[],
-): AsyncGenerator<LlmStreamEvent> {
-  for await (const event of stream) {
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "text_delta"
-    ) {
-      yield { type: "text-delta", text: event.delta.text };
-    }
-
-    if (
-      event.type === "content_block_delta" &&
-      event.delta.type === "input_json_delta"
-    ) {
-      const last = pendingToolCalls[pendingToolCalls.length - 1];
-      if (last) {
-        last.arguments += event.delta.partial_json;
-      }
-    }
-
-    if (
-      event.type === "content_block_start" &&
-      event.content_block.type === "tool_use"
-    ) {
-      pendingToolCalls.push({
-        id: event.content_block.id,
-        name: event.content_block.name,
-        arguments: "",
-      });
-    }
-  }
-}
-
 export async function* claudeStreamChat({
   apiKey,
   model,
@@ -280,8 +288,8 @@ export async function* claudeStreamChat({
 }: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const client = createClient(apiKey, customFetch);
   const { system, messages } = llmMessagesToClaude(input.messages);
-  const tools = buildClaudeTools(input);
-  const toolChoice = buildClaudeToolChoice(input, tools);
+  const tools = input.tools?.map(toClaudeTool);
+  const toolChoice = mapClaudeToolChoice(input.toolChoice, Boolean(tools));
 
   const stream = client.messages.stream({
     model,
@@ -296,7 +304,12 @@ export async function* claudeStreamChat({
   });
 
   const pendingToolCalls: PendingClaudeToolCall[] = [];
-  yield* claudeStreamEvents(stream, pendingToolCalls);
+  for await (const event of stream) {
+    const textDelta = processClaudeStreamEvent(event, pendingToolCalls);
+    if (textDelta) {
+      yield { type: "text-delta", text: textDelta };
+    }
+  }
 
   for (const tc of pendingToolCalls) {
     yield {
