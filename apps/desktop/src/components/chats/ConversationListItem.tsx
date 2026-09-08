@@ -1,4 +1,4 @@
-import { EllipsisVertical, Trash2 } from "lucide-react";
+import { Ellipsis, Trash2 } from "lucide-react";
 import { Box, IconButton, ListItemButton, ListItemText } from "@mui/material";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -105,14 +105,20 @@ export const ConversationListItem = ({
     >
       <ListItemButton
         selected={selected}
+        aria-current={selected ? "true" : undefined}
+        data-active={selected ? "true" : undefined}
         onClick={onSelect}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         sx={{
-          borderRadius: 1,
+          borderRadius: 1.5,
           py: 0.75,
           px: 1,
-          pr: hovered || selected ? 0.5 : 1.5,
+          minHeight: 36,
+          pr: 0.5,
+          "&:hover": {
+            bgcolor: "action.hover",
+          },
         }}
       >
         {/* ListItemText slots are required here. The MuiListItemButton theme
@@ -149,27 +155,37 @@ export const ConversationListItem = ({
           }}
           sx={{ my: 0 }}
         />
-        {(hovered || selected) && (
-          <MenuPopoverBuilder
-            items={menuItems}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-          >
-            {({ ref, open }) => (
-              <IconButton
-                ref={ref}
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  open();
-                }}
-                sx={{ ml: 0.5, flexShrink: 0 }}
-              >
-                <EllipsisVertical size={16} strokeWidth={1.9} />
-              </IconButton>
-            )}
-          </MenuPopoverBuilder>
-        )}
+        <MenuPopoverBuilder
+          items={menuItems}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          {({ ref, open }) => (
+            <IconButton
+              ref={ref}
+              size="small"
+              aria-label={intl.formatMessage({
+                defaultMessage: "More options",
+              })}
+              onClick={(e) => {
+                e.stopPropagation();
+                open();
+              }}
+              sx={{
+                ml: 0.5,
+                flexShrink: 0,
+                opacity: hovered || selected ? 1 : 0,
+                pointerEvents: hovered || selected ? "auto" : "none",
+                transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              }}
+            >
+              <Ellipsis size={16} strokeWidth={1.9} />
+            </IconButton>
+          )}
+        </MenuPopoverBuilder>
       </ListItemButton>
       {ctxMenu.renderMenu()}
     </Box>

@@ -89,12 +89,25 @@ export default function ChatsPage() {
               alignItems: "center",
               justifyContent: "center",
               gap: 1.5,
+              px: 3,
             }}
           >
+            <Typography
+              variant="h6"
+              sx={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 500,
+                textAlign: "center",
+                textWrap: "balance",
+              }}
+            >
+              <FormattedMessage defaultMessage="How can I help you today?" />
+            </Typography>
             <Typography
               variant="body2"
               sx={{
                 color: "text.secondary",
+                textAlign: "center",
               }}
             >
               <FormattedMessage defaultMessage="Start a conversation to get things going" />
@@ -104,7 +117,7 @@ export default function ChatsPage() {
               label={<FormattedMessage defaultMessage="Create new chat" />}
               variant="outlined"
               onClick={handleNewChat}
-              sx={{ mt: 1 }}
+              sx={{ mt: 1, borderRadius: 999 }}
             />
           </Stack>
         )}
