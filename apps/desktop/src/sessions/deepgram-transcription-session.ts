@@ -3,6 +3,11 @@ import { getAppState } from "../store";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  buildProviderVocabulary,
+  collectDictionaryEntries,
+  DEEPGRAM_KEYTERM_BUDGET,
+} from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
@@ -22,6 +27,7 @@ const startDeepgramStreaming = async (
   apiKey: string,
   sampleRate: number,
   language: string,
+  keyterms: string[],
   onInterimResult?: (segment: string) => void,
 ): Promise<DeepgramStreamingSession> => {
   getLogger().verbose(
@@ -147,6 +153,7 @@ const startDeepgramStreaming = async (
     const wsUrl = buildDeepgramWebSocketUrl({
       sampleRate,
       language,
+      keyterms,
     });
     getLogger().verbose(`[${LOGGER_PREFIX}] Connecting to:`, wsUrl);
     ws = new WebSocket(wsUrl, ["token", apiKey]);
@@ -242,12 +249,21 @@ export class DeepgramTranscriptionSession extends BaseApiTranscriptionSession {
       try {
         const state = getAppState();
         const deepgramLanguage = await loadMyEffectiveDictationLanguage(state);
+        const { terms: keyterms, warning } = buildProviderVocabulary(
+          collectDictionaryEntries(state),
+          DEEPGRAM_KEYTERM_BUDGET,
+          "Deepgram",
+        );
+        if (warning) {
+          getLogger().warning(warning);
+        }
 
         getLogger().verbose("[Deepgram] Starting streaming session...");
         this.streamSession = await startDeepgramStreaming(
           this.apiKey,
           sampleRate,
           deepgramLanguage,
+          keyterms,
           this.interimCallback ?? undefined,
         );
         getLogger().verbose(

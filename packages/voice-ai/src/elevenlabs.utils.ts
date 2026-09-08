@@ -30,6 +30,11 @@ export type ElevenLabsTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  /**
+   * Keyterms bias recognition toward these terms (scribe_v2 supports
+   * keyterm prompting). Repeated `keyterms` form fields.
+   */
+  keyterms?: string[];
   customFetch?: CustomFetch;
 };
 
@@ -43,6 +48,7 @@ export const elevenlabsTranscribeAudio = async ({
   blob,
   ext,
   language,
+  keyterms,
   customFetch = fetch,
 }: ElevenLabsTranscriptionArgs): Promise<ElevenLabsTranscribeAudioOutput> => {
   return retry({
@@ -56,6 +62,12 @@ export const elevenlabsTranscribeAudio = async ({
       formData.append("model_id", "scribe_v2");
       if (language && language !== "auto") {
         formData.append("language_code", language);
+      }
+      for (const term of keyterms ?? []) {
+        const trimmed = term.trim();
+        if (trimmed) {
+          formData.append("keyterms", trimmed);
+        }
       }
 
       const response = await customFetch(

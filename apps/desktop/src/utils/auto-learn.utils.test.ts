@@ -96,6 +96,47 @@ describe("extractAutoLearnTerms", () => {
       "\u{1D518}nicode",
     ]);
   });
+
+  it("learns a case-only correction of a proper noun", () => {
+    expect(
+      learn("i spoke to sonia yesterday", "i spoke to Sonia yesterday"),
+    ).toEqual(["Sonia"]);
+  });
+
+  it("learns a case-only acronym correction", () => {
+    expect(learn("the nasa launch", "the NASA launch")).toEqual(["NASA"]);
+  });
+
+  it("learns each part of a case-only full-name correction", () => {
+    expect(learn("kanye west", "Kanye West")).toEqual(["Kanye", "West"]);
+  });
+
+  it("does not learn a decapitalization", () => {
+    expect(learn("Sonia is here", "sonia is here")).toEqual([]);
+  });
+
+  it("learns the corrected casing of a repeated token only once", () => {
+    expect(learn("sonia and sonia", "Sonia and Sonia")).toEqual(["Sonia"]);
+  });
+
+  it("does not learn common words that only gained a capital", () => {
+    expect(
+      learn("wir trafen die neue kollegin", "Wir trafen die neue Kollegin"),
+    ).toEqual(["Kollegin"]);
+  });
+
+  it("does not learn weekday or politeness insertions", () => {
+    expect(learn("lets meet", "Lets meet Monday")).toEqual([]);
+    expect(learn("send me the report", "Please send me the report")).toEqual(
+      [],
+    );
+  });
+
+  it("does not learn frequent German nouns but keeps real names", () => {
+    expect(
+      learn("wir haben die besucht", "Wir haben die Stadt Frankfurt besucht"),
+    ).toEqual(["Frankfurt"]);
+  });
 });
 
 describe("tokenizeForComparison", () => {

@@ -309,6 +309,9 @@ const buildPostProcessingRequest = (
     userName: getMyUserName(state),
     dictationLanguage,
     tone: toneConfig,
+    // The exact-spelling instruction appended to every system prompt is only
+    // meaningful when the cleanup model can see the dictionary contents.
+    glossary: collectDictionaryEntries(state),
   };
   return {
     system: buildSystemPostProcessingTonePrompt(input),

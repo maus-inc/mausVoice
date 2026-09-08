@@ -1,7 +1,13 @@
 import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  buildProviderVocabulary,
+  collectDictionaryEntries,
+  ELEVENLABS_KEYTERMS_BUDGET,
+} from "../utils/prompt.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { drainSamples } from "./audio-buffer.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
@@ -75,6 +81,7 @@ const getElevenLabsToken = async (apiKey: string): Promise<string> => {
 const startElevenLabsStreaming = async (
   apiKey: string,
   inputSampleRate: number,
+  keyterms: string[],
   onInterimResult?: (segment: string) => void,
 ): Promise<ElevenLabsStreamingSession> => {
   const sampleRate = SUPPORTED_SAMPLE_RATES.includes(inputSampleRate)
@@ -263,7 +270,14 @@ const startElevenLabsStreaming = async (
     };
 
     const audioFormat = `pcm_${sampleRate}`;
-    const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad`;
+    // Keyterm prompting: repeated `keyterms` query parameters bias the
+    // realtime model toward the user's dictionary vocabulary.
+    const keytermParams = keyterms
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .map((term) => `&keyterms=${encodeURIComponent(term)}`)
+      .join("");
+    const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad${keytermParams}`;
     getLogger().verbose(
       "[ElevenLabs WebSocket] Connecting to:",
       wsUrl.replace(token, "***"),
@@ -393,9 +407,18 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
       getLogger().verbose("[ElevenLabs] Starting streaming session...");
+      const { terms: keyterms, warning } = buildProviderVocabulary(
+        collectDictionaryEntries(getAppState()),
+        ELEVENLABS_KEYTERMS_BUDGET,
+        "ElevenLabs",
+      );
+      if (warning) {
+        getLogger().warning(warning);
+      }
       this.streamSession = await startElevenLabsStreaming(
         this.apiKey,
         sampleRate,
+        keyterms,
         this.interimCallback ?? undefined,
       );
       getLogger().verbose(

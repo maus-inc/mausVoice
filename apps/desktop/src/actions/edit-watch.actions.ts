@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
+import { collectTermValues } from "../utils/app.utils";
 import { findEditCorrections } from "../utils/edit-watch.utils";
 import { getLogger } from "../utils/log.utils";
 import { getLocalStorage } from "../utils/local-storage.utils";
@@ -11,6 +12,9 @@ import { showToast } from "./toast.actions";
 const WATCH_WINDOW_MS = 90_000;
 const DENIED_TERMS_KEY = "mausvoice:auto-learn-denied";
 const MAX_DENIED_TERMS = 50;
+// The proposal toast is shown for 10 s; the extra grace covers the serialized
+// native toast IPC queue delaying the toast's actual appearance.
+const PROPOSAL_TTL_MS = 12_000;
 
 type WatchSnapshot = {
   text: string;
@@ -65,6 +69,10 @@ const rememberDeniedTerm = (term: string): void => {
  * inserted. Replaces any previous snapshot; a no-op when the feature is off.
  */
 export const beginEditWatch = (text: string): void => {
+  // A new dictation supersedes any pending proposal from the previous one:
+  // its toast is gone (or about to be displaced by the next one), and a
+  // stale proposal would block the new watch's polls.
+  clearAutoLearnProposal();
   const normalized = text.trim();
   if (!normalized || !isFeatureEnabled()) {
     activeWatch = null;
@@ -75,6 +83,10 @@ export const beginEditWatch = (text: string): void => {
 
 export const endEditWatch = (): void => {
   activeWatch = null;
+  // The accept/reject listener (EditWatchSideEffects) is torn down with the
+  // watch, so a surviving proposal could never be answered and would only
+  // block future polls.
+  clearAutoLearnProposal();
 };
 
 const isWatchActive = (): boolean => {
@@ -88,12 +100,7 @@ const isWatchActive = (): boolean => {
   return true;
 };
 
-const collectExistingTerms = (): string[] =>
-  Object.values(getAppState().termById).flatMap((term) =>
-    term.destinationValue
-      ? [term.sourceValue, term.destinationValue]
-      : [term.sourceValue],
-  );
+const collectExistingTerms = (): string[] => collectTermValues(getAppState());
 
 const proposeAutoLearnTerm = async (term: string): Promise<void> => {
   const intl = getIntl();
@@ -119,8 +126,16 @@ export const pollEditWatch = async (): Promise<void> => {
   }
 
   const snapshot = activeWatch as WatchSnapshot;
-  if (getAppState().autoLearn.proposal) {
-    return;
+  // A pending proposal blocks re-proposing while its toast is on screen. The
+  // pill dismisses that toast on its own timer without emitting any event
+  // (only the Add/Ignore buttons do), so an ignored prompt must self-expire
+  // here. Otherwise it silently blocks every future poll until restart.
+  const pending = getAppState().autoLearn.proposal;
+  if (pending) {
+    if (Date.now() - pending.proposedAt <= PROPOSAL_TTL_MS) {
+      return;
+    }
+    clearAutoLearnProposal();
   }
 
   try {
@@ -147,7 +162,7 @@ export const pollEditWatch = async (): Promise<void> => {
     }
 
     produceAppState((draft) => {
-      draft.autoLearn.proposal = { term };
+      draft.autoLearn.proposal = { term, proposedAt: Date.now() };
     });
     await proposeAutoLearnTerm(term);
   } catch (error) {

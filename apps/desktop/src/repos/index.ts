@@ -6,7 +6,16 @@ import { buildGladiaCustomizations } from "../utils/gladia.utils";
 import { getLogger } from "../utils/log.utils";
 import { OLLAMA_DEFAULT_URL } from "../utils/ollama.utils";
 import { buildOpenAICompatibleUrl } from "../utils/openai-compatible.utils";
-import { collectDictionaryEntries } from "../utils/prompt.utils";
+import { secureFetch } from "../utils/secure-fetch.utils";
+import {
+  ASSEMBLYAI_WORD_BOOST_BUDGET,
+  AZURE_PHRASE_LIST_BUDGET,
+  buildProviderVocabulary,
+  collectDictionaryEntries,
+  DEEPGRAM_KEYTERM_BUDGET,
+  ELEVENLABS_KEYTERMS_BUDGET,
+  VocabularyBudget,
+} from "../utils/prompt.utils";
 import {
   ApiGenerativePrefs,
   GenerativePrefs,
@@ -319,6 +328,27 @@ export type TranscribeAudioRepoOutput = {
   warnings: string[];
 };
 
+/**
+ * Caps the user's dictionary vocabulary to a provider's payload budget and
+ * records a warning when entries had to be dropped, so the transcription's
+ * warnings surface the loss instead of hiding it.
+ */
+const providerVocabulary = (
+  budget: VocabularyBudget,
+  providerLabel: string,
+  warnings: string[],
+): string[] => {
+  const { terms, warning } = buildProviderVocabulary(
+    collectDictionaryEntries(getAppState()),
+    budget,
+    providerLabel,
+  );
+  if (warning) {
+    warnings.push(warning);
+  }
+  return terms;
+};
+
 export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
   const prefs = getTranscriptionPrefs(getAppState());
 
@@ -337,6 +367,12 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         repo = new AssemblyAITranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
+          secureFetch,
+          providerVocabulary(
+            ASSEMBLYAI_WORD_BOOST_BUDGET,
+            "AssemblyAI",
+            prefs.warnings,
+          ),
         );
         break;
       case "aldea":
@@ -346,7 +382,11 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         const state = getAppState();
         const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
         const region = apiKeyRecord?.azureRegion || "eastus";
-        repo = new AzureTranscribeAudioRepo(prefs.apiKeyValue, region);
+        repo = new AzureTranscribeAudioRepo(
+          prefs.apiKeyValue,
+          region,
+          providerVocabulary(AZURE_PHRASE_LIST_BUDGET, "Azure", prefs.warnings),
+        );
         break;
       }
       case "gemini":
@@ -394,12 +434,25 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         break;
       }
       case "elevenlabs":
-        repo = new ElevenLabsTranscribeAudioRepo(prefs.apiKeyValue);
+        repo = new ElevenLabsTranscribeAudioRepo(
+          prefs.apiKeyValue,
+          providerVocabulary(
+            ELEVENLABS_KEYTERMS_BUDGET,
+            "ElevenLabs",
+            prefs.warnings,
+          ),
+        );
         break;
       case "deepgram":
         repo = new DeepgramTranscribeAudioRepo(
           prefs.apiKeyValue,
           prefs.transcriptionModel,
+          secureFetch,
+          providerVocabulary(
+            DEEPGRAM_KEYTERM_BUDGET,
+            "Deepgram",
+            prefs.warnings,
+          ),
         );
         break;
       case "gladia":

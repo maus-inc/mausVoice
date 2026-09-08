@@ -49,6 +49,12 @@ export type DeepgramTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  /**
+   * Keyterm prompting biases recognition toward these terms. nova-3 supports
+   * plain terms only (no legacy `keywords` intensifiers), passed by repeating
+   * the `keyterm` query parameter.
+   */
+  keyterms?: string[];
   customFetch?: CustomFetch;
 };
 
@@ -63,6 +69,7 @@ export const deepgramTranscribeAudio = async ({
   blob,
   ext,
   language,
+  keyterms,
   customFetch = fetch,
 }: DeepgramTranscriptionArgs): Promise<DeepgramTranscribeAudioOutput> => {
   return retry({
@@ -78,6 +85,16 @@ export const deepgramTranscribeAudio = async ({
         params.set("language", language);
       } else {
         params.set("detect_language", "true");
+      }
+
+      // Keyterm prompting (nova-3): repeat the parameter per term. Weights
+      // from the legacy `keywords` feature are silently ignored here, so only
+      // plain terms are ever sent.
+      for (const term of keyterms ?? []) {
+        const trimmed = term.trim();
+        if (trimmed) {
+          params.append("keyterm", trimmed);
+        }
       }
 
       const response = await customFetch(

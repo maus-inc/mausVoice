@@ -401,7 +401,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Auto-learn dictionary" />}
             description={
-              <FormattedMessage defaultMessage="When you correct a transcription, add the corrected names and words to your dictionary automatically." />
+              <FormattedMessage defaultMessage="When you correct a saved transcription in History, add the corrected names and words to your dictionary automatically. Corrections you make in other apps are handled by Learn from corrections." />
             }
             action={
               <Switch

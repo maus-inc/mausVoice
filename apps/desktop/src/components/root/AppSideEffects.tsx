@@ -2,13 +2,14 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { commands } from "@maus-inc/desktop-native-apis";
-import { Member, Nullable, Term, User } from "@maus-inc/types";
+import { Member, Nullable, User } from "@maus-inc/types";
 import { getRec, listify } from "@maus-inc/utilities";
 import { isEqual } from "lodash-es";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { combineLatest, from, Observable, of } from "rxjs";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
+import { createGlossaryTerms } from "../../actions/dictionary.actions";
 import {
   pushPillPlacementToNative,
   restartKeyboardListenerOnResume,
@@ -46,7 +47,6 @@ import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
   getAuthRepo,
   getMemberRepo,
-  getTermRepo,
   getTranscriptionRepo,
   getUserRepo,
 } from "../../repos";
@@ -66,14 +66,17 @@ import {
   buildSuperProperties,
   getMixpanel,
 } from "../../utils/analytics.utils";
-import { registerMembers, registerUsers } from "../../utils/app.utils";
+import {
+  collectTermValues,
+  registerMembers,
+  registerUsers,
+} from "../../utils/app.utils";
 import {
   ensurePillGeometry,
   setPillGeometry,
 } from "../../utils/composer.utils";
 import { browserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
-import { createId } from "../../utils/id.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
   getStyleSwitchActionNamesForKey,
@@ -142,6 +145,10 @@ const AUTH_READY_TIMEOUT_MS = 4_000;
 
 // Cadence of the background update poll.
 const UPDATE_CHECK_INTERVAL_MS = hoursToMilliseconds(6);
+
+// A selected paragraph is not a dictionary term: a giant "term" would eat the
+// recognition-prompt budget for every later dictation.
+const MAX_SELECTED_TERM_LENGTH = 200;
 
 /**
  * Fingerprint of every state input that decides which combos the native
@@ -704,26 +711,52 @@ export const AppSideEffects = () => {
       }
 
       const text = selectedText.trim();
-      const newTerm: Term = {
-        id: createId(),
-        createdAt: new Date().toISOString(),
-        sourceValue: text,
-        destinationValue: "",
-        isReplacement: false,
-      };
+      if (text.length > MAX_SELECTED_TERM_LENGTH) {
+        sendPillFlashMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "The selection is too long to add to the dictionary.",
+          }),
+        );
+        return;
+      }
 
-      produceAppState((draft) => {
-        draft.termById[newTerm.id] = newTerm;
-        draft.dictionary.termIds = [newTerm.id, ...draft.dictionary.termIds];
-      });
+      // One term per selection: adding the same word twice would create two
+      // dictionary rows (only the prompt builders dedupe).
+      const existingTerms = collectTermValues(getAppState());
+      if (
+        existingTerms.some(
+          (value) => value.trim().toLowerCase() === text.toLowerCase(),
+        )
+      ) {
+        sendPillFlashMessage(
+          intl.formatMessage(
+            { defaultMessage: '"{text}" is already in your dictionary' },
+            { text },
+          ),
+        );
+        return;
+      }
 
-      await getTermRepo().createTerm(newTerm);
-      sendPillFlashMessage(
-        intl.formatMessage(
-          { defaultMessage: 'Added "{text}" to dictionary' },
-          { text },
-        ),
-      );
+      // createGlossaryTerms owns the optimistic update with per-term rollback
+      // and ticks the onboarding checklist, so this handler must not hand-roll
+      // another term write that could diverge from it.
+      const { created, failed } = await createGlossaryTerms([text]);
+      if (created.length > 0) {
+        sendPillFlashMessage(
+          intl.formatMessage(
+            { defaultMessage: 'Added "{text}" to dictionary' },
+            { text },
+          ),
+        );
+      } else if (failed > 0) {
+        sendPillFlashMessage(
+          intl.formatMessage({
+            defaultMessage:
+              "Could not add the selection to your dictionary. Please try again.",
+          }),
+        );
+      }
     } catch (error) {
       getLogger().error(`Failed to add to dictionary: ${error}`);
     }

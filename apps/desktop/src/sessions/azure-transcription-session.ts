@@ -4,7 +4,8 @@ import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import {
-  buildLocalizedTranscriptionPrompt,
+  AZURE_PHRASE_LIST_BUDGET,
+  buildProviderVocabulary,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
@@ -31,19 +32,24 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
 
       const state = getAppState();
       const language = await loadMyEffectiveDictationLanguage(state);
-      const dictionaryEntries = collectDictionaryEntries(state);
-      const prompt = buildLocalizedTranscriptionPrompt({
-        entries: dictionaryEntries,
-        dictationLanguage: language,
-        state,
-      });
+      // Azure's phrase list takes plain terms (multi-word phrases included),
+      // never the localized prompt sentence, because instruction words
+      // like "Glossary:" or "transcribing" would bias recognition.
+      const { terms: phrases, warning } = buildProviderVocabulary(
+        collectDictionaryEntries(state),
+        AZURE_PHRASE_LIST_BUDGET,
+        "Azure",
+      );
+      if (warning) {
+        getLogger().warning(warning);
+      }
 
       this.streamSession = await createAzureStreamingSession({
         subscriptionKey: this.subscriptionKey,
         region: this.region,
         sampleRate,
         language,
-        prompt: prompt || undefined,
+        phrases,
       });
 
       this.unlisten = await listen<{ samples: number[] }>(
