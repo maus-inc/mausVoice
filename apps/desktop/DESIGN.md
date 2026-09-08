@@ -67,19 +67,24 @@ The two schemes have their own temperature rather than being inversions of each 
 - Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.
 
 ## Toasts
+
 - sonner, bottom-right, themed via GlobalStyles bridge (`SonnerToaster.tsx`).
 - Destructive actions ship UNDO. Max 4 visible; group repeats.
 
 ## Recording state machine (pill + composer)
+
 - States: idle | recording | preview. Documented here; no dedicated state module.
 - Overlay actions are buttons (keyboard + focus-visible); never mouse-down-only.
 
 ## Icons
+
 - lucide (stroke 1.9) is the only icon family. MUI icons only inside sanctioned
   third-party mockups (TutorialForm). Chrome glyphs morph via MorphNavIcon.
 
 ## Dates
+
 - Display: Intl.DateTimeFormat(undefined, {dateStyle, timeStyle}). No dayjs format strings.
 
 ## Radius
+
 - 7 chips/inputs · 14 cards/rows/dialogs (MUI radius 1) · 28 large dialogs · 999 pills only.
