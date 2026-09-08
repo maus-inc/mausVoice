@@ -19,6 +19,32 @@ type AgentActivityProps = {
 
 const AUTO_CLOSE_DELAY = 1000;
 
+const ThinkingCaption = ({
+  isStreaming,
+  duration,
+}: {
+  isStreaming: boolean;
+  duration: number;
+}) => {
+  if (isStreaming && duration > 0) {
+    return (
+      <FormattedMessage
+        defaultMessage="Thinking · {seconds}s"
+        values={{ seconds: duration }}
+      />
+    );
+  }
+  if (isStreaming || duration === 0) {
+    return <FormattedMessage defaultMessage="Thinking…" />;
+  }
+  return (
+    <FormattedMessage
+      defaultMessage="Thought for {seconds} seconds"
+      values={{ seconds: duration }}
+    />
+  );
+};
+
 const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => {
   const intl = useIntl();
   return (
@@ -86,7 +112,9 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   }, [isStreaming]);
 
   useEffect(() => {
-    if (!isStreaming) return;
+    if (!isStreaming) {
+      return undefined;
+    }
     const tick = () => {
       if (startTimeRef.current == null) return;
       setDuration(
@@ -99,13 +127,14 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   }, [isStreaming]);
 
   useEffect(() => {
-    if (!isStreaming && isOpen && !hasAutoClosed && duration > 0) {
-      const timer = window.setTimeout(() => {
-        setIsOpen(false);
-        setHasAutoClosed(true);
-      }, AUTO_CLOSE_DELAY);
-      return () => window.clearTimeout(timer);
+    if (isStreaming || !isOpen || hasAutoClosed || duration === 0) {
+      return undefined;
     }
+    const timer = window.setTimeout(() => {
+      setIsOpen(false);
+      setHasAutoClosed(true);
+    }, AUTO_CLOSE_DELAY);
+    return () => window.clearTimeout(timer);
   }, [isStreaming, isOpen, hasAutoClosed, duration]);
 
   if (!streaming) {
@@ -143,23 +172,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
             }}
           >
             <Typography variant="caption" sx={{ color: "inherit" }}>
-              {isStreaming ? (
-                duration > 0 ? (
-                  <FormattedMessage
-                    defaultMessage="Thinking · {seconds}s"
-                    values={{ seconds: duration }}
-                  />
-                ) : (
-                  <FormattedMessage defaultMessage="Thinking…" />
-                )
-              ) : duration === 0 ? (
-                <FormattedMessage defaultMessage="Thinking…" />
-              ) : (
-                <FormattedMessage
-                  defaultMessage="Thought for {seconds} seconds"
-                  values={{ seconds: duration }}
-                />
-              )}
+              <ThinkingCaption isStreaming={isStreaming} duration={duration} />
             </Typography>
             <Box
               component={reduceMotion ? "span" : motion.span}

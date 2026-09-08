@@ -369,13 +369,20 @@ export const ComposerPage = () => {
             spacing={1}
             sx={{ justifyContent: "flex-end" }}
           >
-            <Button variant="text" onClick={() => void finish(false)}>
+            <Button
+              variant="text"
+              onClick={() => {
+                finish(false).catch(() => undefined);
+              }}
+            >
               <FormattedMessage defaultMessage="Cancel" />
             </Button>
             <MetalChrome>
               <Button
                 variant="contained"
-                onClick={() => void finish(true)}
+                onClick={() => {
+                  finish(true).catch(() => undefined);
+                }}
                 disabled={isEditing || !text.trim()}
               >
                 <FormattedMessage defaultMessage="Insert" />

@@ -7,7 +7,7 @@ import {
   List,
   Typography,
 } from "@mui/material";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAppStore } from "../../store";
 import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
@@ -23,6 +23,22 @@ type ConversationListLayoutProps = {
 };
 
 const GROUP_ORDER: ThreadDayGroup[] = ["today", "yesterday", "earlier"];
+
+const EmptyListMessage = ({ message }: { message: ReactNode }) => (
+  <Box
+    sx={{
+      flexGrow: 1,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      px: 1,
+    }}
+  >
+    <Typography variant="body2" sx={{ color: "text.secondary" }}>
+      {message}
+    </Typography>
+  </Box>
+);
 
 export const ConversationListLayout = ({
   selectedId,
@@ -77,6 +93,58 @@ export const ConversationListLayout = ({
         return intl.formatMessage({ defaultMessage: "Earlier" });
     }
   };
+
+  let listBody: ReactNode;
+  if (conversations.length === 0) {
+    listBody = (
+      <EmptyListMessage
+        message={<FormattedMessage defaultMessage="No conversations" />}
+      />
+    );
+  } else if (filtered.length === 0) {
+    listBody = (
+      <EmptyListMessage
+        message={<FormattedMessage defaultMessage="No threads found" />}
+      />
+    );
+  } else {
+    listBody = (
+      <FadingScrollArea fadeHeight={16} sx={{ px: 0, py: 0.5 }}>
+        {grouped.occupied.map((group) => (
+          <Box key={group} sx={{ mb: 0.5 }}>
+            {grouped.showLabels ? (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  px: 1.25,
+                  pt: 0.75,
+                  pb: 0.25,
+                  color: "text.secondary",
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                }}
+              >
+                {groupLabel(group)}
+              </Typography>
+            ) : null}
+            <List disablePadding>
+              {grouped.buckets[group].map((conversation) => (
+                <ConversationListItem
+                  key={conversation.id}
+                  conversation={conversation}
+                  selected={conversation.id === selectedId}
+                  onSelect={() => onSelect(conversation.id)}
+                  onDelete={() => onDelete(conversation.id)}
+                />
+              ))}
+            </List>
+          </Box>
+        ))}
+      </FadingScrollArea>
+    );
+  }
 
   return (
     <Box
@@ -137,74 +205,7 @@ export const ConversationListLayout = ({
         />
       ) : null}
 
-      {conversations.length === 0 ? (
-        <Box
-          sx={{
-            flexGrow: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            <FormattedMessage defaultMessage="No conversations" />
-          </Typography>
-        </Box>
-      ) : filtered.length === 0 ? (
-        <Box
-          sx={{
-            flexGrow: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            px: 1,
-          }}
-        >
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            <FormattedMessage defaultMessage="No threads found" />
-          </Typography>
-        </Box>
-      ) : (
-        <FadingScrollArea fadeHeight={16} sx={{ px: 0, py: 0.5 }}>
-          {grouped.occupied.map((group) => (
-            <Box key={group} sx={{ mb: 0.5 }}>
-              {grouped.showLabels ? (
-                <Typography
-                  variant="caption"
-                  sx={{
-                    display: "block",
-                    px: 1.25,
-                    pt: 0.75,
-                    pb: 0.25,
-                    color: "text.secondary",
-                    fontWeight: 600,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {groupLabel(group)}
-                </Typography>
-              ) : null}
-              <List disablePadding>
-                {grouped.buckets[group].map((conversation) => (
-                  <ConversationListItem
-                    key={conversation.id}
-                    conversation={conversation}
-                    selected={conversation.id === selectedId}
-                    onSelect={() => onSelect(conversation.id)}
-                    onDelete={() => onDelete(conversation.id)}
-                  />
-                ))}
-              </List>
-            </Box>
-          ))}
-        </FadingScrollArea>
-      )}
+      {listBody}
     </Box>
   );
 };

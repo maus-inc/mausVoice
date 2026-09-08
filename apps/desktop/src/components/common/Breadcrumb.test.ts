@@ -33,8 +33,9 @@ describe("Breadcrumb", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    const mounted = root;
     await act(async () => {
-      root!.render(
+      mounted.render(
         createElement(
           StrictMode,
           null,

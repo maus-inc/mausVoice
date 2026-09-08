@@ -22,7 +22,7 @@ export const MetalChrome = ({
       strength={0.22}
       glowGain={0}
       disableGlow
-      paused={!!reduceMotion}
+      paused={Boolean(reduceMotion)}
       variant={variant}
       {...rest}
     >

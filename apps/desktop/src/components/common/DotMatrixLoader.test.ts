@@ -25,7 +25,7 @@ describe("DotMatrixLoader", () => {
     });
     const grid = container.querySelector(".mv-dmx");
     expect(grid).not.toBeNull();
-    expect(container.querySelectorAll(".mv-dmx-dot").length).toBe(25);
+    expect(container.querySelectorAll(".mv-dmx-dot")).toHaveLength(25);
     const modeClass = [...(grid?.classList ?? [])].find(
       (name) => name.startsWith("mv-dmx-") && name !== "mv-dmx",
     );

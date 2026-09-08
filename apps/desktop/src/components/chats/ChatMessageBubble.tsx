@@ -20,9 +20,63 @@ type ChatMessageBubbleProps = {
   id: string;
 };
 
+const MessageCopyButton = ({
+  visible,
+  copied,
+  reduceMotion,
+  onCopy,
+  label,
+}: {
+  visible: boolean;
+  copied: boolean;
+  reduceMotion: boolean;
+  onCopy: () => void;
+  label: string;
+}) => (
+  <Box
+    sx={{
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? "auto" : "none",
+      transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+      "@media (prefers-reduced-motion: reduce)": {
+        transition: "none",
+      },
+      flexShrink: 0,
+      mb: 0.25,
+    }}
+  >
+    <IconButton size="small" onClick={onCopy} aria-label={label}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={copied ? "check" : "copy"}
+          initial={
+            reduceMotion
+              ? false
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+          exit={
+            reduceMotion
+              ? undefined
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          transition={springPop}
+          style={{ display: "inline-flex" }}
+        >
+          {copied ? (
+            <Check size={14} strokeWidth={2} />
+          ) : (
+            <Copy size={14} strokeWidth={2} />
+          )}
+        </motion.span>
+      </AnimatePresence>
+    </IconButton>
+  </Box>
+);
+
 export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   const message = useAppStore((s) => s.chatMessageById[id]);
-  const isStreaming = useAppStore((s) => !!s.streamingMessageById[id]);
+  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
 
   const intl = useIntl();
   const ctxMenu = useContextMenu();
@@ -51,7 +105,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
       {
         label: intl.formatMessage({ defaultMessage: "Copy message" }),
         onClick: () => {
-          void copyContent();
+          copyContent().catch(() => undefined);
         },
       },
     ];
@@ -77,6 +131,10 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
 
   const isMe = message.role === "user";
   const showCopy = !isEmpty && (hovered || copied);
+  const preferReducedMotion = Boolean(reduceMotion);
+  const handleCopy = () => {
+    copyContent().catch(() => undefined);
+  };
 
   return (
     <Stack
@@ -102,8 +160,8 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           <MessageCopyButton
             visible={showCopy}
             copied={copied}
-            reduceMotion={!!reduceMotion}
-            onCopy={() => void copyContent()}
+            reduceMotion={preferReducedMotion}
+            onCopy={handleCopy}
             label={intl.formatMessage({ defaultMessage: "Copy message" })}
           />
         )}
@@ -177,8 +235,8 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           <MessageCopyButton
             visible={showCopy}
             copied={copied}
-            reduceMotion={!!reduceMotion}
-            onCopy={() => void copyContent()}
+            reduceMotion={preferReducedMotion}
+            onCopy={handleCopy}
             label={intl.formatMessage({ defaultMessage: "Copy message" })}
           />
         )}
@@ -187,60 +245,6 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
     </Stack>
   );
 };
-
-const MessageCopyButton = ({
-  visible,
-  copied,
-  reduceMotion,
-  onCopy,
-  label,
-}: {
-  visible: boolean;
-  copied: boolean;
-  reduceMotion: boolean;
-  onCopy: () => void;
-  label: string;
-}) => (
-  <Box
-    sx={{
-      opacity: visible ? 1 : 0,
-      pointerEvents: visible ? "auto" : "none",
-      transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
-      "@media (prefers-reduced-motion: reduce)": {
-        transition: "none",
-      },
-      flexShrink: 0,
-      mb: 0.25,
-    }}
-  >
-    <IconButton size="small" onClick={onCopy} aria-label={label}>
-      <AnimatePresence mode="popLayout" initial={false}>
-        <motion.span
-          key={copied ? "check" : "copy"}
-          initial={
-            reduceMotion
-              ? false
-              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-          }
-          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-          exit={
-            reduceMotion
-              ? undefined
-              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-          }
-          transition={springPop}
-          style={{ display: "inline-flex" }}
-        >
-          {copied ? (
-            <Check size={14} strokeWidth={2} />
-          ) : (
-            <Copy size={14} strokeWidth={2} />
-          )}
-        </motion.span>
-      </AnimatePresence>
-    </IconButton>
-  </Box>
-);
 
 const ToolResultBubble = ({
   toolName,

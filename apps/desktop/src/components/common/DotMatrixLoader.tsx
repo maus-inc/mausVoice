@@ -1,5 +1,5 @@
 import { Box } from "@mui/material";
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 
 const SIZE = 5;
 const CENTER = 2;
@@ -26,7 +26,7 @@ export type DotMatrixLoaderProps = {
 const hashSeed = (seed: string): number => {
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
+    hash ^= seed.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
   return hash >>> 0;
@@ -42,6 +42,13 @@ const spiralOrder = (row: number, col: number): number => {
   if (col === max) return (layer - 1) * 8 + dim + (row - min);
   if (row === max) return (layer - 1) * 8 + dim * 2 + (max - col);
   return (layer - 1) * 8 + dim * 3 + (max - row);
+};
+
+const ringEdgeOrder = (row: number, col: number): number => {
+  if (row === 0) return col;
+  if (row === 4) return 4 + (4 - col);
+  if (col === 4) return 4 + row;
+  return 12 + (4 - row);
 };
 
 const delayFor = (
@@ -64,14 +71,7 @@ const delayFor = (
       return { delay: row + col, off: false };
     case "ring":
       return {
-        delay:
-          (row === 0
-            ? col
-            : row === 4
-              ? 4 + (4 - col)
-              : col === 4
-                ? 4 + row
-                : 12 + (4 - row)) % 16,
+        delay: ringEdgeOrder(row, col) % 16,
         off: !(row === 0 || row === 4 || col === 0 || col === 4),
       };
     case "core":
@@ -122,11 +122,13 @@ export const DotMatrixLoader = ({
         <Box
           key={cell.key}
           className={cell.off ? "mv-dmx-dot mv-dmx-off" : "mv-dmx-dot"}
-          sx={{
-            width: dotSize,
-            height: dotSize,
-            "--mv-dmx-delay": cell.delay,
-          }}
+          sx={
+            {
+              width: dotSize,
+              height: dotSize,
+              "--mv-dmx-delay": cell.delay,
+            } as CSSProperties
+          }
         />
       ))}
     </Box>
