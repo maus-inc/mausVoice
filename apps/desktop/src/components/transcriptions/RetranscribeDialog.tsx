@@ -10,6 +10,7 @@ import {
   Select,
   Stack,
 } from "@mui/material";
+import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { useCallback, useEffect, useState } from "react";
@@ -28,6 +29,11 @@ import {
 import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
+import {
+  chromeDialogPaperSx,
+  chromeMenuItemSx,
+  chromeSelectMenuProps,
+} from "../common/chromeMenu";
 
 const languageOptions = (
   [
@@ -97,7 +103,13 @@ export const RetranscribeDialog = () => {
   ]);
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="xs"
+      fullWidth
+      slotProps={{ paper: { sx: chromeDialogPaperSx } }}
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Retranscribe" />
       </DialogTitle>
@@ -115,10 +127,14 @@ export const RetranscribeDialog = () => {
                   const value = e.target.value;
                   setSelectedToneId(value || null);
                 }}
+                MenuProps={chromeSelectMenuProps}
               >
                 {tones.map((tone) => (
-                  <MenuItem key={tone.id} value={tone.id}>
+                  <MenuItem key={tone.id} value={tone.id} sx={chromeMenuItemSx}>
                     {tone.name}
+                    {tone.id === selectedToneId ? (
+                      <Check size={16} strokeWidth={2} />
+                    ) : null}
                   </MenuItem>
                 ))}
               </Select>
@@ -134,11 +150,14 @@ export const RetranscribeDialog = () => {
               onChange={(e) =>
                 setSelectedLanguage(e.target.value as DictationLanguageCode)
               }
-              MenuProps={{ slotProps: { paper: { sx: { maxHeight: 300 } } } }}
+              MenuProps={chromeSelectMenuProps}
             >
               {languageOptions.map(({ code, label }) => (
-                <MenuItem key={code} value={code}>
+                <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
                   {label}
+                  {code === selectedLanguage ? (
+                    <Check size={16} strokeWidth={2} />
+                  ) : null}
                 </MenuItem>
               ))}
             </Select>

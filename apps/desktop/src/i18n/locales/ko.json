@@ -236,6 +236,7 @@
   "dictate_a_short_email_mausvoice_works_great_for_longer_form": "짧은 이메일을 받아쓰기하세요. mausVoice은 메시지, 메모, 문서와 같은 장문 콘텐츠에 탁월합니다.",
   "dictate_commands_for_the_ai_to_follow_instead_of_just_cleani": "텍스트를 정리하는 대신 AI가 따를 명령을 말하세요.",
   "dictate_edit_instruction": "편집 지시를 받아쓰기로 입력",
+  "dictate_something_or_import_an_audio_file_to_get_started": "Dictate something, or import an audio file to get started.",
   "dictate_text_into_3_different_applications_mausvoice_will_de": "텍스트를 3개의 서로 다른 애플리케이션에 받아쓰기합니다. mausVoice이 각 앱을 자동으로 감지합니다.",
   "dictation_audio_dim_level": "받아쓰기 오디오 음량 감소 수준",
   "dictation_language": "받아쓰기 언어",

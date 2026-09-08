@@ -12,6 +12,7 @@ import {
   type SxProps,
 } from "@mui/material";
 import { useEffect, useRef, useState } from "react";
+import { chromeMenuPaperSx } from "./chromeMenu";
 import { ListTile } from "./ListTile";
 
 export type MenuPopoverCallbackArgs = {
@@ -127,6 +128,7 @@ const MenuPopoverSubMenuItem = ({
             onMouseEnter: openSubmenu,
             onMouseLeave: closeSubmenu,
             role: "menu",
+            sx: chromeMenuPaperSx,
           },
         }}
       >
@@ -223,6 +225,9 @@ export const MenuPopover = ({
           horizontal: "center",
         }
       }
+      slotProps={{
+        paper: { sx: chromeMenuPaperSx },
+      }}
       {...rest}
     >
       <Stack sx={sx} role="menu">

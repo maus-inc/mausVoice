@@ -3,8 +3,8 @@ import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
 
 /**
- * Jakub Antalík metal-fx (metal.jakubantalik.com) — silver liquid-metal ring.
- * Theme follows the app scheme, not OS auto. Reduced motion freezes the shader.
+ * Quiet silver ring — watermelon hairline energy, not a full liquid-metal demo.
+ * Glow off, low strength; reduced motion freezes the shader.
  */
 export const MetalChrome = ({
   children,
@@ -19,7 +19,9 @@ export const MetalChrome = ({
     <MetalFx
       preset="silver"
       theme={resolved === "light" ? "light" : "dark"}
-      strength={0.55}
+      strength={0.22}
+      glowGain={0}
+      disableGlow
       paused={!!reduceMotion}
       variant={variant}
       {...rest}

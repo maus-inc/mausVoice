@@ -236,6 +236,7 @@
   "dictate_a_short_email_mausvoice_works_great_for_longer_form": "Dictée d'un court e‑mail. mausVoice fonctionne très bien pour les contenus plus longs comme les messages, les notes et les documents.",
   "dictate_commands_for_the_ai_to_follow_instead_of_just_cleani": "Dictez des commandes que l'IA doit suivre au lieu de simplement nettoyer le texte.",
   "dictate_edit_instruction": "Dictez l'instruction d'édition",
+  "dictate_something_or_import_an_audio_file_to_get_started": "Dictate something, or import an audio file to get started.",
   "dictate_text_into_3_different_applications_mausvoice_will_de": "Dictez du texte dans 3 applications différentes. mausVoice détectera chaque application automatiquement.",
   "dictation_audio_dim_level": "Niveau de réduction du son de dictée",
   "dictation_language": "Langue de dictée",

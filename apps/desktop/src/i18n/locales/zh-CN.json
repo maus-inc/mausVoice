@@ -236,6 +236,7 @@
   "dictate_a_short_email_mausvoice_works_great_for_longer_form": "语音输入一封简短的电子邮件。mausVoice 在较长内容（如消息、笔记和文档）方面表现出色。",
   "dictate_commands_for_the_ai_to_follow_instead_of_just_cleani": "口述命令让 AI 执行，而不仅仅是整理文本。",
   "dictate_edit_instruction": "口述编辑指令",
+  "dictate_something_or_import_an_audio_file_to_get_started": "Dictate something, or import an audio file to get started.",
   "dictate_text_into_3_different_applications_mausvoice_will_de": "将文本口述到 3 个不同的应用程序。mausVoice 将自动检测每个应用程序。",
   "dictation_audio_dim_level": "听写音频暗淡级别",
   "dictation_language": "识别语言",

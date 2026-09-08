@@ -260,6 +260,15 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           justifyContent: "space-between",
           alignItems: "center",
           mt: 1.5,
+          mx: -1,
+          px: 1,
+          py: 0.5,
+          borderRadius: 2,
+          transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+          "&:hover": { bgcolor: "action.hover" },
+          "@media (prefers-reduced-motion: reduce)": {
+            transition: "none",
+          },
         }}
       >
         <Stack
