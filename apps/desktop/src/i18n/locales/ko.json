@@ -588,6 +588,7 @@
   "review_transcript": "전사 검토",
   "role_role_platform_platform": "역할: {role} • 플랫폼: {platform}",
   "route_finalized_dictation_to_a_paired_desktop_instead_of_ins": "완료된 받아쓰기를 로컬에 삽입하는 대신 페어링된 데스크톱으로 전송합니다.",
+  "running_tool": "Running tool",
   "save": "저장",
   "save_and_continue": "저장하고 계속",
   "save_changes": "변경 사항 저장",

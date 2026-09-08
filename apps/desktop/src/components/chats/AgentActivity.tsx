@@ -5,9 +5,10 @@
  */
 import { Box, Stack, Typography } from "@mui/material";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ChevronDown } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
+import { DotMatrixLoader } from "../common/DotMatrixLoader";
 import { useEffect, useRef, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import type { StreamingToolCall } from "../../state/app.state";
 import { springSnappy } from "../../styles/motion";
 import { useAppStore } from "../../store";
@@ -18,24 +19,47 @@ type AgentActivityProps = {
 
 const AUTO_CLOSE_DELAY = 1000;
 
-const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => (
-  <Typography
-    variant="caption"
-    sx={{ color: "text.secondary", fontStyle: "italic" }}
-  >
-    {tc.done ? (
-      <FormattedMessage
-        defaultMessage="Used {toolName}"
-        values={{ toolName: tc.toolName }}
-      />
-    ) : (
-      <FormattedMessage
-        defaultMessage="Using {toolName}…"
-        values={{ toolName: tc.toolName }}
-      />
-    )}
-  </Typography>
-);
+const ToolCallLine = ({ tc }: { tc: StreamingToolCall }) => {
+  const intl = useIntl();
+  return (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      sx={{ alignItems: "center", minWidth: 0 }}
+    >
+      {tc.done ? (
+        <Check
+          size={14}
+          strokeWidth={2}
+          color="var(--mui-palette-text-secondary)"
+        />
+      ) : (
+        <DotMatrixLoader
+          seed={tc.toolCallId}
+          size={14}
+          dotSize={2}
+          aria-label={intl.formatMessage({ defaultMessage: "Running tool" })}
+        />
+      )}
+      <Typography
+        variant="caption"
+        sx={{ color: "text.secondary", fontStyle: "italic", minWidth: 0 }}
+      >
+        {tc.done ? (
+          <FormattedMessage
+            defaultMessage="Used {toolName}"
+            values={{ toolName: tc.toolName }}
+          />
+        ) : (
+          <FormattedMessage
+            defaultMessage="Using {toolName}…"
+            values={{ toolName: tc.toolName }}
+          />
+        )}
+      </Typography>
+    </Stack>
+  );
+};
 
 export const AgentActivity = ({ messageId }: AgentActivityProps) => {
   const streaming = useAppStore((s) => s.streamingMessageById[messageId]);

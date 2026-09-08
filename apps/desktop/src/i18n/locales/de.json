@@ -588,6 +588,7 @@
   "review_transcript": "Transkript prüfen",
   "role_role_platform_platform": "Rolle: {role} • Plattform: {platform}",
   "route_finalized_dictation_to_a_paired_desktop_instead_of_ins": "Leite die fertiggestellte Diktierung an einen gekoppelten Desktop weiter, anstatt sie lokal einzufügen.",
+  "running_tool": "Running tool",
   "save": "Speichern",
   "save_and_continue": "Speichern und weiter",
   "save_changes": "Änderungen speichern",

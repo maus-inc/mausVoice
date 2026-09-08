@@ -588,6 +588,7 @@
   "review_transcript": "审阅转写内容",
   "role_role_platform_platform": "角色: {role} • 平台: {platform}",
   "route_finalized_dictation_to_a_paired_desktop_instead_of_ins": "将已完成的听写发送到已配对的桌面，而不是在本地插入。",
+  "running_tool": "Running tool",
   "save": "保存",
   "save_and_continue": "保存并继续",
   "save_changes": "保存更改",

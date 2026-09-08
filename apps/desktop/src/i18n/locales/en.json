@@ -588,6 +588,7 @@
   "review_transcript": "Review transcript",
   "role_role_platform_platform": "Role: {role} • Platform: {platform}",
   "route_finalized_dictation_to_a_paired_desktop_instead_of_ins": "Route finalized dictation to a paired desktop instead of inserting locally.",
+  "running_tool": "Running tool",
   "save": "Save",
   "save_and_continue": "Save and continue",
   "save_changes": "Save changes",

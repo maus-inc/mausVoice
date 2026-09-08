@@ -588,6 +588,7 @@
   "review_transcript": "審閱轉寫內容",
   "role_role_platform_platform": "角色：{role} • 平台：{platform}",
   "route_finalized_dictation_to_a_paired_desktop_instead_of_ins": "將已完成的口述傳送至已配對的桌面，而不是在本機插入。",
+  "running_tool": "Running tool",
   "save": "儲存",
   "save_and_continue": "儲存並繼續",
   "save_changes": "儲存變更",

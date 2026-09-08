@@ -1,4 +1,5 @@
-import { CircularProgress, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { DotMatrixLoader } from "./DotMatrixLoader";
 
 export const CenterLoading = () => {
   return (
@@ -13,7 +14,7 @@ export const CenterLoading = () => {
       }}
       spacing={2}
     >
-      <CircularProgress />
+      <DotMatrixLoader size={28} dotSize={3.5} />
     </Stack>
   );
 };
