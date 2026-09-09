@@ -94,7 +94,7 @@ fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
         .follow(FollowSymlinks::No)
         .maybe_dir(true);
     let managed_directory = app_data.open_with(AUDIO_DIR_NAME, &options)?;
-    let metadata = managed_directory.dir_metadata()?;
+    let metadata = managed_directory.metadata()?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(reject_managed_audio_reparse_point());
     }

@@ -2014,7 +2014,8 @@ pub async fn export_transcription(
         None => return Ok(false),
     };
 
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Read;
