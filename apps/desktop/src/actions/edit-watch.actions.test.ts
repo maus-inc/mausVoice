@@ -52,7 +52,7 @@ vi.mock("./dictionary.actions", () => ({
 }));
 
 vi.mock("./toast.actions", () => ({
-  showToast: vi.fn().mockResolvedValue(),
+  showToast: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../store", () => ({
