@@ -455,6 +455,30 @@ const toExactTokenCounts = (tokens: string[]): Map<string, number> => {
  * capitalization is one of the most common corrections a user makes. The
  * proper-noun and common-word filters downstream still decide learnability.
  */
+/**
+ * Consumes one occurrence of `token` from the original-side multisets.
+ * Returns true when the corrected token counts as added: it is brand new,
+ * or its casing differs from every original occurrence of the same word.
+ */
+const consumeOriginalToken = (
+  token: string,
+  originalCounts: Map<string, number>,
+  originalExactCounts: Map<string, number>,
+): boolean => {
+  const key = token.toLowerCase();
+  const remaining = originalCounts.get(key) ?? 0;
+  if (remaining <= 0) {
+    return true;
+  }
+  originalCounts.set(key, remaining - 1);
+  const exactRemaining = originalExactCounts.get(token) ?? 0;
+  if (exactRemaining <= 0) {
+    return true;
+  }
+  originalExactCounts.set(token, exactRemaining - 1);
+  return false;
+};
+
 export const computeAddedTokens = (
   original: string,
   corrected: string,
@@ -465,17 +489,7 @@ export const computeAddedTokens = (
   const added: string[] = [];
 
   for (const token of tokenizeForComparison(corrected)) {
-    const key = token.toLowerCase();
-    const remaining = originalCounts.get(key) ?? 0;
-    if (remaining > 0) {
-      originalCounts.set(key, remaining - 1);
-      const exactRemaining = originalExactCounts.get(token) ?? 0;
-      if (exactRemaining > 0) {
-        originalExactCounts.set(token, exactRemaining - 1);
-      } else {
-        added.push(token);
-      }
-    } else {
+    if (consumeOriginalToken(token, originalCounts, originalExactCounts)) {
       added.push(token);
     }
   }

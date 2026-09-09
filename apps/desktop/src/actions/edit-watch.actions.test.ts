@@ -48,11 +48,11 @@ vi.mock("../i18n/intl", () => ({
 }));
 
 vi.mock("./dictionary.actions", () => ({
-  createGlossaryTerms: vi.fn(async () => ({ created: [], failed: 0 })),
+  createGlossaryTerms: vi.fn().mockResolvedValue({ created: [], failed: 0 }),
 }));
 
 vi.mock("./toast.actions", () => ({
-  showToast: vi.fn(async () => undefined),
+  showToast: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../store", () => ({

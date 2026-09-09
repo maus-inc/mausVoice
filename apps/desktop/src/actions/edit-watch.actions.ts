@@ -64,6 +64,12 @@ const rememberDeniedTerm = (term: string): void => {
   }
 };
 
+export const clearAutoLearnProposal = (): void => {
+  produceAppState((draft) => {
+    draft.autoLearn.proposal = null;
+  });
+};
+
 /**
  * Starts watching the target app for corrections after a dictation was
  * inserted. Replaces any previous snapshot; a no-op when the feature is off.
@@ -189,10 +195,4 @@ export const rejectAutoLearnProposal = (): void => {
 
   rememberDeniedTerm(proposal.term);
   clearAutoLearnProposal();
-};
-
-export const clearAutoLearnProposal = (): void => {
-  produceAppState((draft) => {
-    draft.autoLearn.proposal = null;
-  });
 };
