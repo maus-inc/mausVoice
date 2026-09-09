@@ -138,10 +138,13 @@ describe("theme mode configuration", () => {
       themeSource.indexOf("MuiListItemButton:"),
       themeSource.indexOf("MuiListItemIcon:"),
     );
-    expect(listItemButtonBlock).toContain('applyStyles("dark"');
-    const inheritRules =
-      listItemButtonBlock.match(/"& svg\.lucide": \{\s*color: "inherit"/g) ??
-      [];
-    expect(inheritRules).toHaveLength(2);
+    const darkStyleStart = listItemButtonBlock.indexOf('applyStyles("dark"');
+    const lightStyleBlock = listItemButtonBlock.slice(0, darkStyleStart);
+    const darkStyleBlock = listItemButtonBlock.slice(darkStyleStart);
+    const lucideInheritanceRule = /"& svg\.lucide": \{\s*color: "inherit"/g;
+
+    expect(darkStyleBlock).toContain('applyStyles("dark"');
+    expect(lightStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+    expect(darkStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
   });
 });
