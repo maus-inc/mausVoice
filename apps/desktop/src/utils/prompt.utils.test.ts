@@ -136,6 +136,31 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
   });
 
+  it("shares one character budget between terms and replacement rules", () => {
+    // 40 terms of 27 characters consume 1158 of the 2000-character budget,
+    // so the rules must fit inside what is left, not a fresh 2000.
+    const sources = Array.from(
+      { length: 40 },
+      (_, i) => `source-term-${i}-padding-pad`,
+    );
+    const rules = Array.from({ length: 120 }, (_, i) => ({
+      source: `s${i}`,
+      destination: `destination-${i}`,
+    }));
+    const result = buildSystemPostProcessingTonePrompt(
+      makeInput(
+        { kind: "style", stylePrompt: "Be formal" },
+        { glossary: { sources, replacements: rules } },
+      ),
+    );
+    const termsLine = result.match(/Terms: (.*)/)?.[1] ?? "";
+    const spellingsLine = result.match(/Spellings: (.*)/)?.[1] ?? "";
+    expect(termsLine.length).toBeGreaterThan(1000);
+    expect(termsLine.length + spellingsLine.length).toBeLessThanOrEqual(2_000);
+    // 120 rules cannot fit in the leftover budget, so entries were dropped.
+    expect(spellingsLine).not.toContain("s119");
+  });
+
   it("caps replacement rules under the glossary character budget", () => {
     const longRules = Array.from({ length: 120 }, (_, i) => ({
       source: `src${i}`,

@@ -147,7 +147,7 @@ const TERM_SEPARATOR_LENGTH = 2;
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
-): { terms: string[]; truncated: boolean } => {
+): { terms: string[]; truncated: boolean; characters: number } => {
   const capped: string[] = [];
   let characters = 0;
   let truncated = false;
@@ -176,7 +176,7 @@ export const capVocabularyTerms = (
     characters += separator + trimmed.length;
   }
 
-  return { terms: capped, truncated };
+  return { terms: capped, truncated, characters };
 };
 
 /**
@@ -243,27 +243,20 @@ export const GLOSSARY_PROMPT_BUDGET: VocabularyBudget = {
 const collectBudgetedGlossary = (
   glossary: DictionaryEntries,
 ): { terms: string[]; rules: string[]; truncated: boolean } => {
-  const { terms, truncated } = capVocabularyTerms(
+  const { terms, truncated, characters } = capVocabularyTerms(
     glossary.sources,
     GLOSSARY_PROMPT_BUDGET,
   );
-  const rules: string[] = [];
-  let characters = 0;
-  let rulesTruncated = false;
-  for (const rule of glossary.replacements) {
-    const rendered = `${rule.source} → ${rule.destination}`;
-    const separator = rules.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
-    if (
-      rules.length >= GLOSSARY_PROMPT_BUDGET.maxEntries ||
-      characters + separator + rendered.length >
-        GLOSSARY_PROMPT_BUDGET.maxCharacters
-    ) {
-      rulesTruncated = true;
-      break;
-    }
-    rules.push(rendered);
-    characters += separator + rendered.length;
-  }
+  // Terms and rules draw from one shared budget: whatever the terms already
+  // consumed is subtracted from the rules' entry and character allowance, so
+  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET.
+  const { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
+    glossary.replacements.map((rule) => `${rule.source} → ${rule.destination}`),
+    {
+      maxEntries: GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length,
+      maxCharacters: GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+    },
+  );
   return { terms, rules, truncated: truncated || rulesTruncated };
 };
 
