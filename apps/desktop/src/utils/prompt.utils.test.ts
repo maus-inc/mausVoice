@@ -443,7 +443,7 @@ describe("capVocabularyTerms token budget", () => {
   });
 
   it("flags truncation with the provider name when tokens overflow", () => {
-    const terms = Array.from({ length: 100 }, () => "北京市朝阳区海淀区");
+    const terms = Array.from({ length: 100 }, (_, i) => `北京市朝阳区${i}海淀区`);
     const { terms: capped, warning } = buildProviderVocabulary(
       { sources: terms, replacements: [] },
       DEEPGRAM_KEYTERM_BUDGET,
