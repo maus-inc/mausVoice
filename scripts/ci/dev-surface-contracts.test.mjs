@@ -9,6 +9,7 @@ import {
   DEVTOOLS_ENV_VAR,
   TAURI_DEVTOOLS_FEATURE,
 } from "./dev-surface-config.mjs";
+import { tauriDevArguments } from "../../apps/desktop/scripts/run-tauri-dev.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (relativePath) =>
@@ -63,14 +64,24 @@ describe("desktop dev-surface build contracts", () => {
   });
 
   it("keeps local developer artifacts inspectable", () => {
-    // pnpm dev and build:mac:debug must both pass --features <CARGO_FEATURE>.
+    // `dev:tauri` deliberately delegates to a non-shell Node runner, so check
+    // the arguments it actually passes to Tauri rather than searching the
+    // package-script text for a flag hidden by that wrapper.
     const scripts = desktopPackage.scripts ?? {};
     const devScript = scripts["dev:tauri"] ?? "";
     const buildScript = scripts["build:mac:debug"] ?? "";
 
-    assert.ok(
-      devScript.includes(`--features ${CARGO_FEATURE}`),
-      `dev:tauri script must pass --features ${CARGO_FEATURE} (got: ${devScript})`,
+    assert.equal(
+      devScript,
+      "node scripts/run-tauri-dev.mjs",
+      "dev:tauri must keep using the non-shell development runner",
+    );
+    const devArguments = tauriDevArguments("src-tauri/tauri.local.conf.json");
+    const featureIndex = devArguments.indexOf("--features");
+    assert.equal(
+      devArguments[featureIndex + 1],
+      CARGO_FEATURE,
+      `run-tauri-dev must pass --features ${CARGO_FEATURE} to Tauri`,
     );
     assert.ok(
       buildScript.includes(`--features ${CARGO_FEATURE}`),
