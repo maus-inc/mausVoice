@@ -72,9 +72,21 @@ const getElevenLabsToken = async (apiKey: string): Promise<string> => {
   });
 
   if (!response.ok) {
-    getLogger().verbose(
-      `[ElevenLabs] Token request failed with status ${response.status}`,
-    );
+    const textSnippet = await response.text().catch(() => "");
+    if (textSnippet) {
+      const snippet =
+        textSnippet.length > 200
+          ? `${textSnippet.slice(0, 200)}...`
+          : textSnippet;
+      getLogger().verbose(
+        "[ElevenLabs] Token fetch failed, response snippet:",
+        snippet,
+      );
+    } else {
+      getLogger().verbose(
+        `[ElevenLabs] Token request failed with status ${response.status}`,
+      );
+    }
     throw new Error(`Failed to get ElevenLabs token: ${response.status}`);
   }
 
