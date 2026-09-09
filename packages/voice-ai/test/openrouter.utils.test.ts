@@ -154,9 +154,8 @@ describe("openrouterGenerateTextResponse response_format selection", () => {
       usage: { total_tokens: 5 },
     });
     mockCreate(create);
-    const { openrouterGenerateTextResponse } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterGenerateTextResponse } =
+      await import("../src/openrouter.utils");
 
     await openrouterGenerateTextResponse({
       apiKey: "test-key",
@@ -180,9 +179,8 @@ describe("openrouterGenerateTextResponse response_format selection", () => {
       usage: { total_tokens: 5 },
     });
     mockCreate(create);
-    const { openrouterGenerateTextResponse } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterGenerateTextResponse } =
+      await import("../src/openrouter.utils");
 
     await openrouterGenerateTextResponse({
       apiKey: "test-key",
@@ -204,9 +202,8 @@ describe("openrouterGenerateTextResponse response_format selection", () => {
       usage: { total_tokens: 5 },
     });
     mockCreate(create);
-    const { openrouterGenerateTextResponse } = await import(
-      "../src/openrouter.utils"
-    );
+    const { openrouterGenerateTextResponse } =
+      await import("../src/openrouter.utils");
 
     await openrouterGenerateTextResponse({
       apiKey: "test-key",

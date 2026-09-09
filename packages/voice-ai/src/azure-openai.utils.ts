@@ -75,7 +75,12 @@ export type AzureOpenAIGenerateTextArgs = {
 const buildResponseFormat = (
   deploymentName: string,
   jsonResponse?: JsonResponse,
-) => buildJsonSchemaResponseFormat(deploymentName, isAzureJsonObjectOnlyModel, jsonResponse);
+) =>
+  buildJsonSchemaResponseFormat(
+    deploymentName,
+    isAzureJsonObjectOnlyModel,
+    jsonResponse,
+  );
 
 export type AzureOpenAIGenerateResponseOutput = {
   text: string;

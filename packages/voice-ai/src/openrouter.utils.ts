@@ -60,7 +60,11 @@ export const isOpenRouterJsonObjectOnlyModel = (model: string): boolean =>
   JSON_OBJECT_ONLY_MODELS.has(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
-  buildJsonSchemaResponseFormat(model, isOpenRouterJsonObjectOnlyModel, jsonResponse);
+  buildJsonSchemaResponseFormat(
+    model,
+    isOpenRouterJsonObjectOnlyModel,
+    jsonResponse,
+  );
 
 /**
  * Create OpenAI client configured for OpenRouter

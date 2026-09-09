@@ -177,9 +177,8 @@ describe("azureOpenAIGenerateText legacy deployment format selection", () => {
       usage: { total_tokens: 5 },
     });
     mockAzureCreate(create);
-    const { azureOpenAIGenerateText } = await import(
-      "../src/azure-openai.utils"
-    );
+    const { azureOpenAIGenerateText } =
+      await import("../src/azure-openai.utils");
 
     await azureOpenAIGenerateText({
       apiKey: "test-key",
@@ -204,9 +203,8 @@ describe("azureOpenAIGenerateText legacy deployment format selection", () => {
       usage: { total_tokens: 5 },
     });
     mockAzureCreate(create);
-    const { azureOpenAIGenerateText } = await import(
-      "../src/azure-openai.utils"
-    );
+    const { azureOpenAIGenerateText } =
+      await import("../src/azure-openai.utils");
 
     await azureOpenAIGenerateText({
       apiKey: "test-key",

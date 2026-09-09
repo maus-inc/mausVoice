@@ -74,7 +74,11 @@ export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
   JSON_OBJECT_ONLY_MODELS.has(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
-  buildJsonSchemaResponseFormat(model, isOpenAIJsonObjectOnlyModel, jsonResponse);
+  buildJsonSchemaResponseFormat(
+    model,
+    isOpenAIJsonObjectOnlyModel,
+    jsonResponse,
+  );
 
 const createClient = (
   apiKey: string,
