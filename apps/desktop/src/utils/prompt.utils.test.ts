@@ -9,6 +9,7 @@ import {
   capVocabularyTerms,
   collectVocabularyTerms,
   DEEPGRAM_KEYTERM_BUDGET,
+  estimateTokenCount,
   ELEVENLABS_BATCH_KEYTERMS_BUDGET,
   ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
   GLOSSARY_EXACT_SPELLING_INSTRUCTION,
@@ -382,10 +383,83 @@ describe("buildProviderVocabulary", () => {
   });
 });
 
+describe("estimateTokenCount", () => {
+  it("counts Latin text at roughly four characters per token", () => {
+    expect(estimateTokenCount("hello world")).toBeCloseTo(2.75, 10);
+    expect(estimateTokenCount("")).toBe(0);
+  });
+
+  it("counts CJK characters at a token each", () => {
+    expect(estimateTokenCount("你好世界")).toBe(4);
+  });
+
+  it("counts emoji at a token each and combining marks at zero", () => {
+    expect(estimateTokenCount("🎉🎉")).toBe(2);
+    expect(estimateTokenCount("e\u0301")).toBe(0.25);
+  });
+});
+
+describe("capVocabularyTerms token budget", () => {
+  const budget = {
+    maxEntries: 100,
+    maxCharacters: 10_000,
+    maxEstimatedTokens: 450,
+  };
+
+  it("caps CJK-heavy lists by tokens before the character budget binds", () => {
+    const terms = Array.from({ length: 100 }, (_, i) => `北京市朝阳区${i}`);
+    const {
+      terms: capped,
+      truncated,
+      estimatedTokens,
+    } = capVocabularyTerms(terms, budget);
+    expect(truncated).toBe(true);
+    expect(capped.length).toBeLessThan(terms.length);
+    expect(estimatedTokens).toBeLessThanOrEqual(450);
+  });
+
+  it("caps emoji-heavy lists by tokens", () => {
+    const terms = Array.from({ length: 100 }, () => "🎉🎊🎈🎁🎉🎊");
+    const {
+      terms: capped,
+      truncated,
+      estimatedTokens,
+    } = capVocabularyTerms(terms, budget);
+    expect(truncated).toBe(true);
+    expect(capped.length).toBeLessThan(terms.length);
+    expect(estimatedTokens).toBeLessThanOrEqual(450);
+  });
+
+  it("keeps Latin lists under the token ceiling through the shared path", () => {
+    const terms = Array.from({ length: 50 }, (_, i) => `Contact${i} Anderson`);
+    const { terms: capped, warning } = buildProviderVocabulary(
+      { sources: terms, replacements: [] },
+      DEEPGRAM_KEYTERM_BUDGET,
+      "Deepgram",
+    );
+    const total = estimateTokenCount(capped.join(", "));
+    expect(total).toBeLessThanOrEqual(450);
+    expect(warning).toBeNull();
+  });
+
+  it("flags truncation with the provider name when tokens overflow", () => {
+    const terms = Array.from({ length: 100 }, () => "北京市朝阳区海淀区");
+    const { terms: capped, warning } = buildProviderVocabulary(
+      { sources: terms, replacements: [] },
+      DEEPGRAM_KEYTERM_BUDGET,
+      "Deepgram",
+    );
+    expect(capped.length).toBeLessThan(terms.length);
+    expect(estimateTokenCount(capped.join(", "))).toBeLessThanOrEqual(450);
+    expect(warning).toContain("Deepgram");
+  });
+});
+
 describe("provider budgets match documented API limits", () => {
   it("Deepgram stays under the documented 500-token keyterm total", () => {
     expect(DEEPGRAM_KEYTERM_BUDGET.maxEntries).toBe(100);
     expect(DEEPGRAM_KEYTERM_BUDGET.maxCharacters).toBeLessThanOrEqual(1500);
+    expect(DEEPGRAM_KEYTERM_BUDGET.maxEstimatedTokens).toBeLessThanOrEqual(500);
   });
 
   it("AssemblyAI streaming rejects more than 100 keyterms per session", () => {

@@ -87,6 +87,13 @@ export type VocabularyBudget = {
   maxTermLength?: number;
   /** Providers that cap phrase length in words skip longer phrases. */
   maxWordsPerTerm?: number;
+  /**
+   * Providers that enforce a token ceiling (not a character ceiling) reject
+   * the whole payload above it. When set, capping also stops once the
+   * estimated token cost passes this value, so CJK- or emoji-heavy terms
+   * that fit the character budget cannot push the payload over the limit.
+   */
+  maxEstimatedTokens?: number;
 };
 
 /**
@@ -156,12 +163,41 @@ const TERM_SEPARATOR_LENGTH = 2;
 const codePointLength = (value: string): number =>
   Array.from(value.normalize("NFC")).length;
 
+/**
+ * Heuristic token estimate for vocabulary budgeting. Latin text averages
+ * about 4 characters per token, but CJK, fullwidth, and emoji characters
+ * cost roughly a token each, so a pure character cap lets a CJK-heavy list
+ * pass while exceeding a provider's token ceiling. Combining marks ride on
+ * their base character and add nothing. This is a conservative envelope,
+ * not a real tokenizer: it over-counts rather than under-counts.
+ */
+const HEAVYWEIGHT_TOKEN_RE =
+  /[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\uFF00-\uFFEF\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+const ZERO_WIDTH_TOKEN_RE = /[\u0300-\u036F\uFE00-\uFE0F]/;
+
+export const estimateTokenCount = (value: string): number => {
+  let tokens = 0;
+  for (const char of value.normalize("NFC")) {
+    if (ZERO_WIDTH_TOKEN_RE.test(char)) {
+      continue;
+    }
+    tokens += HEAVYWEIGHT_TOKEN_RE.test(char) ? 1 : 0.25;
+  }
+  return tokens;
+};
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
-): { terms: string[]; truncated: boolean; characters: number } => {
+): {
+  terms: string[];
+  truncated: boolean;
+  characters: number;
+  estimatedTokens: number;
+} => {
   const capped: string[] = [];
   let characters = 0;
+  let estimatedTokens = 0;
   let truncated = false;
 
   const wordCount = (term: string) => term.split(/\s+/).filter(Boolean).length;
@@ -178,18 +214,23 @@ export const capVocabularyTerms = (
       continue;
     }
     const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+    const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
+    const termTokens = estimateTokenCount(trimmed);
     if (
       capped.length >= budget.maxEntries ||
-      characters + separator + length > budget.maxCharacters
+      characters + separator + length > budget.maxCharacters ||
+      estimatedTokens + separatorTokens + termTokens >
+        (budget.maxEstimatedTokens ?? Infinity)
     ) {
       truncated = true;
       break;
     }
     capped.push(trimmed);
     characters += separator + length;
+    estimatedTokens += separatorTokens + termTokens;
   }
 
-  return { terms: capped, truncated, characters };
+  return { terms: capped, truncated, characters, estimatedTokens };
 };
 
 /**
@@ -590,12 +631,14 @@ export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
 
 // Deepgram keyterm prompting: up to 100 keyterms, repeated plain `keyterm`
 // query parameters, and the docs say to stay well under a 500-token total
-// keyterm budget. 1,500 characters is roughly 375 tokens, which keeps room
-// for capitalized multi-word names that tokenize above the 4-chars-per-token
-// average.
+// keyterm budget. The character cap alone cannot guarantee that: 1,500 Latin
+// characters are roughly 375 tokens, but 1,500 CJK characters are well over
+// 1,000. The token estimate (450, with margin) is the binding ceiling for
+// non-Latin text; the character cap still binds first for Latin text.
 export const DEEPGRAM_KEYTERM_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 1_500,
+  maxEstimatedTokens: 450,
 };
 
 // AssemblyAI batch: `word_boost` is the legacy parameter but stays free of
