@@ -9,7 +9,10 @@ import type {
 } from "@maus-inc/types";
 import { retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
-import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
 import {
   buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
@@ -50,19 +53,7 @@ export type OpenAITranscriptionModel =
 // may receive the legacy `json_object` shape; every other model — including
 // discovered ones (o-series, gpt-4.1, gpt-5.x, gpt-oss) — defaults to
 // `json_schema`, which is the only structured format the o-series accepts.
-const JSON_OBJECT_ONLY_MODELS = new Set<string>([
-  "gpt-3.5-turbo",
-  "gpt-3.5-turbo-0125",
-  "gpt-3.5-turbo-1106",
-  "gpt-4",
-  "gpt-4-0301",
-  "gpt-4-0613",
-  "gpt-4-32k",
-  "gpt-4-turbo",
-  "gpt-4-turbo-2024-04-09",
-  "gpt-4-1106-preview",
-  "gpt-4-0125-preview",
-]);
+const JSON_OBJECT_ONLY_MODELS = new Set<string>(OPENAI_LEGACY_CHAT_MODELS);
 
 /** True when the model accepts `response_format: { type: "json_schema" }`. */
 export function supportsOpenAIJsonSchema(model: string): boolean {

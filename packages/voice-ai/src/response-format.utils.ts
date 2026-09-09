@@ -1,6 +1,26 @@
 import type { JsonResponse } from "@maus-inc/types";
 
 /**
+ * Bare OpenAI chat model ids that predate Structured Outputs and reject
+ * `response_format: { type: "json_schema" }` (400 from the API). Providers
+ * key their own id spaces off this list (OpenRouter prefixes "openai/",
+ * Azure uses deployment names), so the canonical ids live here.
+ */
+export const OPENAI_LEGACY_CHAT_MODELS = [
+  "gpt-3.5-turbo",
+  "gpt-3.5-turbo-0125",
+  "gpt-3.5-turbo-1106",
+  "gpt-4",
+  "gpt-4-0301",
+  "gpt-4-0613",
+  "gpt-4-32k",
+  "gpt-4-turbo",
+  "gpt-4-turbo-2024-04-09",
+  "gpt-4-1106-preview",
+  "gpt-4-0125-preview",
+] as const;
+
+/**
  * Builds the `response_format` for a JSON-mode generation request.
  *
  * `json_object` is sent ONLY for the legacy models named in

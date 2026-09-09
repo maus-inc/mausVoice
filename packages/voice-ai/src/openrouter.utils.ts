@@ -2,7 +2,10 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
-import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
 import {
   buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
@@ -35,26 +38,15 @@ export const OPENROUTER_FAVORITE_MODELS = [
 /** Default generation model when no selection is saved. */
 export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
 
-// Legacy chat models that predate Structured Outputs and reject
-// `response_format: { type: "json_schema" }` (400 from the upstream API).
-// Only these may receive the legacy `json_object` shape; every other model
-// — including the ones discovered from the OpenRouter catalog — defaults to
-// `json_schema`, which the o-series and all gpt-4o-2024-08-06+ models
-// require/accept and which `json_object` callers would otherwise get 400s
-// for (the o-series rejects json_object outright).
-const JSON_OBJECT_ONLY_MODELS = new Set<string>([
-  "openai/gpt-3.5-turbo",
-  "openai/gpt-3.5-turbo-0125",
-  "openai/gpt-3.5-turbo-1106",
-  "openai/gpt-4",
-  "openai/gpt-4-0301",
-  "openai/gpt-4-0613",
-  "openai/gpt-4-32k",
-  "openai/gpt-4-turbo",
-  "openai/gpt-4-turbo-2024-04-09",
-  "openai/gpt-4-1106-preview",
-  "openai/gpt-4-0125-preview",
-]);
+// Legacy chat models (OpenAI id space, "openai/"-prefixed) that predate
+// Structured Outputs and reject `json_schema`. Every other model — including
+// ones discovered from the OpenRouter catalog — defaults to `json_schema`,
+// which the o-series and all gpt-4o-2024-08-06+ models require/accept and
+// which `json_object` callers would otherwise get 400s for (the o-series
+// rejects json_object outright).
+const JSON_OBJECT_ONLY_MODELS = new Set<string>(
+  OPENAI_LEGACY_CHAT_MODELS.map((model) => `openai/${model}`),
+);
 
 export const isOpenRouterJsonObjectOnlyModel = (model: string): boolean =>
   JSON_OBJECT_ONLY_MODELS.has(model);
