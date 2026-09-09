@@ -1,29 +1,21 @@
 import { Box, IconButton, Stack, useColorScheme } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Square, X } from "lucide";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, Minus, Plus, Square, X } from "lucide";
+import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { surfaceAlpha, surfaces } from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
+import { getPlatform } from "../../utils/platform.utils";
 import { LogoWithText } from "../common/LogoWithText";
-import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
 /** Window-control glyphs are 16px so they stay optically level with the 18px
- * theme toggle without crowding the 28px button. */
+ * theme toggle without crowding the button. */
 const CONTROL_ICON_SIZE = 16;
 
-/**
- * Custom frameless chrome title bar.
- * Drag region + native window controls with premium press feedback.
- */
-export const TitleBar = () => {
-  const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
-  const dark = resolved === "dark";
-  const intl = useIntl();
+const useMaximized = () => {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -33,12 +25,15 @@ export const TitleBar = () => {
     const win = getCurrentWindow();
     win
       .isMaximized()
-      .then(setMaximized)
+      .then((value) => {
+        if (!canceled) setMaximized(value);
+      })
       .catch(() => undefined);
     win
       .onResized(async () => {
         try {
-          setMaximized(await win.isMaximized());
+          const value = await win.isMaximized();
+          if (!canceled) setMaximized(value);
         } catch {
           /* ignore */
         }
@@ -61,6 +56,56 @@ export const TitleBar = () => {
     };
   }, []);
 
+  return [maximized, setMaximized] as const;
+};
+
+const useWindowFocused = () => {
+  const [focused, setFocused] = useState(true);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    let canceled = false;
+    const win = getCurrentWindow();
+    if (typeof win.isFocused === "function") {
+      win
+        .isFocused()
+        .then((value) => {
+          if (!canceled) setFocused(value);
+        })
+        .catch(() => undefined);
+    }
+    const subscribe = (
+      win as unknown as {
+        onFocusChanged?: (
+          handler: (event: { payload: boolean }) => void,
+        ) => Promise<() => void>;
+      }
+    ).onFocusChanged;
+    if (typeof subscribe === "function") {
+      subscribe
+        .call(win, ({ payload }) => {
+          if (!canceled) setFocused(payload);
+        })
+        .then((fn) => {
+          if (canceled) {
+            fn();
+          } else {
+            unlisten = fn;
+          }
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      canceled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return focused;
+};
+
+const useWindowControls = (setMaximized: (value: boolean) => void) => {
   const minimize = useCallback(async () => {
     if (!isTauriRuntime()) return;
     await getCurrentWindow().minimize();
@@ -77,27 +122,68 @@ export const TitleBar = () => {
       await win.maximize();
       setMaximized(true);
     }
-  }, []);
-
-  // `Square` -> `Copy` (two offset squares) is the conventional
-  // maximise/restore pair; MorphNavIcon tweens between the two paths.
-  const maximizeIcon = useMemo(() => (maximized ? Copy : Square), [maximized]);
+  }, [setMaximized]);
 
   const close = useCallback(async () => {
     if (!isTauriRuntime()) return;
     await getCurrentWindow().close();
   }, []);
 
+  return { minimize, toggleMax, close };
+};
+
+const captionButtonSx = {
+  width: 46,
+  height: 40,
+  borderRadius: 0,
+  color: "text.secondary",
+  transition: "background-color 150ms ease, color 150ms ease",
+  "&:hover": {
+    backgroundColor: "action.hover",
+    color: "text.primary",
+  },
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: -2,
+  },
+} as const;
+
+/**
+ * Custom frameless chrome title bar with per-platform control placement.
+ * macOS gets left traffic lights; Windows and Linux keep right caption
+ * buttons with full-height hover backplates. Glyphs are stable (no morphing,
+ * no scale press) so small icons stay crisp.
+ */
+export const TitleBar = () => {
+  const { mode, systemMode } = useColorScheme();
+  const resolved = mode === "system" ? systemMode : mode;
+  const dark = resolved === "dark";
+  const intl = useIntl();
+  const platform = getPlatform();
+  const isMac = platform === "macos";
+  const [maximized, setMaximized] = useMaximized();
+  const focused = useWindowFocused();
+  const { minimize, toggleMax, close } = useWindowControls(setMaximized);
+
+  const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
+  const maximizeLabel = maximized
+    ? intl.formatMessage({ defaultMessage: "Restore" })
+    : intl.formatMessage({ defaultMessage: "Maximize" });
+  const closeLabel = intl.formatMessage({ defaultMessage: "Close" });
+
   return (
     <>
       <WindowResizeHandles />
       <Box
+        data-focused={focused}
         sx={{
           height: 40,
           flexShrink: 0,
           display: "flex",
           alignItems: "center",
-          px: 1,
+          px: isMac ? 1.5 : 0,
+          pl: isMac ? 1.5 : 1,
           position: "relative",
           zIndex: 20,
           backgroundColor: dark
@@ -124,6 +210,41 @@ export const TitleBar = () => {
           }}
         />
 
+        {isMac ? (
+          <Stack
+            direction="row"
+            spacing={1}
+            sx={{
+              alignItems: "center",
+              position: "relative",
+              zIndex: 1,
+              opacity: focused ? 1 : 0.55,
+            }}
+          >
+            <TrafficButton
+              label={closeLabel}
+              color={focused ? "#FF5F57" : "#8E8E93"}
+              dark={dark}
+              onClick={() => void close()}
+              glyph={<X size={8} strokeWidth={2.5} />}
+            />
+            <TrafficButton
+              label={minimizeLabel}
+              color={focused ? "#FEBC2E" : "#8E8E93"}
+              dark={dark}
+              onClick={() => void minimize()}
+              glyph={<Minus size={8} strokeWidth={2.5} />}
+            />
+            <TrafficButton
+              label={maximizeLabel}
+              color={focused ? "#28C840" : "#8E8E93"}
+              dark={dark}
+              onClick={() => void toggleMax()}
+              glyph={<Plus size={8} strokeWidth={2.5} />}
+            />
+          </Stack>
+        ) : null}
+
         <Stack
           direction="row"
           spacing={1}
@@ -131,8 +252,9 @@ export const TitleBar = () => {
             alignItems: "center",
             position: "relative",
             zIndex: 1,
-            pl: 0.5,
+            pl: isMac ? 1 : 0.5,
             color: "text.primary",
+            opacity: focused ? 1 : 0.6,
           }}
         >
           <ThemeModeToggle />
@@ -145,67 +267,109 @@ export const TitleBar = () => {
           onDoubleClick={() => void toggleMax()}
         />
 
-        <Stack
-          direction="row"
-          spacing={0.25}
-          sx={{
-            alignItems: "center",
-            position: "relative",
-            zIndex: 1,
-          }}
-        >
-          <IconButton
-            size="small"
-            onClick={() => void minimize()}
-            aria-label={intl.formatMessage({ defaultMessage: "Minimize" })}
-            sx={controlSx}
-          >
-            <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => void toggleMax()}
-            aria-label={
-              maximized
-                ? intl.formatMessage({ defaultMessage: "Restore" })
-                : intl.formatMessage({ defaultMessage: "Maximize" })
-            }
-            sx={controlSx}
-          >
-            <MorphNavIcon icon={maximizeIcon} size={CONTROL_ICON_SIZE} />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => void close()}
-            aria-label={intl.formatMessage({ defaultMessage: "Close" })}
+        {isMac ? null : (
+          <Stack
+            direction="row"
+            spacing={0}
             sx={{
-              ...controlSx,
-              "&:hover": {
-                backgroundColor: "rgba(232, 77, 77, 0.92)",
-                color: "#fff",
-              },
+              alignItems: "stretch",
+              alignSelf: "stretch",
+              position: "relative",
+              zIndex: 1,
+              opacity: focused ? 1 : 0.6,
             }}
           >
-            <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
-          </IconButton>
-        </Stack>
+            <IconButton
+              size="small"
+              onClick={() => void minimize()}
+              aria-label={minimizeLabel}
+              sx={captionButtonSx}
+            >
+              <Minus size={CONTROL_ICON_SIZE} />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={() => void toggleMax()}
+              aria-label={maximizeLabel}
+              sx={captionButtonSx}
+            >
+              {maximized ? (
+                <Copy size={CONTROL_ICON_SIZE} />
+              ) : (
+                <Square size={CONTROL_ICON_SIZE} />
+              )}
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={() => void close()}
+              aria-label={closeLabel}
+              sx={{
+                ...captionButtonSx,
+                "&:hover": {
+                  backgroundColor: "rgba(232, 77, 77, 0.92)",
+                  color: "#fff",
+                },
+              }}
+            >
+              <X size={CONTROL_ICON_SIZE} />
+            </IconButton>
+          </Stack>
+        )}
       </Box>
     </>
   );
 };
 
-const controlSx = {
-  width: 34,
-  height: 28,
-  borderRadius: 1.5,
-  color: "text.secondary",
-  transition:
-    "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
-  "&:hover": {
-    backgroundColor: "action.hover",
-    color: "text.primary",
-  },
-  "&:active": {
-    transform: "scale(0.94)",
-  },
-} as const;
+const TrafficButton = ({
+  label,
+  color,
+  dark,
+  onClick,
+  glyph,
+}: {
+  label: string;
+  color: string;
+  dark: boolean;
+  onClick: () => void;
+  glyph: React.ReactNode;
+}) => (
+  <Box
+    component="button"
+    type="button"
+    aria-label={label}
+    title={label}
+    onClick={onClick}
+    className="traffic-btn"
+    sx={{
+      width: 12,
+      height: 12,
+      borderRadius: "50%",
+      border: "none",
+      padding: 0,
+      cursor: "default",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: color,
+      color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
+      transition: "filter 120ms ease",
+      "&:hover": {
+        filter: "brightness(1.08)",
+      },
+      "&:focus-visible": {
+        outline: "2px solid",
+        outlineColor: "primary.main",
+        outlineOffset: 2,
+      },
+      "& .traffic-glyph": {
+        opacity: 0,
+        display: "flex",
+      },
+      "&:hover .traffic-glyph": {
+        opacity: 0.85,
+      },
+    }}
+  >
+    <span className="traffic-glyph">{glyph}</span>
+  </Box>
+);
