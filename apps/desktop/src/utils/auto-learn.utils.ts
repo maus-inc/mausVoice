@@ -271,15 +271,22 @@ export const tokenizeForComparison = (text: string): string[] =>
 const toTokenCounts = (tokens: string[]): Map<string, number> => {
   const counts = new Map<string, number>();
   for (const token of tokens) {
-    const key = token.toLowerCase();
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    counts.set(token, (counts.get(token) ?? 0) + 1);
   }
   return counts;
 };
 
 /**
- * Tokens present in `corrected` but not in `original`, as a case-insensitive
- * multiset difference. Original token casing is preserved.
+ * Tokens present in `corrected` but not in `original`, as a case-sensitive
+ * multiset difference. Corrected-token casing is preserved.
+ *
+ * The comparison is case-sensitive on purpose: a casing-only correction
+ * ("apple" -> "Apple") is the primary proper-noun signal the engine learns
+ * from. A case-insensitive difference makes that correction invisible
+ * (the word "already exists"), so the feature's main use case would never
+ * learn anything. Lowercase noise is filtered later by the initial-capital
+ * check in `isLearnableProperNoun`, and the existing-terms skip in
+ * `collectLearnableTerms` stays case-insensitive.
  */
 export const computeAddedTokens = (
   original: string,
@@ -289,7 +296,7 @@ export const computeAddedTokens = (
   const added: string[] = [];
 
   for (const token of tokenizeForComparison(corrected)) {
-    const key = token.toLowerCase();
+    const key = token;
     const remaining = originalCounts.get(key) ?? 0;
     if (remaining > 0) {
       originalCounts.set(key, remaining - 1);
@@ -302,7 +309,7 @@ export const computeAddedTokens = (
 };
 
 /**
- * Tokens present in `original` but not in `corrected`, as a case-insensitive
+ * Tokens present in `original` but not in `corrected`, as a case-sensitive
  * multiset difference. Used to confirm an edit was a replacement rather than
  * a pure insertion.
  */
