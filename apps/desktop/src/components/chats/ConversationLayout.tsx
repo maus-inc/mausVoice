@@ -188,6 +188,7 @@ export const ConversationLayout = ({
               color="primary"
               size="small"
               disabled={sending}
+              aria-label={intl.formatMessage({ defaultMessage: "Send" })}
               sx={{
                 bgcolor: "background.paper",
                 border: 1,

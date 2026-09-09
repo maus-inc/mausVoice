@@ -15,6 +15,7 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
   return (
     <Stack
       component={onClick ? "button" : "div"}
+      type={onClick ? "button" : undefined}
       direction="row"
       spacing={0.5}
       aria-label={comboLabel}

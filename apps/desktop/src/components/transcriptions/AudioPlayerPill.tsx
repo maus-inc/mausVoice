@@ -236,6 +236,7 @@ export const AudioPlayerPill = ({
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (disabled) return;
       event.preventDefault();
+      event.currentTarget.focus();
       isDraggingRef.current = true;
       progressAtDragStartRef.current = playbackProgressRef.current;
       const next = getProgressFromClientX(event.clientX);

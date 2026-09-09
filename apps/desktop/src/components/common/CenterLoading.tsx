@@ -1,11 +1,11 @@
 import { Stack } from "@mui/material";
+import { useIntl } from "react-intl";
 import { DotMatrixLoader } from "./DotMatrixLoader";
 
 export const CenterLoading = () => {
+  const intl = useIntl();
   return (
     <Stack
-      role="status"
-      aria-label="Loading"
       sx={{
         height: "100%",
         justifyContent: "center",
@@ -14,7 +14,11 @@ export const CenterLoading = () => {
       }}
       spacing={2}
     >
-      <DotMatrixLoader size={28} dotSize={3.5} />
+      <DotMatrixLoader
+        size={28}
+        dotSize={3.5}
+        aria-label={intl.formatMessage({ defaultMessage: "Loading" })}
+      />
     </Stack>
   );
 };

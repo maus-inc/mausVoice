@@ -189,6 +189,11 @@ export const ConversationListLayout = ({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={intl.formatMessage({ defaultMessage: "Search chats" })}
+          inputProps={{
+            "aria-label": intl.formatMessage({
+              defaultMessage: "Search chats",
+            }),
+          }}
           startAdornment={
             <InputAdornment position="start" sx={{ mr: 0.75 }}>
               <Search size={14} strokeWidth={2} />

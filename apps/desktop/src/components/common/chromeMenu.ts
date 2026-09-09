@@ -7,13 +7,13 @@ export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
   py: 0.5,
   mt: 0.5,
   overflow: "hidden",
-  border:
-    theme.palette.mode === "dark" ? hairline.dark(0.05) : hairline.light(0.06),
-  boxShadow:
-    theme.palette.mode === "dark"
-      ? premiumSurface.dark.rest
-      : premiumSurface.light.rest,
+  border: hairline.light(0.06),
+  boxShadow: premiumSurface.light.rest,
   backgroundColor: "background.paper",
+  ...theme.applyStyles("dark", {
+    border: hairline.dark(0.05),
+    boxShadow: premiumSurface.dark.rest,
+  }),
 });
 
 export const chromeMenuItemSx = {

@@ -128,7 +128,7 @@ export const stopActivePlayback = (reason: PlaybackStopReason): void => {
     // no-op
   }
 
-  current.context.close().catch(() => undefined);
+  closingContext = current.context.close().catch(() => undefined);
   current.onStop(reason);
 };
 
@@ -171,6 +171,10 @@ export const playWebAudio = async (
   startProgress = 0,
 ): Promise<void> => {
   stopActivePlayback("replaced");
+  if (closingContext) {
+    await closingContext;
+    closingContext = null;
+  }
 
   const context = new AudioContext({ sampleRate: data.sampleRate });
   if (context.state === "suspended") {

@@ -52,7 +52,11 @@ export default function TranscriptionsPage() {
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );
-  const transcriptionById = useAppStore((state) => state.transcriptionById);
+  const transcriptionCreatedAtSignature = useAppStore((state) =>
+    state.transcriptions.transcriptionIds
+      .map((id) => `${id}:${state.transcriptionById[id]?.createdAt ?? ""}`)
+      .join("|"),
+  );
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
   const tones = useAppStore((state) =>
@@ -88,6 +92,7 @@ export default function TranscriptionsPage() {
     const labels = new Map<string, ThreadDayGroup | null>();
     const occupied = new Set<ThreadDayGroup>();
     let previous: ThreadDayGroup | null = null;
+    const { transcriptionById } = useAppStore.getState();
     for (const id of transcriptionIds) {
       const row = transcriptionById[id];
       if (!row) continue;
@@ -100,7 +105,7 @@ export default function TranscriptionsPage() {
       return new Map<string, ThreadDayGroup | null>();
     }
     return labels;
-  }, [transcriptionIds, transcriptionById]);
+  }, [transcriptionIds, transcriptionCreatedAtSignature]);
 
   const groupLabel = (group: ThreadDayGroup) => {
     switch (group) {
@@ -229,6 +234,9 @@ export default function TranscriptionsPage() {
                     setSelectedToneId(event.target.value || null)
                   }
                   MenuProps={chromeSelectMenuProps}
+                  renderValue={(value) =>
+                    tones.find((tone) => tone.id === value)?.name ?? ""
+                  }
                 >
                   {tones.map((tone) => (
                     <MenuItem
@@ -258,6 +266,10 @@ export default function TranscriptionsPage() {
                   )
                 }
                 MenuProps={chromeSelectMenuProps}
+                renderValue={(value) =>
+                  languageOptions.find((option) => option.code === value)
+                    ?.label ?? ""
+                }
               >
                 {languageOptions.map(({ code, label }) => (
                   <MenuItem key={code} value={code} sx={chromeMenuItemSx}>

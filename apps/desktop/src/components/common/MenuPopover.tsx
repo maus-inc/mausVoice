@@ -122,7 +122,6 @@ function MenuPopoverSubMenuItem({
         onClose={() => setSubmenuOpen(false)}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
-        disableRestoreFocus
         slotProps={{
           paper: {
             onMouseEnter: openSubmenu,
@@ -173,6 +172,11 @@ function MenuPopoverItemRend({
 
   return null;
 }
+
+const menuWrapperRole = (item: MenuPopoverItem): "menuitem" | undefined =>
+  item.kind === "divider" || item.kind === "genericItem"
+    ? undefined
+    : "menuitem";
 
 type MenuPopoverProps = {
   open: boolean;
@@ -232,7 +236,7 @@ export const MenuPopover = ({
     >
       <Stack sx={sx} role="menu">
         {items.map((item, index) => (
-          <Box key={index} role="menuitem">
+          <Box key={index} role={menuWrapperRole(item)}>
             <MenuPopoverItemRend item={item} close={onClose} />
           </Box>
         ))}

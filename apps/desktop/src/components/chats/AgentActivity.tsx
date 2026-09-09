@@ -39,7 +39,7 @@ const ThinkingCaption = ({
   }
   return (
     <FormattedMessage
-      defaultMessage="Thought for {seconds} seconds"
+      defaultMessage="{seconds, plural, one {Thought for # second} other {Thought for # seconds}}"
       values={{ seconds: duration }}
     />
   );

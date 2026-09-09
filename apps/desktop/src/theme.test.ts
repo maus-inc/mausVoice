@@ -68,6 +68,7 @@ describe("theme mode configuration", () => {
     expect(THEME_PROVIDER_CONFIG).toEqual({
       defaultMode: "system",
       modeStorageKey: THEME_MODE_STORAGE_KEY,
+      disableTransitionOnChange: true,
     });
     expect(indexHtml).toContain(
       `localStorage.getItem("${THEME_MODE_STORAGE_KEY}")`,

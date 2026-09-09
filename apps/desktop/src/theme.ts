@@ -25,6 +25,7 @@ export const THEME_COLOR_SCHEME_SELECTOR = "data-mui-color-scheme";
 export const THEME_PROVIDER_CONFIG = {
   defaultMode: "system",
   modeStorageKey: THEME_MODE_STORAGE_KEY,
+  disableTransitionOnChange: true,
 } as const;
 
 export const theme = createTheme({
@@ -329,7 +330,7 @@ export const theme = createTheme({
           },
           ...theme.applyStyles("dark", {
             "&.Mui-checked:not(.Mui-disabled)": {
-              color: surfaces.dark.level0,
+              color: chalkSolid.base,
               "& + .MuiSwitch-track": {
                 backgroundColor: chalkSolid.base,
                 opacity: 1,

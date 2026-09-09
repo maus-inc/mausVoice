@@ -128,6 +128,9 @@ export const RetranscribeDialog = () => {
                   setSelectedToneId(value || null);
                 }}
                 MenuProps={chromeSelectMenuProps}
+                renderValue={(value) =>
+                  tones.find((tone) => tone.id === value)?.name ?? ""
+                }
               >
                 {tones.map((tone) => (
                   <MenuItem key={tone.id} value={tone.id} sx={chromeMenuItemSx}>
@@ -151,6 +154,10 @@ export const RetranscribeDialog = () => {
                 setSelectedLanguage(e.target.value as DictationLanguageCode)
               }
               MenuProps={chromeSelectMenuProps}
+              renderValue={(value) =>
+                languageOptions.find((option) => option.code === value)
+                  ?.label ?? ""
+              }
             >
               {languageOptions.map(({ code, label }) => (
                 <MenuItem key={code} value={code} sx={chromeMenuItemSx}>

@@ -37,6 +37,10 @@ const MessageCopyButton = ({
     sx={{
       opacity: visible ? 1 : 0,
       pointerEvents: visible ? "auto" : "none",
+      "&:focus-within": {
+        opacity: 1,
+        pointerEvents: "auto",
+      },
       transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
       "@media (prefers-reduced-motion: reduce)": {
         transition: "none",

@@ -221,11 +221,21 @@ export const ComposerPage = () => {
           accepted,
           text: accepted ? text : "",
         });
-      } finally {
         await closeComposerWindow();
+      } catch (error) {
+        getLogger().error("Failed to emit composer result", error);
+        if (mountedRef.current) {
+          setEditError(
+            error instanceof Error
+              ? error.message
+              : intl.formatMessage({
+                  defaultMessage: "Unable to send composer result.",
+                }),
+          );
+        }
       }
     },
-    [requestId, text],
+    [intl, requestId, text],
   );
 
   // Esc cancels the composer, matching the window close-request path which is

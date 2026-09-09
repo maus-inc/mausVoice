@@ -176,6 +176,10 @@ export const ConversationListItem = ({
                 flexShrink: 0,
                 opacity: hovered || selected ? 1 : 0,
                 pointerEvents: hovered || selected ? "auto" : "none",
+                "&:focus-within, &:focus-visible": {
+                  opacity: 1,
+                  pointerEvents: "auto",
+                },
                 transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
                 "@media (prefers-reduced-motion: reduce)": {
                   transition: "none",

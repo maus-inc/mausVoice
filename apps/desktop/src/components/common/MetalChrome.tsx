@@ -1,4 +1,4 @@
-import { useColorScheme } from "@mui/material";
+import { useColorScheme, useTheme } from "@mui/material";
 import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
 
@@ -12,7 +12,9 @@ export const MetalChrome = ({
   ...rest
 }: MetalFxProps) => {
   const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
+  const theme = useTheme();
+  const resolved =
+    (mode === "system" ? systemMode : mode) ?? theme.palette.mode;
   const reduceMotion = useReducedMotion();
 
   return (

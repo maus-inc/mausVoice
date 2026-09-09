@@ -119,7 +119,7 @@ export const flushPendingTranscriptionDeletes = (): void => {
   for (const [id, pending] of pendingById) {
     clearTimeout(pending.timer);
     pendingById.delete(id);
-    invokeDelete(id, pending.snapshot);
+    invokeDelete(id);
   }
 };
 
