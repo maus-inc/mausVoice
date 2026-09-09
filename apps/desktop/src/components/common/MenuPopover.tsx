@@ -61,6 +61,34 @@ type MenuPopoverSubMenuItemProps = {
   close: () => void;
 };
 
+const menuWrapperRole = (item: MenuPopoverItem): "menuitem" | undefined =>
+  item.kind === "divider" || item.kind === "genericItem"
+    ? undefined
+    : "menuitem";
+
+const menuItemBaseKey = (item: MenuPopoverItem): string => {
+  if (item.kind === "listItem") {
+    return `listItem:${typeof item.title === "string" ? item.title : "node"}`;
+  }
+  if (item.kind === "divider") {
+    return "divider";
+  }
+  if (item.kind === "genericItem") {
+    return "genericItem";
+  }
+  return `subMenu:${typeof item.title === "string" ? item.title : "node"}`;
+};
+
+const keyedMenuItems = (items: MenuPopoverItem[]) => {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const base = menuItemBaseKey(item);
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    return { item, key: `${base}:${count}` };
+  });
+};
+
 function MenuPopoverSubMenuItem({
   item,
   close,
@@ -132,8 +160,8 @@ function MenuPopoverSubMenuItem({
         }}
       >
         <Stack>
-          {item.children.map((child, index) => (
-            <Box key={index} role="menuitem">
+          {keyedMenuItems(item.children).map(({ item: child, key }) => (
+            <Box key={key} role={menuWrapperRole(child)}>
               <MenuPopoverItemRend item={child} close={close} />
             </Box>
           ))}
@@ -172,11 +200,6 @@ function MenuPopoverItemRend({
 
   return null;
 }
-
-const menuWrapperRole = (item: MenuPopoverItem): "menuitem" | undefined =>
-  item.kind === "divider" || item.kind === "genericItem"
-    ? undefined
-    : "menuitem";
 
 type MenuPopoverProps = {
   open: boolean;
@@ -235,8 +258,8 @@ export const MenuPopover = ({
       {...rest}
     >
       <Stack sx={sx} role="menu">
-        {items.map((item, index) => (
-          <Box key={index} role={menuWrapperRole(item)}>
+        {keyedMenuItems(items).map(({ item, key }) => (
+          <Box key={key} role={menuWrapperRole(item)}>
             <MenuPopoverItemRend item={item} close={onClose} />
           </Box>
         ))}

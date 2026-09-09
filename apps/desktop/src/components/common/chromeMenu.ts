@@ -27,6 +27,16 @@ export const chromeMenuItemSx = {
   gap: 1,
 } as const;
 
+export const selectedOptionLabel = <Option>(
+  value: string,
+  options: readonly Option[],
+  idOf: (option: Option) => string,
+  labelOf: (option: Option) => string,
+): string => {
+  const match = options.find((option) => idOf(option) === value);
+  return match ? labelOf(match) : "";
+};
+
 export const chromeSelectMenuProps = {
   slotProps: {
     paper: {

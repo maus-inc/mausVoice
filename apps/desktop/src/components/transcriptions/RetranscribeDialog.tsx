@@ -33,6 +33,7 @@ import {
   chromeDialogPaperSx,
   chromeMenuItemSx,
   chromeSelectMenuProps,
+  selectedOptionLabel,
 } from "../common/chromeMenu";
 
 const languageOptions = (
@@ -129,7 +130,12 @@ export const RetranscribeDialog = () => {
                 }}
                 MenuProps={chromeSelectMenuProps}
                 renderValue={(value) =>
-                  tones.find((tone) => tone.id === value)?.name ?? ""
+                  selectedOptionLabel(
+                    value,
+                    tones,
+                    (tone) => tone.id,
+                    (tone) => tone.name,
+                  )
                 }
               >
                 {tones.map((tone) => (
@@ -155,8 +161,12 @@ export const RetranscribeDialog = () => {
               }
               MenuProps={chromeSelectMenuProps}
               renderValue={(value) =>
-                languageOptions.find((option) => option.code === value)
-                  ?.label ?? ""
+                selectedOptionLabel(
+                  value,
+                  languageOptions,
+                  (option) => option.code,
+                  (option) => option.label,
+                )
               }
             >
               {languageOptions.map(({ code, label }) => (

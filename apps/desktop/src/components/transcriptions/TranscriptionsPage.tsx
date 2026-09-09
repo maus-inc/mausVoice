@@ -33,6 +33,7 @@ import {
   chromeDialogPaperSx,
   chromeMenuItemSx,
   chromeSelectMenuProps,
+  selectedOptionLabel,
 } from "../common/chromeMenu";
 import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
 import { ScrollListPage } from "../common/ScrollListPage";
@@ -235,7 +236,12 @@ export default function TranscriptionsPage() {
                   }
                   MenuProps={chromeSelectMenuProps}
                   renderValue={(value) =>
-                    tones.find((tone) => tone.id === value)?.name ?? ""
+                    selectedOptionLabel(
+                      value,
+                      tones,
+                      (tone) => tone.id,
+                      (tone) => tone.name,
+                    )
                   }
                 >
                   {tones.map((tone) => (
