@@ -98,16 +98,30 @@ export type VocabularyBudget = {
 export const collectVocabularyTerms = (
   entries: DictionaryEntries,
 ): string[] => {
-  const seen = new Set<string>();
+  const seen = new Map<string, string>();
   const terms: string[] = [];
 
   const add = (candidate: string) => {
     const value = candidate.trim();
-    if (!value || seen.has(value.toLowerCase())) {
+    if (!value) {
       return;
     }
-    seen.add(value.toLowerCase());
-    terms.push(value);
+    const key = value.toLowerCase();
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, value);
+      terms.push(value);
+      return;
+    }
+    // A replacement destination collides with an already-collected source.
+    // The destination is the user's canonical spelling, so it wins and takes
+    // the source's place: biasing the raw spoken form would reinforce the
+    // very misrecognition the replacement rule exists to fix.
+    const index = terms.indexOf(existing);
+    if (index >= 0) {
+      terms[index] = value;
+      seen.set(key, value);
+    }
   };
 
   for (const source of entries.sources) {
@@ -125,6 +139,11 @@ export const collectVocabularyTerms = (
  * capped terms and whether anything had to be dropped, so callers can
  * surface a warning instead of silently losing dictionary entries.
  */
+// Callers join the capped terms with ", ", so the separator counts toward
+// the payload length. The character budget covers the joined string, not just
+// the bare term lengths.
+const TERM_SEPARATOR_LENGTH = 2;
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
@@ -145,15 +164,16 @@ export const capVocabularyTerms = (
       truncated = truncated || trimmed.length > 0;
       continue;
     }
+    const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
     if (
       capped.length >= budget.maxEntries ||
-      characters + trimmed.length > budget.maxCharacters
+      characters + separator + trimmed.length > budget.maxCharacters
     ) {
       truncated = true;
       break;
     }
     capped.push(trimmed);
-    characters += trimmed.length;
+    characters += separator + trimmed.length;
   }
 
   return { terms: capped, truncated };
@@ -231,14 +251,16 @@ const collectBudgetedGlossary = (
   let characters = 0;
   for (const rule of glossary.replacements) {
     const rendered = `${rule.source} → ${rule.destination}`;
+    const separator = rules.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
     if (
       rules.length >= GLOSSARY_PROMPT_BUDGET.maxEntries ||
-      characters + rendered.length > GLOSSARY_PROMPT_BUDGET.maxCharacters
+      characters + separator + rendered.length >
+        GLOSSARY_PROMPT_BUDGET.maxCharacters
     ) {
       break;
     }
     rules.push(rendered);
-    characters += rendered.length;
+    characters += separator + rendered.length;
   }
   return { terms, rules };
 };
@@ -561,20 +583,13 @@ export const buildLocalizedTranscriptionPrompt = (args: {
   dictationLanguage: DictationLanguageCode;
   state: AppState;
 }): string => {
-  const capped = capVocabularyTerms(
+  // The cap counts separators, so the joined glossary string fits the budget
+  // by construction; the localized instruction wrapper sits on top of it.
+  const { terms } = capVocabularyTerms(
     args.entries.sources,
     TRANSCRIPTION_GLOSSARY_BUDGET,
   );
-  // Count separators too, so the glossary string itself stays inside the
-  // budget; the localized instruction wrapper sits on top of it.
-  let joinedEntries = "";
-  for (const term of capped.terms) {
-    const candidate = joinedEntries ? `${joinedEntries}, ${term}` : term;
-    if (candidate.length > TRANSCRIPTION_GLOSSARY_BUDGET.maxCharacters) {
-      break;
-    }
-    joinedEntries = candidate;
-  }
+  const joinedEntries = terms.join(", ");
   const prompt =
     getRec(transcriptionPromptByCode, args.dictationLanguage) ??
     transcriptionPromptByCode.en;

@@ -186,6 +186,15 @@ describe("collectVocabularyTerms", () => {
       }),
     ).toEqual(["Soniya", "k8s", "Kubernetes"]);
   });
+
+  it("prefers the replacement destination when it collides with a source", () => {
+    expect(
+      collectVocabularyTerms({
+        sources: ["soniya"],
+        replacements: [{ source: "soniya", destination: "Soniya" }],
+      }),
+    ).toEqual(["Soniya"]);
+  });
 });
 
 describe("capVocabularyTerms", () => {
@@ -224,6 +233,20 @@ describe("capVocabularyTerms", () => {
     });
     expect(capped).toEqual(["a", "b"]);
     expect(truncated).toBe(false);
+  });
+});
+
+describe("capVocabularyTerms separator accounting", () => {
+  it("counts the join separators toward the character budget", () => {
+    // "aaaa, bbbb" joined is 10 characters, which busts a 9-character
+    // budget, so only the first term fits.
+    const { terms: capped, truncated } = capVocabularyTerms(["aaaa", "bbbb"], {
+      maxEntries: 10,
+      maxCharacters: 9,
+    });
+    expect(capped).toEqual(["aaaa"]);
+    expect(truncated).toBe(true);
+    expect(capped.join(", ").length).toBeLessThanOrEqual(9);
   });
 });
 
