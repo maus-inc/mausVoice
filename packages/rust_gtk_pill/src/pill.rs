@@ -38,9 +38,20 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
     };
 
+    // X11 keeps room for the below selector slot under the pill, so a side
+    // flip animates inside space that is already there. LayerShell is bottom
+    // anchored (a taller surface would lift the pill) and PlainWayland is
+    // fullscreen, so both keep the typing size. Content math is untouched, so
+    // the pill never moves for the extra rows.
+    let window_h = if backend == Backend::X11 {
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32
+    } else {
+        WINDOW_H_TYPING
+    };
+
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     if backend != Backend::PlainWayland {
-        window.set_default_size(WINDOW_W_TYPING, WINDOW_H_TYPING);
+        window.set_default_size(WINDOW_W_TYPING, window_h);
     }
     window.set_decorated(false);
     window.set_app_paintable(true);
@@ -88,7 +99,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let overlay_widget = gtk::Overlay::new();
     let drawing_area = gtk::DrawingArea::new();
     if backend != Backend::PlainWayland {
-        drawing_area.set_size_request(WINDOW_W_TYPING, WINDOW_H_TYPING);
+        drawing_area.set_size_request(WINDOW_W_TYPING, window_h);
     }
     overlay_widget.add(&drawing_area);
 
@@ -196,6 +207,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_last_x: Cell::new(0.0),
         drag_last_y: Cell::new(0.0),
         hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         hover_probed: Cell::new(false),
         hover_probe_x: Cell::new(0.0),
         hover_probe_y: Cell::new(0.0),
@@ -628,6 +640,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.drag_draw_offset_x.set(0.0);
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.drag_motion.borrow_mut().reset();
+                    state_tick.selector_placement.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
@@ -669,6 +682,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             dt_tick,
         );
         tick_hover_frame(&state_tick);
+        tick_selector_placement(&win_tick, &state_tick, dt_tick);
 
         // Show/hide entry for typing mode
         let is_typing = state_tick.is_typing();
@@ -868,18 +882,7 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         .window()
         .map(|gdk_win| gdk_win.scale_factor() as f64)
         .unwrap_or(1.0);
-    let display = window.display();
-    let monitor = window
-        .window()
-        .and_then(|gdk_win| display.monitor_at_window(&gdk_win))
-        .or_else(|| {
-            display.monitor_at_point(
-                (state.saved_x.get() + (w as f64 / 2.0) * scale) as i32,
-                (state.saved_y.get() + (h as f64 / 2.0) * scale) as i32,
-            )
-        })
-        .or_else(|| display.primary_monitor())
-        .or_else(|| display.monitor(0));
+    let monitor = pill_monitor(window, state);
     let monitor_rect = monitor.map(|m| {
         // `workarea()` is in logical pixels while the pill rect below is
         // physical (`saved_x`/`saved_y` are X11 root coordinates and the
@@ -1040,6 +1043,71 @@ fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt
             monitor,
         });
     }
+}
+
+/// Monitor hosting the pill, for work-area math. Extracted from the IPC
+/// geometry path with identical resolution order: window monitor,
+/// saved-center monitor, primary, first.
+fn pill_monitor(window: &gtk::Window, state: &PillState) -> Option<gdk::Monitor> {
+    let display = window.display();
+    if let Some(gdk_win) = window.window() {
+        if let Some(monitor) = display.monitor_at_window(&gdk_win) {
+            return Some(monitor);
+        }
+    }
+    let (w, h) = window.size();
+    let scale = window
+        .window()
+        .map(|gdk_win| gdk_win.scale_factor() as f64)
+        .unwrap_or(1.0);
+    display
+        .monitor_at_point(
+            (state.saved_x.get() + (w as f64 / 2.0) * scale) as i32,
+            (state.saved_y.get() + (h as f64 / 2.0) * scale) as i32,
+        )
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0))
+}
+
+/// Headroom above the pill in logical pixels for the selector side decision.
+/// X11 with a saved position only: Wayland has no queryable absolute
+/// position and first placement has none yet, so both keep today's
+/// above-only behavior instead of guessing.
+fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
+    if state.backend.get() != Backend::X11 || !state.has_saved_position.get() {
+        return f64::INFINITY;
+    }
+    let monitor = match pill_monitor(window, state) {
+        Some(monitor) => monitor,
+        None => return f64::INFINITY,
+    };
+    let scale = monitor.scale_factor() as f64;
+    if !scale.is_finite() || scale <= 0.0 {
+        return f64::INFINITY;
+    }
+    let work = logical_rect_to_physical(&monitor.workarea(), scale);
+    let (_, oy) = state.content_offset();
+    let (_, pill_y, _, _) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let pill_top = state.saved_y.get() + (oy + pill_y) * scale;
+    (pill_top - work.y) / scale
+}
+
+/// Advances the shared selector-placement controller once per frame from the
+/// live headroom, so the selector drops below the pill exactly when the strip
+/// above no longer fits it. Draw and the input region read the blend back
+/// every frame, so both track the animation.
+fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
+    let space_above = selector_headroom(window, state);
+    state.selector_placement.borrow_mut().advance(
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
 }
 
 /// Advances hover intent one frame from the latest probe and reports edges.

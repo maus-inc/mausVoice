@@ -8,6 +8,7 @@
 
 pub mod drag;
 pub mod hover;
+pub mod placement;
 pub mod spring;
 
 use std::cell::{Cell, RefCell};

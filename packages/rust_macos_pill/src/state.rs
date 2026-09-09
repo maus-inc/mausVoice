@@ -228,6 +228,10 @@ pub(crate) struct PillState {
     /// through a grace before exiting, so fast pass-throughs never flicker
     /// the pill. See rust_pill_shared::hover.
     pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    /// Selector-placement state machine: picks above or below from the live
+    /// headroom and eases the blend between them. See
+    /// rust_pill_shared::placement.
+    pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
     pub(crate) reset_strategy: Cell<ResetStrategy>,

@@ -321,9 +321,19 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let tooltip_w = TOOLTIP_FIXED_WIDTH;
     state.tooltip_width.set(tooltip_w);
 
-    let tooltip_rx = (ww - tooltip_w) / 2.0;
+    let blend = state.selector_placement.borrow().blend();
     let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+    let (tooltip_rx, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
+        0.0,
+        pill_area_top,
+        ww,
+        PILL_AREA_HEIGHT,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    );
+    let tooltip_ry = tooltip_base + y_offset * (1.0 - 2.0 * blend);
     let alpha = tooltip_t;
 
     gfx.fill_rounded_rect(tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS,

@@ -83,6 +83,11 @@ pub fn run(receiver: Receiver<InMessage>) {
     }
 
     let (wx, wy) = initial_position();
+    // The window keeps room for the below selector slot under the pill, so a
+    // side flip animates inside space that is already there. Content math
+    // stays on the typing constants, so the pill never moves for it.
+    let win_h =
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -92,7 +97,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             wx,
             wy,
             WINDOW_W_TYPING,
-            WINDOW_H_TYPING,
+            win_h,
             None,
             None,
             Some(hinstance.into()),
@@ -104,7 +109,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     HWND_CELL.with(|c| c.set(hwnd));
     eprintln!("[pill] window created in {:?}", t0.elapsed());
 
-    let gfx = Gfx::new(WINDOW_W_TYPING, WINDOW_H_TYPING).expect("Failed to create D2D context");
+    let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
     let state = PillState {
@@ -188,6 +193,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cursor_y: Cell::new(0.0),
         drag_motion: RefCell::new(DragController::new()),
         hover_intent: RefCell::new(HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
@@ -467,6 +473,7 @@ fn on_anim_tick(hwnd: HWND) {
             tick_drag_release_fallback(hwnd, state);
             tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
+            tick_selector_placement(hwnd, state, dt);
             update_visibility(hwnd, state);
             update_typing_focus(hwnd, state);
         }
@@ -748,6 +755,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         InMessage::ResetPosition { strategy } => {
             state.has_saved_position.set(false);
             state.drag_motion.borrow_mut().reset();
+            state.selector_placement.borrow_mut().reset();
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
             let hwnd = HWND_CELL.with(|c| c.get());
@@ -1271,8 +1279,18 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         let pill_area_top = win_rect.top as f64 + oy + (dh - PILL_AREA_HEIGHT);
         let tooltip_w = state.tooltip_width.get();
         let y_offset = (1.0 - state.tooltip_t.get()) * 4.0;
-        let tooltip_x = win_rect.left as f64 + ox + (dw - tooltip_w) / 2.0;
-        let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+        let blend = state.selector_placement.borrow().blend();
+        let (tooltip_x, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
+            win_rect.left as f64 + ox,
+            pill_area_top,
+            dw,
+            PILL_AREA_HEIGHT,
+            tooltip_w,
+            TOOLTIP_HEIGHT,
+            TOOLTIP_GAP,
+            blend,
+        );
+        let tooltip_y = tooltip_base + y_offset * (1.0 - 2.0 * blend);
 
         cx >= tooltip_x
             && cx <= tooltip_x + tooltip_w
@@ -1372,9 +1390,10 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
 
-        // The main window is never resized (fixed 600×362 canvas), so the live
-        // rect and the typing constants agree — but use the live rect anyway so
-        // nothing here assumes a specific mode's size.
+        // The main window keeps extra transparent rows below the pill for the
+        // below selector slot, so the live rect is taller than the typing
+        // constants — but use the live rect anyway so nothing here assumes a
+        // specific mode's size.
         let mut current = RECT::default();
         let _ = GetWindowRect(hwnd, &mut current);
         let win_w = current.right - current.left;
@@ -1562,6 +1581,25 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     if settling && output.settled {
         persist_drag_position(hwnd, state);
     }
+}
+
+/// Advances the shared selector-placement controller once per animation
+/// frame. Headroom comes from the live window rect against the monitor work
+/// area, so the selector drops below the pill exactly when the strip above
+/// no longer fits it. A missing work area leaves the side alone instead of
+/// flapping it.
+fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
+    let (rect, monitor) = current_pill_geometry(hwnd);
+    let space_above = monitor.map_or(f64::INFINITY, |work| rect.y - work.y);
+    state.selector_placement.borrow_mut().advance(
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
 }
 
 fn tick_long_press(state: &PillState, dt: f64) {
