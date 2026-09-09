@@ -253,8 +253,11 @@ const collectBudgetedGlossary = (
   const { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
     glossary.replacements.map((rule) => `${rule.source} → ${rule.destination}`),
     {
-      maxEntries: GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length,
-      maxCharacters: GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+      maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
+      maxCharacters: Math.max(
+        0,
+        GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+      ),
     },
   );
   return { terms, rules, truncated: truncated || rulesTruncated };
