@@ -271,13 +271,21 @@ const startElevenLabsStreaming = async (
 
     const audioFormat = `pcm_${sampleRate}`;
     // Keyterm prompting: repeated `keyterms` query parameters bias the
-    // realtime model toward the user's dictionary vocabulary.
-    const keytermParams = keyterms
-      .map((term) => term.trim())
-      .filter(Boolean)
-      .map((term) => `&keyterms=${encodeURIComponent(term)}`)
-      .join("");
-    const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad${keytermParams}`;
+    // realtime model toward the user's dictionary vocabulary. Built with
+    // URLSearchParams so encoding matches Deepgram's path.
+    const params = new URLSearchParams({
+      token,
+      model_id: "scribe_v2_realtime",
+      audio_format: audioFormat,
+      commit_strategy: "vad",
+    });
+    for (const term of keyterms) {
+      const trimmed = term.trim();
+      if (trimmed) {
+        params.append("keyterms", trimmed);
+      }
+    }
+    const wsUrl = `${ELEVENLABS_WS_URL}?${params.toString()}`;
     getLogger().verbose(
       "[ElevenLabs WebSocket] Connecting to:",
       redactQueryParamValues(wsUrl, ["token", "keyterms"]),

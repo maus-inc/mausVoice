@@ -12,9 +12,10 @@ import { showToast } from "./toast.actions";
 const WATCH_WINDOW_MS = 90_000;
 const DENIED_TERMS_KEY = "mausvoice:auto-learn-denied";
 const MAX_DENIED_TERMS = 50;
-// The proposal toast is shown for 10 s; the extra grace covers the serialized
-// native toast IPC queue delaying the toast's actual appearance.
-const PROPOSAL_TTL_MS = 12_000;
+// The proposal toast is shown for this long. The TTL adds a small grace so a
+// delayed native toast IPC delivery cannot outlive the pending proposal.
+const PROPOSAL_TOAST_DURATION_MS = 10_000;
+const PROPOSAL_TTL_MS = PROPOSAL_TOAST_DURATION_MS + 2_000;
 
 type WatchSnapshot = {
   text: string;
@@ -116,7 +117,7 @@ const proposeAutoLearnTerm = async (term: string): Promise<void> => {
       { term },
     ),
     toastType: "info",
-    duration: 10_000,
+    duration: PROPOSAL_TOAST_DURATION_MS,
     action: "auto_learn_accept",
     rejectAction: "auto_learn_reject",
   });
