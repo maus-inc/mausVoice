@@ -110,11 +110,15 @@ const splitProtectedSegments = (
     }
   };
 
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex];
     const marker = fenceMarker(line);
     if (openFence === null && marker) {
       flushProse();
       openFence = { lines: [line], marker };
+      lineIndex++;
       continue;
     }
     if (openFence !== null) {
@@ -130,9 +134,27 @@ const splitProtectedSegments = (
         lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
         openFence = null;
       }
+      lineIndex++;
       continue;
     }
+
+    if (
+      isMarkdownTableRow(line) &&
+      isMarkdownTableDelimiter(lines[lineIndex + 1] ?? "")
+    ) {
+      flushProse();
+      const tableLines = [line, lines[lineIndex + 1]];
+      lineIndex += 2;
+      while (lineIndex < lines.length && isMarkdownTableRow(lines[lineIndex])) {
+        tableLines.push(lines[lineIndex]);
+        lineIndex++;
+      }
+      lineBlocks.push({ protected: true, text: tableLines.join("\n") });
+      continue;
+    }
+
     proseLines.push(line);
+    lineIndex++;
   }
   flushProse();
   // Fail closed: an unterminated fence protects the rest of the text.
@@ -155,6 +177,21 @@ const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*\r?$/;
 
 const closesFence = (marker: string, opener: string): boolean =>
   marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
+
+// GitHub Flavored Markdown tables have a header row followed by a delimiter
+// row. The delimiter contains only optional alignment colons and hyphens.
+// Recognizing that pair lets the scrubber preserve every table cell verbatim.
+const isMarkdownTableDelimiter = (line: string): boolean => {
+  const cells = line
+    .trim()
+    .replace(/^\||\|\r?$/g, "")
+    .split("|");
+  return (
+    cells.length > 1 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
+  );
+};
+
+const isMarkdownTableRow = (line: string): boolean => line.includes("|");
 
 /** End index of the inline code span starting at `from`, or -1. */
 const findInlineCodeEnd = (text: string, from: number): number => {
@@ -198,16 +235,30 @@ const splitInlineCode = (
  * Apply the post‑hoc scrubber to a string of LLM‑generated text.
  *
  * Returns the cleaned text. Code and structured content (fenced blocks,
- * inline code) pass through untouched. Whitespace normalization collapses
- * horizontal runs only — paragraph breaks and line structure are preserved.
+ * inline code, tables, and standalone JSON) pass through untouched.
+ * Whitespace normalization collapses horizontal runs only — paragraph breaks
+ * and line structure are preserved.
  * If `normalizeWhitespace` is true (default), leading/trailing whitespace is
  * trimmed.
  */
+const isStandaloneJson = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const humanizeScrub = (
   text: string | null | undefined,
   options: HumanizeOptions = {},
 ): string => {
   if (!text) return "";
+  // JSON is structured output even when a model did not put it in a fenced
+  // block. Leave it byte-for-byte intact rather than rewriting a value or
+  // normalizing its whitespace.
+  if (isStandaloneJson(text)) return text;
 
   const { normalizeWhitespace = true } = options;
 
