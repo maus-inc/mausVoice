@@ -537,17 +537,19 @@ fn decode_private_http_body(body_base64: Option<&str>) -> Result<Option<Vec<u8>>
     let Some(encoded) = body_base64 else {
         return Ok(None);
     };
-    // Check both the wire frame and its maximum decoded size before allocating
-    // the exact destination buffer used by `decode_slice`.
+    // Check both the wire frame and its maximum decoded size before allocation.
+    // `decode_slice` specifically requires its conservative buffer estimate,
+    // which can be two bytes larger than the decoded output for padded input.
     validate_private_http_encoded_body_length(encoded.len())?;
     let maximum_decoded_length = maximum_private_http_base64_decoded_length(encoded)?;
     validate_private_http_decoded_body_length(maximum_decoded_length)?;
+    let decoded_buffer_length = base64::decoded_len_estimate(encoded.len());
 
     let mut decoded = Vec::new();
     decoded
-        .try_reserve_exact(maximum_decoded_length)
+        .try_reserve_exact(decoded_buffer_length)
         .map_err(|_| "Unable to allocate the private-network request body".to_string())?;
-    decoded.resize(maximum_decoded_length, 0);
+    decoded.resize(decoded_buffer_length, 0);
     let decoded_length = base64::engine::general_purpose::STANDARD
         .decode_slice(encoded, &mut decoded)
         .map_err(|_| private_http_invalid_base64_body_error())?;
