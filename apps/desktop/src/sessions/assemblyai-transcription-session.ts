@@ -21,7 +21,14 @@ type AssemblyAIStreamingSession = {
 
 const LOGGER_PREFIX = "AssemblyAI WebSocket";
 
-const startAssemblyAIStreaming = async (
+/**
+ * Opens an AssemblyAI v3 streaming WebSocket. The `speech_model` query
+ * parameter pins the universal streaming model that supports `keyterms_prompt`
+ * biasing; without it the account default may be an older model that silently
+ * ignores the keyterms. `keyterms` (the user's dictionary, already capped to
+ * the streaming budget) is sent as a JSON array when non-empty.
+ */
+export const startAssemblyAIStreaming = async (
   apiKey: string,
   sampleRate: number,
   keyterms: string[],
@@ -121,7 +128,7 @@ const startAssemblyAIStreaming = async (
       keyterms.length > 0
         ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
         : "";
-    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${apiKey}${keytermsPrompt}`;
+    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
     getLogger().info(
       `[${LOGGER_PREFIX}] Connecting (api key present:`,
       Boolean(apiKey),

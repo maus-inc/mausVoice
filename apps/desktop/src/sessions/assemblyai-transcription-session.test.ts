@@ -20,13 +20,15 @@ class FakeWebSocket {
   static OPEN = 1;
   static CLOSED = 3;
   readyState = FakeWebSocket.OPEN;
+  url: string;
   sent: string[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((error: unknown) => void) | null = null;
   onclose: ((event: { code: number }) => void) | null = null;
 
-  constructor(_url: string) {
+  constructor(url: string) {
+    this.url = url;
     createdSockets.push(this);
     queueMicrotask(() => this.onopen?.());
   }
@@ -46,7 +48,10 @@ class FakeWebSocket {
   }
 }
 
-import { AssemblyAITranscriptionSession } from "./assemblyai-transcription-session";
+import {
+  AssemblyAITranscriptionSession,
+  startAssemblyAIStreaming,
+} from "./assemblyai-transcription-session";
 
 const flushMicrotasks = async () => {
   for (let i = 0; i < 5; i += 1) {
@@ -97,5 +102,46 @@ describe("AssemblyAITranscriptionSession finalize contract", () => {
     expect(result.warnings).toEqual([]);
     expect(result.rawTranscript).toBe("hello world");
     expect(result.metadata.transcriptionMode).toBe("api");
+  });
+});
+
+describe("AssemblyAI streaming connection parameters", () => {
+  beforeEach(() => {
+    createdSockets.length = 0;
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("pins the universal speech model and sends keyterms when the dictionary is non-empty", async () => {
+    const session = await startAssemblyAIStreaming(
+      "test-key",
+      16000,
+      ["Soniya", "Kubernetes"],
+      undefined,
+    );
+    const socket = createdSockets.at(-1);
+    // The universal model is what supports keyterms_prompt biasing; without it
+    // an account default on an older model would silently ignore the dictionary.
+    expect(socket?.url).toContain("speech_model=universal-3-5-pro");
+    expect(socket?.url).toContain("keyterms_prompt=");
+    // The keyterms travel JSON-encoded, so decode to confirm the terms landed.
+    expect(decodeURIComponent(socket?.url ?? "")).toContain("Soniya");
+    session.cleanup();
+  });
+
+  it("omits keyterms_prompt when the dictionary is empty", async () => {
+    const session = await startAssemblyAIStreaming(
+      "test-key",
+      16000,
+      [],
+      undefined,
+    );
+    const socket = createdSockets.at(-1);
+    expect(socket?.url).toContain("speech_model=universal-3-5-pro");
+    expect(socket?.url).not.toContain("keyterms_prompt");
+    session.cleanup();
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INITIAL_APP_STATE } from "../state/app.state";
+import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { setAppState } from "../store";
 import { getModelProviderRepo, getTranscribeAudioRepo } from ".";
 
@@ -12,6 +12,7 @@ import {
   AssemblyAITranscribeAudioRepo,
   BaseTranscribeAudioRepo,
   DeepgramTranscribeAudioRepo,
+  ElevenLabsTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
@@ -20,6 +21,7 @@ import {
   TranscribeSegmentInput,
 } from "./transcribe-audio.repo";
 import { type TranscriptionSegment } from "../utils/hallucination.utils";
+import { createDefaultPreferences } from "../actions/user.actions";
 
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({
@@ -1008,5 +1010,58 @@ describe("per-segment silence gate (mixed recordings)", () => {
     // With overlap 0 a 20s clip splits into two segments, and the filter
     // being off means even the silent one is sent to the provider.
     expect(repo.segmentCalls).toHaveLength(2);
+  });
+});
+
+describe("ElevenLabs keyterms gating", () => {
+  const buildElevenLabsState = (): AppState => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "elevenlabs-key";
+    state.apiKeyById["elevenlabs-key"] = {
+      id: "elevenlabs-key",
+      name: "ElevenLabs",
+      provider: "elevenlabs",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      keyFull: "el-key",
+      transcriptionModel: null,
+    };
+    state.termById["t1"] = {
+      id: "t1",
+      createdAt: "2026-08-19T00:00:00.000Z",
+      sourceValue: "Soniya",
+      destinationValue: "",
+      isReplacement: false,
+    };
+    state.dictionary.termIds = ["t1"];
+    return state;
+  };
+
+  const keytermsOf = (repo: unknown): string[] =>
+    (repo as { keyterms: string[] }).keyterms;
+
+  it("sends no keyterms when the opt-in is off, even with a non-empty dictionary", () => {
+    // userPrefs stays null (the INITIAL_APP_STATE default), so the preference
+    // reads as false and ElevenLabs is never billed the 20% surcharge.
+    setAppState(buildElevenLabsState(), true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
+    expect(keytermsOf(repo)).toEqual([]);
+  });
+
+  it("sends the dictionary as keyterms once the user opts in", () => {
+    const state = buildElevenLabsState();
+    state.userPrefs = {
+      ...createDefaultPreferences(),
+      elevenLabsKeytermsEnabled: true,
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+
+    expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
+    expect(keytermsOf(repo)).toContain("Soniya");
   });
 });

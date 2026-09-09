@@ -144,6 +144,18 @@ export const collectVocabularyTerms = (
 // the bare term lengths.
 const TERM_SEPARATOR_LENGTH = 2;
 
+/**
+ * Counts Unicode code points in a string. JavaScript's `string.length` counts
+ * UTF-16 code units, so an emoji or other surrogate pair counts as two while a
+ * provider's per-character cap counts it as one. Code points match the
+ * character count providers enforce, so the vocabulary cap stays correct for
+ * multi-byte text instead of under-counting it. The string is normalized to
+ * NFC first so a character stored in decomposed form (base plus combining
+ * mark) counts the same as its precomposed form.
+ */
+const codePointLength = (value: string): number =>
+  Array.from(value.normalize("NFC")).length;
+
 export const capVocabularyTerms = (
   terms: string[],
   budget: VocabularyBudget,
@@ -156,24 +168,25 @@ export const capVocabularyTerms = (
 
   for (const term of terms) {
     const trimmed = term.trim();
+    const length = codePointLength(trimmed);
     const fitsTermLimits =
-      trimmed.length > 0 &&
-      trimmed.length <= (budget.maxTermLength ?? Infinity) &&
+      length > 0 &&
+      length <= (budget.maxTermLength ?? Infinity) &&
       wordCount(trimmed) <= (budget.maxWordsPerTerm ?? Infinity);
     if (!fitsTermLimits) {
-      truncated = truncated || trimmed.length > 0;
+      truncated = truncated || length > 0;
       continue;
     }
     const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
     if (
       capped.length >= budget.maxEntries ||
-      characters + separator + trimmed.length > budget.maxCharacters
+      characters + separator + length > budget.maxCharacters
     ) {
       truncated = true;
       break;
     }
     capped.push(trimmed);
-    characters += separator + trimmed.length;
+    characters += separator + length;
   }
 
   return { terms: capped, truncated, characters };
@@ -530,18 +543,29 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 
 // Whisper's initial_prompt is effectively capped at ~224 tokens (the model
 // halves its text context; roughly 900 characters at ~4 characters per
-// token). The budget covers the joined glossary string including
-// separators; the localized instruction (~100 characters) sits on top of it,
-// and anything past the ceiling is silently truncated by the model. An
-// oversized prompt also raises the risk of the prompt leaking into
-// near-silent transcriptions.
+// token). This 650-character budget is a character-count heuristic that
+// approximates that ceiling, not an exact token count: a glossary heavy in
+// multi-byte scripts (CJK, emoji) can consume more than one token per
+// character, so the effective headroom is more conservative than the number
+// suggests. Lengths are measured in Unicode code points (see codePointLength)
+// so surrogate pairs and other multi-byte text are counted the way providers
+// count characters. buildLocalizedTranscriptionPrompt subtracts the localized
+// instruction from this budget, so the rendered initial_prompt (terms plus
+// instruction) stays within it. An oversized prompt also raises the risk of
+// the prompt leaking into near-silent transcriptions.
 export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
 };
 
 // Provider vocabulary budgets, mirroring what each recognition API documents
-// (checked against each provider's docs on 2026-09-09).
+// (checked against each provider's docs on 2026-09-09). Each `maxCharacters`
+// is a character-count heuristic that approximates the provider's documented
+// token or byte ceiling, not an exact token budget: the real token cost of a
+// multi-byte term can exceed its character length, so these ceilings lean
+// conservative. Lengths are measured in Unicode code points (see
+// codePointLength) so emoji and other surrogate pairs are counted as one
+// character, matching how providers enforce per-term and total limits.
 
 // Deepgram keyterm prompting: up to 100 keyterms, repeated plain `keyterm`
 // query parameters, and the docs say to stay well under a 500-token total
@@ -602,16 +626,29 @@ export const buildLocalizedTranscriptionPrompt = (args: {
   dictationLanguage: DictationLanguageCode;
   state: AppState;
 }): string => {
-  // The cap counts separators, so the joined glossary string fits the budget
-  // by construction; the localized instruction wrapper sits on top of it.
-  const { terms } = capVocabularyTerms(
-    args.entries.sources,
-    TRANSCRIPTION_GLOSSARY_BUDGET,
-  );
-  const joinedEntries = terms.join(", ");
   const prompt =
     getRec(transcriptionPromptByCode, args.dictationLanguage) ??
     transcriptionPromptByCode.en;
+  // The localized instruction sentence (the "<glossary/>" token is the
+  // dictionary slot) sits on top of the term budget, so subtract its length
+  // before capping the terms. That keeps the rendered initial_prompt under
+  // whisper's token ceiling regardless of how wordy the dictation language's
+  // instruction is.
+  const instructionLength = codePointLength(prompt.replace("<glossary/>", ""));
+  const { terms } = capVocabularyTerms(
+    // The shared collector folds in replacement destinations and resolves
+    // source/destination collisions, so the recognizer is biased toward the
+    // user's canonical spellings, not just the raw glossary sources.
+    collectVocabularyTerms(args.entries),
+    {
+      ...TRANSCRIPTION_GLOSSARY_BUDGET,
+      maxCharacters: Math.max(
+        0,
+        TRANSCRIPTION_GLOSSARY_BUDGET.maxCharacters - instructionLength,
+      ),
+    },
+  );
+  const joinedEntries = terms.join(", ");
   return applyTemplateVars(prompt, [["glossary", joinedEntries]]);
 };
 
