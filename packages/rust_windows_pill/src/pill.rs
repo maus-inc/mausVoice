@@ -1521,7 +1521,7 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
 /// Frame-loop drag input: the cursor position, the current window rect, and
 /// the clamp bounds on the cursor's monitor. A drag (and its release settle)
 /// belongs to whichever monitor holds the cursor.
-fn drag_placement(hwnd: HWND, state: &PillState) -> (DragBounds, POINT, RECT) {
+fn drag_placement(hwnd: HWND, state: &PillState) -> (DragBounds, POINT, RECT, rust_pill_shared::edge::EdgeWork) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1539,7 +1539,11 @@ fn drag_placement(hwnd: HWND, state: &PillState) -> (DragBounds, POINT, RECT) {
             current.right - current.left,
             current.bottom - current.top,
         );
-        (bounds, cursor, current)
+        let work = rust_pill_shared::edge::EdgeWork {
+            width: (info.rcWork.right - info.rcWork.left) as f64,
+            height: (info.rcWork.bottom - info.rcWork.top) as f64,
+        };
+        (bounds, cursor, current, work)
     }
 }
 
@@ -1553,13 +1557,14 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     if !dragging && !settling {
         return;
     }
-    let (bounds, cursor, current) = drag_placement(hwnd, state);
+    let (bounds, cursor, current, work) = drag_placement(hwnd, state);
     let output = state.drag_motion.borrow_mut().advance(&DragFrame {
         pointer_x: cursor.x as f64,
         pointer_y: cursor.y as f64,
         now: drag_now(),
         dt,
         bounds,
+        edge_work: Some(work),
         held: dragging,
         reduced_motion: reduced_motion(),
     });

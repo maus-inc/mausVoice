@@ -13,6 +13,8 @@
 //! point; this module owns samples, release velocity, and settle physics, so
 //! all three pills feel identical and stay testable without a display.
 
+use crate::edge::{ease_point, EdgeWork};
+
 /// One pointer observation. `time` is seconds on a monotonic clock; platforms
 /// pass their own frame clock (it only ever compares samples with each other).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -71,6 +73,10 @@ pub struct DragFrame {
     /// True when the OS asks for reduced motion. The settle snaps instead of
     /// gliding; held tracking is unaffected (direct tracking is not animation).
     pub reduced_motion: bool,
+    /// Work-area size for edge repulsion, if the platform knows it. `None`
+    /// (or a dead size) keeps the existing hard clamp. See
+    /// [`crate::edge::ease_point`].
+    pub edge_work: Option<EdgeWork>,
 }
 
 /// One frame of output from [`DragController::advance`].
@@ -338,17 +344,31 @@ impl DragController {
     /// clamped to the frame bounds. No spring, no lag. A non-finite pointer
     /// holds the last position instead of poisoning the window origin.
     fn track_held(&mut self, frame: &DragFrame) -> DragOutput {
+        let (vx, vy) = self.estimate_velocity(frame.now);
+        // Reduced motion keeps the gap with the full ease: zero velocity
+        // reads as no fling, so the blend stays at one.
+        let (evx, evy) = if frame.reduced_motion { (0.0, 0.0) } else { (vx, vy) };
         let (x, y) = if frame.pointer_x.is_finite() && frame.pointer_y.is_finite() {
-            frame.bounds.clamp_point(
+            let (cx, cy) = frame.bounds.clamp_point(
                 frame.pointer_x - self.grab_dx,
                 frame.pointer_y - self.grab_dy,
+            );
+            // Edge repulsion eases the clamped origin toward the resting gap
+            // inside the activation band; outside it this is identity.
+            let bounds = frame.bounds;
+            ease_point(
+                cx,
+                cy,
+                evx,
+                evy,
+                (bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y),
+                frame.edge_work,
             )
         } else {
             (self.window_x, self.window_y)
         };
         self.window_x = x;
         self.window_y = y;
-        let (vx, vy) = self.estimate_velocity(frame.now);
         DragOutput {
             x,
             y,
@@ -389,13 +409,24 @@ impl DragController {
         };
 
         if frame.reduced_motion {
-            self.window_x = tx;
-            self.window_y = ty;
+            // The snap still lands on the resting gap, not just inside the
+            // work area.
+            let bounds = frame.bounds;
+            let (ex, ey) = ease_point(
+                tx,
+                ty,
+                0.0,
+                0.0,
+                (bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y),
+                frame.edge_work,
+            );
+            self.window_x = ex;
+            self.window_y = ey;
             self.phase = DragPhase::Idle;
             self.settle_target = None;
             return DragOutput {
-                x: tx,
-                y: ty,
+                x: ex,
+                y: ey,
                 velocity_x: 0.0,
                 velocity_y: 0.0,
                 phase: DragPhase::Idle,
@@ -414,14 +445,23 @@ impl DragController {
             x += vx * h;
             y += vy * h;
         }
-        // Clamp every frame: a hot-plug can shrink the bounds mid-settle, and
-        // the window must never leave the work area on the way to its target.
+        // Edge repulsion eases the settle toward the resting gap inside the
+        // activation band; the bounds clamp after it still holds the screen.
         // A clamped axis stops dead instead of pressing into the edge.
-        let (cx, cy) = frame.bounds.clamp_point(x, y);
-        if cx != x {
+        let bounds = frame.bounds;
+        let (ex, ey) = ease_point(
+            x,
+            y,
+            vx,
+            vy,
+            (bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y),
+            frame.edge_work,
+        );
+        let (cx, cy) = frame.bounds.clamp_point(ex, ey);
+        if cx != ex {
             vx = 0.0;
         }
-        if cy != y {
+        if cy != ey {
             vy = 0.0;
         }
         self.settle_elapsed += dt;
@@ -514,6 +554,7 @@ mod tests {
             bounds: wide_bounds(),
             held: true,
             reduced_motion: false,
+            edge_work: None,
         }
     }
 
@@ -526,7 +567,27 @@ mod tests {
             bounds: wide_bounds(),
             held: false,
             reduced_motion: false,
+            edge_work: None,
         }
+    }
+
+    #[test]
+    fn held_tracking_eases_inside_the_edge_band() {
+        use crate::edge::EdgeWork;
+        let mut drag = DragController::new();
+        drag.begin_drag(0.0, 0.0, 0.0, 0.0, 0.0);
+        let out = drag.advance(&DragFrame {
+            pointer_x: 2.0,
+            pointer_y: 500.0,
+            now: 0.05,
+            dt: FRAME_DT,
+            bounds: DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1920.0, max_y: 1080.0 },
+            held: true,
+            reduced_motion: false,
+            edge_work: Some(EdgeWork { width: 1920.0, height: 1080.0 }),
+        });
+        assert!(out.x > 2.0 && out.x <= 12.5, "edge should ease, got {}", out.x);
+        assert_eq!(out.y, 500.0);
     }
 
     #[test]
@@ -811,6 +872,7 @@ mod tests {
             bounds: wide_bounds(),
             held: true,
             reduced_motion: false,
+            edge_work: None,
         });
         assert!(out.x.is_finite() && out.y.is_finite());
     }
@@ -838,6 +900,7 @@ mod tests {
                     bounds: wide_bounds(),
                     held: false,
                     reduced_motion: false,
+                    edge_work: None,
                 });
                 pos = (out.x, out.y);
             }

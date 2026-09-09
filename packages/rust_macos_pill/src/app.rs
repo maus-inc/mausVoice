@@ -1440,6 +1440,10 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                     max_x,
                     max_y,
                 },
+                edge_work: Some(rust_pill_shared::edge::EdgeWork {
+                    width: visible.size.width,
+                    height: visible.size.height,
+                }),
                 held: dragging,
                 reduced_motion: reduced_motion(),
             });
