@@ -438,3 +438,40 @@ the stack trace for the invalid resource id.
 
 Static review does not prove desktop-runtime behavior. The required platform and
 end-to-end checks remain necessary before release.
+
+## 11. Takeover state (September 9, 2026)
+
+The coordinating session stopped before it opened its pull request. A second
+session took the branch over at commit `052e6e4` (single squashed snapshot)
+and opened the pull request from `arena/01a08611-mausvoice` against
+`fix/superfix-review-findings`, the head of PR 63.
+
+State of the re-review at handover.
+
+- Compared against the PR 63 head `f13ab95`: 128 changed files, 4,381 lines
+  added and 1,822 removed. Every changed file was re-read against the final
+  tree; the fixes in sections 4 and 5 are intact and not regressed by later
+  commits.
+- The final session stage added, on top of the fixes above: the Open decision
+  on the review card (header open button) with durable persistence before the
+  card closes, the pending Paste review bubble in Chats for agent Paste calls,
+  an integer ceiling division and fallible allocation in the resampler, Base64
+  framing with a decoded-size preflight in the private HTTP bridge, the
+  capability-based managed audio directory, strict SemVer release validation
+  with minisign verification of every updater bundle before `latest.json` is
+  written, OpenRouter transcription model discovery, and non-shell dev
+  runners.
+- Verified locally on this tree: `pnpm install --frozen-lockfile`, workspace
+  build, desktop and root type checks, desktop lint, desktop unit tests, the
+  i18n extractor (idempotent, nine locales in sync), and the repo formatting
+  gate. Rust compiles and tests only in CI: there is no Rust toolchain in this
+  sandbox, and the download hosts are unreachable. The CI jobs that cover the
+  Rust changes are the lint matrix (clippy with `-D warnings` on all three
+  platforms plus crate tests), the desktop Rust unit tests (which also run
+  `scripts/check-bindings.sh`), and the three-platform transcription tests.
+- The desktop integration tests fail locally only for the missing
+  `GROQ_API_KEY`; CI provides the secret for same-repo pull requests.
+
+Open items carried forward: the assistant invalid-resource-id repro (section
+4.5), the platform sound parity decision (section 4.6), and the manual QA
+matrix in section 10.
