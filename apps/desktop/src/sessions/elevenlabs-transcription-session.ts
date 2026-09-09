@@ -72,9 +72,8 @@ const getElevenLabsToken = async (apiKey: string): Promise<string> => {
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
     throw new Error(
-      `Failed to get ElevenLabs token: ${response.status} ${errorText}`,
+      `Failed to get ElevenLabs token: ${response.status}`,
     );
   }
 
