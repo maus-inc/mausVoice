@@ -131,10 +131,10 @@ describe("theme mode configuration", () => {
 
   it("lets selected lucide icons inherit list item color in both schemes", () => {
     const root = theme.components?.MuiListItemButton?.styleOverrides?.root;
-    expect(typeof root).toBe("function");
-    const styles = (
-      root as (args: { theme: typeof theme }) => Record<string, unknown>
-    )({ theme });
+    if (typeof root !== "function") {
+      throw new Error("MuiListItemButton root override must be a function");
+    }
+    const styles = root({ theme }) as Record<string, unknown>;
     const serialized = JSON.stringify(styles);
     expect(serialized).toContain('"& svg.lucide":{"color":"inherit"}');
     expect(serialized.split('"& svg.lucide":{"color":"inherit"}')).toHaveLength(
