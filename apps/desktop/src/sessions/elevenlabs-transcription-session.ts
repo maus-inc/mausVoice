@@ -5,6 +5,7 @@ import {
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
+import { getMyUserPreferences } from "../utils/user.utils";
 import { getLogger, redactQueryParamValues } from "../utils/log.utils";
 import {
   buildProviderVocabulary,
@@ -413,13 +414,19 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
       getLogger().verbose("[ElevenLabs] Starting streaming session...");
-      const { terms: keyterms, warning } = buildProviderVocabulary(
-        collectDictionaryEntries(getAppState()),
-        ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
-        "ElevenLabs",
-      );
-      if (warning) {
-        getLogger().warning(warning);
+      const keytermsEnabled =
+        getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ?? false;
+      let keyterms: string[] = [];
+      if (keytermsEnabled) {
+        const { terms: computedKeyterms, warning } = buildProviderVocabulary(
+          collectDictionaryEntries(getAppState()),
+          ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
+          "ElevenLabs",
+        );
+        if (warning) {
+          getLogger().warning(warning);
+        }
+        keyterms = computedKeyterms;
       }
       this.streamSession = await startElevenLabsStreaming(
         this.apiKey,

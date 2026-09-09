@@ -266,14 +266,19 @@ const collectBudgetedGlossary = (
   );
   // Terms and rules draw from one shared budget: whatever the terms already
   // consumed is subtracted from the rules' entry and character allowance, so
-  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET.
+  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET. When both
+  // groups are present the "; " delimiter between them is reserved inside the
+  // rules' character budget, so the final joined glossary never exceeds the
+  // cap. Empty groups keep the original budget untouched.
+  const delimiterLength =
+    terms.length > 0 && glossary.replacements.length > 0 ? 2 : 0;
   const { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
     glossary.replacements.map((rule) => `${rule.source} → ${rule.destination}`),
     {
       maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
       maxCharacters: Math.max(
         0,
-        GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+        GLOSSARY_PROMPT_BUDGET.maxCharacters - characters - delimiterLength,
       ),
     },
   );
@@ -543,16 +548,18 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
 
 // Whisper's initial_prompt is effectively capped at ~224 tokens (the model
 // halves its text context; roughly 900 characters at ~4 characters per
-// token). This 650-character budget is a character-count heuristic that
-// approximates that ceiling, not an exact token count: a glossary heavy in
-// multi-byte scripts (CJK, emoji) can consume more than one token per
-// character, so the effective headroom is more conservative than the number
-// suggests. Lengths are measured in Unicode code points (see codePointLength)
-// so surrogate pairs and other multi-byte text are counted the way providers
-// count characters. buildLocalizedTranscriptionPrompt subtracts the localized
-// instruction from this budget, so the rendered initial_prompt (terms plus
-// instruction) stays within it. An oversized prompt also raises the risk of
-// the prompt leaking into near-silent transcriptions.
+// token). This 650-code-point budget is only a heuristic that approximates
+// that ceiling and does not guarantee the tokenized prompt fits the context
+// limit: a glossary heavy in CJK or emoji can use more than one token per
+// code point, so token-limit compliance should be verified with the exact
+// target tokenizer or with CJK- and emoji-heavy fixtures. The effective
+// headroom is more conservative than the number suggests for most scripts.
+// Lengths are measured in Unicode code points (see codePointLength) so
+// surrogate pairs are counted the way providers count characters.
+// buildLocalizedTranscriptionPrompt subtracts the localized instruction from
+// this heuristic budget, so the rendered initial_prompt (terms plus
+// instruction) stays within the heuristic. An oversized prompt also raises
+// the risk of leaking into near-silent transcriptions.
 export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 650,
@@ -631,9 +638,11 @@ export const buildLocalizedTranscriptionPrompt = (args: {
     transcriptionPromptByCode.en;
   // The localized instruction sentence (the "<glossary/>" token is the
   // dictionary slot) sits on top of the term budget, so subtract its length
-  // before capping the terms. That keeps the rendered initial_prompt under
-  // whisper's token ceiling regardless of how wordy the dictation language's
-  // instruction is.
+  // before capping the terms. That keeps the rendered initial_prompt within
+  // the heuristic budget regardless of how wordy the dictation language's
+  // instruction is. The heuristic does not guarantee token-limit compliance,
+  // so CJK- and emoji-heavy glossaries should be checked with the target
+  // tokenizer.
   const instructionLength = codePointLength(prompt.replace("<glossary/>", ""));
   const { terms } = capVocabularyTerms(
     // The shared collector folds in replacement destinations and resolves

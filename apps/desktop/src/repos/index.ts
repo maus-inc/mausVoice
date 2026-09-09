@@ -18,6 +18,7 @@ import {
 } from "../utils/prompt.utils";
 import {
   ApiGenerativePrefs,
+  ApiTranscriptionPrefs,
   GenerativePrefs,
   getAgentModePrefs,
   getGenerativePrefs,
@@ -350,191 +351,193 @@ const providerVocabulary = (
   return terms;
 };
 
+const buildOpenAICompatibleTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  const state = getAppState();
+  const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+  if (!apiKeyRecord) {
+    throw new Error("OpenAI-compatible endpoint configuration is missing.");
+  }
+  const baseUrl = apiKeyRecord.baseUrl;
+  const model = prefs.transcriptionModel || "whisper-1";
+  const providerApiKey = apiKeyRecord.keyFull || undefined;
+  const includeV1Path = apiKeyRecord.includeV1Path;
+  const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
+  return new OpenAICompatibleTranscribeAudioRepo(
+    apiKeyRecord.id,
+    fullUrl,
+    model,
+    providerApiKey,
+    apiKeyRecord.transcriptionPath ?? undefined,
+  );
+};
+
+const buildSpeachesTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  const state = getAppState();
+  const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+  const baseUrl = apiKeyRecord?.baseUrl || "http://localhost:8000";
+  const configuredModel = prefs.transcriptionModel;
+  if (!configuredModel) {
+    prefs.warnings.push("No model configured for Speaches transcription.");
+  }
+  return new SpeachesTranscribeAudioRepo(
+    baseUrl,
+    configuredModel || "Systran/faster-whisper-large-v3",
+  );
+};
+
+const buildOpenRouterTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): BaseTranscribeAudioRepo => {
+  if (!prefs.transcriptionModel) {
+    prefs.warnings.push("No model configured for OpenRouter transcription.");
+  }
+  return new OpenRouterTranscribeAudioRepo(
+    prefs.apiKeyValue,
+    prefs.transcriptionModel,
+  );
+};
+
+const buildGroqFallbackTranscribeRepo = (
+  prefs: ApiTranscriptionPrefs,
+): { repo: BaseTranscribeAudioRepo; apiKeyId: string } => {
+  const state = getAppState();
+  const groqRecord = Object.values(state.apiKeyById).find(
+    (record) => record?.provider === "groq" && Boolean(record.keyFull),
+  );
+  if (!groqRecord?.keyFull) {
+    throw new Error(
+      `No transcription implementation for provider "${prefs.provider}" and no Groq API key is configured for fallback transcription.`,
+    );
+  }
+  prefs.warnings.push(
+    `No transcription implementation for provider "${prefs.provider}". Using the Groq repository as a fallback.`,
+  );
+  const repo = new GroqTranscribeAudioRepo(
+    groqRecord.keyFull,
+    groqRecord.transcriptionModel ?? null,
+  );
+  return { repo, apiKeyId: groqRecord.id };
+};
+
 export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
   const prefs = getTranscriptionPrefs(getAppState());
 
-  if (prefs.mode === "api") {
-    let repo: BaseTranscribeAudioRepo;
-    let apiKeyId = prefs.apiKeyId;
-
-    switch (prefs.provider) {
-      case "openai":
-        repo = new OpenAITranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-        );
-        break;
-      case "assemblyai":
-        repo = new AssemblyAITranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-          secureFetch,
-          providerVocabulary(
-            ASSEMBLYAI_WORD_BOOST_BUDGET,
-            "AssemblyAI",
-            prefs.warnings,
-          ),
-        );
-        break;
-      case "aldea":
-        repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
-        break;
-      case "azure": {
-        const state = getAppState();
-        const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
-        const region = apiKeyRecord?.azureRegion || "eastus";
-        repo = new AzureTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          region,
-          providerVocabulary(AZURE_PHRASE_LIST_BUDGET, "Azure", prefs.warnings),
-        );
-        break;
-      }
-      case "gemini":
-        repo = new GeminiTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-        );
-        break;
-      case "openai-compatible": {
-        const state = getAppState();
-        const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
-        const baseUrl = apiKeyRecord?.baseUrl;
-        const model = prefs.transcriptionModel || "whisper-1";
-        const providerApiKey = apiKeyRecord?.keyFull || undefined;
-        const includeV1Path = apiKeyRecord?.includeV1Path;
-        const fullUrl = buildOpenAICompatibleUrl(baseUrl, includeV1Path);
-        if (!apiKeyRecord) {
-          throw new Error(
-            "OpenAI-compatible endpoint configuration is missing.",
-          );
-        }
-        repo = new OpenAICompatibleTranscribeAudioRepo(
-          apiKeyRecord.id,
-          fullUrl,
-          model,
-          providerApiKey,
-          apiKeyRecord.transcriptionPath ?? undefined,
-        );
-        break;
-      }
-      case "speaches": {
-        const state = getAppState();
-        const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
-        const baseUrl = apiKeyRecord?.baseUrl || "http://localhost:8000";
-        const configuredModel = prefs.transcriptionModel;
-        if (!configuredModel) {
-          prefs.warnings.push(
-            "No model configured for Speaches transcription.",
-          );
-        }
-        repo = new SpeachesTranscribeAudioRepo(
-          baseUrl,
-          configuredModel || "Systran/faster-whisper-large-v3",
-        );
-        break;
-      }
-      case "elevenlabs": {
-        // ElevenLabs keyterms add a 20% transcription surcharge, so they are
-        // sent only when the user has explicitly opted in. Off by default, so
-        // the dictionary never reaches ElevenLabs without consent.
-        const keytermsEnabled =
-          getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ??
-          false;
-        repo = new ElevenLabsTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          keytermsEnabled
-            ? providerVocabulary(
-                ELEVENLABS_BATCH_KEYTERMS_BUDGET,
-                "ElevenLabs",
-                prefs.warnings,
-              )
-            : [],
-        );
-        break;
-      }
-      case "deepgram":
-        repo = new DeepgramTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-          secureFetch,
-          providerVocabulary(
-            DEEPGRAM_KEYTERM_BUDGET,
-            "Deepgram",
-            prefs.warnings,
-          ),
-        );
-        break;
-      case "gladia":
-        repo = new GladiaTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-          buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
-        );
-        break;
-      case "xai":
-        repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
-        break;
-      case "groq":
-        repo = new GroqTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-        );
-        break;
-      case "openrouter":
-        if (!prefs.transcriptionModel) {
-          prefs.warnings.push(
-            "No model configured for OpenRouter transcription.",
-          );
-        }
-        repo = new OpenRouterTranscribeAudioRepo(
-          prefs.apiKeyValue,
-          prefs.transcriptionModel,
-        );
-        break;
-      default: {
-        // Every provider surfaced by the transcription capability filter now
-        // has an explicit branch above. Reaching here means a stale saved
-        // selection for a generative-only provider (e.g. an Ollama record
-        // saved before the capability fix). Only fall back to Groq when a
-        // configured Groq key exists — the stale selection's own key may be
-        // empty or belong to another provider — and only warn when the
-        // fallback actually happens; otherwise throw so the caller surfaces
-        // the missing-key configuration instead of a dead warning.
-        const state = getAppState();
-        const groqRecord = Object.values(state.apiKeyById).find(
-          (record) => record?.provider === "groq" && Boolean(record.keyFull),
-        );
-        if (!groqRecord?.keyFull) {
-          throw new Error(
-            `No transcription implementation for provider "${prefs.provider}" and no Groq API key is configured for fallback transcription.`,
-          );
-        }
-        prefs.warnings.push(
-          `No transcription implementation for provider "${prefs.provider}". Using the Groq repository as a fallback.`,
-        );
-        apiKeyId = groqRecord.id;
-        // Use the Groq record's own transcription model (falling back to the
-        // Groq repository default when unset) — never the stale selection's
-        // model, which may belong to another provider and would be rejected.
-        repo = new GroqTranscribeAudioRepo(
-          groqRecord.keyFull,
-          groqRecord.transcriptionModel ?? null,
-        );
-        break;
-      }
-    }
-
+  if (prefs.mode !== "api") {
     return {
-      repo,
-      apiKeyId,
+      repo: new LocalTranscribeAudioRepo(),
+      apiKeyId: null,
       warnings: prefs.warnings,
     };
   }
 
+  let repo: BaseTranscribeAudioRepo;
+  let apiKeyId = prefs.apiKeyId;
+
+  switch (prefs.provider) {
+    case "openai":
+      repo = new OpenAITranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+      );
+      break;
+    case "assemblyai":
+      repo = new AssemblyAITranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+        secureFetch,
+        providerVocabulary(
+          ASSEMBLYAI_WORD_BOOST_BUDGET,
+          "AssemblyAI",
+          prefs.warnings,
+        ),
+      );
+      break;
+    case "aldea":
+      repo = new AldeaTranscribeAudioRepo(prefs.apiKeyValue);
+      break;
+    case "azure": {
+      const state = getAppState();
+      const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);
+      const region = apiKeyRecord?.azureRegion || "eastus";
+      repo = new AzureTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        region,
+        providerVocabulary(AZURE_PHRASE_LIST_BUDGET, "Azure", prefs.warnings),
+      );
+      break;
+    }
+    case "gemini":
+      repo = new GeminiTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+      );
+      break;
+    case "openai-compatible":
+      repo = buildOpenAICompatibleTranscribeRepo(prefs);
+      break;
+    case "speaches":
+      repo = buildSpeachesTranscribeRepo(prefs);
+      break;
+    case "elevenlabs": {
+      // ElevenLabs keyterms add a 20% transcription surcharge, so they are
+      // sent only when the user has explicitly opted in. Off by default, so
+      // the dictionary never reaches ElevenLabs without consent.
+      const keytermsEnabled =
+        getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ?? false;
+      repo = new ElevenLabsTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        keytermsEnabled
+          ? providerVocabulary(
+              ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+              "ElevenLabs",
+              prefs.warnings,
+            )
+          : [],
+      );
+      break;
+    }
+    case "deepgram":
+      repo = new DeepgramTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+        secureFetch,
+        providerVocabulary(DEEPGRAM_KEYTERM_BUDGET, "Deepgram", prefs.warnings),
+      );
+      break;
+    case "gladia":
+      repo = new GladiaTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+        buildGladiaCustomizations(collectDictionaryEntries(getAppState())),
+      );
+      break;
+    case "xai":
+      repo = new XaiTranscribeAudioRepo(prefs.apiKeyValue);
+      break;
+    case "groq":
+      repo = new GroqTranscribeAudioRepo(
+        prefs.apiKeyValue,
+        prefs.transcriptionModel,
+      );
+      break;
+    case "openrouter":
+      repo = buildOpenRouterTranscribeRepo(prefs);
+      break;
+    default: {
+      const fallback = buildGroqFallbackTranscribeRepo(prefs);
+      repo = fallback.repo;
+      apiKeyId = fallback.apiKeyId;
+      break;
+    }
+  }
+
   return {
-    repo: new LocalTranscribeAudioRepo(),
-    apiKeyId: null,
+    repo,
+    apiKeyId,
     warnings: prefs.warnings,
   };
 };

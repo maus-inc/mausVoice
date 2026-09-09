@@ -610,7 +610,7 @@
   "sender_address_optional": "Dirección del remitente (opcional)",
   "sender_device": "Dispositivo del remitente",
   "sending_to_name": "Enviando a {name}",
-  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "Enviar tu diccionario a ElevenLabs como términos añade un recargo del 20% a cada transcripción de ElevenLabs. Solo se envía tu diccionario no vacío y puedes desactivarlo en cualquier momento.",
+  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "Enviar tu diccionario a ElevenLabs como términos añade un recargo del 20% a cada transcripción de ElevenLabs. Solo se envía tu diccionario no vacío y puedes desactivar el envío de términos clave en cualquier momento.",
   "sensevoice_226_mb": "SenseVoice (226 MB)",
   "sensevoice_adds_fast_multilingual_local_transcription_withou": "SenseVoice añade transcripción local multilingüe rápida sin puntuación, y el filtro de silencio reduce el texto inventado a partir de audio silencioso. También puedes importar grabaciones desde tu página de Historial.",
   "sensevoice_multilingual": "SenseVoice (multilingüe)",
