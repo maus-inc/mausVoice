@@ -1,7 +1,9 @@
 import { ArrowUpwardOutlined } from "@mui/icons-material";
 import {
   Alert,
+  Box,
   Button,
+  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -13,7 +15,7 @@ import {
 } from "@mui/material";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { isReadOnlyFilesystemInstallError } from "@maus-inc/desktop-utils";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { FormattedMessage, useIntl, type IntlShape } from "react-intl";
 import Markdown from "react-markdown";
 import {
@@ -23,6 +25,7 @@ import {
 import { UpdaterStatus } from "../../state/updater.state";
 import { useAppStore } from "../../store";
 import { formatSize } from "../../utils/format.utils";
+import { ChangelogDialog } from "./ChangelogDialog";
 
 const formatReleaseDate = (isoDate: string | null) => {
   if (!isoDate) {
@@ -271,6 +274,8 @@ export const UpdateDialog = () => {
   const requiresManualInstall = useAppStore(
     (state) => state.updater.requiresManualInstall,
   );
+  const offeredChannel = useAppStore((state) => state.updater.offeredChannel);
+  const [changelogOpen, setChangelogOpen] = useState(false);
 
   const ui = getUpdaterUiState({
     status,
@@ -347,16 +352,17 @@ export const UpdateDialog = () => {
   }, [manualInstallerUrl]);
 
   return (
-    <Dialog
-      open={dialogOpen}
-      onClose={(_, __) => {
-        if (!ui.isUpdating) {
-          handleClose();
-        }
-      }}
-      fullWidth
-      maxWidth="sm"
-      sx={{ zIndex: 9999 }}
+    <>
+      <Dialog
+        open={dialogOpen}
+        onClose={(_, __) => {
+          if (!ui.isUpdating) {
+            handleClose();
+          }
+        }}
+        fullWidth
+        maxWidth="sm"
+        sx={{ zIndex: 9999 }}
     >
       <DialogTitle>
         <FormattedMessage defaultMessage="Update available" />
@@ -364,14 +370,24 @@ export const UpdateDialog = () => {
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           <Stack spacing={0.5}>
-            <Typography
-              variant="body1"
-              sx={{
-                fontWeight: 600,
-              }}
-            >
-              {readyToInstallLabel}
-            </Typography>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
+                {readyToInstallLabel}
+              </Typography>
+              {offeredChannel === "beta" && (
+                <Chip
+                  size="small"
+                  label={<FormattedMessage defaultMessage="Beta" />}
+                  color="warning"
+                  variant="outlined"
+                />
+              )}
+            </Stack>
             <Typography
               variant="body2"
               sx={{
@@ -401,6 +417,16 @@ export const UpdateDialog = () => {
                 <FormattedMessage defaultMessage="What's new" />
               </Typography>
               <Markdown>{releaseNotes}</Markdown>
+              <Box>
+                <Button
+                  size="small"
+                  variant="text"
+                  sx={{ px: 0 }}
+                  onClick={() => setChangelogOpen(true)}
+                >
+                  <FormattedMessage defaultMessage="View past releases" />
+                </Button>
+              </Box>
             </Stack>
           )}
 
@@ -430,6 +456,11 @@ export const UpdateDialog = () => {
           onInstall={() => void handleInstall()}
         />
       </DialogActions>
-    </Dialog>
+      </Dialog>
+      <ChangelogDialog
+        open={changelogOpen}
+        onClose={() => setChangelogOpen(false)}
+      />
+    </>
   );
 };

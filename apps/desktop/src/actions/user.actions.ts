@@ -5,6 +5,7 @@ import {
   PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
+  UpdateChannel,
   User,
   UserPreferences,
 } from "@maus-inc/types";
@@ -118,6 +119,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
   pillPlacement: "bottom",
+  updateChannel: "stable",
 
   alwaysRequestAdminOnStartup: false,
   spokenCommandsEnabled: true,
@@ -700,6 +702,14 @@ export const setPillPlacement = async (
       `Failed to push pill placement to native pill: ${error}`,
     );
   }
+};
+
+export const setUpdateChannel = async (
+  channel: UpdateChannel,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.updateChannel = channel;
+  }, "Failed to save update channel preference. Please try again.");
 };
 
 export const setAlwaysRequestAdminOnStartup = async (
