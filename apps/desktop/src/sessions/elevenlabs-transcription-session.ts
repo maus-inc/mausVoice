@@ -72,6 +72,9 @@ const getElevenLabsToken = async (apiKey: string): Promise<string> => {
   });
 
   if (!response.ok) {
+    getLogger().verbose(
+      `[ElevenLabs] Token request failed with status ${response.status}`,
+    );
     throw new Error(`Failed to get ElevenLabs token: ${response.status}`);
   }
 
