@@ -46,6 +46,7 @@ export type ActiveWebAudioPlayback = {
 
 export let activePlayback: ActiveWebAudioPlayback | null = null;
 let closingContext: Promise<void> | null = null;
+let playbackGeneration = 0;
 
 const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
   const elapsed =
@@ -171,15 +172,27 @@ export const playWebAudio = async (
   onStop: (reason: PlaybackStopReason) => void,
   startProgress = 0,
 ): Promise<void> => {
+  const generation = ++playbackGeneration;
   stopActivePlayback("replaced");
   if (closingContext) {
     await closingContext;
-    closingContext = null;
+    if (generation === playbackGeneration) {
+      closingContext = null;
+    }
+  }
+
+  if (generation !== playbackGeneration) {
+    return;
   }
 
   const context = new AudioContext({ sampleRate: data.sampleRate });
   if (context.state === "suspended") {
     await context.resume();
+  }
+
+  if (generation !== playbackGeneration) {
+    context.close().catch(() => undefined);
+    return;
   }
 
   const channelCount = 1;

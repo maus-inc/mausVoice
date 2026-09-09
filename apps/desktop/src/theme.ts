@@ -693,6 +693,9 @@ export const theme = createTheme({
             "& .MuiSvgIcon-root": {
               color: surfaces.light.level1,
             },
+            "& svg.lucide": {
+              color: "inherit",
+            },
           },
           ...theme.applyStyles("dark", {
             "&:hover": {
@@ -710,6 +713,9 @@ export const theme = createTheme({
               },
               "& .MuiListItemText-secondary": {
                 color: text.dark.secondary,
+              },
+              "& svg.lucide": {
+                color: "inherit",
               },
             },
           }),

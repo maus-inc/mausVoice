@@ -128,4 +128,17 @@ describe("theme mode configuration", () => {
     expect(appliedScheme).toBe("dark");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
   });
+
+  it("lets selected lucide icons inherit list item color in both schemes", () => {
+    const root = theme.components?.MuiListItemButton?.styleOverrides?.root;
+    expect(typeof root).toBe("function");
+    const styles = (
+      root as (args: { theme: typeof theme }) => Record<string, unknown>
+    )({ theme });
+    const serialized = JSON.stringify(styles);
+    expect(serialized).toContain('"& svg.lucide":{"color":"inherit"}');
+    expect(serialized.split('"& svg.lucide":{"color":"inherit"}')).toHaveLength(
+      3,
+    );
+  });
 });
