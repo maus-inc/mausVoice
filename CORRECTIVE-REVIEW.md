@@ -475,3 +475,50 @@ State of the re-review at handover.
 Open items carried forward: the assistant invalid-resource-id repro (section
 4.5), the platform sound parity decision (section 4.6), and the manual QA
 matrix in section 10.
+
+## 12. Deep-dive re-audit (September 9, 2026, second pass)
+
+A second audit pass executed the pure-logic code instead of reading it
+(every pure function run with constructed inputs), and web-verified each
+external claim against the governing source (HTML Standard, Cerebras
+docs, OpenRouter docs, Tauri updater docs, semver.org). Five confirmed
+behavioural defects were found, fixed, and pinned with regression tests:
+
+1. **Auto-learn never learned casing corrections** (`auto-learn.utils.ts`).
+   The multiset difference between inserted and corrected text was
+   case-insensitive, so the feature's primary signal — a user correcting
+   "google" to "Google" — produced no added token and nothing was
+   learned. The diff is now case-sensitive; the initial-capital check and
+   the case-insensitive existing-terms skip are unchanged.
+2. **Pill text lost content on numeric ranges**
+   (`assistant-pill-text.utils.ts`). The HTML tag scanner treated a `<`
+   followed by a digit as a tag start (HTML tag names start with an ASCII
+   letter), so "I have <3> apples" became "I have apples" and a long span
+   up to the next `>` was deleted. Tag start is now letter/`!`/`?` only.
+3. **"scratch that" was a no-op after "new line"/"new paragraph"**
+   (`spoken-commands.utils.ts`). The scratch boundary search stopped at
+   the trailing newline the structural command had inserted, keeping the
+   sentence the user asked to drop. Trailing stops and whitespace are now
+   trimmed together before the boundary search.
+4. **A second agent run made Stop dead for the first** (`run-agent.ts`,
+   `chat.actions.ts`). Two concurrent sends for one conversation (pill
+   typed message while a dashboard run is live) let the newer run
+   overwrite `activeLoops`; the superseded run's cleanup then deleted the
+   NEWER run's registration and agent state, so `abortAgentLoop` reached
+   nothing and two loops interleaved one conversation. A new run now
+   supersedes (aborts) the previous loop, and both cleanups are
+   identity-guarded so only the current run deregisters itself.
+5. **Hardcoded English aria-label** (`PendingPasteReviewBubble.tsx`), in
+   this branch's diff. Now goes through the i18n pipeline with real
+   translations in all eight non-English locales (catalogs 829 keys).
+
+Also corrected a stale contract comment in `DictationSideEffects.tsx`
+that described the superseded start-tone contract; the implemented and
+tested contract is that the stop-time snapshot is authoritative and a
+mid-dictation switch restyles the whole transcript.
+
+Verification: the full desktop unit gate (1,339 tests), the node
+dev-script tests (4), the formatting gate, and the idempotent i18n sync
+all pass locally. Pre-existing hardcoded aria-labels in `main`
+(`HotkeySetting` "Enable hotkey" and four others) were noted and left
+untouched as out of scope for this PR.
