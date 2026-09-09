@@ -149,9 +149,12 @@ const TERM_SEPARATOR_LENGTH = 2;
  * UTF-16 code units, so an emoji or other surrogate pair counts as two while a
  * provider's per-character cap counts it as one. Code points match the
  * character count providers enforce, so the vocabulary cap stays correct for
- * multi-byte text instead of under-counting it.
+ * multi-byte text instead of under-counting it. The string is normalized to
+ * NFC first so a character stored in decomposed form (base plus combining
+ * mark) counts the same as its precomposed form.
  */
-const codePointLength = (value: string): number => Array.from(value).length;
+const codePointLength = (value: string): number =>
+  Array.from(value.normalize("NFC")).length;
 
 export const capVocabularyTerms = (
   terms: string[],

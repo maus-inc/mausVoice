@@ -128,7 +128,7 @@ export const startAssemblyAIStreaming = async (
       keyterms.length > 0
         ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
         : "";
-    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${apiKey}${keytermsPrompt}`;
+    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
     getLogger().info(
       `[${LOGGER_PREFIX}] Connecting (api key present:`,
       Boolean(apiKey),
