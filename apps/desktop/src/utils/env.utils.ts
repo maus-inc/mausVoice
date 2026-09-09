@@ -49,6 +49,10 @@ export const getPlatform = (): Platform => {
 
 export const isMacOS = (): boolean => getPlatform() === "darwin";
 export const isWindows = (): boolean => getPlatform() === "win32";
+// The desktop platform type only distinguishes darwin/win32/unknown, so Linux
+// (and any other non-mac/win platform) reports as "unknown". Treat "not
+// macOS and not Windows" as Linux for UI branching.
+export const isLinux = (): boolean => !isMacOS() && !isWindows();
 
 export const isWindows10 = (): boolean => {
   if (!isWindows()) {

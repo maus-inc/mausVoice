@@ -21,6 +21,7 @@ import {
   GenerativePrefs,
   getAgentModePrefs,
   getGenerativePrefs,
+  getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../utils/user.utils";
 import { BaseApiKeyRepo, LocalApiKeyRepo } from "./api-key.repo";
@@ -433,16 +434,25 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         );
         break;
       }
-      case "elevenlabs":
+      case "elevenlabs": {
+        // ElevenLabs keyterms add a 20% transcription surcharge, so they are
+        // sent only when the user has explicitly opted in. Off by default, so
+        // the dictionary never reaches ElevenLabs without consent.
+        const keytermsEnabled =
+          getMyUserPreferences(getAppState())?.elevenLabsKeytermsEnabled ??
+          false;
         repo = new ElevenLabsTranscribeAudioRepo(
           prefs.apiKeyValue,
-          providerVocabulary(
-            ELEVENLABS_BATCH_KEYTERMS_BUDGET,
-            "ElevenLabs",
-            prefs.warnings,
-          ),
+          keytermsEnabled
+            ? providerVocabulary(
+                ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+                "ElevenLabs",
+                prefs.warnings,
+              )
+            : [],
         );
         break;
+      }
       case "deepgram":
         repo = new DeepgramTranscribeAudioRepo(
           prefs.apiKeyValue,

@@ -407,9 +407,16 @@ dictionary as recognition hints.
 ### F4: prompt hygiene
 
 - `utils/prompt.utils.ts`: `buildLocalizedTranscriptionPrompt` caps the
-  glossary so the joined term string stays at or under 650 characters
-  including separators, keeping the whole `initial_prompt` under whisper's
-  roughly 224-token ceiling.
+  glossary with the shared `collectVocabularyTerms` collector (so replacement
+  destinations and source/destination collisions are included, not just the
+  raw sources) and subtracts the localized instruction length from the
+  650-character Whisper budget, so the rendered `initial_prompt` (terms plus
+  instruction) stays under whisper's roughly 224-token ceiling. The
+  650-character cap is a character-count heuristic that approximates that
+  ceiling, not an exact token count. Lengths are measured in Unicode code
+  points, so multi-byte terms such as CJK or emoji count as one character the
+  way providers enforce per-term limits, and a glossary heavy in multi-byte
+  scripts still leans conservative on token cost.
 - The Azure phrase list no longer receives the localized prompt sentence,
   which fed instruction words like "Glossary:" and "transcribing" into the
   recognizer. It now receives the dictionary terms verbatim, multi-word
@@ -437,7 +444,9 @@ dictionary as recognition hints.
 
 - The "Auto-learn dictionary" description now states its real scope,
   corrections of saved transcriptions in History, and points at "Learn from
-  corrections" for in-app edits.
+  corrections" for in-app edits. On Linux, where "Learn from corrections" is
+  unavailable, the description omits that reference and states that
+  out-of-app corrections are not captured.
 - The Dictionary page subtitle now explains glossary terms as well as
   replacement rules.
 - New messages were extracted and translated across all nine locales. The
@@ -501,8 +510,13 @@ Verified and unchanged:
   prompt-size choice, not a provider limit.
 - `TRANSCRIPTION_GLOSSARY_BUDGET` at 650 characters now counts separators in
   the joined string, so the number in the comment is the number the code
-  enforces. The localized instruction sits on top of it and both stay under
-  whisper's roughly 224-token ceiling.
+  enforces. `buildLocalizedTranscriptionPrompt` subtracts the localized
+  instruction length from that budget before capping the terms, so the
+  rendered `initial_prompt` (terms plus instruction) stays under whisper's
+  roughly 224-token ceiling. The 650-character cap is a character-count
+  heuristic that approximates that ceiling, not an exact token count. Lengths
+  are measured in Unicode code points, so multi-byte terms such as CJK or
+  emoji count as one character the way providers enforce per-term limits.
 - `ASSEMBLYAI_WORD_BOOST_BUDGET` at 1000 entries matches the documented
   word_boost capacity. The review kept `word_boost` for batch because
   `keyterms_prompt` adds a surcharge on newer models, while the legacy
@@ -567,11 +581,16 @@ were extracted into shared helpers.
 - MausAgent verified every claim against documentation, not against live API
   endpoints. The environment has no provider keys. The contract tests assert
   the exact wire format the docs specify.
-- The AssemblyAI streaming session connects without a `speech_model`
-  parameter and uses the account default. The docs list keyterms support for
-  the universal streaming models. If an account default is pinned to an older
-  model, `keyterms_prompt` may be ignored, and the session still works.
-- Using ElevenLabs keyterms adds a 20 percent transcription surcharge. This
-  is the cost of the feature working at all on that provider, and it applies
-  only when the user's dictionary is non-empty. The request sends no keyterms
-  when the dictionary is empty.
+- The AssemblyAI streaming session now pins `speech_model=universal-3-5-pro`
+  in the WebSocket URL, the universal model that supports `keyterms_prompt`.
+  Previously it connected without a `speech_model` parameter and used the
+  account default, where an older default model could silently ignore the
+  keyterms. A new contract test asserts both `speech_model` and
+  `keyterms_prompt` are present on the connection.
+- Using ElevenLabs keyterms adds a 20 percent transcription surcharge, so it
+  is now an explicit opt-in preference that defaults to off. The request
+  sends the dictionary as keyterms only when the user enables the preference
+  and acknowledges the surcharge, and only when the dictionary is non-empty.
+  With the preference off, the request sends no keyterms and incurs no
+  surcharge. The More settings dialog shows the toggle only when the
+  transcription provider is ElevenLabs.

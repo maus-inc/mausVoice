@@ -64,6 +64,8 @@ export type UserPreferences = {
   spokenCommandsEnabled: boolean;
   autoLearnDictionaryEnabled: boolean;
   autoLearnFromEditsEnabled: boolean;
+  /** Opt-in to send the dictionary as ElevenLabs keyterms. Adds a 20% transcription surcharge, so it defaults to off and requires explicit acknowledgment. */
+  elevenLabsKeytermsEnabled: boolean;
 
   // deprecated
 };
