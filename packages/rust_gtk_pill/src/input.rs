@@ -195,6 +195,10 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     let text = state.entry_text.borrow().clone();
                     send_review_decision(id, "copy", Some(text));
                 }
+                ClickAction::ReviewEdit(id) => {
+                    let text = state.entry_text.borrow().clone();
+                    send_review_decision(id, "edit", Some(text));
+                }
                 ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
                 ClickAction::OpenInNew => {
                     if let Some(ref id) = *state.assistant_conversation_id.borrow() {

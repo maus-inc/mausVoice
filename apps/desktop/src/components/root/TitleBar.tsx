@@ -8,6 +8,7 @@ import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { LogoWithText } from "../common/LogoWithText";
+import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
@@ -226,21 +227,21 @@ export const TitleBar = () => {
               color={focused ? "#FF5F57" : "#8E8E93"}
               dark={dark}
               onClick={() => void close()}
-              glyph={<X size={8} strokeWidth={2.5} />}
+              glyph={<MorphNavIcon icon={X} size={8} strokeWidth={2.5} />}
             />
             <TrafficButton
               label={minimizeLabel}
               color={focused ? "#FEBC2E" : "#8E8E93"}
               dark={dark}
               onClick={() => void minimize()}
-              glyph={<Minus size={8} strokeWidth={2.5} />}
+              glyph={<MorphNavIcon icon={Minus} size={8} strokeWidth={2.5} />}
             />
             <TrafficButton
               label={maximizeLabel}
               color={focused ? "#28C840" : "#8E8E93"}
               dark={dark}
               onClick={() => void toggleMax()}
-              glyph={<Plus size={8} strokeWidth={2.5} />}
+              glyph={<MorphNavIcon icon={Plus} size={8} strokeWidth={2.5} />}
             />
           </Stack>
         ) : null}
@@ -285,7 +286,7 @@ export const TitleBar = () => {
               aria-label={minimizeLabel}
               sx={captionButtonSx}
             >
-              <Minus size={CONTROL_ICON_SIZE} />
+              <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
             </IconButton>
             <IconButton
               size="small"
@@ -294,9 +295,9 @@ export const TitleBar = () => {
               sx={captionButtonSx}
             >
               {maximized ? (
-                <Copy size={CONTROL_ICON_SIZE} />
+                <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
               ) : (
-                <Square size={CONTROL_ICON_SIZE} />
+                <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
               )}
             </IconButton>
             <IconButton
@@ -311,7 +312,7 @@ export const TitleBar = () => {
                 },
               }}
             >
-              <X size={CONTROL_ICON_SIZE} />
+              <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
             </IconButton>
           </Stack>
         )}

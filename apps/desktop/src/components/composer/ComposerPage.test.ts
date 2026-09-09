@@ -22,14 +22,21 @@ vi.mock("./voiceInstructionRecorder", () => ({
   },
 }));
 
-vi.mock("react-intl", () => ({
-  useIntl: () => ({
+vi.mock("react-intl", () => {
+  // One stub for the file: useIntl() must return a stable reference, like the
+  // real provider does. A fresh object per render would re-run every effect
+  // that lists intl in its deps (e.g. the composer's transcript load) and let
+  // a late peek overwrite state set after mount.
+  const stub = {
     formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
       defaultMessage,
-  }),
-  FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-    defaultMessage,
-}));
+  };
+  return {
+    useIntl: () => stub,
+    FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
+      defaultMessage,
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue(null),
@@ -80,6 +87,8 @@ vi.mock("../../store", () => ({
 }));
 
 import { ComposerPage } from "./ComposerPage";
+import { applyVoiceEditInstruction } from "../../actions/composer.actions";
+import { invoke } from "@tauri-apps/api/core";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -199,5 +208,116 @@ describe("ComposerPage VoiceInstructionRecorder hydration", () => {
     // No new recorder was constructed (and thus no window was reopened) by the
     // hydration re-render — availability is derived live from the store.
     expect(constructCount).toBe(constructsBeforeHydration);
+  });
+});
+
+describe("ComposerPage review session", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot> | null = null;
+  const mockInvoke = vi.mocked(invoke);
+
+  const transcriptField = () =>
+    container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Transcript"] textarea',
+    );
+  const instructionField = () =>
+    container.querySelector<HTMLInputElement>(
+      'input[placeholder="Make this shorter or turn it into bullets"]',
+    );
+  const buttonByText = (label: string) =>
+    [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === label,
+    ) ?? null;
+
+  beforeEach(() => {
+    constructCount = 0;
+    disposeCount = 0;
+    fakeState = {
+      settings: { aiTranscription: { enabled: false } },
+      apiKeyById: {},
+      userPrefs: { hasProvider: true },
+    };
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === "composer_peek_text") return "hello world edited";
+      return null;
+    });
+    window.history.replaceState(
+      {},
+      "",
+      `/?requestId=r1&original=${encodeURIComponent("hello world")}`,
+    );
+    container = document.createElement("div");
+    document.body.appendChild(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root?.unmount();
+    });
+    root = null;
+    container.remove();
+    mockInvoke.mockReset();
+    window.history.replaceState({}, "", "/");
+  });
+
+  const renderPage = async () => {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(StrictMode, null, createElement(ComposerPage)));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+
+  it("marks edited text dirty against the session original", async () => {
+    await renderPage();
+
+    expect(transcriptField()?.value).toBe("hello world edited");
+    expect(container.textContent).toContain("Unsaved Changes");
+    expect(
+      container.querySelector(".MuiAccordionDetails-root")?.textContent,
+    ).toBe("hello world");
+    expect(buttonByText("Undo edit")).toBeNull();
+  });
+
+  it("offers Undo after a voice edit and restores the prior text", async () => {
+    await renderPage();
+
+    const instruction = instructionField();
+    expect(instruction).not.toBeNull();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(instruction, "Make it formal");
+      instruction?.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const apply = buttonByText("Apply");
+    expect(apply?.disabled).toBe(false);
+    await act(async () => {
+      apply?.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(vi.mocked(applyVoiceEditInstruction)).toHaveBeenCalledWith({
+      text: "hello world edited",
+      instruction: "Make it formal",
+    });
+    expect(instructionField()?.value).toBe("");
+    expect(container.textContent).not.toContain("Edit failed.");
+    expect(transcriptField()?.value).toBe("edited");
+    const undo = buttonByText("Undo edit");
+    expect(undo).not.toBeNull();
+    await act(async () => {
+      undo?.click();
+      await Promise.resolve();
+    });
+
+    expect(transcriptField()?.value).toBe("hello world edited");
+    expect(buttonByText("Undo edit")).toBeNull();
   });
 });
