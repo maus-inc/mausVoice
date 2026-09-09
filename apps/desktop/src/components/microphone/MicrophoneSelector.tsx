@@ -76,7 +76,7 @@ export const MicrophoneSelector = ({
 
   useEffect(() => {
     if (!microphones) {
-      void loadDevices();
+      loadDevices().catch(() => undefined);
     }
   }, [loadDevices, microphones]);
 
@@ -85,7 +85,7 @@ export const MicrophoneSelector = ({
       return;
     }
     return subscribeDeviceChange(navigator.mediaDevices, () => {
-      void loadDevices();
+      loadDevices().catch(() => undefined);
     });
   }, [loadDevices, microphones]);
 
@@ -115,7 +115,7 @@ export const MicrophoneSelector = ({
 
   const handleRefresh = useCallback(() => {
     if (!loading) {
-      void loadDevices();
+      loadDevices().catch(() => undefined);
     }
   }, [loadDevices, loading]);
 

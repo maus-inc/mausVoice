@@ -113,7 +113,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
 
   useEffect(() => {
     if (!isStreaming) {
-      return undefined;
+      return;
     }
     const tick = () => {
       if (startTimeRef.current == null) return;
@@ -128,7 +128,7 @@ export const AgentActivity = ({ messageId }: AgentActivityProps) => {
 
   useEffect(() => {
     if (isStreaming || !isOpen || hasAutoClosed || duration === 0) {
-      return undefined;
+      return;
     }
     const timer = window.setTimeout(() => {
       setIsOpen(false);

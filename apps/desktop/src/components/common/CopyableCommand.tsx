@@ -8,6 +8,30 @@ type CopyableCommandProps = {
   command: string;
 };
 
+const BoxMotion = ({
+  children,
+  reduceMotion,
+}: {
+  children: ReactNode;
+  reduceMotion: boolean;
+}) => (
+  <motion.span
+    initial={
+      reduceMotion ? false : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+    }
+    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+    exit={
+      reduceMotion
+        ? undefined
+        : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+    }
+    transition={springPop}
+    style={{ display: "inline-flex" }}
+  >
+    {children}
+  </motion.span>
+);
+
 export const CopyableCommand = ({ command }: CopyableCommandProps) => {
   const [copied, setCopied] = useState(false);
   const reduceMotion = useReducedMotion();
@@ -63,27 +87,3 @@ export const CopyableCommand = ({ command }: CopyableCommandProps) => {
     </Stack>
   );
 };
-
-const BoxMotion = ({
-  children,
-  reduceMotion,
-}: {
-  children: ReactNode;
-  reduceMotion: boolean;
-}) => (
-  <motion.span
-    initial={
-      reduceMotion ? false : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-    }
-    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-    exit={
-      reduceMotion
-        ? undefined
-        : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
-    }
-    transition={springPop}
-    style={{ display: "inline-flex" }}
-  >
-    {children}
-  </motion.span>
-);
