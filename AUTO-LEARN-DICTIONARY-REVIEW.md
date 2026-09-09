@@ -411,12 +411,15 @@ dictionary as recognition hints.
   destinations and source/destination collisions are included, not just the
   raw sources) and subtracts the localized instruction length from the
   650-character Whisper budget, so the rendered `initial_prompt` (terms plus
-  instruction) stays under whisper's roughly 224-token ceiling. The
-  650-character cap is a character-count heuristic that approximates that
-  ceiling, not an exact token count. Lengths are measured in Unicode code
-  points, so multi-byte terms such as CJK or emoji count as one character the
-  way providers enforce per-term limits, and a glossary heavy in multi-byte
-  scripts still leans conservative on token cost.
+  instruction) stays within the 650-code-point heuristic budget. This cap is
+  only a heuristic that approximates Whisper's roughly 224-token ceiling and
+  does not guarantee that the tokenized prompt fits Whisper's context limit.
+  A glossary heavy in CJK or emoji can use more than one token per code
+  point, so token-limit compliance should be verified with the exact target
+  tokenizer or with CJK- and emoji-heavy fixtures. Lengths are measured in
+  Unicode code points, so multi-byte terms count as one character the way
+  providers enforce per-term limits, and the heuristic still leans
+  conservative on token cost for most scripts.
 - The Azure phrase list no longer receives the localized prompt sentence,
   which fed instruction words like "Glossary:" and "transcribing" into the
   recognizer. It now receives the dictionary terms verbatim, multi-word
@@ -512,11 +515,14 @@ Verified and unchanged:
   the joined string, so the number in the comment is the number the code
   enforces. `buildLocalizedTranscriptionPrompt` subtracts the localized
   instruction length from that budget before capping the terms, so the
-  rendered `initial_prompt` (terms plus instruction) stays under whisper's
-  roughly 224-token ceiling. The 650-character cap is a character-count
-  heuristic that approximates that ceiling, not an exact token count. Lengths
-  are measured in Unicode code points, so multi-byte terms such as CJK or
-  emoji count as one character the way providers enforce per-term limits.
+  rendered `initial_prompt` (terms plus instruction) stays within the
+  650-code-point heuristic budget. This cap is only a heuristic that
+  approximates Whisper's roughly 224-token ceiling and does not guarantee that
+  the tokenized prompt fits the context limit; CJK- or emoji-heavy glossaries
+  can exceed one token per code point, so compliance should be verified with
+  the exact tokenizer or with CJK- and emoji-heavy fixtures. Lengths are
+  measured in Unicode code points, so multi-byte terms count as one character
+  the way providers enforce per-term limits.
 - `ASSEMBLYAI_WORD_BOOST_BUDGET` at 1000 entries matches the documented
   word_boost capacity. The review kept `word_boost` for batch because
   `keyterms_prompt` adds a surcharge on newer models, while the legacy

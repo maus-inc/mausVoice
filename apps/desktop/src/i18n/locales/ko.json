@@ -605,7 +605,7 @@
   "send_test": "테스트 전송",
   "send_to_name": "{name}에게 보내기",
   "send_transcript_to_another_device": "전사본을 다른 기기로 보내기",
-  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "단어를 인식하도록 사전을 ElevenLabs에 키워드로 보냅니다. 이렇게 하면 모든 ElevenLabs 전사에 20% 추가 요금이 부과되므로 기본적으로 사용이 중지되어 있습니다.",
+  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "단어를 인식하도록 사전을 ElevenLabs에 키워드로 보냅니다. 이렇게 하면 모든 ElevenLabs 전사에 20% 추가 요금이 부과되므로 기본적으로 비활성화되어 있습니다.",
   "sender": "보낸 사람",
   "sender_address_optional": "보내는 사람 주소 (선택 사항)",
   "sender_device": "보내는 장치",
