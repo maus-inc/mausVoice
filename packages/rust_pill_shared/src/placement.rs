@@ -172,6 +172,7 @@ pub fn below_slot_extra(tooltip_h: f64) -> f64 {
 /// vertically interpolated between the above slot and the below slot.
 /// Platforms paint at this origin and build their hit region from it on the
 /// same frame, so the clickable box tracks the animation exactly.
+#[allow(clippy::too_many_arguments)]
 pub fn tooltip_origin(
     pill_x: f64,
     pill_y: f64,

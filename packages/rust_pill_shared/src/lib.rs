@@ -7,6 +7,7 @@
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
 pub mod drag;
+pub mod edge;
 pub mod hover;
 pub mod placement;
 pub mod spring;

@@ -201,6 +201,10 @@ pub(crate) fn tick_drag_frame(
         now,
         dt,
         bounds: p.bounds,
+        edge_work: Some(rust_pill_shared::edge::EdgeWork {
+            width: p.work_w,
+            height: p.work_h,
+        }),
         held: dragging,
         reduced_motion: crate::pill::reduced_motion(),
     });

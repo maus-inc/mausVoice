@@ -1028,6 +1028,9 @@ fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt
             max_x: 1e9,
             max_y: 1e9,
         },
+        // No work area on this backend: the compositor owns placement, so the
+        // ease stays off and the wide-open clamp above stands.
+        edge_work: None,
         held: dragging,
         reduced_motion: reduced_motion(),
     });
