@@ -224,6 +224,10 @@ pub(crate) struct PillState {
     /// and the release settle spring. The frame tick advances it while a drag
     /// is held or settling; see rust_pill_shared::drag.
     pub(crate) drag_motion: RefCell<rust_pill_shared::drag::DragController>,
+    /// Hover-intent state machine: dwells before arming hover and lingers
+    /// through a grace before exiting, so fast pass-throughs never flicker
+    /// the pill. See rust_pill_shared::hover.
+    pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
     pub(crate) reset_strategy: Cell<ResetStrategy>,

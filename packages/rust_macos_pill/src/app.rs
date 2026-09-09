@@ -21,6 +21,7 @@ use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::nsstring::with_ns_string;
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -254,8 +255,11 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
         if ctx.state.pointer_down.get() {
             return;
         }
-        if ctx.state.hovered.get() {
-            ctx.state.hovered.set(false);
+        // Leaving the tracking area is decisive: exit now instead of waiting
+        // out the grace, and reset the controller so it cannot disagree.
+        let was_hovered = ctx.state.hover_intent.borrow_mut().reset();
+        ctx.state.hovered.set(false);
+        if was_hovered {
             ipc::send(&OutMessage::Hover { hovered: false });
         }
     });
@@ -768,23 +772,34 @@ fn release_pointer_if_button_up(state: &PillState, window: id) {
 }
 
 fn update_hover(view: id, ctx: &AppContext) {
-    let probed = unsafe {
+    let (probed, mouse_x, mouse_y) = unsafe {
         let window: id = msg_send![view, window];
         let mouse_screen: NSPoint = msg_send![class!(NSEvent), mouseLocation];
         let mouse_win: NSPoint = msg_send![window, convertPointFromScreen:mouse_screen];
         let mouse_view: NSPoint = msg_send![view, convertPoint:mouse_win fromView:nil];
-        input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y)
+        (
+            input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y),
+            mouse_view.x,
+            mouse_view.y,
+        )
     };
 
-    // A held button owns the pointer, so the hit test above cannot be trusted
-    // until it is released.
-    let new_hovered =
-        rust_pill_shared::resolve_hover(probed, ctx.state.pointer_down.get());
-
-    let was_hovered = ctx.state.hovered.get();
-    if new_hovered != was_hovered {
-        ctx.state.hovered.set(new_hovered);
-        ipc::send(&OutMessage::Hover { hovered: new_hovered });
+    // Hover intent: the pointer must dwell on the pill at low speed before
+    // expansion and tooltips fire, and they linger through a short grace once
+    // it leaves, so fast pass-throughs never flicker the pill. A held button
+    // pins hover regardless of the hit test above.
+    let output = ctx.state.hover_intent.borrow_mut().advance(&HoverFrame {
+        probed,
+        pointer_x: mouse_x,
+        pointer_y: mouse_y,
+        now: unsafe { CFAbsoluteTimeGetCurrent() },
+        pointer_down: ctx.state.pointer_down.get(),
+    });
+    ctx.state.hovered.set(output.hovered);
+    if output.entered || output.exited {
+        ipc::send(&OutMessage::Hover {
+            hovered: output.hovered,
+        });
     }
 }
 
@@ -1632,6 +1647,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
         drag_motion: RefCell::new(DragController::new()),
+        hover_intent: RefCell::new(HoverIntent::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
