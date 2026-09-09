@@ -135,8 +135,6 @@ describe("UpdateChannelSetting", () => {
       (tabByName("Stable") as HTMLElement).click();
     });
     expect(setUpdateChannelMock).toHaveBeenCalledWith("stable");
-    expect(document.body.textContent).not.toContain(
-      "Join the beta channel?",
-    );
+    expect(document.body.textContent).not.toContain("Join the beta channel?");
   });
 });

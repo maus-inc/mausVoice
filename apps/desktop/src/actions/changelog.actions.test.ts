@@ -16,7 +16,8 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   published_at: "2026-09-01T12:00:00Z",
   body: "Fixes.",
   prerelease: false,
-  html_url: "https://github.com/maus-inc/mausVoice/releases/tag/mausVoice-v0.1.7",
+  html_url:
+    "https://github.com/maus-inc/mausVoice/releases/tag/mausVoice-v0.1.7",
   ...overrides,
 });
 
@@ -62,9 +63,7 @@ describe("fetchChangelog", () => {
   });
 
   it("skips malformed rows instead of failing the list", async () => {
-    fetchMock.mockResolvedValue(
-      okResponse([null, { nope: true }, row(), 42]),
-    );
+    fetchMock.mockResolvedValue(okResponse([null, { nope: true }, row(), 42]));
 
     const entries = await fetchChangelog();
 

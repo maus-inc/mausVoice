@@ -74,7 +74,10 @@ const ReleaseRow = ({
           />
         )}
         {date && (
-          <Typography variant="caption" sx={{ color: "text.secondary", ml: "auto" }}>
+          <Typography
+            variant="caption"
+            sx={{ color: "text.secondary", ml: "auto" }}
+          >
             {date}
           </Typography>
         )}
@@ -194,11 +197,7 @@ export const ChangelogDialog = ({
               <FormattedMessage defaultMessage="No releases found yet." />
             </Typography>
           ) : (
-            <Stack
-              spacing={2}
-              divider={<Divider flexItem />}
-              sx={{ pt: 1 }}
-            >
+            <Stack spacing={2} divider={<Divider flexItem />} sx={{ pt: 1 }}>
               {entries.map((entry) => (
                 <ReleaseRow
                   key={entry.tag}
