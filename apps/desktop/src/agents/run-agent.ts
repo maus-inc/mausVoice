@@ -111,6 +111,15 @@ export async function runAgent(
     maxIterations: config.maxIterations,
   });
 
+  // A second run for the same conversation supersedes the first: a send can
+  // arrive from the pill while a dashboard send's agent is still running.
+  // Aborting the previous loop keeps at most one live loop per conversation
+  // and keeps the Stop button (abortAgentLoop) pointed at the run that is
+  // actually executing.
+  const superseded = activeLoops.get(conversationId);
+  if (superseded) {
+    superseded.abort();
+  }
   activeLoops.set(conversationId, loop);
 
   let currentMessageId: string | null = null;
@@ -341,7 +350,21 @@ export async function runAgent(
         delete draft.streamingMessageById[finishedMessageId];
       });
     }
-    activeLoops.delete(conversationId);
+    // Only deregister if we are still the current run for this
+    // conversation. A superseded (aborted) run can finish after a newer
+    // run has replaced it; an unconditional delete here would remove the
+    // NEWER run's registration and leave it un-abortable (Stop button
+    // stops working) and would wipe the newer run's status UI.
+    if (activeLoops.get(conversationId) === loop) {
+      activeLoops.delete(conversationId);
+    }
+    if (
+      getAppState().agentStateByConversationId[conversationId] === agentState
+    ) {
+      produceAppState((draft) => {
+        delete draft.agentStateByConversationId[conversationId];
+      });
+    }
   }
 }
 

@@ -307,3 +307,74 @@ describe("pollForPermission", () => {
     }
   });
 });
+
+describe("runAgent supersession (one live loop per conversation)", () => {
+  it("a newer run aborts the older one and Stop still reaches the newest", async () => {
+    // Two concurrent sends for one conversation (dashboard send in flight,
+    // pill-typed send arrives) used to let the second runAgent clobber the
+    // first's active-loop registration; the first run's cleanup then
+    // deleted the SECOND run's entry, leaving the live loop un-abortable
+    // (Stop button silently stopped working).
+    const loops: Array<{ abort: ReturnType<typeof vi.fn> }> = [];
+    let release2: () => void = () => undefined;
+    const gate2 = new Promise<void>((resolve) => {
+      release2 = resolve;
+    });
+    let call = 0;
+    loopRunMock.mockImplementation(function (this: {
+      abort: ReturnType<typeof vi.fn>;
+    }) {
+      call += 1;
+      loops.push(this);
+      if (call === 1) {
+        return agentLoopRun([{ type: "finish", reason: "stop" }]);
+      }
+      async function* second() {
+        yield { type: "iteration-start", iteration: 0 };
+        await gate2;
+        yield { type: "finish", reason: "stop" };
+      }
+      return second();
+    });
+
+    const live = {
+      chatMessageById: {} as Record<string, unknown>,
+      chatMessageIdsByConversationId: { "c-2": [] as string[] },
+      agentStateByConversationId: {},
+      toolInfoById: {},
+      streamingMessageById: {} as Record<string, unknown>,
+    };
+    getAppStateMock.mockReturnValue(live);
+    produceAppStateMock.mockImplementation(() => undefined);
+    humanizeScrubMock.mockImplementation((text: string) => text);
+    setupAgentMocks();
+    getChatMessageRepoCreateMock.mockImplementation(() => Promise.resolve({}));
+
+    const { runAgent, abortAgentLoop } = await import("./run-agent");
+    const config = {
+      agentType: "chat",
+      systemPrompt: "",
+      getToolFilter: () => () => true,
+      maxIterations: 4,
+    };
+
+    // Registration is synchronous: when runAgent returns its promise the
+    // loop is already in the module's active-loop map.
+    const run1 = runAgent("c-2", config);
+    const run2 = runAgent("c-2", config);
+
+    // The older loop was superseded the moment the newer run started.
+    expect(loops).toHaveLength(2);
+    expect(loops[0].abort).toHaveBeenCalledTimes(1);
+    expect(loops[1].abort).toHaveBeenCalledTimes(0);
+
+    await run1;
+    // The older run finished AFTER the newer run took over. Its cleanup
+    // must not have removed the newer loop's registration.
+    abortAgentLoop("c-2");
+    expect(loops[1].abort).toHaveBeenCalledTimes(1);
+
+    release2();
+    await run2;
+  });
+});
