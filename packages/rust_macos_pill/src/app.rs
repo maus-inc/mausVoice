@@ -611,6 +611,7 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.drag_motion.borrow_mut().reset();
+                    ctx.state.selector_placement.borrow_mut().reset();
                     ctx.state.reset_strategy.set(strategy);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
@@ -896,6 +897,25 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.expand_t.get(),
     );
     rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+
+    // Selector side from the live headroom: the selector drops below the
+    // pill exactly when the strip above no longer fits it. Draw and hit
+    // testing read the blend back every frame, so both track the animation.
+    // The pill sits a fixed typing-canvas offset above the window bottom, so
+    // the headroom needs no live height.
+    let space_above = unsafe {
+        let (rect, monitor) = pill_geometry(window);
+        rect.y + (WINDOW_H_TYPING as f64 - PILL_AREA_HEIGHT) - monitor.y
+    };
+    state.selector_placement.borrow_mut().advance(
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
 
     // Panel open/close (spring)
     // A pending review holds the panel open on its own: the transcript must
@@ -1462,7 +1482,11 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let ui_scale = 1.0; // macOS handles Retina scaling automatically
 
     let window_w = WINDOW_W_TYPING as f64;
-    let window_h = WINDOW_H_TYPING as f64;
+    // The window keeps room for the below selector slot under the pill, so a
+    // side flip animates inside space that is already there. Content math
+    // stays on the typing constants, so the pill never moves for it.
+    let window_h =
+        WINDOW_H_TYPING as f64 + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT);
 
     // Create window (NSPanel with non-activating mask so clicks don't steal focus)
     let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(window_w, window_h));
@@ -1615,6 +1639,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         drag_cancelled: Cell::new(false),
         drag_motion: RefCell::new(DragController::new()),
         hover_intent: RefCell::new(HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),

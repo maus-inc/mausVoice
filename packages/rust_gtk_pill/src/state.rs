@@ -268,6 +268,10 @@ pub(crate) struct PillState {
     /// through a grace before exiting, so fast pass-throughs never flicker
     /// the pill. See rust_pill_shared::hover.
     pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    /// Selector-placement state machine: picks above or below from the live
+    /// headroom and eases the blend between them. See
+    /// rust_pill_shared::placement.
+    pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     // Latest hover probe (hit test plus pointer position). Motion, enter,
     // leave, and release handlers only record; the frame tick runs the probe
     // through the controller so bursts coalesce into one decision per frame.
