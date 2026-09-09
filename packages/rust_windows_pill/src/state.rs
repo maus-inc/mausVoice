@@ -54,6 +54,7 @@ pub(crate) enum ClickAction {
     /// transcript so a decision can never be applied to a newer one.
     ReviewInsert(String),
     ReviewCopy(String),
+    ReviewEdit(String),
     ReviewCancel(String),
     SendButton,
     InputField,

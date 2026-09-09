@@ -1125,6 +1125,7 @@ fn draw_review_actions(
     // the edge of the panel, matching the permission card's layout.
     let buttons = [
         ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Edit", ClickAction::ReviewEdit(review_id.to_string()), 0.8),
         ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
         ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
     ];
