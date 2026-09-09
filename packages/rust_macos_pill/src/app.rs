@@ -20,6 +20,7 @@ use crate::gfx::{self, Ctx};
 use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::nsstring::with_ns_string;
+use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -264,10 +265,11 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
-        // End the gesture and persist the dropped position (if still dragging)
+        // End the gesture and start the release settle (if still dragging)
         // through the shared teardown, so the mouseUp path and the frame-tick
         // missed-release backstop cannot drift apart.
-        end_drag(&ctx.state, ctx.window);
+        let now = unsafe { CFAbsoluteTimeGetCurrent() };
+        end_drag(&ctx.state, ctx.window, now);
 
         // Only fire click if the user wasn't dragging
         if !was_dragging {
@@ -604,6 +606,7 @@ fn perform_tick() {
                 }
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.reset_strategy.set(strategy);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
@@ -686,7 +689,7 @@ fn perform_tick() {
         }
 
         // Reposition window: follow cursor when dragging, auto-center otherwise
-        reposition_window(ctx.window, &ctx.state);
+        reposition_window(ctx.window, &ctx.state, dt, now);
 
         // Request redraw
         unsafe {
@@ -707,23 +710,42 @@ fn perform_tick() {
 /// Persists the dropped window position when a drag was in progress, then
 /// clears the drag and gesture flags, so a missed `mouseUp:` caught by the
 /// frame-tick backstop does not strand the pill at its old position.
-fn end_drag(state: &PillState, window: id) {
+fn end_drag(state: &PillState, _window: id, now: f64) {
     if state.dragging.get() {
-        let frame = unsafe { window_frame(window) };
-        state.saved_x.set(frame.origin.x);
-        state.saved_y.set(frame.origin.y);
-        state.has_saved_position.set(true);
-        let (rect, monitor) = unsafe { pill_geometry(window) };
-        ipc::send(&OutMessage::PositionChanged {
-            has_saved_position: true,
-            rect: Some(rect),
-            monitor: Some(monitor),
-        });
+        // The drop point persists when the release settle finishes (the frame
+        // tick calls persist_drag_position on the settled frame), so the saved
+        // position always matches where the pill landed.
+        state.drag_motion.borrow_mut().end_drag(now);
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
+}
+
+/// Persists the position the pill settled at after a drag: stores the live
+/// window origin (not the cursor) and tells the desktop, so the saved point
+/// matches the parked pill exactly.
+fn persist_drag_position(state: &PillState, window: id) {
+    let frame = unsafe { window_frame(window) };
+    state.saved_x.set(frame.origin.x);
+    state.saved_y.set(frame.origin.y);
+    state.has_saved_position.set(true);
+    let (rect, monitor) = unsafe { pill_geometry(window) };
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect: Some(rect),
+        monitor: Some(monitor),
+    });
+}
+
+/// True when macOS accessibility asks for reduced motion.
+fn reduced_motion() -> bool {
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceMotion];
+        reduce == YES
+    }
 }
 
 /// Clears the pointer-down pin if the physical button is no longer held.
@@ -741,7 +763,8 @@ fn release_pointer_if_button_up(state: &PillState, window: id) {
     if buttons & 1 != 0 {
         return;
     }
-    end_drag(state, window);
+    let now = unsafe { CFAbsoluteTimeGetCurrent() };
+    end_drag(state, window, now);
 }
 
 fn update_hover(view: id, ctx: &AppContext) {
@@ -1184,8 +1207,20 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         unsafe {
             let mouse = mouse_location();
             let origin = window_frame(window).origin;
-            state.drag_grab_offset_x.set(mouse.x - origin.x);
-            state.drag_grab_offset_y.set(mouse.y - origin.y);
+            // Arm the shared controller with the grab point, and seed it
+            // with the arm sample so a quick release still has velocity data.
+            let now = CFAbsoluteTimeGetCurrent();
+            state.drag_motion.borrow_mut().begin_drag(
+                mouse.x - origin.x,
+                mouse.y - origin.y,
+                origin.x,
+                origin.y,
+                now,
+            );
+            state
+                .drag_motion
+                .borrow_mut()
+                .push_sample(mouse.x, mouse.y, now);
         }
     }
 }
@@ -1266,7 +1301,7 @@ fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f6
 
 // ── Window positioning ────────────────────────────────────────────
 
-fn reposition_window(window: id, state: &PillState) {
+fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
         let screens = screens();
@@ -1386,16 +1421,34 @@ fn reposition_window(window: id, state: &PillState) {
         let max_x = max_x.max(min_x);
         let max_y = max_y.max(min_y);
 
-        let (target_x, target_y) = if dragging {
-            // Drag mode: keep the grabbed point of the window under the cursor
-            // (1:1 tracking instead of snapping the window centre to it),
-            // clamped so the pill's footprint stays inside the visible frame.
-            let mut tx = mouse_loc.x - state.drag_grab_offset_x.get();
-            let mut ty = mouse_loc.y - state.drag_grab_offset_y.get();
-            tx = tx.max(min_x).min(max_x);
-            ty = ty.max(min_y).min(max_y);
-            (tx, ty)
-        } else if state.has_saved_position.get() {
+        // Drag motion runs through the shared controller: direct 1:1 tracking
+        // while held, a velocity-aware settle after release. Both apply every
+        // frame with no deadband, so the window never trails the cursor; the
+        // parked branches below keep their 1 px deadband against jitter.
+        let settling = state.drag_motion.borrow().is_settling();
+        if dragging || settling {
+            let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+                pointer_x: mouse_loc.x,
+                pointer_y: mouse_loc.y,
+                now,
+                dt,
+                bounds: DragBounds {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                },
+                held: dragging,
+                reduced_motion: reduced_motion(),
+            });
+            set_window_origin(window, NSPoint::new(output.x, output.y));
+            if settling && output.settled {
+                persist_drag_position(state, window);
+            }
+            return;
+        }
+
+        let (target_x, target_y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the visible
             // frame of the screen that position belongs to.
             let mut tx = state.saved_x.get();
@@ -1578,8 +1631,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         long_press_start_y: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
-        drag_grab_offset_x: Cell::new(0.0),
-        drag_grab_offset_y: Cell::new(0.0),
+        drag_motion: RefCell::new(DragController::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
@@ -1630,7 +1682,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 
     // Position and show (orderFront only — don't steal focus from other apps)
     with_ctx(|ctx| {
-        reposition_window(window, &ctx.state);
+        reposition_window(window, &ctx.state, 1.0 / 60.0, CFAbsoluteTimeGetCurrent());
     });
     let _: () = msg_send![window, orderFront:nil];
 

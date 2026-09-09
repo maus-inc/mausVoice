@@ -255,6 +255,15 @@ pub(crate) struct PillState {
     pub(crate) ring_points: RefCell<Vec<(f64, f64, f64)>>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
+    /// Shared drag-motion controller: owns pointer samples, release velocity,
+    /// and the release settle spring. The frame tick advances it while a drag
+    /// is held or settling; see rust_pill_shared::drag.
+    pub(crate) drag_motion: RefCell<rust_pill_shared::drag::DragController>,
+    // Newest motion-event position while dragging on Wayland (window-relative).
+    // Motion events only record; the frame tick applies them through the
+    // shared controller so bursts coalesce into one move per frame.
+    pub(crate) drag_last_x: Cell<f64>,
+    pub(crate) drag_last_y: Cell<f64>,
     // X11 drop position, in physical root coordinates, persisted when a drag
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
@@ -262,9 +271,13 @@ pub(crate) struct PillState {
     pub(crate) reset_strategy: Cell<ResetStrategy>,
     pub(crate) saved_x: Cell<f64>,
     pub(crate) saved_y: Cell<f64>,
-    // Set by the release handler when X11 already persisted the exact drop;
-    // the timer uses it to avoid overwriting that point with a later cursor poll.
+    // Set once the drop point is persisted (release settle end or the slow-timer
+    // net); the timer consumes it to avoid overwriting that point with a later
+    // cursor poll.
     pub(crate) x11_release_persisted: Cell<bool>,
+    // Last window origin the frame tick applied during an X11 drag, so steady
+    // frames skip the X round trip. Seeded out of range to force the first move.
+    pub(crate) x11_drag_applied: Cell<(i32, i32)>,
     // PlainWayland draws the pill on a maximized overlay window, so dragging
     // translates the pill's draw position rather than moving the toplevel.
     pub(crate) drag_draw_offset_x: Cell<f64>,

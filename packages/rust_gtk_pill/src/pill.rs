@@ -192,11 +192,15 @@ pub fn run(receiver: Receiver<InMessage>) {
         ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        drag_motion: RefCell::new(rust_pill_shared::drag::DragController::new()),
+        drag_last_x: Cell::new(0.0),
+        drag_last_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         x11_release_persisted: Cell::new(false),
+        x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -284,13 +288,17 @@ pub fn run(receiver: Receiver<InMessage>) {
             }
         }
 
-        // While dragging, translate the Wayland draw position to follow the
-        // pointer (X11 handles its own toplevel movement elsewhere).
+        // While dragging on Wayland, record the newest pointer sample; the frame
+        // tick applies it through the shared controller (newest wins, so a
+        // burst of motion events coalesces into one move per frame). X11
+        // samples the root pointer on the frame clock instead.
         if state_motion.dragging.get() && state_motion.backend.get() != Backend::X11 {
-            let grab_x = state_motion.drag_cursor_x.get();
-            let grab_y = state_motion.drag_cursor_y.get();
-            state_motion.drag_draw_offset_x.set(mx - grab_x);
-            state_motion.drag_draw_offset_y.set(my - grab_y);
+            state_motion.drag_last_x.set(mx);
+            state_motion.drag_last_y.set(my);
+            state_motion
+                .drag_motion
+                .borrow_mut()
+                .push_sample(mx, my, drag_clock_now());
         }
 
         glib::Propagation::Proceed
@@ -330,6 +338,10 @@ pub fn run(receiver: Receiver<InMessage>) {
             state_press.drag_cancelled.set(false);
             state_press.drag_cursor_x.set(x);
             state_press.drag_cursor_y.set(y);
+            // Seed the Wayland sample so the first drag frame has a sane
+            // pointer even if no motion event arrived since the press.
+            state_press.drag_last_x.set(x);
+            state_press.drag_last_y.set(y);
         }
         glib::Propagation::Proceed
     });
@@ -608,6 +620,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                 InMessage::ResetPosition { strategy } => {
                     state_tick.drag_draw_offset_x.set(0.0);
                     state_tick.drag_draw_offset_y.set(0.0);
+                    state_tick.drag_motion.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
@@ -637,6 +650,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 
         release_pointer_if_button_up(&win_tick, &state_tick);
         tick(&state_tick);
+        tick_drag_frame(&win_tick, &state_tick, backend_tick);
 
         // Show/hide entry for typing mode
         let is_typing = state_tick.is_typing();
@@ -891,28 +905,119 @@ pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
 /// Ends the gesture and tears down any active drag.
 ///
 /// Clears the hover pin and gesture flags. If a drag was in progress, the
-/// dropped position is persisted (X11 repositions via the window; other
-/// backends keep their draw offset) so a missed release caught by the
-/// frame-tick backstop does not strand the pill at its old position.
-fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
+/// release settle starts; the frame tick persists the settled position, so a
+/// missed release caught by the frame-tick backstop does not strand the pill
+/// at its old position.
+fn clear_pointer_pin(state: &PillState, _window: &gtk::Window) {
     if state.dragging.get() {
-        if state.backend.get() == Backend::X11 {
-            let persisted = x11::persist_drop_position(window, state);
-            state.x11_release_persisted.set(persisted);
-        } else {
-            state.has_saved_position.set(true);
-            let (rect, monitor) = pill_geometry(window, state);
-            ipc::send(&OutMessage::PositionChanged {
-                has_saved_position: true,
-                rect,
-                monitor,
-            });
-        }
+        state.drag_motion.borrow_mut().end_drag(drag_clock_now());
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
+}
+
+/// Monotonic clock for the drag controller, in seconds. One origin per
+/// process; the controller only ever compares samples with each other.
+pub(crate) fn drag_clock_now() -> f64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+thread_local! {
+    static LAST_DRAG_FRAME: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Measured frame step for drag motion, clamped like the other pills so a
+/// stall cannot explode the settle spring.
+fn drag_frame_dt() -> f64 {
+    let now = Instant::now();
+    LAST_DRAG_FRAME.with(|c| {
+        let prev = c.get();
+        c.set(Some(now));
+        match prev {
+            Some(p) => now.duration_since(p).as_secs_f64().clamp(0.001, 0.05),
+            None => 1.0 / 60.0,
+        }
+    })
+}
+
+/// True when the desktop asks GTK clients not to animate.
+pub(crate) fn reduced_motion() -> bool {
+    !gtk::Settings::default()
+        .map(|s| s.property::<bool>("gtk-enable-animations"))
+        .unwrap_or(true)
+}
+
+/// Advances one frame of drag motion on the frame clock. X11 samples the root
+/// pointer and moves the toplevel; the Wayland backends run the same
+/// controller in window-relative offset space (the compositor owns the
+/// toplevel there).
+fn tick_drag_frame(window: &gtk::Window, state: &PillState, backend: Backend) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    if !dragging && !settling {
+        return;
+    }
+    let now = drag_clock_now();
+    let dt = drag_frame_dt();
+    match backend {
+        Backend::X11 => x11::tick_drag_frame(window, state, now, dt),
+        Backend::LayerShell | Backend::PlainWayland => {
+            tick_wayland_drag_frame(window, state, now, dt)
+        }
+    }
+}
+
+/// One frame of Wayland/LayerShell drag motion: the newest motion sample runs
+/// through the shared controller and its output becomes the pill draw offset.
+/// The bounds stay wide open. Without absolute coordinates there is no work
+/// area to clamp to, matching the unclamped event-driven math this replaces.
+fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt: f64) {
+    let dragging = state.dragging.get();
+    let mut motion = state.drag_motion.borrow_mut();
+    if dragging && motion.phase() != rust_pill_shared::drag::DragPhase::Held {
+        // First frame, or a re-grab while the previous release still settles:
+        // latch the press point as the grab offset, matching the event-driven
+        // math this replaces (offset = pointer - grab). Re-arming also
+        // cancels the running settle, so the new drag never fights it.
+        motion.begin_drag(
+            state.drag_cursor_x.get(),
+            state.drag_cursor_y.get(),
+            0.0,
+            0.0,
+            now,
+        );
+    }
+    let was_settling = motion.is_settling();
+    let output = motion.advance(&rust_pill_shared::drag::DragFrame {
+        pointer_x: state.drag_last_x.get(),
+        pointer_y: state.drag_last_y.get(),
+        now,
+        dt,
+        bounds: rust_pill_shared::drag::DragBounds {
+            min_x: -1e9,
+            min_y: -1e9,
+            max_x: 1e9,
+            max_y: 1e9,
+        },
+        held: dragging,
+        reduced_motion: reduced_motion(),
+    });
+    drop(motion);
+    state.drag_draw_offset_x.set(output.x);
+    state.drag_draw_offset_y.set(output.y);
+    if was_settling && output.settled {
+        state.has_saved_position.set(true);
+        let (rect, monitor) = pill_geometry(window, state);
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect,
+            monitor,
+        });
+    }
 }
 
 /// Frame-level backstop for a missed button release.
