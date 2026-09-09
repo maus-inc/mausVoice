@@ -1066,8 +1066,14 @@ async fn execute_http_request(
     // frame before networking: at the 128 MiB payload limit it is about 171
     // MiB, and retaining it alongside the decoded request body needlessly
     // raises the peak memory for every redirectable request.
+    //
+    // The decoded body is a `bytes::Bytes` (a refcounted buffer) rather than
+    // a `Vec<u8>`: 307/308 redirect hops re-send the body, and each hop
+    // clones it into the reqwest builder. A Vec clone would copy the entire
+    // payload per hop (up to 128 MiB x 5 hops); Bytes::clone is O(1).
     let encoded_request_body = request.body_base64;
-    let decoded_request_body = decode_private_http_body(encoded_request_body.as_deref())?;
+    let decoded_request_body =
+        decode_private_http_body(encoded_request_body.as_deref())?.map(bytes::Bytes::from);
     drop(encoded_request_body);
 
     let initial_url = Url::parse(&request.url)

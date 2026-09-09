@@ -27,6 +27,11 @@ tauri-build = { version = "=2.5.6", features = [] }
 tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 log = "0.4"
+# Refcounted buffer for the private-HTTP request body: a redirect hop that
+# re-sends the body clones the body into the reqwest builder, and a
+# Vec<u8> clone would copy the entire (up to 128 MiB) payload per hop.
+# Bytes::clone is O(1).
+bytes = "1"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "=2.4.2"
 tauri-plugin-single-instance = "2"

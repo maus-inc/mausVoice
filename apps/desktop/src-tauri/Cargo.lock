@@ -3777,6 +3777,7 @@ dependencies = [
  "arboard",
  "base64 0.21.7",
  "block",
+ "bytes",
  "cap-fs-ext",
  "cap-std",
  "chacha20poly1305",
