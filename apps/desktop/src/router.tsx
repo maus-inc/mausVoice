@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import AppsPage from "./components/apps/AppsPage.tsx";
 import ChatsPage from "./components/chats/ChatsPage.tsx";
@@ -27,10 +28,10 @@ const AppWrapper = () => {
   );
 };
 
-export const browserRouter = createBrowserRouter([
+const appRoutes = (root: ReactNode) => [
   {
     path: "/",
-    element: <Root />,
+    element: root,
     errorElement: <ErrorBoundary />,
     children: [
       {
@@ -125,7 +126,12 @@ export const browserRouter = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+export const createAppRouter = (root: ReactNode = <Root />) =>
+  createBrowserRouter(appRoutes(root));
+
+export const browserRouter = createAppRouter();
 
 export default function Router() {
   return (

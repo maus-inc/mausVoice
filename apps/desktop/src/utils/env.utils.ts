@@ -27,7 +27,7 @@ export const getIsEmulators = (): boolean => {
 };
 
 export type Flavor =
-  "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev";
+  "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev" | "preview";
 export const getFlavor = (): Flavor =>
   (import.meta.env.VITE_FLAVOR ?? "emulators") as Flavor;
 

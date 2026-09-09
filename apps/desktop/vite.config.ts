@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
@@ -79,16 +80,71 @@ const gladiaBrowserPeerStubs = (): Plugin => {
 };
 
 // https://vite.dev/config/
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
   const { formatjsOverrideIdFn } = await import("./scripts/formatjs-id.mjs");
+  const isBrowserPreview = mode === "preview";
+  const previewRoot = fileURLToPath(
+    new URL("./src/preview/tauri", import.meta.url),
+  );
+  const previewAlias = (name: string) =>
+    fileURLToPath(new URL(`./${name}.ts`, `file://${previewRoot}/`));
 
   return {
     // Relative base so the built index.html references ./assets/* instead of
     // /assets/*. Tauri serves the release frontend over the asset: protocol,
     // where absolute paths + the crossorigin module attribute can fail to
     // load — leaving a blank white window with no script execution.
-    base: "./",
+    base: isBrowserPreview ? "/" : "./",
+    // The preview keeps production page modules but substitutes the narrow
+    // native boundary. Aliases are enabled only in the explicit preview mode;
+    // desktop and native test builds continue to import Tauri normally.
+    resolve: {
+      alias: isBrowserPreview
+        ? {
+            "@tauri-apps/api/core": previewAlias("core"),
+            "@tauri-apps/api/event": previewAlias("event"),
+            "@tauri-apps/api/app": previewAlias("app"),
+            "@tauri-apps/api/window": previewAlias("window"),
+            "@tauri-apps/api/webviewWindow": previewAlias("webviewWindow"),
+            "@tauri-apps/api/path": previewAlias("path"),
+            "@tauri-apps/plugin-http": previewAlias("http"),
+            "@tauri-apps/plugin-log": previewAlias("log"),
+            "@tauri-apps/plugin-opener": previewAlias("opener"),
+            "@tauri-apps/plugin-process": previewAlias("process"),
+            "@tauri-apps/plugin-autostart": previewAlias("autostart"),
+            "@tauri-apps/plugin-os": previewAlias("os"),
+          }
+        : undefined,
+    },
     plugins: [
+      // Vite's dev server normally serves index.html at /. Keep preview.html
+      // as the explicit entry file while routing the live-preview root there.
+      {
+        name: "browser-preview-entry",
+        configureServer(server) {
+          if (!isBrowserPreview) return;
+          server.middlewares.use((request, _response, next) => {
+            const requestedUrl = request.url ?? "/";
+            const pathname = requestedUrl.split("?", 1)[0];
+            const isPreviewRoute =
+              pathname === "/" ||
+              [
+                "/dashboard",
+                "/welcome",
+                "/login",
+                "/onboarding",
+                "/composer",
+              ].some(
+                (route) =>
+                  pathname === route || pathname.startsWith(`${route}/`),
+              );
+            if (isPreviewRoute) {
+              request.url = `/preview.html${requestedUrl.slice(pathname.length)}`;
+            }
+            next();
+          });
+        },
+      },
       gladiaBrowserPeerStubs(),
       react({
         babel: {
@@ -139,6 +195,9 @@ export default defineConfig(async () => {
     clearScreen: false,
     build: {
       rollupOptions: {
+        input: isBrowserPreview
+          ? fileURLToPath(new URL("./preview.html", import.meta.url))
+          : undefined,
         output: {
           // Split heavy vendors out of the app bundle. React-family packages
           // that read React at module-init time stay in the React chunk —
@@ -148,17 +207,26 @@ export default defineConfig(async () => {
         },
       },
     },
+    preview: isBrowserPreview
+      ? {
+          host: "0.0.0.0",
+          allowedHosts: [".e2b.app"],
+        }
+      : undefined,
     server: {
       port: 1420,
       strictPort: true,
-      host: host || false,
-      hmr: host
-        ? {
-            protocol: "ws",
-            host,
-            port: 1421,
-          }
-        : undefined,
+      host: isBrowserPreview ? "0.0.0.0" : host || false,
+      // The Arena preview is served from a generated e2b.app host.
+      allowedHosts: isBrowserPreview ? [".e2b.app"] : undefined,
+      hmr:
+        host && !isBrowserPreview
+          ? {
+              protocol: "ws",
+              host,
+              port: 1421,
+            }
+          : undefined,
       watch: {
         ignored: ["**/src-tauri/**"],
       },

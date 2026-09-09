@@ -4,7 +4,12 @@ import { persist } from "zustand/middleware";
 import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 
-const CURRENT_STORAGE_KEY = "mausvoice-local-state";
+// Preview state must never read or overwrite a user's desktop preferences.
+// Vite exposes VITE_PREVIEW only from the dedicated preview mode.
+const IS_BROWSER_PREVIEW = import.meta.env.VITE_PREVIEW === "true";
+const CURRENT_STORAGE_KEY = IS_BROWSER_PREVIEW
+  ? "mausvoice-browser-preview-local-state"
+  : "mausvoice-local-state";
 const LEGACY_STORAGE_KEY = "voquill-local-state";
 
 // The rebrand renamed the persisted Zustand key from "voquill-local-state" to
@@ -29,7 +34,9 @@ function migrateLegacyPersistedState(): void {
   }
 }
 
-migrateLegacyPersistedState();
+if (!IS_BROWSER_PREVIEW) {
+  migrateLegacyPersistedState();
+}
 
 export const useAppStore = createWithEqualityFn<AppState>()(
   persist(() => INITIAL_APP_STATE, {
