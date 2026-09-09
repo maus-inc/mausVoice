@@ -11,6 +11,6 @@ Defaults are clipboard **paste**, **Shift+Insert** as the paste key sequence, an
 
 Use paste for normal editors because it is fast and preserves a single atomic block. Try simulated typing when an application refuses programmatic paste, and increase its delay if characters arrive out of order or go missing. Per-application overrides can preserve a special choice for a troublesome target without slowing every other app.
 
-When **Review before insert** is enabled in **More settings**, the editable composer opens after processing and before insertion. You can edit the text, then confirm or cancel. This applies to both paste and simulated typing.
+When **Review before insert** is enabled in **More settings**, the native pill's editable assistant panel opens after processing and before insertion. For dictation, you can edit the text, then insert, copy, cancel, or open History. An agent's Paste action instead saves an edited **Open** choice as a pending card in Chats: opening the main window changes focus, so copy the text from that card and paste it manually in the intended app. Builds without a native pill use the composer fallback. This applies to both paste and simulated typing.
 
 Insertion failure does not imply transcription failure. Check History or the clipboard. If the correct text exists there, keep the provider settings unchanged and troubleshoot focus, permissions, paste shortcut, or typing delay.

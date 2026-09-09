@@ -10,12 +10,12 @@ A practical tour of how this repo is put together: the technology stack, the mon
 
 ## 1. The big picture
 
-mausVoice is a cross-platform voice-typing desktop app. You hold a hotkey, speak, and the spoken text is transcribed, optionally cleaned up by an LLM, and pasted into whatever application you have focused. It also has an AI assistant ("agent") mode that can take actions on your behalf.
+mausVoice is a cross-platform voice-typing desktop app. You hold a hotkey, speak, and the spoken text is transcribed and optionally cleaned up by an LLM. The app can deliver it to the focused application by paste or simulated typing, or leave it on the clipboard when direct insertion is unavailable. It also has an AI assistant ("agent") mode that can take actions on your behalf.
 
-The desktop app is a Tauri 2 application: a Rust backend that exposes native capabilities, and a React/TypeScript frontend that holds all the product logic. The guiding principle is:
+The desktop app is a Tauri 2 application: a Rust backend that exposes native capabilities, and a React/TypeScript frontend that coordinates product state and routing. The guiding principle is:
 
 > "Rust is the API, TypeScript is the Brain."
-> All business logic and decision-making live in TypeScript. Rust provides pure capabilities (record audio, run Whisper, read accessibility info, paste text, talk to SQLite) and makes no product decisions.
+> TypeScript decides provider selection, styles, prompts, and output routing. Rust supplies capabilities and applies native safety checks while recording audio, running local models, reading accessibility information, delivering text, and talking to SQLite.
 
 ---
 
@@ -165,8 +165,8 @@ There are no cloud or enterprise repos in this build. Main repo families:
 
 Two modes stored in `transcriptionMode`:
 
-- **`"local"`** The `rust_transcription` sidecar runs whisper.cpp (GGML) or an ONNX model (Parakeet, Canary, SenseVoice) on CPU or GPU. The sidecar listens on a local HTTP port and accepts streamed audio. Session idle TTL is 10 minutes; a sweep task cleans every 60 seconds.
-- **`"api"`** A browser WebSocket (Deepgram `nova-3` streaming, Gladia `solaria-1` streaming) or HTTP batch call (Groq, OpenAI, Azure, AssemblyAI, ElevenLabs, Speaches) to a cloud transcription provider.
+- **`"local"`** The `rust_transcription` sidecar runs whisper.cpp (GGML) or an ONNX model (Parakeet, Canary, SenseVoice). Whisper can use the selected CPU or GPU device; the current ONNX engines run on CPU. The sidecar listens on a local HTTP port and accepts streamed audio. Session idle TTL is 10 minutes; a sweep task cleans every 60 seconds.
+- **`"api"`** A dedicated live session (Azure Speech, Deepgram `nova-3`, Gladia `solaria-1`, AssemblyAI, or ElevenLabs) or a buffered HTTP batch route (Groq, OpenAI, Aldea, AssemblyAI, ElevenLabs, Deepgram, Gladia, OpenRouter, OpenAI-compatible, Azure, Gemini, Speaches, or xAI) to a cloud or self-hosted transcription provider.
 
 The hallucination filter (`hallucinationFilterEnabled`) applies an RMS gate before local inference and a phrase filter on returned text for all providers.
 
@@ -196,7 +196,7 @@ Terms and tones live in SQLite (`LocalTermRepo`, `LocalToneRepo`). Terms improve
 
 A provider-agnostic agent loop (`packages/agent` + `src/agents/`) drives tool calls. Tools live in `src/tools/` and are declared in the `TOOL_REGISTRY` map:
 
-- **paste** inserts text into the focused field
+- **paste** delivers text to the focused field; a reviewed agent Paste action can instead become a saved manual-paste card
 - **get_accessibility_info** reads screen context (focused element, selection, cursor position)
 - **end_conversation** closes a pill-scope conversation
 - **run_terminal_command** executes a restricted, allow-listed terminal command (power mode required)
@@ -215,9 +215,9 @@ App targets customize hotkey, insertion method, and tone per application. Remote
 
 Two methods controlled by `insertionMethod`: `paste` (clipboard-based, default) and `simulate_type` (simulated keystrokes via Rust platform layer). The typing speed for `simulate_type` is set by `typingSpeedMs`.
 
-### Composer (review before insert)
+### Review before insert
 
-When `reviewBeforeInsert` is enabled, the editable composer opens after transcription and LLM cleanup, before text is inserted. The user can edit the result, then confirm or cancel.
+When `reviewBeforeInsert` is enabled, the native pill's editable assistant panel opens after transcription and LLM cleanup, before text is inserted. For dictation, the user can edit the result, then insert, copy, cancel, or open History. An agent Paste action saves an edited Open choice as a pending manual-paste card in Chats, where the user can copy it before focusing the intended app. Builds without a native pill use the composer fallback.
 
 ---
 
