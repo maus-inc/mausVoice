@@ -95,48 +95,57 @@ function sleepSync(ms) {
     const sab = new SharedArrayBuffer(4);
     const int32 = new Int32Array(sab);
     Atomics.wait(int32, 0, 0, ms);
+    return;
   } catch {
-    // Fallback: spawn a short-lived node process that sleeps without busy-waiting.
-    // Works cross-platform and doesn't consume CPU.
-    try {
-      const res = spawnSync(
-        process.execPath,
-        ["-e", `setTimeout(()=>{}, ${ms})`],
-        {
-          stdio: "ignore",
-        },
-      );
-      // spawnSync rarely throws; when the child fails to start (ENOENT) or exits
-      // with a non-zero status, res.error/status will indicate failure. Fall back
-      // to busy-wait to guarantee the requested sleep duration in that case.
-      if (res?.error || res?.status !== 0) {
-        const reason =
-          res?.error?.code ??
-          (res?.error?.message ? res.error.message : undefined) ??
-          (res?.signal ? `signal:${res.signal}` : undefined) ??
-          res?.status ??
-          "unknown";
-        const messageSuffix =
-          res?.error?.message && reason !== res.error.message
-            ? ` — ${res.error.message}`
-            : res?.signal
-              ? ` — killed by signal ${res.signal}`
-              : "";
-        console.warn(
-          `[sidecar] sleepSync spawnSync failed: ${reason}${messageSuffix}`,
-        );
-        const start = Date.now();
-        while (Date.now() - start < ms) {
-          // intentional empty
-        }
-      }
-    } catch {
-      // As a last resort, busy-wait (very rare)
-      const start = Date.now();
-      while (Date.now() - start < ms) {
-        // intentional empty
-      }
+    // Atomics.wait unavailable — try Node process sleep.
+  }
+  if (tryNodeProcessSleep(ms)) {
+    return;
+  }
+  busyWait(ms);
+}
+
+function tryNodeProcessSleep(ms) {
+  try {
+    const res = spawnSync(
+      process.execPath,
+      ["-e", `setTimeout(()=>{}, ${ms})`],
+      {
+        stdio: "ignore",
+      },
+    );
+    if (!res?.error && res?.status === 0) {
+      return true;
     }
+    let reason = res?.error?.code;
+    if (!reason && res?.error?.message) {
+      reason = res.error.message;
+    }
+    if (!reason && res?.signal) {
+      reason = `signal:${res.signal}`;
+    }
+    if (!reason) {
+      reason = res?.status ?? "unknown";
+    }
+    let messageSuffix = "";
+    if (res?.error?.message && reason !== res.error.message) {
+      messageSuffix = ` — ${res.error.message}`;
+    } else if (res?.signal) {
+      messageSuffix = ` — killed by signal ${res.signal}`;
+    }
+    console.warn(
+      `[sidecar] sleepSync spawnSync failed: ${reason}${messageSuffix}`,
+    );
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function busyWait(ms) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    // intentional empty
   }
 }
 
