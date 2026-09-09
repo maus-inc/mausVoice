@@ -875,7 +875,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     } else {
         0.0
     };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
     // Loading offset
     if is_loading {
@@ -895,24 +895,24 @@ fn tick(state: &PillState, window: id, dt: f64) {
         hovered,
         state.expand_t.get(),
     );
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
     // A pending review holds the panel open on its own: the transcript must
     // stay visible until the user answers it.
     let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
     let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
 
     // Animate content dimensions toward target mode
     let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
 
     // Shimmer phase
     state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
@@ -951,12 +951,12 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_target > 0.5,
     );
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
     let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -970,7 +970,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+    rust_pill_shared::spring::spring_01(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -981,10 +981,10 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
     let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state, dt);
 
@@ -1280,39 +1280,6 @@ fn tick_ring(state: &PillState, dt: f64) {
     state.arm_pulse.set(anim.arm_pulse);
 }
 
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.5 && (new_vel * dt).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
-    }
-}
 
 // ── Window positioning ────────────────────────────────────────────
 

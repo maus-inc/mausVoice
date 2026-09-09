@@ -8,6 +8,7 @@
 
 pub mod drag;
 pub mod hover;
+pub mod spring;
 
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
