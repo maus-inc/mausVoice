@@ -33,6 +33,7 @@ import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
   buildPostProcessingPrompt,
+  isGlossaryPromptTruncated,
   buildSystemPostProcessingTonePrompt,
   collectDictionaryEntries,
   PostProcessingPromptInput,
@@ -302,7 +303,7 @@ const buildPostProcessingRequest = (
   rawTranscript: string,
   toneId: Nullable<string>,
   dictationLanguage: string,
-): { system: string; prompt: string } => {
+): { system: string; prompt: string; glossaryTruncated: boolean } => {
   const toneConfig = getToneConfig(state, toneId);
   const input: PostProcessingPromptInput = {
     transcript: rawTranscript,
@@ -316,6 +317,7 @@ const buildPostProcessingRequest = (
   return {
     system: buildSystemPostProcessingTonePrompt(input),
     prompt: buildPostProcessingPrompt(input),
+    glossaryTruncated: isGlossaryPromptTruncated(input.glossary),
   };
 };
 
@@ -442,12 +444,17 @@ const runPostProcessingRequest = async ({
     state,
     dictationLanguageOverride,
   );
-  const { system, prompt } = buildPostProcessingRequest(
+  const { system, prompt, glossaryTruncated } = buildPostProcessingRequest(
     state,
     rawTranscript,
     toneId,
     dictationLanguage,
   );
+  if (glossaryTruncated) {
+    warnings.push(
+      "Some dictionary entries were omitted from the post-processing glossary because the safe prompt budget was reached.",
+    );
+  }
   metadata.postProcessPrompt = prompt;
   getLogger().verbose(
     "Post-process language:",

@@ -242,13 +242,14 @@ export const GLOSSARY_PROMPT_BUDGET: VocabularyBudget = {
  */
 const collectBudgetedGlossary = (
   glossary: DictionaryEntries,
-): { terms: string[]; rules: string[] } => {
-  const { terms } = capVocabularyTerms(
+): { terms: string[]; rules: string[]; truncated: boolean } => {
+  const { terms, truncated } = capVocabularyTerms(
     glossary.sources,
     GLOSSARY_PROMPT_BUDGET,
   );
   const rules: string[] = [];
   let characters = 0;
+  let rulesTruncated = false;
   for (const rule of glossary.replacements) {
     const rendered = `${rule.source} → ${rule.destination}`;
     const separator = rules.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
@@ -257,13 +258,24 @@ const collectBudgetedGlossary = (
       characters + separator + rendered.length >
         GLOSSARY_PROMPT_BUDGET.maxCharacters
     ) {
+      rulesTruncated = true;
       break;
     }
     rules.push(rendered);
     characters += separator + rendered.length;
   }
-  return { terms, rules };
+  return { terms, rules, truncated: truncated || rulesTruncated };
 };
+
+/**
+ * Whether the budgeted post-processing glossary had to drop entries. The
+ * prompt builders are pure string formatters with no warning channel, so the
+ * transcription flow checks this and surfaces the loss to the user instead of
+ * silently truncating the cleanup model's view of the dictionary.
+ */
+export const isGlossaryPromptTruncated = (
+  glossary: DictionaryEntries,
+): boolean => collectBudgetedGlossary(glossary).truncated;
 
 const buildGlossaryPromptLines = (glossary: DictionaryEntries): string[] => {
   const { terms, rules } = collectBudgetedGlossary(glossary);

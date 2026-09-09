@@ -11,6 +11,7 @@ import {
   DEEPGRAM_KEYTERM_BUDGET,
   ELEVENLABS_KEYTERMS_BUDGET,
   GLOSSARY_EXACT_SPELLING_INSTRUCTION,
+  isGlossaryPromptTruncated,
   PostProcessingPromptInput,
 } from "./prompt.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
@@ -233,6 +234,37 @@ describe("capVocabularyTerms", () => {
     });
     expect(capped).toEqual(["a", "b"]);
     expect(truncated).toBe(false);
+  });
+});
+
+describe("isGlossaryPromptTruncated", () => {
+  it("reports no truncation when the glossary fits the prompt budget", () => {
+    expect(
+      isGlossaryPromptTruncated({
+        sources: ["Soniya"],
+        replacements: [{ source: "k8s", destination: "Kubernetes" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("reports truncation when sources exceed the entry budget", () => {
+    const manySources = Array.from({ length: 120 }, (_, i) => `term${i}`);
+    expect(
+      isGlossaryPromptTruncated({
+        sources: manySources,
+        replacements: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("reports truncation when replacement rules exceed the entry budget", () => {
+    const manyRules = Array.from({ length: 120 }, (_, i) => ({
+      source: `src${i}`,
+      destination: `dest${i}`,
+    }));
+    expect(
+      isGlossaryPromptTruncated({ sources: [], replacements: manyRules }),
+    ).toBe(true);
   });
 });
 
