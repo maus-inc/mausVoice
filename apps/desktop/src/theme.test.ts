@@ -134,8 +134,10 @@ describe("theme mode configuration", () => {
     if (typeof root !== "function") {
       throw new Error("MuiListItemButton root override must be a function");
     }
-    const styles = root({ theme }) as Record<string, unknown>;
-    const serialized = JSON.stringify(styles);
+    const resolveOverride = root as (args: {
+      theme: typeof theme;
+    }) => Record<string, unknown>;
+    const serialized = JSON.stringify(resolveOverride({ theme }));
     expect(serialized).toContain('"& svg.lucide":{"color":"inherit"}');
     expect(serialized.split('"& svg.lucide":{"color":"inherit"}')).toHaveLength(
       3,
