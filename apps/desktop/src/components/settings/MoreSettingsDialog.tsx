@@ -56,6 +56,7 @@ import {
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
 import { PillPlacementSetting } from "./PillPlacementSetting";
+import { UpdateChannelSetting } from "./UpdateChannelSetting";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
 
@@ -445,6 +446,8 @@ export const MoreSettingsDialog = () => {
               />
             }
           />
+
+          <UpdateChannelSetting />
 
           <SettingSection
             title={<FormattedMessage defaultMessage="Show menu bar icon" />}

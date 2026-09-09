@@ -34,6 +34,8 @@ export type PillResetMonitorStrategy = "current" | "cursor";
 
 export type PillPlacement = "top" | "bottom";
 
+export type UpdateChannel = "stable" | "beta";
+
 export type PullStatus = "in_progress" | "error" | "complete";
 
 export const STYLING_MODES = ["app", "manual"] as const;
