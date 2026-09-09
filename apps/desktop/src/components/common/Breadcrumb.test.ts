@@ -32,8 +32,8 @@ describe("Breadcrumb", () => {
   it("marks the last crumb as the current page and keeps earlier crumbs as buttons", async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
-    root = createRoot(container);
-    const mounted = root;
+    const mounted = createRoot(container);
+    root = mounted;
     await act(async () => {
       mounted.render(
         createElement(
