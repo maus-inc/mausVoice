@@ -92,7 +92,9 @@ export const PendingPasteReviewBubble = ({
           </Typography>
         </Box>
         <TextField
-          aria-label="Text prepared for manual paste"
+          aria-label={getIntl().formatMessage({
+            defaultMessage: "Text prepared for manual paste",
+          })}
           multiline
           minRows={3}
           value={text}

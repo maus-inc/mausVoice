@@ -682,6 +682,7 @@
   "test_your_microphone": "마이크 테스트",
   "testing": "테스트 중...",
   "text_insertion_options": "텍스트 삽입 옵션",
+  "text_prepared_for_manual_paste": "수동 붙여넣기를 위해 준비된 텍스트",
   "the_application_encountered_an_unexpected_error": "애플리케이션에 예기치 않은 오류가 발생했습니다.",
   "the_gpu_app_is_being_deprecated": "GPU 앱이 폐기되고 있습니다",
   "the_gpu_version_of_mausvoice_will_no_longer_receive_updates": "mausVoice의 GPU 버전은 더 이상 업데이트를 받지 않습니다.",
