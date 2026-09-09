@@ -20,14 +20,18 @@ const writeQueuedIds = (): void => {
   if (typeof localStorage === "undefined") {
     return;
   }
-  if (queuedIds.size === 0) {
-    localStorage.removeItem(PENDING_DELETE_STORAGE_KEY);
-    return;
+  try {
+    if (queuedIds.size === 0) {
+      localStorage.removeItem(PENDING_DELETE_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(
+      PENDING_DELETE_STORAGE_KEY,
+      JSON.stringify([...queuedIds]),
+    );
+  } catch {
+    // Quota or private mode. Timers and IPC still use in-memory queuedIds.
   }
-  localStorage.setItem(
-    PENDING_DELETE_STORAGE_KEY,
-    JSON.stringify([...queuedIds]),
-  );
 };
 
 const restoreInStore = (snapshot: Transcription): void => {

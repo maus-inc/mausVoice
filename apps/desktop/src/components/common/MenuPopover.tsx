@@ -61,7 +61,10 @@ type MenuPopoverSubMenuItemProps = {
   close: () => void;
 };
 
-function MenuPopoverSubMenuItem({ item, close }: MenuPopoverSubMenuItemProps) {
+function MenuPopoverSubMenuItem({
+  item,
+  close,
+}: Readonly<MenuPopoverSubMenuItemProps>) {
   const [submenuOpen, setSubmenuOpen] = useState(false);
   const buttonRef = useRef<HTMLDivElement>(null);
   const hideTimerRef = useRef<number | null>(null);
@@ -144,7 +147,7 @@ function MenuPopoverSubMenuItem({ item, close }: MenuPopoverSubMenuItemProps) {
 function MenuPopoverItemRend({
   item,
   close,
-}: MenuPopoverItemRendProps): React.ReactNode {
+}: Readonly<MenuPopoverItemRendProps>): React.ReactNode {
   if (item.kind === "listItem") {
     return (
       <ListTile

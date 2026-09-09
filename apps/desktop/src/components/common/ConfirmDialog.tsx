@@ -75,7 +75,7 @@ export const ConfirmDialog = ({
           {busy ? (
             <CircularProgress size={16} color="inherit" />
           ) : (
-            (confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />)
+            confirmContent
           )}
         </Button>
       </DialogActions>
