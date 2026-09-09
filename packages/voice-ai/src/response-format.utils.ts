@@ -1,12 +1,26 @@
 import type { JsonResponse } from "@maus-inc/types";
 
+/**
+ * Builds the `response_format` for a JSON-mode generation request.
+ *
+ * `json_object` is sent ONLY for the legacy models named in
+ * `jsonObjectOnlyModels` (pre-Structured-Outputs chat models such as
+ * gpt-3.5-turbo / gpt-4-turbo, which reject `json_schema` with a 400).
+ * Every other model — including discovered/unknown modern models (gpt-4o
+ * 2024-08-06+, gpt-4.1, the o-series, gpt-5, gpt-oss) — defaults to
+ * `json_schema`: the o-series in particular rejects `json_object`
+ * outright, so falling back to it for unknown models is the wrong
+ * direction. Callers using the `json_object` branch MUST also inject the
+ * word "JSON" into the prompt (see buildJsonObjectPrompt): the OpenAI API
+ * errors when it is missing.
+ */
 export const buildJsonSchemaResponseFormat = (
   model: string,
-  supportedModels: ReadonlySet<string>,
+  isJsonObjectOnlyModel: (model: string) => boolean,
   jsonResponse?: JsonResponse,
 ) => {
   if (!jsonResponse) return undefined;
-  if (!supportedModels.has(model)) {
+  if (isJsonObjectOnlyModel(model)) {
     return { type: "json_object" as const };
   }
   return {

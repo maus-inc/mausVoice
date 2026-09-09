@@ -522,3 +522,148 @@ dev-script tests (4), the formatting gate, and the idempotent i18n sync
 all pass locally. Pre-existing hardcoded aria-labels in `main`
 (`HotkeySetting` "Enable hotkey" and four others) were noted and left
 untouched as out of scope for this PR.
+
+## 13. PR #190 review round (opened September 9, 2026)
+
+After the PR opened, the review bots returned:
+
+1. **CodeSpect (major, the only finding it actually posted):** the
+   private-HTTP path decodes the request body to a `Vec<u8>` (up to the
+   128 MiB limit), and the existing redirect loop cloned that buffer into
+   the reqwest builder on every 307/308 hop - a full copy of the payload
+   per hop (up to 5 hops), so a redirecting server could push peak memory
+   toward several hundred MiB. This branch introduced the decoded-Vec
+   source, so it was in scope. **Fixed in `0a09a93`:** the decoded body is
+   now a `bytes::Bytes` (a refcounted buffer, wrapped zero-copy from the
+   decoded `Vec`), so per-hop clones are O(1) and reqwest stores the body
+   as its reusable variant (verified against the reqwest 0.12.28 source:
+   `impl From<Bytes> for Body`). `bytes = "1"` added to the desktop Cargo
+   manifest and lockfile (already in the tree via reqwest, no new version).
+2. **Kilo Code Review check failed with "Assistant request was rate
+   limited"** - a failure of the bot's own service, not a code finding.
+   It re-runs automatically on the next push.
+3. **Buoy (neutral):** suggested design tokens for two MUI scale values in
+   `PendingPasteReviewBubble.tsx`. Those values (`border: 1`,
+   `borderRadius: 1`) are scale units, not raw pixels, and are the
+   established convention in this component family (ChatMessageBubble,
+   ConversationLayout, ConversationListItem all use the same). The
+   suggested tokens do not exist in the design system; replying that we
+   keep the family convention and would rather add the tokens for the
+   whole family in a follow-up than invent them for one component.
+
+## 14. Line-by-line re-audit of the full PR content (September 10, 2026)
+
+Per the standing directive, the entire diff (main `72d4163` -> this branch,
+662 files) was re-audited line by line: Rust executed against reqwest/Tauri
+docs, TypeScript executed locally (merge algorithm, spoken commands,
+unit suite) and checked against provider API references, web-verified
+against OpenAI, Hugging Face, k2-fsa, ElevenLabs, Gladia, and Tauri
+sources. One confirmed behavioral bug class was found and fixed:
+
+### 14.1 FIXED: JSON response-format selection (voice-ai)
+
+`openai.utils.ts`, `openrouter.utils.ts`, and `azure-openai.utils.ts`
+decided, per model, whether to send OpenAI's new `json_schema` response
+format or the legacy `json_object` format. Two defects, both verified
+against OpenAI's official Structured Outputs documentation and the
+documented 400 errors:
+
+1. The "supports json_schema" allow-list wrongly included
+   `gpt-4-turbo` / `gpt-3.5-turbo` (OpenAI and OpenRouter) and `gpt-4` /
+   `gpt-35-turbo` (Azure deployment names). Those predate Structured
+   Outputs and are rejected with a 400 when sent `json_schema`, so any
+   post-processing run targeting one of them failed.
+2. The `json_object` fallback never put the word "JSON" into the prompt.
+   OpenAI's API rejects `json_object` requests whose context never
+   mentions JSON ("the API will throw an error if the string 'JSON' does
+   not appear somewhere in the context"). Cerebras and DeepSeek already
+   injected the schema instruction; the other three providers did not.
+   OpenRouter made this reachable for every discovered model outside the
+   allow-list, including the o-series, which additionally rejects
+   `json_object` outright - so those got a 400 from the wrong format too.
+
+**Fix (smallest root cause):** inverted the decision to a small
+legacy-only `json_object` set (the pre-Structured-Outputs chat models);
+every other model - curated or discovered - defaults to `json_schema`.
+On the legacy branch, the schema instruction ("Respond with valid JSON
+matching this schema: ...") is appended to the prompt, exactly as
+Cerebras/DeepSeek already did. Azure additionally keeps `json_object` for
+user-deployed open-model families (llama/phi/mistral/mixtral), which
+Azure serves through JSON mode only (an existing test pins this
+behavior). 9 regression tests added (legacy model -> `json_object` +
+prompt hint; o-series/discovered model -> `json_schema`, prompt
+untouched; Azure `gpt-4` deployment and open-model deployments ->
+`json_object` + hint). voice-ai: 159/159 tests pass; full workspace
+build green; desktop `test:unit` green.
+
+### 14.2 Re-verified OK (no behavioral bugs)
+
+- **Merge/overlap algorithm** (`transcribe.utils.ts`): executed 8 cases
+  (exact overlap, truncated word, fuzzy contraction, no overlap, prefix
+  coincidence). The one imperfect case (a complete word that is a prefix
+  of the next segment's first word, e.g. "you"/"your") is a pre-existing
+  heuristic present in main before this PR - the PR only refactored the
+  same algorithm for speed. Not a regression; noted as a known
+  limitation.
+- **Silence gating:** `gateSilentSegments` (all-gated -> empty text, not
+  fallback), `analyzeSilence` (requires global AND windowed RMS and peak
+  below thresholds - quiet real speech survives), `joinKeptSegmentTexts`
+  spacing rules.
+- **Spoken-commands engine:** traced scratch/abbreviation stops
+  (incl. `Dr.` and 2-letter `a.`), blocked follower/predecessor pairs,
+  gap/whitespace preservation, attach-left punctuation.
+- **Pill review queue** (`pill-review.actions.ts`): busy-flag
+  double-click guard, expiry-vs-persistence race (timer cleared before
+  the await), stale-click identity check, composer fallback when no
+  native pill, queue-advance semantics (later arrivals do not extend the
+  open card's expiry).
+- **Dictation backlog** (strategy + `drainDictationBacklog`):
+  non-destructive snapshot + nonce pre/post checks, serial paste queue,
+  cleanup on session end prevents stale-session delivery, 1s drain poll
+  only while a backlog exists.
+- **Output routing / secure-fetch:** review gate before remote and local
+  delivery, hands-free delay invalidation by session id, http ->
+  native SSRF-guarded command / https -> curated capability allow-list,
+  body stream capping at 128 MiB with abort support.
+- **macOS manual installer path:** TS derives the `.dmg` + detached
+  `.sig` URLs (exact `${dmgUrl}.sig` only), Rust re-validates the host,
+  validates every redirect hop, caps the download, and verifies the
+  minisign signature before `open` - an unverified installer is never
+  launched.
+- **Gladia provider (new, 861 lines):** language mapping, WS endpoint
+  allow-list, transcript accumulator (finals never overwritten,
+  authoritative post-final override), finalize deadline clamping,
+  remote session deletion in all paths; desktop session feeds PCM16
+  matching the declared encoding.
+- **Stop flow / tone contract:** stop-snapshot wins (whole utterance
+  restyled, persisted selection seeds the next recording), start
+  snapshot only as fallback, awaited style load before seeding,
+  provider timer anchored to native capture success, empty-result
+  handling preserves the recording with a retry toast.
+- **Hotkeys:** level-based hold model with `allowedAdditionalKeys`
+  (arrows during hold do not break hold-to-talk release), native fire
+  model contamination logic unchanged from main, release-on-key-up for
+  style actions, main-window-only guards against double dictation from
+  the composer popout.
+- **run-agent / chat actions:** `safeSideEffect` isolation in the loop,
+  block-atomic context trimming (tool-call/result pairs never split),
+  supersede identity guard, delete-vs-send race (flag + queue drain +
+  abort + post-delete guard).
+- **Provider model pins:** OpenAI transcription response formats
+  (web-verified), ElevenLabs `scribe_v2` (web-verified), Gladia
+  `solaria-1` + API shape, OpenRouter default/favorites, xAI `format`
+  field ordering.
+- **Release pipeline:** hardcoded throwaway signing key removed from
+  `release.yml`; updater keypair lives only in repository secrets;
+  manifest entries emitted only with a matching `.sig`; release tag
+  round-trips through the manifest URL into the manual-installer URL.
+- **SQL migrations:** additive only, safe defaults, all matching the TS
+  preference defaults (verified per column).
+- **Scripts/workflows/locale parity:** CI-enforced (Format+i18n gate
+  green on this branch).
+
+Residual: `TutorialForm`, `MoreSettingsDialog`, `StyleHotkeysDialog`,
+`ApiKeyList`, `MicrophoneTester`, `ScrollListPage`,
+`TranscriptionsPage`, `ConversationListItem` were structurally reviewed
+(form/UI wiring whose underlying logic lives in the audited
+utils/actions/repos); no behavioral logic was found inline.

@@ -136,3 +136,90 @@ describe("azureOpenAITestIntegration", () => {
     ).rejects.toThrow("endpoint unreachable");
   });
 });
+
+describe("azureOpenAIGenerateText legacy deployment format selection", () => {
+  afterEach(() => {
+    vi.doUnmock("openai");
+    vi.resetModules();
+  });
+
+  const mockAzureCreate = (create: ReturnType<typeof vi.fn>) => {
+    vi.resetModules();
+    vi.doMock("openai", () => ({
+      AzureOpenAI: class MockAzureOpenAI {
+        chat = { completions: { create } };
+      },
+      default: class MockOpenAI {
+        chat = { completions: { create } };
+      },
+    }));
+  };
+
+  const userContent = (create: ReturnType<typeof vi.fn>): string => {
+    const call = create.mock.calls[0]?.[0] as {
+      messages: Array<{
+        role: string;
+        content: string | Array<{ type: string; text: string }>;
+      }>;
+    };
+    const user = call.messages.find((message) => message.role === "user");
+    const content = user?.content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content.map((part) => part.text).join(" ");
+    }
+    return "";
+  };
+
+  it("sends json_object plus the JSON prompt hint for the legacy gpt-4 deployment", async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
+      usage: { total_tokens: 5 },
+    });
+    mockAzureCreate(create);
+    const { azureOpenAIGenerateText } = await import(
+      "../src/azure-openai.utils"
+    );
+
+    await azureOpenAIGenerateText({
+      apiKey: "test-key",
+      endpoint: "https://test.azure.com",
+      deploymentName: "gpt-4",
+      prompt: "hi",
+      jsonResponse: AZURE_JSON_SCHEMA,
+    });
+
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      model: "gpt-4",
+      response_format: { type: "json_object" },
+    });
+    const content = userContent(create);
+    expect(content).toContain("JSON");
+    expect(content).toContain(JSON.stringify(AZURE_JSON_SCHEMA.schema));
+  });
+
+  it("sends json_object plus the JSON prompt hint for open-model deployments", async () => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
+      usage: { total_tokens: 5 },
+    });
+    mockAzureCreate(create);
+    const { azureOpenAIGenerateText } = await import(
+      "../src/azure-openai.utils"
+    );
+
+    await azureOpenAIGenerateText({
+      apiKey: "test-key",
+      endpoint: "https://test.azure.com",
+      deploymentName: "llama-3.3-70b",
+      prompt: "hi",
+      jsonResponse: AZURE_JSON_SCHEMA,
+    });
+
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      model: "llama-3.3-70b",
+      response_format: { type: "json_object" },
+    });
+    expect(userContent(create)).toContain("JSON");
+  });
+});

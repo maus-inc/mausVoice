@@ -2,6 +2,7 @@ import { AzureOpenAI } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
 import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import { buildJsonObjectPrompt } from "./openai-compatible-generate.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -20,18 +21,44 @@ export const AZURE_OPENAI_MODELS = [
 ] as const;
 export type AzureOpenAIModel = (typeof AZURE_OPENAI_MODELS)[number];
 
-// Azure OpenAI deployments accept the same `json_schema` shape as the
-// upstream OpenAI service. The set is keyed off the deployment name so
-// user-deployed open-source models (Llama, Phi, etc.) fall back to
-// `json_object` instead of being rejected.
-const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
-  "gpt-5-mini",
-  "gpt-5-nano",
-  "gpt-4o",
-  "gpt-4o-mini",
-  "gpt-4",
+// Azure OpenAI deployments mirror the upstream model naming (minus the
+// version dot for 3.5: "gpt-35-turbo"). Only the pre-Structured-Outputs
+// legacy chat deployments reject `json_schema` and must receive the
+// legacy `json_object` shape; every other deployment — including
+// user-deployed open-source models (Llama, Phi, etc.) — defaults to
+// `json_schema`, matching upstream behavior.
+const JSON_OBJECT_ONLY_MODELS = new Set<string>([
   "gpt-35-turbo",
+  "gpt-35-turbo-16k",
+  "gpt-35-turbo-0125",
+  "gpt-35-turbo-1106",
+  "gpt-4",
+  "gpt-4-0301",
+  "gpt-4-0613",
+  "gpt-4-32k",
+  "gpt-4-turbo",
+  "gpt-4-turbo-2024-04-09",
+  "gpt-4-1106",
+  "gpt-4-0125",
 ]);
+
+// Azure serves open-weight models (Llama, Phi, Mistral, ...) through JSON
+// mode (`json_object`) and rejects `json_schema` for them, so those
+// deployment families also take the legacy shape.
+const OPEN_MODEL_DEPLOYMENT_PREFIXES = [
+  "llama",
+  "phi",
+  "mistral",
+  "mixtral",
+] as const;
+
+export const isAzureJsonObjectOnlyModel = (deploymentName: string): boolean => {
+  const name = deploymentName.toLowerCase();
+  return (
+    JSON_OBJECT_ONLY_MODELS.has(deploymentName) ||
+    OPEN_MODEL_DEPLOYMENT_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+};
 
 export type AzureOpenAIGenerateTextArgs = {
   apiKey: string;
@@ -48,12 +75,7 @@ export type AzureOpenAIGenerateTextArgs = {
 const buildResponseFormat = (
   deploymentName: string,
   jsonResponse?: JsonResponse,
-) =>
-  buildJsonSchemaResponseFormat(
-    deploymentName,
-    JSON_SCHEMA_SUPPORTED_MODELS,
-    jsonResponse,
-  );
+) => buildJsonSchemaResponseFormat(deploymentName, isAzureJsonObjectOnlyModel, jsonResponse);
 
 export type AzureOpenAIGenerateResponseOutput = {
   text: string;
@@ -95,11 +117,20 @@ export const azureOpenAIGenerateText = async ({
     fn: async () => {
       const client = createClient(apiKey, endpoint, customFetch);
 
+      // The `json_object` shape (legacy deployments only) requires the word
+      // "JSON" somewhere in the context or the API rejects the request;
+      // append the schema instruction only on that branch so json_schema
+      // calls are unchanged.
+      const finalPrompt =
+        jsonResponse && isAzureJsonObjectOnlyModel(deploymentName)
+          ? buildJsonObjectPrompt({ prompt, jsonResponse })
+          : prompt;
+
       const messages: ChatCompletionMessageParam[] = [];
       if (system) {
         messages.push({ role: "system", content: system });
       }
-      messages.push({ role: "user", content: prompt });
+      messages.push({ role: "user", content: finalPrompt });
 
       const response_format = buildResponseFormat(deploymentName, jsonResponse);
 
