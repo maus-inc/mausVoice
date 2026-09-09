@@ -272,7 +272,10 @@ const collectBudgetedGlossary = (
   // may drop every rule even when glossary.replacements is non-empty).
   const initialRulesBudget = {
     maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
-    maxCharacters: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxCharacters - characters),
+    maxCharacters: Math.max(
+      0,
+      GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+    ),
   };
   const ruleInputs = glossary.replacements.map(
     (rule) => `${rule.source} → ${rule.destination}`,
