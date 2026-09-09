@@ -1527,38 +1527,36 @@ fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
     bytes
 }
 
+fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
+    matches!(audio_path, Some(path) if !path.is_empty())
+}
+
 async fn delete_audio_entries(
     app: AppHandle,
-    entries: Vec<(String, String)>,
+    entries: Vec<(String, bool)>,
 ) -> Result<Vec<String>, String> {
     if entries.is_empty() {
         return Ok(Vec::new());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
-        let audio_dir = crate::system::audio_store::audio_dir(&app)
-            .map_err(|err| format!("Unable to resolve the managed audio directory: {err}"))?;
+        let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+            .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
         let mut removed = Vec::new();
-        for (id, path) in entries {
-            // `audio_path` is persisted data, not a capability. Resolve it
-            // through the shared canonical parent guard rather than trusting
-            // a lexical prefix: an entry such as
-            // `<audio_dir>/../outside.wav` must not remove a user file.
-            let Some(file_path) = crate::system::audio_store::resolve_managed_audio_path_for_delete(
-                &PathBuf::from(&path),
-                &audio_dir,
-            ) else {
-                log::warn!(
-                    "Refusing to delete unmanaged audio path for transcription {id}"
-                );
-                removed.push(id);
-                continue;
-            };
-            if let Err(err) = std::fs::remove_file(&file_path) {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    log::error!("Failed to delete audio file for transcription {id}: {err}");
+        for (id, has_file_path) in entries {
+            // `audio_path` is only a presence marker. Preserve the historical
+            // empty-marker behavior (clear metadata but do not delete a file),
+            // while deriving every non-empty marker's filename from its ID.
+            if has_file_path {
+                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id)
+                {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        log::error!("Failed to delete audio file for transcription {id}: {err}");
+                    }
                 }
             }
+            // Match the existing recovery behavior: an unavailable file must
+            // not keep stale snapshot metadata indefinitely.
             removed.push(id);
         }
         Ok::<Vec<String>, String>(removed)
@@ -1567,124 +1565,43 @@ async fn delete_audio_entries(
     .map_err(|err| err.to_string())?
 }
 
-/// Resolve `path` to the exact file to delete, or `None` when it does not
-/// live directly inside the managed transcription-audio directory. Both the
-/// candidate's parent directory and `audio_dir` are canonicalized before
-/// comparison, so a `..` traversal, an intermediate symlink, or an
-/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
-/// lexical `starts_with` cannot do that. Callers must delete the returned
-/// path — never the raw input — because a relative input is resolved
-/// against `audio_dir` here.
-fn resolve_managed_audio_path(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    crate::system::audio_store::resolve_managed_audio_path_for_delete(path, audio_dir)
-}
-
-/// Resolve `path` to the exact file to read, or `None` when it does not live
-/// directly inside the managed transcription-audio directory. This is the read
-/// counterpart to `resolve_managed_audio_path`: the delete helper must *not*
-/// follow the final entry (so a symlink can be unlinked), but a read must
-/// prove the final entry stays inside `audio_dir` even after following
-/// symlinks. We canonicalize the whole candidate, so a final-position symlink
-/// such as `audio/clip.wav -> /outside/secret.wav` resolves outside
-/// `audio_dir` and is rejected rather than leaking the outside file's bytes.
-fn resolve_managed_audio_path_for_read(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::fs::File> {
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Canonicalize the entire candidate (following a final symlink) and verify
-    // it resolves to a regular file whose parent is exactly the canonical
-    // managed audio directory.
-    let real_path = std::fs::canonicalize(&candidate).ok()?;
-    if !std::fs::metadata(&real_path).ok()?.is_file() {
-        return None;
-    }
-    let real_parent = real_path.parent()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    // Open first, then resolve the entry again. This binds confinement to the
-    // target actually opened rather than to a pre-open canonicalization that a
-    // symlink swap could invalidate.
-    let file = std::fs::File::open(&real_path).ok()?;
-    let opened_path = std::fs::canonicalize(&real_path).ok()?;
-    if opened_path.parent()? != real_audio_dir {
-        return None;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let opened = file.metadata().ok()?;
-        let resolved = std::fs::metadata(&opened_path).ok()?;
-        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
-            return None;
-        }
-    }
-    #[cfg(windows)]
-    {
-        // Windows requires a file handle to retrieve file identity (volume serial
-        // + file index) via GetFileInformationByHandle. Reopening the resolved
-        // path is necessary because Windows provides no API to obtain file
-        // identity from a path alone. This ensures the TOCTOU check compares the
-        // actual opened file with the current target at the resolved path.
-        let resolved_file = std::fs::File::open(&opened_path).ok()?;
-        let opened_id = windows_file_identity(&file)?;
-        let resolved_id = windows_file_identity(&resolved_file)?;
-        if opened_id != resolved_id {
-            return None;
-        }
-    }
-
-    Some(file)
-}
-
-/// Delete listed audio files that still live under `audio_dir`. Paths
-/// outside the managed directory (including traversal attempts) are skipped
-/// (not an error).
-fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
-    for path in paths {
-        // Delete the validated path, not the raw DB value: a relative entry
-        // such as `clip.wav` must resolve inside `audio_dir` rather than
-        // against the process working directory.
-        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
-            continue;
-        };
-        if let Err(err) = std::fs::remove_file(&file_path) {
+/// Delete snapshots whose non-null database marker was collected before a
+/// local-data reset. The storage path itself is intentionally ignored: each
+/// ID maps to its one generated filename in the directory capability.
+fn delete_listed_audio_files(audio_dir: &cap_std::fs::Dir, ids: &[String]) {
+    for id in ids {
+        if let Err(err) = crate::system::audio_store::delete_audio_file(audio_dir, id) {
             if err.kind() != std::io::ErrorKind::NotFound {
                 log::warn!(
-                    "Failed to delete audio file {} during clear: {err}",
-                    file_path.display()
+                    "Failed to delete audio file for transcription {id} during clear: {err}"
                 );
             }
         }
     }
 }
 
-/// Remove leftover `.wav` files in the managed audio directory after the
-/// DB table has been wiped (orphans from an interrupted record, etc.).
-fn sweep_orphaned_wavs(audio_dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(audio_dir) else {
+/// Remove leftover `.wav` files from the directory capability after the DB
+/// table has been wiped (for example, after an interrupted recording).
+fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) {
+    let Ok(entries) = audio_dir.entries() else {
         return;
     };
     for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) == Some("wav") {
-            if let Err(err) = std::fs::remove_file(&p) {
-                log::warn!(
-                    "Failed to remove orphaned audio file {}: {err}",
-                    p.display()
-                );
+        let file_name = entry.file_name();
+        if std::path::Path::new(&file_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("wav")
+        {
+            if let Err(err) =
+                crate::system::audio_store::delete_audio_file_named(audio_dir, &file_name)
+            {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "Failed to remove orphaned audio file {}: {err}",
+                        file_name.to_string_lossy()
+                    );
+                }
             }
         }
     }
@@ -1996,8 +1913,12 @@ pub async fn transcription_delete(
     .await
     .map_err(|err| err.to_string())?;
 
-    if let Some(path) = audio_path {
-        delete_audio_entries(app.clone(), vec![(id.clone(), path)]).await?;
+    if let Some(audio_path) = audio_path {
+        delete_audio_entries(
+            app.clone(),
+            vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
+        )
+        .await?;
     }
 
     crate::db::transcription_queries::delete_transcription(pool, &id)
@@ -2035,16 +1956,14 @@ pub async fn transcription_audio_load(
     .await
     .map_err(|err| err.to_string())?;
 
-    let audio_path = audio_path
-        .ok_or_else(|| "No audio snapshot available for this transcription".to_string())?;
+    if !audio_path_has_file_path(audio_path.as_deref()) {
+        return Err("No audio snapshot available for this transcription".to_string());
+    }
 
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
-    let audio_path_buf = PathBuf::from(&audio_path);
-
-    let mut audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
-        Some(file) => file,
-        None => return Err("Audio snapshot path is outside the managed directory".to_string()),
-    };
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| err.to_string())?;
+    let mut audio_file = crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
+        .map_err(|err| format!("Unable to open the managed audio snapshot: {err}"))?;
 
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
         crate::system::audio_store::load_audio_samples(&mut audio_file)
@@ -2122,9 +2041,11 @@ pub async fn export_transcription(
             }
         }
 
-        if let Some(ref audio_path_str) = audio_path {
-            let path_buf = PathBuf::from(audio_path_str);
-            if let Some(mut audio_file) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
+        if audio_path_has_file_path(audio_path.as_deref()) {
+            // A non-empty value marks a saved snapshot; the generated ID name
+            // and held directory capability select the actual file.
+            if let Ok(mut audio_file) =
+                crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
             {
                 let mut audio_data = Vec::new();
                 audio_file
@@ -2532,10 +2453,11 @@ pub async fn clear_local_data(
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
 
-    // Collect audio file paths BEFORE wiping transcriptions so we can delete
-    // them from disk after the transaction commits.
-    let audio_paths: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
+    // Collect IDs with non-empty snapshot markers before wiping
+    // transcriptions so their generated managed filenames can be deleted
+    // after commit. This preserves the existing empty-marker behavior.
+    let audio_ids: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
     )
     .fetch_all(&pool)
     .await
@@ -2551,13 +2473,11 @@ pub async fn clear_local_data(
     }
     transaction.commit().await.map_err(|err| err.to_string())?;
 
-    // After commit, delete every audio WAV on disk that the DB used to know
-    // about, then sweep orphans. Each path goes through
-    // `resolve_managed_audio_path`, which canonicalizes the path and its
-    // parent so only files that really sit inside the managed audio
-    // directory are deleted.
-    if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
-        delete_listed_audio_files(&audio_dir, &audio_paths);
+    // After commit, open the managed root once, delete every filename derived
+    // from the recorded IDs, then sweep orphaned WAVs through that same held
+    // directory. A root replacement cannot redirect either destructive step.
+    if let Ok(audio_dir) = crate::system::audio_store::open_managed_audio_dir(&app) {
+        delete_listed_audio_files(&audio_dir, &audio_ids);
         sweep_orphaned_wavs(&audio_dir);
     }
 
@@ -2821,13 +2741,14 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())?;
 
-    let stale_entries: Vec<(String, String)> = rows
+    let stale_entries: Vec<(String, bool)> = rows
         .into_iter()
         .skip(MAX_RETAINED_TRANSCRIPTION_AUDIO)
         .map(|row| {
+            let audio_path = row.get::<String, _>("audio_path");
             (
                 row.get::<String, _>("id"),
-                row.get::<String, _>("audio_path"),
+                audio_path_has_file_path(Some(&audio_path)),
             )
         })
         .collect();
@@ -5446,103 +5367,10 @@ mod tests {
     }
 
     #[test]
-    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let other_dir = root.join("other");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&other_dir).unwrap();
-        // Canonicalized because the guard returns real paths (e.g. macOS
-        // maps /tmp to /private/tmp).
-        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
-
-        let inside = audio_dir.join("clip.wav");
-        let outside = other_dir.join("clip.wav");
-        // A traversal attempt must NOT escape the managed directory.
-        let traversal = audio_dir.join("..").join("escaped.wav");
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &audio_dir),
-            Some(expected.clone())
-        );
-        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
-        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
-        // A relative entry must resolve inside the managed directory, never
-        // against the process working directory.
-        assert_eq!(
-            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(expected.clone())
-        );
-        // An `audio_dir` spelled with `.` still matches its own contents.
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
-            Some(expected)
-        );
-
-        #[cfg(unix)]
-        {
-            // A symlinked subdirectory must not tunnel out of audio_dir.
-            let link = audio_dir.join("link");
-            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
-                None
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let secret = outside_dir.join("secret.wav");
-        std::fs::write(&secret, b"TOP SECRET").unwrap();
-
-        #[cfg(unix)]
-        {
-            // A final-entry symlink pointing outside must be rejected for
-            // reads: canonicalizing the whole path follows the symlink and
-            // lands outside audio_dir, so the bytes are never leaked.
-            let link = audio_dir.join("clip.wav");
-            std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
-
-            // A regular file inside audio_dir is still accepted.
-            let real = audio_dir.join("real.wav");
-            std::fs::write(&real, b"ok").unwrap();
-            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        let real = audio_dir.join("real.wav");
-        std::fs::write(&real, b"readable-bytes").unwrap();
-
-        // The read helper must return a handle to the *validated* file whose
-        // bytes match what was on disk.
-        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
-        assert!(file.is_some());
-        let mut buf = String::new();
-        use std::io::Read;
-        file.unwrap().read_to_string(&mut buf).unwrap();
-        assert_eq!(buf, "readable-bytes");
-
-        let _ = std::fs::remove_dir_all(&root);
+    fn empty_and_null_audio_markers_do_not_authorize_file_access() {
+        assert!(!audio_path_has_file_path(None));
+        assert!(!audio_path_has_file_path(Some("")));
+        assert!(audio_path_has_file_path(Some("managed/snapshot.wav")));
     }
 
     #[test]
@@ -6196,51 +6024,70 @@ mod tests {
     }
 
     #[test]
-    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+    fn clear_local_data_deletes_derived_names_and_only_sweeps_wavs() {
         let root = std::env::temp_dir().join(format!(
             "mausvoice-clear-local-{}",
             std::process::id()
         ));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-
-        let inside = audio_dir.join("keep-me-not.wav");
-        let relative = audio_dir.join("relative.wav");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let expected = audio_dir.join("known-id.wav");
         let orphan = audio_dir.join("orphan.wav");
         let other = audio_dir.join("notes.txt");
-        let outside = outside_dir.join("do-not-delete.wav");
-        // A manipulated database row can retain the managed directory's
-        // lexical prefix while traversing out of it. Retention cleanup and
-        // local-data reset share `resolve_managed_audio_path`, so this must
-        // never resolve to a deletion target.
-        let traversal = audio_dir.join("..").join("outside").join("do-not-delete.wav");
-        std::fs::write(&inside, b"in").unwrap();
-        std::fs::write(&relative, b"rel").unwrap();
-        std::fs::write(&orphan, b"or").unwrap();
-        std::fs::write(&other, b"txt").unwrap();
-        std::fs::write(&outside, b"out").unwrap();
-        assert!(resolve_managed_audio_path(&traversal, &audio_dir).is_none());
+        let outside = root.join("outside.wav");
+        std::fs::write(&expected, b"managed").expect("managed fixture must be writable");
+        std::fs::write(&orphan, b"orphan").expect("orphan fixture must be writable");
+        std::fs::write(&other, b"notes").expect("non-WAV fixture must be writable");
+        std::fs::write(&outside, b"do not delete").expect("outside fixture must be writable");
 
-        delete_listed_audio_files(
-            &audio_dir,
-            &[
-                inside.to_string_lossy().into_owned(),
-                // A relative row must be deleted from inside `audio_dir`.
-                "relative.wav".to_string(),
-                outside.to_string_lossy().into_owned(),
-                traversal.to_string_lossy().into_owned(),
-            ],
+        // The list contains IDs collected from non-null database markers, not
+        // mutable filesystem paths. It therefore cannot name `outside.wav`.
+        delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()]);
+        assert!(!expected.exists(), "the derived managed file must be deleted");
+        assert!(outside.exists(), "an outside file must remain untouched");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+        assert!(!orphan.exists(), "the held-root WAV orphan must be removed");
+        assert!(other.exists(), "non-WAV files must not be swept");
+        assert!(outside.exists(), "the sweep must not reach outside the root");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_sweep_stays_in_the_held_root_after_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-held-root-{}",
+            std::process::id()
+        ));
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let original = app_data.join("transcription-audio");
+        let detached = app_data.join("former-transcription-audio");
+        let original_orphan = original.join("orphan.wav");
+        std::fs::write(&original_orphan, b"delete").expect("orphan fixture must be writable");
+
+        std::fs::rename(&original, &detached)
+            .expect("an open Unix directory can be renamed for this regression");
+        std::fs::create_dir(&original).expect("replacement directory must be creatable");
+        let replacement_orphan = original.join("orphan.wav");
+        std::fs::write(&replacement_orphan, b"do not delete")
+            .expect("replacement fixture must be writable");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+
+        assert!(
+            !detached.join("orphan.wav").exists(),
+            "the sweep must delete from the original held directory"
         );
-        assert!(!inside.exists());
-        assert!(!relative.exists());
-        assert!(outside.exists());
-
-        sweep_orphaned_wavs(&audio_dir);
-        assert!(!orphan.exists());
-        assert!(other.exists());
-        assert!(outside.exists());
+        assert!(
+            replacement_orphan.exists(),
+            "the replacement directory must not be swept"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
