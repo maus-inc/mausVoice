@@ -246,6 +246,7 @@
   "export_transcription": "전사 내보내기",
   "failed_to_load_api_keys": "API 키를 로드하지 못했습니다",
   "failed_to_load_models": "모델을 로드하지 못했습니다",
+  "failed_to_restart_mausvoice_as_administrator": "Failed to restart mausVoice as administrator.",
   "failed_to_stop_recording": "녹화를 중지하지 못했습니다",
   "fast_large_model_great_accuracy": "빠른 대형 모델, 뛰어난 정확도",
   "fastest_lowest_accuracy": "가장 빠름, 가장 낮은 정확도",

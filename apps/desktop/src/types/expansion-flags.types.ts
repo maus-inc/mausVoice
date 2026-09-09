@@ -5,6 +5,7 @@ export const EXPANSION_FLAG_NAMES = [
   "connectorsEnabled",
   "handsFreeToggleEnabled",
   "voiceWorkflowsEnabled",
+  "ephemeralSessionEnabled",
 ] as const;
 
 export type ExpansionFeatureName = (typeof EXPANSION_FLAG_NAMES)[number];
@@ -18,6 +19,7 @@ export const DEFAULT_EXPANSION_FLAGS: ExpansionFlags = {
   connectorsEnabled: false,
   handsFreeToggleEnabled: false,
   voiceWorkflowsEnabled: false,
+  ephemeralSessionEnabled: false,
 };
 
 /**
