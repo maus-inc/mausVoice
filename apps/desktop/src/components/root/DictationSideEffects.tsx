@@ -428,15 +428,16 @@ export const DictationSideEffects = () => {
    * pill stuck on a stale phase.
    */
   const sendPhaseToPill = useCallback(async (phase: OverlayPhase) => {
-    lastPhaseSentRef.current = phase;
     try {
       await invoke<void>("set_phase", { phase });
+      lastPhaseSentRef.current = phase;
     } catch (error) {
       getLogger().warning(
         `Failed to send phase ${phase} to pill: ${error}; retrying once`,
       );
       try {
         await invoke<void>("set_phase", { phase });
+        lastPhaseSentRef.current = phase;
       } catch (retryError) {
         getLogger().error(
           `Failed to send phase ${phase} to pill on retry: ${retryError}`,
@@ -552,7 +553,7 @@ export const DictationSideEffects = () => {
 
           getLogger().verbose("Invoking stop_recording and fetching a11y info");
           const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-            strategyRef.current?.setPhase("loading"),
+            sendPhaseToPill("loading"),
             invoke<StopRecordingResponse>("stop_recording"),
             invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
               getLogger().verbose(`Failed to get text field info: ${error}`);
@@ -586,7 +587,7 @@ export const DictationSideEffects = () => {
     );
 
     return { audio, a11yInfo, appTarget };
-  }, [intl]);
+  }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
     async ({
@@ -642,6 +643,8 @@ export const DictationSideEffects = () => {
       getLogger().verbose(
         `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
       );
+
+      await sendPhaseToPill("idle");
 
       if (strategy.shouldStoreTranscript()) {
         getLogger().verbose("Storing transcription");
