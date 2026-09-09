@@ -208,6 +208,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_last_y: Cell::new(0.0),
         hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         hover_probed: Cell::new(false),
         hover_probe_x: Cell::new(0.0),
         hover_probe_y: Cell::new(0.0),
@@ -641,6 +642,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.drag_draw_offset_y.set(0.0);
                     state_tick.drag_motion.borrow_mut().reset();
                     state_tick.selector_placement.borrow_mut().reset();
+                    state_tick.crossing.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
                     let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
@@ -683,6 +685,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         );
         tick_hover_frame(&state_tick);
         tick_selector_placement(&win_tick, &state_tick, dt_tick);
+        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
 
         // Show/hide entry for typing mode
         let is_typing = state_tick.is_typing();
@@ -1111,6 +1114,63 @@ fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
             reduced_motion: reduced_motion(),
         },
     );
+}
+
+/// Origin of the monitor containing the pill center, in physical root pixels,
+/// for crossing identity. X11 with a saved position only: Wayland has no
+/// queryable absolute position, so it reports unknown and never deforms.
+fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, f64) {
+    let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    if state.backend.get() != Backend::X11 || !state.has_saved_position.get() {
+        return unknown;
+    }
+    let display = window.display();
+    let scale = window
+        .window()
+        .map(|gdk_win| gdk_win.scale_factor() as f64)
+        .unwrap_or(1.0);
+    if !scale.is_finite() || scale <= 0.0 {
+        return unknown;
+    }
+    let (ox, oy) = state.content_offset();
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let cx = state.saved_x.get() + (ox + px + pw / 2.0) * scale;
+    let cy = state.saved_y.get() + (oy + py + ph / 2.0) * scale;
+    let monitor = match display.monitor_at_point(cx.round() as i32, cy.round() as i32) {
+        Some(monitor) => monitor,
+        None => return unknown,
+    };
+    let ms = monitor.scale_factor() as f64;
+    if !ms.is_finite() || ms <= 0.0 {
+        return unknown;
+    }
+    let g = monitor.geometry();
+    (g.x() as f64 * ms, g.y() as f64 * ms, cx, cy)
+}
+
+/// Advances the shared crossing-deformation controller once per frame from
+/// the monitor under the pill center. A reduced-motion trigger arms the
+/// border flash instead of deforming.
+fn tick_crossing_frame(window: &gtk::Window, state: &PillState, dt: f64) {
+    let (mx, my, cx, cy) = crossing_monitor(window, state);
+    let rm = reduced_motion();
+    let out = state.crossing.borrow_mut().advance(
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: mx,
+            monitor_y: my,
+            pill_cx: cx,
+            pill_cy: cy,
+            now: drag_clock_now(),
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
 }
 
 /// Advances hover intent one frame from the latest probe and reports edges.

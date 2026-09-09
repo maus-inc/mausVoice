@@ -140,6 +140,19 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
+    // Monitor-crossing deformation: paint-only scale about the pill center.
+    // Click regions below keep the unscaled footprint. Gfx pre-multiplies, so
+    // the calls run in reverse point order versus cairo.
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        gfx.save();
+        gfx.translate(-dcx, -dcy);
+        gfx.scale(dsx, dsy);
+        gfx.translate(dcx, dcy);
+    }
+
     gfx.fill_rounded_rect(rx, ry, pill_w, pill_h, radius, [0.0, 0.0, 0.0, bg_alpha]);
     gfx.stroke_rounded_rect(rx + 0.5, ry + 0.5, pill_w - 1.0, pill_h - 1.0, radius - 0.5,
         [1.0, 1.0, 1.0, BORDER_ALPHA], 1.0);
@@ -170,6 +183,9 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+    if deformed {
+        gfx.restore();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

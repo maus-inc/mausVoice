@@ -228,6 +228,9 @@ pub(crate) struct PillState {
     /// through a grace before exiting, so fast pass-throughs never flicker
     /// the pill. See rust_pill_shared::hover.
     pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    /// Crossing-deformation state machine: squeezes the paint briefly when
+    /// the pill changes monitors. See rust_pill_shared::deform.
+    pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
     /// Selector-placement state machine: picks above or below from the live
     /// headroom and eases the blend between them. See
     /// rust_pill_shared::placement.

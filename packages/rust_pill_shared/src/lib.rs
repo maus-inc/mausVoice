@@ -6,6 +6,7 @@
 //! platform traces the *same* path for the same input rectangle, so the
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
+pub mod deform;
 pub mod drag;
 pub mod edge;
 pub mod hover;

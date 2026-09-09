@@ -612,6 +612,7 @@ fn perform_tick() {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.drag_motion.borrow_mut().reset();
                     ctx.state.selector_placement.borrow_mut().reset();
+                    ctx.state.crossing.borrow_mut().reset();
                     ctx.state.reset_strategy.set(strategy);
                     let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
                     ipc::send(&OutMessage::PositionChanged {
@@ -817,6 +818,42 @@ fn clear_flash(state: &PillState) {
     );
 }
 
+/// Origin of the visible frame containing the pill center, plus the center
+/// itself, in top-down points. Drives the crossing detector; the transparent
+/// canvas may straddle a boundary the pill itself has not crossed. Unknown
+/// when no screen contains the center.
+unsafe fn pill_center_monitor(window: id, state: &PillState) -> (f64, f64, f64, f64) {
+    let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    let frame = window_frame(window);
+    let (px, py, pw, ph) = draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    // View is flipped y-down; the window origin is bottom-left y-up.
+    let cx_up = frame.origin.x + cox + px + pw / 2.0;
+    let cy_up = frame.origin.y + frame.size.height - (coy + py + ph / 2.0);
+    let screens = screens();
+    let count: usize = msg_send![screens, count];
+    let primary: id = if count > 0 {
+        msg_send![screens, objectAtIndex:0usize]
+    } else {
+        return unknown;
+    };
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    for i in 0..count {
+        let screen: id = msg_send![screens, objectAtIndex:i];
+        let frame: NSRect = msg_send![screen, frame];
+        if cx_up >= frame.origin.x
+            && cx_up < frame.origin.x + frame.size.width
+            && cy_up >= frame.origin.y
+            && cy_up < frame.origin.y + frame.size.height
+        {
+            let visible = to_top_down(screen_visible_frame(screen), primary_top);
+            return (visible.x, visible.y, primary_top - cx_up, primary_top - cy_up);
+        }
+    }
+    unknown
+}
+
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
 /// cancel controls, drag inflate), and the fireworks/flame/flash/transcript
@@ -897,6 +934,28 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.expand_t.get(),
     );
     rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+
+    // Monitor crossing from the pill center: deformation is paint-only, so
+    // hit regions and saved positions never see it. A reduced-motion trigger
+    // arms the border flash instead.
+    let (mon_x, mon_y, pcx, pcy) = unsafe { pill_center_monitor(window, state) };
+    let rm = reduced_motion();
+    let out = state.crossing.borrow_mut().advance(
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: mon_x,
+            monitor_y: mon_y,
+            pill_cx: pcx,
+            pill_cy: pcy,
+            now: unsafe { CFAbsoluteTimeGetCurrent() },
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
 
     // Selector side from the live headroom: the selector drops below the
     // pill exactly when the strip above no longer fits it. Draw and hit
@@ -1643,6 +1702,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         drag_cancelled: Cell::new(false),
         drag_motion: RefCell::new(DragController::new()),
         hover_intent: RefCell::new(HoverIntent::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),

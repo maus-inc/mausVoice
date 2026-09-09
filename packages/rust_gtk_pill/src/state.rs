@@ -272,6 +272,9 @@ pub(crate) struct PillState {
     /// headroom and eases the blend between them. See
     /// rust_pill_shared::placement.
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
+    /// Crossing-deformation state machine: squeezes the paint briefly when
+    /// the pill changes monitors. See rust_pill_shared::deform.
+    pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
     // Latest hover probe (hit test plus pointer position). Motion, enter,
     // leave, and release handlers only record; the frame tick runs the probe
     // through the controller so bursts coalesce into one decision per frame.
