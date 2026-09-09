@@ -6,6 +6,8 @@
 //! platform traces the *same* path for the same input rectangle, so the
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
+pub mod drag;
+
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
 
