@@ -112,12 +112,18 @@ function sleepSync(ms) {
       if (res?.error || res?.status !== 0) {
         const reason =
           res?.error?.code ??
-          res?.error?.message ??
+          (res?.error?.message ? res.error.message : undefined) ??
           (res?.signal ? `signal:${res.signal}` : undefined) ??
           res?.status ??
           "unknown";
+        const messageSuffix =
+          res?.error?.message && reason !== res.error.message
+            ? ` — ${res.error.message}`
+            : res?.signal
+              ? ` — killed by signal ${res.signal}`
+              : "";
         console.warn(
-          `[sidecar] sleepSync spawnSync failed: ${reason}${res?.error?.message ? ` — ${res.error.message}` : res?.signal ? ` — killed by signal ${res.signal}` : ""}`,
+          `[sidecar] sleepSync spawnSync failed: ${reason}${messageSuffix}`,
         );
         const start = Date.now();
         while (Date.now() - start < ms) {
