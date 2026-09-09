@@ -9,8 +9,10 @@ import {
   capVocabularyTerms,
   collectVocabularyTerms,
   DEEPGRAM_KEYTERM_BUDGET,
-  ELEVENLABS_KEYTERMS_BUDGET,
+  ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+  ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
   GLOSSARY_EXACT_SPELLING_INSTRUCTION,
+  GLOSSARY_PROMPT_BUDGET,
   isGlossaryPromptTruncated,
   PostProcessingPromptInput,
 } from "./prompt.utils";
@@ -175,15 +177,38 @@ describe("buildSystemPostProcessingTonePrompt", () => {
       ),
     );
     const spellings = result.match(/Spellings: (.*)/)?.[1] ?? "";
-    expect(spellings.length).toBeLessThanOrEqual(2_100);
-    // The budget is 2,000 characters of rules, so the full 120-rule list
-    // (over 3,900 characters) must be cut short.
+    expect(spellings.length).toBeLessThanOrEqual(
+      GLOSSARY_PROMPT_BUDGET.maxCharacters,
+    );
+    // With no source terms the rules get the whole shared budget, so the
+    // full 120-rule list (over 3,900 characters) must be cut short.
     expect(spellings).not.toContain("src119");
     expect(spellings).toContain("src0");
   });
 });
 
 describe("glossary template variable", () => {
+  it("inserts template values verbatim when they contain dollar patterns", () => {
+    const result = buildPostProcessingPrompt(
+      makeInput(
+        {
+          kind: "template",
+          promptTemplate: "Glossary: <glossary/>. <transcript/>",
+        },
+        {
+          glossary: {
+            sources: ["cost$&price", "fee$`quote"],
+            replacements: [],
+          },
+        },
+      ),
+    );
+    // $& and $` must land in the prompt exactly as written, not be
+    // interpreted as replace patterns.
+    expect(result).toContain("cost$&price");
+    expect(result).toContain("fee$`quote");
+  });
+
   it("substitutes <glossary/> in template prompts", () => {
     const result = buildPostProcessingPrompt(
       makeInput(
@@ -353,9 +378,14 @@ describe("provider budgets match documented API limits", () => {
     expect(ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET.maxTermLength).toBe(50);
   });
 
-  it("ElevenLabs keyterms respect the 50-character and 5-word limits", () => {
-    expect(ELEVENLABS_KEYTERMS_BUDGET.maxTermLength).toBe(50);
-    expect(ELEVENLABS_KEYTERMS_BUDGET.maxWordsPerTerm).toBe(5);
+  it("ElevenLabs batch keyterms respect the 50-character and 5-word limits", () => {
+    expect(ELEVENLABS_BATCH_KEYTERMS_BUDGET.maxTermLength).toBe(50);
+    expect(ELEVENLABS_BATCH_KEYTERMS_BUDGET.maxWordsPerTerm).toBe(5);
+  });
+
+  it("ElevenLabs realtime keyterms stay within 50 terms of 20 characters", () => {
+    expect(ELEVENLABS_REALTIME_KEYTERMS_BUDGET.maxEntries).toBe(50);
+    expect(ELEVENLABS_REALTIME_KEYTERMS_BUDGET.maxTermLength).toBe(20);
   });
 
   it("Azure phrase lists document a 500-phrase maximum", () => {

@@ -13,7 +13,7 @@ import {
   buildProviderVocabulary,
   collectDictionaryEntries,
   DEEPGRAM_KEYTERM_BUDGET,
-  ELEVENLABS_KEYTERMS_BUDGET,
+  ELEVENLABS_BATCH_KEYTERMS_BUDGET,
   VocabularyBudget,
 } from "../utils/prompt.utils";
 import {
@@ -437,7 +437,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
         repo = new ElevenLabsTranscribeAudioRepo(
           prefs.apiKeyValue,
           providerVocabulary(
-            ELEVENLABS_KEYTERMS_BUDGET,
+            ELEVENLABS_BATCH_KEYTERMS_BUDGET,
             "ElevenLabs",
             prefs.warnings,
           ),

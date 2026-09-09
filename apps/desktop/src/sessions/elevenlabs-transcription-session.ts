@@ -2,11 +2,11 @@ import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
-import { getLogger } from "../utils/log.utils";
+import { getLogger, redactQueryParamValues } from "../utils/log.utils";
 import {
   buildProviderVocabulary,
   collectDictionaryEntries,
-  ELEVENLABS_KEYTERMS_BUDGET,
+  ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
 } from "../utils/prompt.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { drainSamples } from "./audio-buffer.utils";
@@ -280,7 +280,7 @@ const startElevenLabsStreaming = async (
     const wsUrl = `${ELEVENLABS_WS_URL}?token=${encodeURIComponent(token)}&model_id=scribe_v2_realtime&audio_format=${audioFormat}&commit_strategy=vad${keytermParams}`;
     getLogger().verbose(
       "[ElevenLabs WebSocket] Connecting to:",
-      wsUrl.replace(token, "***"),
+      redactQueryParamValues(wsUrl, ["token", "keyterms"]),
     );
     ws = new WebSocket(wsUrl);
 
@@ -409,7 +409,7 @@ export class ElevenLabsTranscriptionSession extends BaseApiTranscriptionSession 
       getLogger().verbose("[ElevenLabs] Starting streaming session...");
       const { terms: keyterms, warning } = buildProviderVocabulary(
         collectDictionaryEntries(getAppState()),
-        ELEVENLABS_KEYTERMS_BUDGET,
+        ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
         "ElevenLabs",
       );
       if (warning) {

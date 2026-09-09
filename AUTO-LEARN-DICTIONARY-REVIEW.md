@@ -68,10 +68,13 @@ Reference points from the vendors whose STT APIs mausVoice integrates:
   with an error. Source: assemblyai.com/docs, keyterms prompting pages.
 - ElevenLabs Scribe v2, the model this repo hardcodes, supports `keyterms` as
   repeated form fields for batch and repeated query parameters for realtime.
-  Each term must be under 50 characters and at most 5 words. Using keyterms
-  adds a 20 percent surcharge, and going past 100 keyterms triggers a
-  20-second minimum billable duration per request. Source:
-  elevenlabs.io/docs, speech-to-text keyterms pages.
+  Batch accepts up to 1000 keyterms, each under 50 characters and at most 5
+  words. Realtime is stricter: up to 50 keyterms of at most 20 characters
+  each. Using keyterms adds a 20 percent surcharge, and going past 100
+  keyterms in batch triggers a 20-second minimum billable duration per
+  request. Source: elevenlabs.io/docs, speech-to-text keyterms pages, and
+  the ElevenLabs changelog entry of 2026-04-27 that introduced realtime
+  keyterms.
 - Azure Speech supports phrase lists for realtime transcription, with a
   documented maximum of 500 phrases. Batch transcription does not support
   phrase lists. Source: Microsoft Q&A and Azure documentation.
@@ -83,7 +86,7 @@ Reference points from the vendors whose STT APIs mausVoice integrates:
 
 ## 3. The pipeline as implemented
 
-```
+```text
 Correction made
   ├─ A. History details dialog ──> saveCorrectedTranscript (auto-learn.actions.ts)
   │      diff previous final transcript vs corrected text
@@ -381,6 +384,12 @@ dictionary as recognition hints.
   form fields. `assemblyaiTranscribeAudio` sends `word_boost` in the
   transcript payload. `azureTranscribeAudio` and `createAzureStreamingSession`
   take a `phrases` array for the phrase-list grammar.
+  `azureTranscribeAudio` runs one-shot recognition through the Speech SDK,
+  whose PhraseListGrammar supports phrase lists. It is not Azure Batch
+  Transcription, the separate asynchronous REST service, which does not
+  support phrase lists at all. The vocabulary handling stays in the Azure
+  batch repository because that repository is what batch-mode dictation
+  uses.
 - Desktop batch repos in `repos/transcribe-audio.repo.ts` and `repos/index.ts`:
   the four repos receive the user's vocabulary at construction, capped by
   per-provider budgets with a surfaced warning when entries had to be dropped.
@@ -472,13 +481,14 @@ duplicated logic. All were corrected.
 
 ### 9.1 Budget corrections
 
-| Budget                                       | Before | After | Why, with source                                                                                                |
-| -------------------------------------------- | ------ | ----- | --------------------------------------------------------------------------------------------------------------- |
-| `AZURE_PHRASE_LIST_BUDGET.maxEntries`        | 1000   | 500   | Microsoft documents a maximum of 500 phrases per phrase list.                                                   |
-| `DEEPGRAM_KEYTERM_BUDGET.maxCharacters`      | 4000   | 1500  | Deepgram's docs say to stay well under a 500-token total keyterm budget. 1500 characters is roughly 375 tokens. |
-| `ELEVENLABS_KEYTERMS_BUDGET.maxEntries`      | 1000   | 100   | The API accepts 1000, but past 100 each request incurs a 20-second minimum billable duration.                   |
-| `ELEVENLABS_KEYTERMS_BUDGET.maxTermLength`   | absent | 50    | Each keyterm must be under 50 characters.                                                                       |
-| `ELEVENLABS_KEYTERMS_BUDGET.maxWordsPerTerm` | absent | 5     | Each keyterm can contain at most 5 words.                                                                       |
+| Budget                                             | Before | After | Why, with source                                                                                                 |
+| -------------------------------------------------- | ------ | ----- | ---------------------------------------------------------------------------------------------------------------- |
+| `AZURE_PHRASE_LIST_BUDGET.maxEntries`              | 1000   | 500   | Microsoft documents a maximum of 500 phrases per phrase list.                                                    |
+| `DEEPGRAM_KEYTERM_BUDGET.maxCharacters`            | 4000   | 1500  | Deepgram's docs say to stay well under a 500-token total keyterm budget. 1500 characters is roughly 375 tokens.  |
+| `ELEVENLABS_BATCH_KEYTERMS_BUDGET.maxEntries`      | 1000   | 100   | The API accepts 1000, but past 100 each request incurs a 20-second minimum billable duration.                    |
+| `ELEVENLABS_BATCH_KEYTERMS_BUDGET.maxTermLength`   | absent | 50    | Each keyterm must be under 50 characters.                                                                        |
+| `ELEVENLABS_BATCH_KEYTERMS_BUDGET.maxWordsPerTerm` | absent | 5     | Each keyterm can contain at most 5 words.                                                                        |
+| `ELEVENLABS_REALTIME_KEYTERMS_BUDGET`              | shared | 50/20 | The realtime WebSocket accepts up to 50 keyterms of at most 20 characters each, split out from the batch budget. |
 
 `capVocabularyTerms` now enforces the per-term word limit through a new
 optional `maxWordsPerTerm` field on `VocabularyBudget`. Terms that exceed a
@@ -536,6 +546,9 @@ were extracted into shared helpers.
   together confirm repeated form fields for batch and repeated query
   parameters for realtime, the 50-character and 5-word per-term limits, the
   20 percent surcharge, and the 20-second minimum billing above 100 keyterms.
+- ElevenLabs realtime keyterm limits: the ElevenLabs changelog entry of
+  2026-04-27 and the speech-to-text capability overview, which both state a
+  maximum of 50 realtime keyterms of up to 20 characters each.
 - AssemblyAI streaming prompting and keyterms:
   assemblyai.com/docs/streaming/prompting-and-keyterms. Maximum 100 keyterms
   per session, each 50 characters or less, more than 100 returns an error.

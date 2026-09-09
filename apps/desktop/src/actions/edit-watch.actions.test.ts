@@ -68,9 +68,12 @@ describe("edit-watch proposal lifecycle", () => {
   it("clears a stale proposal and keeps polling after an ignored toast", async () => {
     invokeMock.mockReset();
     invokeMock.mockResolvedValue({ textContent: "call Ralf tomorrow" });
+    beginEditWatch("call ralf tomorrow");
+    // The watch is live and the proposal toast has long expired, with no
+    // accept or reject ever arriving: only the TTL check in pollEditWatch
+    // can clear it now.
     setProposal("Soniya", Date.now() - 60_000);
 
-    beginEditWatch("call ralf tomorrow");
     await pollEditWatch();
 
     // The stale proposal no longer blocks the poll: the focused field is

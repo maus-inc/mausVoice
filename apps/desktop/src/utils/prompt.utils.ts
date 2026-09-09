@@ -208,7 +208,10 @@ function applyTemplateVars(
 ): string {
   let result = template;
   for (const [name, value] of vars) {
-    result = result.replace(new RegExp(`<${name}\\/>`, "g"), value);
+    // The replacer function returns the value verbatim. A plain string
+    // replacement would interpret dollar patterns such as $& or $' inside
+    // user-controlled values like glossary terms and transcripts.
+    result = result.replace(new RegExp(`<${name}\\/>`, "g"), () => value);
   }
   return result;
 }
@@ -566,17 +569,24 @@ export const ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET: VocabularyBudget = {
   maxTermLength: 50,
 };
 
-// ElevenLabs Scribe v2 keyterms: each term under 50 characters and at most
-// 5 words (repeated form fields for batch, repeated query parameters for
-// realtime). The API accepts 1,000 terms, but going past 100 triggers a
-// 20-second minimum billable duration per request, so the cap stays at the
-// 100-term sweet spot. Using keyterms at all adds a 20% transcription
-// surcharge.
-export const ELEVENLABS_KEYTERMS_BUDGET: VocabularyBudget = {
+// ElevenLabs Scribe v2 batch keyterms travel as repeated form fields. Each
+// term must be under 50 characters and at most 5 words. The API accepts
+// 1,000 terms, but going past 100 triggers a 20-second minimum billable
+// duration per request, so the cap stays at the 100-term sweet spot. Using
+// keyterms at all adds a 20% transcription surcharge.
+export const ELEVENLABS_BATCH_KEYTERMS_BUDGET: VocabularyBudget = {
   maxEntries: 100,
   maxCharacters: 10_000,
   maxTermLength: 50,
   maxWordsPerTerm: 5,
+};
+
+// The realtime WebSocket is stricter: up to 50 keyterms of at most 20
+// characters each, sent as repeated query parameters.
+export const ELEVENLABS_REALTIME_KEYTERMS_BUDGET: VocabularyBudget = {
+  maxEntries: 50,
+  maxCharacters: 1_000,
+  maxTermLength: 20,
 };
 
 // Azure Speech phrase lists: Microsoft documents a maximum of 500 phrases,

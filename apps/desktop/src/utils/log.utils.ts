@@ -13,6 +13,33 @@ type Logger = {
   stopwatch<T>(label: string, fn: () => Promise<T>): Promise<T>;
 };
 
+/**
+ * Redacts the values of the named query parameters in a URL before it is
+ * logged. Vocabulary parameters such as Deepgram `keyterm` and ElevenLabs
+ * `keyterms` carry the user's dictionary terms, and auth tokens must never
+ * reach the log either. Parameters without a value keep their name only.
+ */
+export const redactQueryParamValues = (
+  url: string,
+  paramNames: string[],
+): string => {
+  try {
+    const parsed = new URL(url);
+    for (const name of paramNames) {
+      const count = parsed.searchParams.getAll(name).length;
+      if (count > 0) {
+        parsed.searchParams.delete(name);
+        for (let i = 0; i < count; i++) {
+          parsed.searchParams.append(name, "***");
+        }
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+
 const stringify = (args: unknown[]): string =>
   args
     .map((arg) => {

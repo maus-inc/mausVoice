@@ -2,7 +2,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { ensureFloat32Array } from "../utils/audio.utils";
-import { getLogger } from "../utils/log.utils";
+import { getLogger, redactQueryParamValues } from "../utils/log.utils";
 import {
   buildProviderVocabulary,
   collectDictionaryEntries,
@@ -155,7 +155,10 @@ const startDeepgramStreaming = async (
       language,
       keyterms,
     });
-    getLogger().verbose(`[${LOGGER_PREFIX}] Connecting to:`, wsUrl);
+    getLogger().verbose(
+      `[${LOGGER_PREFIX}] Connecting to:`,
+      redactQueryParamValues(wsUrl, ["keyterm"]),
+    );
     ws = new WebSocket(wsUrl, ["token", apiKey]);
 
     ws.onopen = () => {
