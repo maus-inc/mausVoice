@@ -130,17 +130,18 @@ describe("theme mode configuration", () => {
   });
 
   it("lets selected lucide icons inherit list item color in both schemes", () => {
-    const root = theme.components?.MuiListItemButton?.styleOverrides?.root;
-    if (typeof root !== "function") {
-      throw new Error("MuiListItemButton root override must be a function");
-    }
-    const resolveOverride = root as (args: {
-      theme: typeof theme;
-    }) => Record<string, unknown>;
-    const serialized = JSON.stringify(resolveOverride({ theme }));
-    expect(serialized).toContain('"& svg.lucide":{"color":"inherit"}');
-    expect(serialized.split('"& svg.lucide":{"color":"inherit"}')).toHaveLength(
-      3,
+    const themeSource = readFileSync(
+      new URL("./theme.ts", import.meta.url),
+      "utf8",
     );
+    const listItemButtonBlock = themeSource.slice(
+      themeSource.indexOf("MuiListItemButton:"),
+      themeSource.indexOf("MuiListItemIcon:"),
+    );
+    expect(listItemButtonBlock).toContain('applyStyles("dark"');
+    const inheritRules =
+      listItemButtonBlock.match(/"& svg\.lucide": \{\s*color: "inherit"/g) ??
+      [];
+    expect(inheritRules).toHaveLength(2);
   });
 });
