@@ -83,6 +83,25 @@ describe("postProcessTranscript provider attribution on failure", () => {
     expect(result.warnings.join(" ")).toContain("402");
   });
 
+  it("aborts the provider signal after a non-timeout failure", async () => {
+    let seenSignal: AbortSignal | undefined;
+    genRepo.generateText.mockImplementationOnce(
+      async (input: { signal?: AbortSignal }) => {
+        seenSignal = input.signal;
+        throw new Error("provider rejected the request");
+      },
+    );
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("hello world");
+    expect(result.metadata.postProcessFailed).toBe(true);
+    expect(seenSignal?.aborted).toBe(true);
+  });
+
   it("records provider metadata on success", async () => {
     genRepo.generateText.mockResolvedValueOnce({
       text: JSON.stringify({ result: "Hello, world." }),

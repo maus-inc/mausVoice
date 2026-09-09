@@ -529,8 +529,16 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
     );
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return [];
+    // OpenRouter deliberately omits STT models from its default text-model
+    // catalog. Request its transcription modality explicitly so a provider
+    // advertised in the transcription selector has a usable model picker.
+    return fetchOpenAICompatibleModels(
+      "OpenRouter",
+      "https://openrouter.ai/api/v1/models?output_modalities=transcription",
+      options.apiKey,
+    );
   }
 }
 
