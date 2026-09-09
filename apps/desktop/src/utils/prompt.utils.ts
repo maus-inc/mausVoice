@@ -211,7 +211,10 @@ function applyTemplateVars(
     // The replacer function returns the value verbatim. A plain string
     // replacement would interpret dollar patterns such as $& or $' inside
     // user-controlled values like glossary terms and transcripts.
-    result = result.replace(new RegExp(`<${name}\\/>`, "g"), () => value);
+    result = result.replace(
+      new RegExp(String.raw`<${name}\/>`, "g"),
+      () => value,
+    );
   }
   return result;
 }
