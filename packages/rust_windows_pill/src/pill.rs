@@ -18,6 +18,7 @@ use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibi
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -186,6 +187,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
         drag_motion: RefCell::new(DragController::new()),
+        hover_intent: RefCell::new(HoverIntent::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
@@ -522,8 +524,9 @@ fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
     }
 }
 
-/// Monotonic frame clock for the drag controller, in seconds. One origin per
-/// process; the controller only ever compares samples with each other.
+/// Monotonic clock in seconds for the gesture controllers (drag, hover
+/// intent). One origin per process; controllers only ever compare samples
+/// with each other.
 fn drag_now() -> f64 {
     use std::sync::OnceLock;
     static START: OnceLock<Instant> = OnceLock::new();
@@ -1279,23 +1282,26 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    // A held button owns the pointer, so the hit tests above cannot be trusted:
-    // dragging moves the window and easily outruns it, which would collapse the
-    // pill to its unhovered size mid-gesture.
-    let new_hovered = rust_pill_shared::resolve_hover(
-        in_pill || in_tooltip || in_panel,
-        state.pointer_down.get(),
-    );
-    let was_hovered = state.hovered.get();
-
-    if new_hovered != was_hovered {
-        state.hovered.set(new_hovered);
+    // Hover intent: the pointer must dwell on the pill at low speed before
+    // expansion and tooltips fire, and they linger through a short grace once
+    // it leaves, so fast pass-throughs never flicker the pill. A held button
+    // pins hover regardless of the hit tests above: dragging moves the window
+    // and easily outruns it, which would collapse the pill mid-gesture.
+    let output = state.hover_intent.borrow_mut().advance(&HoverFrame {
+        probed: in_pill || in_tooltip || in_panel,
+        pointer_x: cx,
+        pointer_y: cy,
+        now: drag_now(),
+        pointer_down: state.pointer_down.get(),
+    });
+    state.hovered.set(output.hovered);
+    if output.entered || output.exited {
         state.dirty.set(true);
         ipc::send(&OutMessage::Hover {
-            hovered: new_hovered,
+            hovered: output.hovered,
         });
     }
-    if !new_hovered {
+    if !output.hovered {
         state.mouse_x.set(-1000.0);
         state.mouse_y.set(-1000.0);
     }

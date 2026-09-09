@@ -195,6 +195,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_motion: RefCell::new(rust_pill_shared::drag::DragController::new()),
         drag_last_x: Cell::new(0.0),
         drag_last_y: Cell::new(0.0),
+        hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
+        hover_probed: Cell::new(false),
+        hover_probe_x: Cell::new(0.0),
+        hover_probe_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
@@ -237,11 +241,14 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_enter = state.clone();
     window.connect_enter_notify_event(move |win, event| {
         let (mx, my) = event.position();
-        let is_over_pill = input::is_over_pill_area(&state_enter, mx, my);
-        if is_over_pill {
-            state_enter.hovered.set(true);
-            ipc::send(&OutMessage::Hover { hovered: true });
-        }
+        // Record the probe; the frame tick runs it through the hover-intent
+        // controller, so entering the window does not expand the pill until
+        // the pointer actually dwells on it.
+        state_enter
+            .hover_probed
+            .set(input::is_over_pill_area(&state_enter, mx, my));
+        state_enter.hover_probe_x.set(mx);
+        state_enter.hover_probe_y.set(my);
         if let Some(gdk_win) = win.window() {
             input::set_expanded_input_region(&gdk_win, &state_enter);
         }
@@ -263,17 +270,14 @@ pub fn run(receiver: Receiver<InMessage>) {
             clear_pointer_pin(&state_motion, &win_motion);
         }
 
-        // A held button owns the pointer, so the hit test cannot be trusted:
-        // dragging moves the window and easily outruns it.
-        let is_over_pill = rust_pill_shared::resolve_hover(
-            input::is_over_pill_area(&state_motion, mx, my),
-            state_motion.pointer_down.get(),
-        );
-        let was_hovered = state_motion.hovered.get();
-        if is_over_pill != was_hovered {
-            state_motion.hovered.set(is_over_pill);
-            ipc::send(&OutMessage::Hover { hovered: is_over_pill });
-        }
+        // Record the probe; the frame tick runs it through the hover-intent
+        // controller (dwell to arm, grace to exit, pin while held), so bursts
+        // of motion coalesce into one hover decision per frame.
+        state_motion
+            .hover_probed
+            .set(input::is_over_pill_area(&state_motion, mx, my));
+        state_motion.hover_probe_x.set(mx);
+        state_motion.hover_probe_y.set(my);
 
         if state_motion.long_press_active.get() {
             let start_x = state_motion.long_press_start_x.get();
@@ -309,8 +313,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         // Dragging the pill drags its window out from under the pointer, so
         // mid-gesture crossings are an artefact, not the user leaving.
         if event.mode() == gdk::CrossingMode::Normal && !state_leave.pointer_down.get() {
-            state_leave.hovered.set(false);
-            ipc::send(&OutMessage::Hover { hovered: false });
+            // The pointer left for real; the tick's exit grace still applies,
+            // so a leave immediately followed by a re-enter does not flicker.
+            state_leave.hover_probed.set(false);
         }
         glib::Propagation::Proceed
     });
@@ -379,14 +384,16 @@ pub fn run(receiver: Receiver<InMessage>) {
             input::handle_click(&state_click, x, y);
         }
 
-        // Hover was pinned for the duration of the gesture; settle it against
-        // the cursor's real position now that the pointer is free.
+        // Hover was pinned for the duration of the gesture; re-probe against
+        // the cursor's real position now that the pointer is free. The frame
+        // tick applies it (with exit grace), so releasing outside fades out
+        // instead of snapping off.
         let (rx, ry) = event.position();
-        let now_hovered = input::is_over_pill_area(&state_click, rx, ry);
-        if now_hovered != state_click.hovered.get() {
-            state_click.hovered.set(now_hovered);
-            ipc::send(&OutMessage::Hover { hovered: now_hovered });
-        }
+        state_click
+            .hover_probed
+            .set(input::is_over_pill_area(&state_click, rx, ry));
+        state_click.hover_probe_x.set(rx);
+        state_click.hover_probe_y.set(ry);
         glib::Propagation::Proceed
     });
 
@@ -651,6 +658,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         release_pointer_if_button_up(&win_tick, &state_tick);
         tick(&state_tick);
         tick_drag_frame(&win_tick, &state_tick, backend_tick);
+        tick_hover_frame(&state_tick);
 
         // Show/hide entry for typing mode
         let is_typing = state_tick.is_typing();
@@ -1016,6 +1024,27 @@ fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt
             has_saved_position: true,
             rect,
             monitor,
+        });
+    }
+}
+
+/// Advances hover intent one frame from the latest probe and reports edges.
+/// The hover IPC fires only on entered/exited, so every platform reports each
+/// transition exactly once.
+fn tick_hover_frame(state: &PillState) {
+    let output = state.hover_intent.borrow_mut().advance(
+        &rust_pill_shared::hover::HoverFrame {
+            probed: state.hover_probed.get(),
+            pointer_x: state.hover_probe_x.get(),
+            pointer_y: state.hover_probe_y.get(),
+            now: drag_clock_now(),
+            pointer_down: state.pointer_down.get(),
+        },
+    );
+    state.hovered.set(output.hovered);
+    if output.entered || output.exited {
+        ipc::send(&OutMessage::Hover {
+            hovered: output.hovered,
         });
     }
 }

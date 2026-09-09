@@ -264,6 +264,16 @@ pub(crate) struct PillState {
     // shared controller so bursts coalesce into one move per frame.
     pub(crate) drag_last_x: Cell<f64>,
     pub(crate) drag_last_y: Cell<f64>,
+    /// Hover-intent state machine: dwells before arming hover and lingers
+    /// through a grace before exiting, so fast pass-throughs never flicker
+    /// the pill. See rust_pill_shared::hover.
+    pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    // Latest hover probe (hit test plus pointer position). Motion, enter,
+    // leave, and release handlers only record; the frame tick runs the probe
+    // through the controller so bursts coalesce into one decision per frame.
+    pub(crate) hover_probed: Cell<bool>,
+    pub(crate) hover_probe_x: Cell<f64>,
+    pub(crate) hover_probe_y: Cell<f64>,
     // X11 drop position, in physical root coordinates, persisted when a drag
     // ends so the toplevel stays parked until the user moves it again.
     pub(crate) has_saved_position: Cell<bool>,
