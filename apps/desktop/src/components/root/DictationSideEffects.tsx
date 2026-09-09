@@ -180,6 +180,96 @@ export const handleEmptyTranscriptionResult = async (
   return { handled: true };
 };
 
+export type PhaseBookkeeper = {
+  issue: () => number;
+  markSent: (seq: number, phase: OverlayPhase) => void;
+  getLastSent: () => OverlayPhase | null;
+};
+
+export const createPhaseBookkeeper = (): PhaseBookkeeper => {
+  let issued = 0;
+  let lastSent: OverlayPhase | null = null;
+  return {
+    issue: () => {
+      issued += 1;
+      return issued;
+    },
+    markSent: (seq, phase) => {
+      if (seq === issued) {
+        lastSent = phase;
+      }
+    },
+    getLastSent: () => lastSent,
+  };
+};
+
+type PostTranscriptInput = {
+  audio: StopRecordingResponse;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+  toneId: string | null;
+  rawTranscript: string;
+  transcribeResult: TranscriptionSessionResult;
+  strategy: Pick<BaseStrategy, "handleTranscript" | "shouldStoreTranscript">;
+  isAgentMode: boolean;
+  handleTranscriptTimeoutMs: number;
+  sendIdle: () => Promise<void>;
+  storeTranscriptionFn: typeof storeTranscription;
+  refreshMember: () => void;
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  const { strategy } = input;
+  if (input.isAgentMode) {
+    await input.sendIdle();
+  }
+  getLogger().info("Post-processing transcript");
+  const result = await withTimeout(
+    strategy.handleTranscript({
+      rawTranscript: input.rawTranscript,
+      processedTranscript: input.transcribeResult.processedTranscript,
+      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
+      toneId: input.toneId,
+      a11yInfo: input.a11yInfo,
+      currentApp: input.appTarget,
+      loadingToken: null,
+      audio: input.audio,
+      transcriptionMetadata: input.transcribeResult.metadata,
+      transcriptionWarnings: input.transcribeResult.warnings,
+    }),
+    input.handleTranscriptTimeoutMs,
+    "Transcript post-processing",
+  );
+  const transcript = result.transcript;
+  const sanitizedTranscript = result.sanitizedTranscript;
+  const postProcessMetadata = result.postProcessMetadata;
+  const postProcessWarnings = result.postProcessWarnings;
+  getLogger().verbose(
+    `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
+  );
+  await input.sendIdle();
+  if (strategy.shouldStoreTranscript()) {
+    getLogger().verbose("Storing transcription");
+    await input.storeTranscriptionFn({
+      audio: input.audio,
+      rawTranscript: input.rawTranscript ?? null,
+      sanitizedTranscript,
+      transcript,
+      transcriptionMetadata: input.transcribeResult.metadata,
+      postProcessMetadata,
+      warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
+      remoteStatus: result.remoteStatus,
+      remoteDeviceId: result.remoteDeviceId,
+    });
+  }
+  input.refreshMember();
+  return {
+    shouldContinue: result.shouldContinue,
+  };
+};
+
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
@@ -234,9 +324,7 @@ export const DictationSideEffects = () => {
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
   const isPausedRef = useRef(false);
-  // Last phase actually sent to the pill; drives the idle-reconciliation
-  // heartbeat and keeps duplicate idle writes out of the pipe.
-  const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
+  const phaseBookkeeperRef = useRef(createPhaseBookkeeper());
   const previousStyleSwitchKeysRef = useRef<string[]>([]);
   const utteranceTonesRef = useRef(createUtteranceToneSnapshots());
   const [isStopping, setIsStopping] = useState(false);
@@ -428,16 +516,18 @@ export const DictationSideEffects = () => {
    * pill stuck on a stale phase.
    */
   const sendPhaseToPill = useCallback(async (phase: OverlayPhase) => {
+    const bookkeeper = phaseBookkeeperRef.current;
+    const seq = bookkeeper.issue();
     try {
       await invoke<void>("set_phase", { phase });
-      lastPhaseSentRef.current = phase;
+      bookkeeper.markSent(seq, phase);
     } catch (error) {
       getLogger().warning(
         `Failed to send phase ${phase} to pill: ${error}; retrying once`,
       );
       try {
         await invoke<void>("set_phase", { phase });
-        lastPhaseSentRef.current = phase;
+        bookkeeper.markSent(seq, phase);
       } catch (retryError) {
         getLogger().error(
           `Failed to send phase ${phase} to pill on retry: ${retryError}`,
@@ -455,7 +545,7 @@ export const DictationSideEffects = () => {
       if (state.activeRecordingMode !== null) {
         return;
       }
-      if (lastPhaseSentRef.current === "idle") {
+      if (phaseBookkeeperRef.current.getLastSent() === "idle") {
         return;
       }
       void sendPhaseToPill("idle");
@@ -607,64 +697,23 @@ export const DictationSideEffects = () => {
         return { shouldContinue: false };
       }
 
-      if (getAppState().activeRecordingMode === "agent") {
-        await sendPhaseToPill("idle");
-      }
-
-      getLogger().info("Post-processing transcript");
-      // When review-before-insert is on, the composer owns the pacing;
-      // give the wrapper a budget above the composer's own so the two
-      // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
-      const handleTranscriptTimeoutMs = getMyUserPreferences(getAppState())
-        ?.reviewBeforeInsert
-        ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
-        : HANDLE_TRANSCRIPT_TIMEOUT_MS;
-      const result = await withTimeout(
-        strategy.handleTranscript({
-          rawTranscript,
-          processedTranscript: transcribeResult.processedTranscript,
-          serverPostProcessMetadata: transcribeResult.postProcessMetadata,
-          toneId,
-          a11yInfo,
-          currentApp: appTarget,
-          loadingToken: null,
-          audio,
-          transcriptionMetadata: transcribeResult.metadata,
-          transcriptionWarnings: transcribeResult.warnings,
-        }),
-        handleTranscriptTimeoutMs,
-        "Transcript post-processing",
-      );
-
-      const transcript = result.transcript;
-      const sanitizedTranscript = result.sanitizedTranscript;
-      const postProcessMetadata = result.postProcessMetadata;
-      const postProcessWarnings = result.postProcessWarnings;
-      getLogger().verbose(
-        `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
-      );
-
-      await sendPhaseToPill("idle");
-
-      if (strategy.shouldStoreTranscript()) {
-        getLogger().verbose("Storing transcription");
-        await storeTranscription({
-          audio,
-          rawTranscript: rawTranscript ?? null,
-          sanitizedTranscript,
-          transcript,
-          transcriptionMetadata: transcribeResult.metadata,
-          postProcessMetadata,
-          warnings: [...transcribeResult.warnings, ...postProcessWarnings],
-          remoteStatus: result.remoteStatus,
-          remoteDeviceId: result.remoteDeviceId,
-        });
-      }
-
-      refreshMember();
-      return {
-        shouldContinue: result.shouldContinue,
-      };
+      return postProcessFinalizedTranscript({
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+        strategy,
+        isAgentMode: getAppState().activeRecordingMode === "agent",
+        handleTranscriptTimeoutMs: getMyUserPreferences(getAppState())
+          ?.reviewBeforeInsert
+          ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
+          : HANDLE_TRANSCRIPT_TIMEOUT_MS,
+        sendIdle: () => sendPhaseToPill("idle"),
+        storeTranscriptionFn: storeTranscription,
+        refreshMember,
+      });
     },
     [sendPhaseToPill],
   );
