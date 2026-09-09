@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement, StrictMode } from "react";
+import { createElement, StrictMode, type ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -28,8 +28,8 @@ vi.mock("../../actions/app.actions", () => ({
 }));
 
 vi.mock("react-markdown", () => ({
-  default: ({ children }: { children?: unknown }) =>
-    createElement("div", null, children as never),
+  default: ({ children }: { children?: ReactNode }) =>
+    createElement("div", null, children),
 }));
 
 vi.mock("./AgentActivity", () => ({
@@ -37,8 +37,8 @@ vi.mock("./AgentActivity", () => ({
 }));
 
 vi.mock("../common/OverflowTypography", () => ({
-  OverflowTypography: ({ children }: { children?: unknown }) =>
-    createElement("span", null, children as never),
+  OverflowTypography: ({ children }: { children?: ReactNode }) =>
+    createElement("span", null, children),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {

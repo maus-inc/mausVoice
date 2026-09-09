@@ -28,6 +28,7 @@ import {
   setIncognitoModeEnabled,
   setIncognitoModeIncludeInStats,
   setMenuBarIconHidden,
+  setPreserveAudioOnFailure,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
   setSpokenCommandsEnabled,
@@ -66,6 +67,7 @@ export const MoreSettingsDialog = () => {
     ignoreUpdateDialog,
     incognitoModeEnabled,
     incognitoIncludeInStats,
+    preserveAudioOnFailure,
     dictationPillVisibility,
     pillResetMonitorStrategy,
     realtimeOutputEnabled,
@@ -91,6 +93,7 @@ export const MoreSettingsDialog = () => {
       prefs?.ignoreUpdateDialog ?? false,
       prefs?.incognitoModeEnabled ?? false,
       prefs?.incognitoModeIncludeInStats ?? false,
+      prefs?.preserveAudioOnFailure ?? true,
       getEffectivePillVisibility(prefs?.dictationPillVisibility),
       prefs?.pillResetMonitorStrategy ?? "current",
       prefs?.realtimeOutputEnabled ?? false,
@@ -193,6 +196,15 @@ export const MoreSettingsDialog = () => {
     logOnRejection(
       setIncognitoModeIncludeInStats(enabled),
       "settings dialog: setIncognitoModeIncludeInStats",
+    );
+  };
+
+  const handleTogglePreserveAudioOnFailure = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    logOnRejection(
+      setPreserveAudioOnFailure(event.target.checked),
+      "settings dialog: setPreserveAudioOnFailure",
     );
   };
 
@@ -399,6 +411,22 @@ export const MoreSettingsDialog = () => {
           )}
 
           <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Preserve audio on failure" />
+            }
+            description={
+              <FormattedMessage defaultMessage="Keep the audio snapshot with a failed transcription so you can replay it from History. Incognito recordings are never saved." />
+            }
+            action={
+              <Switch
+                edge="end"
+                checked={preserveAudioOnFailure}
+                onChange={handleTogglePreserveAudioOnFailure}
+              />
+            }
+          />
+
+          <SettingSection
             title={<FormattedMessage defaultMessage="Auto-learn dictionary" />}
             description={
               <FormattedMessage defaultMessage="When you correct a transcription, add the corrected names and words to your dictionary automatically." />
@@ -510,7 +538,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Spoken commands" />}
             description={
-              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Requires an English dictation language; Auto does not apply these commands.' />
+              <FormattedMessage defaultMessage='Turn phrases like "new line", "comma", and "scratch that" into formatting, even in Verbatim. Commands apply for English or Auto dictation.' />
             }
             action={
               <Switch
@@ -538,7 +566,7 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Review before insert" />}
             description={
-              <FormattedMessage defaultMessage="Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
+              <FormattedMessage defaultMessage="Open the editable assistant panel in the pill so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off." />
             }
             action={
               <Switch

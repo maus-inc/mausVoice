@@ -8,12 +8,71 @@ const { invokeMock, pluginFetchMock } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: pluginFetchMock }));
 
-import { createOpenAICompatibleFetch, secureFetch } from "./secure-fetch.utils";
+import {
+  createOpenAICompatibleFetch,
+  encodePrivateHttpBodyStream,
+  secureFetch,
+} from "./secure-fetch.utils";
+
+const encodeBase64 = (text: string): string => btoa(text);
+
+const decodeBase64 = (encoded: string): string => atob(encoded);
+
+const streamFromChunks = (chunks: Uint8Array[]): ReadableStream<Uint8Array> =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
 
 describe("secureFetch", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     pluginFetchMock.mockReset();
+  });
+
+  it("frames chunks separated at non-Base64 boundaries as one body", async () => {
+    const original = Uint8Array.from([0, 1, 2, 253, 254, 255, 17]);
+
+    const encoded = await encodePrivateHttpBodyStream(
+      streamFromChunks([
+        original.subarray(0, 2),
+        original.subarray(2, 5),
+        original.subarray(5),
+      ]),
+    );
+
+    const decoded = decodeBase64(encoded);
+    expect(
+      Uint8Array.from(decoded, (character) => character.charCodeAt(0)),
+    ).toEqual(original);
+  });
+
+  it("rejects an oversized stream before it is Base64-framed", async () => {
+    await expect(
+      encodePrivateHttpBodyStream(
+        streamFromChunks([Uint8Array.from([0, 1]), Uint8Array.from([2, 3])]),
+        null,
+        3,
+      ),
+    ).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it("stops a pending body read when its request is aborted", async () => {
+    let canceled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        canceled = true;
+      },
+    });
+    const controller = new AbortController();
+    const pending = encodePrivateHttpBodyStream(body, controller.signal);
+
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(canceled).toBe(true);
   });
 
   it("keeps curated HTTPS requests in plugin-http", async () => {
@@ -38,7 +97,7 @@ describe("secureFetch", () => {
     invokeMock.mockResolvedValue({
       status: 200,
       headers: { "content-type": "application/json" },
-      body: Array.from(new TextEncoder().encode('{"models":[]}')),
+      bodyBase64: encodeBase64('{"models":[]}'),
     });
 
     const response = await secureFetch("http://10.0.0.5:11434/api/tags", {
@@ -57,18 +116,60 @@ describe("secureFetch", () => {
           authorization: "Bearer local",
           "content-type": "text/plain;charset=UTF-8",
         },
-        body: Array.from(new TextEncoder().encode("request body")),
+        bodyBase64: expect.any(String),
       },
     });
+    const privateRequest = invokeMock.mock.calls.find(
+      ([command]) => command === "private_http_request",
+    )?.[1]?.request;
+    expect(decodeBase64(privateRequest.bodyBase64)).toBe("request body");
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ models: [] });
+  });
+
+  it("keeps Base64 framing intact across the request chunk boundary", async () => {
+    const requestBody = Uint8Array.from(
+      { length: 24 * 1024 + 2 },
+      (_value, index) => index % 251,
+    );
+    invokeMock.mockResolvedValue({
+      status: 200,
+      headers: {},
+      bodyBase64: "",
+    });
+
+    await secureFetch("http://127.0.0.1:11434/upload", {
+      method: "POST",
+      body: requestBody,
+    });
+
+    const privateRequest = invokeMock.mock.calls.find(
+      ([command]) => command === "private_http_request",
+    )?.[1]?.request;
+    const decoded = decodeBase64(privateRequest.bodyBase64);
+    expect(decoded.length).toBe(requestBody.length);
+    expect(
+      Uint8Array.from(decoded, (character) => character.charCodeAt(0)),
+    ).toEqual(requestBody);
+  });
+
+  it("rejects a malformed Base64 response frame", async () => {
+    invokeMock.mockResolvedValue({
+      status: 200,
+      headers: { "content-type": "text/plain" },
+      bodyBase64: "not-base64!",
+    });
+
+    await expect(
+      secureFetch("http://127.0.0.1:11434/api/tags"),
+    ).rejects.toThrow("Private-network response body is not valid base64");
   });
 
   it("routes saved hosted OpenAI-compatible endpoints through the authorized command", async () => {
     invokeMock.mockResolvedValue({
       status: 200,
       headers: { "content-type": "application/json" },
-      body: Array.from(new TextEncoder().encode('{"data":[]}')),
+      bodyBase64: encodeBase64('{"data":[]}'),
     });
 
     const customFetch = createOpenAICompatibleFetch("custom-key-id");
@@ -85,10 +186,18 @@ describe("secureFetch", () => {
         url: "https://llm.example.com/proxy/openai/v1/models",
         method: "GET",
         headers: { authorization: "Bearer secret" },
-        body: null,
+        bodyBase64: null,
       },
     });
     expect(response.status).toBe(200);
+  });
+
+  it("preserves a serialised IPC error's own message", async () => {
+    invokeMock.mockRejectedValue({ message: "private endpoint denied" });
+
+    await expect(
+      secureFetch("http://127.0.0.1:11434/api/tags"),
+    ).rejects.toThrow("Tauri IPC error: private endpoint denied");
   });
 
   it("does not start a native request for an already-aborted signal", async () => {
@@ -140,12 +249,12 @@ describe("secureFetch", () => {
       });
     });
 
-    finishRequest({ status: 204, headers: {}, body: [] });
+    finishRequest({ status: 204, headers: {}, bodyBase64: "" });
   });
 });
 
 type PrivateHttpResponseFixture = {
   status: number;
   headers: Record<string, string>;
-  body: number[];
+  bodyBase64: string;
 };

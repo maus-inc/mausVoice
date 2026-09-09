@@ -33,7 +33,7 @@ paste / simulate_type / remote receiver
 2. `DictationSideEffects` / dictation strategy starts capture and a `TranscriptionSession` (Deepgram stream, Gladia stream, other API batch, or local sidecar).
 3. Dictionary replacements run in TypeScript.
 4. If post-processing is **API**, a generate-text repo calls the configured LLM. **Off** skips the network rewrite.
-5. If `reviewBeforeInsert` is on, the composer opens for editing before insertion.
+5. If `reviewBeforeInsert` is on, the native pill's assistant panel opens for editing before insertion. An agent Paste action that opens Chats becomes a saved manual-paste card because Chats takes focus. Builds without a native pill use the composer fallback.
 6. History and audio persist unless Incognito mode is enabled.
 7. Insertion uses `paste` (clipboard) or `simulate_type` (simulated keystrokes).
 

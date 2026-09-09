@@ -62,15 +62,22 @@ const mountPage = () => {
   return {
     container,
     waitFor: async (predicate: () => boolean) => {
-      const deadline = Date.now() + 2000;
-      while (!predicate() && Date.now() < deadline) {
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 10));
+      if (predicate()) return;
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            if (!predicate()) return;
+            observer.disconnect();
+            resolve();
+          });
+          observer.observe(container, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+          });
         });
-      }
-      expect(predicate(), "timed out waiting for the chats page state").toBe(
-        true,
-      );
+      });
+      expect(predicate()).toBe(true);
     },
     cleanup: () => {
       act(() => {

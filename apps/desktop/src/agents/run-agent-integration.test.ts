@@ -11,6 +11,7 @@ const {
   humanizeScrubMock,
   modifyAgentStateMock,
   getChatMessageRepoCreateMock,
+  getToolPermissionStatusMock,
   agentLoopRun,
   loggerMock,
 } = vi.hoisted(() => {
@@ -24,6 +25,7 @@ const {
   const humanizeScrubMock = vi.fn();
   const modifyAgentStateMock = vi.fn();
   const getChatMessageRepoCreateMock = vi.fn();
+  const getToolPermissionStatusMock = vi.fn();
   const agentLoopRun = (events: unknown[]) => {
     async function* gen() {
       for (const event of events) yield event;
@@ -47,6 +49,7 @@ const {
     humanizeScrubMock,
     modifyAgentStateMock,
     getChatMessageRepoCreateMock,
+    getToolPermissionStatusMock,
     agentLoopRun,
     loggerMock,
   };
@@ -70,7 +73,7 @@ vi.mock("../repos", () => ({
 
 vi.mock("../actions/tool.actions", () => ({
   executeTool: vi.fn(),
-  getToolPermissionStatus: vi.fn(),
+  getToolPermissionStatus: getToolPermissionStatusMock,
   requestToolPermission: vi.fn(),
 }));
 
@@ -279,5 +282,28 @@ describe("runAgent continues after a tool call when the desktop side effect reje
         (m) => (m as { content?: string }).content === "scrubbed:done",
       ),
     ).toBe(true);
+  });
+});
+
+describe("pollForPermission", () => {
+  it("waits for the permission store to record timeout denial", async () => {
+    vi.useFakeTimers();
+    getAppStateMock.mockReturnValue({ agentStateByConversationId: {} });
+    const startedAt = Date.now();
+    getToolPermissionStatusMock.mockImplementation(() =>
+      Date.now() - startedAt >= 1_000 ? { status: "denied" } : null,
+    );
+
+    try {
+      const { pollForPermission } = await import("./run-agent");
+      const result = pollForPermission("c-1", "permission-1");
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(result).resolves.toBe("denied");
+      expect(getToolPermissionStatusMock).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

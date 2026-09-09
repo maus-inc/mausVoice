@@ -76,6 +76,10 @@ once_cell = "1"
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+# Hold managed-audio directory capabilities across destructive operations. The
+# 4.0.3 floor includes the patched resolver; do not downgrade below it.
+cap-std = "=4.0.3"
+cap-fs-ext = { version = "=4.0.3", default-features = false }
 
 [dev-dependencies]
 filetime = "0.2"

@@ -13,6 +13,7 @@ import {
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
+  normalizeGladiaModel,
   normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
@@ -594,7 +595,9 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       warnings,
       metadata: {
         inferenceDevice: "API • Gladia",
-        modelSize: this.model,
+        // gladiaTranscribeAudio normalizes legacy/unsupported persisted values
+        // before issuing its request, so History must record that actual model.
+        modelSize: normalizeGladiaModel(this.model),
         transcriptionMode: "api",
       },
     };

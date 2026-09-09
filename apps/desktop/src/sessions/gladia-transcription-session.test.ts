@@ -46,6 +46,8 @@ vi.mock("@maus-inc/voice-ai", () => ({
     mocks.sessionOptions = options;
     return mocks.createSession();
   },
+  normalizeGladiaModel: (model: string | null) =>
+    model === "solaria-1" ? model : "solaria-1",
 }));
 
 vi.mock("../store", () => ({
@@ -130,6 +132,21 @@ describe("GladiaTranscriptionSession", () => {
     });
     expect(mocks.finalize).toHaveBeenCalledOnce();
     expect(mocks.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("records Gladia's normalized model for an unsupported persisted value", async () => {
+    const session = new GladiaTranscriptionSession("key", "retired-model");
+    await session.onRecordingStart(16000);
+    mocks.sessionOptions?.onReady?.();
+
+    const result = await session.finalize({
+      samples: new Float32Array(0),
+      sampleRate: 16000,
+    });
+
+    // createGladiaStreamingSession normalizes the actual wire request. History
+    // must describe that effective model rather than the stale value.
+    expect(result.metadata.modelSize).toBe("solaria-1");
   });
 
   it("hands locally buffered reconnect audio to the SDK before finalizing", async () => {

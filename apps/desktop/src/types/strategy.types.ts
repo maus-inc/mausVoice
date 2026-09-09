@@ -13,6 +13,13 @@ export type StrategyValidationError = {
   action: Nullable<ToastAction>;
 };
 
+export type ReviewedTranscriptPersistenceInput = {
+  transcript: string;
+  sanitizedTranscript: string | null;
+  postProcessMetadata: PostProcessMetadata;
+  postProcessWarnings: string[];
+};
+
 export type HandleTranscriptParams = {
   rawTranscript: string;
   processedTranscript?: string | null;
@@ -24,6 +31,13 @@ export type HandleTranscriptParams = {
   audio: StopRecordingResponse;
   transcriptionMetadata: TranscribeAudioMetadata;
   transcriptionWarnings: string[];
+  /**
+   * Persists a reviewed Open edit and navigates to History. It returns false
+   * when persistence is unavailable so the pill keeps the review intact.
+   */
+  persistReviewedTranscript?: (
+    input: ReviewedTranscriptPersistenceInput,
+  ) => Promise<boolean>;
 };
 
 export type HandleTranscriptResult = {
@@ -34,4 +48,6 @@ export type HandleTranscriptResult = {
   postProcessWarnings: string[];
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
+  /** True when the review Open callback already persisted the History row. */
+  historyPersisted?: boolean;
 };

@@ -213,11 +213,11 @@ pub enum OutMessage {
         kind: String,
     },
     /// The user's decision on the transcript under review.
-    /// `action` is one of "insert", "copy", "cancel".
+    /// `action` is one of "insert", "copy", "cancel", "open".
     ///
-    /// `text` carries what the entry holds when the decision is "insert", so
-    /// an edit made in the panel is what gets typed. It is left out for the
-    /// other decisions.
+    /// `text` carries what the entry holds for Insert, Copy, and Open. Open
+    /// lets the desktop preserve the edited text before it settles the
+    /// review; Cancel leaves it out.
     ReviewDecision {
         review_id: String,
         action: String,

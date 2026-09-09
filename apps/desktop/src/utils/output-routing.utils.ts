@@ -1,19 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   RouteTranscriptOutputArgs,
-  RouteTranscriptOutputResult,
+  RouteTranscriptOutputResult as SharedRouteTranscriptOutputResult,
 } from "@maus-inc/types";
 import { beginEditWatch } from "../actions/edit-watch.actions";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
+import type { ReviewDecision } from "../types/review.types";
 import { getLogger } from "./log.utils";
 import { sendPillFlashMessage } from "./overlay.utils";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
 
 type PasteOutcome = "pasted" | "copied_to_clipboard";
+
+/**
+ * The normal delivery status plus the reviewed text after a successful Open
+ * persistence handoff. This stays in the desktop process and is never sent
+ * over IPC or stored separately from the History record.
+ */
+export type RouteTranscriptOutputResult = SharedRouteTranscriptOutputResult & {
+  reviewOpened?: boolean;
+  reviewedText?: string;
+};
 
 let handsFreeSessionId = 0;
 
@@ -38,7 +49,9 @@ const deliverRemoteOutput = async (
   args: RouteTranscriptOutputArgs,
   prefs: NonNullable<OutputContext["prefs"]>,
 ): Promise<RouteTranscriptOutputResult> => {
-  if (!args.text.trim()) return { delivered: false, remote: true };
+  if (!args.text.trim()) {
+    return { delivered: false, remote: true, deliveredText: null };
+  }
   await invoke<void>("remote_sender_deliver_final_text", {
     args: {
       targetDeviceId: prefs.remoteTargetDeviceId,
@@ -46,27 +59,28 @@ const deliverRemoteOutput = async (
       mode: args.mode,
     },
   });
-  return { delivered: true, remote: true };
+  return { delivered: true, remote: true, deliveredText: args.text };
 };
 
 const reviewOutputText = async (
   text: string,
   prefs: OutputContext["prefs"],
   skipReview?: boolean,
-): Promise<string | null> => {
+  onReviewOpen?: RouteTranscriptOutputArgs["onReviewOpen"],
+): Promise<ReviewDecision> => {
   if (skipReview || prefs?.reviewBeforeInsert !== true || !text.trim()) {
-    return text;
+    return { action: "insert", text };
   }
   // NOTE: the pill intentionally keeps its processing phase while this
   // review is open. The review await sits inside the caller's
   // handleTranscript chain, which also gates `isStoppingRef`, so
   // advertising an idle pill here would promise interactions the flow
   // cannot honor yet — and the wrapper's timeout must stay larger than
-  // the composer's own decision window so a long read can never be
-  // misclassified as a hang and skip history persistence. True phase
-  // decoupling needs the review wait lifted out of stopRecording and is
-  // tracked as a follow-up.
-  return reviewTranscriptBeforeInsert(text);
+  // the review decision window so a long read can never be misclassified
+  // as a hang and skip history persistence. True phase decoupling needs
+  // the review wait lifted out of stopRecording and is tracked as a
+  // follow-up.
+  return reviewTranscriptBeforeInsert(text, onReviewOpen);
 };
 
 const insertLocalOutput = async (
@@ -101,17 +115,46 @@ export const routeTranscriptOutput = async (
   const sessionId = ++handsFreeSessionId;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
-    const outputText = await reviewOutputText(
+    const decision = await reviewOutputText(
       args.text,
       prefs,
       args.skipReview,
+      args.onReviewOpen,
     );
-    if (!outputText?.trim()) return { delivered: false, remote: true };
-    return deliverRemoteOutput({ ...args, text: outputText }, prefs);
+    if (decision.action === "open") {
+      return {
+        delivered: false,
+        remote: true,
+        deliveredText: null,
+        reviewOpened: true,
+        reviewedText: decision.text,
+      };
+    }
+    if (!decision.text?.trim()) {
+      return { delivered: false, remote: true, deliveredText: null };
+    }
+    return deliverRemoteOutput({ ...args, text: decision.text }, prefs);
   }
 
-  const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
-  if (!outputText?.trim()) return { delivered: false, remote: false };
+  const decision = await reviewOutputText(
+    args.text,
+    prefs,
+    args.skipReview,
+    args.onReviewOpen,
+  );
+  if (decision.action === "open") {
+    return {
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+      reviewOpened: true,
+      reviewedText: decision.text,
+    };
+  }
+  const outputText = decision.text;
+  if (!outputText?.trim()) {
+    return { delivered: false, remote: false, deliveredText: null };
+  }
 
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
@@ -120,7 +163,7 @@ export const routeTranscriptOutput = async (
       setTimeout(resolve, handsFreeDelayMs);
     });
     if (sessionId !== handsFreeSessionId) {
-      return { delivered: false, remote: false };
+      return { delivered: false, remote: false, deliveredText: null };
     }
   }
 
@@ -133,7 +176,7 @@ export const routeTranscriptOutput = async (
     beginEditWatch(outputText);
   }
 
-  return { delivered: true, remote: false };
+  return { delivered: true, remote: false, deliveredText: outputText };
 };
 
 export const insertLocalTranscriptOutputViaPaste = async (

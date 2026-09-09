@@ -297,25 +297,18 @@ describe("Gemini native transport", () => {
   it("cancels the response reader when the consumer stops iterating", async () => {
     let canceled = false;
     const encoder = new TextEncoder();
-    let pump: ReturnType<typeof setInterval> | undefined;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        // Never-ending stream of valid chunks.
-        pump = setInterval(() => {
-          try {
-            controller.enqueue(
-              encoder.encode(
-                'data: {"candidates":[{"content":{"parts":[{"text":"x"}]}}]}\r\n\r\n',
-              ),
-            );
-          } catch {
-            // Stream already closed/cancelled.
-          }
-        }, 5);
+        // One valid chunk is enough to reach the generator's cancellation
+        // path; keeping the stream open makes reader cancellation observable.
+        controller.enqueue(
+          encoder.encode(
+            'data: {"candidates":[{"content":{"parts":[{"text":"x"}]}}]}\r\n\r\n',
+          ),
+        );
       },
       cancel() {
         canceled = true;
-        clearInterval(pump);
       },
     });
     const customFetch = vi
@@ -331,8 +324,6 @@ describe("Gemini native transport", () => {
     const first = await generator.next();
     expect(first.done).toBe(false);
     await generator.return(undefined);
-    // Give the generator's finally-block cancellation a turn to run.
-    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(canceled).toBe(true);
   });
 

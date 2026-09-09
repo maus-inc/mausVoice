@@ -17,6 +17,7 @@ import {
   GroqModelProviderRepo,
   OpenAICompatibleModelProviderRepo,
   OpenAIModelProviderRepo,
+  OpenRouterModelProviderRepo,
   XaiModelProviderRepo,
 } from "./model-provider.repo";
 
@@ -120,6 +121,29 @@ describe("provider model discovery", () => {
     ).resolves.toEqual(["whisper-1"]);
   });
 
+  it("loads OpenRouter's STT-only catalog for its transcription picker", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "openai/whisper-large-v3" }, { id: "openai/whisper-1" }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      new OpenRouterModelProviderRepo().getTranscriptionModels({
+        apiKey: "openrouter-key",
+      }),
+    ).resolves.toEqual(["openai/whisper-1", "openai/whisper-large-v3"]);
+    expect(pluginFetchMock).toHaveBeenCalledWith(
+      "https://openrouter.ai/api/v1/models?output_modalities=transcription",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer openrouter-key" },
+      }),
+    );
+  });
+
   it("logs provider HTTP failures before using a fallback catalog", async () => {
     pluginFetchMock.mockResolvedValue(
       new Response(null, { status: 401, statusText: "Unauthorized" }),
@@ -166,10 +190,8 @@ describe("provider model discovery", () => {
     invokeMock.mockResolvedValue({
       status: 200,
       headers: { "content-type": "application/json" },
-      body: Array.from(
-        new TextEncoder().encode(
-          JSON.stringify({ data: [{ id: "custom/latest-model" }] }),
-        ),
+      bodyBase64: btoa(
+        JSON.stringify({ data: [{ id: "custom/latest-model" }] }),
       ),
     });
     const repo = new OpenAICompatibleModelProviderRepo();

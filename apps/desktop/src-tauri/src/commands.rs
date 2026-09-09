@@ -426,8 +426,9 @@ const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
-    /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
-    /// avoids expanding every sample into a JSON number.
+    /// Little-endian signed 16-bit mono PCM. The IPC serializer still carries
+    /// bytes as a JSON number array, but packed PCM is materially smaller than
+    /// sending each sample as a floating-point JSON value.
     pub pcm16_le: Vec<u8>,
     pub sample_rate: u32,
 }
@@ -455,13 +456,10 @@ pub struct PrivateHttpRequest {
     pub url: String,
     pub method: String,
     pub headers: std::collections::HashMap<String, String>,
-    // KNOWN COST: bodies cross the IPC bridge as JSON number arrays (Specta's
-    // Vec<u8> mapping), which inflates large payloads roughly 4x in transit.
-    // The 128 MiB request / 32 MiB response caps bound this. Moving to binary
-    // IPC (tauri::ipc::Request/Response raw payloads or base64 frames) needs
-    // regenerated Specta bindings and is tracked in
-    // docs/pr63-pr109-review-findings-audit.md.
-    pub body: Option<Vec<u8>>,
+    /// RFC 4648 standard Base64 body. A string is substantially smaller than
+    /// the JSON number array Specta generates for `Vec<u8>` and keeps large
+    /// local audio/model requests within the command's explicit limits.
+    pub body_base64: Option<String>,
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -469,7 +467,121 @@ pub struct PrivateHttpRequest {
 pub struct PrivateHttpResponse {
     pub status: u16,
     pub headers: std::collections::HashMap<String, String>,
-    pub body: Vec<u8>,
+    /// RFC 4648 standard Base64 response body, decoded by secureFetch.
+    pub body_base64: String,
+}
+
+const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize =
+    MAX_PRIVATE_HTTP_REQUEST_BYTES.div_ceil(3) * 4;
+
+fn private_http_request_body_limit_error() -> String {
+    format!(
+        "Private-network request body exceeds the {} MiB limit",
+        MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+    )
+}
+
+fn validate_private_http_encoded_body_length(encoded_length: usize) -> Result<(), String> {
+    if encoded_length > MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn validate_private_http_decoded_body_length(decoded_length: usize) -> Result<(), String> {
+    if decoded_length > MAX_PRIVATE_HTTP_REQUEST_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn private_http_invalid_base64_body_error() -> String {
+    "Private-network request body is not valid base64".to_string()
+}
+
+/// Validates a standard RFC 4648 Base64 frame and calculates its decoded size
+/// without allocating a destination buffer. The Base64 engine performs the
+/// actual decode afterwards; this preflight stops malformed or oversized IPC
+/// input from determining an allocation size.
+fn maximum_private_http_base64_decoded_length(encoded: &str) -> Result<usize, String> {
+    let encoded_length = encoded.len();
+    let remainder = encoded_length % 4;
+    if remainder == 1 {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let mut trailing_padding = 0;
+    for byte in encoded.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' if trailing_padding == 0 => {}
+            b'=' => trailing_padding += 1,
+            _ => return Err(private_http_invalid_base64_body_error()),
+        }
+    }
+    if trailing_padding > 2 || (trailing_padding > 0 && remainder != 0) {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let blocks = encoded_length.div_ceil(4);
+    let omitted_padding = if trailing_padding == 0 && remainder != 0 {
+        // An unpadded final group has two or three input characters and
+        // therefore produces one or two bytes less than a full group.
+        4 - remainder
+    } else {
+        trailing_padding
+    };
+    Ok(blocks * 3 - omitted_padding)
+}
+
+fn decode_private_http_body(body_base64: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    let Some(encoded) = body_base64 else {
+        return Ok(None);
+    };
+    // Check both the wire frame and its maximum decoded size before allocation.
+    // `decode_slice` specifically requires its conservative buffer estimate,
+    // which can be two bytes larger than the decoded output for padded input.
+    validate_private_http_encoded_body_length(encoded.len())?;
+    let maximum_decoded_length = maximum_private_http_base64_decoded_length(encoded)?;
+    validate_private_http_decoded_body_length(maximum_decoded_length)?;
+    let decoded_buffer_length = base64::decoded_len_estimate(encoded.len());
+
+    let mut decoded = Vec::new();
+    decoded
+        .try_reserve_exact(decoded_buffer_length)
+        .map_err(|_| "Unable to allocate the private-network request body".to_string())?;
+    decoded.resize(decoded_buffer_length, 0);
+    let decoded_length = base64::engine::general_purpose::STANDARD
+        .decode_slice(encoded, &mut decoded)
+        .map_err(|_| private_http_invalid_base64_body_error())?;
+    decoded.truncate(decoded_length);
+    Ok(Some(decoded))
+}
+
+fn reserve_private_http_response_body(
+    body: &mut Vec<u8>,
+    additional: usize,
+) -> Result<(), String> {
+    body.try_reserve(additional)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())
+}
+
+fn encode_private_http_body(body: &[u8]) -> Result<String, String> {
+    let encoded_len = base64::encoded_len(body.len(), true)
+        .ok_or_else(|| "Private-network response body is too large to encode".to_string())?;
+    // The native bridge already caps response bytes, but allocating the Base64
+    // transport string must still fail normally on a memory-constrained host.
+    // `encode_slice` does not allocate after this fallible reservation.
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(encoded_len)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())?;
+    encoded.resize(encoded_len, 0);
+    let written = base64::engine::general_purpose::STANDARD
+        .encode_slice(body, &mut encoded)
+        .map_err(|_| "Unable to encode the private-network response body".to_string())?;
+    debug_assert_eq!(written, encoded_len);
+    String::from_utf8(encoded)
+        .map_err(|_| "Private-network response Base64 was not valid UTF-8".to_string())
 }
 
 // Process-global by design: audio import runs the picker + decode pipeline
@@ -949,16 +1061,14 @@ async fn execute_http_request(
     let (_cancellation_guard, mut cancellation) =
         PrivateHttpCancellationGuard::register(request.request_id.clone())?;
 
-    if request
-        .body
-        .as_ref()
-        .is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES)
-    {
-        return Err(format!(
-            "Private-network request body exceeds the {} MiB limit",
-            MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
-        ));
-    }
+    // The decoder preflights both the Base64 frame and its decoded size before
+    // allocating the request body. Move and explicitly release the encoded
+    // frame before networking: at the 128 MiB payload limit it is about 171
+    // MiB, and retaining it alongside the decoded request body needlessly
+    // raises the peak memory for every redirectable request.
+    let encoded_request_body = request.body_base64;
+    let decoded_request_body = decode_private_http_body(encoded_request_body.as_deref())?;
+    drop(encoded_request_body);
 
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "HTTP request URL is invalid".to_string())?;
@@ -1012,7 +1122,7 @@ async fn execute_http_request(
     // addresses that passed the check.
     let mut current_url = initial_url;
     let mut current_method = method;
-    let mut current_body: Option<Vec<u8>> = request.body;
+    let mut current_body = decoded_request_body;
     // Plaintext policies connect directly: an environment HTTP proxy could
     // otherwise tunnel a private-network (or saved plaintext endpoint)
     // request, and its bearer credential, to an arbitrary public host.
@@ -1145,7 +1255,8 @@ async fn execute_http_request(
         .content_length()
         .unwrap_or_default()
         .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
-    let mut body = Vec::with_capacity(initial_capacity);
+    let mut body = Vec::new();
+    reserve_private_http_response_body(&mut body, initial_capacity)?;
     loop {
         let chunk = tokio::select! {
             _ = &mut cancellation => {
@@ -1167,13 +1278,14 @@ async fn execute_http_request(
                 MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
             ));
         }
+        reserve_private_http_response_body(&mut body, chunk.len())?;
         body.extend_from_slice(&chunk);
     }
 
     Ok(PrivateHttpResponse {
         status,
         headers,
-        body,
+        body_base64: encode_private_http_body(&body)?,
     })
 }
 
@@ -1417,166 +1529,81 @@ fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
     bytes
 }
 
+fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
+    matches!(audio_path, Some(path) if !path.is_empty())
+}
+
 async fn delete_audio_entries(
     app: AppHandle,
-    entries: Vec<(String, String)>,
+    entries: Vec<(String, bool)>,
 ) -> Result<Vec<String>, String> {
     if entries.is_empty() {
         return Ok(Vec::new());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
+        let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+            .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
         let mut removed = Vec::new();
-        for (id, path) in entries {
-            let file_path = PathBuf::from(&path);
-            if let Err(err) = crate::system::audio_store::delete_audio_file(&app, &file_path) {
-                log::error!("Failed to delete audio file for transcription {id}: {err}");
+        for (id, has_file_path) in entries {
+            // `audio_path` is only a presence marker. Preserve the historical
+            // empty-marker behavior (clear metadata but do not delete a file),
+            // while deriving every non-empty marker's filename from its ID.
+            if has_file_path {
+                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id)
+                {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        log::error!("Failed to delete audio file for transcription {id}: {err}");
+                    }
+                }
             }
+            // Match the existing recovery behavior: an unavailable file must
+            // not keep stale snapshot metadata indefinitely.
             removed.push(id);
         }
-        removed
+        Ok::<Vec<String>, String>(removed)
     })
     .await
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?
 }
 
-/// Resolve `path` to the exact file to delete, or `None` when it does not
-/// live directly inside the managed transcription-audio directory. Both the
-/// candidate's parent directory and `audio_dir` are canonicalized before
-/// comparison, so a `..` traversal, an intermediate symlink, or an
-/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
-/// lexical `starts_with` cannot do that. Callers must delete the returned
-/// path — never the raw input — because a relative input is resolved
-/// against `audio_dir` here.
-fn resolve_managed_audio_path(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    // Resolve the candidate: an absolute `path` is taken as-is; a relative
-    // `path` is resolved against `audio_dir`.
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Managed audio is a flat directory of `<id>.wav` files, so the file
-    // must sit directly inside `audio_dir`. Canonicalize the parent only:
-    // the entry itself may be a symlink we want to unlink rather than
-    // follow, and it may already be gone.
-    let file_name = candidate.file_name()?;
-    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    Some(real_parent.join(file_name))
-}
-
-/// Resolve `path` to the exact file to read, or `None` when it does not live
-/// directly inside the managed transcription-audio directory. This is the read
-/// counterpart to `resolve_managed_audio_path`: the delete helper must *not*
-/// follow the final entry (so a symlink can be unlinked), but a read must
-/// prove the final entry stays inside `audio_dir` even after following
-/// symlinks. We canonicalize the whole candidate, so a final-position symlink
-/// such as `audio/clip.wav -> /outside/secret.wav` resolves outside
-/// `audio_dir` and is rejected rather than leaking the outside file's bytes.
-fn resolve_managed_audio_path_for_read(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::fs::File> {
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Canonicalize the entire candidate (following a final symlink) and verify
-    // it resolves to a regular file whose parent is exactly the canonical
-    // managed audio directory.
-    let real_path = std::fs::canonicalize(&candidate).ok()?;
-    if !std::fs::metadata(&real_path).ok()?.is_file() {
-        return None;
-    }
-    let real_parent = real_path.parent()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    // Open first, then resolve the entry again. This binds confinement to the
-    // target actually opened rather than to a pre-open canonicalization that a
-    // symlink swap could invalidate.
-    let file = std::fs::File::open(&real_path).ok()?;
-    let opened_path = std::fs::canonicalize(&real_path).ok()?;
-    if opened_path.parent()? != real_audio_dir {
-        return None;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let opened = file.metadata().ok()?;
-        let resolved = std::fs::metadata(&opened_path).ok()?;
-        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
-            return None;
-        }
-    }
-    #[cfg(windows)]
-    {
-        // Windows requires a file handle to retrieve file identity (volume serial
-        // + file index) via GetFileInformationByHandle. Reopening the resolved
-        // path is necessary because Windows provides no API to obtain file
-        // identity from a path alone. This ensures the TOCTOU check compares the
-        // actual opened file with the current target at the resolved path.
-        let resolved_file = std::fs::File::open(&opened_path).ok()?;
-        let opened_id = windows_file_identity(&file)?;
-        let resolved_id = windows_file_identity(&resolved_file)?;
-        if opened_id != resolved_id {
-            return None;
-        }
-    }
-
-    Some(file)
-}
-
-/// Delete listed audio files that still live under `audio_dir`. Paths
-/// outside the managed directory (including traversal attempts) are skipped
-/// (not an error).
-fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
-    for path in paths {
-        // Delete the validated path, not the raw DB value: a relative entry
-        // such as `clip.wav` must resolve inside `audio_dir` rather than
-        // against the process working directory.
-        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
-            continue;
-        };
-        if let Err(err) = std::fs::remove_file(&file_path) {
+/// Delete snapshots whose non-null database marker was collected before a
+/// local-data reset. The storage path itself is intentionally ignored: each
+/// ID maps to its one generated filename in the directory capability.
+fn delete_listed_audio_files(audio_dir: &cap_std::fs::Dir, ids: &[String]) {
+    for id in ids {
+        if let Err(err) = crate::system::audio_store::delete_audio_file(audio_dir, id) {
             if err.kind() != std::io::ErrorKind::NotFound {
                 log::warn!(
-                    "Failed to delete audio file {} during clear: {err}",
-                    file_path.display()
+                    "Failed to delete audio file for transcription {id} during clear: {err}"
                 );
             }
         }
     }
 }
 
-/// Remove leftover `.wav` files in the managed audio directory after the
-/// DB table has been wiped (orphans from an interrupted record, etc.).
-fn sweep_orphaned_wavs(audio_dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(audio_dir) else {
+/// Remove leftover `.wav` files from the directory capability after the DB
+/// table has been wiped (for example, after an interrupted recording).
+fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) {
+    let Ok(entries) = audio_dir.entries() else {
         return;
     };
     for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) == Some("wav") {
-            if let Err(err) = std::fs::remove_file(&p) {
-                log::warn!(
-                    "Failed to remove orphaned audio file {}: {err}",
-                    p.display()
-                );
+        let file_name = entry.file_name();
+        if std::path::Path::new(&file_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("wav")
+        {
+            if let Err(err) =
+                crate::system::audio_store::delete_audio_file_named(audio_dir, &file_name)
+            {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "Failed to remove orphaned audio file {}: {err}",
+                        file_name.to_string_lossy()
+                    );
+                }
             }
         }
     }
@@ -1888,8 +1915,12 @@ pub async fn transcription_delete(
     .await
     .map_err(|err| err.to_string())?;
 
-    if let Some(path) = audio_path {
-        delete_audio_entries(app.clone(), vec![(id.clone(), path)]).await?;
+    if let Some(audio_path) = audio_path {
+        delete_audio_entries(
+            app.clone(),
+            vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
+        )
+        .await?;
     }
 
     crate::db::transcription_queries::delete_transcription(pool, &id)
@@ -1927,16 +1958,14 @@ pub async fn transcription_audio_load(
     .await
     .map_err(|err| err.to_string())?;
 
-    let audio_path = audio_path
-        .ok_or_else(|| "No audio snapshot available for this transcription".to_string())?;
+    if !audio_path_has_file_path(audio_path.as_deref()) {
+        return Err("No audio snapshot available for this transcription".to_string());
+    }
 
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
-    let audio_path_buf = PathBuf::from(&audio_path);
-
-    let mut audio_file = match resolve_managed_audio_path_for_read(&audio_path_buf, &audio_dir) {
-        Some(file) => file,
-        None => return Err("Audio snapshot path is outside the managed directory".to_string()),
-    };
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| err.to_string())?;
+    let mut audio_file = crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
+        .map_err(|err| format!("Unable to open the managed audio snapshot: {err}"))?;
 
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
         crate::system::audio_store::load_audio_samples(&mut audio_file)
@@ -1987,7 +2016,8 @@ pub async fn export_transcription(
         None => return Ok(false),
     };
 
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Read;
@@ -2014,9 +2044,11 @@ pub async fn export_transcription(
             }
         }
 
-        if let Some(ref audio_path_str) = audio_path {
-            let path_buf = PathBuf::from(audio_path_str);
-            if let Some(mut audio_file) = resolve_managed_audio_path_for_read(&path_buf, &audio_dir)
+        if audio_path_has_file_path(audio_path.as_deref()) {
+            // A non-empty value marks a saved snapshot; the generated ID name
+            // and held directory capability select the actual file.
+            if let Ok(mut audio_file) =
+                crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
             {
                 let mut audio_data = Vec::new();
                 audio_file
@@ -2424,10 +2456,11 @@ pub async fn clear_local_data(
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
 
-    // Collect audio file paths BEFORE wiping transcriptions so we can delete
-    // them from disk after the transaction commits.
-    let audio_paths: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
+    // Collect IDs with non-empty snapshot markers before wiping
+    // transcriptions so their generated managed filenames can be deleted
+    // after commit. This preserves the existing empty-marker behavior.
+    let audio_ids: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
     )
     .fetch_all(&pool)
     .await
@@ -2443,13 +2476,11 @@ pub async fn clear_local_data(
     }
     transaction.commit().await.map_err(|err| err.to_string())?;
 
-    // After commit, delete every audio WAV on disk that the DB used to know
-    // about, then sweep orphans. Each path goes through
-    // `resolve_managed_audio_path`, which canonicalizes the path and its
-    // parent so only files that really sit inside the managed audio
-    // directory are deleted.
-    if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
-        delete_listed_audio_files(&audio_dir, &audio_paths);
+    // After commit, open the managed root once, delete every filename derived
+    // from the recorded IDs, then sweep orphaned WAVs through that same held
+    // directory. A root replacement cannot redirect either destructive step.
+    if let Ok(audio_dir) = crate::system::audio_store::open_managed_audio_dir(&app) {
+        delete_listed_audio_files(&audio_dir, &audio_ids);
         sweep_orphaned_wavs(&audio_dir);
     }
 
@@ -2713,13 +2744,14 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())?;
 
-    let stale_entries: Vec<(String, String)> = rows
+    let stale_entries: Vec<(String, bool)> = rows
         .into_iter()
         .skip(MAX_RETAINED_TRANSCRIPTION_AUDIO)
         .map(|row| {
+            let audio_path = row.get::<String, _>("audio_path");
             (
                 row.get::<String, _>("id"),
-                row.get::<String, _>("audio_path"),
+                audio_path_has_file_path(Some(&audio_path)),
             )
         })
         .collect();
@@ -4226,10 +4258,10 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
 }
 
-/// Download the detached `.sig` (minisign text format) for an installer,
-/// validating every redirect hop against the trusted allow-list and enforcing
-/// a tight dedicated size cap (a signature is only a few hundred bytes, so it
-/// must not reuse the installer's 250 MiB streaming budget).
+/// Download the detached `.sig` (a Base64-encoded minisign signature) for an
+/// installer, validating every redirect hop against the trusted allow-list and
+/// enforcing a tight dedicated size cap (a signature is only a few hundred
+/// bytes, so it must not reuse the installer's 250 MiB streaming budget).
 async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
     let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
     validate_initial_signature_url(&parsed)?;
@@ -4272,6 +4304,17 @@ async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, St
     Ok(sig)
 }
 
+/// Decode the outer RFC 4648 frame that Tauri writes to each updater `.sig`
+/// file. The decoded payload is the ordinary, four-line minisign signature
+/// text that `minisign_verify` parses.
+fn decode_tauri_installer_signature(signature_base64: &[u8]) -> Result<String, String> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(signature_base64)
+        .map_err(|error| format!("Installer signature is not valid Tauri Base64: {error}"))?;
+    String::from_utf8(decoded)
+        .map_err(|error| format!("Installer signature is not valid UTF-8: {error}"))
+}
+
 /// Verify `data` against a minisign detached signature using the embedded
 /// updater public key. Returns `Ok(())` only when the signature is valid.
 fn verify_minisign_data(
@@ -4302,8 +4345,7 @@ async fn verify_installer_signature(
     }
     let public_key_text = updater_public_key_text(app)?;
     let sig_bytes = download_installer_signature(signature_url).await?;
-    let signature_text = String::from_utf8(sig_bytes)
-        .map_err(|e| format!("Installer signature is not valid UTF-8: {e}"))?;
+    let signature_text = decode_tauri_installer_signature(&sig_bytes)?;
     // Reading the whole installer and verifying its signature are CPU- and
     // memory-bound; move them off the async runtime so unrelated IPC/native
     // work is not stalled by a 250 MiB read + verification.
@@ -4431,9 +4473,50 @@ fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Downloads a `.dmg` installer to a temp directory and opens it with
-/// macOS Installer.app. This is used as a fallback when the normal in-place
-/// updater cannot write to the app's install location.
+fn unix_epoch_nanos(now: SystemTime) -> Result<u128, String> {
+    now.duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+        .map(|duration| duration.as_nanos())
+}
+
+/// Stream a response into a new installer file. Once the file exists, this
+/// function owns it: every transfer, write, or flush error closes and removes
+/// the incomplete file before returning. The caller owns cleanup after a
+/// complete file has moved on to signature verification or hand-off.
+async fn download_installer_response_to_file(
+    response: &mut reqwest::Response,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    // `create_new` avoids following or overwriting an entry planted at this
+    // predictable-by-design temp path. A collision is safe to report; the next
+    // update attempt receives a fresh random filename.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|error| error.to_string())?;
+
+    let transfer_result: Result<(), String> = async {
+        let mut written: u64 = 0;
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            written = installer_account_chunk(written, chunk.len() as u64)?;
+            std::io::Write::write_all(&mut file, &chunk).map_err(|error| error.to_string())?;
+        }
+        std::io::Write::flush(&mut file).map_err(|error| error.to_string())
+    }
+    .await;
+
+    // Closing first is required before removing a failed download on Windows.
+    drop(file);
+    if transfer_result.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    transfer_result
+}
+
+/// Downloads a `.dmg` installer to a temp directory and opens it through
+/// macOS's default handler. This is used as a fallback when the normal
+/// in-place updater cannot write to the app's install location.
 #[tauri::command]
 #[specta::specta]
 pub async fn download_and_open_mac_installer(
@@ -4451,10 +4534,10 @@ pub async fn download_and_open_mac_installer(
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we delete
-    // the temp file on any verification failure, and the launched installer keeps
-    // its own copy. Match the temp file's extension to the downloaded artifact
-    // so `open` handles it.
+    // timestamp, process ID, and random token make collisions vanishingly
+    // unlikely; `create_new` below still refuses to overwrite any collision.
+    // Match the extension to the downloaded artifact so `open` selects the
+    // right macOS handler.
     let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
         ".app.tar.gz"
     } else if parsed.path().ends_with(".pkg") {
@@ -4462,17 +4545,12 @@ pub async fn download_and_open_mac_installer(
     } else {
         ".dmg"
     };
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let nanos = unix_epoch_nanos(SystemTime::now())?;
     let pid = std::process::id();
+    let token = rand::random::<u64>();
     let dest = std::env::temp_dir().join(format!(
-        "mausvoice-update-{nanos}-{pid}{downloaded_ext}"
+        "mausvoice-update-{nanos}-{pid}-{token:016x}{downloaded_ext}"
     ));
-
-    // Remove any stale previous download (best-effort).
-    let _ = std::fs::remove_file(&dest);
 
     // Validate every redirect hop rather than trusting the initial URL: the
     // default policy would silently follow an allowed host to an arbitrary one.
@@ -4504,29 +4582,9 @@ pub async fn download_and_open_mac_installer(
     installer_content_length_ok(response.content_length())?;
 
     // Stream to disk, enforcing the cap as we go so a server that lies about
-    // (or omits) Content-Length cannot exhaust memory or fill the disk.
-    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut written: u64 = 0;
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = match installer_account_chunk(written, chunk.len() as u64) {
-            Ok(next) => next,
-            Err(err) => {
-                drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
-                let _ = std::fs::remove_file(&dest);
-                return Err(err);
-            }
-        };
-        if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
-            let _ = std::fs::remove_file(&dest);
-            return Err(err.to_string());
-        }
-    }
-    if let Err(err) = std::io::Write::flush(&mut file) {
-        let _ = std::fs::remove_file(&dest);
-        return Err(err.to_string());
-    }
-    drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
+    // (or omits) Content-Length cannot exhaust memory or fill the disk. The
+    // helper removes an incomplete file for every transfer/write/flush error.
+    download_installer_response_to_file(&mut response, &dest).await?;
 
     // Verify the downloaded DMG against its detached minisign signature
     // BEFORE opening it. On any failure (missing/invalid key, missing or
@@ -4537,10 +4595,13 @@ pub async fn download_and_open_mac_installer(
         return Err(err);
     }
 
-    std::process::Command::new("open")
-        .arg(&dest)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    // The handler may still need to read the verified file after `open`
+    // returns, so retain it on success. If the hand-off itself fails, no other
+    // process owns the file and it must not be left behind in the temp dir.
+    if let Err(error) = std::process::Command::new("open").arg(&dest).spawn() {
+        let _ = std::fs::remove_file(&dest);
+        return Err(error.to_string());
+    }
 
     Ok(())
 }
@@ -4770,6 +4831,49 @@ mod tests {
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    #[test]
+    fn private_http_base64_framing_preserves_bytes_and_rejects_invalid_data() {
+        let original = [0_u8, 1, 2, 253, 254, 255, 17];
+        let encoded =
+            encode_private_http_body(&original).expect("small response bytes must encode");
+        assert_eq!(
+            decode_private_http_body(Some(&encoded)),
+            Ok(Some(original.to_vec()))
+        );
+        assert_eq!(decode_private_http_body(None), Ok(None));
+        assert_eq!(
+            decode_private_http_body(Some("not-base64!")),
+            Err("Private-network request body is not valid base64".to_string())
+        );
+    }
+
+    #[test]
+    fn private_http_base64_framing_enforces_encoded_and_decoded_limits() {
+        assert_eq!(maximum_private_http_base64_decoded_length("AA=="), Ok(1));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAE="), Ok(2));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAEC"), Ok(3));
+        assert!(validate_private_http_encoded_body_length(
+            MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES
+        )
+        .is_ok());
+        assert_eq!(
+            validate_private_http_encoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+        assert!(validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES).is_ok());
+        assert_eq!(
+            validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+    }
+
+    #[test]
+    fn private_http_response_reservation_returns_an_error_on_capacity_overflow() {
+        let mut response = Vec::new();
+        assert!(reserve_private_http_response_body(&mut response, usize::MAX).is_err());
+        assert!(response.is_empty());
+    }
 
     #[test]
     fn terminal_command_rejects_empty() {
@@ -5269,103 +5373,10 @@ mod tests {
     }
 
     #[test]
-    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let other_dir = root.join("other");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&other_dir).unwrap();
-        // Canonicalized because the guard returns real paths (e.g. macOS
-        // maps /tmp to /private/tmp).
-        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
-
-        let inside = audio_dir.join("clip.wav");
-        let outside = other_dir.join("clip.wav");
-        // A traversal attempt must NOT escape the managed directory.
-        let traversal = audio_dir.join("..").join("escaped.wav");
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &audio_dir),
-            Some(expected.clone())
-        );
-        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
-        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
-        // A relative entry must resolve inside the managed directory, never
-        // against the process working directory.
-        assert_eq!(
-            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(expected.clone())
-        );
-        // An `audio_dir` spelled with `.` still matches its own contents.
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
-            Some(expected)
-        );
-
-        #[cfg(unix)]
-        {
-            // A symlinked subdirectory must not tunnel out of audio_dir.
-            let link = audio_dir.join("link");
-            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
-                None
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_rejects_final_symlink_escape() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-        let secret = outside_dir.join("secret.wav");
-        std::fs::write(&secret, b"TOP SECRET").unwrap();
-
-        #[cfg(unix)]
-        {
-            // A final-entry symlink pointing outside must be rejected for
-            // reads: canonicalizing the whole path follows the symlink and
-            // lands outside audio_dir, so the bytes are never leaked.
-            let link = audio_dir.join("clip.wav");
-            std::os::unix::fs::symlink(&secret, &link).unwrap();
-            assert!(
-                resolve_managed_audio_path_for_read(&link, &audio_dir).is_none()
-            );
-
-            // A regular file inside audio_dir is still accepted.
-            let real = audio_dir.join("real.wav");
-            std::fs::write(&real, b"ok").unwrap();
-            assert!(resolve_managed_audio_path_for_read(&real, &audio_dir).is_some());
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn managed_audio_read_returns_usable_handle_for_regular_file() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-read-handle-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        let real = audio_dir.join("real.wav");
-        std::fs::write(&real, b"readable-bytes").unwrap();
-
-        // The read helper must return a handle to the *validated* file whose
-        // bytes match what was on disk.
-        let file = resolve_managed_audio_path_for_read(&real, &audio_dir);
-        assert!(file.is_some());
-        let mut buf = String::new();
-        use std::io::Read;
-        file.unwrap().read_to_string(&mut buf).unwrap();
-        assert_eq!(buf, "readable-bytes");
-
-        let _ = std::fs::remove_dir_all(&root);
+    fn empty_and_null_audio_markers_do_not_authorize_file_access() {
+        assert!(!audio_path_has_file_path(None));
+        assert!(!audio_path_has_file_path(Some("")));
+        assert!(audio_path_has_file_path(Some("managed/snapshot.wav")));
     }
 
     #[test]
@@ -5553,7 +5564,9 @@ mod tests {
             )]
             .into_iter()
             .collect(),
-            body: Some(b"{}".to_vec()),
+            body_base64: Some(
+                encode_private_http_body(b"{}").expect("small test body must encode"),
+            ),
         }
     }
 
@@ -5881,7 +5894,7 @@ mod tests {
             url: "http://127.0.0.1:1/never-started".to_string(),
             method: "GET".to_string(),
             headers: std::collections::HashMap::new(),
-            body: None,
+            body_base64: None,
         })
         .await;
         match result {
@@ -5965,7 +5978,7 @@ mod tests {
             url: format!("http://{address}/slow"),
             method: "GET".to_string(),
             headers: std::collections::HashMap::new(),
-            body: None,
+            body_base64: None,
         }));
         tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
             .await
@@ -6017,44 +6030,70 @@ mod tests {
     }
 
     #[test]
-    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+    fn clear_local_data_deletes_derived_names_and_only_sweeps_wavs() {
         let root = std::env::temp_dir().join(format!(
             "mausvoice-clear-local-{}",
             std::process::id()
         ));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-
-        let inside = audio_dir.join("keep-me-not.wav");
-        let relative = audio_dir.join("relative.wav");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let expected = audio_dir.join("known-id.wav");
         let orphan = audio_dir.join("orphan.wav");
         let other = audio_dir.join("notes.txt");
-        let outside = outside_dir.join("do-not-delete.wav");
-        std::fs::write(&inside, b"in").unwrap();
-        std::fs::write(&relative, b"rel").unwrap();
-        std::fs::write(&orphan, b"or").unwrap();
-        std::fs::write(&other, b"txt").unwrap();
-        std::fs::write(&outside, b"out").unwrap();
+        let outside = root.join("outside.wav");
+        std::fs::write(&expected, b"managed").expect("managed fixture must be writable");
+        std::fs::write(&orphan, b"orphan").expect("orphan fixture must be writable");
+        std::fs::write(&other, b"notes").expect("non-WAV fixture must be writable");
+        std::fs::write(&outside, b"do not delete").expect("outside fixture must be writable");
 
-        delete_listed_audio_files(
-            &audio_dir,
-            &[
-                inside.to_string_lossy().into_owned(),
-                // A relative row must be deleted from inside `audio_dir`.
-                "relative.wav".to_string(),
-                outside.to_string_lossy().into_owned(),
-            ],
+        // The list contains IDs collected from non-null database markers, not
+        // mutable filesystem paths. It therefore cannot name `outside.wav`.
+        delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()]);
+        assert!(!expected.exists(), "the derived managed file must be deleted");
+        assert!(outside.exists(), "an outside file must remain untouched");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+        assert!(!orphan.exists(), "the held-root WAV orphan must be removed");
+        assert!(other.exists(), "non-WAV files must not be swept");
+        assert!(outside.exists(), "the sweep must not reach outside the root");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_sweep_stays_in_the_held_root_after_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-held-root-{}",
+            std::process::id()
+        ));
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let original = app_data.join("transcription-audio");
+        let detached = app_data.join("former-transcription-audio");
+        let original_orphan = original.join("orphan.wav");
+        std::fs::write(&original_orphan, b"delete").expect("orphan fixture must be writable");
+
+        std::fs::rename(&original, &detached)
+            .expect("an open Unix directory can be renamed for this regression");
+        std::fs::create_dir(&original).expect("replacement directory must be creatable");
+        let replacement_orphan = original.join("orphan.wav");
+        std::fs::write(&replacement_orphan, b"do not delete")
+            .expect("replacement fixture must be writable");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+
+        assert!(
+            !detached.join("orphan.wav").exists(),
+            "the sweep must delete from the original held directory"
         );
-        assert!(!inside.exists());
-        assert!(!relative.exists());
-        assert!(outside.exists());
-
-        sweep_orphaned_wavs(&audio_dir);
-        assert!(!orphan.exists());
-        assert!(other.exists());
-        assert!(outside.exists());
+        assert!(
+            replacement_orphan.exists(),
+            "the replacement directory must not be swept"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -6103,6 +6142,54 @@ mod tests {
         assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
     }
 
+    #[tokio::test]
+    async fn incomplete_installer_download_removes_its_partial_temp_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener must bind");
+        let address = listener.local_addr().expect("test listener has an address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("test client connects");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+            // The declared body is longer than the bytes sent. reqwest returns
+            // the response first and reports the broken transfer from
+            // `response.chunk`, exercising the file-owning cleanup path.
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 16\r\nconnection: close\r\n\r\npartial",
+                )
+                .await
+                .expect("test response writes");
+            socket.shutdown().await.expect("test response closes");
+        });
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock is after the Unix epoch")
+            .as_nanos();
+        let dest = std::env::temp_dir().join(format!(
+            "mausvoice-partial-installer-{}-{unique}.dmg",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&dest);
+        let mut response = reqwest::Client::new()
+            .get(format!("http://{address}/installer.dmg"))
+            .send()
+            .await
+            .expect("test server returns headers");
+
+        let result = download_installer_response_to_file(&mut response, &dest).await;
+        let was_removed = !dest.exists();
+        let _ = std::fs::remove_file(&dest);
+        server.await.expect("test server completes");
+
+        assert!(result.is_err(), "a truncated HTTP body must fail");
+        assert!(was_removed, "a failed transfer must remove its partial file");
+    }
+
     #[test]
     fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
         assert!(signature_content_length_ok(None).is_ok());
@@ -6130,6 +6217,15 @@ mod tests {
 #[cfg(test)]
 mod installer_url_tests {
     use super::*;
+
+    #[test]
+    fn installer_temp_timestamp_rejects_a_pre_epoch_clock() {
+        let before_epoch = UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("one second before the Unix epoch must be representable");
+
+        assert!(unix_epoch_nanos(before_epoch).is_err());
+    }
 
     #[test]
     fn initial_installer_url_requires_trusted_repo_path() {
@@ -6357,13 +6453,23 @@ RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7b
 trusted comment: timestamp:1633700835\tfile:test\tprehashed\n\
 wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
 
-        // Valid signature verifies.
-        assert!(verify_minisign_data(public_key, b"test", signature).is_ok());
+        // Tauri stores the complete minisign signature text in an outer Base64
+        // frame. The manual-installer fallback must decode that frame before
+        // passing it to minisign-verify; passing the downloaded `.sig` bytes
+        // directly makes every valid Tauri-signed installer fail to parse.
+        let tauri_signature = base64::engine::general_purpose::STANDARD.encode(signature);
+        let decoded_signature = decode_tauri_installer_signature(tauri_signature.as_bytes())
+            .expect("a Tauri-generated signature frame must decode");
+        assert_eq!(decoded_signature, signature);
+        assert!(verify_minisign_data(public_key, b"test", &decoded_signature).is_ok());
+
+        // A malformed outer frame must fail before minisign parsing.
+        assert!(decode_tauri_installer_signature(b"not-base64!").is_err());
         // A tampered payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"tampered", signature).is_err());
+        assert!(verify_minisign_data(public_key, b"tampered", &decoded_signature).is_err());
         // A different payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"other", signature).is_err());
-        // A malformed signature must fail to parse.
+        assert!(verify_minisign_data(public_key, b"other", &decoded_signature).is_err());
+        // A malformed decoded signature must fail to parse.
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
     }
 }
