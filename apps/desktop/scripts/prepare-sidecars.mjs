@@ -95,10 +95,18 @@ function sleepSync(ms) {
     const int32 = new Int32Array(sab);
     Atomics.wait(int32, 0, 0, ms);
   } catch {
-    // Fallback busy-wait if Atomics.wait is unavailable
-    const start = Date.now();
-    while (Date.now() - start < ms) {
-      // intentional empty
+    // Fallback: spawn a short-lived node process that sleeps without busy-waiting.
+    // Works cross-platform and doesn't consume CPU.
+    try {
+      spawnSync(process.execPath, ["-e", `setTimeout(()=>{}, ${ms})`], {
+        stdio: "ignore",
+      });
+    } catch {
+      // As a last resort, busy-wait (very rare)
+      const start = Date.now();
+      while (Date.now() - start < ms) {
+        // intentional empty
+      }
     }
   }
 }
@@ -148,10 +156,16 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     }
     // `run` already logged the failure when allowFailure is true
     if (!isLastAttempt) {
+      // Exponential backoff with jitter to reduce thundering-herd retries.
+      const baseDelayMs = 5000;
+      const maxDelayMs = 30000;
+      const exponential = baseDelayMs * 2 ** (attempt - 1);
+      const jitter = Math.floor(Math.random() * 1000);
+      const backoffMs = Math.min(exponential + jitter, maxDelayMs);
       console.warn(
-        `[sidecar] Retrying cargo build for ${binaryName} (${attempt}/${maxAttempts}) in 5s — transient network may have caused sherpa download 500`,
+        `[sidecar] Retrying cargo build for ${binaryName} (${attempt}/${maxAttempts}) in ${backoffMs}ms — transient network may have caused sherpa download 500`,
       );
-      sleepSync(5000);
+      sleepSync(backoffMs);
     }
   }
   if (!buildOk) {
