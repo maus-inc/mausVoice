@@ -19,4 +19,10 @@ describe("appendQueryParamValues", () => {
     appendQueryParamValues(params, "keyterm", []);
     expect(params.has("keyterm")).toBe(false);
   });
+
+  it("accepts an omitted value list", () => {
+    const params = new URLSearchParams({ model: "nova-3" });
+    appendQueryParamValues(params, "keyterm", undefined);
+    expect(params.has("keyterm")).toBe(false);
+  });
 });

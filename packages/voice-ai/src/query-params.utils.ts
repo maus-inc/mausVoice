@@ -8,8 +8,11 @@
 export const appendQueryParamValues = (
   params: URLSearchParams,
   name: string,
-  values: readonly string[],
+  values?: readonly string[],
 ): void => {
+  if (!values || values.length === 0) {
+    return;
+  }
   for (const value of values) {
     const trimmed = value.trim();
     if (trimmed) {

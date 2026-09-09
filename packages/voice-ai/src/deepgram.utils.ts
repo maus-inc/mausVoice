@@ -91,7 +91,7 @@ export const deepgramTranscribeAudio = async ({
       // Keyterm prompting (nova-3): repeat the parameter per term. Weights
       // from the legacy `keywords` feature are silently ignored here, so only
       // plain terms are ever sent.
-      appendQueryParamValues(params, "keyterm", keyterms ?? []);
+      appendQueryParamValues(params, "keyterm", keyterms);
 
       const response = await customFetch(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,
