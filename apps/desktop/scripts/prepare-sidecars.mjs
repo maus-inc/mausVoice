@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { randomInt } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -98,9 +99,25 @@ function sleepSync(ms) {
     // Fallback: spawn a short-lived node process that sleeps without busy-waiting.
     // Works cross-platform and doesn't consume CPU.
     try {
-      spawnSync(process.execPath, ["-e", `setTimeout(()=>{}, ${ms})`], {
-        stdio: "ignore",
-      });
+      const res = spawnSync(
+        process.execPath,
+        ["-e", `setTimeout(()=>{}, ${ms})`],
+        {
+          stdio: "ignore",
+        },
+      );
+      // spawnSync rarely throws; when the child fails to start (ENOENT) or exits
+      // with a non-zero status, res.error/status will indicate failure. Fall back
+      // to busy-wait to guarantee the requested sleep duration in that case.
+      if (res?.error || res?.status !== 0) {
+        const reason =
+          res?.error?.code ?? res?.error?.message ?? res?.status ?? "unknown";
+        console.warn(`[sidecar] sleepSync spawnSync failed: ${reason}`);
+        const start = Date.now();
+        while (Date.now() - start < ms) {
+          // intentional empty
+        }
+      }
     } catch {
       // As a last resort, busy-wait (very rare)
       const start = Date.now();
@@ -160,7 +177,7 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
       const baseDelayMs = 5000;
       const maxDelayMs = 30000;
       const exponential = baseDelayMs * 2 ** (attempt - 1);
-      const jitter = Math.floor(Math.random() * 1000);
+      const jitter = randomInt(0, 1000);
       const backoffMs = Math.min(exponential + jitter, maxDelayMs);
       console.warn(
         `[sidecar] Retrying cargo build for ${binaryName} (${attempt}/${maxAttempts}) in ${backoffMs}ms — transient network may have caused sherpa download 500`,
