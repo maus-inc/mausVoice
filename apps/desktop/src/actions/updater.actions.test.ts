@@ -8,9 +8,9 @@ const { updaterMock, toastMock, invokeMock } = vi.hoisted(() => ({
   updaterMock: {
     checkForUpdate: vi.fn(),
     checkForChannelUpdate: vi.fn(async (...args: unknown[]) =>
-      (
-        updaterMock.checkForUpdate as (...callArgs: unknown[]) => unknown
-      )(...args),
+      (updaterMock.checkForUpdate as (...callArgs: unknown[]) => unknown)(
+        ...args,
+      ),
     ),
     hasAvailableUpdate: vi.fn(() => false),
     closeAvailableUpdate: vi.fn(async () => {}),

@@ -363,99 +363,99 @@ export const UpdateDialog = () => {
         fullWidth
         maxWidth="sm"
         sx={{ zIndex: 9999 }}
-    >
-      <DialogTitle>
-        <FormattedMessage defaultMessage="Update available" />
-      </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <Stack spacing={0.5}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      >
+        <DialogTitle>
+          <FormattedMessage defaultMessage="Update available" />
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Stack spacing={0.5}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Typography
+                  variant="body1"
+                  sx={{
+                    fontWeight: 600,
+                  }}
+                >
+                  {readyToInstallLabel}
+                </Typography>
+                {offeredChannel === "beta" && (
+                  <Chip
+                    size="small"
+                    label={<FormattedMessage defaultMessage="Beta" />}
+                    color="warning"
+                    variant="outlined"
+                  />
+                )}
+              </Stack>
               <Typography
-                variant="body1"
-                sx={{
-                  fontWeight: 600,
-                }}
-              >
-                {readyToInstallLabel}
-              </Typography>
-              {offeredChannel === "beta" && (
-                <Chip
-                  size="small"
-                  label={<FormattedMessage defaultMessage="Beta" />}
-                  color="warning"
-                  variant="outlined"
-                />
-              )}
-            </Stack>
-            <Typography
-              variant="body2"
-              sx={{
-                color: "text.secondary",
-              }}
-            >
-              {currentVersionDescription}
-            </Typography>
-            {formattedDate && (
-              <Typography
-                variant="caption"
+                variant="body2"
                 sx={{
                   color: "text.secondary",
                 }}
               >
-                <FormattedMessage
-                  defaultMessage="Released on {date}"
-                  values={{ date: formattedDate }}
-                />
+                {currentVersionDescription}
               </Typography>
-            )}
-          </Stack>
-
-          {releaseNotes && (
-            <Stack spacing={1}>
-              <Typography variant="body1">
-                <FormattedMessage defaultMessage="What's new" />
-              </Typography>
-              <Markdown>{releaseNotes}</Markdown>
-              <Box>
-                <Button
-                  size="small"
-                  variant="text"
-                  sx={{ px: 0 }}
-                  onClick={() => setChangelogOpen(true)}
+              {formattedDate && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                  }}
                 >
-                  <FormattedMessage defaultMessage="View past releases" />
-                </Button>
-              </Box>
+                  <FormattedMessage
+                    defaultMessage="Released on {date}"
+                    values={{ date: formattedDate }}
+                  />
+                </Typography>
+              )}
             </Stack>
-          )}
 
-          {ui.showProgress && (
-            <UpdateProgress
+            {releaseNotes && (
+              <Stack spacing={1}>
+                <Typography variant="body1">
+                  <FormattedMessage defaultMessage="What's new" />
+                </Typography>
+                <Markdown>{releaseNotes}</Markdown>
+                <Box>
+                  <Button
+                    size="small"
+                    variant="text"
+                    sx={{ px: 0 }}
+                    onClick={() => setChangelogOpen(true)}
+                  >
+                    <FormattedMessage defaultMessage="View past releases" />
+                  </Button>
+                </Box>
+              </Stack>
+            )}
+
+            {ui.showProgress && (
+              <UpdateProgress
+                status={status}
+                requiresManualInstall={requiresManualInstall}
+                percent={percent}
+                progressLabel={progressLabel}
+              />
+            )}
+
+            <UpdateStatusAlerts
               status={status}
               requiresManualInstall={requiresManualInstall}
-              percent={percent}
-              progressLabel={progressLabel}
+              errorMessage={errorMessage}
+              showManualInstallerAction={ui.showManualInstallerAction}
+              onOpenManualInstaller={handleOpenManualInstaller}
             />
-          )}
-
-          <UpdateStatusAlerts
-            status={status}
-            requiresManualInstall={requiresManualInstall}
-            errorMessage={errorMessage}
-            showManualInstallerAction={ui.showManualInstallerAction}
-            onOpenManualInstaller={handleOpenManualInstaller}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <UpdateDialogActions
+            pkgInstallerOpened={ui.pkgInstallerOpened}
+            isUpdating={ui.isUpdating}
+            onClose={handleClose}
+            onInstall={() => void handleInstall()}
           />
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <UpdateDialogActions
-          pkgInstallerOpened={ui.pkgInstallerOpened}
-          isUpdating={ui.isUpdating}
-          onClose={handleClose}
-          onInstall={() => void handleInstall()}
-        />
-      </DialogActions>
+        </DialogActions>
       </Dialog>
       <ChangelogDialog
         open={changelogOpen}

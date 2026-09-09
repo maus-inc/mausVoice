@@ -3,13 +3,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fetchChangelogMock, openUrlMock, getVersionMock } = vi.hoisted(
-  () => ({
-    fetchChangelogMock: vi.fn(),
-    openUrlMock: vi.fn(async () => undefined),
-    getVersionMock: vi.fn(async () => "0.1.7"),
-  }),
-);
+const { fetchChangelogMock, openUrlMock, getVersionMock } = vi.hoisted(() => ({
+  fetchChangelogMock: vi.fn(),
+  openUrlMock: vi.fn(async () => undefined),
+  getVersionMock: vi.fn(async () => "0.1.7"),
+}));
 
 vi.mock("react-intl", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-intl")>();
@@ -102,7 +100,9 @@ afterEach(() => {
 
 const renderDialog = () => {
   act(() => {
-    root.render(createElement(ChangelogDialog, { open: true, onClose: () => {} }));
+    root.render(
+      createElement(ChangelogDialog, { open: true, onClose: () => {} }),
+    );
   });
 };
 
