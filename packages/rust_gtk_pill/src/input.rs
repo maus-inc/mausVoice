@@ -669,7 +669,7 @@ mod input_region_tests {
         let hidden = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            0.0, tooltip_w,
+            0.0, tooltip_w, 0.0,
             false,
         );
         assert!(
