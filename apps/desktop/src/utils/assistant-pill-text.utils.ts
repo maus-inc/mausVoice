@@ -140,7 +140,10 @@ const stripTagsOnce = (input: string): string => {
       continue;
     }
     const next = input[i + 1] ?? "";
-    const isTagStart = /[A-Za-z0-9/!?_-]/.test(next);
+    // Tag names start with an ASCII letter (HTML spec); digits, "-", and
+    // "_" do NOT start tags, so numeric ranges like "<3> apples" survive
+    // as literal text instead of being deleted up to the next ">".
+    const isTagStart = /[A-Za-z/!?]/.test(next);
     if (!isTagStart) {
       out += ch;
       i += 1;

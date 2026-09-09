@@ -139,6 +139,20 @@ describe("unsafe HTML is neutralized", () => {
     expect(result).toContain("text");
   });
 
+  it("keeps numeric ranges like <3> and <5 days as literal text", () => {
+    // "<" followed by a digit is not an HTML tag (tag names start with a
+    // letter). The old scanner treated it as a tag and deleted everything
+    // up to the next ">" — "I have <3> apples" became "I have apples".
+    expect(markdownToPillText("I have <3> apples")).toBe("I have <3> apples");
+    expect(markdownToPillText("Items (<5 days) are old; sort a > b")).toBe(
+      "Items (<5 days) are old; sort a > b",
+    );
+    // A real tag later in the string must still be stripped.
+    expect(markdownToPillText("Pick the <2> option <b>now</b>")).toBe(
+      "Pick the <2> option now",
+    );
+  });
+
   it("decodes entities only after stripping tags so encoded tags stay inert", () => {
     // &lt;script&gt; must not turn back into <script> in the output.
     const input = "Safe &lt;script&gt;alert(1)&lt;/script&gt; text";
