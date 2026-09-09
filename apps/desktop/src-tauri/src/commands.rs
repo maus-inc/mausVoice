@@ -472,7 +472,7 @@ pub struct PrivateHttpResponse {
 }
 
 const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize =
-    ((MAX_PRIVATE_HTTP_REQUEST_BYTES + 2) / 3) * 4;
+    MAX_PRIVATE_HTTP_REQUEST_BYTES.div_ceil(3) * 4;
 
 fn private_http_request_body_limit_error() -> String {
     format!(
@@ -522,7 +522,7 @@ fn maximum_private_http_base64_decoded_length(encoded: &str) -> Result<usize, St
         return Err(private_http_invalid_base64_body_error());
     }
 
-    let blocks = (encoded_length + 3) / 4;
+    let blocks = encoded_length.div_ceil(4);
     let omitted_padding = if trailing_padding == 0 && remainder != 0 {
         // An unpadded final group has two or three input characters and
         // therefore produces one or two bytes less than a full group.
@@ -4850,6 +4850,9 @@ mod tests {
 
     #[test]
     fn private_http_base64_framing_enforces_encoded_and_decoded_limits() {
+        assert_eq!(maximum_private_http_base64_decoded_length("AA=="), Ok(1));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAE="), Ok(2));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAEC"), Ok(3));
         assert!(validate_private_http_encoded_body_length(
             MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES
         )
