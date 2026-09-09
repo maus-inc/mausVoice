@@ -94,7 +94,7 @@ fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
         .follow(FollowSymlinks::No)
         .maybe_dir(true);
     let managed_directory = app_data.open_with(AUDIO_DIR_NAME, &options)?;
-    let metadata = managed_directory.metadata()?;
+    let metadata = managed_directory.dir_metadata()?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(reject_managed_audio_reparse_point());
     }
@@ -446,6 +446,21 @@ mod tests {
         assert_eq!(audio_file_name_for("session-42"), "session-42.wav");
         assert_eq!(audio_file_name_for("../../outside"), "outside.wav");
         assert_eq!(audio_file_name_for(""), "transcription.wav");
+    }
+
+    #[test]
+    fn opens_a_regular_managed_audio_directory() {
+        let root = TemporaryDirectory::create();
+        let held_audio_dir = open_managed_audio_dir_at(&root.0)
+            .expect("managed audio directory must be openable");
+
+        assert!(
+            held_audio_dir
+                .dir_metadata()
+                .expect("held managed directory metadata must be available")
+                .is_dir(),
+            "the managed capability must be a directory"
+        );
     }
 
     #[test]
