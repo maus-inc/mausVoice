@@ -17,6 +17,16 @@ const payloadTypes = () =>
     (call) => JSON.parse((call[1] as { payload: string }).payload).type,
   );
 
+const deferred = <T>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
 describe("native toast IPC ordering", () => {
   beforeEach(() => {
     invoke.mockReset();
@@ -24,16 +34,21 @@ describe("native toast IPC ordering", () => {
 
   it("delivers a slow show before a later dismiss", async () => {
     const delivered: string[] = [];
+    const showArrived = deferred<void>();
+    const releaseShow = deferred<void>();
     invoke.mockImplementation(async (_cmd: string, args: unknown) => {
       const { type } = JSON.parse((args as { payload: string }).payload);
-      // The show round trip is slower than the dismiss that follows it.
-      const delay = type === "toast" ? 20 : 0;
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      if (type === "toast") {
+        showArrived.resolve();
+        await releaseShow.promise;
+      }
       delivered.push(type);
     });
 
     const showing = showPersistentToast("working", 120_000);
     const dismissing = dismissToast();
+    await showArrived.promise;
+    releaseShow.resolve();
     await Promise.all([showing, dismissing]);
 
     // Without serialization the dismiss lands first and the loading toast

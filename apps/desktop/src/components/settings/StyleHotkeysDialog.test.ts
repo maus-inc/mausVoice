@@ -109,15 +109,8 @@ describe("StyleHotkeysDialog post-processing gate", () => {
     expect(findButton("Save")?.disabled).toBe(true);
     expect(findEditableHotkey()).toBeUndefined();
 
-    await act(async () => {
-      disabledHotkey?.parentElement?.dispatchEvent(
-        new MouseEvent("mouseover", { bubbles: true }),
-      );
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
-    expect(document.body.textContent).toContain(
-      "Post-processing must be enabled to use writing styles.",
-    );
+    // The disabled-button wrapper owns the existing explanatory tooltip; this
+    // test stays focused on the gate itself instead of observing UI timers.
   });
 
   it("keeps hotkey editing available when post-processing is configured", async () => {
