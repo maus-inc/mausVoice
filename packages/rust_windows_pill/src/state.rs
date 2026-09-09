@@ -228,6 +228,9 @@ pub(crate) struct PillState {
     /// headroom and eases the blend between them. See
     /// rust_pill_shared::placement.
     pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
+    /// Crossing-deformation state machine: squeezes the paint briefly when
+    /// the pill changes monitors. See rust_pill_shared::deform.
+    pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
     pub(crate) reset_strategy: Cell<ResetStrategy>,
@@ -337,6 +340,7 @@ impl PillState {
         if self.expand_velocity.get() != 0.0 { return true; }
         if self.tooltip_velocity.get() != 0.0 { return true; }
         if self.selector_placement.borrow().blend_velocity() != 0.0 { return true; }
+        if self.crossing.borrow().animating() { return true; }
         if self.panel_open_velocity.get() != 0.0 { return true; }
         if self.kb_button_velocity.get() != 0.0 { return true; }
         if self.draw_w_velocity.get() != 0.0 { return true; }

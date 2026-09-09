@@ -194,6 +194,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_motion: RefCell::new(DragController::new()),
         hover_intent: RefCell::new(HoverIntent::new()),
         selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
@@ -474,6 +475,7 @@ fn on_anim_tick(hwnd: HWND) {
             tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
             tick_selector_placement(hwnd, state, dt);
+            tick_crossing(hwnd, state, dt);
             update_visibility(hwnd, state);
             update_typing_focus(hwnd, state);
         }
@@ -756,6 +758,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.has_saved_position.set(false);
             state.drag_motion.borrow_mut().reset();
             state.selector_placement.borrow_mut().reset();
+            state.crossing.borrow_mut().reset();
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
             let hwnd = HWND_CELL.with(|c| c.get());
@@ -1605,6 +1608,62 @@ fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
             reduced_motion: reduced_motion(),
         },
     );
+}
+
+/// Origin of the monitor containing a screen point, for crossing identity.
+/// The full monitor origin (not the work area) keys identity, so taskbar
+/// moves never read as crossings. Unknown points stay unknown instead of
+/// guessing.
+fn monitor_origin_at(x: f64, y: f64) -> Option<(f64, f64)> {
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT { x: x.round() as i32, y: y.round() as i32 },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            Some((info.rcMonitor.left as f64, info.rcMonitor.top as f64))
+        } else {
+            None
+        }
+    }
+}
+
+/// Advances the shared crossing-deformation controller once per frame from
+/// the monitor under the pill center. The transparent canvas may straddle a
+/// boundary the pill itself has not crossed, so the window monitor is not
+/// enough. A reduced-motion trigger arms the border flash instead.
+fn tick_crossing(hwnd: HWND, state: &PillState, dt: f64) {
+    let (rect, _) = current_pill_geometry(hwnd);
+    let (ox, oy) = state.content_offset();
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let cx = rect.x + ox + px + pw / 2.0;
+    let cy = rect.y + oy + py + ph / 2.0;
+    let (mx, my) = monitor_origin_at(cx, cy).unwrap_or((f64::NAN, f64::NAN));
+    let rm = reduced_motion();
+    let out = state.crossing.borrow_mut().advance(
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: mx,
+            monitor_y: my,
+            pill_cx: cx,
+            pill_cy: cy,
+            now: drag_now(),
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
 }
 
 fn tick_long_press(state: &PillState, dt: f64) {

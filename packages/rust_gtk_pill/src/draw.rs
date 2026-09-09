@@ -148,6 +148,18 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
+    // Monitor-crossing deformation: paint-only scale about the pill center.
+    // Click regions below keep the unscaled footprint.
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        cr.save();
+        cr.translate(dcx, dcy);
+        cr.scale(dsx, dsy);
+        cr.translate(-dcx, -dcy);
+    }
+
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.set_source_rgba(0.0, 0.0, 0.0, bg_alpha);
     let _ = cr.fill();
@@ -186,6 +198,9 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+    if deformed {
+        let _ = cr.restore();
+    }
 }
 
 /// Draws the long-press progress ring around the pill, kept at full
