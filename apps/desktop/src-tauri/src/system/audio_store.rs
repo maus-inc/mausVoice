@@ -88,15 +88,34 @@ pub fn save_transcription_audio(
     })
 }
 
+/// Resolve `path` to the exact managed entry that may be unlinked, or `None`
+/// when it is not directly inside `audio_dir`. Canonicalizing the parent rather
+/// than the final entry deliberately permits unlinking a final-position symlink
+/// without following it, while rejecting `..` traversal and intermediate
+/// symlinks out of the managed directory.
+pub(crate) fn resolve_managed_audio_path_for_delete(
+    path: &Path,
+    audio_dir: &Path,
+) -> Option<PathBuf> {
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        audio_dir.join(path)
+    };
+    let file_name = candidate.file_name()?;
+    let real_parent = fs::canonicalize(candidate.parent()?).ok()?;
+    let real_audio_dir = fs::canonicalize(audio_dir).ok()?;
+    (real_parent == real_audio_dir).then(|| real_parent.join(file_name))
+}
+
 pub fn delete_audio_file(app: &tauri::AppHandle, file_path: &Path) -> io::Result<()> {
     let audio_dir = audio_dir(app)?;
-
-    if !file_path.starts_with(&audio_dir) {
-        return Err(io::Error::new(
+    let file_path = resolve_managed_audio_path_for_delete(file_path, &audio_dir).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Refusing to delete audio outside of managed directory",
-        ));
-    }
+        )
+    })?;
 
     match fs::remove_file(file_path) {
         Ok(()) => Ok(()),
@@ -259,4 +278,95 @@ pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32
     }
 
     Ok((samples, spec.sample_rate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_managed_audio_path_for_delete;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn create() -> Self {
+            static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "mausvoice-audio-store-test-{}-{id}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("test temporary directory must be creatable");
+            Self(path)
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn create_audio_dir(root: &Path) -> PathBuf {
+        let audio_dir = root.join("transcription-audio");
+        fs::create_dir_all(&audio_dir).expect("managed audio directory must be creatable");
+        audio_dir
+    }
+
+    #[test]
+    fn delete_path_must_be_a_direct_managed_child_after_normalization() {
+        let root = TemporaryDirectory::create();
+        let audio_dir = create_audio_dir(&root.0);
+        let managed = audio_dir.join("clip.wav");
+        let outside = root.0.join("outside.wav");
+        fs::write(&outside, b"do not delete").expect("outside fixture must be writable");
+
+        assert_eq!(
+            resolve_managed_audio_path_for_delete(&managed, &audio_dir),
+            Some(managed.clone())
+        );
+        assert_eq!(
+            resolve_managed_audio_path_for_delete(Path::new("clip.wav"), &audio_dir),
+            Some(managed)
+        );
+        assert!(
+            resolve_managed_audio_path_for_delete(&audio_dir.join("..").join("outside.wav"), &audio_dir)
+                .is_none()
+        );
+        assert!(
+            resolve_managed_audio_path_for_delete(Path::new("../outside.wav"), &audio_dir).is_none()
+        );
+        assert!(outside.exists(), "the rejected path must remain untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_path_rejects_intermediate_symlinks_but_unlinks_a_final_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = TemporaryDirectory::create();
+        let audio_dir = create_audio_dir(&root.0);
+        let outside_dir = root.0.join("outside");
+        fs::create_dir_all(&outside_dir).expect("outside fixture directory must be creatable");
+        let outside_file = outside_dir.join("secret.wav");
+        fs::write(&outside_file, b"do not delete").expect("outside fixture must be writable");
+
+        let intermediate_link = audio_dir.join("redirect");
+        symlink(&outside_dir, &intermediate_link).expect("intermediate symlink must be creatable");
+        assert!(
+            resolve_managed_audio_path_for_delete(&intermediate_link.join("secret.wav"), &audio_dir)
+                .is_none()
+        );
+
+        let final_link = audio_dir.join("clip.wav");
+        symlink(&outside_file, &final_link).expect("final symlink must be creatable");
+        let resolved = resolve_managed_audio_path_for_delete(&final_link, &audio_dir)
+            .expect("a final managed symlink may be unlinked without following it");
+        fs::remove_file(resolved).expect("managed final symlink must be removable");
+        assert!(
+            outside_file.exists(),
+            "unlinking the managed link must not delete its outside target"
+        );
+    }
 }

@@ -426,8 +426,9 @@ const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
-    /// Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
-    /// avoids expanding every sample into a JSON number.
+    /// Little-endian signed 16-bit mono PCM. The IPC serializer still carries
+    /// bytes as a JSON number array, but packed PCM is materially smaller than
+    /// sending each sample as a floating-point JSON value.
     pub pcm16_le: Vec<u8>,
     pub sample_rate: u32,
 }
@@ -455,13 +456,10 @@ pub struct PrivateHttpRequest {
     pub url: String,
     pub method: String,
     pub headers: std::collections::HashMap<String, String>,
-    // KNOWN COST: bodies cross the IPC bridge as JSON number arrays (Specta's
-    // Vec<u8> mapping), which inflates large payloads roughly 4x in transit.
-    // The 128 MiB request / 32 MiB response caps bound this. Moving to binary
-    // IPC (tauri::ipc::Request/Response raw payloads or base64 frames) needs
-    // regenerated Specta bindings and is tracked in
-    // docs/pr63-pr109-review-findings-audit.md.
-    pub body: Option<Vec<u8>>,
+    /// RFC 4648 standard Base64 body. A string is substantially smaller than
+    /// the JSON number array Specta generates for `Vec<u8>` and keeps large
+    /// local audio/model requests within the command's explicit limits.
+    pub body_base64: Option<String>,
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -469,7 +467,119 @@ pub struct PrivateHttpRequest {
 pub struct PrivateHttpResponse {
     pub status: u16,
     pub headers: std::collections::HashMap<String, String>,
-    pub body: Vec<u8>,
+    /// RFC 4648 standard Base64 response body, decoded by secureFetch.
+    pub body_base64: String,
+}
+
+const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize =
+    ((MAX_PRIVATE_HTTP_REQUEST_BYTES + 2) / 3) * 4;
+
+fn private_http_request_body_limit_error() -> String {
+    format!(
+        "Private-network request body exceeds the {} MiB limit",
+        MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+    )
+}
+
+fn validate_private_http_encoded_body_length(encoded_length: usize) -> Result<(), String> {
+    if encoded_length > MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn validate_private_http_decoded_body_length(decoded_length: usize) -> Result<(), String> {
+    if decoded_length > MAX_PRIVATE_HTTP_REQUEST_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn private_http_invalid_base64_body_error() -> String {
+    "Private-network request body is not valid base64".to_string()
+}
+
+/// Validates a standard RFC 4648 Base64 frame and calculates its decoded size
+/// without allocating a destination buffer. The Base64 engine performs the
+/// actual decode afterwards; this preflight stops malformed or oversized IPC
+/// input from determining an allocation size.
+fn maximum_private_http_base64_decoded_length(encoded: &str) -> Result<usize, String> {
+    let encoded_length = encoded.len();
+    let remainder = encoded_length % 4;
+    if remainder == 1 {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let mut trailing_padding = 0;
+    for byte in encoded.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' if trailing_padding == 0 => {}
+            b'=' => trailing_padding += 1,
+            _ => return Err(private_http_invalid_base64_body_error()),
+        }
+    }
+    if trailing_padding > 2 || (trailing_padding > 0 && remainder != 0) {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let blocks = (encoded_length + 3) / 4;
+    let omitted_padding = if trailing_padding == 0 && remainder != 0 {
+        // An unpadded final group has two or three input characters and
+        // therefore produces one or two bytes less than a full group.
+        4 - remainder
+    } else {
+        trailing_padding
+    };
+    Ok(blocks * 3 - omitted_padding)
+}
+
+fn decode_private_http_body(body_base64: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    let Some(encoded) = body_base64 else {
+        return Ok(None);
+    };
+    // Check both the wire frame and its maximum decoded size before allocating
+    // the exact destination buffer used by `decode_slice`.
+    validate_private_http_encoded_body_length(encoded.len())?;
+    let maximum_decoded_length = maximum_private_http_base64_decoded_length(encoded)?;
+    validate_private_http_decoded_body_length(maximum_decoded_length)?;
+
+    let mut decoded = Vec::new();
+    decoded
+        .try_reserve_exact(maximum_decoded_length)
+        .map_err(|_| "Unable to allocate the private-network request body".to_string())?;
+    decoded.resize(maximum_decoded_length, 0);
+    let decoded_length = base64::engine::general_purpose::STANDARD
+        .decode_slice(encoded, &mut decoded)
+        .map_err(|_| private_http_invalid_base64_body_error())?;
+    decoded.truncate(decoded_length);
+    Ok(Some(decoded))
+}
+
+fn reserve_private_http_response_body(
+    body: &mut Vec<u8>,
+    additional: usize,
+) -> Result<(), String> {
+    body.try_reserve(additional)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())
+}
+
+fn encode_private_http_body(body: &[u8]) -> Result<String, String> {
+    let encoded_len = base64::encoded_len(body.len(), true)
+        .ok_or_else(|| "Private-network response body is too large to encode".to_string())?;
+    // The native bridge already caps response bytes, but allocating the Base64
+    // transport string must still fail normally on a memory-constrained host.
+    // `encode_slice` does not allocate after this fallible reservation.
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(encoded_len)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())?;
+    encoded.resize(encoded_len, 0);
+    let written = base64::engine::general_purpose::STANDARD
+        .encode_slice(body, &mut encoded)
+        .map_err(|_| "Unable to encode the private-network response body".to_string())?;
+    debug_assert_eq!(written, encoded_len);
+    String::from_utf8(encoded)
+        .map_err(|_| "Private-network response Base64 was not valid UTF-8".to_string())
 }
 
 // Process-global by design: audio import runs the picker + decode pipeline
@@ -949,16 +1059,14 @@ async fn execute_http_request(
     let (_cancellation_guard, mut cancellation) =
         PrivateHttpCancellationGuard::register(request.request_id.clone())?;
 
-    if request
-        .body
-        .as_ref()
-        .is_some_and(|body| body.len() > MAX_PRIVATE_HTTP_REQUEST_BYTES)
-    {
-        return Err(format!(
-            "Private-network request body exceeds the {} MiB limit",
-            MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
-        ));
-    }
+    // The decoder preflights both the Base64 frame and its decoded size before
+    // allocating the request body. Move and explicitly release the encoded
+    // frame before networking: at the 128 MiB payload limit it is about 171
+    // MiB, and retaining it alongside the decoded request body needlessly
+    // raises the peak memory for every redirectable request.
+    let encoded_request_body = request.body_base64;
+    let decoded_request_body = decode_private_http_body(encoded_request_body.as_deref())?;
+    drop(encoded_request_body);
 
     let initial_url = Url::parse(&request.url)
         .map_err(|_| "HTTP request URL is invalid".to_string())?;
@@ -1012,7 +1120,7 @@ async fn execute_http_request(
     // addresses that passed the check.
     let mut current_url = initial_url;
     let mut current_method = method;
-    let mut current_body: Option<Vec<u8>> = request.body;
+    let mut current_body = decoded_request_body;
     // Plaintext policies connect directly: an environment HTTP proxy could
     // otherwise tunnel a private-network (or saved plaintext endpoint)
     // request, and its bearer credential, to an arbitrary public host.
@@ -1145,7 +1253,8 @@ async fn execute_http_request(
         .content_length()
         .unwrap_or_default()
         .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
-    let mut body = Vec::with_capacity(initial_capacity);
+    let mut body = Vec::new();
+    reserve_private_http_response_body(&mut body, initial_capacity)?;
     loop {
         let chunk = tokio::select! {
             _ = &mut cancellation => {
@@ -1167,13 +1276,14 @@ async fn execute_http_request(
                 MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
             ));
         }
+        reserve_private_http_response_body(&mut body, chunk.len())?;
         body.extend_from_slice(&chunk);
     }
 
     Ok(PrivateHttpResponse {
         status,
         headers,
-        body,
+        body_base64: encode_private_http_body(&body)?,
     })
 }
 
@@ -1426,18 +1536,35 @@ async fn delete_audio_entries(
     }
 
     tauri::async_runtime::spawn_blocking(move || {
+        let audio_dir = crate::system::audio_store::audio_dir(&app)
+            .map_err(|err| format!("Unable to resolve the managed audio directory: {err}"))?;
         let mut removed = Vec::new();
         for (id, path) in entries {
-            let file_path = PathBuf::from(&path);
-            if let Err(err) = crate::system::audio_store::delete_audio_file(&app, &file_path) {
-                log::error!("Failed to delete audio file for transcription {id}: {err}");
+            // `audio_path` is persisted data, not a capability. Resolve it
+            // through the shared canonical parent guard rather than trusting
+            // a lexical prefix: an entry such as
+            // `<audio_dir>/../outside.wav` must not remove a user file.
+            let Some(file_path) = crate::system::audio_store::resolve_managed_audio_path_for_delete(
+                &PathBuf::from(&path),
+                &audio_dir,
+            ) else {
+                log::warn!(
+                    "Refusing to delete unmanaged audio path for transcription {id}"
+                );
+                removed.push(id);
+                continue;
+            };
+            if let Err(err) = std::fs::remove_file(&file_path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    log::error!("Failed to delete audio file for transcription {id}: {err}");
+                }
             }
             removed.push(id);
         }
-        removed
+        Ok::<Vec<String>, String>(removed)
     })
     .await
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?
 }
 
 /// Resolve `path` to the exact file to delete, or `None` when it does not
@@ -1452,26 +1579,7 @@ fn resolve_managed_audio_path(
     path: &std::path::Path,
     audio_dir: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
-    // Resolve the candidate: an absolute `path` is taken as-is; a relative
-    // `path` is resolved against `audio_dir`.
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Managed audio is a flat directory of `<id>.wav` files, so the file
-    // must sit directly inside `audio_dir`. Canonicalize the parent only:
-    // the entry itself may be a symlink we want to unlink rather than
-    // follow, and it may already be gone.
-    let file_name = candidate.file_name()?;
-    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    Some(real_parent.join(file_name))
+    crate::system::audio_store::resolve_managed_audio_path_for_delete(path, audio_dir)
 }
 
 /// Resolve `path` to the exact file to read, or `None` when it does not live
@@ -4226,10 +4334,10 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
         .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
 }
 
-/// Download the detached `.sig` (minisign text format) for an installer,
-/// validating every redirect hop against the trusted allow-list and enforcing
-/// a tight dedicated size cap (a signature is only a few hundred bytes, so it
-/// must not reuse the installer's 250 MiB streaming budget).
+/// Download the detached `.sig` (a Base64-encoded minisign signature) for an
+/// installer, validating every redirect hop against the trusted allow-list and
+/// enforcing a tight dedicated size cap (a signature is only a few hundred
+/// bytes, so it must not reuse the installer's 250 MiB streaming budget).
 async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
     let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
     validate_initial_signature_url(&parsed)?;
@@ -4272,6 +4380,17 @@ async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, St
     Ok(sig)
 }
 
+/// Decode the outer RFC 4648 frame that Tauri writes to each updater `.sig`
+/// file. The decoded payload is the ordinary, four-line minisign signature
+/// text that `minisign_verify` parses.
+fn decode_tauri_installer_signature(signature_base64: &[u8]) -> Result<String, String> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(signature_base64)
+        .map_err(|error| format!("Installer signature is not valid Tauri Base64: {error}"))?;
+    String::from_utf8(decoded)
+        .map_err(|error| format!("Installer signature is not valid UTF-8: {error}"))
+}
+
 /// Verify `data` against a minisign detached signature using the embedded
 /// updater public key. Returns `Ok(())` only when the signature is valid.
 fn verify_minisign_data(
@@ -4302,8 +4421,7 @@ async fn verify_installer_signature(
     }
     let public_key_text = updater_public_key_text(app)?;
     let sig_bytes = download_installer_signature(signature_url).await?;
-    let signature_text = String::from_utf8(sig_bytes)
-        .map_err(|e| format!("Installer signature is not valid UTF-8: {e}"))?;
+    let signature_text = decode_tauri_installer_signature(&sig_bytes)?;
     // Reading the whole installer and verifying its signature are CPU- and
     // memory-bound; move them off the async runtime so unrelated IPC/native
     // work is not stalled by a 250 MiB read + verification.
@@ -4431,9 +4549,50 @@ fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Downloads a `.dmg` installer to a temp directory and opens it with
-/// macOS Installer.app. This is used as a fallback when the normal in-place
-/// updater cannot write to the app's install location.
+fn unix_epoch_nanos(now: SystemTime) -> Result<u128, String> {
+    now.duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+        .map(|duration| duration.as_nanos())
+}
+
+/// Stream a response into a new installer file. Once the file exists, this
+/// function owns it: every transfer, write, or flush error closes and removes
+/// the incomplete file before returning. The caller owns cleanup after a
+/// complete file has moved on to signature verification or hand-off.
+async fn download_installer_response_to_file(
+    response: &mut reqwest::Response,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    // `create_new` avoids following or overwriting an entry planted at this
+    // predictable-by-design temp path. A collision is safe to report; the next
+    // update attempt receives a fresh random filename.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|error| error.to_string())?;
+
+    let transfer_result: Result<(), String> = async {
+        let mut written: u64 = 0;
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            written = installer_account_chunk(written, chunk.len() as u64)?;
+            std::io::Write::write_all(&mut file, &chunk).map_err(|error| error.to_string())?;
+        }
+        std::io::Write::flush(&mut file).map_err(|error| error.to_string())
+    }
+    .await;
+
+    // Closing first is required before removing a failed download on Windows.
+    drop(file);
+    if transfer_result.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    transfer_result
+}
+
+/// Downloads a `.dmg` installer to a temp directory and opens it through
+/// macOS's default handler. This is used as a fallback when the normal
+/// in-place updater cannot write to the app's install location.
 #[tauri::command]
 #[specta::specta]
 pub async fn download_and_open_mac_installer(
@@ -4451,10 +4610,10 @@ pub async fn download_and_open_mac_installer(
 
     // Use a unique temp filename (not the URL-derived basename) so a crafted
     // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we delete
-    // the temp file on any verification failure, and the launched installer keeps
-    // its own copy. Match the temp file's extension to the downloaded artifact
-    // so `open` handles it.
+    // timestamp, process ID, and random token make collisions vanishingly
+    // unlikely; `create_new` below still refuses to overwrite any collision.
+    // Match the extension to the downloaded artifact so `open` selects the
+    // right macOS handler.
     let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
         ".app.tar.gz"
     } else if parsed.path().ends_with(".pkg") {
@@ -4462,17 +4621,12 @@ pub async fn download_and_open_mac_installer(
     } else {
         ".dmg"
     };
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let nanos = unix_epoch_nanos(SystemTime::now())?;
     let pid = std::process::id();
+    let token = rand::random::<u64>();
     let dest = std::env::temp_dir().join(format!(
-        "mausvoice-update-{nanos}-{pid}{downloaded_ext}"
+        "mausvoice-update-{nanos}-{pid}-{token:016x}{downloaded_ext}"
     ));
-
-    // Remove any stale previous download (best-effort).
-    let _ = std::fs::remove_file(&dest);
 
     // Validate every redirect hop rather than trusting the initial URL: the
     // default policy would silently follow an allowed host to an arbitrary one.
@@ -4504,29 +4658,9 @@ pub async fn download_and_open_mac_installer(
     installer_content_length_ok(response.content_length())?;
 
     // Stream to disk, enforcing the cap as we go so a server that lies about
-    // (or omits) Content-Length cannot exhaust memory or fill the disk.
-    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut written: u64 = 0;
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = match installer_account_chunk(written, chunk.len() as u64) {
-            Ok(next) => next,
-            Err(err) => {
-                drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
-                let _ = std::fs::remove_file(&dest);
-                return Err(err);
-            }
-        };
-        if let Err(err) = std::io::Write::write_all(&mut file, &chunk) {
-            drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
-            let _ = std::fs::remove_file(&dest);
-            return Err(err.to_string());
-        }
-    }
-    if let Err(err) = std::io::Write::flush(&mut file) {
-        let _ = std::fs::remove_file(&dest);
-        return Err(err.to_string());
-    }
-    drop(file); // skipcq: RS-E1021 - File must close before remove_file on Windows
+    // (or omits) Content-Length cannot exhaust memory or fill the disk. The
+    // helper removes an incomplete file for every transfer/write/flush error.
+    download_installer_response_to_file(&mut response, &dest).await?;
 
     // Verify the downloaded DMG against its detached minisign signature
     // BEFORE opening it. On any failure (missing/invalid key, missing or
@@ -4537,10 +4671,13 @@ pub async fn download_and_open_mac_installer(
         return Err(err);
     }
 
-    std::process::Command::new("open")
-        .arg(&dest)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    // The handler may still need to read the verified file after `open`
+    // returns, so retain it on success. If the hand-off itself fails, no other
+    // process owns the file and it must not be left behind in the temp dir.
+    if let Err(error) = std::process::Command::new("open").arg(&dest).spawn() {
+        let _ = std::fs::remove_file(&dest);
+        return Err(error.to_string());
+    }
 
     Ok(())
 }
@@ -4770,6 +4907,46 @@ mod tests {
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    #[test]
+    fn private_http_base64_framing_preserves_bytes_and_rejects_invalid_data() {
+        let original = [0_u8, 1, 2, 253, 254, 255, 17];
+        let encoded =
+            encode_private_http_body(&original).expect("small response bytes must encode");
+        assert_eq!(
+            decode_private_http_body(Some(&encoded)),
+            Ok(Some(original.to_vec()))
+        );
+        assert_eq!(decode_private_http_body(None), Ok(None));
+        assert_eq!(
+            decode_private_http_body(Some("not-base64!")),
+            Err("Private-network request body is not valid base64".to_string())
+        );
+    }
+
+    #[test]
+    fn private_http_base64_framing_enforces_encoded_and_decoded_limits() {
+        assert!(validate_private_http_encoded_body_length(
+            MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES
+        )
+        .is_ok());
+        assert_eq!(
+            validate_private_http_encoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+        assert!(validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES).is_ok());
+        assert_eq!(
+            validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+    }
+
+    #[test]
+    fn private_http_response_reservation_returns_an_error_on_capacity_overflow() {
+        let mut response = Vec::new();
+        assert!(reserve_private_http_response_body(&mut response, usize::MAX).is_err());
+        assert!(response.is_empty());
+    }
 
     #[test]
     fn terminal_command_rejects_empty() {
@@ -5553,7 +5730,9 @@ mod tests {
             )]
             .into_iter()
             .collect(),
-            body: Some(b"{}".to_vec()),
+            body_base64: Some(
+                encode_private_http_body(b"{}").expect("small test body must encode"),
+            ),
         }
     }
 
@@ -5881,7 +6060,7 @@ mod tests {
             url: "http://127.0.0.1:1/never-started".to_string(),
             method: "GET".to_string(),
             headers: std::collections::HashMap::new(),
-            body: None,
+            body_base64: None,
         })
         .await;
         match result {
@@ -5965,7 +6144,7 @@ mod tests {
             url: format!("http://{address}/slow"),
             method: "GET".to_string(),
             headers: std::collections::HashMap::new(),
-            body: None,
+            body_base64: None,
         }));
         tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
             .await
@@ -6032,11 +6211,17 @@ mod tests {
         let orphan = audio_dir.join("orphan.wav");
         let other = audio_dir.join("notes.txt");
         let outside = outside_dir.join("do-not-delete.wav");
+        // A manipulated database row can retain the managed directory's
+        // lexical prefix while traversing out of it. Retention cleanup and
+        // local-data reset share `resolve_managed_audio_path`, so this must
+        // never resolve to a deletion target.
+        let traversal = audio_dir.join("..").join("outside").join("do-not-delete.wav");
         std::fs::write(&inside, b"in").unwrap();
         std::fs::write(&relative, b"rel").unwrap();
         std::fs::write(&orphan, b"or").unwrap();
         std::fs::write(&other, b"txt").unwrap();
         std::fs::write(&outside, b"out").unwrap();
+        assert!(resolve_managed_audio_path(&traversal, &audio_dir).is_none());
 
         delete_listed_audio_files(
             &audio_dir,
@@ -6045,6 +6230,7 @@ mod tests {
                 // A relative row must be deleted from inside `audio_dir`.
                 "relative.wav".to_string(),
                 outside.to_string_lossy().into_owned(),
+                traversal.to_string_lossy().into_owned(),
             ],
         );
         assert!(!inside.exists());
@@ -6103,6 +6289,54 @@ mod tests {
         assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
     }
 
+    #[tokio::test]
+    async fn incomplete_installer_download_removes_its_partial_temp_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener must bind");
+        let address = listener.local_addr().expect("test listener has an address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("test client connects");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+            // The declared body is longer than the bytes sent. reqwest returns
+            // the response first and reports the broken transfer from
+            // `response.chunk`, exercising the file-owning cleanup path.
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 16\r\nconnection: close\r\n\r\npartial",
+                )
+                .await
+                .expect("test response writes");
+            socket.shutdown().await.expect("test response closes");
+        });
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock is after the Unix epoch")
+            .as_nanos();
+        let dest = std::env::temp_dir().join(format!(
+            "mausvoice-partial-installer-{}-{unique}.dmg",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&dest);
+        let mut response = reqwest::Client::new()
+            .get(format!("http://{address}/installer.dmg"))
+            .send()
+            .await
+            .expect("test server returns headers");
+
+        let result = download_installer_response_to_file(&mut response, &dest).await;
+        let was_removed = !dest.exists();
+        let _ = std::fs::remove_file(&dest);
+        server.await.expect("test server completes");
+
+        assert!(result.is_err(), "a truncated HTTP body must fail");
+        assert!(was_removed, "a failed transfer must remove its partial file");
+    }
+
     #[test]
     fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
         assert!(signature_content_length_ok(None).is_ok());
@@ -6130,6 +6364,15 @@ mod tests {
 #[cfg(test)]
 mod installer_url_tests {
     use super::*;
+
+    #[test]
+    fn installer_temp_timestamp_rejects_a_pre_epoch_clock() {
+        let before_epoch = UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("one second before the Unix epoch must be representable");
+
+        assert!(unix_epoch_nanos(before_epoch).is_err());
+    }
 
     #[test]
     fn initial_installer_url_requires_trusted_repo_path() {
@@ -6357,13 +6600,23 @@ RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7b
 trusted comment: timestamp:1633700835\tfile:test\tprehashed\n\
 wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
 
-        // Valid signature verifies.
-        assert!(verify_minisign_data(public_key, b"test", signature).is_ok());
+        // Tauri stores the complete minisign signature text in an outer Base64
+        // frame. The manual-installer fallback must decode that frame before
+        // passing it to minisign-verify; passing the downloaded `.sig` bytes
+        // directly makes every valid Tauri-signed installer fail to parse.
+        let tauri_signature = base64::engine::general_purpose::STANDARD.encode(signature);
+        let decoded_signature = decode_tauri_installer_signature(tauri_signature.as_bytes())
+            .expect("a Tauri-generated signature frame must decode");
+        assert_eq!(decoded_signature, signature);
+        assert!(verify_minisign_data(public_key, b"test", &decoded_signature).is_ok());
+
+        // A malformed outer frame must fail before minisign parsing.
+        assert!(decode_tauri_installer_signature(b"not-base64!").is_err());
         // A tampered payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"tampered", signature).is_err());
+        assert!(verify_minisign_data(public_key, b"tampered", &decoded_signature).is_err());
         // A different payload must fail verification.
-        assert!(verify_minisign_data(public_key, b"other", signature).is_err());
-        // A malformed signature must fail to parse.
+        assert!(verify_minisign_data(public_key, b"other", &decoded_signature).is_err());
+        // A malformed decoded signature must fail to parse.
         assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
     }
 }

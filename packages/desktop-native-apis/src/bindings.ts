@@ -212,9 +212,9 @@ async copyToClipboard(text: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Downloads a `.dmg` installer to a temp directory and opens it with
- * macOS Installer.app. This is used as a fallback when the normal in-place
- * updater cannot write to the app's install location.
+ * Downloads a `.dmg` installer to a temp directory and opens it through
+ * macOS's default handler. This is used as a fallback when the normal
+ * in-place updater cannot write to the app's install location.
  */
 async downloadAndOpenMacInstaller(url: string, signatureUrl: string) : Promise<Result<null, string>> {
     try {
@@ -1262,8 +1262,8 @@ export type PermissionKind = "microphone" | "accessibility"
 export type PermissionState = "authorized" | "denied" | "restricted" | "not-determined"
 export type PermissionStatus = { kind: PermissionKind; state: PermissionState; promptShown: boolean }
 export type PillWindowSize = "dictation" | "assistant_compact" | "assistant_expanded" | "assistant_typing"
-export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; body: number[] | null }
-export type PrivateHttpResponse = { status: number; headers: Partial<{ [key in string]: string }>; body: number[] }
+export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; bodyBase64: string | null }
+export type PrivateHttpResponse = { status: number; headers: Partial<{ [key in string]: string }>; bodyBase64: string }
 export type RemoteReceiverStatus = { enabled: boolean; deviceId: string; deviceName: string; listenAddress: string | null; port: number | null; pairingCode: string; lastSenderDeviceId: string | null; lastEventId: string | null; lastDeliveryStatus: string | null; lastDeliveryAt: string | null; lastError: string | null; lastTargetClassName: string | null; lastTargetTitle: string | null; lastTargetEditable: boolean | null; devicePlatform: string }
 export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mode: string }
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }

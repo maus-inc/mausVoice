@@ -4,7 +4,22 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 type PrivateHttpResponse = {
   status: number;
   headers: Record<string, string>;
-  body: number[] | Uint8Array | ArrayBuffer;
+  bodyBase64: string;
+};
+
+const getIpcErrorMessage = (error: object): string => {
+  // Tauri normally rejects with an Error or a plain serialised object. Read
+  // only a data-property message so an unexpected getter cannot run while we
+  // are already handling an IPC failure.
+  try {
+    const message = Object.getOwnPropertyDescriptor(error, "message")?.value;
+    if (typeof message === "string") return message;
+    return JSON.stringify(error) ?? "Unknown Tauri IPC error";
+  } catch {
+    // A hostile or otherwise unserialisable object must not hide the original
+    // request failure behind a second exception from error formatting.
+    return "Unknown Tauri IPC error";
+  }
 };
 
 const requestUrl = (input: RequestInfo | URL): string => {
@@ -13,16 +28,147 @@ const requestUrl = (input: RequestInfo | URL): string => {
   return input;
 };
 
-const responseBytes = (
-  body: number[] | Uint8Array | ArrayBuffer,
-): Uint8Array => {
-  if (body instanceof ArrayBuffer) return new Uint8Array(body);
-  if (body instanceof Uint8Array) return body;
-  return Uint8Array.from(body);
-};
+// Keep each btoa input below engine argument/string limits. The chunk is a
+// multiple of three so padding only appears at the end of the full payload.
+const BASE64_INPUT_CHUNK_BYTES = 24 * 1024;
+// Keep the renderer-side preflight aligned with the native command. The native
+// limit remains authoritative, but reading a body with Request.arrayBuffer()
+// first meant a malformed local caller could allocate an unbounded duplicate
+// in the webview before the command had a chance to reject it.
+const MAX_PRIVATE_HTTP_REQUEST_BYTES = 128 * 1024 * 1024;
+
+const privateHttpRequestLimitError = (): RangeError =>
+  new RangeError("Private-network request body exceeds the 128 MiB limit");
 
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+
+const bytesToBase64 = (bytes: Uint8Array): string => {
+  const encodedChunks: string[] = [];
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += BASE64_INPUT_CHUNK_BYTES
+  ) {
+    const chunk = bytes.subarray(offset, offset + BASE64_INPUT_CHUNK_BYTES);
+    let binary = "";
+    for (const byte of chunk) binary += String.fromCharCode(byte);
+    encodedChunks.push(btoa(binary));
+  }
+  return encodedChunks.join("");
+};
+
+const readBodyChunk = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | null,
+): Promise<ReadableStreamReadResult<Uint8Array>> => {
+  if (!signal) return reader.read();
+  if (signal.aborted) throw abortReason(signal);
+
+  const pending = reader.read();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (): boolean => {
+      if (settled) return false;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      return true;
+    };
+    const abort = () => {
+      // A body-read rejection after this user-visible AbortError is already
+      // handled by `pending.then` below. The outer encoder cancels the reader
+      // in its failure cleanup, after this promise leaves the loop.
+      if (finish()) reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(
+      (result) => {
+        if (finish()) resolve(result);
+      },
+      (error: unknown) => {
+        if (finish()) reject(error);
+      },
+    );
+    // Abort may have happened in the tiny interval before the listener was
+    // registered. Checking again ties this read to the signal without a timer.
+    if (signal.aborted) abort();
+  });
+};
+
+/**
+ * Read a request body incrementally, enforcing the native command's decoded
+ * byte cap before Base64 transport framing. Carrying the last zero to two
+ * bytes across stream chunks makes the joined frames one valid RFC 4648 value
+ * rather than padding every source chunk independently.
+ */
+export const encodePrivateHttpBodyStream = async (
+  body: ReadableStream<Uint8Array> | null,
+  signal: AbortSignal | null = null,
+  maxBytes = MAX_PRIVATE_HTTP_REQUEST_BYTES,
+): Promise<string> => {
+  const reader = body?.getReader();
+  if (!reader) return "";
+
+  let byteLength = 0;
+  let trailing = new Uint8Array(0);
+  const encodedChunks: string[] = [];
+  let completed = false;
+
+  try {
+    while (true) {
+      const { done, value } = await readBodyChunk(reader, signal);
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+
+      byteLength += value.byteLength;
+      if (byteLength > maxBytes) {
+        throw privateHttpRequestLimitError();
+      }
+
+      let combined = value;
+      if (trailing.byteLength > 0) {
+        combined = new Uint8Array(trailing.byteLength + value.byteLength);
+        combined.set(trailing);
+        combined.set(value, trailing.byteLength);
+      }
+      const completeLength = combined.byteLength - (combined.byteLength % 3);
+      if (completeLength > 0) {
+        encodedChunks.push(bytesToBase64(combined.subarray(0, completeLength)));
+      }
+      // `combined` can be a large stream chunk, so copy the small tail before
+      // the next read instead of retaining the whole chunk in memory.
+      trailing = combined.subarray(completeLength).slice();
+    }
+    completed = true;
+  } finally {
+    if (!completed) {
+      // No fetch has begun, so cancellation is cleanup only. Preserve the
+      // size/abort/read error that caused this path if the producer rejects
+      // cancellation while it is shutting down.
+      void reader.cancel().catch(() => undefined);
+    }
+    reader.releaseLock();
+  }
+
+  if (trailing.byteLength > 0) {
+    encodedChunks.push(bytesToBase64(trailing));
+  }
+  return encodedChunks.join("");
+};
+
+const base64ToBytes = (encoded: string): Uint8Array => {
+  let binary: string;
+  try {
+    binary = atob(encoded);
+  } catch {
+    throw new TypeError("Private-network response body is not valid base64");
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
 
 const awaitWithAbort = async <T>(
   operation: Promise<T>,
@@ -47,11 +193,10 @@ const awaitWithAbort = async <T>(
   });
 };
 
-// KNOWN TRADEOFF: the native bridge validates + caps and returns the whole
-// body, so SSE/LLM streaming over private or saved endpoints resolves in one
-// burst rather than token by token. Acceptable for the short rewrite/model
-// payloads this path carries (local network, bounded by config), and noted in
-// docs/pr63-pr109-review-findings-audit.md.
+// The native bridge validates, caps, and returns the whole body, so SSE/LLM
+// streaming over private or saved endpoints resolves in one burst rather than
+// token by token. This bridge is used for bounded rewrite and model payloads,
+// not the interactive public-provider streaming path.
 const invokeHttpRequest = async (
   command: "private_http_request" | "openai_compatible_http_request",
   input: RequestInfo | URL,
@@ -59,10 +204,10 @@ const invokeHttpRequest = async (
   apiKeyId?: string,
 ): Promise<Response> => {
   const request = new Request(input, init);
-  const body =
+  const bodyBase64 =
     request.method === "GET" || request.method === "HEAD"
       ? null
-      : Array.from(new Uint8Array(await request.arrayBuffer()));
+      : await encodePrivateHttpBodyStream(request.body, request.signal);
   if (request.signal.aborted) throw abortReason(request.signal);
 
   const requestId = crypto.randomUUID();
@@ -79,7 +224,7 @@ const invokeHttpRequest = async (
       url: request.url,
       method: request.method,
       headers: Object.fromEntries(request.headers.entries()),
-      body,
+      bodyBase64,
     },
     // Tauri command arguments use camelCase at the JavaScript boundary;
     // `apiKeyId` binds the Rust command's `api_key_id` parameter.
@@ -97,19 +242,20 @@ const invokeHttpRequest = async (
       // message property when it is a string, or JSON.stringify for
       // a meaningful representation.
       if (error != null && typeof error === "object") {
-        const rawMessage = (error as Record<string, unknown>).message;
-        const message =
-          typeof rawMessage === "string" ? rawMessage : JSON.stringify(error);
-        throw new Error(`Tauri IPC error: ${message}`);
+        throw new Error(`Tauri IPC error: ${getIpcErrorMessage(error)}`);
       }
       // `error` is a primitive (string, number, boolean) or null/undefined.
-      // Use JSON.stringify to safely stringify any non-string value without
-      // producing '[object Object]'. JSON.stringify returns `undefined` for
-      // `undefined`, so fall back to a default message.
-      const errorText =
-        typeof error === "string"
-          ? error
-          : (JSON.stringify(error) ?? "Unknown Tauri IPC error");
+      // JSON.stringify avoids an unhelpful '[object Object]' if a future
+      // invocation boundary supplies a non-string value.
+      let errorText: string;
+      try {
+        errorText =
+          typeof error === "string"
+            ? error
+            : (JSON.stringify(error) ?? "Unknown Tauri IPC error");
+      } catch {
+        errorText = "Unknown Tauri IPC error";
+      }
       throw new Error(errorText);
     },
   );
@@ -124,7 +270,7 @@ const invokeHttpRequest = async (
   const NULL_BODY_STATUSES = new Set([204, 205, 304]);
   const responseBody = NULL_BODY_STATUSES.has(response.status)
     ? null
-    : responseBytes(response.body);
+    : base64ToBytes(response.bodyBase64);
   return new Response(responseBody, {
     status: response.status,
     headers: response.headers,
