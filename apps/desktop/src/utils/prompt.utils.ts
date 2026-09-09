@@ -208,13 +208,11 @@ function applyTemplateVars(
 ): string {
   let result = template;
   for (const [name, value] of vars) {
-    // The replacer function returns the value verbatim. A plain string
-    // replacement would interpret dollar patterns such as $& or $' inside
-    // user-controlled values like glossary terms and transcripts.
-    result = result.replace(
-      new RegExp(String.raw`<${name}\/>`, "g"),
-      () => value,
-    );
+    // A literal split/join replacement never interprets the value: there is
+    // no regex and no $-pattern substitution, so dollar patterns inside
+    // user-controlled values like glossary terms and transcripts land in the
+    // prompt exactly as written.
+    result = result.split(`<${name}/>`).join(value);
   }
   return result;
 }

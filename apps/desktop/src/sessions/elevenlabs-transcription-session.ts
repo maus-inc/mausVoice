@@ -1,4 +1,7 @@
-import { convertFloat32ToBase64PCM16 } from "@maus-inc/voice-ai";
+import {
+  appendQueryParamValues,
+  convertFloat32ToBase64PCM16,
+} from "@maus-inc/voice-ai";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
@@ -279,12 +282,7 @@ const startElevenLabsStreaming = async (
       audio_format: audioFormat,
       commit_strategy: "vad",
     });
-    for (const term of keyterms) {
-      const trimmed = term.trim();
-      if (trimmed) {
-        params.append("keyterms", trimmed);
-      }
-    }
+    appendQueryParamValues(params, "keyterms", keyterms);
     const wsUrl = `${ELEVENLABS_WS_URL}?${params.toString()}`;
     getLogger().verbose(
       "[ElevenLabs WebSocket] Connecting to:",

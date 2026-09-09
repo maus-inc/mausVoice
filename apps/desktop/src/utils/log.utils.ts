@@ -34,7 +34,7 @@ export const redactQueryParamValues = (
         }
       }
     }
-    return parsed.toString();
+    return parsed.href;
   } catch {
     return url;
   }

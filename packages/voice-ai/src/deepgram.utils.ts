@@ -1,4 +1,5 @@
 import { countWords, retry } from "@maus-inc/utilities";
+import { appendQueryParamValues } from "./query-params.utils";
 import type { CustomFetch } from "./types";
 
 export type DeepgramTestIntegrationArgs = {
@@ -90,12 +91,7 @@ export const deepgramTranscribeAudio = async ({
       // Keyterm prompting (nova-3): repeat the parameter per term. Weights
       // from the legacy `keywords` feature are silently ignored here, so only
       // plain terms are ever sent.
-      for (const term of keyterms ?? []) {
-        const trimmed = term.trim();
-        if (trimmed) {
-          params.append("keyterm", trimmed);
-        }
-      }
+      appendQueryParamValues(params, "keyterm", keyterms ?? []);
 
       const response = await customFetch(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,

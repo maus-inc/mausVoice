@@ -1,14 +1,4 @@
-const appendKeytermParams = (
-  params: URLSearchParams,
-  keyterms: string[],
-): void => {
-  for (const term of keyterms) {
-    const trimmed = term.trim();
-    if (trimmed) {
-      params.append("keyterm", trimmed);
-    }
-  }
-};
+import { appendQueryParamValues } from "@maus-inc/voice-ai";
 
 export const buildDeepgramWebSocketUrl = (args: {
   sampleRate: number;
@@ -29,7 +19,7 @@ export const buildDeepgramWebSocketUrl = (args: {
   // Keyterm prompting repeats the parameter once per term, with plain
   // terms only, since weights from the legacy `keywords` feature are not
   // supported on nova-3.
-  appendKeytermParams(params, args.keyterms ?? []);
+  appendQueryParamValues(params, "keyterm", args.keyterms ?? []);
 
   // "auto" (or unset) → Deepgram nova-3 multilingual code-switching. Note: the
   // `multi` set is English, Spanish, French, German, Hindi, Russian, Portuguese,
