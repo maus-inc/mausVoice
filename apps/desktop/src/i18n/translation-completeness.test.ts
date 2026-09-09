@@ -16,6 +16,14 @@ const UNIVERSAL_SAFE = [
   /^(SenseVoice|NVIDIA|Whisper)\b/,
 ];
 
+// These user-facing controls were added with the failed-transcription audio
+// preservation setting. Unlike a model identifier, they must not fall back to
+// English in any supported locale.
+const FAILURE_AUDIO_MESSAGES = [
+  "keep_the_audio_snapshot_with_a_failed_transcription_so_you_c",
+  "preserve_audio_on_failure",
+] as const;
+
 type Messages = Record<string, string>;
 
 const loadLocales = (): Record<string, Messages> => {
@@ -65,5 +73,21 @@ describe("i18n catalogs", () => {
       untranslatedEverywhere,
       `These keys are untranslated in ALL locales (translate them or extend UNIVERSAL_SAFE):\n${untranslatedEverywhere.join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("translates failed-transcription audio controls in every locale", () => {
+    const locales = loadLocales();
+    const keyedEnglish = locales[manifest.defaultLocale]!;
+    const translatedCodes = (manifest.supportedLocales as string[]).filter(
+      (code) => code !== manifest.defaultLocale,
+    );
+
+    for (const key of FAILURE_AUDIO_MESSAGES) {
+      for (const locale of translatedCodes) {
+        const translation = locales[locale]?.[key];
+        expect(translation, `${locale}:${key} must exist`).toBeTypeOf("string");
+        expect(translation, `${locale}:${key}`).not.toBe(keyedEnglish[key]);
+      }
+    }
   });
 });

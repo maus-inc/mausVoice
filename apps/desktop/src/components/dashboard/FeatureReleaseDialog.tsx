@@ -81,7 +81,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and a reviewable composer" />
+          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and review in the pill" />
         </Typography>
       </Stack>
       <Stack
@@ -113,7 +113,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
+          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in the pill, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
         </Typography>
       </Stack>
     </Stack>

@@ -7,6 +7,7 @@ import { isNativePillAvailable } from "../utils/native-pill.utils";
 import { createId } from "../utils/id.utils";
 import { getLogger } from "../utils/log.utils";
 import { runToast, showToast } from "./toast.actions";
+import type { ReviewDecision } from "../types/review.types";
 
 /**
  * Review-before-insert on the native pill.
@@ -17,7 +18,10 @@ import { runToast, showToast } from "./toast.actions";
  * transcript at a time, so concurrent ones queue here and are presented in
  * arrival order; the queue never drops one silently.
  */
-export type PillReviewAction = "insert" | "copy" | "cancel";
+export type PillReviewAction = "insert" | "copy" | "cancel" | "open";
+
+/** Returns true only after the caller durably preserved an Open edit. */
+export type ReviewOpenHandler = (editedText: string) => Promise<boolean>;
 
 export type PendingPillReview = {
   id: string;
@@ -26,15 +30,17 @@ export type PendingPillReview = {
 
 type QueuedReview = {
   review: PendingPillReview;
-  resolve: (text: string | null) => void;
+  onOpen: ReviewOpenHandler | undefined;
+  resolve: (decision: ReviewDecision) => void;
   /** Set while a decision runs, so a second click cannot start it twice. */
   busy: boolean;
 };
 
 /**
  * How long a card may sit unanswered on the pill. Same cap as the composer
- * window: an ignored review must not block the dictation output path forever.
- * The transcript stays in history, so nothing is lost when it expires.
+ * window: an ignored review must not block the output path forever. The
+ * original text remains in dictation History or in the agent tool-call record
+ * when the review expires.
  */
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -62,7 +68,7 @@ const stopListening = (): void => {
  * review still on the pill. The timer calls back in here, which is why one
  * function owns both halves of the transition.
  */
-const advanceQueue = (answer?: { text: string | null }): void => {
+const advanceQueue = (answer?: ReviewDecision): void => {
   if (timeoutId !== null) {
     clearTimeout(timeoutId);
     timeoutId = null;
@@ -73,7 +79,9 @@ const advanceQueue = (answer?: { text: string | null }): void => {
   produceAppState((draft) => {
     draft.pendingPillReview = current;
   });
-  answered?.resolve(answer?.text ?? null);
+  if (answered && answer) {
+    answered.resolve(answer);
+  }
   if (queue.length === 0) {
     stopListening();
   }
@@ -83,9 +91,9 @@ const advanceQueue = (answer?: { text: string | null }): void => {
   timeoutId = setTimeout(() => {
     timeoutId = null;
     getLogger().warning(
-      `Pill review ${id} went unanswered; skipping the insert and keeping the transcript in history`,
+      `Pill review ${id} went unanswered; skipping delivery and retaining the original text`,
     );
-    advanceQueue({ text: null });
+    advanceQueue({ action: "cancel", text: null });
   }, REVIEW_TIMEOUT_MS);
 };
 
@@ -114,13 +122,19 @@ const reviewAnswerText = (
   editedText: string | null,
 ): string => (editedText?.trim() ? editedText : review.text);
 
-/** Finish the review with `id` and hand `text` back to the caller. */
-const settle = (id: string, text: string | null): void => {
-  if (!openReview(id)) return;
-  advanceQueue({ text });
+/** Finish the review with `id` and hand its decision back to the caller. */
+const settle = (id: string, decision: ReviewDecision): boolean => {
+  if (!openReview(id)) return false;
+  advanceQueue(decision);
+  return true;
 };
 
-const copyReviewToClipboard = async (text: string): Promise<void> => {
+/**
+ * Returns false when the native clipboard operation failed. The caller must
+ * then leave the review in place: neither a failed clipboard write nor the
+ * unavailable History fallback for agent output may discard an edited value.
+ */
+const copyReviewToClipboard = async (text: string): Promise<boolean> => {
   try {
     await invoke("copy_to_clipboard", { text });
     runToast(
@@ -132,19 +146,20 @@ const copyReviewToClipboard = async (text: string): Promise<void> => {
         duration: 3000,
       }),
     );
+    return true;
   } catch (error) {
     getLogger().error(`Failed to copy the reviewed transcript: ${error}`);
     runToast(
       showToast({
         message: getIntl().formatMessage({
           defaultMessage:
-            "Could not copy the transcript. It is saved in your history.",
+            "Could not copy the transcript. It remains available for review.",
         }),
         toastType: "error",
         duration: 8000,
-        action: "open_transcriptions",
       }),
     );
+    return false;
   }
 };
 
@@ -156,24 +171,45 @@ const applyDecision = async (
   const current = openReview(id);
   if (!current || current.busy) return;
   current.busy = true;
+  // A valid click is now being handled. The unanswered-review expiry must not
+  // race an in-flight persistence write and settle the promise as Cancel.
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
   const text = reviewAnswerText(current.review, editedText);
 
   try {
-    if (action === "copy") {
-      await copyReviewToClipboard(text);
+    if (action === "copy" && !(await copyReviewToClipboard(text))) {
+      return;
     }
-    settle(id, action === "insert" ? text : null);
+    if (action === "open") {
+      // Do not remove the card until the dictation pipeline has persisted the
+      // exact edit. If persistence is unavailable, the card remains usable so
+      // a retry, Copy, Insert, or Cancel cannot lose the user's text.
+      if (!current.onOpen || !(await current.onOpen(text))) {
+        return;
+      }
+      settle(id, { action: "open", text });
+      return;
+    }
+    settle(id, action === "insert" ? { action, text } : { action, text: null });
   } finally {
     // A failure leaves the review open so the click can be repeated, rather
-    // than stranding the transcript behind a busy flag nobody can clear. On
-    // the way out through success the review has already left the queue, so
-    // clearing the flag there changes nothing.
+    // than stranding the transcript behind a busy flag nobody can clear. Give
+    // that newly available review a fresh unanswered-review window.
     current.busy = false;
+    if (head() === current && timeoutId === null) {
+      advanceQueue();
+    }
   }
 };
 
 const isPillReviewAction = (value: unknown): value is PillReviewAction =>
-  value === "insert" || value === "copy" || value === "cancel";
+  value === "insert" ||
+  value === "copy" ||
+  value === "cancel" ||
+  value === "open";
 
 const startListening = (): Promise<void> => {
   listenerSetup ??= listen<{
@@ -202,14 +238,15 @@ const startListening = (): Promise<void> => {
 };
 
 /**
- * Show `text` on the pill for review and resolve with the text to insert, or
- * null when the user cancelled, copied or moved the transcript to the editor.
- * Reviews queue: a transcript that arrives while another is on the pill waits
- * its turn instead of replacing it.
+ * Show `text` on the pill for review and resolve with the user's decision.
+ * An Open decision stays on the pill until its caller confirms the edited text
+ * was persisted. Reviews queue: a transcript that arrives while another is on
+ * the pill waits its turn instead of replacing it.
  */
 export const reviewTranscriptOnPill = async (
   text: string,
-): Promise<string | null> => {
+  onOpen?: ReviewOpenHandler,
+): Promise<ReviewDecision> => {
   // Listen before the card is published, so a very fast click cannot land
   // before we can hear it. Without a listener the user could never answer, so
   // a failure here falls back to the composer window rather than queueing a
@@ -220,14 +257,23 @@ export const reviewTranscriptOnPill = async (
     getLogger().error(
       `Could not listen for pill review decisions: ${error}; reviewing in the composer instead`,
     );
-    return reviewTextInComposer(text);
+    const composerText = await reviewTextInComposer(text);
+    return composerText?.trim()
+      ? { action: "insert", text: composerText }
+      : { action: "cancel", text: null };
   }
 
   const review: PendingPillReview = { id: createId(), text };
-  const decision = new Promise<string | null>((resolve) => {
-    queue.push({ review, resolve, busy: false });
+  const shouldPublish = queue.length === 0;
+  const decision = new Promise<ReviewDecision>((resolve) => {
+    queue.push({ review, onOpen, resolve, busy: false });
   });
-  advanceQueue();
+  // Adding a later review is not a state transition for the card already on
+  // the pill. Re-publishing it would restart its expiry each time another
+  // transcript arrives, allowing a steady stream to block the queue forever.
+  if (shouldPublish) {
+    advanceQueue();
+  }
 
   return decision;
 };
@@ -236,7 +282,7 @@ export const reviewTranscriptOnPill = async (
 export const cancelAllPillReviews = (): void => {
   while (queue.length > 0) {
     const pending = queue.shift();
-    pending?.resolve(null);
+    pending?.resolve({ action: "cancel", text: null });
   }
   // Clears the pill, drops the timer and stops listening, since the queue is
   // now empty.
@@ -252,9 +298,13 @@ export const cancelAllPillReviews = (): void => {
  */
 export const reviewTranscriptBeforeInsert = async (
   text: string,
-): Promise<string | null> => {
+  onOpen?: ReviewOpenHandler,
+): Promise<ReviewDecision> => {
   if (await isNativePillAvailable()) {
-    return reviewTranscriptOnPill(text);
+    return reviewTranscriptOnPill(text, onOpen);
   }
-  return reviewTextInComposer(text);
+  const composerText = await reviewTextInComposer(text);
+  return composerText?.trim()
+    ? { action: "insert", text: composerText }
+    : { action: "cancel", text: null };
 };

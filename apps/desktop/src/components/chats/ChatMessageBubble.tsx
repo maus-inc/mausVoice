@@ -14,6 +14,7 @@ import {
 } from "../common/ContextMenu";
 import { OverflowTypography } from "../common/OverflowTypography";
 import { AgentActivity } from "./AgentActivity";
+import { PendingPasteReviewBubble } from "./PendingPasteReviewBubble";
 
 const thinkingShimmer = keyframes`
   0% { background-position: 200% 50%; }
@@ -56,7 +57,11 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
     return null;
   }
 
-  const metadata = message.metadata as Record<string, unknown> | null;
+  const metadata = message.metadata;
+
+  if (metadata?.type === "pending-paste-review") {
+    return <PendingPasteReviewBubble message={message} />;
+  }
 
   if (metadata?.type === "tool-result") {
     return (
