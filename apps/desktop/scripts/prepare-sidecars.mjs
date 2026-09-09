@@ -143,6 +143,12 @@ function tryNodeProcessSleep(ms) {
 }
 
 function busyWait(ms) {
+  // Final spawnSync attempt before CPU busy-wait. The first attempt in
+  // sleepSync may have failed on a transient issue, so a second attempt
+  // can still recover before burning CPU in a tight loop.
+  if (tryNodeProcessSleep(ms)) {
+    return;
+  }
   const start = Date.now();
   while (Date.now() - start < ms) {
     // intentional empty

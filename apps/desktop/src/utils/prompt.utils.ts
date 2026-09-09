@@ -266,22 +266,33 @@ const collectBudgetedGlossary = (
   );
   // Terms and rules draw from one shared budget: whatever the terms already
   // consumed is subtracted from the rules' entry and character allowance, so
-  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET. When both
-  // groups are present the "; " delimiter between them is reserved inside the
-  // rules' character budget, so the final joined glossary never exceeds the
-  // cap. Empty groups keep the original budget untouched.
-  const delimiterLength =
-    terms.length > 0 && glossary.replacements.length > 0 ? 2 : 0;
-  const { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
-    glossary.replacements.map((rule) => `${rule.source} → ${rule.destination}`),
-    {
-      maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
-      maxCharacters: Math.max(
-        0,
-        GLOSSARY_PROMPT_BUDGET.maxCharacters - characters - delimiterLength,
-      ),
-    },
+  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET. The "; "
+  // delimiter between groups is only reserved when both groups survive
+  // capping, which cannot be known until the rules are capped (per-term limits
+  // may drop every rule even when glossary.replacements is non-empty).
+  const initialRulesBudget = {
+    maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
+    maxCharacters: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxCharacters - characters),
+  };
+  const ruleInputs = glossary.replacements.map(
+    (rule) => `${rule.source} → ${rule.destination}`,
   );
+  let { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
+    ruleInputs,
+    initialRulesBudget,
+  );
+  // If both terms and rules survived the initial cap, reserve the "; "
+  // delimiter and re-cap the rules under the tighter allowance so the
+  // combined glossary stays within the shared budget.
+  if (terms.length > 0 && rules.length > 0) {
+    const adjustedBudget = {
+      maxEntries: initialRulesBudget.maxEntries,
+      maxCharacters: Math.max(0, initialRulesBudget.maxCharacters - 2),
+    };
+    const adjusted = capVocabularyTerms(ruleInputs, adjustedBudget);
+    rules = adjusted.terms;
+    rulesTruncated = rulesTruncated || adjusted.truncated;
+  }
   return { terms, rules, truncated: truncated || rulesTruncated };
 };
 

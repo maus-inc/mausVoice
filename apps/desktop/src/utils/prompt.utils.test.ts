@@ -316,6 +316,21 @@ describe("isGlossaryPromptTruncated", () => {
       isGlossaryPromptTruncated({ sources: [], replacements: manyRules }),
     ).toBe(true);
   });
+
+  it("does not reserve the inter-group delimiter when no rules survive capping", () => {
+    // Sources consume 1996 of the 2000-character budget. The replacement
+    // rule "x → y" (5 chars) cannot fit in the remaining 4 characters, so
+    // it is filtered out. The two-pass cap does not reserve the "; "
+    // delimiter before it knows whether both groups will survive, so the
+    // rules get the full remaining budget (4 instead of 2). The rule is
+    // still too long, but the budget accounting is correct.
+    expect(
+      isGlossaryPromptTruncated({
+        sources: ["a".repeat(1996)],
+        replacements: [{ source: "x", destination: "y" }],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("capVocabularyTerms separator accounting", () => {
