@@ -656,8 +656,18 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
 
         release_pointer_if_button_up(&win_tick, &state_tick);
-        tick(&state_tick);
-        tick_drag_frame(&win_tick, &state_tick, backend_tick);
+        // One measured step for the whole frame: the transition springs and
+        // the drag controller share it, so a long frame slows everything
+        // together instead of each measuring a different slice.
+        let dt_tick = frame_dt();
+        tick(&state_tick, dt_tick);
+        tick_drag_frame(
+            &win_tick,
+            &state_tick,
+            backend_tick,
+            drag_clock_now(),
+            dt_tick,
+        );
         tick_hover_frame(&state_tick);
 
         // Show/hide entry for typing mode
@@ -935,14 +945,14 @@ pub(crate) fn drag_clock_now() -> f64 {
 }
 
 thread_local! {
-    static LAST_DRAG_FRAME: Cell<Option<Instant>> = const { Cell::new(None) };
+    static LAST_FRAME: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
-/// Measured frame step for drag motion, clamped like the other pills so a
-/// stall cannot explode the settle spring.
-fn drag_frame_dt() -> f64 {
+/// Measured frame step shared by the transition springs and the drag
+/// motion, clamped like the other pills so a stall cannot explode a spring.
+fn frame_dt() -> f64 {
     let now = Instant::now();
-    LAST_DRAG_FRAME.with(|c| {
+    LAST_FRAME.with(|c| {
         let prev = c.get();
         c.set(Some(now));
         match prev {
@@ -963,14 +973,18 @@ pub(crate) fn reduced_motion() -> bool {
 /// pointer and moves the toplevel; the Wayland backends run the same
 /// controller in window-relative offset space (the compositor owns the
 /// toplevel there).
-fn tick_drag_frame(window: &gtk::Window, state: &PillState, backend: Backend) {
+fn tick_drag_frame(
+    window: &gtk::Window,
+    state: &PillState,
+    backend: Backend,
+    now: f64,
+    dt: f64,
+) {
     let dragging = state.dragging.get();
     let settling = state.drag_motion.borrow().is_settling();
     if !dragging && !settling {
         return;
     }
-    let now = drag_clock_now();
-    let dt = drag_frame_dt();
     match backend {
         Backend::X11 => x11::tick_drag_frame(window, state, now, dt),
         Backend::LayerShell | Backend::PlainWayland => {
@@ -1085,7 +1099,7 @@ fn clear_flash(state: &PillState) {
     );
 }
 
-fn tick(state: &PillState) {
+fn tick(state: &PillState, dt: f64) {
     tick_long_press(state);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
@@ -1096,7 +1110,7 @@ fn tick(state: &PillState) {
 
     // Pill expand/collapse (spring)
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
     // Loading offset
     if is_loading {
@@ -1116,7 +1130,7 @@ fn tick(state: &PillState) {
         hovered,
         state.expand_t.get(),
     );
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
     // A pending review holds the panel open on its own: the transcript must
@@ -1127,18 +1141,18 @@ fn tick(state: &PillState) {
         } else {
             0.0
         };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
     let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
 
     // Animate content dimensions toward target mode
     let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
 
     // Shimmer phase for thinking animation
     state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
@@ -1155,7 +1169,7 @@ fn tick(state: &PillState) {
     // Broadcast transcript
     tick_transcript(state);
 
-    tick_flash(state, tooltip_target > 0.5);
+    tick_flash(state, tooltip_target > 0.5, dt);
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
@@ -1166,7 +1180,7 @@ fn tick(state: &PillState) {
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
     let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -1180,7 +1194,7 @@ fn tick(state: &PillState) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
+    rust_pill_shared::spring::spring_01(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -1191,10 +1205,10 @@ fn tick(state: &PillState) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
 
     let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state);
 
@@ -1252,7 +1266,7 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
 /// Flash banner (native pill toast) expiry and fade spring. An action-less
 /// banner yields the strip above the pill to a revealed style tooltip, so the
 /// banner and the selector never sit on top of each other.
-fn tick_flash(state: &PillState, tooltip_revealed: bool) {
+fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - SPRING_DT;
         if remaining <= 0.0 {
@@ -1269,7 +1283,7 @@ fn tick_flash(state: &PillState, tooltip_revealed: bool) {
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_revealed,
     );
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 }
 
 fn tick_long_press(state: &PillState) {
@@ -1516,39 +1530,6 @@ fn tick_transcript(state: &PillState) {
     }
 }
 
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * SPRING_DT;
-    let new_v = v + new_vel * SPRING_DT;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * SPRING_DT;
-    let new_v = v + new_vel * SPRING_DT;
-    if (new_v - target).abs() < 0.5 && (new_vel * SPRING_DT).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
-    }
-}
 
 #[cfg(test)]
 mod geometry_tests {
