@@ -67,16 +67,12 @@ const menuWrapperRole = (item: MenuPopoverItem): "menuitem" | undefined =>
     : "menuitem";
 
 const menuItemBaseKey = (item: MenuPopoverItem): string => {
-  if (item.kind === "listItem") {
-    return `listItem:${typeof item.title === "string" ? item.title : "node"}`;
+  const title =
+    "title" in item && typeof item.title === "string" ? item.title : "node";
+  if (item.kind === "listItem" || item.kind === "subMenu") {
+    return `${item.kind}:${title}`;
   }
-  if (item.kind === "divider") {
-    return "divider";
-  }
-  if (item.kind === "genericItem") {
-    return "genericItem";
-  }
-  return `subMenu:${typeof item.title === "string" ? item.title : "node"}`;
+  return item.kind;
 };
 
 const keyedMenuItems = (items: MenuPopoverItem[]) => {

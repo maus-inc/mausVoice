@@ -45,6 +45,7 @@ export type ActiveWebAudioPlayback = {
 };
 
 export let activePlayback: ActiveWebAudioPlayback | null = null;
+let closingContext: Promise<void> | null = null;
 
 const elapsedRatio = (playback: ActiveWebAudioPlayback): number => {
   const elapsed =
