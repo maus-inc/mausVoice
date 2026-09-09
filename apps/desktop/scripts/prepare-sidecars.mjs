@@ -89,6 +89,20 @@ if (gpuBuildState.canBuildNative) {
   mirrorCpuSidecarAsGpu(cpuSidecarPath);
 }
 
+function sleepSync(ms) {
+  try {
+    const sab = new SharedArrayBuffer(4);
+    const int32 = new Int32Array(sab);
+    Atomics.wait(int32, 0, 0, ms);
+  } catch {
+    // Fallback busy-wait if Atomics.wait is unavailable
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      // intentional empty
+    }
+  }
+}
+
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   const allowFailure = options.allowFailure === true;
   const cargoArgs = [
@@ -115,7 +129,31 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     );
   }
 
-  const buildOk = run("cargo", cargoArgs, repoRoot, { allowFailure });
+  // Transient network failures (e.g. GitHub 500 for sherpa-onnx) can
+  // break the first attempt. Retry with back-off, reusing the existing
+  // `run` helper so no new `cargo` PATH hotspot is introduced.
+  const maxAttempts = 3;
+  let buildOk = false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const isLastAttempt = attempt === maxAttempts;
+    // Intermediate failures should not abort the process; only the final
+    // attempt respects the caller's allowFailure flag.
+    const currentAllowFailure = isLastAttempt ? allowFailure : true;
+    const ok = run("cargo", cargoArgs, repoRoot, {
+      allowFailure: currentAllowFailure,
+    });
+    if (ok) {
+      buildOk = true;
+      break;
+    }
+    // `run` already logged the failure when allowFailure is true
+    if (!isLastAttempt) {
+      console.warn(
+        `[sidecar] Retrying cargo build for ${binaryName} (${attempt}/${maxAttempts}) in 5s — transient network may have caused sherpa download 500`,
+      );
+      sleepSync(5000);
+    }
+  }
   if (!buildOk) {
     return null;
   }
