@@ -671,6 +671,7 @@ utils/actions/repos); no behavioral logic was found inline.
 ## 15. CI gates after the PR opened (September 10, 2026)
 
 ### 15.1 SonarCloud "8.5% duplication on new code" — fixed
+
 The three provider response-format test blocks were near-identical.
 Extracted the shared block into
 `packages/voice-ai/src/test-helpers/shared-json-response-format.helper.ts`;
@@ -680,9 +681,11 @@ full monorepo build pass, so the duplication gate should clear on the
 next analysis.
 
 ### 15.2 macOS build failure at `9927135` — assessed as environmental
+
 The "Build Desktop (macOS)" job failed at the "Build Tauri app" step
 after ~2m12s; Windows and Linux jobs on the same commit passed. Evidence
 that this is not a code regression:
+
 - Nothing Rust changed since the last green macOS build (`0a09a93`,
   run 34379415766): the delta is TS test files, one test helper, and
   this document.
@@ -692,8 +695,32 @@ that this is not a code regression:
   4c6fae1) failed all three OS builds at the frontend step in the same
   window, with its own follow-up commit building green — the build
   queue was producing scattered failures that night.
-The token in this environment cannot re-run the failed job (403), so a
-new commit (this document) re-triggers the full build; if macOS fails
-again at the same step on the new commit, the job log in the GitHub UI
-must be inspected by a maintainer, because the error text is not
-downloadable from this sandbox.
+  The token in this environment cannot re-run the failed job (403), so a
+  new commit (this document) re-triggers the full build; if macOS fails
+  again at the same step on the new commit, the job log in the GitHub UI
+  must be inspected by a maintainer, because the error text is not
+  downloadable from this sandbox.
+
+### 15.3 Ito QA diff review (0a09a93 -> 9927135): two real Azure bugs — fixed
+Ito QA ran its own tests against the diff and reported two failures,
+both confirmed against OpenAI's documentation:
+1. **Case-variant deployment names.** The legacy-set lookup compared the
+   raw deployment name while the open-model prefix check compared the
+   lowercased name, so a deployment named `GPT-4` was misclassified as
+   modern and received `json_schema`, which the frozen model rejects
+   with a 400. Fix: the set lookup is now case-insensitive (all
+   canonical names are lowercase).
+2. **Missing frozen preview snapshot names on Azure.** The Azure legacy
+   set had drifted out of sync with the OpenAI one (it was a second,
+   hand-maintained list): it missed `gpt-4-1106-preview`,
+   `gpt-4-0125-preview`, `gpt-4-turbo-preview`, the vision previews,
+   and other real ids, and it even listed `gpt-4-0301`, which is not a
+   real OpenAI id (the March 2023 snapshot is `gpt-4-0314`, per
+   OpenAI's launch announcement and deprecation list). Fix: the
+   canonical list in `response-format.utils.ts` is now complete (every
+   entry verified against the OpenAI catalog/deprecation page) and the
+   Azure set is DERIVED from it (plus the dot-less `gpt-35-turbo`
+   names), so the two can no longer drift apart.
+Regression tests: 18 new cases across the OpenAI, OpenRouter and Azure
+response-format suites (case variants, preview snapshots, dot-less
+Azure names). 178/178 voice-ai tests pass; full build green.

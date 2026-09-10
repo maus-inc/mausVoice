@@ -1,7 +1,10 @@
 import { AzureOpenAI } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { retry, countWords } from "@maus-inc/utilities";
-import { buildJsonSchemaResponseFormat } from "./response-format.utils";
+import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
 import { buildJsonObjectPrompt } from "./openai-compatible-generate.utils";
 import type {
   JsonResponse,
@@ -21,26 +24,28 @@ export const AZURE_OPENAI_MODELS = [
 ] as const;
 export type AzureOpenAIModel = (typeof AZURE_OPENAI_MODELS)[number];
 
-// Azure OpenAI deployments mirror the upstream model naming (minus the
-// version dot for 3.5: "gpt-35-turbo"). Only the pre-Structured-Outputs
+// Azure OpenAI deployment names mirror the upstream model naming (minus
+// the version dot for 3.5: "gpt-35-turbo"). Only the pre-Structured-Outputs
 // legacy chat deployments reject `json_schema` and must receive the
 // legacy `json_object` shape; every other deployment — including
 // user-deployed open-source models (Llama, Phi, etc.) — defaults to
 // `json_schema`, matching upstream behavior.
-const JSON_OBJECT_ONLY_MODELS = new Set<string>([
-  "gpt-35-turbo",
-  "gpt-35-turbo-16k",
-  "gpt-35-turbo-0125",
-  "gpt-35-turbo-1106",
-  "gpt-4",
-  "gpt-4-0301",
-  "gpt-4-0613",
-  "gpt-4-32k",
-  "gpt-4-turbo",
-  "gpt-4-turbo-2024-04-09",
-  "gpt-4-1106",
-  "gpt-4-0125",
-]);
+//
+// Derive the legacy set from the canonical OpenAI list so the two cannot
+// drift apart (the original hand-maintained copy missed the "-preview"
+// snapshot names and silently sent json_schema to frozen previews).
+const AZURE_JSON_OBJECT_ONLY_MODELS = new Set<string>(
+  OPENAI_LEGACY_CHAT_MODELS.flatMap((model) =>
+    model.startsWith("gpt-3.5-turbo")
+      ? [model, model.replace("gpt-3.5-turbo", "gpt-35-turbo")]
+      : [model],
+  ),
+);
+// Azure users also name deployments after the frozen snapshots without the
+// "-preview" suffix; those are the same legacy models and get the legacy
+// shape too.
+AZURE_JSON_OBJECT_ONLY_MODELS.add("gpt-4-1106");
+AZURE_JSON_OBJECT_ONLY_MODELS.add("gpt-4-0125");
 
 // Azure serves open-weight models (Llama, Phi, Mistral, ...) through JSON
 // mode (`json_object`) and rejects `json_schema` for them, so those
@@ -53,9 +58,12 @@ const OPEN_MODEL_DEPLOYMENT_PREFIXES = [
 ] as const;
 
 export const isAzureJsonObjectOnlyModel = (deploymentName: string): boolean => {
+  // Deployment names are user-chosen aliases, so a deployment named
+  // "GPT-4-TURBO" is the same legacy model as "gpt-4-turbo": match the set
+  // case-insensitively (all canonical names are lowercase).
   const name = deploymentName.toLowerCase();
   return (
-    JSON_OBJECT_ONLY_MODELS.has(deploymentName) ||
+    AZURE_JSON_OBJECT_ONLY_MODELS.has(name) ||
     OPEN_MODEL_DEPLOYMENT_PREFIXES.some((prefix) => name.startsWith(prefix))
   );
 };

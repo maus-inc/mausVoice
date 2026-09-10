@@ -146,8 +146,22 @@ createJsonResponseFormatTests({
     return mod;
   },
   functionName: "azureOpenAIGenerateText",
-  jsonObjectModels: ["gpt-4", "llama-3.3-70b"],
-  jsonSchemaModels: ["gpt-4o-mini"],
+  // Deployment names are user-chosen aliases: case variants of canonical
+  // names and the frozen "-preview" snapshot names must all get the legacy
+  // json_object shape (json_schema 400s on those frozen models).
+  jsonObjectModels: [
+    "gpt-4",
+    "GPT-4",
+    "Gpt-4-Turbo",
+    "gpt-4-1106-preview",
+    "gpt-4-0125-preview",
+    "gpt-4-turbo-preview",
+    "gpt-4-vision-preview",
+    "gpt-35-turbo",
+    "GPT-35-TURBO",
+    "llama-3.3-70b",
+  ],
+  jsonSchemaModels: ["gpt-4o-mini", "gpt-4o", "gpt-5-mini"],
   extraParams: { endpoint: "https://test.azure.com" },
   modelParamName: "deploymentName",
 });

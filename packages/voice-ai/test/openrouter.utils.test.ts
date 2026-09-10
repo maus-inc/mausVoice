@@ -117,6 +117,6 @@ createJsonResponseFormatTests({
     return mod;
   },
   functionName: "openrouterGenerateTextResponse",
-  jsonObjectModels: ["openai/gpt-4-turbo"],
+  jsonObjectModels: ["openai/gpt-4-turbo", "openai/gpt-4-1106-preview"],
   jsonSchemaModels: ["openai/o3-mini", "openai/gpt-oss-20b"],
 });
