@@ -1350,7 +1350,12 @@ autoLearnDictionaryEnabled?: boolean;
  * as glossary terms. Disabled by default because it polls the focused
  * text field through the accessibility APIs.
  */
-autoLearnFromEditsEnabled?: boolean }
+autoLearnFromEditsEnabled?: boolean; 
+/**
+ * Opt-in consent for sending dictionary terms as ElevenLabs keyterms,
+ * which adds a 20% transcription surcharge. Off by default.
+ */
+elevenLabsKeytermsEnabled?: boolean }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/
