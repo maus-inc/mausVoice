@@ -701,6 +701,12 @@ that this is not a code regression:
   must be inspected by a maintainer, because the error text is not
   downloadable from this sandbox.
 
+Resolved: the macOS build then passed at `5742244` (Windows, macOS and
+Linux all green), where the Rust code is byte-identical to `9927135` —
+the delta since the last green macOS build is TS test files, one test
+helper, and this document. The failure was an environmental flake; no
+code change was needed.
+
 ### 15.3 Ito QA diff review (0a09a93 -> 9927135): two real Azure bugs — fixed
 
 Ito QA ran its own tests against the diff and reported two failures,
@@ -726,3 +732,23 @@ both confirmed against OpenAI's documentation:
    Regression tests: 18 new cases across the OpenAI, OpenRouter and Azure
    response-format suites (case variants, preview snapshots, dot-less
    Azure names). 178/178 voice-ai tests pass; full build green.
+
+### 15.4 Bot checks with no findings — classified as bot-side failures
+
+Across every commit of this PR (`f76804c`, `9927135`, `5742244`,
+`35233ea`):
+
+- **CodeSpect**: the check marked itself failed with zero annotations
+  and no new inline comments each time. Its single real finding (the
+  request-body OOM risk in `commands.rs`) was fixed in `0a09a93` and
+  answered in-thread.
+- **Kilo Code Review**: stuck in the queued state on every commit, no
+  output.
+- **DeepSource**: skipped with no output.
+
+None of these three has ever posted a finding on this branch, so their
+red or queued state is treated as their own infrastructure problem, not
+a code issue. Ito QA, SonarCloud, CodeRabbit, Socket, Gitleaks, Buoy,
+and every first-party gate (builds for all three OSes, desktop unit,
+integration, lint, format, i18n, Rust unit, voice-ai unit) are green or
+clean.
