@@ -6,6 +6,7 @@ import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
+import { TipCard } from "../onboarding/TipCard";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatPromptBox } from "./ChatPromptBox";
 import { ToolPermissionCard } from "./ToolPermissionCard";
@@ -118,6 +119,9 @@ export const ConversationLayout = ({
         overflow: "hidden",
       }}
     >
+      <Box sx={{ px: 2, pt: 2 }}>
+        <TipCard id="assistant-mode" />
+      </Box>
       <FadingScrollArea
         fadeHeight={32}
         viewportRef={scrollViewportRef}

@@ -48,6 +48,7 @@ import {
 } from "../../actions/personal-use.actions";
 import { setAutoLaunchEnabled } from "../../actions/settings.actions";
 import { SettingSection } from "../common/SettingSection";
+import { TipCard } from "../onboarding/TipCard";
 import { loadTones } from "../../actions/tone.actions";
 import {
   setAlwaysRequestAdminOnStartup,
@@ -478,6 +479,7 @@ export default function SettingsPage() {
         <FormattedMessage defaultMessage="How mausVoice should manage your transcriptions." />
       }
     >
+      <TipCard id="generative-provider" />
       {dictationLanguageComp}
       <ListTile
         title={<FormattedMessage defaultMessage="Deepgram API key" />}

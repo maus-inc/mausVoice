@@ -31,6 +31,112 @@ import { showErrorSnackbar } from "./app.actions";
 import { clearLocalStorageValue } from "./local-storage.actions";
 import { refreshMember } from "./member.actions";
 import { setAutoLaunchEnabled } from "./settings.actions";
+import {
+  trackButtonClick,
+  trackOnboardingOutcome,
+  type OnboardingOutcome,
+} from "../utils/analytics.utils";
+import { isMacOS } from "../utils/env.utils";
+
+export const CURRENT_ONBOARDING_FLOW_VERSION = 3;
+
+const postPermissionsPage = (): OnboardingPageKey =>
+  isMacOS() ? "micPerms" : "keybindings";
+
+const stepEnteredAt: Record<string, number> = {};
+
+export const markOnboardingStepEntered = (page: OnboardingPageKey): void => {
+  stepEnteredAt[page] = Date.now();
+};
+
+const recordStepOutcome = (
+  page: OnboardingPageKey,
+  outcome: OnboardingOutcome,
+): void => {
+  const startedAt = stepEnteredAt[page];
+  trackOnboardingOutcome(
+    page,
+    outcome,
+    startedAt !== undefined ? Date.now() - startedAt : undefined,
+  );
+  delete stepEnteredAt[page];
+};
+
+/**
+ * Pages cut from the v3 first run. Anyone resuming onto one (persisted
+ * progress from an older flow) lands on the nearest kept page instead of
+ * a blank screen. Migrations never replay completed permission steps.
+ */
+const nearestKeptPage = (page: OnboardingPageKey): OnboardingPageKey => {
+  switch (page) {
+    case "chooseLlm":
+    case "referralSource":
+      return postPermissionsPage();
+    case "userDetails":
+      return "chooseTranscription";
+    case "unlockedPro":
+      return "tutorial";
+    default:
+      return page;
+  }
+};
+
+export const ensureOnboardingFlow = (): void => {
+  const state = getAppState();
+  if (state.local.onboardingFlowVersion >= CURRENT_ONBOARDING_FLOW_VERSION) {
+    return;
+  }
+  produceAppState((draft) => {
+    draft.onboarding.currentPage = nearestKeptPage(
+      draft.onboarding.currentPage,
+    );
+    draft.onboarding.history = draft.onboarding.history.map(nearestKeptPage);
+    if (draft.local.onboardingResumePage) {
+      draft.local.onboardingResumePage = nearestKeptPage(
+        draft.local.onboardingResumePage,
+      );
+    }
+    draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
+  });
+};
+
+export const markPrerequisite = (id: string): void => {
+  produceAppState((draft) => {
+    if (!draft.local.completedPrerequisites.includes(id)) {
+      draft.local.completedPrerequisites.push(id);
+    }
+  });
+};
+
+export const dismissTip = (id: string): void => {
+  trackButtonClick("tip_dismiss", { tipId: id });
+  produceAppState((draft) => {
+    if (!draft.local.dismissedTipIds.includes(id)) {
+      draft.local.dismissedTipIds.push(id);
+    }
+  });
+};
+
+export const resetTip = (id: string): void => {
+  trackButtonClick("tip_show_again", { tipId: id });
+  produceAppState((draft) => {
+    draft.local.dismissedTipIds = draft.local.dismissedTipIds.filter(
+      (tipId) => tipId !== id,
+    );
+  });
+};
+
+export const resumeOnboardingPage = (): void => {
+  const state = getAppState();
+  const resume = state.local.onboardingResumePage;
+  if (
+    resume &&
+    resume !== state.onboarding.currentPage &&
+    state.onboarding.history.length === 0
+  ) {
+    goToOnboardingPage(nearestKeptPage(resume));
+  }
+};
 
 const navigateToOnboardingPage = (
   onboarding: OnboardingState,
@@ -45,18 +151,28 @@ const navigateToOnboardingPage = (
 };
 
 export const goBackOnboardingPage = () => {
+  const leaving = getAppState().onboarding.currentPage;
   produceAppState((draft) => {
     const previousPage = draft.onboarding.history.pop();
     if (previousPage) {
       draft.onboarding.currentPage = previousPage;
     }
   });
+  recordStepOutcome(leaving, "back");
 };
 
-export const goToOnboardingPage = (nextPage: OnboardingPageKey) => {
+export const goToOnboardingPage = (
+  nextPage: OnboardingPageKey,
+  outcome: Extract<OnboardingOutcome, "complete" | "skip"> = "complete",
+) => {
+  const leaving = getAppState().onboarding.currentPage;
   produceAppState((draft) => {
     navigateToOnboardingPage(draft.onboarding, nextPage);
+    draft.local.onboardingResumePage = draft.onboarding.currentPage;
   });
+  if (leaving !== nextPage) {
+    recordStepOutcome(leaving, outcome);
+  }
 };
 
 export const resetOnboarding = () => {
@@ -266,6 +382,8 @@ export const finishOnboarding = async () => {
     const savedUser = await repo.setMyUser(updatedUser);
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
+      draft.local.onboardingResumePage = null;
+      draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
     });
 
     await setAutoLaunchEnabled(true);
