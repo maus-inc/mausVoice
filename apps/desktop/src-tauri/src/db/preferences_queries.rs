@@ -373,14 +373,37 @@ pub async fn fetch_transcription_mode(pool: SqlitePool) -> Result<Option<String>
     Ok(row.flatten())
 }
 
+/// Single-column write path that owns `expansion_flags`.
+///
+/// `upsert_user_preferences` deliberately preserves the stored value on
+/// conflict (`expansion_flags = expansion_flags`), so every flag mutation
+/// must go through this statement — never through a full-row upsert, which
+/// would let a stale preferences snapshot overwrite concurrent flag changes.
+pub fn expansion_flags_update_sql() -> &'static str {
+    "UPDATE user_preferences SET expansion_flags = ?1 WHERE user_id = ?2"
+}
+
 pub async fn set_expansion_flags(
     pool: SqlitePool,
     flags: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE user_preferences SET expansion_flags = ?1 WHERE user_id = ?2")
+    sqlx::query(expansion_flags_update_sql())
         .bind(flags)
         .bind(LOCAL_USER_ID)
         .execute(&pool)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expansion_flags_update_sql_targets_only_the_flag_column() {
+        let sql = expansion_flags_update_sql();
+        assert!(sql.contains("SET expansion_flags = ?1"));
+        assert!(sql.contains("WHERE user_id = ?2"));
+        assert!(!sql.contains("excluded."));
+    }
 }

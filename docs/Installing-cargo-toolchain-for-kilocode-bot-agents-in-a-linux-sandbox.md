@@ -8,8 +8,11 @@ a clean Ubuntu 22.04 container.
 ## Prerequisites
 
 - Ubuntu 22.04 or compatible Debian-based distro
-- Root or sudo access
+- Root or sudo access (prefix every `apt-get` below with `sudo` when
+  running as a non-root user)
 - Internet access for package downloads and Cargo crate fetches
+- A checkout of the mausVoice repo — the config paths and the final
+  verification step assume the repo root as the working directory
 
 ## Step 1: Install rustup and the stable toolchain
 
@@ -43,6 +46,7 @@ apt-get update -qq
 apt-get install -y -qq \
   build-essential \
   pkg-config \
+  git \
   libssl-dev \
   libglib2.0-dev \
   libgtk-3-dev \
@@ -52,8 +56,15 @@ apt-get install -y -qq \
   libwebkit2gtk-4.1-dev \
   libasound2-dev \
   libpulse-dev \
-  libudev-dev
+  libudev-dev \
+  libxdo-dev
 ```
+
+`libwebkit2gtk-4.1-dev` is correct for Ubuntu 22.04. On distros whose
+repositories only carry the older WebKitGTK, substitute
+`libwebkit2gtk-4.0-dev` — the same fallback the repo's
+`.github/scripts/install-desktop-linux-deps.sh` probes for with
+`apt-cache show` before installing.
 
 Explanation of each package:
 
@@ -61,6 +72,7 @@ Explanation of each package:
 |---------|-----------|
 | `build-essential` | C toolchain (`cc`, `make`) required by many `build.rs` scripts and for linking |
 | `pkg-config` | Used by Rust crates to locate system library headers and linker flags |
+| `git` | Required for the Step 4 `git-fetch-with-cli` fallback and for fetching git-based crate dependencies |
 | `libssl-dev` | `reqwest`/`rustls` TLS support when the `native-tls` or OpenSSL features are enabled |
 | `libglib2.0-dev` | `glib-sys` / `gio-sys` — GLib is a transitive dependency of GTK and zbus |
 | `libgtk-3-dev` | GTK 3 bindings used by the tray icon, window theming, and native menus |
@@ -71,6 +83,7 @@ Explanation of each package:
 | `libasound2-dev` | `alsa-sys` — ALSA audio backend |
 | `libpulse-dev` | PulseAudio audio bindings |
 | `libudev-dev` | Device enumeration for input and audio hardware |
+| `libxdo-dev` | `xdo` crate — synthetic keyboard/mouse input for dictation insertion |
 
 ## Step 3: Install Clippy
 
@@ -141,6 +154,8 @@ apt-get install -y libglib2.0-dev
 ```bash
 apt-get install -y libsoup-3.0-dev libwebkit2gtk-4.1-dev
 ```
+(Use `libwebkit2gtk-4.0-dev` instead where only the older WebKitGTK is
+available — see the Step 2 note above.)
 
 ### `pkg-config exited with status code 1` for `alsa`
 
@@ -199,16 +214,22 @@ source "$HOME/.cargo/env"
 
 echo "Installing system dependencies..."
 apt-get update -qq
+if apt-cache show libwebkit2gtk-4.1-dev >/dev/null 2>&1; then
+  webkit_pkg="libwebkit2gtk-4.1-dev"
+else
+  webkit_pkg="libwebkit2gtk-4.0-dev"
+fi
 apt-get install -y -qq \
   build-essential \
   pkg-config \
+  git \
   libssl-dev \
   libglib2.0-dev \
   libgtk-3-dev \
   libayatana-appindicator3-dev \
   librsvg2-dev \
   libsoup-3.0-dev \
-  libwebkit2gtk-4.1-dev \
+  "${webkit_pkg}" \
   libasound2-dev \
   libpulse-dev \
   libudev-dev \

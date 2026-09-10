@@ -3,11 +3,12 @@ export type RedactionMode = "full" | "hash" | "truncate";
 const SENSITIVE_KEY_PATTERNS = [
   /password|passwd|pwd/i,
   /secret|clientSecret|client_secret/i,
-  /token(?!s)|accessToken|refreshToken|idToken/gi,
+  /tokens?|accessTokens?|refreshTokens?|idTokens?/i,
   /authorization|auth(?:Header|orization|_header)?/i,
   /credential/i,
   /private/i,
-  /apikey|api[_-]?key/i,
+  /api[_-]?key/i,
+  /(?:access[_-]?key|key[_-]?id|session[_-]?key)/i,
 ];
 
 const SECRET_VALUE_PATTERN =
@@ -77,68 +78,87 @@ const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
   );
 };
 
-const redactArray = async (
-  arr: unknown[],
-  sensitiveKeys: string[],
-): Promise<unknown[]> => {
-  return Promise.all(
-    arr.map(async (item) => {
-      if (isNestedObject(item)) {
-        return redactObject(item, sensitiveKeys);
-      }
-      if (Array.isArray(item)) {
-        return redactArray(item, sensitiveKeys);
-      }
-      if (typeof item === "string") {
-        return redactStringValue(item);
-      }
-      return item;
-    }),
-  );
-};
-
 const redactStringValue = (value: string): string => {
   return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
+const redactArray = (
+  arr: unknown[],
+  sensitiveKeys: string[],
+  forceFull = false,
+  seen: WeakSet<object> = new WeakSet(),
+): Promise<unknown[]> => {
+  return Promise.all(
+    arr.map(async (item) => {
+      if (typeof item === "string") {
+        return forceFull ? redactString(item, "full") : redactStringValue(item);
+      }
+      if (isNestedObject(item)) {
+        return redactObject(item, sensitiveKeys, forceFull, seen);
+      }
+      if (Array.isArray(item)) {
+        if (seen.has(item)) {
+          return "[circular]";
+        }
+        seen.add(item);
+        try {
+          return await redactArray(item, sensitiveKeys, forceFull, seen);
+        } finally {
+          seen.delete(item);
+        }
+      }
+      return forceFull ? "[redacted]" : item;
+    }),
+  );
+};
+
+const redactWithCycleGuard = async (
+  value: Record<string, unknown> | unknown[],
+  seen: WeakSet<object>,
+  redact: () => Promise<Record<string, unknown> | unknown[]>,
+): Promise<Record<string, unknown> | unknown[] | "[circular]"> => {
+  if (seen.has(value)) {
+    return "[circular]";
+  }
+  seen.add(value);
+  try {
+    return await redact();
+  } finally {
+    seen.delete(value);
+  }
+};
+
 /**
  * Redact sensitive keys and recursively redact nested objects and arrays.
+ * Values under a sensitive key are fully redacted at every depth.
+ * Circular references are replaced with "[circular]".
  */
 export const redactObject = async (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
+  forceFull = false,
+  seen: WeakSet<object> = new WeakSet(),
 ): Promise<Record<string, unknown>> => {
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (isSensitiveKey(key, sensitiveKeys)) {
+  seen.add(obj);
+  try {
+    for (const [key, value] of Object.entries(obj)) {
+      const sensitive = forceFull || isSensitiveKey(key, sensitiveKeys);
       if (typeof value === "string") {
-        result[key] = await redactString(value, "full");
-      } else if (Array.isArray(value)) {
-        result[key] = await Promise.all(
-          value.map(async (item) => {
-            if (typeof item === "string") {
-              return await redactString(item, "full");
-            }
-            if (isNestedObject(item)) {
-              return redactObject(item, sensitiveKeys);
-            }
-            if (Array.isArray(item)) {
-              return redactArray(item, sensitiveKeys);
-            }
-            return "[redacted]";
-          }),
-        );
+        result[key] = sensitive
+          ? await redactString(value, "full")
+          : redactStringValue(value);
+      } else if (isNestedObject(value) || Array.isArray(value)) {
+        const nested = Array.isArray(value)
+          ? () => redactArray(value, sensitiveKeys, sensitive, seen)
+          : () => redactObject(value, sensitiveKeys, sensitive, seen);
+        result[key] = await redactWithCycleGuard(value, seen, nested);
       } else {
-        result[key] = "[redacted]";
+        result[key] = sensitive ? "[redacted]" : value;
       }
-    } else if (isNestedObject(value)) {
-      result[key] = await redactObject(value, sensitiveKeys);
-    } else if (Array.isArray(value)) {
-      result[key] = await redactArray(value, sensitiveKeys);
-    } else {
-      result[key] =
-        typeof value === "string" ? redactStringValue(value) : value;
     }
+  } finally {
+    seen.delete(obj);
   }
   return result;
 };

@@ -92,6 +92,7 @@ enabled/disabled without a rebuild. Flags added now:
 - `connectorsEnabled` (default: false)
 - `handsFreeToggleEnabled` (default: false)
 - `voiceWorkflowsEnabled` (default: false)
+- `ephemeralSessionEnabled` (default: false)
 
 ## Privacy-safe logging
 

@@ -83,7 +83,56 @@ pub fn sanitize_log_content(input: &str) -> String {
             .replace_all(&result, rule.replacement)
             .into_owned();
     }
-    result
+    redact_labeled_blocks(&result)
+}
+
+/// Labels whose payload may span multiple log lines. The regex rules above
+/// only redact the label's own line (`.+` never matches `\n`), so a payload
+/// continued on following lines would leak. This pass redacts the label line
+/// and every continuation line until the next `[`-prefixed log record.
+///
+/// "Received transcript:" is intentionally excluded: its rule is surgical
+/// (redacts only the `preview` value, keeps `length` metadata), and its
+/// JSON payload cannot span lines without breaking the preserved fields.
+const BLOCK_LABELS: &[&str] = &[
+    "Processed transcript:",
+    "LLM raw output:",
+    "finalizing with transcript:",
+    "final transcript:",
+    "LLM prompt:",
+    "Webhook payload:",
+    "Meeting transcript:",
+    "Translation source:",
+    "Translation result:",
+    "Translation content:",
+];
+
+fn earliest_label(line: &str) -> Option<usize> {
+    BLOCK_LABELS
+        .iter()
+        .filter_map(|label| line.find(label).map(|pos| pos + label.len()))
+        .min()
+}
+
+fn redact_labeled_blocks(input: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_block = false;
+    for line in input.split('\n') {
+        if let Some(end) = earliest_label(line) {
+            out.push(format!("{} [REDACTED]", &line[..end]));
+            in_block = true;
+        } else if in_block {
+            if line.starts_with('[') {
+                in_block = false;
+                out.push(line.to_string());
+            } else {
+                out.push("[REDACTED]".to_string());
+            }
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
 }
 
 #[cfg(test)]
@@ -266,6 +315,28 @@ mod tests {
         let result = sanitize_log_content(input);
         assert!(result.contains("Translation result: [REDACTED]"));
         assert!(!result.contains("how are you"));
+    }
+
+    #[test]
+    fn test_redacts_multiline_meeting_transcript_block() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: Alice said the deadline moves\nsecond line of the same transcript with secrets\nthird line\n[2024-01-15][14:30:46.000][INFO][webview] Transcript pasted successfully";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Meeting transcript: [REDACTED]"));
+        assert!(!result.contains("Alice said"));
+        assert!(!result.contains("second line"));
+        assert!(!result.contains("third line"));
+        assert!(result.contains("Transcript pasted successfully"));
+    }
+
+    #[test]
+    fn test_redacts_multiline_translation_block() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation source: Bonjour\ncontinued source text\n[2024-01-15][14:30:46.000][DEBUG][webview] Translation result: Hello\ncontinued result text";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation source: [REDACTED]"));
+        assert!(result.contains("Translation result: [REDACTED]"));
+        assert!(!result.contains("Bonjour"));
+        assert!(!result.contains("continued source"));
+        assert!(!result.contains("continued result"));
     }
 
     #[test]

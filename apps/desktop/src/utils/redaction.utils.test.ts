@@ -122,11 +122,11 @@ describe("redaction.utils", () => {
 
     it("redacts secret values embedded in bare array strings", async () => {
       const input = {
-        tokens: ["sk-abcdefghijklmnopqrstuvwxyz123456", "visible-token"],
+        notes: ["sk-abcdefghijklmnopqrstuvwxyz123456", "visible-note"],
       };
       const result = (await redactObject(input)) as typeof input;
-      expect(result.tokens[0]).toBe("[redacted-secret]");
-      expect(result.tokens[1]).toBe("visible-token");
+      expect(result.notes[0]).toBe("[redacted-secret]");
+      expect(result.notes[1]).toBe("visible-note");
     });
 
     it("preserves non-sensitive objects inside arrays", async () => {
@@ -141,6 +141,72 @@ describe("redaction.utils", () => {
         { name: "Alice", role: "admin" },
         { name: "Bob", role: "user" },
       ]);
+    });
+
+    it("redacts consecutive token-like keys without stateful misses", async () => {
+      const result = await redactObject({
+        accessToken: "aaa",
+        refreshToken: "bbb",
+        idToken: "ccc",
+      });
+      expect(result.accessToken).toBe("[redacted]");
+      expect(result.refreshToken).toBe("[redacted]");
+      expect(result.idToken).toBe("[redacted]");
+    });
+
+    it("redacts plural token keys and key-id credential names", async () => {
+      const result = await redactObject({
+        tokens: ["aaa", "bbb"],
+        accessTokens: "Bearer xyz",
+        accessKey: "AKIAIOSFODNN7EXAMPLE",
+        keyId: "key-id-value",
+        session_key: "session-value",
+      });
+      expect(result.tokens).toEqual(["[redacted]", "[redacted]"]);
+      expect(result.accessTokens).toBe("[redacted]");
+      expect(result.accessKey).toBe("[redacted]");
+      expect(result.keyId).toBe("[redacted]");
+      expect(result.session_key).toBe("[redacted]");
+    });
+
+    it("leaves lookalike non-credential keys visible", async () => {
+      const result = await redactObject({
+        monkey: "banana",
+        keyboard: "qwerty",
+      });
+      expect(result.monkey).toBe("banana");
+      expect(result.keyboard).toBe("qwerty");
+    });
+
+    it("fully redacts nested arrays under sensitive keys", async () => {
+      const result = (await redactObject({ passwords: [["foo"]] })) as {
+        passwords: unknown;
+      };
+      expect(result.passwords).toEqual([["[redacted]"]]);
+    });
+
+    it("fully redacts objects nested under sensitive keys", async () => {
+      const result = (await redactObject({
+        auth: [{ note: "Bearer opaque" }],
+      })) as { auth: Array<{ note: string }> };
+      expect(result.auth[0].note).toBe("[redacted]");
+    });
+
+    it("replaces circular references instead of overflowing", async () => {
+      const input: Record<string, unknown> = { name: "ok" };
+      input.self = input;
+      const result = await redactObject(input);
+      expect(result.name).toBe("ok");
+      expect(result.self).toBe("[circular]");
+    });
+
+    it("replaces circular arrays", async () => {
+      const loop: unknown[] = [];
+      loop.push(loop);
+      const result = (await redactObject({ items: loop })) as {
+        items: unknown[];
+      };
+      expect(result.items).toEqual(["[circular]"]);
     });
   });
 });
