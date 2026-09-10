@@ -1,7 +1,10 @@
 import { Box, Stack } from "@mui/material";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { goToOnboardingPage } from "../../actions/onboarding.actions";
+import {
+  goToOnboardingPage,
+  markPrerequisite,
+} from "../../actions/onboarding.actions";
 import enableMicVideo from "../../assets/enable-mic.mp4";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -49,8 +52,18 @@ export const MicPermsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_mic_perms_continue");
+    markPrerequisite("microphone");
     goToOnboardingPage(isMacOS() ? "a11yPerms" : "keybindings");
   };
+
+  // A restart that lands back here with the permission already granted
+  // moves on without replaying the step.
+  useEffect(() => {
+    if (isAuthorized) {
+      markPrerequisite("microphone");
+      goToOnboardingPage(isMacOS() ? "a11yPerms" : "keybindings");
+    }
+  }, [isAuthorized]);
 
   const form = (
     <OnboardingFormLayout

@@ -18,6 +18,7 @@ import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
 import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
+import { TipCard } from "../onboarding/TipCard";
 import { TranscriptionRow } from "./TranscriptRow";
 import { ScrollListPage } from "../common/ScrollListPage";
 import {
@@ -100,30 +101,33 @@ export default function TranscriptionsPage() {
   return (
     <>
       <TranscriptionsSideEffects />
-      <ScrollListPage
-        title={<FormattedMessage defaultMessage="History" />}
-        subtitle={
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <span>
-              <FormattedMessage
-                defaultMessage="{count} {count, plural, one {transcription} other {transcriptions}}"
-                values={{ count: transcriptionIds.length }}
-              />
-            </span>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => setImportDialogOpen(true)}
-              disabled={isImporting}
-            >
-              <FormattedMessage defaultMessage="Import audio" />
-            </Button>
-          </Stack>
-        }
-        items={transcriptionIds}
-        computeItemKey={(id) => id}
-        renderItem={(id) => <TranscriptionRow key={id} id={id} />}
-      />
+      <Stack spacing={2} sx={{ height: "100%" }}>
+        <TipCard id="review-before-insert" />
+        <ScrollListPage
+          title={<FormattedMessage defaultMessage="History" />}
+          subtitle={
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+              <span>
+                <FormattedMessage
+                  defaultMessage="{count} {count, plural, one {transcription} other {transcriptions}}"
+                  values={{ count: transcriptionIds.length }}
+                />
+              </span>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setImportDialogOpen(true)}
+                disabled={isImporting}
+              >
+                <FormattedMessage defaultMessage="Import audio" />
+              </Button>
+            </Stack>
+          }
+          items={transcriptionIds}
+          computeItemKey={(id) => id}
+          renderItem={(id) => <TranscriptionRow key={id} id={id} />}
+        />
+      </Stack>
 
       <Dialog
         open={importDialogOpen}

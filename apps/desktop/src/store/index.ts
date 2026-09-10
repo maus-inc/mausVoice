@@ -3,6 +3,7 @@ import { isEqual } from "lodash-es";
 import { persist } from "zustand/middleware";
 import { createWithEqualityFn } from "zustand/traditional";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
+import { INITIAL_LOCAL_STATE } from "../state/local.state";
 
 const CURRENT_STORAGE_KEY = "mausvoice-local-state";
 const LEGACY_STORAGE_KEY = "voquill-local-state";
@@ -35,6 +36,15 @@ export const useAppStore = createWithEqualityFn<AppState>()(
   persist(() => INITIAL_APP_STATE, {
     name: CURRENT_STORAGE_KEY,
     partialize: (state) => ({ local: state.local }),
+    // Stored blobs predate new local fields, so fill them from defaults
+    // instead of leaving them undefined for existing installs.
+    merge: (persisted, current) => ({
+      ...current,
+      local: {
+        ...INITIAL_LOCAL_STATE,
+        ...(persisted as AppState)?.local,
+      },
+    }),
   }),
   isEqual,
 );
