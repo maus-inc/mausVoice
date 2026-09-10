@@ -702,8 +702,10 @@ that this is not a code regression:
   downloadable from this sandbox.
 
 ### 15.3 Ito QA diff review (0a09a93 -> 9927135): two real Azure bugs — fixed
+
 Ito QA ran its own tests against the diff and reported two failures,
 both confirmed against OpenAI's documentation:
+
 1. **Case-variant deployment names.** The legacy-set lookup compared the
    raw deployment name while the open-model prefix check compared the
    lowercased name, so a deployment named `GPT-4` was misclassified as
@@ -721,6 +723,6 @@ both confirmed against OpenAI's documentation:
    entry verified against the OpenAI catalog/deprecation page) and the
    Azure set is DERIVED from it (plus the dot-less `gpt-35-turbo`
    names), so the two can no longer drift apart.
-Regression tests: 18 new cases across the OpenAI, OpenRouter and Azure
-response-format suites (case variants, preview snapshots, dot-less
-Azure names). 178/178 voice-ai tests pass; full build green.
+   Regression tests: 18 new cases across the OpenAI, OpenRouter and Azure
+   response-format suites (case variants, preview snapshots, dot-less
+   Azure names). 178/178 voice-ai tests pass; full build green.
