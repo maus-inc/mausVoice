@@ -667,3 +667,33 @@ Residual: `TutorialForm`, `MoreSettingsDialog`, `StyleHotkeysDialog`,
 `TranscriptionsPage`, `ConversationListItem` were structurally reviewed
 (form/UI wiring whose underlying logic lives in the audited
 utils/actions/repos); no behavioral logic was found inline.
+
+## 15. CI gates after the PR opened (September 10, 2026)
+
+### 15.1 SonarCloud "8.5% duplication on new code" — fixed
+The three provider response-format test blocks were near-identical.
+Extracted the shared block into
+`packages/voice-ai/src/test-helpers/shared-json-response-format.helper.ts`;
+the three test files now only declare their own model lists and options.
+Committed as `9927135` (net -164 lines); all 160 voice-ai tests and the
+full monorepo build pass, so the duplication gate should clear on the
+next analysis.
+
+### 15.2 macOS build failure at `9927135` — assessed as environmental
+The "Build Desktop (macOS)" job failed at the "Build Tauri app" step
+after ~2m12s; Windows and Linux jobs on the same commit passed. Evidence
+that this is not a code regression:
+- Nothing Rust changed since the last green macOS build (`0a09a93`,
+  run 34379415766): the delta is TS test files, one test helper, and
+  this document.
+- The frontend half of the build (the only part that consumes TS) passed
+  on all three OSes at this commit.
+- A concurrent branch (`arena/01a08680-mausvoice-item02`, commit
+  4c6fae1) failed all three OS builds at the frontend step in the same
+  window, with its own follow-up commit building green — the build
+  queue was producing scattered failures that night.
+The token in this environment cannot re-run the failed job (403), so a
+new commit (this document) re-triggers the full build; if macOS fails
+again at the same step on the new commit, the job log in the GitHub UI
+must be inspected by a maintainer, because the error text is not
+downloadable from this sandbox.
