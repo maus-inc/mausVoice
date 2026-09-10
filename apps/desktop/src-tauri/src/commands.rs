@@ -2635,6 +2635,9 @@ pub struct MeetingUpdateArgs {
     pub id: String,
     pub title: Option<String>,
     pub status: Option<String>,
+    /// `None` leaves the stored summary unchanged. There is intentionally no
+    /// null-out path yet: no caller clears summaries, and the nested
+    /// `Option<Option<..>>` form was removed to fix an E0515 borrow error.
     pub summary: Option<String>,
     pub transcript: Option<String>,
     pub duration_ms: Option<i64>,

@@ -108,8 +108,9 @@ export const generateMeetingSummary = async (
       prompt: meeting.transcript,
     });
   } catch (err) {
+    const redacted = await redactError(err);
     getLogger().warning(
-      `Summary generation failed for meeting ${meetingId}: ${redactError(err)}`,
+      `Summary generation failed for meeting ${meetingId}: ${redacted}`,
     );
     return;
   }

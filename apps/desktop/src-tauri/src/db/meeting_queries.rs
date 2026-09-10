@@ -134,6 +134,10 @@ pub async fn update_meeting(
 /// Persist segments, speakers, and the parent meeting update atomically.
 /// Any failure rolls back every child insert so a partial stop-recording
 /// state never lingers in the database.
+///
+/// Completion is idempotent: a retried stop reuses the caller-side
+/// segment/speaker ids, so rows a previous attempt committed are cleared
+/// before the full detail set is inserted.
 #[allow(clippy::too_many_arguments)]
 pub async fn complete_meeting(
     pool: SqlitePool,
@@ -158,6 +162,14 @@ pub async fn complete_meeting(
     }
 
     let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM meeting_segments WHERE meeting_id = ?1")
+        .bind(meeting_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM meeting_speakers WHERE meeting_id = ?1")
+        .bind(meeting_id)
+        .execute(&mut *tx)
+        .await?;
     for segment in segments {
         sqlx::query(
             "INSERT INTO meeting_segments (id, meeting_id, speaker_id, start_time_ms, end_time_ms, text, confidence)

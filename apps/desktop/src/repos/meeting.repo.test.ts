@@ -54,12 +54,14 @@ describe("LocalMeetingRepo payload shape", () => {
     };
     await repo.updateMeeting(params);
     expect(invokeMock).toHaveBeenCalledWith("meeting_update", {
-      args: expect.objectContaining({
+      args: {
         id: "meeting-1",
+        title: undefined,
         status: "completed",
-        durationMs: 1234,
+        summary: undefined,
         transcript: "hello",
-      }),
+        durationMs: 1234,
+      },
     });
   });
 
