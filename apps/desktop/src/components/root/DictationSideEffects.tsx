@@ -203,7 +203,7 @@ export const createPhaseBookkeeper = (): PhaseBookkeeper => {
   };
 };
 
-type PostTranscriptInput = {
+export type PostTranscriptInput = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
   appTarget: AppTarget | null;

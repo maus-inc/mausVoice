@@ -32,6 +32,7 @@ import {
   handleEmptyTranscriptionResult,
   postProcessFinalizedTranscript,
 } from "./DictationSideEffects";
+import type { PostTranscriptInput } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 
 type ToastCall = {
@@ -192,7 +193,9 @@ describe("createPhaseBookkeeper", () => {
 describe("postProcessFinalizedTranscript", () => {
   const buildInput = (options: { store?: boolean; agent?: boolean } = {}) => {
     const order: string[] = [];
-    const handleTranscript = vi.fn(async () => {
+    const handleTranscript = vi.fn<
+      PostTranscriptInput["strategy"]["handleTranscript"]
+    >(async () => {
       order.push("handleTranscript");
       return {
         shouldContinue: false,
@@ -200,12 +203,27 @@ describe("postProcessFinalizedTranscript", () => {
         sanitizedTranscript: "hello world",
         postProcessMetadata: {},
         postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
       };
     });
-    const storeTranscriptionFn = vi.fn(async () => {
+    const storeTranscriptionFn = vi.fn<
+      PostTranscriptInput["storeTranscriptionFn"]
+    >(async () => {
       order.push("store");
+      return { transcription: null, wordCount: 0 };
     });
-    const input = {
+    const strategy: PostTranscriptInput["strategy"] = {
+      handleTranscript,
+      shouldStoreTranscript: () => options.store !== false,
+    };
+    const sendIdle = vi.fn(async () => {
+      order.push("idle");
+    });
+    const refreshMember = vi.fn(() => {
+      order.push("refresh");
+    });
+    const input: PostTranscriptInput = {
       audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
       a11yInfo: null,
       appTarget: null,
@@ -218,21 +236,21 @@ describe("postProcessFinalizedTranscript", () => {
         metadata: {},
         warnings: [],
       },
-      strategy: {
-        handleTranscript,
-        shouldStoreTranscript: () => options.store !== false,
-      } as never,
+      strategy,
       isAgentMode: options.agent === true,
       handleTranscriptTimeoutMs: 60_000,
-      sendIdle: vi.fn(async () => {
-        order.push("idle");
-      }),
-      storeTranscriptionFn: storeTranscriptionFn as never,
-      refreshMember: vi.fn(() => {
-        order.push("refresh");
-      }),
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
     };
-    return { input, order, handleTranscript, storeTranscriptionFn };
+    return {
+      input,
+      order,
+      handleTranscript,
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
+    };
   };
 
   it("sends idle after handleTranscript and before storeTranscription", async () => {
@@ -243,6 +261,25 @@ describe("postProcessFinalizedTranscript", () => {
     expect(handleTranscript).toHaveBeenCalledTimes(1);
     expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
     expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
+  });
+
+  it("propagates a post-processing failure without sending idle or persisting", async () => {
+    const {
+      input,
+      handleTranscript,
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
+    } = buildInput();
+    const failure = new Error("post-processing failed");
+    handleTranscript.mockRejectedValueOnce(failure);
+
+    await expect(postProcessFinalizedTranscript(input)).rejects.toThrow(
+      failure,
+    );
+    expect(sendIdle).not.toHaveBeenCalled();
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(refreshMember).not.toHaveBeenCalled();
   });
 
   it("still sends idle when the strategy skips history storage", async () => {
