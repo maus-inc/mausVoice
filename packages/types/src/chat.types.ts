@@ -17,3 +17,26 @@ export type ChatMessage = {
   createdAt: string;
   metadata: Nullable<Record<string, unknown>>;
 };
+
+export type ChatToolStatus =
+  "pending" | "approval" | "running" | "complete" | "denied" | "failed";
+
+export type ChatPart =
+  | { kind: "text"; text: string }
+  | { kind: "reasoning"; text: string; open: boolean }
+  | {
+      kind: "tool";
+      toolCallId: string;
+      toolName: string;
+      status: ChatToolStatus;
+      reason?: string;
+    }
+  | {
+      kind: "tool-result";
+      toolCallId: string;
+      toolName: string;
+      reason?: string;
+    }
+  | { kind: "permission"; permissionId: string }
+  | { kind: "status"; text: string }
+  | { kind: "error"; text: string };
