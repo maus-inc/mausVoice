@@ -752,3 +752,25 @@ a code issue. Ito QA, SonarCloud, CodeRabbit, Socket, Gitleaks, Buoy,
 and every first-party gate (builds for all three OSes, desktop unit,
 integration, lint, format, i18n, Rust unit, voice-ai unit) are green or
 clean.
+
+Final bot outcomes (as of HEAD `1b3e51f`):
+
+- **Ito QA re-run (9927135 -> 1b3e51f): PASSED** — "2 fixed, 12
+  passing", "safe to merge, no PR-attributable regressions". Both of
+  its earlier failures (case-variant and preview deployment names) are
+  confirmed fixed inline.
+- **Kilo Code Review (after being stuck queued all PR): posted a full
+  independent review — "No new code defects found in changed code",
+  recommendation to merge.** Its advisory notes: (1) SonarCloud reports
+  7 new non-gate issues that are only visible on the authenticated
+  dashboard (gate still passed; flagged for a maintainer to glance at
+  before merging — not enumerable from this environment); (2) the
+  CodeSpect review is stale and should be dismissed (all 3 of its
+  issues are fixed — answered on the review itself); (3) the
+  `console.log` llm-usage lines in the OpenAI utils are pre-existing,
+  out of scope.
+- **CodeSpect:** its single CHANGES_REQUESTED review (1 major + 2
+  minors) is fully addressed on HEAD — major fixed in `0a09a93`, the
+  two minors are the Azure defects fixed in `5742244`. A comment has
+  been posted on the review requesting re-analysis/dismissal by a
+  maintainer (the token in this environment cannot dismiss reviews).
