@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use sqlx::{Row, SqlitePool};
 
 use crate::domain::{Meeting, MeetingSegment, MeetingSource, MeetingSpeaker};
