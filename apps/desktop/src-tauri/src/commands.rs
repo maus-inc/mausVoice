@@ -4580,8 +4580,8 @@ fn channel_manifest_url(channel: &str) -> &'static str {
 /// verification all run the stock plugin path untouched.
 #[tauri::command]
 #[specta::specta]
-pub async fn check_for_channel_update<R: tauri::Runtime>(
-    webview: tauri::Webview<R>,
+pub async fn check_for_channel_update(
+    webview: tauri::Webview<tauri::Wry>,
     channel: String,
 ) -> Result<Option<ChannelUpdateMetadata>, String> {
     let url = Url::parse(channel_manifest_url(channel.as_str()))
