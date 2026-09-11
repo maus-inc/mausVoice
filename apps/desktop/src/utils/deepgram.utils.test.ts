@@ -47,4 +47,28 @@ describe("buildDeepgramWebSocketUrl", () => {
     expect(url.searchParams.get("language")).toBe("multi");
     expect(url.searchParams.get("sample_rate")).toBe("44100");
   });
+
+  it("enables diarization with diarize_model=latest for meeting sessions", () => {
+    const url = new URL(
+      buildDeepgramWebSocketUrl({
+        sampleRate: 16000,
+        diarize: true,
+      }),
+    );
+
+    expect(url.searchParams.get("diarize_model")).toBe("latest");
+    expect(url.searchParams.has("diarize")).toBe(false);
+  });
+
+  it("omits diarization parameters for regular sessions", () => {
+    const url = new URL(
+      buildDeepgramWebSocketUrl({
+        sampleRate: 16000,
+        diarize: false,
+      }),
+    );
+
+    expect(url.searchParams.has("diarize_model")).toBe(false);
+    expect(url.searchParams.has("diarize")).toBe(false);
+  });
 });

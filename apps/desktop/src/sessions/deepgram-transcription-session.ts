@@ -9,16 +9,31 @@ import {
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
+export type DeepgramStreamingWord = {
+  word?: string;
+  punctuated_word?: string;
+  start?: number;
+  end?: number;
+  confidence?: number;
+  speaker?: number;
+};
+
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
 };
 
-const startDeepgramStreaming = async (
+type DeepgramStreamingOptions = {
+  diarize?: boolean;
+  onWords?: (words: DeepgramStreamingWord[]) => void;
+};
+
+export const startDeepgramStreaming = async (
   apiKey: string,
   sampleRate: number,
   language: string,
   onInterimResult?: (segment: string) => void,
+  options?: DeepgramStreamingOptions,
 ): Promise<DeepgramStreamingSession> => {
   console.log("[Deepgram WebSocket] Starting with sample rate:", sampleRate);
   const MIN_CHUNK_DURATION_MS = 20;
@@ -234,6 +249,7 @@ const startDeepgramStreaming = async (
     const wsUrl = buildDeepgramWebSocketUrl({
       sampleRate,
       language,
+      diarize: options?.diarize,
     });
     console.log("[Deepgram WebSocket] Connecting to:", wsUrl);
     ws = new WebSocket(wsUrl, ["token", apiKey]);
@@ -259,6 +275,11 @@ const startDeepgramStreaming = async (
           const transcript = data.channel?.alternatives?.[0]?.transcript || "";
           const isFinal = data.is_final === true;
           const speechFinal = data.speech_final === true;
+          const words = data.channel?.alternatives?.[0]?.words;
+
+          if (isFinal && Array.isArray(words) && options?.onWords) {
+            options.onWords(words);
+          }
 
           if (isFinal && transcript) {
             finalTranscript += (finalTranscript ? " " : "") + transcript;

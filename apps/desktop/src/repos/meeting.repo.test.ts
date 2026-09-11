@@ -139,3 +139,30 @@ describe("LocalMeetingRepo boundary conversion", () => {
     expect(result.createdAt).toBe("2023-11-14T22:13:20.000Z");
   });
 });
+
+describe("LocalMeetingRepo search and export", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("passes the query and limit to meeting_search", async () => {
+    invokeMock.mockResolvedValueOnce([]);
+    const repo = new LocalMeetingRepo();
+    await repo.searchMeetings("sprint", 10);
+    expect(invokeMock).toHaveBeenCalledWith("meeting_search", {
+      query: "sprint",
+      limit: 10,
+    });
+  });
+
+  it("passes the id and format to meeting_export", async () => {
+    invokeMock.mockResolvedValueOnce(true);
+    const repo = new LocalMeetingRepo();
+    const result = await repo.exportMeeting("meeting-1", "srt");
+    expect(invokeMock).toHaveBeenCalledWith("meeting_export", {
+      id: "meeting-1",
+      format: "srt",
+    });
+    expect(result).toBe(true);
+  });
+});

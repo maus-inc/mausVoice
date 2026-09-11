@@ -1,6 +1,7 @@
 export const buildDeepgramWebSocketUrl = (args: {
   sampleRate: number;
   language?: string;
+  diarize?: boolean;
 }): string => {
   const params = new URLSearchParams({
     encoding: "linear16",
@@ -11,6 +12,10 @@ export const buildDeepgramWebSocketUrl = (args: {
     interim_results: "true",
     endpointing: "300",
   });
+
+  if (args.diarize) {
+    params.set("diarize_model", "latest");
+  }
 
   // "auto" (or unset) → Deepgram nova-3 multilingual code-switching. Note: the
   // `multi` set is English, Spanish, French, German, Hindi, Russian, Portuguese,

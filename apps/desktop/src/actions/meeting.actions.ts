@@ -5,7 +5,8 @@ import {
 } from "../types/meetings.types";
 import type { Conversation } from "@maus-inc/types";
 import { getGenerateTextRepo, getMeetingRepo } from "../repos";
-import { createConversation } from "./chat.actions";
+import type { MeetingExportFormat } from "../repos/meeting.repo";
+import { createChatMessage, createConversation } from "./chat.actions";
 import { createId } from "../utils/id.utils";
 import { isExpansionFeatureEnabled } from "../features/featureFlags";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
@@ -82,12 +83,23 @@ export const createMeetingConversation = async (
   const meeting = await repo.getMeeting(meetingId);
   const now = new Date().toISOString();
   try {
-    return await createConversation({
+    const conversation = await createConversation({
       id: createId(),
       title: meeting.title,
       createdAt: now,
       updatedAt: now,
     });
+    if (meeting.transcript) {
+      await createChatMessage({
+        id: createId(),
+        conversationId: conversation.id,
+        role: "system",
+        content: meeting.transcript,
+        createdAt: now,
+        metadata: { meetingId },
+      });
+    }
+    return conversation;
   } catch (err) {
     const redacted = await redactError(err);
     getLogger().warning(
@@ -95,6 +107,22 @@ export const createMeetingConversation = async (
     );
     throw err;
   }
+};
+
+export const searchMeetings = async (
+  query: string,
+  limit = 20,
+): Promise<Meeting[]> => {
+  ensureMeetingNotesEnabled();
+  return getMeetingRepo().searchMeetings(query, limit);
+};
+
+export const exportMeeting = async (
+  id: string,
+  format: MeetingExportFormat,
+): Promise<boolean> => {
+  ensureMeetingNotesEnabled();
+  return getMeetingRepo().exportMeeting(id, format);
 };
 
 export const generateMeetingSummary = async (

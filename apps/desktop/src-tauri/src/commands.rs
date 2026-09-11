@@ -2781,6 +2781,97 @@ pub async fn meeting_complete(
     .await
     .map_err(|err| err.to_string())
 }
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_search(
+    query: String,
+    limit: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Meeting>, String> {
+    crate::db::meeting_queries::search_meetings(database.pool(), &query, limit)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn meeting_export(
+    id: String,
+    format: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<bool, String> {
+    let pool = database.pool();
+    let meeting = crate::db::meeting_queries::fetch_meeting(pool.clone(), &id)
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Meeting not found".to_string())?;
+
+    let (extension, contents) = match format.as_str() {
+        "txt" => ("txt".to_string(), meeting.transcript.clone()),
+        "md" => {
+            let segments =
+                crate::db::meeting_queries::fetch_segments(pool.clone(), &id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            let speakers =
+                crate::db::meeting_queries::fetch_speakers(pool.clone(), &id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            (
+                "md".to_string(),
+                crate::db::meeting_queries::format_meeting_markdown(
+                    &meeting, &segments, &speakers,
+                ),
+            )
+        }
+        "srt" => {
+            let segments =
+                crate::db::meeting_queries::fetch_segments(pool.clone(), &id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            (
+                "srt".to_string(),
+                crate::db::meeting_queries::format_meeting_srt(&segments),
+            )
+        }
+        "vtt" => {
+            let segments =
+                crate::db::meeting_queries::fetch_segments(pool.clone(), &id)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            (
+                "vtt".to_string(),
+                crate::db::meeting_queries::format_meeting_vtt(&segments),
+            )
+        }
+        _ => return Err(format!("Unsupported meeting export format: {format}")),
+    };
+
+    let short_id = if id.len() > 8 { &id[..8] } else { &id };
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_file_name(format!("mausvoice-meeting-{short_id}.{extension}"))
+        .add_filter("Meeting export", &[extension.as_str()])
+        .save_file()
+        .await;
+
+    let save_path = match dialog {
+        Some(handle) => handle.path().to_path_buf(),
+        None => return Ok(false),
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Write;
+
+        let mut file = std::fs::File::create(&save_path)
+            .map_err(|err| format!("Failed to create file: {err}"))?;
+        file.write_all(contents.as_bytes())
+            .map_err(|err| format!("Failed to write file: {err}"))?;
+        Ok::<bool, String>(true)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 
 #[cfg(test)]
 mod tests {

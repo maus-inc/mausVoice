@@ -15,6 +15,7 @@ export { BatchTranscriptionSession } from "./batch-transcription-session";
 export { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
 export { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-session";
 export { LocalTranscriptionSession } from "./local-transcription-session";
+export { MeetingTranscriptionSession } from "./meeting-transcription-session";
 
 export const createTranscriptionSession = (
   prefs: TranscriptionPrefs,

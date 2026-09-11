@@ -12,6 +12,7 @@ const {
   updateMeetingMock,
   generateTextMock,
   createConversationMock,
+  createChatMessageMock,
 } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
@@ -23,6 +24,7 @@ const {
   updateMeetingMock: vi.fn(),
   generateTextMock: vi.fn(),
   createConversationMock: vi.fn(),
+  createChatMessageMock: vi.fn(),
 }));
 
 let persistenceAllowed = true;
@@ -51,6 +53,7 @@ vi.mock("../repos", () => ({
 }));
 vi.mock("./chat.actions", () => ({
   createConversation: createConversationMock,
+  createChatMessage: createChatMessageMock,
 }));
 
 const segment = (text: string, endTimeMs: number): MeetingSegment => ({
@@ -161,5 +164,18 @@ describe("createMeetingConversation", () => {
       expect.objectContaining({ title: "Weekly sync" }),
     );
     expect(result).toEqual(expect.objectContaining({ title: "Weekly sync" }));
+  });
+
+  it("pre-populates the conversation with the transcript context", async () => {
+    await createMeetingConversation("meeting-1");
+
+    expect(createChatMessageMock).toHaveBeenCalledTimes(1);
+    expect(createChatMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "system",
+        content: "hello",
+        metadata: { meetingId: "meeting-1" },
+      }),
+    );
   });
 });
