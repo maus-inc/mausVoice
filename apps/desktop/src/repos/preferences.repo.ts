@@ -60,6 +60,7 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   alwaysRequestAdminOnStartup?: boolean;
+  expansionFlags?: Nullable<string>;
 };
 
 const normalizePillResetMonitorStrategy = (
@@ -147,6 +148,7 @@ export const fromLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  expansionFlags: preferences.expansionFlags ?? "{}",
 });
 
 export const toLocalPreferences = (
@@ -198,6 +200,7 @@ export const toLocalPreferences = (
     preferences.pillResetMonitorStrategy,
   ),
   alwaysRequestAdminOnStartup: preferences.alwaysRequestAdminOnStartup ?? false,
+  expansionFlags: preferences.expansionFlags ?? "{}",
 });
 
 export abstract class BaseUserPreferencesRepo extends BaseRepo {
@@ -205,6 +208,7 @@ export abstract class BaseUserPreferencesRepo extends BaseRepo {
     preferences: UserPreferences,
   ): Promise<UserPreferences>;
   abstract getUserPreferences(): Promise<Nullable<UserPreferences>>;
+  abstract setExpansionFlags(flags: string): Promise<UserPreferences>;
 }
 
 export class LocalUserPreferencesRepo extends BaseUserPreferencesRepo {
@@ -227,5 +231,16 @@ export class LocalUserPreferencesRepo extends BaseUserPreferencesRepo {
     );
 
     return result ? fromLocalPreferences(result) : null;
+  }
+
+  async setExpansionFlags(flags: string): Promise<UserPreferences> {
+    const saved = await invoke<LocalUserPreferences>(
+      "user_preferences_set_expansion_flags",
+      {
+        args: { flags },
+      },
+    );
+
+    return fromLocalPreferences(saved);
   }
 }

@@ -44,6 +44,7 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   alwaysRequestAdminOnStartup: boolean;
+  expansionFlags: string; // JSON object of feature-name -> boolean
 
   // deprecated
 };

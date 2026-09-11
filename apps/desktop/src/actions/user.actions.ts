@@ -120,6 +120,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  expansionFlags: "{}",
 });
 
 export const updateUserPreferences = async (

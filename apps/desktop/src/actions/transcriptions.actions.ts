@@ -2,6 +2,7 @@ import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import {
   applyReplacements,
   applySymbolConversions,
@@ -111,7 +112,9 @@ export const retranscribeTranscription = async ({
     warnings: warnings.length > 0 ? warnings : null,
   };
 
-  const updated = await repo.updateTranscription(updatedPayload);
+  const updated = isPersistenceAllowed()
+    ? await repo.updateTranscription(updatedPayload)
+    : updatedPayload;
 
   produceAppState((draft) => {
     draft.transcriptionById[transcriptionId] = updated;

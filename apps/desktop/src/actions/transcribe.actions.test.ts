@@ -1,9 +1,15 @@
+import type { UserPreferences } from "@maus-inc/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { transcribeAudio } from "./transcribe.actions";
+import {
+  storeTranscription,
+  transcribeAudio,
+  type StoreTranscriptionInput,
+} from "./transcribe.actions";
+import { createDefaultPreferences } from "./user.actions";
 
-const { loggerMock } = vi.hoisted(() => ({
+const { loggerMock, addWordsMock } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
@@ -13,9 +19,15 @@ const { loggerMock } = vi.hoisted(() => ({
       fn(),
     ),
   },
+  addWordsMock: vi.fn(),
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
+
+vi.mock("./user.actions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./user.actions")>();
+  return { ...actual, addWordsToCurrentUser: addWordsMock };
+});
 
 const staleOllamaState = () => {
   const state = structuredClone(INITIAL_APP_STATE);
@@ -117,5 +129,86 @@ describe("transcribeAudio warning logging and failure-path cause preservation", 
     expect((error as Error).message).toMatch(
       /No API key configured for API transcription/,
     );
+  });
+});
+
+describe("storeTranscription persistence suppression", () => {
+  const storeInput = (): StoreTranscriptionInput => ({
+    audio: { samples: [0.1, 0.2, 0.3], sampleRate: 16000 },
+    rawTranscript: "one two three",
+    sanitizedTranscript: "one two three",
+    transcript: "one two three",
+    transcriptionMetadata: {},
+    postProcessMetadata: {},
+    warnings: [],
+  });
+
+  const applyState = (
+    prefs: Partial<UserPreferences>,
+    ephemeralSessionActive = false,
+  ) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = { ...createDefaultPreferences(), ...prefs };
+    state.local.ephemeralSessionActive = ephemeralSessionActive;
+    setAppState(state, true);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("skips storage and counts words when incognito opts into stats", async () => {
+    applyState({
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: true,
+    });
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).toHaveBeenCalledWith(3);
+  });
+
+  it("skips storage without counting words when incognito excludes stats", async () => {
+    applyState({
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: false,
+    });
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).not.toHaveBeenCalled();
+  });
+
+  it("skips storage during an ephemeral session and never counts words", async () => {
+    // Stats opt-in is on, but it belongs to incognito mode, not to a session.
+    applyState({ incognitoModeIncludeInStats: true }, true);
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).not.toHaveBeenCalled();
+  });
+
+  it("logs why storage was suppressed without logging transcript content", async () => {
+    applyState({}, true);
+
+    await storeTranscription(storeInput());
+
+    const calls = loggerMock.verbose.mock.calls.map((call) => String(call[0]));
+    const suppressed = calls.find((line) =>
+      line.includes("Persistence suppressed: skipping storage"),
+    );
+
+    expect(suppressed).toBeDefined();
+    expect(suppressed).not.toContain("one two three");
   });
 });
