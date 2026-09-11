@@ -139,6 +139,12 @@
           "url": "https://api.anthropic.com/**"
         },
         {
+          "url": "https://api.github.com"
+        },
+        {
+          "url": "https://api.github.com/**"
+        },
+        {
           "url": "https://api.groq.com"
         },
         {

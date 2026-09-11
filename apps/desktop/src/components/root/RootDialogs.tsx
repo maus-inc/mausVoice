@@ -10,7 +10,6 @@ import { StyleHotkeysDialog } from "../settings/StyleHotkeysDialog";
 import { DiagnosticsDialog } from "../settings/DiagnosticsDialog";
 import { MicrophoneDialog } from "../settings/MicrophoneDialog";
 import { MultiDeviceDialog } from "../settings/MultiDeviceDialog";
-import { MoreSettingsDialog } from "../settings/MoreSettingsDialog";
 import { ProfileDialog } from "../settings/ProfileDialog";
 import { ShortcutsDialog } from "../settings/ShortcutsDialog";
 import { ToneEditorDialog } from "../tones/ToneEditorDialog";
@@ -30,7 +29,6 @@ export const RootDialogs = () => {
       <ShortcutsDialog />
       <ClearLocalDataDialog />
       <DeleteAccountDialog />
-      <MoreSettingsDialog />
       <MultiDeviceDialog />
       <DictationLanguageDialog />
       <StyleHotkeysDialog />

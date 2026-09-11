@@ -24,5 +24,7 @@ export interface ToolPermission {
   status: ToolPermissionStatus;
   token?: string;
   conversationId: string;
+  /** Links the request to its timeline step. Absent on pre-part requests. */
+  toolCallId?: string;
   createdAt: number;
 }

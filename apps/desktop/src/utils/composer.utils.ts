@@ -229,6 +229,7 @@ let activeComposer: { windowId: string; requestId: string } | null = null;
  */
 export const reviewTextInComposer = async (
   text: string,
+  options?: { originalText?: string },
 ): Promise<string | null> => {
   // If a review is already in flight, focus its window best-effort and do
   // not open a second WebView2 window. The guard is set synchronously at
@@ -247,7 +248,13 @@ export const reviewTextInComposer = async (
   }
 
   const requestId = createId();
-  const route = `composer?requestId=${encodeURIComponent(requestId)}`;
+  // The session original travels beside the request id so the composer can
+  // show original-vs-edited without another round trip. Transcripts are short
+  // dictation takes, well under URL limits.
+  const originalText = options?.originalText ?? text;
+  const route =
+    `composer?requestId=${encodeURIComponent(requestId)}` +
+    `&original=${encodeURIComponent(originalText)}`;
   let windowId: string | null = null;
   let unlisten: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;

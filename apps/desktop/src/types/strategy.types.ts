@@ -6,6 +6,7 @@ import type {
 import type { TextFieldInfo } from "./accessibility.types";
 import type { ToastAction } from "./toast.types";
 import type { StopRecordingResponse } from "./transcription-session.types";
+import type { PipelineTrace } from "../utils/pipeline-trace";
 
 export type StrategyValidationError = {
   title: string;
@@ -24,6 +25,7 @@ export type HandleTranscriptParams = {
   audio: StopRecordingResponse;
   transcriptionMetadata: TranscribeAudioMetadata;
   transcriptionWarnings: string[];
+  trace?: PipelineTrace | null;
 };
 
 export type HandleTranscriptResult = {

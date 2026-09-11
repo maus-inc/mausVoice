@@ -87,6 +87,12 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { sendPillStageText } from "../../utils/overlay.utils";
+import {
+  markPipeline,
+  startPipelineTrace,
+  type PipelineTrace,
+} from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
 import {
@@ -234,6 +240,7 @@ export const DictationSideEffects = () => {
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
   const isPausedRef = useRef(false);
+  const pipelineTraceRef = useRef<PipelineTrace | null>(null);
   // Last phase actually sent to the pill; drives the idle-reconciliation
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
@@ -429,6 +436,7 @@ export const DictationSideEffects = () => {
    */
   const sendPhaseToPill = useCallback(async (phase: OverlayPhase) => {
     lastPhaseSentRef.current = phase;
+    if (phase === "idle") sendPillStageText(null);
     try {
       await invoke<void>("set_phase", { phase });
     } catch (error) {
@@ -630,6 +638,7 @@ export const DictationSideEffects = () => {
           audio,
           transcriptionMetadata: transcribeResult.metadata,
           transcriptionWarnings: transcribeResult.warnings,
+          trace: pipelineTraceRef.current,
         }),
         handleTranscriptTimeoutMs,
         "Transcript post-processing",
@@ -655,6 +664,7 @@ export const DictationSideEffects = () => {
           warnings: [...transcribeResult.warnings, ...postProcessWarnings],
           remoteStatus: result.remoteStatus,
           remoteDeviceId: result.remoteDeviceId,
+          trace: pipelineTraceRef.current,
         });
       }
 
@@ -709,6 +719,10 @@ export const DictationSideEffects = () => {
         FINALIZE_TIMEOUT_MS,
         "Transcription finalize",
       );
+      markPipeline(pipelineTraceRef.current, "audioFinalized");
+      if (!pipelineTraceRef.current?.marks.transcribed) {
+        markPipeline(pipelineTraceRef.current, "transcribed");
+      }
       const rawTranscript = transcribeResult?.rawTranscript;
       getLogger().verbose(
         `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
@@ -745,6 +759,7 @@ export const DictationSideEffects = () => {
           abortMessage: "No audio data received",
         };
       }
+      sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
       return await finalizeAndPostProcess({ audio, a11yInfo, appTarget });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
@@ -766,6 +781,7 @@ export const DictationSideEffects = () => {
     finalizeAndPostProcess,
     restoreSystemVolume,
     sendPhaseToPill,
+    intl,
   ]);
 
   const stopRecording = useCallback(async () => {
@@ -782,6 +798,11 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
+    pipelineTraceRef.current = startPipelineTrace();
+    markPipeline(pipelineTraceRef.current, "stopped");
+    sendPillStageText(
+      intl.formatMessage({ defaultMessage: "Finalizing audio" }),
+    );
     // Capture the live tone at stop: this is the style the whole utterance is
     // finalized with, so a mid-dictation style switch restyles the entire
     // transcript (and, being persisted, starts the next recording too).
@@ -827,6 +848,7 @@ export const DictationSideEffects = () => {
     hardResetHotkeyState,
     stopRecordingRaw,
     setIsStopping,
+    intl,
   ]);
 
   const startUserRecordingTimers = useCallback(() => {

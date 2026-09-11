@@ -63,6 +63,7 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
     "paired_remote_devices",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::domain::{
     ApiKey, ApiKeyCreateRequest, ApiKeyView, AudioChunkPayload, OverlayPhase, OverlayPhasePayload,
@@ -4543,6 +4544,96 @@ pub async fn download_and_open_mac_installer(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Update metadata for a channel check. Mirrors the updater plugin's own
+/// metadata shape so the frontend reuses the stock install path; `rawJson`
+/// travels as text because specta cannot type an open JSON value, and the
+/// date travels as unix seconds for the same reason.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelUpdateMetadata {
+    pub rid: u32,
+    pub current_version: String,
+    pub version: String,
+    pub date_unix: Option<i64>,
+    pub body: Option<String>,
+    pub raw_json: String,
+}
+
+/// Manifest URL per update channel. Stable is the bundled default; beta is a
+/// rolling manifest under a dedicated release that only ever lists beta
+/// builds, so the two channels can never offer each other.
+fn channel_manifest_url(channel: &str) -> &'static str {
+    match channel {
+        "beta" => {
+            "https://github.com/maus-inc/mausVoice/releases/download/beta-channel/latest-beta.json"
+        }
+        _ => "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json",
+    }
+}
+
+/// Check a non-default update channel at runtime. Stable keeps using the
+/// updater plugin's bundled endpoint; this builds an identical updater aimed
+/// at the channel manifest and registers the found update in the same
+/// resource table, so download, install, relaunch, and signature
+/// verification all run the stock plugin path untouched.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_for_channel_update(
+    webview: tauri::Webview<tauri::Wry>,
+    channel: String,
+) -> Result<Option<ChannelUpdateMetadata>, String> {
+    let url = Url::parse(channel_manifest_url(channel.as_str()))
+        .map_err(|e| e.to_string())?;
+    let updater = webview
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+    match update {
+        Some(update) => {
+            let metadata = ChannelUpdateMetadata {
+                rid: 0,
+                current_version: update.current_version.clone(),
+                version: update.version.clone(),
+                date_unix: update.date.map(|date| date.unix_timestamp()),
+                body: update.body.clone(),
+                raw_json: serde_json::to_string(&update.raw_json)
+                    .map_err(|e| e.to_string())?,
+            };
+            let rid = webview.resources_table().add(update);
+            Ok(Some(ChannelUpdateMetadata { rid, ..metadata }))
+        }
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod channel_update_tests {
+    use super::channel_manifest_url;
+
+    #[test]
+    fn beta_channel_uses_the_rolling_beta_manifest() {
+        assert_eq!(
+            channel_manifest_url("beta"),
+            "https://github.com/maus-inc/mausVoice/releases/download/beta-channel/latest-beta.json"
+        );
+    }
+
+    #[test]
+    fn unknown_channels_fall_back_to_stable() {
+        assert_eq!(
+            channel_manifest_url("stable"),
+            "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
+        );
+        assert_eq!(
+            channel_manifest_url("nightly"),
+            "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
+        );
+    }
 }
 
 #[tauri::command]

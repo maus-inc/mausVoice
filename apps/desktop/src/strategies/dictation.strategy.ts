@@ -8,6 +8,7 @@ import {
   type PostProcessMetadata,
 } from "../actions/transcribe.actions";
 import { getAppState } from "../store";
+import { getIntl } from "../i18n/intl";
 import type { OverlayPhase } from "../types/overlay.types";
 import type {
   HandleTranscriptParams,
@@ -15,6 +16,7 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
+import { sendPillStageText } from "../utils/overlay.utils";
 import {
   routeTranscriptOutput,
   appendToDictationBacklog,
@@ -338,9 +340,13 @@ export class DictationStrategy extends BaseStrategy {
           transcript = args.processedTranscript;
           postProcessMetadata = args.serverPostProcessMetadata ?? {};
         } else {
+          sendPillStageText(
+            getIntl().formatMessage({ defaultMessage: "Polishing" }),
+          );
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
             toneId: args.toneId,
+            trace: args.trace,
           });
 
           transcript = result.transcript;
@@ -357,11 +363,14 @@ export class DictationStrategy extends BaseStrategy {
           );
 
           const textToPaste = transcript.trim() + " ";
-          const result = await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: args.currentApp?.id ?? null,
-          });
+          const result = await routeTranscriptOutput(
+            {
+              text: textToPaste,
+              mode: "dictation",
+              currentAppId: args.currentApp?.id ?? null,
+            },
+            args.trace ?? null,
+          );
           if (result.remote && result.delivered) {
             remoteStatus = "sent";
             showSnackbar("Transcript sent to paired receiver.", {

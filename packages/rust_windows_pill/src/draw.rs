@@ -140,6 +140,19 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
+    // Monitor-crossing deformation: paint-only scale about the pill center.
+    // Click regions below keep the unscaled footprint. Gfx pre-multiplies, so
+    // the calls run in reverse point order versus cairo.
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        gfx.save();
+        gfx.translate(-dcx, -dcy);
+        gfx.scale(dsx, dsy);
+        gfx.translate(dcx, dcy);
+    }
+
     gfx.fill_rounded_rect(rx, ry, pill_w, pill_h, radius, [0.0, 0.0, 0.0, bg_alpha]);
     gfx.stroke_rounded_rect(rx + 0.5, ry + 0.5, pill_w - 1.0, pill_h - 1.0, radius - 0.5,
         [1.0, 1.0, 1.0, BORDER_ALPHA], 1.0);
@@ -170,6 +183,9 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+    if deformed {
+        gfx.restore();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -249,6 +265,23 @@ fn draw_loading(
     gfx.save();
     gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        gfx.draw_text_centered(
+            stage,
+            rx,
+            ry,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, 0.9 * expand_t],
+        );
+        gfx.restore();
+
+        draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;
@@ -321,9 +354,19 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let tooltip_w = TOOLTIP_FIXED_WIDTH;
     state.tooltip_width.set(tooltip_w);
 
-    let tooltip_rx = (ww - tooltip_w) / 2.0;
+    let blend = state.selector_placement.borrow().blend();
     let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+    let (tooltip_rx, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
+        0.0,
+        pill_area_top,
+        ww,
+        PILL_AREA_HEIGHT,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    );
+    let tooltip_ry = tooltip_base + y_offset * (1.0 - 2.0 * blend);
     let alpha = tooltip_t;
 
     gfx.fill_rounded_rect(tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS,
@@ -1099,6 +1142,7 @@ fn draw_review_actions(
     // the edge of the panel, matching the permission card's layout.
     let buttons = [
         ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Edit", ClickAction::ReviewEdit(review_id.to_string()), 0.8),
         ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
         ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
     ];

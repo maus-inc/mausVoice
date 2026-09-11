@@ -6,6 +6,7 @@ import {
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
+  UpdateChannel,
   UserPreferences,
 } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -62,6 +63,7 @@ type LocalUserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy?: Nullable<PillResetMonitorStrategy>;
   pillPlacement?: Nullable<string>;
+  updateChannel?: Nullable<string>;
   alwaysRequestAdminOnStartup?: boolean;
   preserveAudioOnFailure?: boolean;
   handsFreeDelayMs?: Nullable<number>;
@@ -89,6 +91,10 @@ const normalizePillResetMonitorStrategy = (
 const normalizePillPlacement = (
   value: Nullable<string> | undefined,
 ): PillPlacement => (value === "top" || value === "bottom" ? value : "bottom");
+
+const normalizeUpdateChannel = (
+  value: Nullable<string> | undefined,
+): UpdateChannel => (value === "beta" ? "beta" : "stable");
 
 export const normalizeAgentMaxIterations = (
   value: number | null | undefined,
@@ -209,6 +215,7 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
     preferences.pillResetMonitorStrategy,
   ),
   pillPlacement: normalizePillPlacement(preferences.pillPlacement),
+  updateChannel: normalizeUpdateChannel(preferences.updateChannel),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
   preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   handsFreeDelayMs: preferences.handsFreeDelayMs ?? null,
@@ -292,6 +299,7 @@ const toLocalOutputPreferences = (preferences: UserPreferences) => ({
     preferences.pillResetMonitorStrategy,
   ),
   pillPlacement: orValue(preferences.pillPlacement, "bottom"),
+  updateChannel: orValue(preferences.updateChannel, "stable"),
   alwaysRequestAdminOnStartup: orFalse(preferences.alwaysRequestAdminOnStartup),
   preserveAudioOnFailure: preferences.preserveAudioOnFailure ?? true,
   handsFreeDelayMs: orNull(preferences.handsFreeDelayMs),

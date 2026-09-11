@@ -31,6 +31,12 @@ import { orFalse, orNull } from "../utils/nullable.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
 import {
+  appendTimingSample,
+  markPipeline,
+  summarizePipeline,
+  type PipelineTrace,
+} from "../utils/pipeline-trace";
+import {
   buildLocalizedTranscriptionPrompt,
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
@@ -56,6 +62,7 @@ export type TranscribeAudioInput = {
   samples: AudioSamples;
   sampleRate: number;
   dictationLanguage?: string;
+  trace?: PipelineTrace | null;
 };
 
 export type TranscribeAudioMetadata = {
@@ -81,6 +88,7 @@ export type PostProcessInput = {
   rawTranscript: string;
   toneId: Nullable<string>;
   dictationLanguage?: string;
+  trace?: PipelineTrace | null;
 };
 
 export type PostProcessMetadata = {
@@ -118,6 +126,7 @@ export const transcribeAudio = async ({
   samples,
   sampleRate,
   dictationLanguage: dictationLanguageOverride,
+  trace,
 }: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
   const state = getAppState();
 
@@ -229,6 +238,8 @@ export const transcribeAudio = async ({
   metadata.transcriptionApiKeyId = transcriptionApiKeyId;
   metadata.transcriptionMode =
     transcribeOutput.metadata?.transcriptionMode || null;
+
+  markPipeline(trace, "transcribed");
 
   return {
     rawTranscript,
@@ -551,6 +562,8 @@ export const postProcessTranscript = async (
     warnings,
   );
 
+  markPipeline(input.trace, "polished");
+
   return {
     transcript,
     warnings: dedup(warnings),
@@ -568,6 +581,7 @@ export type StoreTranscriptionInput = {
   warnings: string[];
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
+  trace?: PipelineTrace | null;
 };
 
 export type StoreTranscriptionOutput = {
@@ -786,6 +800,23 @@ export const storeTranscription = async (
 
   await recordUsageWords(wordsAdded);
   await purgeStaleAudioSnapshots();
+
+  markPipeline(input.trace, "persisted");
+  const summary = summarizePipeline(input.trace);
+  if (summary) {
+    const providerKey = [
+      input.transcriptionMetadata.transcriptionMode ?? "unknown",
+      input.transcriptionMetadata.modelSize ?? "",
+      input.transcriptionMetadata.inferenceDevice ?? "",
+      input.postProcessMetadata.postProcessMode ?? "",
+    ].join("|");
+    produceAppState((draft) => {
+      draft.local.providerTiming[providerKey] = appendTimingSample(
+        draft.local.providerTiming[providerKey],
+        summary,
+      );
+    });
+  }
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
 };

@@ -31,6 +31,7 @@ vi.mock("./log.utils", () => ({
 
 vi.mock("./overlay.utils", () => ({
   sendPillFlashMessage: vi.fn(),
+  sendPillStageText: vi.fn(),
 }));
 
 vi.mock("../i18n/intl", () => ({

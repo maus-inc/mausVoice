@@ -1,5 +1,10 @@
 import { Stack } from "@mui/material";
 import { useEffect } from "react";
+import {
+  ensureOnboardingFlow,
+  markOnboardingStepEntered,
+  resumeOnboardingPage,
+} from "../../actions/onboarding.actions";
 import { trackOnboardingStep } from "../../utils/analytics.utils";
 import { useAppStore } from "../../store";
 import { A11yPermsForm } from "./A11yPermsForm";
@@ -19,7 +24,13 @@ export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
 
   useEffect(() => {
-    trackOnboardingStep(`v2_${currentPage}`);
+    ensureOnboardingFlow();
+    resumeOnboardingPage();
+  }, []);
+
+  useEffect(() => {
+    markOnboardingStepEntered(currentPage);
+    trackOnboardingStep(`v3_${currentPage}`);
   }, [currentPage]);
 
   return (

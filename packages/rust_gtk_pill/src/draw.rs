@@ -148,6 +148,18 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
+    // Monitor-crossing deformation: paint-only scale about the pill center.
+    // Click regions below keep the unscaled footprint.
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        cr.save().ok();
+        cr.translate(dcx, dcy);
+        cr.scale(dsx, dsy);
+        cr.translate(-dcx, -dcy);
+    }
+
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.set_source_rgba(0.0, 0.0, 0.0, bg_alpha);
     let _ = cr.fill();
@@ -186,6 +198,9 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+    if deformed {
+        let _ = cr.restore();
+    }
 }
 
 /// Draws the long-press progress ring around the pill, kept at full
@@ -503,6 +518,21 @@ fn draw_loading(
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.clip();
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.set_font_size(12.0);
+        let ext = cr.text_extents(stage).unwrap();
+        let tx = rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing();
+        let ty = ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing();
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+        cr.move_to(tx, ty);
+        let _ = cr.show_text(stage);
+        cr.restore().ok();
+
+        draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;
@@ -605,34 +635,52 @@ pub(crate) fn tooltip_entry_offset(tooltip_t: f64) -> f64 {
     (1.0 - tooltip_t) * TOOLTIP_ENTRY_SLIDE
 }
 
-/// Top-left corner of the style tooltip, which sits directly above the pill.
-///
-/// Drawing, hit testing and the Wayland input region all resolve the tooltip
-/// through this one helper. They previously each derived it separately: draw
-/// used a fixed `pill_area_top`, while the input region used the live `pill_y`.
-/// Those disagreed by the tooltip gap even at rest, and on Wayland — where a
-/// drag translates the draw offset rather than moving the toplevel — they
-/// diverged by the whole drag distance, leaving the visible style selector
-/// outside its own input region and unclickable.
-pub(crate) fn tooltip_origin(pill_x: f64, pill_y: f64, pill_w: f64, tooltip_w: f64) -> (f64, f64) {
-    let x = pill_x + (pill_w - tooltip_w) / 2.0;
-    let y = pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT;
-    (x, y)
+/// Top-left corner of the style tooltip, on the side the shared placement
+/// controller picked. Drawing, hit testing and the Wayland input region all
+/// resolve the tooltip through this one helper (plus the entry offset in
+/// `tooltip_rendered_origin`). They previously each derived it separately:
+/// draw used a fixed `pill_area_top`, while the input region used the live
+/// `pill_y`. Those disagreed by the tooltip gap even at rest, and on Wayland —
+/// where a drag translates the draw offset rather than moving the toplevel —
+/// they diverged by the whole drag distance, leaving the visible style
+/// selector outside its own input region and unclickable.
+pub(crate) fn tooltip_origin(
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+    tooltip_w: f64,
+    blend: f64,
+) -> (f64, f64) {
+    rust_pill_shared::placement::tooltip_origin(
+        pill_x,
+        pill_y,
+        pill_w,
+        pill_h,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    )
 }
 
 /// Where the tooltip is actually painted, including the entry animation.
 ///
 /// This is the geometry drawing, hit testing and the input region must all
-/// agree on. `tooltip_origin()` alone is the resting position.
+/// agree on. `tooltip_origin()` alone is the resting position. The entry
+/// slide mirrors across the side: above slides down into place, below slides
+/// up, so the motion always reads as arriving from the pill.
 pub(crate) fn tooltip_rendered_origin(
     pill_x: f64,
     pill_y: f64,
     pill_w: f64,
+    pill_h: f64,
     tooltip_w: f64,
     tooltip_t: f64,
+    blend: f64,
 ) -> (f64, f64) {
-    let (x, y) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
-    (x, y + tooltip_entry_offset(tooltip_t))
+    let (x, y) = tooltip_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, blend);
+    (x, y + tooltip_entry_offset(tooltip_t) * (1.0 - 2.0 * blend))
 }
 
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
@@ -665,9 +713,10 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     // Anchor to the live pill so the tooltip tracks a Wayland drag, and stays
     // inside the input region built from the same helper.
-    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
+    let blend = state.selector_placement.borrow().blend();
     let (tooltip_rx, tooltip_ry) =
-        tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+        tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, blend);
     let alpha = tooltip_t;
 
     rounded_rect(cr, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);
@@ -1446,6 +1495,7 @@ fn draw_review_actions(
     // the edge of the panel, matching the permission card's layout.
     let buttons = [
         ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Edit", ClickAction::ReviewEdit(review_id.to_string()), 0.8),
         ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
         ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
     ];
