@@ -1176,7 +1176,7 @@ export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_
  * date travels as unix seconds for the same reason.
  */
 export type ChannelUpdateMetadata = { rid: number; currentVersion: string; version: string; dateUnix: number | null; body: string | null; rawJson: string }
-export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; updatedAt: number }
+export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
 export type CreateFloatingWindowArgs = { url: string; 
