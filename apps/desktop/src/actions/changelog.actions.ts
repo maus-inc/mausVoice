@@ -39,7 +39,10 @@ export const fetchChangelog = async (
       signal,
     });
   } catch (error) {
-    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+    if (
+      signal?.aborted ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       throw error;
     }
     throw new Error(
