@@ -24,7 +24,9 @@ pub use hotkey::{CompositorBinding, Hotkey};
 pub use keyboard::{
     KeyboardListenerHealthPayload, KeysHeldPayload, EVT_KEYBOARD_LISTENER_HEALTH, EVT_KEYS_HELD,
 };
-pub use meeting::{Meeting, MeetingSegment, MeetingSpeaker, MeetingWithDetails};
+pub use meeting::{
+    Meeting, MeetingSegment, MeetingSource, MeetingSpeaker, MeetingWithDetails, UnknownMeetingSource,
+};
 pub use monitor::{MonitorAtCursor, OverlayAnchor, ScreenVisibleArea};
 pub use overlay::{OverlayPhase, OverlayPhasePayload, PillWindowSize, EVT_OVERLAY_PHASE};
 pub use paired_remote_device::PairedRemoteDevice;
