@@ -2783,6 +2783,14 @@ pub async fn meeting_complete(
 }
 #[tauri::command]
 #[specta::specta]
+pub async fn automation_api_token(
+    state: State<'_, std::sync::Arc<crate::automation_server::AutomationState>>,
+) -> Result<String, String> {
+    Ok(state.token().to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn meeting_search(
     query: String,
     limit: i64,

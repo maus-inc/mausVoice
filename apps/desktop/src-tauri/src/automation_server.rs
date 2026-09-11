@@ -211,6 +211,30 @@ async fn handle(
     Ok(json_response(status, body))
 }
 
+/// Persist the connection details where local CLI/MCP clients can read
+/// them. The token is per-boot: it is regenerated on every start and the
+/// file is rewritten, so a leaked token dies with the process.
+pub fn write_connection_file(
+    app: tauri::AppHandle,
+    state: &AutomationState,
+    port: u16,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| format!("Failed to get config dir: {err}"))?;
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|err| format!("Failed to create config dir: {err}"))?;
+    let file_path = config_dir.join("automation-api.json");
+    let content = serde_json::json!({ "port": port, "token": state.token() }).to_string();
+    std::fs::write(&file_path, &content)
+        .map_err(|err| format!("Failed to write automation-api.json: {err}"))?;
+    log::info!("Wrote automation API details to {}", file_path.display());
+    Ok(())
+}
+
 pub async fn serve_automation_api(
     state: Arc<AutomationState>,
     port: u16,

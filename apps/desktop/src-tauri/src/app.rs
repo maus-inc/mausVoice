@@ -288,6 +288,13 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     crate::automation_server::AutomationState::with_pool(Some(pool)),
                 );
                 app.manage(Arc::clone(&automation));
+                if let Err(err) = crate::automation_server::write_connection_file(
+                    app.handle(),
+                    &automation,
+                    crate::automation_server::AUTOMATION_DEFAULT_PORT,
+                ) {
+                    log::warn!("Failed to write automation API details: {err}");
+                }
                 tauri::async_runtime::spawn(async move {
                     match crate::automation_server::serve_automation_api(
                         automation,
@@ -439,6 +446,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::meeting_complete,
             crate::commands::meeting_search,
             crate::commands::meeting_export,
+            crate::commands::automation_api_token,
         ])
 }
 
