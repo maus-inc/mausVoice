@@ -6,6 +6,14 @@ export type SnippetVariableChoice = {
   value: string;
 };
 
+/**
+ * A snippet variable definition.
+ *
+ * For `multiselect`, the selected values are stored as a JSON-encoded string
+ * array in `SnippetFillIn.variableValues[name]`. Use
+ * `encodeMultiselectValue`/`decodeMultiselectValue` so values containing
+ * commas round-trip losslessly. `choices` enumerates the allowed options.
+ */
 export type SnippetVariable = {
   name: string;
   type: SnippetVariableType;

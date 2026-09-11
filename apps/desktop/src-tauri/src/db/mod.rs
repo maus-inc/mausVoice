@@ -3,6 +3,7 @@ pub mod app_target_queries;
 pub mod chat_message_queries;
 pub mod conversation_queries;
 pub mod hotkey_queries;
+pub mod meeting_queries;
 pub mod paired_remote_device_queries;
 pub mod preferences_queries;
 pub mod term_queries;
@@ -145,6 +146,8 @@ pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
     include_str!("migrations/074_always_request_admin_on_startup.sql");
 pub const EXPANSION_FLAGS_MIGRATION_SQL: &str =
     include_str!("migrations/075_expansion_flags.sql");
+pub const MEETINGS_MIGRATION_SQL: &str =
+    include_str!("migrations/076_meetings.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -584,6 +587,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 75,
             description: "add_expansion_flags",
             sql: EXPANSION_FLAGS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 76,
+            description: "create_meetings_tables",
+            sql: MEETINGS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

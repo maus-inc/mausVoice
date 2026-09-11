@@ -1,0 +1,63 @@
+# Meeting Notes — Research
+
+## Falsifiable research questions
+
+1. How does the existing transcription session lifecycle work, and how can it
+   be extended to capture timed segments?
+2. Does Deepgram support diarization with the current WebSocket integration?
+3. How are conversations created and linked to domain entities?
+4. What is the database migration pattern for new tables?
+
+## Findings
+
+### 1. Transcription session lifecycle
+
+Sessions implement `TranscriptionSession` interface (`src/types/transcription-session.types.ts`):
+- `onRecordingStart(sampleRate)` — Initialize provider connection.
+- Audio chunks flow via `listen("audio_chunk", ...)` event.
+- `finalize(audio)` — Close connection, return `TranscriptionSessionResult`.
+- `cleanup()` — Release resources.
+
+The Deepgram session (`src/sessions/deepgram-transcription-session.ts`) already
+supports interim results via `setInterimResultCallback()`. The WebSocket
+response includes `words[]` with `start`, `end`, `punctuated_word`, and
+(when diarization is enabled) `speaker` fields.
+
+### 2. Deepgram diarization
+
+Meeting sessions need per-word speaker labels, which Deepgram returns as
+`speaker` (a number) per word in `words[]` once diarization is enabled on
+the session. Enable it with `diarize_model=latest` on the meeting
+WebSocket URL — the plain `diarize` boolean is deprecated upstream, and on
+streaming endpoints `latest` selects the v1 diarization model (`v2`
+returns a validation error on streaming, so never send it). Verified
+against the official Deepgram JS SDK types (auto-generated from their API
+definition): `diarize?: boolean` is marked "Deprecated: use
+`diarize_model` instead", and each streaming word carries optional
+`speaker` alongside `word`/`start`/`end`/`confidence`/`punctuated_word`.
+`buildDeepgramWebSocketUrl()` gains a diarization option that appends the
+parameter only for enabled meeting sessions and omits it otherwise; cover
+both URL variants with tests before consuming `words[].speaker`.
+
+### 3. Conversation linking
+
+Conversations are created via `conversation_create` Tauri command and stored in
+`conversations` table. Chat messages reference `conversation_id`. There is no
+existing FK from conversations to domain entities (transcriptions, meetings).
+We add `meetingId` as metadata on the conversation.
+
+### 4. Migration pattern
+
+Migrations are `NNN_description.sql` files registered in `db/mod.rs`. Latest is
+version 075. Next is 076. Tables use `id TEXT PRIMARY KEY`, timestamps as
+INTEGER millis, FK with `ON DELETE CASCADE`.
+
+## Source references
+
+| Claim | Source |
+|-------|--------|
+| TranscriptionSession interface | `src/types/transcription-session.types.ts:26-34` |
+| Deepgram WebSocket words format | `src/sessions/deepgram-transcription-session.ts:258` |
+| Conversation schema | `src-tauri/src/db/migrations/063_conversations_and_chat_messages.sql` |
+| Latest migration version | `src-tauri/src/db/mod.rs:580` (version 74/75) |
+| Meeting types already defined | `src/types/meetings.types.ts` |
