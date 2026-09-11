@@ -117,8 +117,10 @@ Centralize the existing scattered incognito checks behind a single
 `true` only when incognito mode is off and no ephemeral session is active.
 Every path that stores a new transcription calls this helper. The inline checks
 in `transcribe.actions.ts` and `remote-transcript.actions.ts` now call it too,
-so the invariant lives in one place. `retranscribeTranscription` updates a row
-that was already stored under an allowed path, so it needs no gate of its own. Incognito behavior is preserved exactly,
+so the invariant lives in one place. `retranscribeTranscription` gates its
+`updateTranscription` write behind the same helper: when persistence is
+disallowed the retranscribed payload updates in-memory state only and never
+reaches disk. Incognito behavior is preserved exactly,
 including the separate `incognitoModeIncludeInStats` option, which still counts
 words only for incognito mode and never for an ephemeral session. The audio
 snapshot guard in `storeTranscription` was removed because the single gate above

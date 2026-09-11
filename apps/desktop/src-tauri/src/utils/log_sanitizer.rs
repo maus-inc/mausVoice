@@ -12,7 +12,7 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         // Redact the preview value but keep the rest
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Received transcript:\s*.*?"preview"\s*:\s*)"(?:[^"\\]|\\.)*""#,
+                r#"(?m)(Received transcript:\s*[\s\S]*?"preview"\s*:\s*)"(?:[^"\\]|\\.)*""#,
             )
             .unwrap(),
             replacement: r#"${1}"[REDACTED]""#,
@@ -53,11 +53,12 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
             replacement: "$1 [REDACTED_URL]",
         },
         // Connector token/credential/secret/api key: <credential>, optionally
-        // wrapped in quotes. Without the optional quotes a logged
-        // `Connector token: "value"` skipped the rule entirely and leaked.
+        // wrapped in quotes. A quoted value may contain whitespace
+        // (`Connector token: "Bearer opaque-secret"`), so match the complete
+        // quoted value before falling back to a bare token.
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*["']?[^\s"']+["']?"#,
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("[^"]*"|'[^']*'|[^\s"']+)"#,
             )
             .unwrap(),
             replacement: "$1 [REDACTED]",
@@ -89,11 +90,14 @@ pub fn sanitize_log_content(input: &str) -> String {
 /// Labels whose payload may span multiple log lines. The regex rules above
 /// only redact the label's own line (`.+` never matches `\n`), so a payload
 /// continued on following lines would leak. This pass redacts the label line
-/// and every continuation line until the next `[`-prefixed log record.
+/// and every continuation line until the next timestamped log record. A bare
+/// `[` is not enough: a multiline payload can itself contain lines starting
+/// with `[` (for example a formatted JSON array).
 ///
 /// "Received transcript:" is intentionally excluded: its rule is surgical
-/// (redacts only the `preview` value, keeps `length` metadata), and its
-/// JSON payload cannot span lines without breaking the preserved fields.
+/// (redacts only the `preview` value, keeps `length` metadata), and the
+/// preview pattern above is multiline-safe so pretty-printed JSON payloads
+/// are covered without redacting the whole block.
 const BLOCK_LABELS: &[&str] = &[
     "Processed transcript:",
     "LLM raw output:",
@@ -106,6 +110,22 @@ const BLOCK_LABELS: &[&str] = &[
     "Translation result:",
     "Translation content:",
 ];
+
+/// A continuation line is only a new log record when it opens with the
+/// full timestamp envelope (`[YYYY-MM-DD][hh:mm:ss...]`), matching every
+/// record this sanitizer is expected to see.
+fn is_log_record_start(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() > 12
+        && b[0] == b'['
+        && b[1..5].iter().all(|c| c.is_ascii_digit())
+        && b[5] == b'-'
+        && b[6..8].iter().all(|c| c.is_ascii_digit())
+        && b[8] == b'-'
+        && b[9..11].iter().all(|c| c.is_ascii_digit())
+        && b[11] == b']'
+        && b[12] == b'['
+}
 
 fn earliest_label(line: &str) -> Option<usize> {
     BLOCK_LABELS
@@ -122,7 +142,7 @@ fn redact_labeled_blocks(input: &str) -> String {
             out.push(format!("{} [REDACTED]", &line[..end]));
             in_block = true;
         } else if in_block {
-            if line.starts_with('[') {
+            if is_log_record_start(line) {
                 in_block = false;
                 out.push(line.to_string());
             } else {
@@ -349,5 +369,31 @@ mod tests {
         let input = "[2024-01-15][14:30:45.123][INFO][webview] Storing transcription record";
         let result = sanitize_log_content(input);
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_redacts_quoted_connector_token_with_whitespace() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer opaque-secret\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("opaque-secret"));
+    }
+
+    #[test]
+    fn test_redacts_pretty_printed_transcript_preview() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] [Deepgram] Received transcript: {\n  \"length\": 85,\n  \"preview\": \"Secret meeting notes\ncontinued on the next line\"\n}";
+        let result = sanitize_log_content(input);
+        assert!(!result.contains("Secret meeting notes"));
+        assert!(!result.contains("continued on the next line"));
+        assert!(result.contains("length"));
+    }
+
+    #[test]
+    fn test_bracket_continuation_line_stays_redacted() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: first secret line\n[\"second\", \"array-like\"] payload line\n[2024-01-15][14:30:46.000][INFO][webview] Transcript pasted successfully";
+        let result = sanitize_log_content(input);
+        assert!(!result.contains("first secret line"));
+        assert!(!result.contains("array-like"));
+        assert!(result.contains("Transcript pasted successfully"));
     }
 }

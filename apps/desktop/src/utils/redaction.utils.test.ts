@@ -208,5 +208,17 @@ describe("redaction.utils", () => {
       };
       expect(result.items).toEqual(["[circular]"]);
     });
+
+    it("redacts a shared array referenced by sibling branches", async () => {
+      const shared = ["Bearer opaque"];
+      const result = (await redactObject(
+        { items: [shared, shared] },
+        [],
+        true,
+      )) as {
+        items: string[][];
+      };
+      expect(result.items).toEqual([["[redacted]"], ["[redacted]"]]);
+    });
   });
 });

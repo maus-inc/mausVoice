@@ -82,34 +82,31 @@ const redactStringValue = (value: string): string => {
   return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
-const redactArray = (
+const redactArray = async (
   arr: unknown[],
   sensitiveKeys: string[],
   forceFull = false,
   seen: WeakSet<object> = new WeakSet(),
 ): Promise<unknown[]> => {
-  return Promise.all(
-    arr.map(async (item) => {
-      if (typeof item === "string") {
-        return forceFull ? redactString(item, "full") : redactStringValue(item);
-      }
-      if (isNestedObject(item)) {
-        return redactObject(item, sensitiveKeys, forceFull, seen);
-      }
-      if (Array.isArray(item)) {
-        if (seen.has(item)) {
-          return "[circular]";
-        }
-        seen.add(item);
-        try {
-          return await redactArray(item, sensitiveKeys, forceFull, seen);
-        } finally {
-          seen.delete(item);
-        }
-      }
-      return forceFull ? "[redacted]" : item;
-    }),
-  );
+  const result: unknown[] = [];
+  for (const item of arr) {
+    if (typeof item === "string") {
+      result.push(
+        forceFull ? await redactString(item, "full") : redactStringValue(item),
+      );
+    } else if (isNestedObject(item)) {
+      result.push(await redactObject(item, sensitiveKeys, forceFull, seen));
+    } else if (Array.isArray(item)) {
+      result.push(
+        await redactWithCycleGuard(item, seen, () =>
+          redactArray(item, sensitiveKeys, forceFull, seen),
+        ),
+      );
+    } else {
+      result.push(forceFull ? "[redacted]" : item);
+    }
+  }
+  return result;
 };
 
 const redactWithCycleGuard = async (
