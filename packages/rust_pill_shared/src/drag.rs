@@ -882,4 +882,44 @@ mod tests {
             "advance too slow for per-frame use"
         );
     }
+
+    #[test]
+    fn subframe_flick_completes_a_settle_from_the_tracked_position() {
+        // Press and release inside one frame interval: no tick ever armed
+        // the controller, so the platform arms from the press point, runs
+        // the missed held frame, and ends. The release must settle from the
+        // tracked delta (newest minus press), not no-op and strand the
+        // motion, and released frames must run to a persisted settle.
+        let mut drag = DragController::new();
+        drag.push_sample(102.0, 202.0, 0.004);
+        drag.push_sample(118.0, 214.0, 0.009);
+        assert_eq!(drag.phase(), DragPhase::Idle);
+        drag.begin_drag(100.0, 200.0, 0.0, 0.0, 0.010);
+        drag.push_sample(118.0, 214.0, 0.010);
+        let tracked = drag.advance(&DragFrame {
+            pointer_x: 118.0,
+            pointer_y: 214.0,
+            now: 0.010,
+            dt: 0.0,
+            bounds: wide_bounds(),
+            held: true,
+            reduced_motion: false,
+        });
+        assert_eq!(tracked.phase, DragPhase::Held);
+        assert_eq!((tracked.x, tracked.y), (18.0, 14.0));
+        drag.end_drag(0.010);
+        assert!(drag.is_settling());
+        let mut now = 0.010;
+        let mut done = None;
+        for _ in 0..600 {
+            now += FRAME_DT;
+            let out = drag.advance(&free_frame(now, FRAME_DT));
+            if out.settled {
+                done = Some(out);
+                break;
+            }
+        }
+        let done = done.expect("settle must terminate");
+        assert_eq!((done.x, done.y), (18.0, 14.0));
+    }
 }

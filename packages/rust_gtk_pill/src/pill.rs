@@ -928,7 +928,43 @@ pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
 /// at its old position.
 fn clear_pointer_pin(state: &PillState, _window: &gtk::Window) {
     if state.dragging.get() {
-        state.drag_motion.borrow_mut().end_drag(drag_clock_now());
+        let mut motion = state.drag_motion.borrow_mut();
+        if motion.phase() == rust_pill_shared::drag::DragPhase::Idle {
+            // Sub-frame flick: press and release landed inside one frame
+            // interval, so no tick ever armed the controller and end_drag
+            // below would no-op, orphaning the buffered motion. Arm from
+            // the press point and run the missed held frame, so the release
+            // settles from the tracked delta and the tick loop (which keeps
+            // running while settling) persists it.
+            let now = drag_clock_now();
+            motion.begin_drag(
+                state.drag_cursor_x.get(),
+                state.drag_cursor_y.get(),
+                0.0,
+                0.0,
+                now,
+            );
+            motion.push_sample(
+                state.drag_last_x.get(),
+                state.drag_last_y.get(),
+                now,
+            );
+            motion.advance(&rust_pill_shared::drag::DragFrame {
+                pointer_x: state.drag_last_x.get(),
+                pointer_y: state.drag_last_y.get(),
+                now,
+                dt: 0.0,
+                bounds: rust_pill_shared::drag::DragBounds {
+                    min_x: -1e9,
+                    min_y: -1e9,
+                    max_x: 1e9,
+                    max_y: 1e9,
+                },
+                held: true,
+                reduced_motion: reduced_motion(),
+            });
+        }
+        motion.end_drag(drag_clock_now());
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
@@ -1173,7 +1209,7 @@ fn tick(state: &PillState, dt: f64) {
 
     // Long-press cancel flash timer
     if state.cancel_flash.get() > 0.0 {
-        let remaining = state.cancel_flash.get() - SPRING_DT;
+        let remaining = state.cancel_flash.get() - dt;
         state.cancel_flash.set(remaining.max(0.0));
     }
 
@@ -1268,7 +1304,7 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
 /// banner and the selector never sit on top of each other.
 fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
     if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - SPRING_DT;
+        let remaining = state.flash_timer.get() - dt;
         if remaining <= 0.0 {
             state.flash_visible.set(false);
             state.flash_timer.set(0.0);
