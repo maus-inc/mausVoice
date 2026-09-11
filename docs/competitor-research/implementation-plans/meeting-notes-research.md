@@ -38,6 +38,9 @@ definition): `diarize?: boolean` is marked "Deprecated: use
 `buildDeepgramWebSocketUrl()` gains a diarization option that appends the
 parameter only for enabled meeting sessions and omits it otherwise; cover
 both URL variants with tests before consuming `words[].speaker`.
+Self-hosted deployments may behave differently (older diarizer models can
+be absent, so no speaker labels arrive) — treat a missing `speaker` as
+normal and gate speaker-dependent UI on labels actually arriving.
 
 ### 3. Conversation linking
 
