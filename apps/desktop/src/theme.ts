@@ -10,6 +10,14 @@ import {
   text,
 } from "./styles/palette";
 import { accentSurface, hairline, premiumSurface } from "./styles/shadows";
+import {
+  cssEase,
+  easeInOutCubic,
+  easeOutCubic,
+  easeOutQuint,
+} from "./styles/motion";
+
+const easeOut = cssEase(easeOutQuint);
 
 const uiFont = '"Satoshi", system-ui, -apple-system, sans-serif';
 /** TAN-PARADISO only via CSS var(--font-display) on logo + welcome/name. */
@@ -135,9 +143,9 @@ export const theme = createTheme({
 
   transitions: {
     easing: {
-      easeOut: "cubic-bezier(0.23, 1, 0.32, 1)",
-      easeInOut: "cubic-bezier(0.645, 0.045, 0.355, 1)",
-      sharp: "cubic-bezier(0.33, 1, 0.68, 1)",
+      easeOut,
+      easeInOut: cssEase(easeInOutCubic),
+      sharp: cssEase(easeOutCubic),
     },
     duration: {
       shortest: 100,
@@ -168,7 +176,7 @@ export const theme = createTheme({
           WebkitFontSmoothing: "antialiased",
           MozOsxFontSmoothing: "grayscale",
           textRendering: "optimizeLegibility",
-          transition: "background-color 220ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `background-color 220ms ${easeOut}`,
         },
         // Browser-owned surfaces. Theme them from the palette so every drawing
         // plane shares the design instead of shipping platform defaults.
@@ -298,8 +306,7 @@ export const theme = createTheme({
           borderRadius: 99,
           padding: theme.spacing(2, 3),
           boxShadow: premiumSurface.light.rest,
-          transition:
-            "transform 150ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `transform 150ms ${easeOut}, box-shadow 200ms ${easeOut}`,
           "&:hover": {
             transform: "translateY(-1px)",
             boxShadow: premiumSurface.light.hover,
@@ -399,8 +406,7 @@ export const theme = createTheme({
           borderRadius: 12,
           fontSize: theme.typography.pxToRem(15),
           padding: theme.spacing(1, 2),
-          transition:
-            "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1), color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}, box-shadow 200ms ${easeOut}, color 180ms ${easeOut}`,
           "& .MuiSvgIcon-root": {
             fontSize: 22,
           },
@@ -527,8 +533,7 @@ export const theme = createTheme({
             backgroundColor: theme.vars.palette.level1,
             boxShadow: premiumSurface.light.rest,
             border: hairline.light(0.04),
-            transition:
-              "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+            transition: `transform 180ms ${easeOut}, box-shadow 200ms ${easeOut}`,
             ...theme.applyStyles("dark", {
               boxShadow: premiumSurface.dark.rest,
               border: hairline.dark(0.04),
@@ -557,8 +562,7 @@ export const theme = createTheme({
         root: ({ theme }) => ({
           color: theme.vars.palette.text.primary,
           borderRadius: 12,
-          transition:
-            "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}`,
           "&:hover": {
             backgroundColor: theme.vars.palette.level2,
           },
@@ -577,8 +581,7 @@ export const theme = createTheme({
           borderRadius: 16,
           border: hairline.light(0.05),
           boxShadow: premiumSurface.light.rest,
-          transition:
-            "transform 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `transform 180ms ${easeOut}, box-shadow 200ms ${easeOut}`,
           "&:hover": {
             transform: "translateY(-1px)",
             boxShadow: premiumSurface.light.hover,
@@ -612,8 +615,7 @@ export const theme = createTheme({
           minHeight: 44,
           paddingTop: 10,
           paddingBottom: 10,
-          transition:
-            "transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background-color 180ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 200ms cubic-bezier(0.23, 1, 0.32, 1), color 180ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `transform 120ms ${easeOut}, background-color 180ms ${easeOut}, box-shadow 200ms ${easeOut}, color 180ms ${easeOut}`,
           "&:hover": {
             backgroundColor: ink(0.04),
           },

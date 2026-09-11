@@ -46,10 +46,21 @@ export const AppFab = ({
       sx={{
         width: labelWidth,
         transition: (theme) =>
-          theme.transitions.create("width", {
-            easing: theme.transitions.easing.easeInOut,
-            duration: theme.transitions.duration.shortest,
-          }),
+          [
+            theme.transitions.create("width", {
+              easing: theme.transitions.easing.easeInOut,
+              duration: theme.transitions.duration.shortest,
+            }),
+            "transform 100ms var(--ease-out-cubic)",
+          ].join(", "),
+        "&:active:not(:disabled)": {
+          transform: "scale(0.97)",
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "&:active:not(:disabled)": {
+            transform: "none",
+          },
+        },
         overflow: "hidden",
         border: isOutline ? "1px solid currentColor" : "none",
         backgroundColor: isOutline ? "background.paper" : "primary.main",
