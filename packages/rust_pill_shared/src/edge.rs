@@ -70,19 +70,19 @@ pub fn ease_axis(pos: f64, vel: f64, min: f64, max: f64, dim: f64) -> f64 {
 /// Ease against one edge. `edge` is the bounds value on that side, `dir` is
 /// -1 for the minimum edge and +1 for the maximum edge.
 fn ease_side(pos: f64, vel: f64, edge: f64, band: f64, dir: f64) -> f64 {
-    let e = (pos - edge) * dir;
+    let e = (edge - pos) * dir;
     if e < 0.0 || e >= band {
         return pos;
     }
     let s = e / band;
     let rest = EDGE_REST_GAP + (band - EDGE_REST_GAP) * s * s * (3.0 - 2.0 * s);
-    let inward = (-vel * dir).max(0.0);
+    let inward = (vel * dir).max(0.0);
     let blend = if inward.is_finite() {
         (1.0 - inward / EDGE_FLING_SPEED).clamp(EDGE_MIN_BLEND, 1.0)
     } else {
         1.0
     };
-    edge + dir * (e + (rest - e) * blend)
+    edge - dir * (e + (rest - e) * blend)
 }
 
 /// Ease a clamped window origin against the work area on both axes. Corners
