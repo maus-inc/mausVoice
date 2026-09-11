@@ -555,6 +555,9 @@ fn perform_tick() {
                     ctx.state.transcript_time_since_update.set(0.0);
                     ctx.state.transcript_has_message.set(true);
                 }
+                InMessage::StageText { text } => {
+                    *ctx.state.stage_text.borrow_mut() = text;
+                }
                 InMessage::Visibility { visibility } => {
                     ctx.state.visibility.set(visibility);
                 }
@@ -1694,6 +1697,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),

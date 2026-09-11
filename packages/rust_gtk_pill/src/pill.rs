@@ -183,6 +183,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -584,6 +585,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.transcript_text.borrow_mut() = text;
                     state_tick.transcript_time_since_update.set(0.0);
                     state_tick.transcript_has_message.set(true);
+                }
+                InMessage::StageText { text } => {
+                    *state_tick.stage_text.borrow_mut() = text;
                 }
                 InMessage::Visibility { visibility } => {
                     state_tick.visibility.set(visibility);

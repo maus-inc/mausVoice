@@ -210,6 +210,7 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
+    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press drag state
     pub(crate) long_press_active: Cell<bool>,

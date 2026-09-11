@@ -265,6 +265,23 @@ fn draw_loading(
     gfx.save();
     gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        gfx.draw_text_centered(
+            stage,
+            rx,
+            ry,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, 0.9 * expand_t],
+        );
+        gfx.restore();
+
+        draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;
