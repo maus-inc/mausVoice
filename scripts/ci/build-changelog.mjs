@@ -65,13 +65,25 @@ async function main() {
   }
 
   const epoch = Number(process.env.SOURCE_DATE_EPOCH ?? "");
-  const date = Number.isFinite(epoch) && epoch > 0
-    ? new Date(epoch * 1000).toISOString()
-    : new Date().toISOString();
+  const date =
+    Number.isFinite(epoch) && epoch > 0
+      ? new Date(epoch * 1000).toISOString()
+      : new Date().toISOString();
 
-  const changelog = buildChangelog({ version, tag, name, prerelease, notes, date });
+  const changelog = buildChangelog({
+    version,
+    tag,
+    name,
+    prerelease,
+    notes,
+    date,
+  });
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true });
-  await fs.writeFile(outPath, `${JSON.stringify(changelog, null, 2)}\n`, "utf8");
+  await fs.writeFile(
+    outPath,
+    `${JSON.stringify(changelog, null, 2)}\n`,
+    "utf8",
+  );
   console.log(`Wrote ${outPath}`);
 }
 

@@ -6,11 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 
-import {
-  buildChangelog,
-  channelOf,
-  isPrerelease,
-} from "./build-changelog.mjs";
+import { buildChangelog, channelOf, isPrerelease } from "./build-changelog.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "build-changelog.mjs");
@@ -106,24 +102,20 @@ describe("build-changelog script", () => {
   });
 
   it("writes changelog.json from the release environment", () => {
-    execFileSync(
-      process.execPath,
-      [script],
-      {
-        cwd: resolve(here, "..", ".."),
-        env: {
-          ...process.env,
-          RELEASE_VERSION: "0.1.3",
-          RELEASE_TAG: "mausVoice-v0.1.3",
-          RELEASE_NAME: "mausVoice v0.1.3",
-          RELEASE_PRERELEASE: "false",
-          RELEASE_BODY_FILE: join(sandbox, "body.md"),
-          CHANGELOG_OUT: outPath,
-          SOURCE_DATE_EPOCH: "1788912000",
-        },
-        stdio: "pipe",
+    execFileSync(process.execPath, [script], {
+      cwd: resolve(here, "..", ".."),
+      env: {
+        ...process.env,
+        RELEASE_VERSION: "0.1.3",
+        RELEASE_TAG: "mausVoice-v0.1.3",
+        RELEASE_NAME: "mausVoice v0.1.3",
+        RELEASE_PRERELEASE: "false",
+        RELEASE_BODY_FILE: join(sandbox, "body.md"),
+        CHANGELOG_OUT: outPath,
+        SOURCE_DATE_EPOCH: "1788912000",
       },
-    );
+      stdio: "pipe",
+    });
     const written = JSON.parse(readFileSync(outPath, "utf8"));
     assert.equal(written.version, "0.1.3");
     assert.equal(written.channel, "stable");
