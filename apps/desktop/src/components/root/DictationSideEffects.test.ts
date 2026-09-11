@@ -27,7 +27,12 @@ vi.mock("../../utils/log.utils", () => ({
   }),
 }));
 
-import { handleEmptyTranscriptionResult } from "./DictationSideEffects";
+import {
+  createPhaseBookkeeper,
+  handleEmptyTranscriptionResult,
+  postProcessFinalizedTranscript,
+} from "./DictationSideEffects";
+import type { PostTranscriptInput } from "./DictationSideEffects";
 import type { BaseStrategy } from "../../strategies/base.strategy";
 
 type ToastCall = {
@@ -152,5 +157,149 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
 
     expect(result).toEqual({ handled: false });
     expect(showToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPhaseBookkeeper", () => {
+  it("records each issued phase on success", () => {
+    const bookkeeper = createPhaseBookkeeper();
+    const first = bookkeeper.issue();
+    bookkeeper.markSent(first, "loading");
+    expect(bookkeeper.getLastSent()).toBe("loading");
+    const second = bookkeeper.issue();
+    bookkeeper.markSent(second, "idle");
+    expect(bookkeeper.getLastSent()).toBe("idle");
+  });
+
+  it("ignores a stale completion that resolves after a newer phase", () => {
+    const bookkeeper = createPhaseBookkeeper();
+    const stale = bookkeeper.issue();
+    const latest = bookkeeper.issue();
+    bookkeeper.markSent(stale, "loading");
+    expect(bookkeeper.getLastSent()).toBeNull();
+    bookkeeper.markSent(latest, "idle");
+    expect(bookkeeper.getLastSent()).toBe("idle");
+  });
+
+  it("keeps the previous phase when a send fails so the heartbeat retries", () => {
+    const bookkeeper = createPhaseBookkeeper();
+    const first = bookkeeper.issue();
+    bookkeeper.markSent(first, "loading");
+    bookkeeper.issue();
+    expect(bookkeeper.getLastSent()).toBe("loading");
+  });
+});
+
+describe("postProcessFinalizedTranscript", () => {
+  const buildInput = (options: { store?: boolean; agent?: boolean } = {}) => {
+    const order: string[] = [];
+    const handleTranscript = vi.fn<
+      PostTranscriptInput["strategy"]["handleTranscript"]
+    >(async () => {
+      order.push("handleTranscript");
+      return {
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+      };
+    });
+    const storeTranscriptionFn = vi.fn<
+      PostTranscriptInput["storeTranscriptionFn"]
+    >(async () => {
+      order.push("store");
+      return { transcription: null, wordCount: 0 };
+    });
+    const strategy: PostTranscriptInput["strategy"] = {
+      handleTranscript,
+      shouldStoreTranscript: () => options.store !== false,
+    };
+    const sendIdle = vi.fn(async () => {
+      order.push("idle");
+    });
+    const refreshMember = vi.fn(() => {
+      order.push("refresh");
+    });
+    const input: PostTranscriptInput = {
+      audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
+      a11yInfo: null,
+      appTarget: null,
+      toneId: null,
+      rawTranscript: "hello world",
+      transcribeResult: {
+        rawTranscript: "hello world",
+        processedTranscript: "hello world",
+        postProcessMetadata: {},
+        metadata: {},
+        warnings: [],
+      },
+      strategy,
+      isAgentMode: options.agent === true,
+      handleTranscriptTimeoutMs: 60_000,
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
+    };
+    return {
+      input,
+      order,
+      handleTranscript,
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
+    };
+  };
+
+  it("sends idle after handleTranscript and before storeTranscription", async () => {
+    const { input, order, handleTranscript, storeTranscriptionFn } =
+      buildInput();
+    const result = await postProcessFinalizedTranscript(input);
+    expect(result).toEqual({ shouldContinue: false });
+    expect(handleTranscript).toHaveBeenCalledTimes(1);
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
+  });
+
+  it("propagates a post-processing failure without sending idle or persisting", async () => {
+    const {
+      input,
+      handleTranscript,
+      sendIdle,
+      storeTranscriptionFn,
+      refreshMember,
+    } = buildInput();
+    const failure = new Error("post-processing failed");
+    handleTranscript.mockRejectedValueOnce(failure);
+
+    await expect(postProcessFinalizedTranscript(input)).rejects.toThrow(
+      failure,
+    );
+    expect(sendIdle).not.toHaveBeenCalled();
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(refreshMember).not.toHaveBeenCalled();
+  });
+
+  it("still sends idle when the strategy skips history storage", async () => {
+    const { input, order, storeTranscriptionFn } = buildInput({
+      store: false,
+    });
+    await postProcessFinalizedTranscript(input);
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+    expect(order).toEqual(["handleTranscript", "idle", "refresh"]);
+  });
+
+  it("sends idle up front in agent mode without skipping the post-routing idle", async () => {
+    const { input, order } = buildInput({ agent: true });
+    await postProcessFinalizedTranscript(input);
+    expect(order).toEqual([
+      "idle",
+      "handleTranscript",
+      "idle",
+      "store",
+      "refresh",
+    ]);
   });
 });
