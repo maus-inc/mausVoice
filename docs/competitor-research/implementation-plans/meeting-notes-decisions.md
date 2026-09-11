@@ -19,8 +19,8 @@ captured during streaming, not post-processing. Minimal new code.
 
 ## Decision 3: Cloud-only diarization via Deepgram Nova-3
 
-**Choice:** Gate diarization behind Deepgram provider + `diarize=true`
-parameter. No local whisper diarization in v1.
+**Choice:** Gate diarization behind Deepgram provider + `diarize_model=latest`
+parameter (the plain `diarize` boolean is deprecated upstream). No local whisper diarization in v1.
 
 **Rationale:** Deepgram Nova-3 reliably supports diarization. Local whisper
 has no built-in diarization. Platform-specific system audio capture is a

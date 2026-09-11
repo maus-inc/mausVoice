@@ -26,13 +26,18 @@ response includes `words[]` with `start`, `end`, `punctuated_word`, and
 ### 2. Deepgram diarization
 
 Meeting sessions need per-word speaker labels, which Deepgram returns as
-`speaker` per word in `words[]` once diarization is enabled on the session.
-The current `buildDeepgramWebSocketUrl()` does NOT enable diarization. When
-the meeting recording slice lands, it must opt into diarization per the
-current Deepgram docs and cover both URL variants with tests before
-consuming `words[].speaker`. (The exact parameter name was left
-unpinned here on purpose: verify it against the live Deepgram docs at
-implementation time rather than trusting a remembered flag.)
+`speaker` (a number) per word in `words[]` once diarization is enabled on
+the session. Enable it with `diarize_model=latest` on the meeting
+WebSocket URL — the plain `diarize` boolean is deprecated upstream, and on
+streaming endpoints `latest` selects the v1 diarization model (`v2`
+returns a validation error on streaming, so never send it). Verified
+against the official Deepgram JS SDK types (auto-generated from their API
+definition): `diarize?: boolean` is marked "Deprecated: use
+`diarize_model` instead", and each streaming word carries optional
+`speaker` alongside `word`/`start`/`end`/`confidence`/`punctuated_word`.
+`buildDeepgramWebSocketUrl()` gains a diarization option that appends the
+parameter only for enabled meeting sessions and omits it otherwise; cover
+both URL variants with tests before consuming `words[].speaker`.
 
 ### 3. Conversation linking
 
