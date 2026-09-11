@@ -1,23 +1,21 @@
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutlined";
-import {
-  Autocomplete,
-  Box,
-  CircularProgress,
-  TextField,
-  Typography,
-} from "@mui/material";
-import { useCallback, useEffect, useState } from "react";
+import { Box, CircularProgress, Typography } from "@mui/material";
+import { useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { OllamaRepo, OpenAICompatibleRepo } from "../../repos/ollama.repo";
+import { OllamaRepo } from "../../repos/ollama.repo";
 import { OLLAMA_DEFAULT_URL } from "../../utils/ollama.utils";
+import { FreeSoloModelAutocomplete } from "./FreeSoloModelAutocomplete";
 
+// This picker is Ollama-only: OpenAI-compatible providers route to
+// OpenAICompatibleModelPicker instead (which carries the authorized
+// saved-endpoint fetch and /v1 handling). Keeping a dormant compat branch
+// here would probe the wrong transport if it were ever revived.
 type OllamaModelPickerProps = {
   baseUrl: string | null;
   apiKey?: string | null;
   selectedModel: string | null;
   onModelSelect: (model: string | null) => void;
   disabled?: boolean;
-  provider?: "ollama" | "openai-compatible";
 };
 
 export const OllamaModelPicker = ({
@@ -26,7 +24,6 @@ export const OllamaModelPicker = ({
   selectedModel,
   onModelSelect,
   disabled = false,
-  provider = "ollama",
 }: OllamaModelPickerProps) => {
   const [models, setModels] = useState<string[]>([]);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
@@ -34,43 +31,54 @@ export const OllamaModelPicker = ({
 
   const effectiveUrl = baseUrl || OLLAMA_DEFAULT_URL;
 
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const repo =
-        provider === "openai-compatible"
-          ? new OpenAICompatibleRepo(effectiveUrl, apiKey || undefined)
-          : new OllamaRepo(effectiveUrl, apiKey || undefined);
-      const available = await repo.checkAvailability();
-      setIsAvailable(available);
+  // Probes re-arm every 3s only while the endpoint is unavailable; once it
+  // answers, polling stops (the models list is in-hand and a config change
+  // rebuilds the effect anyway). Runs never overlap by construction: the next
+  // probe is scheduled only after the current one settles, and its late
+  // result is discarded by the cancellation flag.
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-      if (available) {
-        const fetchedModels = await repo.getAvailableModels();
-        setModels(fetchedModels);
-      } else {
+    const run = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      setIsLoading(true);
+      try {
+        const repo = new OllamaRepo(effectiveUrl, apiKey || undefined);
+        const available = await repo.checkAvailability();
+        if (cancelled) return;
+        setIsAvailable(available);
+
+        if (available) {
+          const fetchedModels = await repo.getAvailableModels();
+          if (cancelled) return;
+          setModels(fetchedModels);
+          return;
+        }
         setModels([]);
+        timer = setTimeout(() => void run(), 3000);
+      } catch (error) {
+        console.error("Failed to fetch Ollama models", error);
+        if (!cancelled) {
+          setIsAvailable(false);
+          setModels([]);
+          timer = setTimeout(() => void run(), 3000);
+        }
+      } finally {
+        inFlight = false;
+        if (!cancelled) setIsLoading(false);
       }
-    } catch (error) {
-      console.error("Failed to fetch Ollama models", error);
-      setIsAvailable(false);
-      setModels([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [effectiveUrl, apiKey, provider]);
+    };
 
-  useEffect(() => {
-    void fetchModels();
-  }, [fetchModels]);
+    void run();
 
-  // Poll for availability every 3 seconds while we're showing this picker
-  useEffect(() => {
-    const interval = setInterval(() => {
-      void fetchModels();
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [fetchModels]);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [effectiveUrl, apiKey]);
 
   if (isLoading && isAvailable === null) {
     return (
@@ -100,32 +108,11 @@ export const OllamaModelPicker = ({
   }
 
   return (
-    <Autocomplete
-      freeSolo
-      options={models}
-      value={selectedModel ?? ""}
-      onChange={(_event, newValue) => {
-        onModelSelect(newValue || null);
-      }}
-      onInputChange={(_event, newInputValue, reason) => {
-        if (reason === "input") {
-          onModelSelect(newInputValue || null);
-        }
-      }}
+    <FreeSoloModelAutocomplete
+      models={models}
+      selectedModel={selectedModel}
+      onModelSelect={onModelSelect}
       disabled={disabled || !isAvailable}
-      size="small"
-      fullWidth
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label={<FormattedMessage defaultMessage="Model" />}
-          placeholder="Select or type a model"
-          slotProps={{
-            ...params.slotProps,
-            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
-          }}
-        />
-      )}
     />
   );
 };

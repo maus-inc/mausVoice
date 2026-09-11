@@ -11,14 +11,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Emitter, EventTarget};
+use tauri::{AppHandle, Emitter};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
+
 /// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(target_os = "linux")]
@@ -84,7 +88,13 @@ impl KeyEventEmitter {
     }
 
     fn emit(&self, payload: KeysHeldPayload) {
-        if let Err(err) = self.app.emit_to(EventTarget::any(), EVT_KEYS_HELD, payload) {
+        // Scope the broadcast to the main window only. The composer popout is a
+        // separate webview that loads the same SPA; if it received `keys_held`
+        // it would run its own dictation/style-switch pipeline in parallel with
+        // the main window, producing duplicate dictation. The main window is
+        // the only surface that owns dictation input. A raw label string is the
+        // canonical `EventTarget::Window` form (see `emit_to("main", ...)`).
+        if let Err(err) = self.app.emit_to("main", EVT_KEYS_HELD, payload) {
             log::error!("Failed to emit keys-held event: {err}");
         }
     }
@@ -334,7 +344,7 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 pub fn sync_combos(combos: Vec<Vec<String>>) {
     {
         let mut guard = lock(combo_store());
-        *guard = combos.clone();
+        guard.clone_from(&combos);
     }
 
     let mut guard = lock(child_stdin_store());
@@ -674,8 +684,7 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
     }
 
     {
-        let combos = lock(combo_store())
-            .clone();
+        let combos = lock(combo_store()).clone();
         if !combos.is_empty() {
             let mut guard = lock(child_stdin_store());
             if let Some(stdin) = guard.as_mut() {
@@ -993,7 +1002,7 @@ pub(crate) struct ListenerContext {
 }
 
 pub(crate) fn setup_listener_process() -> Result<ListenerContext, String> {
-    let port = env::var("MAUSVOICE_KEYBOARD_PORT")
+    let port = env::var(MAUSVOICE_KEYBOARD_PORT)
         .map_err(|_| "MAUSVOICE_KEYBOARD_PORT env var missing".to_string())?
         .parse::<u16>()
         .map_err(|err| format!("invalid MAUSVOICE_KEYBOARD_PORT: {err}"))?;
@@ -1084,10 +1093,10 @@ pub(crate) fn run_listen_loop(
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::{
-        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff,
-        should_promote, update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState,
-        HealthState, KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING,
-        FAILURE_CAP, HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
+        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff, should_promote,
+        update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState, HealthState,
+        KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING, FAILURE_CAP,
+        HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
     };
     use std::collections::HashSet;
     use std::time::Duration;
@@ -1339,5 +1348,20 @@ mod tests {
         // Once capped, switch to the slow-retry auto-recovery interval.
         assert_eq!(retry_backoff(FAILURE_CAP), SLOW_RETRY_INTERVAL);
         assert_eq!(retry_backoff(FAILURE_CAP + 5), SLOW_RETRY_INTERVAL);
+    }
+
+    /// Regression test for issue #488: the Windows resume path calls
+    /// `restart_key_listener` (which is `start_key_listener` under the
+    /// hood) after sleep/wake or session unlock, and may receive a second
+    /// `desktop_resume` event while the first restart is still in flight.
+    /// The platform-agnostic entry point must therefore be safe to call
+    /// twice in quick succession. We exercise the stop half directly here
+    /// because the start half spawns a child process; the stop path
+    /// shares the same `lifecycle_lock` + `Option::take` invariant.
+    #[test]
+    fn stop_key_listener_is_idempotent() {
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
     }
 }

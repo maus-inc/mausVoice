@@ -2,17 +2,16 @@
 
 <br>
 <div align="center">
-  
 
 <img src="docs/assets/mausVoicetopbanner.png" alt="mausVoice top-banner" width="700" />
 
   <br>
   <br>
-  
+
   <img src="docs/assets/animated-pill.gif" alt="mausVoice pill in action" width="200" />
 
   <br>
-  
+
 # mausVoice <a href="https://github.com/maus-inc/mausVoice/actions/workflows/test-desktop-unit.yml"><img src="https://img.shields.io/github/actions/workflow/status/maus-inc/mausVoice/test-desktop-unit.yml?branch=main&label=CI&style=flat&color=000000&labelColor=000000" alt="CI" /></a>
 
 </div>
@@ -36,8 +35,6 @@
 <br>
 
 </div>
-
-
 
 <p align="center">
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />

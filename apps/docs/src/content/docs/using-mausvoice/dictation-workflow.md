@@ -10,10 +10,13 @@ A dictation crosses distinct stages, and most configuration and troubleshooting 
 1. **Trigger:** the global hold-to-dictate shortcut starts capture.
 2. **Capture:** the selected microphone supplies audio while the shortcut remains held.
 3. **Transcription:** either the local Whisper sidecar or an API provider converts audio into raw text.
-4. **Dictionary handling:** glossary context can help recognition where supported, and replacement rules correct or expand recognized text before the optional rewrite.
-5. **Post-processing:** when enabled, a generative provider applies the active writing style. With post-processing off, raw text remains the output.
-6. **Persistence:** unless Incognito suppresses it, the app stores the transcription record and attempts to retain its audio snapshot. Automatic cleanup keeps managed audio for only the 20 newest transcription rows that have audio.
-7. **Delivery:** mausVoice writes to the clipboard and invokes the selected paste or simulated-typing strategy for the focused target.
+4. **Dictionary handling:** replacement rules correct or expand recognized text. Glossary context can help recognition where the provider supports it.
+5. **Filtering:** the hallucination filter strips known silence-only phrases when enabled.
+6. **Spoken commands:** when enabled and the dictation language is English or Auto, formatting commands like "new line" and "scratch that" are executed.
+7. **Symbol conversions:** "hashtag" and "pound sign" are converted to `#`.
+8. **Post-processing:** when enabled, a generative provider applies the active writing style. With post-processing off, the text from the previous stages is the output.
+9. **Persistence:** unless Incognito suppresses it, the app stores the transcription record and attempts to retain its audio snapshot. Automatic cleanup keeps managed audio for only the 20 newest transcription rows that have audio.
+10. **Delivery:** mausVoice writes to the clipboard and invokes the selected paste or simulated-typing strategy for the focused target.
 
 The target application's focus matters at delivery time. If you start in one field and click elsewhere while a network provider is still processing, the later focus can receive the text.
 

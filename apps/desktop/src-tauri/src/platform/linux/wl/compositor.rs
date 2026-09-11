@@ -88,8 +88,10 @@ fn trigger_script_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(config_dir.join("trigger-hotkey.sh"))
 }
 
+static XDG_CURRENT_DESKTOP: &str = "XDG_CURRENT_DESKTOP";
+
 fn detect_compositor() -> Compositor {
-    if let Ok(desktop) = std::env::var("XDG_CURRENT_DESKTOP") {
+    if let Ok(desktop) = std::env::var(XDG_CURRENT_DESKTOP) {
         let lower = desktop.to_lowercase();
         if lower.contains("gnome") {
             return Compositor::Gnome;
@@ -131,7 +133,7 @@ fn detect_compositor() -> Compositor {
         }
     }
 
-    Compositor::Unknown(std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+    Compositor::Unknown(std::env::var(XDG_CURRENT_DESKTOP).unwrap_or_default())
 }
 
 pub fn sync_compositor_hotkeys(
@@ -159,18 +161,102 @@ pub fn sync_compositor_hotkeys(
 
 // --- Key translation ---
 
+fn is_super_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    n >= 4
+        && ((lower.starts_with("super") || lower.starts_with("meta")) && n >= 5
+            || lower.starts_with("os")
+            || lower.starts_with("win"))
+}
+
+fn is_ctrl_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    lower.starts_with("control") && n >= 7
+}
+
+fn is_shift_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    lower.starts_with("shift") && n >= 5
+}
+
+fn is_alt_modifier(lower: &str) -> bool {
+    let n = lower.len();
+    (lower.starts_with("alt") && n >= 3) || (lower.starts_with("option") && n >= 6)
+}
+
 fn classify_key(key: &str) -> Option<(&'static str, bool)> {
     let lower = key.to_lowercase();
-    if lower.starts_with("meta") {
+    if is_super_modifier(&lower) {
         Some(("super", true))
-    } else if lower.starts_with("control") {
+    } else if is_ctrl_modifier(&lower) {
         Some(("ctrl", true))
-    } else if lower.starts_with("shift") {
+    } else if is_shift_modifier(&lower) {
         Some(("shift", true))
-    } else if lower.starts_with("alt") || lower.starts_with("option") {
+    } else if is_alt_modifier(&lower) {
         Some(("alt", true))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod classify_key_tests {
+    use super::classify_key;
+
+    #[test]
+    fn maps_meta_prefix_to_super() {
+        assert_eq!(classify_key("MetaLeft"), Some(("super", true)));
+        assert_eq!(classify_key("MetaRight"), Some(("super", true)));
+        assert_eq!(classify_key("MetaL"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_os_prefix_to_super() {
+        assert_eq!(classify_key("OSLeft"), Some(("super", true)));
+        assert_eq!(classify_key("OSRight"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_super_prefix_to_super() {
+        assert_eq!(classify_key("SuperL"), Some(("super", true)));
+        assert_eq!(classify_key("SuperLeft"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_win_prefix_to_super() {
+        assert_eq!(classify_key("WinL"), Some(("super", true)));
+        assert_eq!(classify_key("WinLeft"), Some(("super", true)));
+    }
+
+    #[test]
+    fn is_case_insensitive() {
+        assert_eq!(classify_key("metaleft"), Some(("super", true)));
+        assert_eq!(classify_key("OSLEFT"), Some(("super", true)));
+        assert_eq!(classify_key("SuPeR"), Some(("super", true)));
+    }
+
+    #[test]
+    fn maps_other_modifiers() {
+        assert_eq!(classify_key("ControlLeft"), Some(("ctrl", true)));
+        assert_eq!(classify_key("ShiftRight"), Some(("shift", true)));
+        assert_eq!(classify_key("AltLeft"), Some(("alt", true)));
+        assert_eq!(classify_key("Option"), Some(("alt", true)));
+    }
+
+    #[test]
+    fn returns_none_for_non_modifier() {
+        assert_eq!(classify_key("KeyA"), None);
+        assert_eq!(classify_key("Escape"), None);
+        assert_eq!(classify_key("Digit1"), None);
+    }
+
+    #[test]
+    fn does_not_match_oem_like_keys() {
+        assert_eq!(classify_key("oem102"), None);
+        assert_eq!(classify_key("oem1"), None);
+        assert_eq!(classify_key("o"), None);
+        assert_eq!(classify_key("ordinary"), None);
+        assert_eq!(classify_key("ose"), None);
     }
 }
 
@@ -186,8 +272,8 @@ fn extract_non_modifier_key(key: &str) -> String {
 }
 
 fn keys_to_gnome_binding(keys: &[String]) -> String {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -233,8 +319,8 @@ fn keys_to_sway_binding(keys: &[String]) -> String {
 }
 
 fn keys_to_hyprland_binding(keys: &[String]) -> (String, String) {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -498,8 +584,8 @@ fn sync_hyprland(script_path: &Path, bindings: &[CompositorBinding]) -> Result<(
 const KDE_DESKTOP_PREFIX: &str = "mausvoice-hotkey-";
 
 fn keys_to_kde_binding(keys: &[String]) -> String {
-    let mut modifiers = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -693,8 +779,8 @@ fn cosmic_shortcuts_file() -> PathBuf {
 }
 
 fn keys_to_cosmic_binding(keys: &[String]) -> (Vec<String>, String) {
-    let mut modifiers: Vec<String> = Vec::new();
-    let mut non_mod = String::new();
+    let mut modifiers: Vec<String> = Vec::default();
+    let mut non_mod = String::default();
 
     for key in keys {
         if let Some((name, _)) = classify_key(key) {
@@ -829,22 +915,26 @@ fn sync_cosmic(script_path: &Path, bindings: &[CompositorBinding]) -> Result<(),
     Ok(())
 }
 
+static XDG_DATA_HOME: &str = "XDG_DATA_HOME";
+static XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
+static HOME: &str = "HOME";
+
 fn data_home() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+    if let Ok(xdg) = std::env::var(XDG_DATA_HOME) {
         return PathBuf::from(xdg);
     }
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".local/share");
     }
-    PathBuf::from("/tmp")
+    std::env::temp_dir()
 }
 
 fn config_home() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+    if let Ok(xdg) = std::env::var(XDG_CONFIG_HOME) {
         return PathBuf::from(xdg);
     }
-    if let Ok(home) = std::env::var("HOME") {
+    if let Ok(home) = std::env::var(HOME) {
         return PathBuf::from(home).join(".config");
     }
-    PathBuf::from("/tmp")
+    std::env::temp_dir()
 }

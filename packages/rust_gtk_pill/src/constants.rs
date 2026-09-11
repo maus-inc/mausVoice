@@ -124,6 +124,13 @@ pub(crate) const PERM_BUTTON_WIDTH: f64 = 80.0;
 pub(crate) const PERM_BUTTON_HEIGHT: f64 = 26.0;
 pub(crate) const PERM_BUTTON_GAP: f64 = 6.0;
 
+// Review-before-insert card.
+pub(crate) const REVIEW_TITLE_HEIGHT: f64 = 20.0;
+pub(crate) const REVIEW_LINE_HEIGHT: f64 = 20.0;
+/// Height of the row of review buttons that sits above the input bar. The row
+/// is fixed there rather than in the scrolling text, so it is always reachable.
+pub(crate) const REVIEW_ACTIONS_HEIGHT: f64 = 44.0;
+
 // ── Window sizes for each mode ────────────────────────────────────
 // Height = PANEL_TOP_MARGIN + panel_height + PANEL_BOTTOM_MARGIN
 pub(crate) const WINDOW_W_COMPACT: i32 = 452;

@@ -77,12 +77,26 @@ export type SettingsState = {
   moreSettingsDialogOpen: boolean;
   multiDeviceDialogOpen: boolean;
   dictationLanguageDialogOpen: boolean;
+  styleHotkeysDialogOpen: boolean;
   appKeybindingsDialogOpen: boolean;
   elevationDeclinedDialogOpen: boolean;
+  /**
+   * True until the Windows startup-elevation gate resolves. Defaults true so
+   * heavy init (auth, dashboard) cannot race ahead of the elevation check on
+   * first paint; cleared immediately on non-Windows / non-main windows, or
+   * once the UAC decision is settled (including "Launch normally").
+   */
+  elevationStartupPending: boolean;
   diagnosticsDialogOpen: boolean;
   aiTranscription: SettingsTranscriptionState;
   aiPostProcessing: SettingsGenerativeState;
   agentMode: SettingsAgentModeState;
+  inDictationStyleSwitchingEnabled: boolean;
+  hallucinationFilterEnabled: boolean;
+  reviewBeforeInsert: boolean;
+  agentEnabledTools: string[] | null;
+  agentMaxIterations: number;
+  agentPermissionTimeoutMs: number;
   apiKeys: SettingsApiKey[];
   apiKeysStatus: ActionStatus;
   hotkeyIds: string[];
@@ -136,8 +150,10 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
   moreSettingsDialogOpen: false,
   multiDeviceDialogOpen: false,
   dictationLanguageDialogOpen: false,
+  styleHotkeysDialogOpen: false,
   appKeybindingsDialogOpen: false,
   elevationDeclinedDialogOpen: false,
+  elevationStartupPending: true,
   diagnosticsDialogOpen: false,
   aiTranscription: {
     mode: null,
@@ -165,6 +181,12 @@ export const INITIAL_SETTINGS_STATE: SettingsState = {
     openclawGatewayUrl: null,
     openclawToken: null,
   },
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  reviewBeforeInsert: false,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
   apiKeys: [],
   apiKeysStatus: "idle",
   hotkeyIds: [],

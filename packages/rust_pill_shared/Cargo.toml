@@ -8,3 +8,6 @@ publish = false
 [lib]
 name = "rust_pill_shared"
 path = "src/lib.rs"
+
+[lints.clippy]
+uninlined_format_args = "allow"

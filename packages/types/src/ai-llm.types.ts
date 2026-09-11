@@ -49,12 +49,7 @@ export type LlmStreamEvent =
   | { type: "error"; error: string };
 
 export type LlmFinishReason =
-  | "stop"
-  | "length"
-  | "tool-calls"
-  | "content-filter"
-  | "error"
-  | "other";
+  "stop" | "length" | "tool-calls" | "content-filter" | "error" | "other";
 
 export interface LlmUsage {
   promptTokens?: number;

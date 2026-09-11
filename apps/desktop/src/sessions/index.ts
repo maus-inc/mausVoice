@@ -7,6 +7,7 @@ import { AzureTranscriptionSession } from "./azure-transcription-session";
 import { BatchTranscriptionSession } from "./batch-transcription-session";
 import { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
 import { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-session";
+import { GladiaTranscriptionSession } from "./gladia-transcription-session";
 import { LocalTranscriptionSession } from "./local-transcription-session";
 
 export { AssemblyAITranscriptionSession } from "./assemblyai-transcription-session";
@@ -14,6 +15,7 @@ export { AzureTranscriptionSession } from "./azure-transcription-session";
 export { BatchTranscriptionSession } from "./batch-transcription-session";
 export { DeepgramTranscriptionSession } from "./deepgram-transcription-session";
 export { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-session";
+export { GladiaTranscriptionSession } from "./gladia-transcription-session";
 export { LocalTranscriptionSession } from "./local-transcription-session";
 
 export const createTranscriptionSession = (
@@ -27,6 +29,11 @@ export const createTranscriptionSession = (
         return new DeepgramTranscriptionSession(prefs.apiKeyValue);
       case "elevenlabs":
         return new ElevenLabsTranscriptionSession(prefs.apiKeyValue);
+      case "gladia":
+        return new GladiaTranscriptionSession(
+          prefs.apiKeyValue,
+          prefs.transcriptionModel,
+        );
       case "azure": {
         const state = getAppState();
         const apiKeyRecord = getRec(state.apiKeyById, prefs.apiKeyId);

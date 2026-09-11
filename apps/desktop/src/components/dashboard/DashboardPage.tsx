@@ -1,6 +1,6 @@
 import { Box, Stack, Typography } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
-import { motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { easeOutQuint } from "../../styles/motion";
@@ -53,25 +53,29 @@ export default function DashboardPage() {
             pt: { xs: 0.5, sm: 1 },
           }}
         >
-          <Box
-            component={motion.div}
-            key={location.pathname}
-            initial={
-              reduceMotion ? false : { opacity: 0, y: 8, filter: "blur(2px)" }
-            }
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.22, ease: easeOutQuint }}
-            // Flat: the route content owns its own surfaces (cards, rows), so
-            // wrapping it in a second bordered panel stacked two tiers of
-            // elevation for one plane and boxed the page inside the page.
-            sx={{
-              flexGrow: 1,
-              minHeight: 0,
-              overflow: "auto",
-            }}
-          >
-            <Outlet />
-          </Box>
+          <AnimatePresence initial={false} mode="popLayout">
+            <Box
+              component={motion.div}
+              key={
+                location.key ??
+                `${location.pathname}${location.search}${location.hash}`
+              }
+              initial={reduceMotion ? false : { opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={reduceMotion ? undefined : { opacity: 0, x: -6 }}
+              transition={{
+                duration: reduceMotion ? 0 : 0.24,
+                ease: easeOutQuint,
+              }}
+              sx={{
+                flexGrow: 1,
+                minHeight: 0,
+                overflow: "auto",
+              }}
+            >
+              <Outlet />
+            </Box>
+          </AnimatePresence>
         </Box>
         <Typography
           variant="caption"

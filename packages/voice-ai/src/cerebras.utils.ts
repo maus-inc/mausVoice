@@ -1,53 +1,146 @@
 import OpenAI from "openai";
-import {
-  ChatCompletionContentPart,
-  ChatCompletionMessageParam,
-} from "openai/resources/chat/completions";
-import { retry, countWords } from "@maus-inc/utilities";
+import { retry } from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import {
+  buildJsonObjectPrompt,
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
+import type { CustomFetch, DiscoveredModelId } from "./types";
 
-export const CEREBRAS_MODELS = [
-  "zai-glm-4.7",
-  "llama3.1-8b",
-  "gpt-oss-120b",
-  "qwen-3-235b-a22b-instruct-2507",
-] as const;
-export type CerebrasModel = (typeof CEREBRAS_MODELS)[number];
+export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
+export type CerebrasModel =
+  (typeof CEREBRAS_MODELS)[number] | DiscoveredModelId;
 
 const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
 
-const contentToString = (
-  content: string | ChatCompletionContentPart[] | null | undefined,
-): string => {
-  if (!content) {
-    return "";
-  }
+/**
+ * Terminal, non-retryable failure from a Cerebras request. Carries the HTTP
+ * status when the SDK surfaced one so callers can map 402 to a billing/quota
+ * message instead of a generic fallback. The API key, authorization header,
+ * and raw transcript are never attached.
+ */
+export class CerebrasProviderError extends Error {
+  readonly status?: number;
 
-  if (typeof content === "string") {
-    return content;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = "CerebrasProviderError";
+    this.status = status;
   }
+}
 
-  return content
-    .map((part) => {
-      if (part.type === "text") {
-        return part.text ?? "";
-      }
-      return "";
-    })
-    .join("")
-    .trim();
+/** True when a status must not be retried (billing, auth, bad request). */
+export const isCerebrasTerminalStatus = (status: number): boolean =>
+  status === 400 ||
+  status === 401 ||
+  status === 402 ||
+  status === 403 ||
+  status === 404 ||
+  status === 422;
+
+/**
+ * Replace the literal API key and common authorization material anywhere in
+ * a provider message. The OpenAI SDK's own error strings can embed the key
+ * ("Incorrect API key provided: csk_..."), and some proxies echo the
+ * Authorization header. Never reveals the key value itself (no length/first
+ * characters), so a message like "key csk_ab" redacts the whole token.
+ */
+const CEREBRAS_SECRET_PATTERNS: RegExp[] = [
+  /\bcsk_[a-z0-9_-]+/gi,
+  /\bsk-[a-z0-9_-]+/gi,
+  /\bsk_[a-z0-9_-]+/gi,
+  /bearer\s+[a-z0-9._~+/=-]+/gi,
+  /authorization:\s*[^\s;,]+/gi,
+  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
+];
+
+export const redactCerebrasMessage = (message: string): string =>
+  CEREBRAS_SECRET_PATTERNS.reduce(
+    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
+    message,
+  );
+
+const readStatus = (error: unknown): number | undefined => {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return undefined;
+  }
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
 };
 
-const createClient = (apiKey: string) => {
+/** True when a thrown value carries a non-retryable Cerebras HTTP status. */
+export const isCerebrasTerminalError = (error: unknown): boolean => {
+  if (error instanceof CerebrasProviderError && error.status !== undefined) {
+    return isCerebrasTerminalStatus(error.status);
+  }
+  const status = readStatus(error);
+  return status !== undefined && isCerebrasTerminalStatus(status);
+};
+
+/**
+ * Normalize any value thrown by a Cerebras call into a throwable error.
+ *
+ * The OpenAI SDK (which Cerebras is wire-compatible with) rejects on a
+ * non-2xx response with an `APIError` carrying `status`. For a 402 with an
+ * empty body that surfaces as `402 status code (no body)`; we map it to a
+ * provider-specific message. Other errors pass through with their original
+ * message so transient failures still retry.
+ */
+export const normalizeCerebrasError = (error: unknown): Error => {
+  if (error instanceof CerebrasProviderError) {
+    return error;
+  }
+
+  const status =
+    typeof error === "object" && error !== null && "status" in error
+      ? (error as { status?: unknown }).status
+      : undefined;
+  const numericStatus = typeof status === "number" ? status : undefined;
+
+  if (numericStatus === 402) {
+    return new CerebrasProviderError(
+      "Cerebras could not process this request. Your Cerebras account may be out of credit, over its quota, blocked by billing state, or missing access to the selected model.",
+      402,
+    );
+  }
+
+  if (numericStatus !== undefined && isCerebrasTerminalStatus(numericStatus)) {
+    const rawMessage =
+      error instanceof Error && error.message
+        ? error.message
+        : `Cerebras request failed with status ${numericStatus}`;
+    // Sanitize before wrapping: SDK APIError messages can contain the API
+    // key (e.g. "Incorrect API key provided: csk_..."). The key must never
+    // reach logs, snackbars, or persisted postProcessError metadata.
+    return new CerebrasProviderError(
+      `Cerebras: ${redactCerebrasMessage(rawMessage)}`,
+      numericStatus,
+    );
+  }
+
+  // Network/timeout/5xx: return a plain Error so the retry helper treats it
+  // as transient and tries again. A proxy or server can still echo key
+  // material in these messages, so scrub it before it reaches logs or saved
+  // metadata; the original error is returned unchanged when clean.
+  if (error instanceof Error) {
+    const redacted = redactCerebrasMessage(error.message);
+    return redacted === error.message ? error : new Error(redacted);
+  }
+  return new Error(redactCerebrasMessage(String(error)));
+};
+
+const createClient = (apiKey: string, customFetch?: CustomFetch) => {
   return new OpenAI({
     apiKey: apiKey.trim(),
     baseURL: CEREBRAS_BASE_URL,
     dangerouslyAllowBrowser: true,
+    fetch: customFetch,
   });
 };
 
@@ -57,6 +150,9 @@ export type CerebrasGenerateTextArgs = {
   system?: string;
   prompt: string;
   jsonResponse?: JsonResponse;
+  maxTokens?: number;
+  customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type CerebrasGenerateResponseOutput = {
@@ -66,103 +162,70 @@ export type CerebrasGenerateResponseOutput = {
 
 export const cerebrasGenerateTextResponse = async ({
   apiKey,
-  model = "zai-glm-4.7",
+  model = CEREBRAS_MODELS[0],
   system,
   prompt,
   jsonResponse,
+  maxTokens,
+  customFetch,
+  signal,
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
   return retry({
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
     retries: 3,
+    // A billing/auth/validation failure cannot be fixed by retrying. A 402
+    // in particular must surface immediately with an actionable message.
+    // The status may arrive either as a raw SDK error (before normalization)
+    // or already wrapped, so inspect both shapes.
+    isRetryable: (error) => !signal?.aborted && !isCerebrasTerminalError(error),
     fn: async () => {
-      const client = createClient(apiKey);
+      const client = createClient(apiKey, customFetch);
 
-      const messages: ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-
-      let finalPrompt = prompt;
-      if (jsonResponse) {
-        finalPrompt = `${prompt}\n\nRespond with valid JSON matching this schema: ${JSON.stringify(jsonResponse.schema)}`;
-      }
-
-      const userParts: ChatCompletionContentPart[] = [];
-      userParts.push({ type: "text", text: finalPrompt });
-      messages.push({ role: "user", content: userParts });
+      const finalPrompt = buildJsonObjectPrompt({ prompt, jsonResponse });
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt: finalPrompt,
+      });
 
       const params: Record<string, unknown> = {
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       };
-      if (model === "zai-glm-4.7") {
-        params.reasoning_effort = "none";
-      }
-
       const response = await client.chat.completions.create(
         params as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming,
+        { signal },
       );
 
       console.log("cerebras llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from Cerebras");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      const content = contentToString(result);
-      return {
-        text: content,
-        tokensUsed: response.usage?.total_tokens ?? countWords(content),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "Cerebras",
+      });
     },
+  }).catch((error: unknown) => {
+    throw normalizeCerebrasError(error);
   });
 };
 
 export type CerebrasTestIntegrationArgs = {
   apiKey: string;
+  customFetch?: CustomFetch;
 };
 
 export const cerebrasTestIntegration = async ({
   apiKey,
+  customFetch,
 }: CerebrasTestIntegrationArgs): Promise<boolean> => {
-  const client = createClient(apiKey);
-
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `Reply with the single word "Hello."`,
-          },
-        ],
-      },
-    ],
-    model: "llama3.1-8b",
-    temperature: 0,
-    max_tokens: 32,
-    top_p: 1,
-  });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from Cerebras");
-  }
-
-  const first = response.choices[0];
-  const content = contentToString(first?.message?.content);
-  if (!content) {
-    throw new Error("Response content is empty");
-  }
-
-  return content.toLowerCase().includes("hello");
+  const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
 };
 
 // ============================================================================
@@ -173,18 +236,21 @@ export type CerebrasStreamChatArgs = {
   apiKey: string;
   model: string;
   input: LlmChatInput;
+  customFetch?: CustomFetch;
 };
 
 export async function* cerebrasStreamChat({
   apiKey,
   model,
   input,
+  customFetch,
 }: CerebrasStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
-  const client = createClient(apiKey);
-  yield* openaiCompatibleStreamChat(
-    client,
-    model,
-    input,
-    model === "zai-glm-4.7" ? { reasoning_effort: "none" } : undefined,
-  );
+  const client = createClient(apiKey, customFetch);
+  try {
+    yield* openaiCompatibleStreamChat(client, model, input);
+  } catch (error) {
+    // Surface a 402 (or other terminal status) with an actionable message in
+    // agent/assistant streaming too, not just the non-streaming path.
+    throw normalizeCerebrasError(error);
+  }
 }

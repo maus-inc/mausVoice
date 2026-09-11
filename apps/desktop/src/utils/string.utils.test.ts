@@ -3,6 +3,7 @@ import {
   applyReplacements,
   applySymbolConversions,
   editDistance,
+  escapeRegExp,
   getFirstAndLastName,
   getInitials,
   getStringSimilarity,
@@ -619,4 +620,78 @@ describe("sanitizeIndentation", () => {
     const input = "  paragraph one\n\n\n  paragraph two";
     expect(sanitizeIndentation(input)).toBe("paragraph one\n\n\nparagraph two");
   });
+});
+
+describe("escapeRegExp", () => {
+  it.each([
+    [".", "\\."],
+    ["\\", "\\\\"],
+    ["[", "\\["],
+    ["]", "\\]"],
+    ["(", "\\("],
+    [")", "\\)"],
+    ["+", "\\+"],
+    ["*", "\\*"],
+    ["?", "\\?"],
+    ["^", "\\^"],
+    ["$", "\\$"],
+    ["{", "\\{"],
+    ["}", "\\}"],
+    ["|", "\\|"],
+  ])("escapes %s", (input, expected) => {
+    expect(escapeRegExp(input)).toBe(expected);
+  });
+
+  it("escapes a multi-character source without altering literal letters", () => {
+    expect(escapeRegExp("C++")).toBe("C\\+\\+");
+    expect(escapeRegExp("(group)")).toBe("\\(group\\)");
+    expect(escapeRegExp("a.b")).toBe("a\\.b");
+  });
+
+  it("produces a regex that matches the original literal", () => {
+    const sources = [
+      "C++",
+      "a.b",
+      "path\\to\\file",
+      "[brackets]",
+      "x*y",
+      "(a)",
+    ];
+    for (const source of sources) {
+      const re = new RegExp(escapeRegExp(source));
+      expect(re.test(source)).toBe(true);
+    }
+  });
+});
+
+describe("applyReplacements with regex metacharacters in sourceValue", () => {
+  // These cases pin down escaping: a metacharacter in sourceValue must never
+  // compile into regex syntax. The trailing "]", ")" and "++" in some expected
+  // values are not a typo. applyReplacements matches on word boundaries and
+  // leaves trailing punctuation in place, so only the word part is swapped.
+  const cases: [
+    name: string,
+    text: string,
+    sourceValue: string,
+    destinationValue: string,
+    expected: string,
+  ][] = [
+    ["a slash as a delimiter", "use a/b now", "a/b", "AB", "use AB now"],
+    ["a backslash as an escape", "see a\\b now", "a\\b", "AB", "see AB now"],
+    ["brackets as a class", "see f[b] now", "f[b]", "FB", "see FB] now"],
+    ["parens as a group", "see f(b) now", "f(b)", "FB", "see FB) now"],
+    ["a plus as a quantifier", "write C++ now", "C++", "Rs", "write Rs++ now"],
+    ["a star as a quantifier", "use a*b now", "a*b", "AB", "use AB now"],
+    ["a question mark", "is maybe? now", "maybe", "perhaps", "is perhaps? now"],
+  ];
+
+  it.each(cases)(
+    "does not treat %s",
+    (_name, text, sourceValue, destinationValue, expected) => {
+      const rules = [{ sourceValue, destinationValue }];
+
+      expect(() => applyReplacements(text, rules)).not.toThrow();
+      expect(applyReplacements(text, rules)).toBe(expected);
+    },
+  );
 });

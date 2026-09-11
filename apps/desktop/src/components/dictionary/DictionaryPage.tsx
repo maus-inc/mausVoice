@@ -82,7 +82,7 @@ export default function DictionaryPage() {
       <ScrollListPage
         title={<FormattedMessage defaultMessage="Dictionary" />}
         subtitle={
-          <FormattedMessage defaultMessage="mausVoice may misunderstand you on occasion. If you see certain words being missed frequently, you can define a replacement rule here to fix the spelling automatically." />
+          <FormattedMessage defaultMessage="mausVoice may misunderstand you on occasion. Add glossary terms to bias recognition toward the names and words you use, or define a replacement rule to fix the spelling automatically." />
         }
         action={
           <Button

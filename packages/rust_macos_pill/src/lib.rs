@@ -11,6 +11,7 @@ mod constants;
 mod draw;
 mod gfx;
 mod input;
+mod nsstring;
 mod state;
 
 use std::sync::mpsc::{Receiver, Sender};

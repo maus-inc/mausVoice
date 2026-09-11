@@ -52,12 +52,14 @@ import time
 from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+from urlcheck import assert_http_url
 
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
 OLLAMA_BASE = "http://localhost:11434"
+
 
 OLLAMA_MODELS = {
     "gemma4": "gemma4:latest",
@@ -86,18 +88,21 @@ MODELS = {**OLLAMA_MODELS, **GROQ_MODELS, **OPENAI_MODELS}
 
 
 def user_prompt(transcript: str) -> str:
+    """Build the user prompt that wraps a transcript for model calls."""
     return f"""\
 Here is the transcript: "{transcript}"
 """.strip()
 
 
 def pull_model(model_tag: str):
+    """Pull an Ollama model tag via the ollama CLI."""
     print(f"Pulling {model_tag}...")
     subprocess.run(["ollama", "pull", model_tag], check=True)
     print(f"Done pulling {model_tag}")
 
 
 def list_models():
+    """Print the known model aliases grouped by provider."""
     print("Ollama models:\n")
     for alias, tag in OLLAMA_MODELS.items():
         print(f"  {alias:<24} -> {tag}")
@@ -120,14 +125,17 @@ RESET = "\033[0m"
 
 
 def is_groq_model(model_tag: str) -> bool:
+    """Return whether a model tag or alias targets Groq."""
     return model_tag in GROQ_MODELS.values() or any(model_tag == alias for alias in GROQ_MODELS)
 
 
 def is_openai_model(model_tag: str) -> bool:
+    """Return whether a model tag or alias targets OpenAI."""
     return model_tag in OPENAI_MODELS.values() or any(model_tag == alias for alias in OPENAI_MODELS)
 
 
 def extract_result(content: str) -> str:
+    """Extract the result field from a JSON model response, falling back to the raw content."""
     try:
         parsed = json.loads(content)
         return parsed.get("result", content)
@@ -136,6 +144,7 @@ def extract_result(content: str) -> str:
 
 
 def run_groq(model_tag: str, sys_prompt: str, transcript: str) -> str:
+    """Run a prompt against a Groq model and return its content."""
     from groq import Groq
 
     client = Groq()
@@ -158,6 +167,7 @@ def run_groq(model_tag: str, sys_prompt: str, transcript: str) -> str:
 
 
 def run_ollama(model_tag: str, sys_prompt: str, transcript: str) -> str:
+    """Run a prompt against a local Ollama model and return its content."""
     payload = {
         "model": model_tag,
         "messages": [
@@ -169,10 +179,12 @@ def run_ollama(model_tag: str, sys_prompt: str, transcript: str) -> str:
     }
 
     body = json.dumps(payload).encode()
-    req = Request(f"{OLLAMA_BASE}/api/chat", data=body, headers={"Content-Type": "application/json"})
+    url = f"{OLLAMA_BASE}/api/chat"
+    assert_http_url(url)
+    req = Request(url, data=body, headers={"Content-Type": "application/json"})
 
     try:
-        with urlopen(req, timeout=600) as resp:
+        with urlopen(req, timeout=600) as resp:  # nosec B310 -- scheme validated by assert_http_url
             data = json.loads(resp.read())
     except URLError as e:
         print(f"Error: Cannot connect to Ollama. Is it running? (ollama serve)\n{e}", file=sys.stderr)
@@ -207,6 +219,7 @@ Respond with JSON only: { "evals": [{ "status": "pass" | "fail", "slice": "<text
 
 
 def evaluate_result(sys_prompt: str, result: str, transcript: str, judge_model: str = "gpt-5.4") -> list[dict]:
+    """Ask the judge model to evaluate a prompt/transcript/output triple."""
     from openai import OpenAI
 
     client = OpenAI()
@@ -235,6 +248,7 @@ def evaluate_result(sys_prompt: str, result: str, transcript: str, judge_model: 
 
 
 def print_evals(evals: list[dict]):
+    """Pretty-print evaluation results to the console."""
     for e in evals:
         status = e.get("status", "?")
         slice_text = e.get("slice", "")
@@ -248,6 +262,7 @@ def print_evals(evals: list[dict]):
 
 
 def run_openai(model_tag: str, sys_prompt: str, transcript: str) -> str:
+    """Run a prompt against an OpenAI model and return its content."""
     from openai import OpenAI
 
     client = OpenAI()
@@ -264,6 +279,7 @@ def run_openai(model_tag: str, sys_prompt: str, transcript: str) -> str:
 
 
 def run_one(model_tag: str, sys_prompt: str, transcript: str) -> str:
+    """Dispatch a model call to the correct provider implementation."""
     if is_openai_model(model_tag):
         return run_openai(model_tag, sys_prompt, transcript)
     if is_groq_model(model_tag):
@@ -272,6 +288,7 @@ def run_one(model_tag: str, sys_prompt: str, transcript: str) -> str:
 
 
 def resolve_transcripts(transcript_arg: str) -> list[Path]:
+    """Expand a transcript argument (comma-separated files or a directory) into a sorted list of files."""
     paths = []
     for part in transcript_arg.split(","):
         p = Path(part.strip())
@@ -289,6 +306,7 @@ def resolve_transcripts(transcript_arg: str) -> list[Path]:
 
 
 def run_prompt(model_tags: list[str], sys_prompt: str, transcript_files: list[Path], judge_model: str = None):
+    """Run a system prompt against the given models over all transcript files."""
     for tf in transcript_files:
         transcript = tf.read_text()
         print(f"\n{CYAN}=== {tf.name} ==={RESET}")
@@ -368,6 +386,7 @@ Respond with JSON only:
 
 
 def run_golden(model_tag: str, sys_prompt: str, transcripts_dir: Path, output_dir: Path):
+    """Generate golden reference outputs for the self-improvement loop."""
     golden_dir = output_dir / "golden"
     golden_dir.mkdir(parents=True, exist_ok=True)
 
@@ -408,6 +427,7 @@ def run_epoch(
     output_dir: Path,
     judge_model: str = "gpt-5.4",
 ) -> tuple[str, bool]:
+    """Run one refinement epoch and return the refined prompt plus whether it converged."""
     epoch_label = f"{epoch_num:03d}"
     epoch_dir = output_dir / "epochs" / epoch_label
     results_dir = epoch_dir / "results"
@@ -536,6 +556,7 @@ def run_epoch(
 
 
 def cmd_self_improve(args):
+    """Run the self-improvement loop: golden outputs, then prompt refinement epochs."""
     golden_model = MODELS.get(args.golden_model, args.golden_model)
     target_model = MODELS.get(args.target_model, args.target_model)
     judge_model = MODELS.get(args.judge_model, args.judge_model)
@@ -572,6 +593,7 @@ def cmd_self_improve(args):
 
 
 def main():
+    """Parse CLI arguments and dispatch the requested command."""
     parser = argparse.ArgumentParser(description="Test open-source models via Ollama")
     sub = parser.add_subparsers(dest="command")
 

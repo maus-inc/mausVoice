@@ -1,9 +1,28 @@
 import { Nullable } from "@maus-inc/types";
 
+export {
+  KNOWN_SILENCE_HALLUCINATIONS,
+  filterKnownSilenceHallucinations,
+  isKnownSilenceHallucination,
+} from "./hallucination.utils";
+
+/**
+ * Escapes regular expression metacharacters in `value` so it can be embedded
+ * as a literal pattern. Use this whenever a user-supplied string (for example
+ * a dictionary term's source value) is passed to `new RegExp`, `String.replace`
+ * with a regex, or any other regex-accepting API. Without escaping, a term
+ * like `C++` or `a.b` is interpreted as a regex pattern and either throws
+ * or matches the wrong span.
+ */
+const REGEXP_ESCAPE_PATTERN = /[.*+?^${}()|[\]\\]/g;
+
+export const escapeRegExp = (value: string): string =>
+  value.replace(REGEXP_ESCAPE_PATTERN, String.raw`\$&`);
+
 /**
  * Calculates the Levenshtein edit distance between two strings.
  * Returns the minimum number of single-character edits (insertions,
- * deletions, or substitutions) required to change one string into the other.
+ * deletions, or substitutions) required to change one string into another.
  */
 export const editDistance = (a: string, b: string): number => {
   if (a.length === 0) return b.length;
@@ -143,6 +162,36 @@ const countWords = (phrase: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
+type PreparedRule = {
+  rule: ReplacementRule;
+  source: string;
+  wordCount: number;
+};
+
+const findBestMatchingRule = (
+  preparedRules: PreparedRule[],
+  normalizedCandidate: string,
+  span: number,
+): ReplacementRule | null => {
+  let bestMatch: ReplacementRule | null = null;
+  let bestSimilarity = 0;
+
+  for (const prepared of preparedRules) {
+    if (prepared.wordCount !== span) continue;
+
+    const similarity = getStringSimilarity(
+      normalizedCandidate,
+      prepared.source,
+    );
+    if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
+      bestSimilarity = similarity;
+      bestMatch = prepared.rule;
+    }
+  }
+
+  return bestMatch;
+};
+
 export const applyReplacements = (
   text: string,
   rules: ReplacementRule[],
@@ -163,7 +212,7 @@ export const applyReplacements = (
   // Rules are matched as phrases, so a rule spans as many words as its source
   // does. Longer phrases are tried first so that "New York City" wins over a
   // "New York" rule at the same position.
-  const preparedRules = rules
+  const preparedRules: PreparedRule[] = rules
     .map((rule) => ({
       rule,
       source: normalizePhrase(rule.sourceValue).toLowerCase(),
@@ -206,22 +255,11 @@ export const applyReplacements = (
       if (!word) continue;
 
       const normalizedCandidate = collapseWhitespace(word).toLowerCase();
-
-      let bestMatch: ReplacementRule | null = null;
-      let bestSimilarity = 0;
-
-      for (const prepared of preparedRules) {
-        if (prepared.wordCount !== span) continue;
-
-        const similarity = getStringSimilarity(
-          normalizedCandidate,
-          prepared.source,
-        );
-        if (similarity >= SIMILARITY_THRESHOLD && similarity > bestSimilarity) {
-          bestSimilarity = similarity;
-          bestMatch = prepared.rule;
-        }
-      }
+      const bestMatch = findBestMatchingRule(
+        preparedRules,
+        normalizedCandidate,
+        span,
+      );
 
       if (bestMatch) {
         const { word: destinationWord } = extractPunctuation(

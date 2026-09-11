@@ -14,7 +14,7 @@ use crate::downloads::DownloadArtifact;
 use crate::errors::ApiError;
 use crate::models::WhisperModel;
 use crate::state::AppState;
-use crate::transcription::{ComputeDevice, TranscriptionInput};
+use crate::transcription::{ComputeDevice, TranscriptionInput, TranscriptionSegment};
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
@@ -138,17 +138,24 @@ async fn download_model(
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, url)| {
-                DownloadArtifact::new(
+            .map(|(name, url, sha256)| {
+                DownloadArtifact::new_verified(
                     url,
                     model.artifact_path(&state.config.models_dir, name),
+                    crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
+                    sha256,
                 )
             })
             .collect()
     } else {
-        vec![DownloadArtifact::new(
+        // whisper.cpp ggml blobs travel the same verified pipeline: pinned
+        // immutable revision + LFS SHA-256 (absent only when a developer
+        // overrides the URL via the environment).
+        vec![DownloadArtifact::new_verified(
             model.download_url(),
             state.model_path(model),
+            crate::downloads::MAX_MODEL_ARTIFACT_BYTES,
+            model.download_sha256(),
         )]
     };
 
@@ -208,7 +215,7 @@ async fn remove_invalid_onnx_bundle_before_download(
     }
 
     crate::onnx_inference::evict_model(&model_path);
-    for (name, _) in model.artifact_set() {
+    for (name, _, _) in model.artifact_set() {
         let artifact_path = model.artifact_path(&state.config.models_dir, name);
         match tokio::fs::remove_file(&artifact_path).await {
             Ok(()) => {}
@@ -292,13 +299,7 @@ async fn handle_download_action(
     Path(path): Path<DownloadTargetPath>,
 ) -> Result<Json<crate::downloads::DownloadJobSnapshot>, ApiError> {
     let model = parse_model(&path.model)?;
-    dispatch_download_action(
-        &state,
-        model,
-        ResolvedDownloadTarget::Active,
-        &path.target,
-    )
-    .await
+    dispatch_download_action(&state, model, ResolvedDownloadTarget::Active, &path.target).await
 }
 
 async fn handle_job_action(
@@ -367,7 +368,7 @@ async fn delete_model(
     // in-progress auxiliary fragments in the model-specific directory.
     if model.is_onnx() {
         crate::onnx_inference::evict_model(&model_path);
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::remove_file(&artifact_path).await {
                 Ok(()) => {}
@@ -395,6 +396,10 @@ async fn delete_model(
     Ok(Json(status))
 }
 
+fn default_hallucination_filter_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TranscribeRequest {
@@ -404,6 +409,8 @@ struct TranscribeRequest {
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,6 +421,8 @@ struct CreateTranscriptionSessionRequest {
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    #[serde(default = "default_hallucination_filter_enabled")]
+    hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -442,11 +451,31 @@ struct DeleteTranscriptionSessionResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SegmentResponse {
+    text: String,
+    no_speech_prob: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TranscribeResponse {
     text: String,
     model: WhisperModel,
     inference_device: String,
     duration_ms: u128,
+    segments: Vec<SegmentResponse>,
+}
+
+fn segments_to_response(
+    segments: &[TranscriptionSegment],
+) -> Vec<SegmentResponse> {
+    segments
+        .iter()
+        .map(|segment| SegmentResponse {
+            text: segment.text.clone(),
+            no_speech_prob: segment.no_speech_prob,
+        })
+        .collect()
 }
 
 async fn transcribe(
@@ -456,16 +485,17 @@ async fn transcribe(
     let model_path = ensure_model_downloaded(&state, request.model).await?;
 
     let started = Instant::now();
-    let output = run_transcription_request(
-        &state,
-        request.model,
+    let output = run_transcription_request(TranscriptionRequestParams {
+        state: &state,
+        model: request.model,
         model_path,
-        request.samples,
-        request.sample_rate,
-        request.language,
-        request.initial_prompt,
-        request.device_id,
-    )
+        samples: request.samples,
+        sample_rate: request.sample_rate,
+        language: request.language,
+        initial_prompt: request.initial_prompt,
+        device_id: request.device_id,
+        hallucination_filter_enabled: request.hallucination_filter_enabled,
+    })
     .await?;
 
     Ok(Json(TranscribeResponse {
@@ -473,6 +503,7 @@ async fn transcribe(
         model: request.model,
         inference_device: output.inference_device,
         duration_ms: started.elapsed().as_millis(),
+        segments: segments_to_response(&output.segments),
     }))
 }
 
@@ -491,6 +522,7 @@ async fn create_transcription_session(
                 language: request.language,
                 initial_prompt: request.initial_prompt,
                 device_id: request.device_id,
+                hallucination_filter_enabled: request.hallucination_filter_enabled,
             },
         )
         .await;
@@ -542,16 +574,17 @@ async fn finalize_transcription_session(
 
     let model_path = ensure_model_downloaded(&state, session.model).await?;
     let started = Instant::now();
-    let output = run_transcription_request(
-        &state,
-        session.model,
+    let output = run_transcription_request(TranscriptionRequestParams {
+        state: &state,
+        model: session.model,
         model_path,
-        session.samples,
-        session.sample_rate,
-        session.language,
-        session.initial_prompt,
-        session.device_id,
-    )
+        samples: session.samples,
+        sample_rate: session.sample_rate,
+        language: session.language,
+        initial_prompt: session.initial_prompt,
+        device_id: session.device_id,
+        hallucination_filter_enabled: session.hallucination_filter_enabled,
+    })
     .await?;
 
     Ok(Json(TranscribeResponse {
@@ -559,6 +592,7 @@ async fn finalize_transcription_session(
         model: session.model,
         inference_device: output.inference_device,
         duration_ms: started.elapsed().as_millis(),
+        segments: segments_to_response(&output.segments),
     }))
 }
 
@@ -594,7 +628,7 @@ fn decode_f32le_samples(bytes: &[u8]) -> Result<Vec<f32>, ApiError> {
         return Ok(Vec::new());
     }
 
-    if bytes.len() % std::mem::size_of::<f32>() != 0 {
+    if !bytes.len().is_multiple_of(std::mem::size_of::<f32>()) {
         return Err(ApiError::bad_request(
             "invalid_audio_chunk",
             "audio chunk byte length must be a multiple of 4",
@@ -617,11 +651,15 @@ async fn ensure_model_downloaded(
     model: WhisperModel,
 ) -> Result<PathBuf, ApiError> {
     let model_path = state.model_path(model);
+    // Presence-only on the inference path. SHA-256 is verified at
+    // download/admission (`DownloadArtifact::new_verified`) so each request
+    // stays O(1) after the model is already on disk. Do not reintroduce
+    // request-time digest scans here.
     let required_paths = if model.is_onnx() {
         model
             .artifact_set()
             .into_iter()
-            .map(|(name, _)| model.artifact_path(&state.config.models_dir, name))
+            .map(|(name, _, _digest)| model.artifact_path(&state.config.models_dir, name))
             .collect::<Vec<_>>()
     } else {
         vec![model_path.clone()]
@@ -647,8 +685,8 @@ async fn ensure_model_downloaded(
     Ok(model_path)
 }
 
-async fn run_transcription_request(
-    state: &AppState,
+struct TranscriptionRequestParams<'a> {
+    state: &'a AppState,
     model: WhisperModel,
     model_path: PathBuf,
     samples: Vec<f32>,
@@ -656,7 +694,23 @@ async fn run_transcription_request(
     language: Option<String>,
     initial_prompt: Option<String>,
     device_id: Option<String>,
+    hallucination_filter_enabled: bool,
+}
+
+async fn run_transcription_request(
+    params: TranscriptionRequestParams<'_>,
 ) -> Result<crate::transcription::TranscriptionOutput, ApiError> {
+    let TranscriptionRequestParams {
+        state,
+        model,
+        model_path,
+        samples,
+        sample_rate,
+        language,
+        initial_prompt,
+        device_id,
+        hallucination_filter_enabled,
+    } = params;
     state
         .transcriber
         .transcribe(TranscriptionInput {
@@ -667,6 +721,7 @@ async fn run_transcription_request(
             language,
             initial_prompt,
             device_id,
+            hallucination_filter_enabled,
         })
         .await
         .map_err(|error| map_transcription_error(model, error))
@@ -683,7 +738,7 @@ async fn read_model_status(
     let file_bytes = if model.is_onnx() {
         let mut total = 0_u64;
         let mut found = false;
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             if let Ok(meta) = tokio::fs::metadata(artifact_path).await {
                 if meta.is_file() {
@@ -701,7 +756,7 @@ async fn read_model_status(
         // An ONNX model is only "downloaded" once the complete, model-specific
         // graph/weights/tokenizer artifact set is present on disk.
         let mut all_present = true;
-        for (name, _) in model.artifact_set() {
+        for (name, _, _) in model.artifact_set() {
             let artifact_path = model.artifact_path(&state.config.models_dir, name);
             match tokio::fs::metadata(&artifact_path).await {
                 Ok(meta) if meta.is_file() && meta.len() > 0 => {}
@@ -809,8 +864,7 @@ async fn remove_partial_model_downloads(
         };
 
         if !file_name.starts_with(&prefix)
-            || !(file_name.ends_with(".download")
-                || file_name.ends_with(".download.validator"))
+            || !(file_name.ends_with(".download") || file_name.ends_with(".download.validator"))
         {
             continue;
         }
@@ -939,12 +993,9 @@ mod tests {
         let model = WhisperModel::ParakeetCtc06B;
         let model_dir = state.config.models_dir.join(model.as_slug());
         tokio::fs::create_dir_all(&model_dir).await.unwrap();
-        tokio::fs::write(
-            model_dir.join("model_int8.onnx"),
-            b"not a valid ONNX graph",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(model_dir.join("model_int8.onnx"), b"not a valid ONNX graph")
+            .await
+            .unwrap();
         tokio::fs::write(model_dir.join("model_int8.onnx_data"), b"corrupt weights")
             .await
             .unwrap();
@@ -971,13 +1022,10 @@ mod tests {
         let retry_artifacts = model
             .artifact_set()
             .into_iter()
-            .map(|(name, _)| {
+            .map(|(name, _, _)| {
                 let destination = model.artifact_path(&state.config.models_dir, name);
                 assert!(!destination.exists(), "invalid artifact was not removed");
-                DownloadArtifact::new(
-                    format!("http://127.0.0.1:0/{name}"),
-                    destination,
-                )
+                DownloadArtifact::new(format!("http://127.0.0.1:0/{name}"), destination)
             })
             .collect();
         let retry = state

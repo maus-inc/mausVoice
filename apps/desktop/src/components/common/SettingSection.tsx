@@ -3,7 +3,13 @@ import { ReactNode } from "react";
 
 type SettingSectionProps = {
   title: ReactNode;
-  description: ReactNode;
+  /** Plain-text or inline description rendered inside a Typography. */
+  description?: ReactNode;
+  /**
+   * Rich description rendered without an enclosing Typography, so callers can
+   * supply their own layout (stacks, custom typography, status roles).
+   */
+  descriptionSlot?: ReactNode;
   action?: ReactNode;
   sx?: SxProps;
 };
@@ -11,6 +17,7 @@ type SettingSectionProps = {
 export const SettingSection = ({
   title,
   description,
+  descriptionSlot,
   action,
   sx,
 }: SettingSectionProps) => {
@@ -40,14 +47,16 @@ export const SettingSection = ({
         >
           {title}
         </Typography>
-        <Typography
-          variant="body2"
-          sx={{
-            color: "text.secondary",
-          }}
-        >
-          {description}
-        </Typography>
+        {descriptionSlot ?? (
+          <Typography
+            variant="body2"
+            sx={{
+              color: "text.secondary",
+            }}
+          >
+            {description}
+          </Typography>
+        )}
       </Stack>
       {action && <Box>{action}</Box>}
     </Stack>

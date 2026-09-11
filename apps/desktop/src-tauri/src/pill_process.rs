@@ -157,6 +157,17 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        let msg = format!(r#"{{"type":"pill_placement","placement":"{placement}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of placement: {err}");
+        }
+    }
+}
+
+/// Forwards the active writing-style name and total count to the native
+/// pill so it can render its style indicator.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({
@@ -191,6 +202,17 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
         if let Err(err) = pill.send(payload) {
             log::error!("Failed to notify pill of assistant state: {err}");
         }
+    }
+}
+
+/// Ask the pill to re-publish its geometry so the desktop can anchor windows
+/// to it before the user has ever moved it.
+pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<PillProcess>>() {
+        Some(pill) => pill
+            .send(r#"{"type":"request_position"}"#)
+            .map_err(|err| format!("failed to request pill position: {err}")),
+        None => Err("Pill position requested with no managed pill process".to_string()),
     }
 }
 
@@ -248,7 +270,7 @@ fn wait_for_ready(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -291,7 +313,7 @@ fn wait_for_ready(
 fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildStdout>) {
     std::thread::spawn(move || {
         let mut reader = reader;
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -347,11 +369,22 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                             });
                             let _ = app.emit_to("main", "overlay-resolve-permission", payload);
                         }
+                    } else if line.contains("\"review_decision\"") {
+                        if let Some((review_id, action, text)) = parse_review_decision(&line) {
+                            let payload = serde_json::json!({
+                                "reviewId": review_id,
+                                "action": action.as_str(),
+                                "text": text,
+                            });
+                            if let Err(err) =
+                                app.emit_to("main", "pill-review-decision", payload)
+                            {
+                                log::error!("Failed to deliver a pill review decision: {err}");
+                            }
+                        }
                     } else if line.contains("\"style_switch\"") {
-                        if line.contains("\"forward\"") {
-                            let _ = app.emit_to("main", "tone-switch-forward", ());
-                        } else if line.contains("\"backward\"") {
-                            let _ = app.emit_to("main", "tone-switch-backward", ());
+                        if let Some(direction) = parse_style_switch_direction(&line) {
+                            emit_pill_style_switch(&app, direction);
                         }
                     } else if line.contains("\"toast_action\"") {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -360,13 +393,32 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
                                 let _ = app.emit_to("main", "toast-action", payload);
                             }
                         }
+                    } else if line.contains("\"haptic_feedback\"") {
+                        if let Ok(val) =
+                            serde_json::from_str::<serde_json::Value>(&line)
+                        {
+                            if let Some(kind) =
+                                val.get("kind").and_then(|v| v.as_str())
+                            {
+                                crate::system::audio_feedback::play_thock(kind);
+                            }
+                        }
                     } else if line.contains("\"position_changed\"") {
                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
                             let has_saved = val
                                 .get("has_saved_position")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
-                            let payload = serde_json::json!({ "hasSavedPosition": has_saved });
+                            let rect = val.get("rect").cloned().filter(|v| v.is_object());
+                            let monitor = val
+                                .get("monitor")
+                                .cloned()
+                                .filter(|v| v.is_object());
+                            let payload = serde_json::json!({
+                                "hasSavedPosition": has_saved,
+                                "rect": rect,
+                                "monitor": monitor,
+                            });
                             let _ = app.emit_to("main", "pill-position-changed", payload);
                         }
                     }
@@ -375,4 +427,292 @@ fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildSt
         }
         log::info!("Pill overlay process stdout closed");
     });
+}
+
+/// Direction of a pill style switch. A closed enum lets the emit path match
+/// exhaustively instead of defensively warning on a value the parser already
+/// guarantees is valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillStyleSwitchDirection {
+    Forward,
+    Backward,
+}
+
+impl PillStyleSwitchDirection {
+    /// Case-insensitive parse from the direction string the pills emit.
+    pub fn parse(direction: &str) -> Option<Self> {
+        if direction.eq_ignore_ascii_case("forward") {
+            Some(Self::Forward)
+        } else if direction.eq_ignore_ascii_case("backward") {
+            Some(Self::Backward)
+        } else {
+            None
+        }
+    }
+}
+
+/// Parsed `style_switch` direction from a pill stdout line.
+///
+/// Accepts the serde-tagged JSON the pills emit
+/// (`{"type":"style_switch","direction":"forward"}`) and is case-insensitive
+/// on `direction` so a casing drift cannot silently drop the click.
+pub(crate) fn parse_style_switch_direction(line: &str) -> Option<PillStyleSwitchDirection> {
+    let trimmed = line.trim();
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(error) => {
+            // Distinguish unparseable lines from valid-but-unsupported payloads:
+            // a JSON parse failure here is genuinely malformed pill output and
+            // warrants its own warning rather than a silent `None`.
+            log::warn!("Ignoring unparseable pill line {trimmed:?}: {error}");
+            return None;
+        }
+    };
+    if value.get("type").and_then(|v| v.as_str()) != Some("style_switch") {
+        return None;
+    }
+    let Some(raw_direction) = value.get("direction").and_then(|v| v.as_str()) else {
+        log::warn!("Ignoring pill style-switch line missing direction: {trimmed}");
+        return None;
+    };
+    match PillStyleSwitchDirection::parse(raw_direction) {
+        Some(direction) => Some(direction),
+        None => {
+            log::warn!(
+                "Ignoring unknown pill style-switch direction from line: {trimmed}"
+            );
+            None
+        }
+    }
+}
+
+/// What the user chose for the transcript shown on the pill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PillReviewAction {
+    Insert,
+    Copy,
+    Cancel,
+}
+
+impl PillReviewAction {
+    /// Case-insensitive so a casing drift cannot silently drop a decision.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "insert" => Some(Self::Insert),
+            "copy" => Some(Self::Copy),
+            "cancel" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Insert => "insert",
+            Self::Copy => "copy",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+/// Parsed `review_decision` from a pill stdout line.
+///
+/// The id and the action are both required. A malformed line is dropped
+/// instead of guessed at, because assuming an action would throw away the very
+/// transcript the user is being asked about. Dropping it leaves the transcript
+/// on the pill, so the click can simply be repeated.
+///
+/// The text is what the pill's entry held at the time, so an edit made in the
+/// panel is what gets inserted. It is absent for decisions that do not carry
+/// one.
+pub(crate) fn parse_review_decision(
+    line: &str,
+) -> Option<(String, PillReviewAction, Option<String>)> {
+    let trimmed = line.trim();
+    // The line carries the user's transcript, so none of the diagnostics below
+    // repeat it. Logs travel with bug reports.
+    let value: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(value) => value,
+        Err(error) => {
+            log::warn!("Ignoring unparseable pill line: {error}");
+            return None;
+        }
+    };
+    if value.get("type").and_then(|v| v.as_str()) != Some("review_decision") {
+        return None;
+    }
+    let review_id = value
+        .get("review_id")
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty());
+    let Some(review_id) = review_id else {
+        log::warn!("Ignoring pill review decision with no review id");
+        return None;
+    };
+    let raw_action = value.get("action").and_then(|v| v.as_str());
+    let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
+        // A valid action is one short word, so the token is capped: a
+        // malformed line must not be able to write an unbounded string into
+        // the log.
+        let token: String = raw_action.unwrap_or("<missing>").chars().take(32).collect();
+        log::warn!("Ignoring pill review decision with an unknown action: {token}");
+        return None;
+    };
+    let text = value
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|text| text.to_string());
+    Some((review_id.to_string(), action, text))
+}
+
+/// Tauri event names the pill bridge emits for a chevron click. These must
+/// stay in sync with the `useTauriListen` event strings in
+/// `DictationSideEffects.tsx` (currently the hard-coded `"tone-switch-forward"`
+/// / `"tone-switch-backward"` listeners), which are the webview's counterpart.
+pub const PILL_STYLE_SWITCH_FORWARD_EVENT: &str = "tone-switch-forward";
+pub const PILL_STYLE_SWITCH_BACKWARD_EVENT: &str = "tone-switch-backward";
+
+/// Emit the pill chevron click to the desktop webview.
+///
+/// Prefer the main window (dictation is owned there) but fall back to a
+/// broadcast so a hidden/relabeled window cannot swallow the switch.
+pub fn emit_pill_style_switch(app: &tauri::AppHandle, direction: PillStyleSwitchDirection) {
+    let event = match direction {
+        PillStyleSwitchDirection::Forward => PILL_STYLE_SWITCH_FORWARD_EVENT,
+        PillStyleSwitchDirection::Backward => PILL_STYLE_SWITCH_BACKWARD_EVENT,
+    };
+    log::debug!("Pill style switch: {direction:?}");
+    if let Err(err) = app.emit_to("main", event, ()) {
+        log::warn!("Failed to emit {event} to main: {err}; broadcasting");
+        if let Err(err) = app.emit(event, ()) {
+            log::error!("Failed to broadcast {event}: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod style_switch_parse_tests {
+    use super::{parse_style_switch_direction, PillStyleSwitchDirection};
+
+    #[test]
+    fn parses_canonical_pill_line() {
+        assert_eq!(
+            parse_style_switch_direction(
+                r#"{"type":"style_switch","direction":"forward"}"#
+            ),
+            Some(PillStyleSwitchDirection::Forward)
+        );
+        assert_eq!(
+            parse_style_switch_direction(
+                r#"{"type":"style_switch","direction":"backward"}"#
+            ),
+            Some(PillStyleSwitchDirection::Backward)
+        );
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            parse_style_switch_direction(
+                "{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"
+            ),
+            Some(PillStyleSwitchDirection::Forward)
+        );
+        assert_eq!(
+            parse_style_switch_direction(
+                "{\"type\":\"style_switch\",\"direction\":\"BACKWARD\"}\r\n"
+            ),
+            Some(PillStyleSwitchDirection::Backward)
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_unrelated_lines() {
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"click"}"#),
+            None
+        );
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"style_switch","direction":"sideways"}"#),
+            None
+        );
+        assert_eq!(parse_style_switch_direction("not json"), None);
+        assert_eq!(
+            parse_style_switch_direction(r#"{"type":"style_info","name":"forward"}"#),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod review_decision_parse_tests {
+    use super::{parse_review_decision, PillReviewAction};
+
+    #[test]
+    fn parses_every_decision() {
+        for (raw, expected) in [
+            ("insert", PillReviewAction::Insert),
+            ("copy", PillReviewAction::Copy),
+            ("cancel", PillReviewAction::Cancel),
+        ] {
+            let line =
+                format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
+            assert_eq!(
+                parse_review_decision(&line),
+                Some(("r1".to_string(), expected, None))
+            );
+            assert_eq!(expected.as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn keeps_the_text_edited_on_the_pill() {
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"insert","text":"edited words"}"#
+            ),
+            Some((
+                "r1".to_string(),
+                PillReviewAction::Insert,
+                Some("edited words".to_string())
+            ))
+        );
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            parse_review_decision(
+                "{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"
+            ),
+            Some(("r1".to_string(), PillReviewAction::Insert, None))
+        );
+    }
+
+    #[test]
+    fn drops_a_decision_it_cannot_read_instead_of_guessing() {
+        // A missing or unknown action must never fall back to cancel: that
+        // would discard the transcript the card is asking about.
+        assert_eq!(
+            parse_review_decision(r#"{"type":"review_decision","review_id":"r1"}"#),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"delete"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(r#"{"type":"review_decision","action":"insert"}"#),
+            None
+        );
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"","action":"insert"}"#
+            ),
+            None
+        );
+        assert_eq!(parse_review_decision(r#"{"type":"click"}"#), None);
+        assert_eq!(parse_review_decision("not json"), None);
+    }
 }

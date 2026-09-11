@@ -3,12 +3,34 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
+/// Axis-aligned screen rectangle in logical pixels. Coordinates are top-left
+/// origin, y-down — the same space Tauri uses for window placement on Windows.
+/// The desktop anchors the composer next to the pill using `rect` (the pill
+/// window itself) and `monitor` (the work area it lives on).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
     Hidden,
     WhileActive,
     Persistent,
+}
+
+impl From<Visibility> for rust_pill_shared::PillVisibility {
+    fn from(value: Visibility) -> Self {
+        match value {
+            Visibility::Hidden => Self::Hidden,
+            Visibility::WhileActive => Self::WhileActive,
+            Visibility::Persistent => Self::Persistent,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -19,7 +41,6 @@ pub enum Phase {
     Loading,
     Paused,
 }
-
 
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -57,6 +78,15 @@ pub struct PillStreaming {
     pub is_streaming: bool,
 }
 
+/// Review-before-insert state: one finished transcript waiting for the user
+/// to decide what happens to it. Reviews are queued by the desktop, so the
+/// pill only ever holds the one it is currently showing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PillReview {
+    pub id: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PillPermission {
     pub id: String,
@@ -76,22 +106,41 @@ pub enum InMessage {
         #[serde(default)]
         seq: u64,
     },
-    Levels { levels: Vec<f32> },
-    StyleInfo { count: u32, name: String },
-    Visibility { visibility: Visibility },
-    WindowSize { size: String },
+    Levels {
+        levels: Vec<f32>,
+    },
+    StyleInfo {
+        count: u32,
+        name: String,
+    },
+    Visibility {
+        visibility: Visibility,
+    },
+    WindowSize {
+        size: String,
+    },
     Toast {
         message: String,
         toast_type: Option<String>,
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
+        #[serde(default)]
+        reject_action: Option<String>,
+        #[serde(default)]
+        reject_action_label: Option<String>,
     },
     DismissToast,
-    Fireworks { message: String },
-    Flame { message: String },
+    Fireworks {
+        message: String,
+    },
+    Flame {
+        message: String,
+    },
     FlashBlue,
-    BroadcastTranscript { text: String },
+    BroadcastTranscript {
+        text: String,
+    },
     AssistantState {
         active: bool,
         input_mode: String,
@@ -101,6 +150,9 @@ pub enum InMessage {
         messages: Vec<PillMessage>,
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
+        /// Transcript awaiting a review decision, if any.
+        #[serde(default)]
+        review: Option<PillReview>,
     },
     /// Clears the saved position; `strategy` picks which monitor the pill
     /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
@@ -109,6 +161,18 @@ pub enum InMessage {
         #[serde(default)]
         strategy: ResetStrategy,
     },
+    /// User preference for which screen edge the pill anchors to.
+    PillPlacement {
+        placement: String,
+    },
+    /// Ask the pill to re-publish its current geometry.
+    ///
+    /// The pill only emits `PositionChanged` when the user moves it, so a
+    /// freshly started session has no geometry on the desktop side and
+    /// windows anchored to the pill (the review composer) fall back to the
+    /// OS-centred placement. The desktop asks for the geometry once the
+    /// listener is live instead of waiting for the first drag.
+    RequestPosition,
     Quit,
 }
 
@@ -116,14 +180,22 @@ pub enum InMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutMessage {
     Ready,
-    Hover { hovered: bool },
+    Hover {
+        hovered: bool,
+    },
     Click,
-    StyleSwitch { direction: String },
+    StyleSwitch {
+        direction: String,
+    },
     AgentTalk,
     AssistantClose,
     EnableTypeMode,
-    TypedMessage { text: String },
-    OpenConversation { conversation_id: String },
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
     ResolvePermission {
         permission_id: String,
         status: String,
@@ -132,8 +204,31 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-    ToastAction { action: String },
-    PositionChanged { has_saved_position: bool },
+    ToastAction {
+        action: String,
+    },
+    /// Haptic/audio feedback request for the desktop process.
+    /// `kind` values: "press", "deep", "release".
+    HapticFeedback {
+        kind: String,
+    },
+    /// The user's decision on the transcript under review.
+    /// `action` is one of "insert", "copy", "cancel".
+    ///
+    /// `text` carries what the entry holds when the decision is "insert", so
+    /// an edit made in the panel is what gets typed. It is left out for the
+    /// other decisions.
+    ReviewDecision {
+        review_id: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+    PositionChanged {
+        has_saved_position: bool,
+        rect: Option<Rect>,
+        monitor: Option<Rect>,
+    },
 }
 
 pub fn send(msg: &OutMessage) {

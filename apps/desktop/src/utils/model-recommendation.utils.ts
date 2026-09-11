@@ -18,6 +18,7 @@ const MODEL_TIER: Record<LocalWhisperModel, number> = {
   medium: 2,
   turbo: 2,
   "canary-1b": 2,
+  "sense-voice": 1,
   large: 3,
 };
 

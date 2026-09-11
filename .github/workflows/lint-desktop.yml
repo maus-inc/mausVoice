@@ -12,12 +12,6 @@ on:
       - "patches/**"
       - "scripts/generate-app-icons.mjs"
       - ".github/workflows/lint-desktop.yml"
-
-# Least privilege: linting only needs to read the checked-out source.
-permissions:
-  contents: read
-  actions: write
-
 # Run every stacked PR independently, but cancel superseded runs for the same
 # PR (or the same branch for push/manual events) to avoid consuming runner slots.
 concurrency:
@@ -28,6 +22,11 @@ jobs:
   lint:
     name: Lint Desktop (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
+    # Least privilege: linting installs dependencies and runs lifecycle
+    # scripts, so the job token must stay read-only regardless of the
+    # repository's default token scope.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -40,11 +39,11 @@ jobs:
             os: ubuntu-22.04
     steps:
       - name: Checkout source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Setup pnpm
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
       - name: Setup Node
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -97,6 +96,12 @@ jobs:
       - name: Test native pill
         if: matrix.os == 'windows-latest'
         run: cargo test --manifest-path packages/rust_windows_pill/Cargo.toml
+      - name: Test native pill (macOS)
+        if: matrix.os == 'macos-14'
+        run: cargo test --manifest-path packages/rust_macos_pill/Cargo.toml
+      - name: Test native pill (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
       - name: Test shared pill geometry
         if: matrix.os == 'ubuntu-22.04'
         run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml

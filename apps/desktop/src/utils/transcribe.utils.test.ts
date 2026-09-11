@@ -427,6 +427,9 @@ describe("splitAudioTranscription", () => {
       expect(Array.from(result[1])).toEqual([2, 3, 4, 5]);
       expect(Array.from(result[2])).toEqual([4, 5, 6, 7]);
       expect(Array.from(result[3])).toEqual([6, 7, 8, 9]);
+      expect(result.every((segment) => segment.buffer === samples.buffer)).toBe(
+        true,
+      );
     });
 
     it("should handle no overlap (step equals segment size)", () => {

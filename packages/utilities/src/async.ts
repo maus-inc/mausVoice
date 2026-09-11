@@ -7,15 +7,25 @@ export const retry = async <T>(args: {
   fn: () => Promise<T>;
   retries?: number;
   delay?: number;
+  /** Return false for failures another attempt cannot fix (e.g. HTTP 4xx). */
+  isRetryable?: (error: unknown) => boolean;
 }): Promise<T> => {
-  const { fn, retries = 3, delay = 20 } = args;
+  const { fn, retries = 3, delay = 20, isRetryable } = args;
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (error) {
-      if (i < retries - 1) {
-        await delayed(delay);
-      } else {
+      if (isRetryable && !isRetryable(error)) {
+        throw error;
+      }
+      if (i >= retries - 1) {
+        throw error;
+      }
+      await delayed(delay);
+      // Re-check after the wait. The caller may abort during the delay, and
+      // isRetryable often reads signal.aborted. Skipping this check would
+      // still run the next fn() after the deadline.
+      if (isRetryable && !isRetryable(error)) {
         throw error;
       }
     }

@@ -11,6 +11,10 @@ import {
 } from "./language.utils";
 import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
+import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
+
+const appendHumanizeSkill = (base: string): string =>
+  `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
 
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
@@ -76,13 +80,193 @@ export const collectDictionaryEntries = (
   };
 };
 
+export type VocabularyBudget = {
+  maxEntries: number;
+  maxCharacters: number;
+  /** Terms longer than this cannot be sent by the provider and are skipped. */
+  maxTermLength?: number;
+  /** Providers that cap phrase length in words skip longer phrases. */
+  maxWordsPerTerm?: number;
+  /**
+   * Providers that enforce a token ceiling (not a character ceiling) reject
+   * the whole payload above it. When set, capping also stops once the
+   * estimated token cost passes this value, so CJK- or emoji-heavy terms
+   * that fit the character budget cannot push the payload over the limit.
+   */
+  maxEstimatedTokens?: number;
+};
+
+/**
+ * Flattens dictionary entries into a deduplicated list of vocabulary terms a
+ * recognition provider should be biased toward: every glossary source plus
+ * every replacement destination (so a spoken long form is spelled right even
+ * before the deterministic replacement pass runs).
+ */
+export const collectVocabularyTerms = (
+  entries: DictionaryEntries,
+): string[] => {
+  const seen = new Map<string, string>();
+  const terms: string[] = [];
+
+  const add = (candidate: string) => {
+    const value = candidate.trim();
+    if (!value) {
+      return;
+    }
+    const key = value.toLowerCase();
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, value);
+      terms.push(value);
+      return;
+    }
+    // A replacement destination collides with an already-collected source.
+    // The destination is the user's canonical spelling, so it wins and takes
+    // the source's place: biasing the raw spoken form would reinforce the
+    // very misrecognition the replacement rule exists to fix.
+    const index = terms.indexOf(existing);
+    if (index >= 0) {
+      terms[index] = value;
+      seen.set(key, value);
+    }
+  };
+
+  for (const source of entries.sources) {
+    add(source);
+  }
+  for (const rule of entries.replacements) {
+    add(rule.destination);
+  }
+
+  return terms;
+};
+
+/**
+ * Caps a vocabulary list to a provider-safe payload budget. Returns the
+ * capped terms and whether anything had to be dropped, so callers can
+ * surface a warning instead of silently losing dictionary entries.
+ */
+// Callers join the capped terms with ", ", so the separator counts toward
+// the payload length. The character budget covers the joined string, not just
+// the bare term lengths.
+const TERM_SEPARATOR_LENGTH = 2;
+
+/**
+ * Counts Unicode code points in a string. JavaScript's `string.length` counts
+ * UTF-16 code units, so an emoji or other surrogate pair counts as two while a
+ * provider's per-character cap counts it as one. Code points match the
+ * character count providers enforce, so the vocabulary cap stays correct for
+ * multi-byte text instead of under-counting it. The string is normalized to
+ * NFC first so a character stored in decomposed form (base plus combining
+ * mark) counts the same as its precomposed form.
+ */
+const codePointLength = (value: string): number =>
+  Array.from(value.normalize("NFC")).length;
+
+/**
+ * Heuristic token estimate for vocabulary budgeting. Latin text averages
+ * about 4 characters per token, but CJK, fullwidth, and emoji characters
+ * cost roughly a token each, so a pure character cap lets a CJK-heavy list
+ * pass while exceeding a provider's token ceiling. Combining marks ride on
+ * their base character and add nothing. This is a conservative envelope,
+ * not a real tokenizer: it over-counts rather than under-counts.
+ */
+const HEAVYWEIGHT_TOKEN_RE =
+  /[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\uFF00-\uFFEF\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+const ZERO_WIDTH_TOKEN_RE = /[\u0300-\u036F\uFE00-\uFE0F]/;
+
+export const estimateTokenCount = (value: string): number => {
+  let tokens = 0;
+  for (const char of value.normalize("NFC")) {
+    if (ZERO_WIDTH_TOKEN_RE.test(char)) {
+      continue;
+    }
+    tokens += HEAVYWEIGHT_TOKEN_RE.test(char) ? 1 : 0.25;
+  }
+  return tokens;
+};
+
+export const capVocabularyTerms = (
+  terms: string[],
+  budget: VocabularyBudget,
+): {
+  terms: string[];
+  truncated: boolean;
+  characters: number;
+  estimatedTokens: number;
+} => {
+  const capped: string[] = [];
+  let characters = 0;
+  let estimatedTokens = 0;
+  let truncated = false;
+
+  const wordCount = (term: string) => term.split(/\s+/).filter(Boolean).length;
+
+  for (const term of terms) {
+    const trimmed = term.trim();
+    const length = codePointLength(trimmed);
+    const fitsTermLimits =
+      length > 0 &&
+      length <= (budget.maxTermLength ?? Infinity) &&
+      wordCount(trimmed) <= (budget.maxWordsPerTerm ?? Infinity);
+    if (!fitsTermLimits) {
+      truncated = truncated || length > 0;
+      continue;
+    }
+    const separator = capped.length > 0 ? TERM_SEPARATOR_LENGTH : 0;
+    const separatorTokens = capped.length > 0 ? estimateTokenCount(", ") : 0;
+    const termTokens = estimateTokenCount(trimmed);
+    if (
+      capped.length >= budget.maxEntries ||
+      characters + separator + length > budget.maxCharacters ||
+      estimatedTokens + separatorTokens + termTokens >
+        (budget.maxEstimatedTokens ?? Infinity)
+    ) {
+      truncated = true;
+      break;
+    }
+    capped.push(trimmed);
+    characters += separator + length;
+    estimatedTokens += separatorTokens + termTokens;
+  }
+
+  return { terms: capped, truncated, characters, estimatedTokens };
+};
+
+/**
+ * Builds the vocabulary payload a recognition provider receives: dictionary
+ * entries collected, capped to the provider's budget, plus a warning when
+ * entries were dropped. One shared path so the desktop app and every
+ * streaming session stay in sync.
+ */
+export const buildProviderVocabulary = (
+  entries: DictionaryEntries,
+  budget: VocabularyBudget,
+  providerLabel: string,
+): { terms: string[]; warning: string | null } => {
+  const { terms, truncated } = capVocabularyTerms(
+    collectVocabularyTerms(entries),
+    budget,
+  );
+  return {
+    terms,
+    warning: truncated
+      ? `Some dictionary entries were omitted from ${providerLabel} vocabulary hints because the safe payload budget was reached.`
+      : null,
+  };
+};
+
 function applyTemplateVars(
   template: string,
   vars: [name: string, value: string][],
 ): string {
   let result = template;
   for (const [name, value] of vars) {
-    result = result.replace(new RegExp(`<${name}\\/>`, "g"), value);
+    // A literal split/join replacement never interprets the value: there is
+    // no regex and no $-pattern substitution, so dollar patterns inside
+    // user-controlled values like glossary terms and transcripts land in the
+    // prompt exactly as written.
+    result = result.split(`<${name}/>`).join(value);
   }
   return result;
 }
@@ -92,6 +276,112 @@ export type PostProcessingPromptInput = {
   userName: string;
   dictationLanguage: string;
   tone: ToneConfig;
+  /**
+   * The user's personal dictionary. The exact-spelling instruction is only
+   * useful when the cleanup model can actually see the glossary contents.
+   */
+  glossary: DictionaryEntries;
+};
+
+// The glossary is a hint inside a prompt that also carries style instructions
+// and the transcript itself, so it stays small: a hundred terms is far beyond
+// what a normal personal dictionary holds, and the cap keeps every dictation
+// prompt lean.
+export const GLOSSARY_PROMPT_BUDGET: VocabularyBudget = {
+  maxEntries: 100,
+  maxCharacters: 2_000,
+};
+
+/**
+ * Shared budgeted view of the glossary for every prompt-side consumer: the
+ * capped source terms plus the capped "source → destination" replacement
+ * strings, both under the glossary character budget. Prompt formatters only
+ * decide how to join these, never how to cap them.
+ */
+const collectBudgetedGlossary = (
+  glossary: DictionaryEntries,
+): { terms: string[]; rules: string[]; truncated: boolean } => {
+  const { terms, truncated, characters } = capVocabularyTerms(
+    glossary.sources,
+    GLOSSARY_PROMPT_BUDGET,
+  );
+  // Terms and rules draw from one shared budget: whatever the terms already
+  // consumed is subtracted from the rules' entry and character allowance, so
+  // the combined glossary block stays under GLOSSARY_PROMPT_BUDGET. The "; "
+  // delimiter between groups is only reserved when both groups survive
+  // capping, which cannot be known until the rules are capped (per-term limits
+  // may drop every rule even when glossary.replacements is non-empty).
+  const initialRulesBudget = {
+    maxEntries: Math.max(0, GLOSSARY_PROMPT_BUDGET.maxEntries - terms.length),
+    maxCharacters: Math.max(
+      0,
+      GLOSSARY_PROMPT_BUDGET.maxCharacters - characters,
+    ),
+  };
+  const ruleInputs = glossary.replacements.map(
+    (rule) => `${rule.source} → ${rule.destination}`,
+  );
+  let { terms: rules, truncated: rulesTruncated } = capVocabularyTerms(
+    ruleInputs,
+    initialRulesBudget,
+  );
+  // If both terms and rules survived the initial cap, reserve the "; "
+  // delimiter and re-cap the rules under the tighter allowance so the
+  // combined glossary stays within the shared budget.
+  if (terms.length > 0 && rules.length > 0) {
+    const adjustedBudget = {
+      maxEntries: initialRulesBudget.maxEntries,
+      maxCharacters: Math.max(0, initialRulesBudget.maxCharacters - 2),
+    };
+    const adjusted = capVocabularyTerms(ruleInputs, adjustedBudget);
+    rules = adjusted.terms;
+    rulesTruncated = rulesTruncated || adjusted.truncated;
+  }
+  return { terms, rules, truncated: truncated || rulesTruncated };
+};
+
+/**
+ * Whether the budgeted post-processing glossary had to drop entries. The
+ * prompt builders are pure string formatters with no warning channel, so the
+ * transcription flow checks this and surfaces the loss to the user instead of
+ * silently truncating the cleanup model's view of the dictionary.
+ */
+export const isGlossaryPromptTruncated = (
+  glossary: DictionaryEntries,
+): boolean => collectBudgetedGlossary(glossary).truncated;
+
+const buildGlossaryPromptLines = (glossary: DictionaryEntries): string[] => {
+  const { terms, rules } = collectBudgetedGlossary(glossary);
+  const lines: string[] = [];
+  if (terms.length > 0) {
+    lines.push(`Terms: ${terms.join(", ")}`);
+  }
+  if (rules.length > 0) {
+    lines.push(`Spellings: ${rules.join(", ")}`);
+  }
+  return lines;
+};
+
+/**
+ * Compact single-line glossary for style templates that use `<glossary/>`.
+ */
+const formatGlossaryTemplateVar = (glossary: DictionaryEntries): string => {
+  const { terms, rules } = collectBudgetedGlossary(glossary);
+  return [terms.join(", "), rules.join(", ")]
+    .filter((part) => part.length > 0)
+    .join("; ");
+};
+
+/**
+ * The glossary block appended to post-processing system prompts. Empty when
+ * the dictionary holds nothing the cleanup model needs to see.
+ */
+const buildGlossaryPromptSection = (glossary: DictionaryEntries): string => {
+  const lines = buildGlossaryPromptLines(glossary);
+  if (lines.length === 0) {
+    return "";
+  }
+  return `User glossary (use these exact spellings when the transcript refers to them):\n${lines.join("\n")}`;
 };
 
 const buildPostProcessingTemplateVars = (
@@ -102,6 +392,7 @@ const buildPostProcessingTemplateVars = (
     ["username", input.userName],
     ["transcript", input.transcript],
     ["language", languageName],
+    ["glossary", formatGlossaryTemplateVar(input.glossary)],
   ];
 };
 
@@ -112,27 +403,71 @@ const getStylePrompt = (input: PostProcessingPromptInput): string => {
   return "Clean up the provided transcript";
 };
 
+export const GLOSSARY_EXACT_SPELLING_INSTRUCTION =
+  "When the user's glossary contains a term, prefer that exact spelling even if the raw transcript differs.";
+
+/**
+ * The glossary block plus the shared exact-spelling instruction. Without the
+ * block the instruction refers to a list the model cannot see, which is why
+ * the two are always appended together.
+ */
+const buildGlossaryGuidance = (glossary: DictionaryEntries): string => {
+  const section = buildGlossaryPromptSection(glossary);
+  return section
+    ? `${section}\n\n${GLOSSARY_EXACT_SPELLING_INSTRUCTION}`
+    : GLOSSARY_EXACT_SPELLING_INSTRUCTION;
+};
+
+const appendStructuredStyleGuidance = (
+  prompt: string,
+  tone: ToneConfig,
+): string => {
+  const fields = [
+    tone.category && `Category: ${tone.category}`,
+    tone.outputLength && `Output length: ${tone.outputLength}`,
+    tone.exampleInputOutput &&
+      `Example input/output: ${tone.exampleInputOutput}`,
+  ].filter((field): field is string => Boolean(field));
+
+  if (fields.length === 0) {
+    return prompt;
+  }
+
+  return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
+};
+
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   if (input.tone.kind === "template" && input.tone.systemPromptTemplate) {
-    return applyTemplateVars(
+    const systemPrompt = applyTemplateVars(
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
+    return (
+      appendHumanizeSkill(
+        appendStructuredStyleGuidance(systemPrompt, input.tone),
+      ) + `\n\n${buildGlossaryGuidance(input.glossary)}`
+    );
   }
 
-  const stylePrompt = getStylePrompt(input);
+  const stylePrompt = appendStructuredStyleGuidance(
+    getStylePrompt(input),
+    input.tone,
+  );
   const languageName = getDisplayNameForLanguage(input.dictationLanguage);
   const fullPrompt = `
 ${stylePrompt}
 The result must be in the ${languageName} language.
 Respond with JSON only: { "result": "<processed-transcript>" }
+${buildGlossaryGuidance(input.glossary)}
 `;
 
-  return applyTemplateVars(
-    fullPrompt.trim(),
-    buildPostProcessingTemplateVars(input),
+  return appendHumanizeSkill(
+    applyTemplateVars(
+      fullPrompt.trim(),
+      buildPostProcessingTemplateVars(input),
+    ),
   );
 };
 
@@ -266,15 +601,120 @@ const transcriptionPromptByCode: Record<DictationLanguageCode, string> = {
   yue: "詞彙表：<glossary/>\n\n轉錄嘅時候請參考呢個詞彙表。唔好提及呢啲規則；淨係返回整理好嘅轉錄文本。",
 };
 
+// Whisper's initial_prompt is effectively capped at ~224 tokens (the model
+// halves its text context; roughly 900 characters at ~4 characters per
+// token). This 650-code-point budget is only a heuristic that approximates
+// that ceiling and does not guarantee the tokenized prompt fits the context
+// limit: a glossary heavy in CJK or emoji can use more than one token per
+// code point, so token-limit compliance should be verified with the exact
+// target tokenizer or with CJK- and emoji-heavy fixtures. The effective
+// headroom is more conservative than the number suggests for most scripts.
+// Lengths are measured in Unicode code points (see codePointLength) so
+// surrogate pairs are counted the way providers count characters.
+// buildLocalizedTranscriptionPrompt subtracts the localized instruction from
+// this heuristic budget, so the rendered initial_prompt (terms plus
+// instruction) stays within the heuristic. An oversized prompt also raises
+// the risk of leaking into near-silent transcriptions.
+export const TRANSCRIPTION_GLOSSARY_BUDGET: VocabularyBudget = {
+  maxEntries: 100,
+  maxCharacters: 650,
+};
+
+// Provider vocabulary budgets, mirroring what each recognition API documents
+// (checked against each provider's docs on 2026-09-09). Each `maxCharacters`
+// is a character-count heuristic that approximates the provider's documented
+// token or byte ceiling, not an exact token budget: the real token cost of a
+// multi-byte term can exceed its character length, so these ceilings lean
+// conservative. Lengths are measured in Unicode code points (see
+// codePointLength) so emoji and other surrogate pairs are counted as one
+// character, matching how providers enforce per-term and total limits.
+
+// Deepgram keyterm prompting: up to 100 keyterms, repeated plain `keyterm`
+// query parameters, and the docs say to stay well under a 500-token total
+// keyterm budget. The character cap alone cannot guarantee that: 1,500 Latin
+// characters are roughly 375 tokens, but 1,500 CJK characters are well over
+// 1,000. The token estimate (450, with margin) is the binding ceiling for
+// non-Latin text; the character cap still binds first for Latin text.
+export const DEEPGRAM_KEYTERM_BUDGET: VocabularyBudget = {
+  maxEntries: 100,
+  maxCharacters: 1_500,
+  maxEstimatedTokens: 450,
+};
+
+// AssemblyAI batch: `word_boost` is the legacy parameter but stays free of
+// the surcharge that `keyterms_prompt` adds on newer models, and it accepts
+// up to 1,000 words in the JSON body.
+export const ASSEMBLYAI_WORD_BOOST_BUDGET: VocabularyBudget = {
+  maxEntries: 1_000,
+  maxCharacters: 10_000,
+};
+
+// AssemblyAI streaming `keyterms_prompt`: a maximum of 100 keyterms per
+// session, each 50 characters or less. Requests with more than 100 keyterms
+// are rejected with an error, so the cap is not optional.
+export const ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET: VocabularyBudget = {
+  maxEntries: 100,
+  maxCharacters: 5_000,
+  maxTermLength: 50,
+};
+
+// ElevenLabs Scribe v2 batch keyterms travel as repeated form fields. Each
+// term must be under 50 characters and at most 5 words. The API accepts
+// 1,000 terms, but going past 100 triggers a 20-second minimum billable
+// duration per request, so the cap stays at the 100-term sweet spot. Using
+// keyterms at all adds a 20% transcription surcharge.
+export const ELEVENLABS_BATCH_KEYTERMS_BUDGET: VocabularyBudget = {
+  maxEntries: 100,
+  maxCharacters: 10_000,
+  maxTermLength: 50,
+  maxWordsPerTerm: 5,
+};
+
+// The realtime WebSocket is stricter: up to 50 keyterms of at most 20
+// characters each, sent as repeated query parameters.
+export const ELEVENLABS_REALTIME_KEYTERMS_BUDGET: VocabularyBudget = {
+  maxEntries: 50,
+  maxCharacters: 1_000,
+  maxTermLength: 20,
+};
+
+// Azure Speech phrase lists: Microsoft documents a maximum of 500 phrases,
+// and phrase lists only apply to realtime transcription, not batch.
+export const AZURE_PHRASE_LIST_BUDGET: VocabularyBudget = {
+  maxEntries: 500,
+  maxCharacters: 10_000,
+};
+
 export const buildLocalizedTranscriptionPrompt = (args: {
   entries: DictionaryEntries;
   dictationLanguage: DictationLanguageCode;
   state: AppState;
 }): string => {
-  const joinedEntries = args.entries.sources.join(", ");
   const prompt =
     getRec(transcriptionPromptByCode, args.dictationLanguage) ??
     transcriptionPromptByCode.en;
+  // The localized instruction sentence (the "<glossary/>" token is the
+  // dictionary slot) sits on top of the term budget, so subtract its length
+  // before capping the terms. That keeps the rendered initial_prompt within
+  // the heuristic budget regardless of how wordy the dictation language's
+  // instruction is. The heuristic does not guarantee token-limit compliance,
+  // so CJK- and emoji-heavy glossaries should be checked with the target
+  // tokenizer.
+  const instructionLength = codePointLength(prompt.replace("<glossary/>", ""));
+  const { terms } = capVocabularyTerms(
+    // The shared collector folds in replacement destinations and resolves
+    // source/destination collisions, so the recognizer is biased toward the
+    // user's canonical spellings, not just the raw glossary sources.
+    collectVocabularyTerms(args.entries),
+    {
+      ...TRANSCRIPTION_GLOSSARY_BUDGET,
+      maxCharacters: Math.max(
+        0,
+        TRANSCRIPTION_GLOSSARY_BUDGET.maxCharacters - instructionLength,
+      ),
+    },
+  );
+  const joinedEntries = terms.join(", ");
   return applyTemplateVars(prompt, [["glossary", joinedEntries]]);
 };
 
@@ -282,14 +722,20 @@ export const buildPostProcessingPrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   const { transcript, tone } = input;
+  // A19: append the shared humanize skill to every post-processing prompt so
+  // styled dictation output is de-slopped at generation time (the scrubber in
+  // run-agent.ts is the post-hoc safety net).
   if (tone.kind === "template") {
-    return applyTemplateVars(
-      tone.promptTemplate,
-      buildPostProcessingTemplateVars(input),
+    return appendHumanizeSkill(
+      applyTemplateVars(
+        tone.promptTemplate,
+        buildPostProcessingTemplateVars(input),
+      ),
     );
   }
 
-  return `
+  return appendHumanizeSkill(
+    `
 Here is the transcript:
 
 <transcript>
@@ -297,7 +743,8 @@ ${transcript}
 </transcript>
 
 Process the transcript according to the instructions.
-`.trim();
+`,
+  );
 };
 
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
@@ -377,6 +824,6 @@ Return ONLY the requested output, nothing else. The output will be pasted direct
     );
   }
 
-  console.log("Agent prompt", prompt);
+  console.log("Agent prompt", base);
   return base;
 };

@@ -30,6 +30,6 @@ Generation forms require:
 
 mausVoice uses API version `2024-10-21`. The default generation value is `gpt-4o-mini`, while the picker also suggests common names such as `gpt-4o`, `gpt-4`, and `gpt-35-turbo`. Your deployment name can differ from its underlying model name; type the actual deployment name.
 
-The Azure OpenAI **Test** sends a tiny chat request using the literal `gpt-4o-mini`. It can fail when your valid resource has no deployment with that name, and success does not validate a different deployment selected for the task. Post-processing and Assistant use the selected deployment independently.
+The Azure OpenAI **Test** lists models available to the resource instead of assuming a deployment named `gpt-4o-mini`. Azure's data-plane model list contains base models rather than your deployment names, so success verifies the resource endpoint and key but still does not validate the deployment name selected for the task. Post-processing and Assistant use that selected deployment independently.
 
 Do not put a portal page URL or a Speech endpoint into the Azure OpenAI endpoint field. If a request fails, compare the resource type, region/endpoint, deployment spelling, API access, and task in which that record was created.

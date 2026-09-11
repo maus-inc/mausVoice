@@ -1,12 +1,5 @@
 {
   "productName": "mausVoice (dev)",
   "identifier": "com.mausinc.desktop.dev",
-  "mainBinaryName": "mausVoice (dev)",
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/mausvoice/mausvoice/releases/download/desktop-dev/latest.json"
-      ]
-    }
-  }
+  "mainBinaryName": "mausVoice (dev)"
 }

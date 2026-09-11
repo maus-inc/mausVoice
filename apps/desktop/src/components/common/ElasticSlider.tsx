@@ -2,6 +2,8 @@ import {
   Box,
   Slider as MuiSlider,
   type SliderProps,
+  type SxProps,
+  type Theme,
   useTheme,
 } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
@@ -28,6 +30,58 @@ export type ElasticSliderProps = {
   onChangeDisplay?: (value: number) => void;
   sx?: SliderProps["sx"];
 };
+
+/**
+ * MUI centers the horizontal thumb with `translate(-50%, -50%)`. A state
+ * transform that omits it (e.g. a bare `scale`) replaces the centering
+ * translate and drops the thumb down-right of its track anchor, so every
+ * thumb state transform must re-compose it to keep the geometric center fixed.
+ */
+export const THUMB_CENTER_TRANSFORM = "translate(-50%, -50%)";
+
+/** Builds the MUI Slider `sx` for the ElasticSlider look. */
+export const buildElasticSliderSx = (
+  blue: string,
+  rail: string,
+): SxProps<Theme> => ({
+  "& .MuiSlider-rail": {
+    height: 4,
+    borderRadius: 99,
+    backgroundColor: rail,
+    opacity: 1,
+    transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+  },
+  "& .MuiSlider-track": {
+    height: 4,
+    borderRadius: 99,
+    border: "none",
+    backgroundColor: blue,
+    transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+  },
+  "& .MuiSlider-thumb": {
+    width: 16,
+    height: 16,
+    backgroundColor: "#FFFFFF",
+    border: `2px solid ${blue}`,
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
+    transition:
+      "transform 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+    "&:hover": {
+      transform: `${THUMB_CENTER_TRANSFORM} scale(1.15)`,
+      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${blue} 14%, transparent)`,
+    },
+    "&.Mui-active": {
+      transform: `${THUMB_CENTER_TRANSFORM} scale(1.25)`,
+      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 8px color-mix(in srgb, ${blue} 18%, transparent)`,
+    },
+    "&.Mui-focusVisible": {
+      boxShadow: `0 0 0 3px color-mix(in srgb, ${blue} 40%, transparent)`,
+    },
+  },
+  "&:hover .MuiSlider-rail, &:hover .MuiSlider-track": {
+    height: 6,
+  },
+});
 
 /**
  * ElasticSlider — the ElasticSlider look (reactbits.dev) adapted to MUI and
@@ -102,45 +156,7 @@ export const ElasticSlider = ({
         valueLabelDisplay={valueLabelDisplay}
         valueLabelFormat={valueLabelFormat}
         aria-label={ariaLabel}
-        sx={{
-          "& .MuiSlider-rail": {
-            height: 4,
-            borderRadius: 99,
-            backgroundColor: rail,
-            opacity: 1,
-            transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
-          },
-          "& .MuiSlider-track": {
-            height: 4,
-            borderRadius: 99,
-            border: "none",
-            backgroundColor: blue,
-            transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
-          },
-          "& .MuiSlider-thumb": {
-            width: 16,
-            height: 16,
-            backgroundColor: "#FFFFFF",
-            border: `2px solid ${blue}`,
-            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
-            transition:
-              "transform 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1)",
-            "&:hover": {
-              transform: "scale(1.15)",
-              boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${blue} 14%, transparent)`,
-            },
-            "&.Mui-active": {
-              transform: "scale(1.25)",
-              boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 8px color-mix(in srgb, ${blue} 18%, transparent)`,
-            },
-            "&.Mui-focusVisible": {
-              boxShadow: `0 0 0 3px color-mix(in srgb, ${blue} 40%, transparent)`,
-            },
-          },
-          "&:hover .MuiSlider-rail, &:hover .MuiSlider-track": {
-            height: 6,
-          },
-        }}
+        sx={buildElasticSliderSx(blue, rail)}
       />
     </Box>
   );

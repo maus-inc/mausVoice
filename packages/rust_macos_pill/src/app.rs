@@ -9,7 +9,7 @@ use cocoa::appkit::{
     NSWindow, NSWindowCollectionBehavior,
 };
 use cocoa::base::{id, nil, NO, YES};
-use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
+use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize};
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel, BOOL};
 // Note: `Object` import kept for potential future use (currently only `&Object` is needed)
@@ -18,7 +18,8 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::nsstring::with_ns_string;
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,6 +54,34 @@ unsafe fn screens() -> id {
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
+/// y-down coordinate space Tauri uses for window positions. `primary_top` is
+/// the AppKit y of the primary screen's top edge, so windows on screens above
+/// the primary correctly come out with negative y values.
+unsafe fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
+    Rect {
+        x: rect.origin.x,
+        y: primary_top - (rect.origin.y + rect.size.height),
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+/// Reads the pill window's screen rect and the visible frame of the monitor it
+/// lives on, already flipped into Tauri's top-down coordinate space, so the
+/// desktop can anchor the composer next to the real pill.
+unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+    let frame = window_frame(window);
+    let screen: id = msg_send![window, screen];
+    let primary_screens = screens();
+    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    let rect = to_top_down(frame, primary_top);
+    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    (rect, monitor)
 }
 
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
@@ -139,6 +168,15 @@ fn register_pill_view_class() -> &'static Class {
         decl.add_method(sel!(tick:), tick_callback as extern "C" fn(&Object, Sel, id));
         decl.add_method(sel!(hitTest:), hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id);
         decl.add_method(sel!(textFieldAction:), text_field_action as extern "C" fn(&Object, Sel, id));
+        decl.add_method(
+            sel!(controlTextDidChange:),
+            control_text_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(control:textView:doCommandBySelector:),
+            control_do_command as extern "C" fn(&Object, Sel, id, id, Sel) -> BOOL,
+        );
+        decl.add_method(sel!(cancelOperation:), cancel_operation as extern "C" fn(&Object, Sel, id));
     }
 
     decl.register()
@@ -166,10 +204,7 @@ extern "C" fn accepts_first_responder(_this: &Object, _sel: Sel) -> BOOL {
 }
 
 extern "C" fn can_become_key_window(_this: &Object, _sel: Sel) -> BOOL {
-    let is_typing = with_ctx(|ctx| {
-        ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type"
-    });
+    let is_typing = with_ctx(|ctx| ctx.state.is_typing());
     if is_typing.unwrap_or(false) { YES } else { NO }
 }
 
@@ -307,19 +342,98 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
     }
 }
 
+/// Read what a text field currently holds. A field that hands back nothing at
+/// all reads as an empty string, and bytes that are not valid UTF-8 are
+/// replaced rather than dropping the whole entry.
+///
+/// # Safety
+/// `field` must be a live `NSTextField`.
+unsafe fn field_string(field: id) -> String {
+    let ns_text: id = msg_send![field, stringValue];
+    if ns_text.is_null() {
+        return String::new();
+    }
+    let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
+    if cstr.is_null() {
+        return String::new();
+    }
+    std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned()
+}
+
 extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
     with_ctx(|ctx| {
         unsafe {
-            let ns_text: id = msg_send![sender, stringValue];
-            let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-            let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                ipc::send(&OutMessage::TypedMessage { text });
-                let empty: id = NSString::alloc(nil).init_str("");
-                let _: () = msg_send![sender, setStringValue:empty];
-                *ctx.state.entry_text.borrow_mut() = String::new();
-            }
+            *ctx.state.entry_text.borrow_mut() = field_string(sender);
         }
+        // Enter submits: an insert decision while a transcript is under review,
+        // a message to the assistant otherwise.
+        if input::submit_entry(&ctx.state) {
+            set_entry_text("");
+        }
+    });
+}
+
+/// Mirror every keystroke into state, the way the GTK pill does on `changed`.
+///
+/// The field only fires its action once the edit is committed, so without this
+/// the buttons on the review panel would answer with the text as it stood at
+/// the last frame instead of the text on screen.
+extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: id) {
+    with_ctx(|ctx| unsafe {
+        let control: id = msg_send![notification, object];
+        *ctx.state.entry_text.borrow_mut() = field_string(control);
+    });
+}
+
+/// Escape while a transcript is under review cancels it, the same as on the
+/// Windows pill. The field editor holds the keyboard while the entry is being
+/// edited, and it routes Escape here as `cancelOperation:`. Every other command
+/// keeps its standard behaviour.
+extern "C" fn control_do_command(
+    _this: &Object,
+    _sel: Sel,
+    _control: id,
+    _text_view: id,
+    command: Sel,
+) -> BOOL {
+    if command != sel!(cancelOperation:) {
+        return NO;
+    }
+    if cancel_pending_review() {
+        YES
+    } else {
+        NO
+    }
+}
+
+/// Escape when the panel, rather than its entry, holds the keyboard.
+///
+/// The chain deliberately stops here: an Escape with no review to answer must
+/// not travel up to the panel, which would close the pill window.
+extern "C" fn cancel_operation(_this: &Object, _sel: Sel, _sender: id) {
+    cancel_pending_review();
+}
+
+/// Send a cancel decision for the transcript under review, if there is one.
+/// Returns whether a review was cancelled.
+fn cancel_pending_review() -> bool {
+    with_ctx(|ctx| match ctx.state.pending_review_id() {
+        Some(review_id) => {
+            input::send_review_decision(&review_id, "cancel", None);
+            true
+        }
+        None => false,
+    })
+    .unwrap_or(false)
+}
+
+/// Put `text` in the panel's text field. Used to load a transcript into the
+/// entry for review and to empty the field once it has been answered.
+pub(crate) fn set_entry_text(text: &str) {
+    with_ctx(|ctx| unsafe {
+        with_ns_string(text, |ns| {
+            let _: () = msg_send![ctx.entry, setStringValue:ns];
+        });
     });
 }
 
@@ -362,6 +476,15 @@ fn perform_tick() {
                     }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
+                    ctx.state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&ctx.state);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
@@ -375,25 +498,26 @@ fn perform_tick() {
                     ctx.state.style_count.set(count);
                     *ctx.state.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *ctx.state.flash_action.borrow_mut() = action;
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
+                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
-                    ctx.state.flash_visible.set(false);
-                    ctx.state.flash_timer.set(0.0);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
+                    clear_flash(&ctx.state);
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -407,6 +531,8 @@ fn perform_tick() {
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -439,8 +565,27 @@ fn perform_tick() {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = ctx.state.assistant_active.get();
+                    let previous_review_id = ctx
+                        .state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
+                    *ctx.state.assistant_review.borrow_mut() = review;
+
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *ctx.state.entry_text.borrow_mut() = text.clone();
+                        set_entry_text(&text);
+                    }
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
                     ctx.state.assistant_compact.set(compact);
@@ -450,7 +595,9 @@ fn perform_tick() {
                     *ctx.state.assistant_streaming.borrow_mut() = streaming;
                     *ctx.state.assistant_permissions.borrow_mut() = permissions;
 
-                    if active && !was_active {
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         ctx.state.should_stick.set(true);
                         ctx.state.scroll_offset.set(0.0);
                     }
@@ -458,7 +605,20 @@ fn perform_tick() {
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
                     ctx.state.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
+                }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: ctx.state.has_saved_position.get(),
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);
@@ -490,8 +650,7 @@ fn perform_tick() {
         tick(&ctx.state, ctx.window, dt);
 
         // Show/hide entry for typing mode
-        let is_typing = ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type";
+        let is_typing = ctx.state.is_typing();
         unsafe {
             let entry = ctx.entry;
             let entry_hidden: BOOL = msg_send![entry, isHidden];
@@ -504,24 +663,20 @@ fn perform_tick() {
                 let _: () = msg_send![ctx.window, resignKeyWindow];
             }
 
-            // Sync entry text to state
+            // Sync entry text to state. `controlTextDidChange:` already does
+            // this on every keystroke; this covers changes the delegate does
+            // not see, such as a paste routed by the system.
             if is_typing {
-                let ns_text: id = msg_send![entry, stringValue];
-                let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-                let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string();
-                *ctx.state.entry_text.borrow_mut() = text;
+                *ctx.state.entry_text.borrow_mut() = field_string(entry);
             }
         }
 
         // Visibility
-        let visibility = ctx.state.visibility.get();
-        let is_active = ctx.state.phase.get() != Phase::Idle;
-        let is_assistant = ctx.state.assistant_active.get();
-        let should_show = match visibility {
-            Visibility::Hidden => is_assistant,
-            Visibility::WhileActive => is_active || is_assistant,
-            Visibility::Persistent => true,
-        };
+        let should_show = rust_pill_shared::should_show_pill(
+            ctx.state.visibility.get().into(),
+            ctx.state.phase.get() != Phase::Idle,
+            ctx.state.owns_panel(),
+        );
         unsafe {
             if should_show {
                 let _: () = msg_send![ctx.window, orderFront:nil];
@@ -558,7 +713,12 @@ fn end_drag(state: &PillState, window: id) {
         state.saved_x.set(frame.origin.x);
         state.saved_y.set(frame.origin.y);
         state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        let (rect, monitor) = unsafe { pill_geometry(window) };
+        ipc::send(&OutMessage::PositionChanged {
+            has_saved_position: true,
+            rect: Some(rect),
+            monitor: Some(monitor),
+        });
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
@@ -606,6 +766,17 @@ fn update_hover(view: id, ctx: &AppContext) {
 }
 
 // ── Animation tick ────────────────────────────────────────────────
+
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
@@ -674,18 +845,24 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
     spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
     spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
@@ -694,7 +871,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
     spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
     spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
@@ -725,11 +902,17 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         } else {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
     spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
@@ -761,6 +944,9 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.dragging.get(),
     );
     spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state, dt);
 
@@ -1177,7 +1363,7 @@ fn reposition_window(window: id, state: &PillState) {
         // coordinates, while the view is flipped y-down, so a view-space top
         // edge at `fy` maps to screen y = origin.y + win_h − fy.)
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation
+            if state.effective_window_mode() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
                 (
@@ -1302,11 +1488,16 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
 
-    let placeholder = NSString::alloc(nil).init_str("Type a message...");
-    let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    with_ns_string("Type a message...", |placeholder| {
+        let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    });
 
     let _: () = msg_send![entry, setTarget:view];
     let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];
+    // The view is also the field's editing delegate: it mirrors each keystroke
+    // into state and turns Escape into a cancel decision while a transcript is
+    // under review.
+    let _: () = msg_send![entry, setDelegate:view];
     let _: () = msg_send![entry, setHidden:YES];
     let _: () = msg_send![view, addSubview:entry];
 
@@ -1327,6 +1518,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
@@ -1341,6 +1533,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -1364,6 +1557,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -1392,6 +1587,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),

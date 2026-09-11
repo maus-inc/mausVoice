@@ -50,6 +50,7 @@ const storeRemoteTranscription = async ({
     transcriptionMode: null,
     postProcessMode: null,
     postProcessDevice: null,
+    postProcessModel: null,
     transcriptionDurationMs: null,
     postprocessDurationMs: null,
     remoteStatus: "received",

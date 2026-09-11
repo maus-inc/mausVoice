@@ -29,6 +29,7 @@ export const TitleBar = () => {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
+    let canceled = false;
     const win = getCurrentWindow();
     win
       .isMaximized()
@@ -43,10 +44,21 @@ export const TitleBar = () => {
         }
       })
       .then((fn) => {
-        unlisten = fn;
+        // `onResized` resolves asynchronously. If the effect cleaned up before
+        // it resolved (e.g. React StrictMode double-invoke, or fast navigation),
+        // the unlisten fn must be released immediately instead of being stored
+        // and leaked, since the `return` below would have already run.
+        if (canceled) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
       })
       .catch(() => undefined);
-    return () => unlisten?.();
+    return () => {
+      canceled = true;
+      unlisten?.();
+    };
   }, []);
 
   const minimize = useCallback(async () => {

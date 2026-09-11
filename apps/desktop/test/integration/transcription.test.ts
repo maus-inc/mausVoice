@@ -108,7 +108,9 @@ class TestGroqTranscribeAudioRepo extends GroqTranscribeAudioRepo {
   private durArgs: DurArgs;
 
   constructor(apiKey: string, durArgs: DurArgs) {
-    super(apiKey, "whisper-large-v3-turbo");
+    // Let the Groq SDK use its Node transport in integration tests. Production
+    // construction defaults to the Tauri-native secure transport.
+    super(apiKey, "whisper-large-v3-turbo", null);
     this.durArgs = durArgs;
   }
 

@@ -173,7 +173,33 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
           onClick={handleClick}
           disabled={disabled}
           disableRipple={disableRipple}
-          sx={{ position: "relative", zIndex: 1 }}
+          sx={(theme) => ({
+            position: "relative",
+            zIndex: 1,
+            transformOrigin: "center",
+            // No will-change: transform is already compositor-friendly and
+            // adding a layer for every row would cost GPU memory on long lists.
+            // Tested on macOS Apple Silicon, macOS Intel, Windows 11, and
+            // Linux with integrated GPU. Press stays smooth without the hint.
+            // Re-add willChange only if jank appears on low-end devices.
+            transition: [
+              theme.transitions.create("background-color", {
+                duration: theme.transitions.duration.shortest,
+              }),
+              "transform 90ms var(--ease-out-cubic)",
+            ].join(", "),
+            "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
+              {
+                transform: "scale(0.975)",
+              },
+            "@media (prefers-reduced-motion: reduce)": {
+              transition: "none",
+              "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
+                {
+                  transform: "none",
+                },
+            },
+          })}
         >
           <Stack
             direction="row"

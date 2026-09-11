@@ -11,6 +11,8 @@ use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperError,
 };
 
+const SILENCE_RMS_THRESHOLD: f32 = 0.0025;
+
 #[derive(Debug, Clone)]
 pub struct TranscriptionInput {
     pub model: WhisperModel,
@@ -20,12 +22,20 @@ pub struct TranscriptionInput {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
+    pub hallucination_filter_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionOutput {
     pub text: String,
     pub inference_device: String,
+    pub segments: Vec<TranscriptionSegment>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptionSegment {
+    pub text: String,
+    pub no_speech_prob: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -107,10 +117,36 @@ impl TranscriptionEngine {
             return Err("no finite samples provided".to_string());
         }
 
-        let processed = resample_to_16khz(&filtered_samples, input.sample_rate);
-        if processed.is_empty() {
-            return Err("unable to resample audio".to_string());
+        // A preference-controlled pre-inference energy gate prevents both
+        // whisper.cpp and ONNX engines from turning a microphone floor into a
+        // fabricated sentence. sherpa-onnx also exposes VAD, but this gate is
+        // deterministic and applies before any model-specific runtime is
+        // loaded.
+        if input.hallucination_filter_enabled
+            && is_near_silent(&filtered_samples, SILENCE_RMS_THRESHOLD)
+        {
+            // Tolerate device-resolution failures here: this branch returns an
+            // empty transcript without running inference, so a transient
+            // enumeration failure (common for ONNX/sherpa runtimes) or an
+            // unresolvable device_id must not turn a should-be-empty result
+            // into a hard error. The non-silent paths below still resolve the
+            // device strictly and reject invalid IDs before real inference.
+            let inference_device = if input.model.is_onnx() {
+                "CPU".to_string()
+            } else {
+                self.resolve_device_blocking(input.device_id.as_deref())
+                    .map(|device| device.name)
+                    .unwrap_or_else(|_| self.mode.as_str().to_ascii_uppercase())
+            };
+            return Ok(TranscriptionOutput {
+                text: String::new(),
+                inference_device,
+                segments: Vec::new(),
+            });
         }
+
+        let processed = crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000)
+            .map_err(|err| format!("unable to resample audio: {err}"))?;
 
         // Parakeet and Canary run through model-specific ONNX Runtime engines
         // with their real feature extractors and decoders. The current ONNX
@@ -128,6 +164,7 @@ impl TranscriptionEngine {
             return Ok(TranscriptionOutput {
                 text,
                 inference_device: "CPU".to_string(),
+                segments: Vec::new(),
             });
         }
 
@@ -144,6 +181,11 @@ impl TranscriptionEngine {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_no_context(true);
+        // Whisper's no-speech probability and blank suppression complement the
+        // energy gate for very quiet speech/noise at the edge of the threshold.
+        params.set_no_speech_thold(0.6);
+        params.set_suppress_blank(true);
+        params.set_suppress_nst(true);
 
         if let Some(language) = input
             .language
@@ -160,7 +202,7 @@ impl TranscriptionEngine {
             .map(str::trim)
             .filter(|v| !v.is_empty())
         {
-            let sanitized: String = prompt.chars().filter(|ch| *ch != '\0').collect();
+            let sanitized: String = prompt.matches(|ch| ch != '\0').collect();
             if !sanitized.is_empty() {
                 params.set_initial_prompt(&sanitized);
             }
@@ -170,12 +212,13 @@ impl TranscriptionEngine {
             .full(params, &processed)
             .map_err(|err| format!("failed to run whisper inference: {err}"))?;
 
-        let text = collect_transcription(&state)?;
+        let (text, segments) = collect_transcription(&state)?;
         let inference_device = device.name.clone();
 
         Ok(TranscriptionOutput {
             text,
             inference_device,
+            segments,
         })
     }
 
@@ -357,8 +400,11 @@ impl TranscriptionEngine {
     }
 }
 
-fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, String> {
-    let mut transcript = String::new();
+fn collect_transcription(
+    state: &whisper_rs::WhisperState,
+) -> Result<(String, Vec<TranscriptionSegment>), String> {
+    let mut transcript = String::default();
+    let mut segments = Vec::default();
 
     for segment in state.as_iter() {
         let piece = match segment.to_str() {
@@ -369,6 +415,12 @@ fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, Str
                 .unwrap_or_default(),
             Err(err) => return Err(format!("failed to read whisper segment: {err}")),
         };
+
+        let no_speech_prob = segment.no_speech_probability();
+        segments.push(TranscriptionSegment {
+            text: piece.clone(),
+            no_speech_prob,
+        });
 
         if piece.is_empty() {
             continue;
@@ -381,41 +433,25 @@ fn collect_transcription(state: &whisper_rs::WhisperState) -> Result<String, Str
         transcript.push_str(&piece);
     }
 
-    Ok(transcript.trim().to_string())
+    Ok((transcript.trim().to_string(), segments))
 }
 
-fn resample_to_16khz(samples: &[f32], sample_rate: u32) -> Vec<f32> {
-    const TARGET_RATE: u32 = 16_000;
-
-    if sample_rate == 0 || samples.is_empty() {
-        return Vec::new();
+fn is_near_silent(samples: &[f32], threshold: f32) -> bool {
+    if samples.is_empty() {
+        return true;
     }
 
-    if sample_rate == TARGET_RATE {
-        return samples.to_vec();
+    let mut sum_squares = 0.0_f64;
+    let mut count = 0_u64;
+    for sample in samples {
+        if sample.is_finite() {
+            let value = f64::from(*sample);
+            sum_squares += value * value;
+            count += 1;
+        }
     }
 
-    let ratio = f64::from(TARGET_RATE) / f64::from(sample_rate);
-    let output_len = ((samples.len() as f64) * ratio).ceil().max(1.0) as usize;
-    let mut output = Vec::with_capacity(output_len);
-
-    for index in 0..output_len {
-        let source_pos = (index as f64) / ratio;
-        let lower = source_pos.floor() as usize;
-        let fraction = source_pos - (lower as f64);
-
-        let value = if lower + 1 < samples.len() {
-            let first = samples[lower];
-            let second = samples[lower + 1];
-            first + ((second - first) * fraction as f32)
-        } else {
-            samples[lower]
-        };
-
-        output.push(value);
-    }
-
-    output
+    count == 0 || (sum_squares / count as f64).sqrt() < f64::from(threshold)
 }
 
 pub fn ensure_gpu_runtime_available() -> Result<(), String> {
@@ -465,7 +501,9 @@ fn list_gpu_devices() -> Result<Vec<ComputeDevice>, String> {
 #[cfg(feature = "gpu")]
 fn describe_gpu_device(device: whisper_rs::whisper_rs_sys::ggml_backend_dev_t) -> String {
     let description = unsafe {
-        c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_description(device))
+        c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_description(
+            device,
+        ))
     };
     let name = unsafe { c_string(whisper_rs::whisper_rs_sys::ggml_backend_dev_name(device)) };
     let backend = unsafe {

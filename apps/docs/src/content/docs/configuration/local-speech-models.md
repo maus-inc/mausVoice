@@ -10,9 +10,10 @@ mausVoice runs local transcription in a separate sidecar process. Two model fami
 | Family                   | Runtime            | Models                                              |
 | ------------------------ | ------------------ | --------------------------------------------------- |
 | Whisper                  | whisper.cpp (GGML) | Tiny, Base, Small, Medium, Large v3, Large v3 Turbo |
-| NVIDIA Parakeet / Canary | ONNX Runtime       | Parakeet CTC 0.6B, Parakeet TDT 0.6B, Canary 1B     |
+| NVIDIA Parakeet / Canary | ONNX Runtime       | Parakeet CTC 0.6B, Parakeet TDT 0.6B, Canary 1B    |
+| SenseVoice               | sherpa-onnx        | SenseVoice (Multilingual)                           |
 
-Whisper is the safe default across languages and hardware. The ONNX models are faster on modern CPUs: Parakeet CTC is tuned for low-latency English dictation, Parakeet TDT trades a little speed for better English accuracy, and Canary adds multilingual recognition with automatic punctuation and casing.
+Whisper is the safe default across languages and hardware. The ONNX models are faster on modern CPUs: Parakeet CTC is tuned for low-latency English dictation, Parakeet TDT trades a little speed for better English accuracy, and Canary adds multilingual recognition with automatic punctuation and casing. SenseVoice is a sherpa-onnx multilingual INT8 model (~226 MB) with automatic language detection and no punctuation.
 
 Open **Settings → Processing → AI transcription → Local** to see the full list. Each row shows the model, its size, and its download state.
 
@@ -41,6 +42,7 @@ All local models live under the app-data `transcription-models/` directory. Whis
 - For quick English dictation on a modern CPU, start with Parakeet CTC or Parakeet TDT.
 - For multilingual work or less common languages, use Whisper. Try Small with a GPU, or Medium/Large v3 if accuracy matters more than speed.
 - For automatic punctuation and casing in several languages, try Canary 1B.
+- For a lightweight multilingual model with automatic language detection, try SenseVoice.
 - On low-RAM machines, use the recommendation chip as a guide and test Base or Parakeet CTC before going larger. The advisory chip is not a benchmark; always validate with your own microphone and noise.
 
 The active model can be changed at any time without restarting. The next dictation picks up the new selection.

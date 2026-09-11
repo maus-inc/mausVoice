@@ -1,4 +1,3 @@
-import CloseIcon from "@mui/icons-material/Close";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import {
   Button,
@@ -8,7 +7,6 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
-  IconButton,
   Stack,
   Switch,
   Typography,
@@ -21,8 +19,34 @@ import {
   getIsPowerModeEnabled,
 } from "../../utils/assistant-mode.utils";
 import { AGENT_DICTATE_HOTKEY } from "../../utils/keyboard.utils";
+import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import { SettingSection } from "../common/SettingSection";
 import { AIAgentModeConfiguration } from "./AIAgentModeConfiguration";
 import { HotkeySetting } from "./HotkeySetting";
+
+const ToggleRow = ({
+  title,
+  description,
+  checked,
+  onChange,
+}: {
+  title: React.ReactNode;
+  description: React.ReactNode;
+  checked: boolean;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+}) => {
+  return (
+    <SettingSection
+      title={title}
+      description={description}
+      action={<Switch checked={checked} onChange={onChange} />}
+      sx={{
+        alignItems: "flex-start",
+        width: "100%",
+      }}
+    />
+  );
+};
 
 export const AIAgentModeDialog = () => {
   const open = useAppStore((state) => state.settings.agentModeDialogOpen);
@@ -78,7 +102,7 @@ export const AIAgentModeDialog = () => {
               color: "text.secondary",
             }}
           >
-            <FormattedMessage defaultMessage="Power mode allows the assistant to run terminal commands on your computer. This is powerful but inherently dangerous — commands run with your full user permissions and can modify files, install software, or access sensitive data." />
+            <FormattedMessage defaultMessage="Power mode allows the assistant to run terminal commands on your computer. This is powerful but inherently dangerous; commands run with your full user permissions and can modify files, install software, or access sensitive data." />
           </Typography>
           <Typography
             variant="body2"
@@ -114,18 +138,10 @@ export const AIAgentModeDialog = () => {
         </DialogActions>
       </Dialog>
       <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <DialogTitleWithClose onClose={handleClose}>
           <FormattedMessage defaultMessage="Assistant mode" />
           <Chip label="Beta" size="small" color="primary" />
-          <IconButton
-            onClick={handleClose}
-            size="small"
-            sx={{ ml: "auto" }}
-            aria-label="Close"
-          >
-            <CloseIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
+        </DialogTitleWithClose>
         <DialogContent dividers>
           <Stack
             spacing={3}
@@ -155,79 +171,23 @@ export const AIAgentModeDialog = () => {
 
             <Divider flexItem />
 
-            <Stack
-              direction="row"
-              sx={{
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                width: "100%",
-              }}
-            >
-              <Stack
-                spacing={0.5}
-                sx={{
-                  flex: 1,
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{
-                    fontWeight: "bold",
-                  }}
-                >
-                  <FormattedMessage defaultMessage="Assistant mode" />
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: "text.secondary",
-                  }}
-                >
-                  <FormattedMessage defaultMessage="Assistant mode is disabled by default. This is a new experimental feature." />
-                </Typography>
-              </Stack>
-              <Switch
-                checked={assistantModeEnabled}
-                onChange={handleAssistantModeToggle}
-              />
-            </Stack>
+            <ToggleRow
+              title={<FormattedMessage defaultMessage="Assistant mode" />}
+              description={
+                <FormattedMessage defaultMessage="Assistant mode is disabled by default. This is a new experimental feature." />
+              }
+              checked={assistantModeEnabled}
+              onChange={handleAssistantModeToggle}
+            />
 
-            <Stack
-              direction="row"
-              sx={{
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                width: "100%",
-              }}
-            >
-              <Stack
-                spacing={0.5}
-                sx={{
-                  flex: 1,
-                }}
-              >
-                <Typography
-                  variant="body1"
-                  sx={{
-                    fontWeight: "bold",
-                  }}
-                >
-                  <FormattedMessage defaultMessage="Power mode" />
-                </Typography>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    color: "text.secondary",
-                  }}
-                >
-                  <FormattedMessage defaultMessage="Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes." />
-                </Typography>
-              </Stack>
-              <Switch
-                checked={powerModeEnabled}
-                onChange={handlePowerModeToggle}
-              />
-            </Stack>
+            <ToggleRow
+              title={<FormattedMessage defaultMessage="Power mode" />}
+              description={
+                <FormattedMessage defaultMessage="Allow the assistant to run terminal commands on your behalf. This is a temporary guardrail that will be removed in a future update. Restart mausVoice to apply changes." />
+              }
+              checked={powerModeEnabled}
+              onChange={handlePowerModeToggle}
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

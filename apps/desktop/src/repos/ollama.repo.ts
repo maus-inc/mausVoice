@@ -1,5 +1,6 @@
-import { fetch } from "@tauri-apps/plugin-http";
+import { secureFetch as fetch } from "../utils/secure-fetch.utils";
 import { getOllamaHeaders } from "../utils/ollama.utils";
+import { appendOpenAICompatiblePath } from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseOllamaRepo extends BaseRepo {
@@ -55,18 +56,27 @@ export class OllamaRepo extends BaseOllamaRepo {
 export class OpenAICompatibleRepo extends BaseOllamaRepo {
   private baseUrl: string;
   private apiKey?: string;
+  private fetchFn: typeof fetch;
 
-  constructor(baseUrl: string, apiKey?: string) {
+  constructor(
+    baseUrl: string,
+    apiKey?: string,
+    customFetch: typeof fetch = fetch,
+  ) {
     super();
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
+    this.fetchFn = customFetch;
   }
 
   override async checkAvailability(): Promise<boolean> {
     try {
-      const health = await fetch(new URL("/v1/models", this.baseUrl).href, {
-        headers: getOllamaHeaders(this.apiKey),
-      });
+      const health = await this.fetchFn(
+        appendOpenAICompatiblePath(this.baseUrl, "models"),
+        {
+          headers: getOllamaHeaders(this.apiKey),
+        },
+      );
       return health.ok;
     } catch {
       return false;
@@ -74,9 +84,12 @@ export class OpenAICompatibleRepo extends BaseOllamaRepo {
   }
 
   async getAvailableModels(): Promise<string[]> {
-    const response = await fetch(new URL("/v1/models", this.baseUrl).href, {
-      headers: getOllamaHeaders(this.apiKey),
-    });
+    const response = await this.fetchFn(
+      appendOpenAICompatiblePath(this.baseUrl, "models"),
+      {
+        headers: getOllamaHeaders(this.apiKey),
+      },
+    );
     if (!response.ok) {
       throw new Error(`Unable to fetch models (status ${response.status})`);
     }

@@ -42,7 +42,7 @@ That is a poor trade for a always-running background tool.
 - `platform/windows/permissions.rs` reports accessibility as `Authorized`
   because hotkeys genuinely work unelevated. This state gates both the key
   listener (`AppSideEffects`) and the blocking `PermissionsDialog`, so
-  reporting anything else disables dictation for every standard install — the
+  reporting anything else disables dictation for every standard install. The
   cause of a previous "audio stopped working" regression.
 - The Linux stub reports a state that lets onboarding continue, matching the
   behaviour above.

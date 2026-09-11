@@ -13,7 +13,55 @@ fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     // since the flash can be wider than the draw area (it extends into the
     // content-offset margins). The FlashAction region has exact coordinates.
     let regions = state.click_regions.borrow();
-    regions.iter().any(|r| matches!(r.action, ClickAction::FlashAction) && r.contains(x, y))
+    regions.iter().any(|r| {
+        matches!(
+            r.action,
+            ClickAction::FlashAction | ClickAction::FlashReject
+        ) && r.contains(x, y)
+    })
+}
+
+/// A23: Dispatch haptic/audio feedback to the desktop process.
+fn send_haptic(kind: &str) {
+    ipc::send(&OutMessage::HapticFeedback {
+        kind: kind.to_string(),
+    });
+}
+
+/// Report a review decision back to the desktop. The id travels with the
+/// decision so a late click on a card that has already been replaced is
+/// discarded instead of applied to the next transcript.
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) {
+    ipc::send(&OutMessage::ReviewDecision {
+        review_id: review_id.to_string(),
+        action: action.to_string(),
+        text,
+    });
+}
+
+/// Send whatever the entry holds.
+///
+/// While a transcript is under review the entry holds that transcript, so
+/// submitting it is the insert decision and carries any edit the user made.
+/// Otherwise it is a message for the assistant. An empty entry sends nothing,
+/// because there is nothing to insert or say.
+///
+/// Returns true when something was sent, so the caller can clear the platform
+/// text control only then.
+pub(crate) fn submit_entry(state: &PillState) -> bool {
+    // Send the text exactly as the user left it. Spacing at either end can be
+    // deliberate when the transcript lands in a document, so trimming is only
+    // ever used to decide whether there is anything to send.
+    let text = state.entry_text.borrow().clone();
+    if text.trim().is_empty() {
+        return false;
+    }
+    match state.pending_review_id() {
+        Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
+        None => ipc::send(&OutMessage::TypedMessage { text }),
+    }
+    *state.entry_text.borrow_mut() = String::new();
+    true
 }
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
@@ -27,6 +75,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // A pending review owns the pill surface: the transcript
+                    // must be answered (or cancelled) before a body click can
+                    // start dictation or an assistant turn again.
+                    if state.assistant_review.borrow().is_some() {
+                        return;
+                    }
+                    // Loading owns the current operation; another body click
+                    // must not emit feedback or start a second action.
+                    if !rust_pill_shared::can_emit_interaction_feedback(
+                        true,
+                        state.phase.get() == Phase::Loading,
+                    ) {
+                        return;
+                    }
+                    // The recording chime owns the pill-body click. The
+                    // desktop side plays start/stop clips for the same event,
+                    // so emitting a thock here doubled the sound.
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);
                     } else {
@@ -34,14 +99,41 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
                 }
                 ClickAction::StyleBackward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
-                    ipc::send(&OutMessage::AssistantClose);
+                    // Closing the panel while a transcript is under review is
+                    // a cancel decision, not a silent dismissal: the desktop
+                    // needs an answer to release the queued reviews.
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    match review_id {
+                        Some(review_id) => send_review_decision(&review_id, "cancel", None),
+                        None => ipc::send(&OutMessage::AssistantClose),
+                    }
                 }
+                ClickAction::ReviewInsert(id) => {
+                    // The entry is the transcript, edits included, and it
+                    // travels exactly as the user left it. An empty one has
+                    // nothing to insert, so the card simply stays up.
+                    let text = state.entry_text.borrow().clone();
+                    if !text.trim().is_empty() {
+                        send_review_decision(id, "insert", Some(text));
+                    }
+                }
+                ClickAction::ReviewCopy(id) => {
+                    let text = state.entry_text.borrow().clone();
+                    send_review_decision(id, "copy", Some(text));
+                }
+                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
                 ClickAction::OpenInNew => {
                     if let Some(ref id) = *state.assistant_conversation_id.borrow() {
                         ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
@@ -52,12 +144,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     ipc::send(&OutMessage::EnableTypeMode);
                 }
                 ClickAction::CancelDictation => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::CancelDictation);
                 }
                 ClickAction::PauseDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::PauseDictation);
                 }
                 ClickAction::ResumeDictation => {
+                    send_haptic("press");
                     ipc::send(&OutMessage::ResumeDictation);
                 }
                 ClickAction::PermissionAllow(id) => {
@@ -76,20 +171,33 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     });
                 }
                 ClickAction::SendButton => {
-                    let text = state.entry_text.borrow().trim().to_string();
-                    if !text.is_empty() {
-                        ipc::send(&OutMessage::TypedMessage { text });
-                        *state.entry_text.borrow_mut() = String::new();
-                    }
+                    submit_entry(state);
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
                         ipc::send(&OutMessage::ToastAction { action: action.clone() });
                     }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
+                }
+                ClickAction::FlashReject => {
+                    if let Some(ref action) = *state.flash_reject_action.borrow() {
+                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                    }
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
                 }
             }
             return;
@@ -98,7 +206,13 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
 }
 
 pub(crate) fn handle_scroll(state: &PillState, delta_y: f64) {
-    if !state.assistant_active.get() || state.assistant_compact.get() {
+    // A pending review makes the panel scrollable too. The card can sit below a
+    // conversation, and its buttons have to be reachable. The compact test
+    // mirrors the one the panel is drawn with.
+    let has_review = state.assistant_review.borrow().is_some();
+    let owns_panel = state.owns_panel();
+    let is_compact = state.assistant_compact.get() && !has_review;
+    if !owns_panel || is_compact {
         return;
     }
 
@@ -119,7 +233,7 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return false;
     }
 
@@ -157,7 +271,7 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
@@ -206,7 +320,7 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
