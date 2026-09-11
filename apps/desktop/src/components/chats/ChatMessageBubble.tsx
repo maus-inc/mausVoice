@@ -1,12 +1,13 @@
-import { useMemo } from "react";
-import { BuildRounded } from "@mui/icons-material";
-import { Box, Stack, Typography } from "@mui/material";
-import { keyframes, useTheme } from "@mui/material/styles";
+import { Box, IconButton, Stack, Typography } from "@mui/material";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Check, Copy, Wrench } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import Markdown from "react-markdown";
 import { FormattedMessage, useIntl } from "react-intl";
 import remarkGfm from "remark-gfm";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import { useAppStore } from "../../store";
+import { springPop } from "../../styles/motion";
 import {
   isEditableTarget,
   useContextMenu,
@@ -15,42 +16,104 @@ import {
 import { OverflowTypography } from "../common/OverflowTypography";
 import { AgentActivity } from "./AgentActivity";
 
-const thinkingShimmer = keyframes`
-  0% { background-position: 200% 50%; }
-  100% { background-position: -200% 50%; }
-`;
-
 type ChatMessageBubbleProps = {
   id: string;
 };
 
+const MessageCopyButton = ({
+  visible,
+  copied,
+  reduceMotion,
+  onCopy,
+  label,
+}: {
+  visible: boolean;
+  copied: boolean;
+  reduceMotion: boolean;
+  onCopy: () => void;
+  label: string;
+}) => (
+  <Box
+    sx={{
+      opacity: visible ? 1 : 0,
+      pointerEvents: visible ? "auto" : "none",
+      "&:focus-within": {
+        opacity: 1,
+        pointerEvents: "auto",
+      },
+      transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+      "@media (prefers-reduced-motion: reduce)": {
+        transition: "none",
+      },
+      flexShrink: 0,
+      mb: 0.25,
+    }}
+  >
+    <IconButton size="small" onClick={onCopy} aria-label={label}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={copied ? "check" : "copy"}
+          initial={
+            reduceMotion
+              ? false
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+          exit={
+            reduceMotion
+              ? undefined
+              : { opacity: 0, scale: 0.25, filter: "blur(4px)" }
+          }
+          transition={springPop}
+          style={{ display: "inline-flex" }}
+        >
+          {copied ? (
+            <Check size={14} strokeWidth={2} />
+          ) : (
+            <Copy size={14} strokeWidth={2} />
+          )}
+        </motion.span>
+      </AnimatePresence>
+    </IconButton>
+  </Box>
+);
+
 export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
-  const theme = useTheme();
   const message = useAppStore((s) => s.chatMessageById[id]);
-  const isStreaming = useAppStore((s) => !!s.streamingMessageById[id]);
+  const isStreaming = useAppStore((s) => Boolean(s.streamingMessageById[id]));
 
   const intl = useIntl();
   const ctxMenu = useContextMenu();
+  const reduceMotion = useReducedMotion();
+  const [hovered, setHovered] = useState(false);
+  const [copied, setCopied] = useState(false);
   const content = message?.content ?? "";
+
+  const copyContent = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+      showSnackbar(
+        intl.formatMessage({ defaultMessage: "Copied successfully" }),
+        { mode: "success" },
+      );
+    } catch (error) {
+      showErrorSnackbar(error);
+    }
+  }, [content, intl]);
+
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!content.trim()) return [];
     return [
       {
         label: intl.formatMessage({ defaultMessage: "Copy message" }),
-        onClick: async () => {
-          try {
-            await navigator.clipboard.writeText(content);
-            showSnackbar(
-              intl.formatMessage({ defaultMessage: "Copied successfully" }),
-              { mode: "success" },
-            );
-          } catch (error) {
-            showErrorSnackbar(error);
-          }
+        onClick: () => {
+          copyContent().catch(() => undefined);
         },
       },
     ];
-  }, [content, intl]);
+  }, [content, intl, copyContent]);
 
   if (!message) {
     return null;
@@ -71,6 +134,11 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   if (message.role === "assistant" && isEmpty && !isStreaming) return null;
 
   const isMe = message.role === "user";
+  const showCopy = !isEmpty && (hovered || copied);
+  const preferReducedMotion = Boolean(reduceMotion);
+  const handleCopy = () => {
+    copyContent().catch(() => undefined);
+  };
 
   return (
     <Stack
@@ -84,17 +152,32 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
       <AgentActivity messageId={id} />
       <Stack
         direction="row"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         sx={{
           justifyContent: isMe ? "flex-end" : "flex-start",
+          alignItems: "flex-end",
+          gap: 0.5,
         }}
       >
+        {!isMe && (
+          <MessageCopyButton
+            visible={showCopy}
+            copied={copied}
+            reduceMotion={preferReducedMotion}
+            onCopy={handleCopy}
+            label={intl.formatMessage({ defaultMessage: "Copy message" })}
+          />
+        )}
         <Box
           sx={{
             maxWidth: "75%",
             px: 2,
             py: 1,
-            borderRadius: 1,
-            bgcolor: isMe ? "primary.main" : "action.hover",
+            borderRadius: 2.5,
+            bgcolor: isMe ? "primary.main" : "level1",
+            border: isMe ? "none" : 1,
+            borderColor: "divider",
             color: isMe ? "primary.contrastText" : "text.primary",
             "& p": { m: 0 },
             "& p + p": { mt: 1 },
@@ -134,20 +217,33 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
               sx={{
                 width: "fit-content",
                 fontWeight: 500,
-                color: "transparent",
-                backgroundImage: `linear-gradient(90deg, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 0%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.9) 50%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 100%)`,
-                backgroundSize: "200% 100%",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                animation: `${thinkingShimmer} 1.6s linear infinite`,
+                color: "text.secondary",
+                "@keyframes thinkingPulse": {
+                  "0%, 100%": { opacity: 0.45 },
+                  "50%": { opacity: 1 },
+                },
+                animation: "thinkingPulse 1.4s ease-in-out infinite",
+                "@media (prefers-reduced-motion: reduce)": {
+                  animation: "none",
+                  opacity: 0.8,
+                },
               }}
             >
-              <FormattedMessage defaultMessage="Thinking" />
+              <FormattedMessage defaultMessage="Thinking…" />
             </Typography>
           ) : (
             <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
           )}
         </Box>
+        {isMe && (
+          <MessageCopyButton
+            visible={showCopy}
+            copied={copied}
+            reduceMotion={preferReducedMotion}
+            onCopy={handleCopy}
+            label={intl.formatMessage({ defaultMessage: "Copy message" })}
+          />
+        )}
       </Stack>
       {ctxMenu.renderMenu()}
     </Stack>
@@ -174,8 +270,11 @@ const ToolResultBubble = ({
         overflow: "hidden",
       }}
     >
-      <BuildRounded
-        sx={{ fontSize: 14, color: "text.secondary", flexShrink: 0 }}
+      <Wrench
+        size={14}
+        strokeWidth={1.9}
+        style={{ flexShrink: 0 }}
+        color="var(--mui-palette-text-secondary)"
       />
       <OverflowTypography
         variant="caption"

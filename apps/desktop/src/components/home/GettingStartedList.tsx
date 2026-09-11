@@ -1,8 +1,4 @@
-import {
-  CheckCircleRounded,
-  InfoOutlined,
-  RadioButtonUncheckedRounded,
-} from "@mui/icons-material";
+import { Circle, CircleCheck, Info } from "lucide-react";
 import { Box, LinearProgress, Stack, Tooltip, Typography } from "@mui/material";
 import dayjs from "dayjs";
 import { useMemo } from "react";
@@ -34,12 +30,16 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
       }}
     >
       {item.done ? (
-        <CheckCircleRounded
-          sx={{ color: "var(--app-palette-blue)", fontSize: 22 }}
+        <CircleCheck
+          size={22}
+          strokeWidth={1.9}
+          color="var(--app-palette-chrome)"
         />
       ) : (
-        <RadioButtonUncheckedRounded
-          sx={{ color: "text.disabled", fontSize: 22 }}
+        <Circle
+          size={22}
+          strokeWidth={1.9}
+          color="var(--mui-palette-text-disabled)"
         />
       )}
       <Typography
@@ -54,9 +54,15 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
       {item.extra}
       <Box sx={{ flex: 1 }} />
       <Tooltip title={item.info} arrow>
-        <InfoOutlined
-          sx={{ fontSize: 16, color: "text.disabled", cursor: "help" }}
-        />
+        <Box
+          sx={{
+            display: "inline-flex",
+            color: "text.disabled",
+            cursor: "help",
+          }}
+        >
+          <Info size={16} strokeWidth={1.9} />
+        </Box>
       </Tooltip>
     </Stack>
   );
@@ -85,7 +91,7 @@ function AppIconBoxes({ iconPaths }: { iconPaths: (string | null)[] }) {
             alignItems: "center",
             justifyContent: "center",
             bgcolor: "level2",
-            border: path ? "1.5px solid var(--app-palette-blue)" : "none",
+            border: path ? "1.5px solid var(--app-palette-chrome)" : "none",
           }}
         >
           {path && <StorageImage path={path} size={36} />}
@@ -237,7 +243,7 @@ export function GettingStartedList() {
           bgcolor: "var(--app-palette-level2)",
           mb: 1,
           "& .MuiLinearProgress-bar": {
-            bgcolor: "var(--app-palette-blue)",
+            bgcolor: "var(--app-palette-chrome)",
             borderRadius: 3,
           },
         }}

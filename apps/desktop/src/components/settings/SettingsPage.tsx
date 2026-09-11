@@ -74,6 +74,7 @@ import {
 import { ListTile } from "../common/ListTile";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Section } from "../common/Section";
+import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
 import { getPlatform } from "../../utils/platform.utils";
 
@@ -134,6 +135,7 @@ export default function SettingsPage() {
   ]);
   const autoLaunchLoading = autoLaunchStatus === "loading";
   const intl = useIntl();
+  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "Settings" }));
 
   const dictationLanguage = useAppStore((state) => {
     const user = getMyUser(state);

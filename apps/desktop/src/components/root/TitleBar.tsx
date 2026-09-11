@@ -181,8 +181,8 @@ export const TitleBar = () => {
             sx={{
               ...controlSx,
               "&:hover": {
-                backgroundColor: "rgba(232, 77, 77, 0.92)",
-                color: "#fff",
+                backgroundColor: "dangerHover",
+                color: "error.contrastText",
               },
             }}
           >
@@ -206,6 +206,6 @@ const controlSx = {
     color: "text.primary",
   },
   "&:active": {
-    transform: "scale(0.94)",
+    transform: "scale(0.96)",
   },
 } as const;

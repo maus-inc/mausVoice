@@ -82,7 +82,7 @@ export const MicPermsForm = () => {
   const rightContent = (
     <Box
       sx={{
-        borderRadius: "24px",
+        borderRadius: 2,
         border: "1px solid gray",
         overflow: "hidden",
         maxHeight: "100%",

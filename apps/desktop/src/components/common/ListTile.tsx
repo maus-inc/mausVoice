@@ -165,7 +165,13 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
         disablePadding
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        sx={[{ position: "relative" }, ...normalizedSx] as any}
+        onFocusCapture={() => setHovered(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+            setHovered(false);
+          }
+        }}
+        sx={[{ position: "relative" }, ...normalizedSx] as SxProps}
       >
         {indicator}
         <ListItemButton
@@ -190,7 +196,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
             ].join(", "),
             "&:active:not(:disabled), &:focus-visible:active:not(:disabled), &.Mui-focusVisible:active:not(:disabled)":
               {
-                transform: "scale(0.975)",
+                transform: "scale(0.96)",
               },
             "@media (prefers-reduced-motion: reduce)": {
               transition: "none",

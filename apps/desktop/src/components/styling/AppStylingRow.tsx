@@ -1,4 +1,4 @@
-import { Check, MoreVert } from "@mui/icons-material";
+import { Check, EllipsisVertical } from "lucide-react";
 import { Box, IconButton, Stack, Typography } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import { useCallback } from "react";
@@ -82,7 +82,10 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
     {
       kind: "listItem",
       title: <FormattedMessage defaultMessage="Default (Shift+Insert)" />,
-      trailing: pasteKeybindValue === "shift+insert" ? <Check /> : undefined,
+      trailing:
+        pasteKeybindValue === "shift+insert" ? (
+          <Check size={16} strokeWidth={1.9} />
+        ) : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("shift+insert");
         close();
@@ -91,7 +94,10 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
     {
       kind: "listItem",
       title: <FormattedMessage defaultMessage="Ctrl+V" />,
-      trailing: pasteKeybindValue === "ctrl+v" ? <Check /> : undefined,
+      trailing:
+        pasteKeybindValue === "ctrl+v" ? (
+          <Check size={16} strokeWidth={1.9} />
+        ) : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("ctrl+v");
         close();
@@ -100,7 +106,10 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
     {
       kind: "listItem",
       title: <FormattedMessage defaultMessage="Terminal (Ctrl+Shift+V)" />,
-      trailing: pasteKeybindValue === "ctrl+shift+v" ? <Check /> : undefined,
+      trailing:
+        pasteKeybindValue === "ctrl+shift+v" ? (
+          <Check size={16} strokeWidth={1.9} />
+        ) : undefined,
       onClick: ({ close }) => {
         handlePasteKeybindChange("ctrl+shift+v");
         close();
@@ -160,7 +169,7 @@ export const AppStylingRow = ({ id }: AppStylingRowProps) => {
               size="small"
               sx={{ width: 32, height: 32, p: 0 }}
             >
-              <MoreVert fontSize="small" />
+              <EllipsisVertical size={16} strokeWidth={1.9} />
             </IconButton>
           )}
         </MenuPopoverBuilder>

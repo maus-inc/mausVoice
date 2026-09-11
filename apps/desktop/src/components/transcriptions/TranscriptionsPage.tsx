@@ -3,23 +3,23 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   FormControl,
   InputLabel,
   MenuItem,
   Select,
   Stack,
+  Typography,
 } from "@mui/material";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
-import { useEffect, useRef, useState } from "react";
+import { Check, FileUp } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
+import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
-import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
-import { TranscriptionRow } from "./TranscriptRow";
-import { ScrollListPage } from "../common/ScrollListPage";
+import { threadDayGroup, type ThreadDayGroup } from "../../utils/date.utils";
 import {
   AUTO_LANGUAGE,
   DICTATION_LANGUAGES,
@@ -29,6 +29,16 @@ import {
 import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
+import {
+  chromeDialogPaperSx,
+  chromeMenuItemSx,
+  chromeSelectMenuProps,
+  selectedOptionLabel,
+} from "../common/chromeMenu";
+import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import { ScrollListPage } from "../common/ScrollListPage";
+import { TranscriptionRow } from "./TranscriptRow";
+import { TranscriptionsSideEffects } from "./TranscriptionsSideEffects";
 
 const languageOptions = (
   [
@@ -39,8 +49,14 @@ const languageOptions = (
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
+  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "History" }));
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
+  );
+  const transcriptionCreatedAtSignature = useAppStore((state) =>
+    state.transcriptions.transcriptionIds
+      .map((id) => `${id}:${state.transcriptionById[id]?.createdAt ?? ""}`)
+      .join("|"),
   );
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
   const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
@@ -73,6 +89,36 @@ export default function TranscriptionsPage() {
     prevImportDialogOpen.current = importDialogOpen;
   }, [importDialogOpen]);
 
+  const dayLabelById = useMemo(() => {
+    const labels = new Map<string, ThreadDayGroup | null>();
+    const occupied = new Set<ThreadDayGroup>();
+    let previous: ThreadDayGroup | null = null;
+    const { transcriptionById } = useAppStore.getState();
+    for (const id of transcriptionIds) {
+      const row = transcriptionById[id];
+      if (!row) continue;
+      const group = threadDayGroup(row.createdAt);
+      occupied.add(group);
+      labels.set(id, group !== previous ? group : null);
+      previous = group;
+    }
+    if (occupied.size < 2) {
+      return new Map<string, ThreadDayGroup | null>();
+    }
+    return labels;
+  }, [transcriptionIds, transcriptionCreatedAtSignature]);
+
+  const groupLabel = (group: ThreadDayGroup) => {
+    switch (group) {
+      case "today":
+        return intl.formatMessage({ defaultMessage: "Today" });
+      case "yesterday":
+        return intl.formatMessage({ defaultMessage: "Yesterday" });
+      case "earlier":
+        return intl.formatMessage({ defaultMessage: "Earlier" });
+    }
+  };
+
   const handleImport = async () => {
     setIsImporting(true);
     try {
@@ -97,45 +143,84 @@ export default function TranscriptionsPage() {
     }
   };
 
+  const closeImport = () => {
+    if (!isImporting) setImportDialogOpen(false);
+  };
+
   return (
     <>
       <TranscriptionsSideEffects />
       <ScrollListPage
         title={<FormattedMessage defaultMessage="History" />}
         subtitle={
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <span>
-              <FormattedMessage
-                defaultMessage="{count} {count, plural, one {transcription} other {transcriptions}}"
-                values={{ count: transcriptionIds.length }}
-              />
-            </span>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => setImportDialogOpen(true)}
-              disabled={isImporting}
+          <FormattedMessage
+            defaultMessage="{count} {count, plural, one {transcription} other {transcriptions}}"
+            values={{ count: transcriptionIds.length }}
+          />
+        }
+        action={
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<FileUp size={14} strokeWidth={2} />}
+            onClick={() => setImportDialogOpen(true)}
+            disabled={isImporting}
+            sx={{ textTransform: "none", borderRadius: 999 }}
+          >
+            <FormattedMessage defaultMessage="Import audio" />
+          </Button>
+        }
+        emptyState={
+          <Stack spacing={1} sx={{ alignItems: "center", px: 2 }}>
+            <Typography variant="h6" sx={{ textAlign: "center" }}>
+              <FormattedMessage defaultMessage="No transcriptions yet." />
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ color: "text.secondary", textAlign: "center" }}
             >
-              <FormattedMessage defaultMessage="Import audio" />
-            </Button>
+              <FormattedMessage defaultMessage="Dictate something, or import an audio file to get started." />
+            </Typography>
           </Stack>
         }
         items={transcriptionIds}
         computeItemKey={(id) => id}
-        renderItem={(id) => <TranscriptionRow key={id} id={id} />}
+        renderItem={(id) => {
+          const group = dayLabelById.get(id);
+          return (
+            <>
+              {group ? (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    display: "block",
+                    pt: 1.5,
+                    pb: 0.25,
+                    color: "text.secondary",
+                    fontWeight: 600,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {groupLabel(group)}
+                </Typography>
+              ) : null}
+              <TranscriptionRow key={id} id={id} />
+            </>
+          );
+        }}
       />
 
       <Dialog
         open={importDialogOpen}
-        onClose={() => {
-          if (!isImporting) setImportDialogOpen(false);
-        }}
+        onClose={closeImport}
         maxWidth="xs"
         fullWidth
+        slotProps={{ paper: { sx: chromeDialogPaperSx } }}
       >
-        <DialogTitle>
+        <DialogTitleWithClose onClose={closeImport}>
           <FormattedMessage defaultMessage="Import audio" />
-        </DialogTitle>
+        </DialogTitleWithClose>
         <DialogContent>
           <Stack spacing={2.5} sx={{ mt: 1 }}>
             {postProcessingEnabled && (
@@ -149,10 +234,26 @@ export default function TranscriptionsPage() {
                   onChange={(event) =>
                     setSelectedToneId(event.target.value || null)
                   }
+                  MenuProps={chromeSelectMenuProps}
+                  renderValue={(value) =>
+                    selectedOptionLabel(
+                      value,
+                      tones,
+                      (tone) => tone.id,
+                      (tone) => tone.name,
+                    )
+                  }
                 >
                   {tones.map((tone) => (
-                    <MenuItem key={tone.id} value={tone.id}>
+                    <MenuItem
+                      key={tone.id}
+                      value={tone.id}
+                      sx={chromeMenuItemSx}
+                    >
                       {tone.name}
+                      {tone.id === selectedToneId ? (
+                        <Check size={16} strokeWidth={2} />
+                      ) : null}
                     </MenuItem>
                   ))}
                 </Select>
@@ -170,21 +271,26 @@ export default function TranscriptionsPage() {
                     event.target.value as DictationLanguageCode,
                   )
                 }
+                MenuProps={chromeSelectMenuProps}
+                renderValue={(value) =>
+                  languageOptions.find((option) => option.code === value)
+                    ?.label ?? ""
+                }
               >
                 {languageOptions.map(({ code, label }) => (
-                  <MenuItem key={code} value={code}>
+                  <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
                     {label}
+                    {code === selectedLanguage ? (
+                      <Check size={16} strokeWidth={2} />
+                    ) : null}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => setImportDialogOpen(false)}
-            disabled={isImporting}
-          >
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeImport} disabled={isImporting}>
             <FormattedMessage defaultMessage="Cancel" />
           </Button>
           <Button

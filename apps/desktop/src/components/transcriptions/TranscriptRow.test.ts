@@ -7,7 +7,10 @@ import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
-const h = vi.hoisted(() => ({ deleteTranscription: vi.fn() }));
+const h = vi.hoisted(() => ({
+  deleteTranscription: vi.fn(),
+  scheduleTranscriptionDelete: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -25,6 +28,11 @@ vi.mock("../../repos", () => ({
   getTranscriptionRepo: () => ({
     deleteTranscription: h.deleteTranscription,
   }),
+}));
+
+vi.mock("../../utils/pending-transcription-delete", () => ({
+  scheduleTranscriptionDelete: h.scheduleTranscriptionDelete,
+  undoTranscriptionDelete: vi.fn(),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -144,7 +152,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     );
     expect(button?.querySelector(".MuiCircularProgress-root")).not.toBeNull();
     expect(
-      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
+      button?.querySelector('[data-testid="retranscribe-hourglass"]'),
     ).toBeNull();
   });
 
@@ -161,7 +169,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.getAttribute("aria-busy")).toBe("true");
     expect(button?.querySelector(".MuiCircularProgress-root")).toBeNull();
     expect(
-      button?.querySelector('[data-testid="HourglassEmptyRoundedIcon"]'),
+      button?.querySelector('[data-testid="retranscribe-hourglass"]'),
     ).not.toBeNull();
   });
 
@@ -177,7 +185,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.getAttribute("aria-busy")).toBe("false");
     expect(button?.getAttribute("aria-label")).toBe("Retranscribed audio clip");
     expect(
-      button?.querySelector('[data-testid="CheckCircleRoundedIcon"]'),
+      button?.querySelector('[data-testid="retranscribe-check"]'),
     ).not.toBeNull();
   });
 
@@ -189,7 +197,7 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(button?.disabled).toBe(false);
     expect(button?.getAttribute("aria-label")).toBe("Retranscribe audio clip");
     expect(
-      button?.querySelector('[data-testid="ReplayRoundedIcon"]'),
+      button?.querySelector('[data-testid="retranscribe-replay"]'),
     ).not.toBeNull();
   });
 });
@@ -262,10 +270,10 @@ describe("TranscriptionRow context menu", () => {
       deleteItem?.click();
     });
 
-    const repo = await import("../../repos");
-    expect(
-      repo.getTranscriptionRepo().deleteTranscription,
-    ).toHaveBeenCalledWith("row-1");
+    expect(h.scheduleTranscriptionDelete).toHaveBeenCalledWith(
+      sampleTranscription,
+      5000,
+    );
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

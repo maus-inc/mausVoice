@@ -19,6 +19,7 @@ export type ShowSnackbarOpts = {
   duration?: number;
   transitionDuration?: number;
   mode?: SnackbarMode;
+  action?: { label: string; onClick: () => void };
 };
 
 export const setSnackbar = (
@@ -31,6 +32,7 @@ export const setSnackbar = (
   draft.snackbarMode = opts?.mode ?? "info";
   draft.snackbarDuration = opts?.duration ?? 3000;
   draft.snackbarTransitionDuration = opts?.transitionDuration;
+  draft.snackbarAction = opts?.action;
 };
 
 export const registerUsers = (draft: AppState, users: User[]): void => {

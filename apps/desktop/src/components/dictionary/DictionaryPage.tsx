@@ -1,9 +1,10 @@
-import AddRoundedIcon from "@mui/icons-material/AddRounded";
+import { Plus } from "lucide-react";
 import { Button } from "@mui/material";
 import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
 import { useCallback, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
+import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { loadDictionary } from "../../actions/dictionary.actions";
 import { setLocalStorageValue } from "../../actions/local-storage.actions";
@@ -16,6 +17,8 @@ import { AddTermDialog } from "./AddTermDialog";
 import { DictionaryRow } from "./DictionaryRow";
 
 export default function DictionaryPage() {
+  const intl = useIntl();
+  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "Dictionary" }));
   const termIds = useAppStore((state) => state.dictionary.termIds);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
@@ -87,7 +90,7 @@ export default function DictionaryPage() {
         action={
           <Button
             variant="text"
-            startIcon={<AddRoundedIcon />}
+            startIcon={<Plus size={16} strokeWidth={2} />}
             onClick={() => setIsAddDialogOpen(true)}
           >
             <FormattedMessage defaultMessage="Add" />

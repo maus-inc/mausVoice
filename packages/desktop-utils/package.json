@@ -9,6 +9,20 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "development": "./src/react.ts",
+      "import": "./dist/react.js",
+      "default": "./dist/react.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

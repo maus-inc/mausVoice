@@ -44,12 +44,7 @@ export const AppFab = ({
       onClick={onClick}
       disabled={disabled}
       sx={{
-        width: labelWidth,
-        transition: (theme) =>
-          theme.transitions.create("width", {
-            easing: theme.transitions.easing.easeInOut,
-            duration: theme.transitions.duration.shortest,
-          }),
+        minWidth: labelWidth,
         overflow: "hidden",
         border: isOutline ? "1px solid currentColor" : "none",
         backgroundColor: isOutline ? "background.paper" : "primary.main",

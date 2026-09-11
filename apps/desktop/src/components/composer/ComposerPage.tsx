@@ -1,4 +1,3 @@
-import MicIcon from "@mui/icons-material/Mic";
 import {
   Box,
   Button,
@@ -9,6 +8,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { Mic } from "lucide-react";
+import { MetalChrome } from "../common/MetalChrome";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -220,11 +221,21 @@ export const ComposerPage = () => {
           accepted,
           text: accepted ? text : "",
         });
-      } finally {
         await closeComposerWindow();
+      } catch (error) {
+        getLogger().error("Failed to emit composer result", error);
+        if (mountedRef.current) {
+          setEditError(
+            error instanceof Error
+              ? error.message
+              : intl.formatMessage({
+                  defaultMessage: "Unable to send composer result.",
+                }),
+          );
+        }
       }
     },
-    [requestId, text],
+    [intl, requestId, text],
   );
 
   // Esc cancels the composer, matching the window close-request path which is
@@ -337,7 +348,7 @@ export const ComposerPage = () => {
               title={disabledReason ?? undefined}
               aria-describedby={disabledReason ? disabledReasonId : undefined}
             >
-              <MicIcon />
+              <Mic size={20} strokeWidth={2} />
             </IconButton>
             <Button
               variant="outlined"
@@ -368,16 +379,25 @@ export const ComposerPage = () => {
             spacing={1}
             sx={{ justifyContent: "flex-end" }}
           >
-            <Button variant="text" onClick={() => void finish(false)}>
+            <Button
+              variant="text"
+              onClick={() => {
+                finish(false).catch(() => undefined);
+              }}
+            >
               <FormattedMessage defaultMessage="Cancel" />
             </Button>
-            <Button
-              variant="contained"
-              onClick={() => void finish(true)}
-              disabled={isEditing || !text.trim()}
-            >
-              <FormattedMessage defaultMessage="Insert" />
-            </Button>
+            <MetalChrome>
+              <Button
+                variant="contained"
+                onClick={() => {
+                  finish(true).catch(() => undefined);
+                }}
+                disabled={isEditing || !text.trim()}
+              >
+                <FormattedMessage defaultMessage="Insert" />
+              </Button>
+            </MetalChrome>
           </Stack>
         </Stack>
       </Paper>

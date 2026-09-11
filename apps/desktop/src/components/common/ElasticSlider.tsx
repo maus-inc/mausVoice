@@ -41,7 +41,7 @@ export const THUMB_CENTER_TRANSFORM = "translate(-50%, -50%)";
 
 /** Builds the MUI Slider `sx` for the ElasticSlider look. */
 export const buildElasticSliderSx = (
-  blue: string,
+  fill: string,
   rail: string,
 ): SxProps<Theme> => ({
   "& .MuiSlider-rail": {
@@ -55,27 +55,27 @@ export const buildElasticSliderSx = (
     height: 4,
     borderRadius: 99,
     border: "none",
-    backgroundColor: blue,
+    backgroundColor: fill,
     transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
   },
   "& .MuiSlider-thumb": {
     width: 16,
     height: 16,
     backgroundColor: "#FFFFFF",
-    border: `2px solid ${blue}`,
+    border: `2px solid ${fill}`,
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
     transition:
       "transform 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1)",
     "&:hover": {
       transform: `${THUMB_CENTER_TRANSFORM} scale(1.15)`,
-      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${blue} 14%, transparent)`,
+      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${fill} 14%, transparent)`,
     },
     "&.Mui-active": {
       transform: `${THUMB_CENTER_TRANSFORM} scale(1.25)`,
-      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 8px color-mix(in srgb, ${blue} 18%, transparent)`,
+      boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 8px color-mix(in srgb, ${fill} 18%, transparent)`,
     },
     "&.Mui-focusVisible": {
-      boxShadow: `0 0 0 3px color-mix(in srgb, ${blue} 40%, transparent)`,
+      boxShadow: `0 0 0 3px color-mix(in srgb, ${fill} 40%, transparent)`,
     },
   },
   "&:hover .MuiSlider-rail, &:hover .MuiSlider-track": {
@@ -109,7 +109,8 @@ export const ElasticSlider = ({
   const [dragValue, setDragValue] = useState(value);
   const draggingRef = useRef(false);
 
-  const blue = theme.vars?.palette.blue ?? theme.palette.blue;
+  const accentFill =
+    theme.vars?.palette.primary.main ?? theme.palette.primary.main;
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {
@@ -156,7 +157,7 @@ export const ElasticSlider = ({
         valueLabelDisplay={valueLabelDisplay}
         valueLabelFormat={valueLabelFormat}
         aria-label={ariaLabel}
-        sx={buildElasticSliderSx(blue, rail)}
+        sx={buildElasticSliderSx(accentFill, rail)}
       />
     </Box>
   );

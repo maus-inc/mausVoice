@@ -1,4 +1,4 @@
-import { AddRounded } from "@mui/icons-material";
+import { Plus } from "lucide-react";
 import { Box, Chip, Divider, Stack, Typography } from "@mui/material";
 import { useEffect } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -9,6 +9,7 @@ import {
   loadChatMessages,
 } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
+import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { createId } from "../../utils/id.utils";
 import { ChatsSideEffects } from "./ChatsSideEffects";
 import { ConversationLayout } from "./ConversationLayout";
@@ -38,6 +39,7 @@ export default function ChatsPage() {
   };
 
   const intl = useIntl();
+  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "Chats" }));
 
   const handleNewChat = async () => {
     const now = new Date().toISOString();
@@ -89,22 +91,35 @@ export default function ChatsPage() {
               alignItems: "center",
               justifyContent: "center",
               gap: 1.5,
+              px: 3,
             }}
           >
+            <Typography
+              variant="h6"
+              sx={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 500,
+                textAlign: "center",
+                textWrap: "balance",
+              }}
+            >
+              <FormattedMessage defaultMessage="How can I help you today?" />
+            </Typography>
             <Typography
               variant="body2"
               sx={{
                 color: "text.secondary",
+                textAlign: "center",
               }}
             >
               <FormattedMessage defaultMessage="Start a conversation to get things going" />
             </Typography>
             <Chip
-              icon={<AddRounded />}
+              icon={<Plus size={16} strokeWidth={2} />}
               label={<FormattedMessage defaultMessage="Create new chat" />}
               variant="outlined"
               onClick={handleNewChat}
-              sx={{ mt: 1 }}
+              sx={{ mt: 1, borderRadius: 999 }}
             />
           </Stack>
         )}

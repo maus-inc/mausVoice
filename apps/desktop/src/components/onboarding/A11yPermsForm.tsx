@@ -100,7 +100,7 @@ export const A11yPermsForm = () => {
   const rightContent = (
     <Box
       sx={{
-        borderRadius: "12px",
+        borderRadius: 1,
         border: "1px solid gray",
         overflow: "hidden",
         maxHeight: "100%",

@@ -107,7 +107,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
           sx={{
             position: "absolute",
             inset: 0,
-            borderRadius: "14px",
+            borderRadius: 1,
             bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
             boxShadow: selectedShadow,
             zIndex: 0,
@@ -124,7 +124,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         sx={{
           position: "absolute",
           inset: 0,
-          borderRadius: "14px",
+          borderRadius: 1,
           bgcolor: dark ? surfaces.dark.level2 : inkSolid.base,
           boxShadow: selectedShadow,
           zIndex: 0,
@@ -172,7 +172,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       sx={{
         alignItems: "stretch",
         height: "100%",
-        borderRadius: "16px",
+        borderRadius: 1,
         margin: "0.35rem",
         border: dark ? hairline.dark(0.05) : hairline.light(0.05),
 

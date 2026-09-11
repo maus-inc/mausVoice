@@ -47,8 +47,13 @@ vi.mock("./TranscriptRow", () => ({
 vi.mock("../common/ScrollListPage", async () => {
   const { createElement: create } = await import("react");
   return {
-    ScrollListPage: ({ subtitle }: { subtitle: React.ReactNode }) =>
-      create("div", null, subtitle),
+    ScrollListPage: ({
+      subtitle,
+      action,
+    }: {
+      subtitle: React.ReactNode;
+      action?: React.ReactNode;
+    }) => create("div", null, subtitle, action),
   };
 });
 

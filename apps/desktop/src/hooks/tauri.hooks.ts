@@ -1,7 +1,7 @@
 import {
   useTauriListen as useTauriListenBase,
   type UseTauriListenOptions,
-} from "@maus-inc/desktop-utils";
+} from "@maus-inc/desktop-utils/react";
 import { showErrorSnackbar } from "../actions/app.actions";
 
 const surfaceError = (error: unknown) => showErrorSnackbar(error);

@@ -1,4 +1,4 @@
-import { Check } from "@mui/icons-material";
+import { Check } from "lucide-react";
 import {
   Step,
   StepLabel,
@@ -48,14 +48,18 @@ export const AppStepper = ({
         const active = idx === index;
         const clickable =
           onStepClick && (isDefined(readyIndex) ? idx <= readyIndex : true);
-        const icon = completed ? <Check /> : step.icon;
+        const icon = completed ? (
+          <Check size={20} strokeWidth={2} />
+        ) : (
+          step.icon
+        );
 
         return (
           <Step key={step.label} completed={completed}>
             <StepLabel
               icon={icon}
               sx={{
-                borderRadius: "64px",
+                borderRadius: 999,
                 display: "flex",
                 alignItems: "center",
                 opacity: clickable ? 1 : 0.5,
