@@ -102,7 +102,10 @@ import {
 } from "../../utils/hands-free-delay.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
+  getDetectedSystemLocale,
   getEffectivePillVisibility,
+  getGenerativePrefs,
+  getMyUser,
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
@@ -118,11 +121,6 @@ import {
   KEYBOARD_LAYOUT_LANGUAGE,
   WHISPER_LANGUAGES,
 } from "../../utils/language.utils";
-import {
-  getDetectedSystemLocale,
-  getGenerativePrefs,
-  getMyUser,
-} from "../../utils/user.utils";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_API_KEY_NAME,

@@ -50,7 +50,9 @@ export const fetchChangelog = async (
     );
   }
   if (!response.ok) {
-    throw new Error(`The release history returned status ${response.status}.`);
+    throw new TypeError(
+      `The release history returned status ${response.status}.`,
+    );
   }
 
   const json: unknown = await response.json();

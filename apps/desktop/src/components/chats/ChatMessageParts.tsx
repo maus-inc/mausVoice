@@ -9,6 +9,7 @@ import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import type { ChatPart, ChatToolStatus } from "@maus-inc/types";
+import type { AgentRunState } from "../../state/agent.state";
 import { retryAssistant } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { partsForMessage } from "../../utils/chat-parts.utils";
@@ -216,6 +217,22 @@ export const RunNotePart = ({
   </Stack>
 );
 
+type RunNote = { kind: "error" | "status"; text: string };
+
+const runNoteFor = (
+  agentState: AgentRunState | null | undefined,
+  stoppedText: string,
+): RunNote | null => {
+  if (!agentState) return null;
+  if (agentState.status === "error" && agentState.error) {
+    return { kind: "error", text: agentState.error };
+  }
+  if (agentState.status === "error" || agentState.aborted) {
+    return { kind: "status", text: stoppedText };
+  }
+  return null;
+};
+
 export const useMessageParts = (messageId: string) => {
   const intl = useIntl();
   const message = useAppStore((s) => s.chatMessageById[messageId]);
@@ -245,16 +262,11 @@ export const useMessageParts = (messageId: string) => {
   // The run note belongs to the run, so it renders once under the latest
   // message instead of repeating under every bubble.
   const runNote =
-    !streaming &&
-    isLast &&
-    agentState &&
-    (agentState.status === "error" || agentState.aborted)
-      ? agentState.status === "error" && agentState.error
-        ? { kind: "error" as const, text: agentState.error }
-        : {
-            kind: "status" as const,
-            text: intl.formatMessage({ defaultMessage: "Stopped." }),
-          }
+    !streaming && isLast
+      ? runNoteFor(
+          agentState,
+          intl.formatMessage({ defaultMessage: "Stopped." }),
+        )
       : null;
 
   const parts = partsForMessage({

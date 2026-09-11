@@ -34,16 +34,16 @@ export const useTonePreview = () => {
         }
         setOutput(text);
         setStatus("done");
-      } catch (caught) {
+      } catch (error_) {
         if (next.signal.aborted) {
           setStatus("idle");
           return;
         }
-        if (caught instanceof TonePreviewNoProviderError) {
+        if (error_ instanceof TonePreviewNoProviderError) {
           setStatus("unavailable");
           return;
         }
-        setError(caught instanceof Error ? caught.message : "Preview failed.");
+        setError(error_ instanceof Error ? error_.message : "Preview failed.");
         setStatus("error");
       }
     },

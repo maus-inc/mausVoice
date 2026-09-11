@@ -60,7 +60,7 @@ export const laterMessagesHaveToolActivity = (
   const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
   return ids.slice(ids.indexOf(messageId) + 1).some((id) => {
     const message = state.chatMessageById[id];
-    if (!message || message.role !== "assistant") return false;
+    if (message?.role !== "assistant") return false;
     const metadata = message.metadata as Record<string, unknown> | null;
     return (
       metadata?.type === "reasoning" &&

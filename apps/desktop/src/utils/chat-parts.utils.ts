@@ -82,69 +82,91 @@ const liveStatusOf = (status: AgentToolCallState["status"]): ChatToolStatus => {
  * reads; live streaming and agent state only overlay the message that is
  * currently being written.
  */
+const toolResultPart = (
+  message: ChatMessage,
+  metadata: Record<string, unknown>,
+): ChatPart[] => {
+  const toolCallId =
+    typeof metadata.toolCallId === "string" && metadata.toolCallId
+      ? metadata.toolCallId
+      : message.id;
+  const toolName =
+    typeof metadata.toolName === "string" && metadata.toolName
+      ? metadata.toolName
+      : "tool";
+  const reason =
+    typeof metadata.reason === "string" ? metadata.reason : undefined;
+  return [{ kind: "tool-result", toolCallId, toolName, reason }];
+};
+
+const liveToolParts = (
+  live: NonNullable<MessagePartsInput["streaming"]>,
+  liveToolCalls: AgentToolCallState[] | null | undefined,
+  permissions: ToolPermission[] | null | undefined,
+): ChatPart[] => {
+  const parts: ChatPart[] = [];
+  if (live.reasoning.trim()) {
+    parts.push({
+      kind: "reasoning",
+      text: live.reasoning,
+      open: live.isStreaming,
+    });
+  }
+  for (const tc of liveToolCalls ?? []) {
+    const reason = reasonFrom(permissions, tc.toolCallId);
+    parts.push({
+      kind: "tool",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      status: liveStatusOf(tc.status),
+      ...(reason ? { reason } : {}),
+    });
+    const linked = tc.permissionId
+      ? permissions?.find((p) => p.id === tc.permissionId)
+      : permissionFor(permissions, tc.toolCallId);
+    if (linked?.status === "pending") {
+      parts.push({ kind: "permission", permissionId: linked.id });
+    }
+  }
+  return parts;
+};
+
+const persistedToolParts = (
+  message: ChatMessage,
+  permissions: ToolPermission[] | null | undefined,
+): ChatPart[] => {
+  const parts: ChatPart[] = [];
+  for (const call of persistedToolCallsOf(message)) {
+    const reason = reasonFrom(permissions, call.id);
+    parts.push({
+      kind: "tool",
+      toolCallId: call.id,
+      toolName: call.name,
+      status: persistedStatusOf(permissions, call.id),
+      ...(reason ? { reason } : {}),
+    });
+    // Only an undecided request renders its prompt. A denied request is
+    // already reflected in the step status; an allowed one is consumed.
+    const linked = permissionFor(permissions, call.id);
+    if (linked?.status === "pending") {
+      parts.push({ kind: "permission", permissionId: linked.id });
+    }
+  }
+  return parts;
+};
+
 export const partsForMessage = (input: MessagePartsInput): ChatPart[] => {
   const { message, streaming, liveToolCalls, permissions, runNote } = input;
   const metadata = recordOf(message.metadata);
 
   if (metadata?.type === "tool-result") {
-    const toolCallId =
-      typeof metadata.toolCallId === "string" && metadata.toolCallId
-        ? metadata.toolCallId
-        : message.id;
-    const toolName =
-      typeof metadata.toolName === "string" && metadata.toolName
-        ? metadata.toolName
-        : "tool";
-    const reason =
-      typeof metadata.reason === "string" ? metadata.reason : undefined;
-    return [{ kind: "tool-result", toolCallId, toolName, reason }];
+    return toolResultPart(message, metadata);
   }
 
-  const parts: ChatPart[] = [];
   const live = streaming ?? null;
-
-  if (live) {
-    if (live.reasoning.trim()) {
-      parts.push({
-        kind: "reasoning",
-        text: live.reasoning,
-        open: live.isStreaming,
-      });
-    }
-    for (const tc of liveToolCalls ?? []) {
-      const reason = reasonFrom(permissions, tc.toolCallId);
-      parts.push({
-        kind: "tool",
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        status: liveStatusOf(tc.status),
-        ...(reason ? { reason } : {}),
-      });
-      const linked = tc.permissionId
-        ? permissions?.find((p) => p.id === tc.permissionId)
-        : permissionFor(permissions, tc.toolCallId);
-      if (linked && linked.status === "pending") {
-        parts.push({ kind: "permission", permissionId: linked.id });
-      }
-    }
-  } else {
-    for (const call of persistedToolCallsOf(message)) {
-      const reason = reasonFrom(permissions, call.id);
-      parts.push({
-        kind: "tool",
-        toolCallId: call.id,
-        toolName: call.name,
-        status: persistedStatusOf(permissions, call.id),
-        ...(reason ? { reason } : {}),
-      });
-      // Only an undecided request renders its prompt. A denied request is
-      // already reflected in the step status; an allowed one is consumed.
-      const linked = permissionFor(permissions, call.id);
-      if (linked && linked.status === "pending") {
-        parts.push({ kind: "permission", permissionId: linked.id });
-      }
-    }
-  }
+  const parts: ChatPart[] = live
+    ? liveToolParts(live, liveToolCalls, permissions)
+    : persistedToolParts(message, permissions);
 
   if (message.content.trim()) {
     parts.push({ kind: "text", text: message.content });
