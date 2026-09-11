@@ -1,5 +1,6 @@
 import { Term } from "@maus-inc/types";
 import dayjs from "dayjs";
+import { setLocalStorageValue } from "./local-storage.actions";
 import { getTermRepo } from "../repos";
 import { produceAppState } from "../store";
 import { registerTerms } from "../utils/app.utils";
@@ -54,6 +55,10 @@ export const createGlossaryTerms = async (
         draft.termById[persisted.id] = persisted;
       });
       created.push(persisted);
+      // Every path that grows the dictionary satisfies the "add a word to
+      // your dictionary" onboarding item, whether it is auto-learn, an
+      // edit-watch proposal, the add-to-dictionary hotkey or this dialog.
+      setLocalStorageValue("mausvoice:checklist-dictionary", true);
     } catch (error) {
       produceAppState((draft) => {
         delete draft.termById[newTerm.id];

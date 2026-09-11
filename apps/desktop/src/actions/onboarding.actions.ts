@@ -215,6 +215,7 @@ export const submitOnboarding = async () => {
       spokenCommandsEnabled: true,
       autoLearnDictionaryEnabled: true,
       autoLearnFromEditsEnabled: false,
+      elevenLabsKeytermsEnabled: false,
     };
 
     const [savedUser, savedPreferences] = await Promise.all([

@@ -1,4 +1,5 @@
 import { countWords, retry } from "@maus-inc/utilities";
+import { appendQueryParamValues } from "./query-params.utils";
 import type { CustomFetch } from "./types";
 
 export type DeepgramTestIntegrationArgs = {
@@ -49,6 +50,12 @@ export type DeepgramTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext: string;
   language?: string;
+  /**
+   * Keyterm prompting biases recognition toward these terms. nova-3 supports
+   * plain terms only (no legacy `keywords` intensifiers), passed by repeating
+   * the `keyterm` query parameter.
+   */
+  keyterms?: string[];
   customFetch?: CustomFetch;
 };
 
@@ -63,6 +70,7 @@ export const deepgramTranscribeAudio = async ({
   blob,
   ext,
   language,
+  keyterms,
   customFetch = fetch,
 }: DeepgramTranscriptionArgs): Promise<DeepgramTranscribeAudioOutput> => {
   return retry({
@@ -79,6 +87,11 @@ export const deepgramTranscribeAudio = async ({
       } else {
         params.set("detect_language", "true");
       }
+
+      // Keyterm prompting (nova-3): repeat the parameter per term. Weights
+      // from the legacy `keywords` feature are silently ignored here, so only
+      // plain terms are ever sent.
+      appendQueryParamValues(params, "keyterm", keyterms);
 
       const response = await customFetch(
         `${DEEPGRAM_LISTEN_URL}?${params.toString()}`,

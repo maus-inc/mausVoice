@@ -2,6 +2,7 @@ import { getRec } from "@maus-inc/utilities";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { extractAutoLearnTerms } from "../utils/auto-learn.utils";
+import { collectTermValues } from "../utils/app.utils";
 import { getLogger } from "../utils/log.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { createGlossaryTerms } from "./dictionary.actions";
@@ -18,13 +19,7 @@ const learnTermsFromCorrection = async (
   corrected: string,
 ): Promise<{ learnedTerms: string[]; failedTerms: number }> => {
   const state = getAppState();
-  // Only non-empty values are candidates for the existing-terms set; a
-  // glossary term always carries an empty destinationValue.
-  const existingTerms = Object.values(state.termById).flatMap((term) =>
-    term.destinationValue
-      ? [term.sourceValue, term.destinationValue]
-      : [term.sourceValue],
-  );
+  const existingTerms = collectTermValues(state);
 
   const { learnedTerms } = extractAutoLearnTerms({
     original,

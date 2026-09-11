@@ -1,6 +1,10 @@
+import { appendQueryParamValues } from "@maus-inc/voice-ai";
+
 export const buildDeepgramWebSocketUrl = (args: {
   sampleRate: number;
   language?: string;
+  /** Vocabulary terms to bias recognition (nova-3 keyterm prompting). */
+  keyterms?: string[];
 }): string => {
   const params = new URLSearchParams({
     encoding: "linear16",
@@ -11,6 +15,11 @@ export const buildDeepgramWebSocketUrl = (args: {
     interim_results: "true",
     endpointing: "300",
   });
+
+  // Keyterm prompting repeats the parameter once per term, with plain
+  // terms only, since weights from the legacy `keywords` feature are not
+  // supported on nova-3.
+  appendQueryParamValues(params, "keyterm", args.keyterms);
 
   // "auto" (or unset) → Deepgram nova-3 multilingual code-switching. Note: the
   // `multi` set is English, Spanish, French, German, Hindi, Russian, Portuguese,

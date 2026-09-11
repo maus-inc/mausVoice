@@ -236,6 +236,166 @@ const COMMON_WORDS = new Set([
   "theres",
   "here's",
   "heres",
+  // Politeness, greetings and connectives that survive the common-word list
+  // above only because they are rarely function words: they still must never
+  // be learned just because a correction capitalized them.
+  "please",
+  "thank",
+  "thanks",
+  "sorry",
+  "excuse",
+  "pardon",
+  "welcome",
+  "hello",
+  "hi",
+  "hey",
+  "dear",
+  "regards",
+  "sincerely",
+  "faithfully",
+  "greetings",
+  "congrats",
+  "congratulations",
+  "goodbye",
+  "bye",
+  "let",
+  "lets",
+  "ok",
+  "okay",
+  "maybe",
+  "perhaps",
+  "anyway",
+  "anyways",
+  "sure",
+  "fine",
+  "alright",
+  "wow",
+  "awesome",
+  // Weekdays and months: ordinary words that users routinely capitalize at
+  // sentence starts, never worth a dictionary hint.
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "mon",
+  "tue",
+  "tues",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+  "sun",
+  "january",
+  "february",
+  "march",
+  "april",
+  "june",
+  "july",
+  "august",
+  "september",
+  "october",
+  "november",
+  "december",
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "sept",
+  "oct",
+  "nov",
+  "dec",
+  // Stopgap for non-English languages: the most frequent capitalized common
+  // nouns, pronouns and politeness words for the languages the app ships.
+  // German capitalizes every noun, so without this list any inserted or
+  // case-corrected noun would be learned. The durable fix is per-language
+  // stop lists selected by the dictation language.
+  "wir",
+  "ihnen",
+  "euch",
+  "danke",
+  "bitte",
+  "entschuldigung",
+  "herr",
+  "stadt",
+  "haus",
+  "zeit",
+  "tag",
+  "woche",
+  "monat",
+  "jahr",
+  "mann",
+  "frau",
+  "kind",
+  "kinder",
+  "name",
+  "frage",
+  "antwort",
+  "arbeit",
+  "geld",
+  "welt",
+  "leben",
+  "liebe",
+  "nacht",
+  "morgen",
+  "abend",
+  "stunde",
+  "straße",
+  "strasse",
+  "platz",
+  "land",
+  "wasser",
+  "nous",
+  "vous",
+  "merci",
+  "bonjour",
+  "bonsoir",
+  "monsieur",
+  "madame",
+  "salut",
+  "bienvenue",
+  "usted",
+  "ustedes",
+  "gracias",
+  "hola",
+  "buenos",
+  "buenas",
+  "señor",
+  "señora",
+  "señorita",
+  "favor",
+  "bienvenido",
+  "bienvenidos",
+  "lei",
+  "grazie",
+  "buongiorno",
+  "buonasera",
+  "prego",
+  "signore",
+  "signora",
+  "benvenuto",
+  "benvenuta",
+  "você",
+  "vocês",
+  "obrigado",
+  "obrigada",
+  "olá",
+  "senhor",
+  "senhora",
+  "bom",
+  "boa",
+  "alstublieft",
+  "alstjeblieft",
+  "bedankt",
+  "hallo",
+  "meneer",
+  "mevrouw",
 ]);
 
 export type AutoLearnTermsResult = {
@@ -277,23 +437,59 @@ const toTokenCounts = (tokens: string[]): Map<string, number> => {
   return counts;
 };
 
+const toExactTokenCounts = (tokens: string[]): Map<string, number> => {
+  const counts = new Map<string, number>();
+  for (const token of tokens) {
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return counts;
+};
+
 /**
  * Tokens present in `corrected` but not in `original`, as a case-insensitive
- * multiset difference. Original token casing is preserved.
+ * multiset difference. Corrected token casing is preserved.
+ *
+ * A token that matches an original token case-insensitively but not in its
+ * exact form is a casing correction ("sonia" → "Sonia") and is surfaced as an
+ * added token too: recognizers routinely emit proper nouns lowercased, so
+ * capitalization is one of the most common corrections a user makes. The
+ * proper-noun and common-word filters downstream still decide learnability.
  */
+/**
+ * Consumes one occurrence of `token` from the original-side multisets.
+ * Returns true when the corrected token counts as added: it is brand new,
+ * or its casing differs from every original occurrence of the same word.
+ */
+const consumeOriginalToken = (
+  token: string,
+  originalCounts: Map<string, number>,
+  originalExactCounts: Map<string, number>,
+): boolean => {
+  const key = token.toLowerCase();
+  const remaining = originalCounts.get(key) ?? 0;
+  if (remaining <= 0) {
+    return true;
+  }
+  originalCounts.set(key, remaining - 1);
+  const exactRemaining = originalExactCounts.get(token) ?? 0;
+  if (exactRemaining <= 0) {
+    return true;
+  }
+  originalExactCounts.set(token, exactRemaining - 1);
+  return false;
+};
+
 export const computeAddedTokens = (
   original: string,
   corrected: string,
 ): string[] => {
-  const originalCounts = toTokenCounts(tokenizeForComparison(original));
+  const originalTokens = tokenizeForComparison(original);
+  const originalCounts = toTokenCounts(originalTokens);
+  const originalExactCounts = toExactTokenCounts(originalTokens);
   const added: string[] = [];
 
   for (const token of tokenizeForComparison(corrected)) {
-    const key = token.toLowerCase();
-    const remaining = originalCounts.get(key) ?? 0;
-    if (remaining > 0) {
-      originalCounts.set(key, remaining - 1);
-    } else {
+    if (consumeOriginalToken(token, originalCounts, originalExactCounts)) {
       added.push(token);
     }
   }

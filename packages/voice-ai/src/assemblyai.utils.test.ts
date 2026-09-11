@@ -84,6 +84,35 @@ describe("assemblyaiTranscribeAudio request contract", () => {
     ]);
   });
 
+  it("sends word_boost with the dictionary vocabulary", async () => {
+    const capture = { bodies: [] as Record<string, unknown>[] };
+    await assemblyaiTranscribeAudio({
+      apiKey: "key",
+      blob: new Uint8Array([1, 2]).buffer,
+      language: "en",
+      wordBoost: ["Soniya", "Ralf"],
+      pollIntervalMs: 1,
+      customFetch: makeFetch(capture),
+    });
+
+    expect(capture.bodies[0]).toMatchObject({
+      word_boost: ["Soniya", "Ralf"],
+    });
+  });
+
+  it("omits word_boost when no vocabulary is provided", async () => {
+    const capture = { bodies: [] as Record<string, unknown>[] };
+    await assemblyaiTranscribeAudio({
+      apiKey: "key",
+      blob: new Uint8Array([1, 2]).buffer,
+      language: "en",
+      pollIntervalMs: 1,
+      customFetch: makeFetch(capture),
+    });
+
+    expect(capture.bodies[0]).not.toHaveProperty("word_boost");
+  });
+
   it("never reuses the deprecated singular speech_model field", async () => {
     const capture = { bodies: [] as Record<string, unknown>[] };
     await assemblyaiTranscribeAudio({
