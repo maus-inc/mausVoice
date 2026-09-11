@@ -216,11 +216,18 @@ pub(crate) struct PillState {
     pub(crate) drag_cancelled: Cell<bool>,
     pub(crate) drag_cursor_x: Cell<f64>,
     pub(crate) drag_cursor_y: Cell<f64>,
-    /// Offset from the window origin to the cursor at the moment the drag
-    /// started. Keeping this fixed means the pill follows the cursor without
-    /// jumping so its grab point stays under the pointer.
-    pub(crate) drag_grab_offset_x: Cell<f64>,
-    pub(crate) drag_grab_offset_y: Cell<f64>,
+    /// Shared drag-motion controller: owns pointer samples, release velocity,
+    /// and the release settle spring. The frame loop advances it while a drag
+    /// is held or settling; see rust_pill_shared::drag.
+    pub(crate) drag_motion: RefCell<rust_pill_shared::drag::DragController>,
+    /// Hover-intent state machine: dwells before arming hover and lingers
+    /// through a grace before exiting, so fast pass-throughs never flicker
+    /// the pill. See rust_pill_shared::hover.
+    pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    /// Selector-placement state machine: picks above or below from the live
+    /// headroom and eases the blend between them. See
+    /// rust_pill_shared::placement.
+    pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
     pub(crate) reset_strategy: Cell<ResetStrategy>,
@@ -329,6 +336,7 @@ impl PillState {
         // Spring animations still in motion
         if self.expand_velocity.get() != 0.0 { return true; }
         if self.tooltip_velocity.get() != 0.0 { return true; }
+        if self.selector_placement.borrow().blend_velocity() != 0.0 { return true; }
         if self.panel_open_velocity.get() != 0.0 { return true; }
         if self.kb_button_velocity.get() != 0.0 { return true; }
         if self.draw_w_velocity.get() != 0.0 { return true; }
