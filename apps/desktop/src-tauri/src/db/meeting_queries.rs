@@ -4,6 +4,12 @@ use sqlx::{Row, SqlitePool};
 
 use crate::domain::{Meeting, MeetingSegment, MeetingSource, MeetingSpeaker};
 
+fn parse_meeting_source(row: &sqlx::sqlite::SqliteRow) -> Result<MeetingSource, sqlx::Error> {
+    row.get::<String, _>("source")
+        .parse::<MeetingSource>()
+        .map_err(|err| sqlx::Error::Decode(Box::new(err)))
+}
+
 /// Build the `SET` clause and bind order for `update_meeting`.
 /// Returning the assignment order alongside the query string makes the
 /// bind order obvious to both readers and tests, and keeps the placeholder
@@ -70,19 +76,19 @@ pub async fn fetch_meeting(
     .fetch_optional(&pool)
     .await?;
 
-    Ok(row.map(|r| Meeting {
-        id: r.get::<String, _>("id"),
-        title: r.get::<String, _>("title"),
-        created_at: r.get::<i64, _>("created_at"),
-        duration_ms: r.get::<i64, _>("duration_ms"),
-        status: r.get::<String, _>("status"),
-        summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
-        transcript: r.get::<String, _>("transcript"),
-        source: r
-            .get::<String, _>("source")
-            .parse::<MeetingSource>()
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?,
-    }))
+    row.map(|r| -> Result<Meeting, sqlx::Error> {
+        Ok(Meeting {
+            id: r.get::<String, _>("id"),
+            title: r.get::<String, _>("title"),
+            created_at: r.get::<i64, _>("created_at"),
+            duration_ms: r.get::<i64, _>("duration_ms"),
+            status: r.get::<String, _>("status"),
+            summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
+            transcript: r.get::<String, _>("transcript"),
+            source: parse_meeting_source(&r)?,
+        })
+    })
+    .transpose()
 }
 
 pub async fn fetch_meetings(
@@ -97,22 +103,20 @@ pub async fn fetch_meetings(
     .fetch_all(&pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| Meeting {
-            id: r.get::<String, _>("id"),
-            title: r.get::<String, _>("title"),
-            created_at: r.get::<i64, _>("created_at"),
-            duration_ms: r.get::<i64, _>("duration_ms"),
-            status: r.get::<String, _>("status"),
-            summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
-            transcript: r.get::<String, _>("transcript"),
-            source: r
-            .get::<String, _>("source")
-            .parse::<MeetingSource>()
-            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?,
+    rows.into_iter()
+        .map(|r| -> Result<Meeting, sqlx::Error> {
+            Ok(Meeting {
+                id: r.get::<String, _>("id"),
+                title: r.get::<String, _>("title"),
+                created_at: r.get::<i64, _>("created_at"),
+                duration_ms: r.get::<i64, _>("duration_ms"),
+                status: r.get::<String, _>("status"),
+                summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
+                transcript: r.get::<String, _>("transcript"),
+                source: parse_meeting_source(&r)?,
+            })
         })
-        .collect())
+        .collect()
 }
 
 pub async fn update_meeting(
