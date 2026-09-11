@@ -281,8 +281,12 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // future CLI/MCP clients. The bind address is a constant
             // (127.0.0.1) inside the module, never a setting.
             {
-                let automation =
-                    Arc::new(crate::automation_server::AutomationState::new());
+                let pool = app
+                    .state::<crate::state::OptionKeyDatabase>()
+                    .pool();
+                let automation = Arc::new(
+                    crate::automation_server::AutomationState::with_pool(Some(pool)),
+                );
                 app.manage(Arc::clone(&automation));
                 tauri::async_runtime::spawn(async move {
                     match crate::automation_server::serve_automation_api(

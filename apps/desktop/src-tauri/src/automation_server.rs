@@ -32,10 +32,11 @@ pub struct AutomationState {
     token: String,
     started_at: Instant,
     rate: Mutex<RateBucket>,
+    pool: Option<sqlx::SqlitePool>,
 }
 
 impl AutomationState {
-    pub fn new() -> Self {
+    pub fn with_pool(pool: Option<sqlx::SqlitePool>) -> Self {
         let mut bytes = [0u8; TOKEN_BYTES];
         OsRng.fill_bytes(&mut bytes);
         let token = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -46,6 +47,7 @@ impl AutomationState {
                 window_start: Instant::now(),
                 count: 0,
             }),
+            pool,
         }
     }
 
@@ -75,12 +77,6 @@ impl AutomationState {
     }
 }
 
-impl Default for AutomationState {
-    fn default() -> Self {
-        AutomationState::new()
-    }
-}
-
 fn json_response(status: StatusCode, body: serde_json::Value) -> Response<Full<Bytes>> {
     let bytes = Bytes::from(body.to_string());
     Response::builder()
@@ -93,6 +89,71 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response<Full<B
                 .body(Full::new(Bytes::new()))
                 .expect("static fallback response builds")
         })
+}
+
+fn query_pairs(raw_query: Option<&str>) -> Vec<(String, String)> {
+    url::form_urlencoded::parse(raw_query.unwrap_or_default().as_bytes())
+        .into_owned()
+        .collect()
+}
+
+fn parse_limit(raw_query: Option<&str>) -> i64 {
+    query_pairs(raw_query)
+        .iter()
+        .find(|(key, _)| key == "limit")
+        .and_then(|(_, value)| value.parse::<i64>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100)
+}
+
+fn parse_query(raw_query: Option<&str>) -> String {
+    query_pairs(raw_query)
+        .iter()
+        .find(|(key, _)| key == "q")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default()
+}
+
+async fn serve_meetings(
+    state: &AutomationState,
+    raw_query: Option<&str>,
+    search: bool,
+) -> (StatusCode, serde_json::Value) {
+    let pool = match state.pool.clone() {
+        Some(pool) => pool,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::json!({ "error": "database_unavailable" }),
+            )
+        }
+    };
+    let limit = parse_limit(raw_query);
+    let outcome = if search {
+        let q = parse_query(raw_query);
+        if q.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": "missing_query" }),
+            );
+        }
+        crate::db::meeting_queries::search_meetings(pool, &q, limit).await
+    } else {
+        crate::db::meeting_queries::fetch_meetings(pool, limit).await
+    };
+    match outcome {
+        Ok(meetings) => (
+            StatusCode::OK,
+            serde_json::json!({ "meetings": meetings }),
+        ),
+        Err(err) => {
+            log::warn!("automation meetings query failed: {err}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serde_json::json!({ "error": "query_failed" }),
+            )
+        }
+    }
 }
 
 fn route(
@@ -139,7 +200,13 @@ async fn handle(
     }
 
     let uptime_secs = state.started_at.elapsed().as_secs();
-    let (status, body) = route(&method, &path, uptime_secs);
+    let (status, body) = if method == Method::GET && path == "/api/v1/meetings" {
+        serve_meetings(&state, req.uri().query(), false).await
+    } else if method == Method::GET && path == "/api/v1/meetings/search" {
+        serve_meetings(&state, req.uri().query(), true).await
+    } else {
+        route(&method, &path, uptime_secs)
+    };
     audit_log(&method, &path, status);
     Ok(json_response(status, body))
 }
@@ -191,14 +258,14 @@ mod tests {
     #[test]
     fn tokens_are_unique_per_state() {
         assert_ne!(
-            AutomationState::new().token(),
-            AutomationState::new().token()
+            AutomationState::with_pool(None).token(),
+            AutomationState::with_pool(None).token()
         );
     }
 
     #[test]
     fn auth_rejects_missing_and_wrong_tokens() {
-        let state = AutomationState::new();
+        let state = AutomationState::with_pool(None);
         assert!(!state.check_auth(&hyper::HeaderMap::new()));
         let mut wrong = authed_headers(&state);
         wrong.insert(
@@ -211,13 +278,33 @@ mod tests {
 
     #[test]
     fn rate_limit_trips_after_window_budget() {
-        let state = AutomationState::new();
+        let state = AutomationState::with_pool(None);
         let start = Instant::now();
         for _ in 0..RATE_LIMIT_MAX_REQUESTS {
             assert!(state.check_rate_limit(start));
         }
         assert!(!state.check_rate_limit(start));
         assert!(state.check_rate_limit(start + RATE_LIMIT_WINDOW));
+    }
+
+    #[test]
+    fn parse_limit_defaults_clamps_and_parses() {
+        assert_eq!(parse_limit(None), 20);
+        assert_eq!(parse_limit(Some("")), 20);
+        assert_eq!(parse_limit(Some("limit=10")), 10);
+        assert_eq!(parse_limit(Some("q=x&limit=5")), 5);
+        assert_eq!(parse_limit(Some("limit=9999")), 100);
+        assert_eq!(parse_limit(Some("limit=0")), 1);
+        assert_eq!(parse_limit(Some("limit=abc")), 20);
+    }
+
+    #[test]
+    fn parse_query_extracts_q() {
+        assert_eq!(parse_query(None), "");
+        assert_eq!(parse_query(Some("limit=5")), "");
+        assert_eq!(parse_query(Some("q=sprint")), "sprint");
+        assert_eq!(parse_query(Some("q=sprint%20planning")), "sprint planning");
+        assert_eq!(parse_query(Some("freq=x")), "");
     }
 
     #[test]
