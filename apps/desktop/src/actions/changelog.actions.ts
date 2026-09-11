@@ -50,14 +50,12 @@ export const fetchChangelog = async (
     );
   }
   if (!response.ok) {
-    throw new TypeError(
-      `The release history returned status ${response.status}.`,
-    );
+    throw new Error(`The release history returned status ${response.status}.`);
   }
 
   const json: unknown = await response.json();
   if (!Array.isArray(json)) {
-    throw new Error("The release history had an unexpected shape.");
+    throw new TypeError("The release history had an unexpected shape.");
   }
 
   const entries: ChangelogEntry[] = [];

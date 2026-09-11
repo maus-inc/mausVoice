@@ -191,21 +191,21 @@ const MacTrafficLights = ({
       label={closeLabel}
       color={focused ? "#FF5F57" : "#8E8E93"}
       dark={dark}
-      onClick={() => void onClose()}
+      onClick={onClose}
       glyph={<MorphNavIcon icon={X} size={8} strokeWidth={2.5} />}
     />
     <TrafficButton
       label={minimizeLabel}
       color={focused ? "#FEBC2E" : "#8E8E93"}
       dark={dark}
-      onClick={() => void onMinimize()}
+      onClick={onMinimize}
       glyph={<MorphNavIcon icon={Minus} size={8} strokeWidth={2.5} />}
     />
     <TrafficButton
       label={maximizeLabel}
       color={focused ? "#28C840" : "#8E8E93"}
       dark={dark}
-      onClick={() => void onToggleMax()}
+      onClick={onToggleMax}
       glyph={<MorphNavIcon icon={Plus} size={8} strokeWidth={2.5} />}
     />
   </Stack>
@@ -245,7 +245,7 @@ const CaptionButtons = ({
   >
     <IconButton
       size="small"
-      onClick={() => void onMinimize()}
+      onClick={onMinimize}
       aria-label={minimizeLabel}
       sx={captionButtonSx}
     >
@@ -253,7 +253,7 @@ const CaptionButtons = ({
     </IconButton>
     <IconButton
       size="small"
-      onClick={() => void onToggleMax()}
+      onClick={onToggleMax}
       aria-label={maximizeLabel}
       sx={captionButtonSx}
     >
@@ -265,7 +265,7 @@ const CaptionButtons = ({
     </IconButton>
     <IconButton
       size="small"
-      onClick={() => void onClose()}
+      onClick={onClose}
       aria-label={closeLabel}
       sx={{
         ...captionButtonSx,
@@ -326,7 +326,7 @@ export const TitleBar = () => {
         */}
         <Box
           data-tauri-drag-region
-          onDoubleClick={() => void toggleMax()}
+          onDoubleClick={toggleMax}
           sx={{
             position: "absolute",
             inset: 0,
@@ -366,7 +366,7 @@ export const TitleBar = () => {
         <Box
           sx={{ flex: 1 }}
           data-tauri-drag-region
-          onDoubleClick={() => void toggleMax()}
+          onDoubleClick={toggleMax}
         />
 
         {isMac ? null : (
