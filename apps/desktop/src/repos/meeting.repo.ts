@@ -16,7 +16,7 @@ type LocalMeeting = {
   status: string;
   summary: string | null;
   transcript: string;
-  source: string;
+  source: Meeting["source"];
 };
 
 type LocalMeetingWithDetails = LocalMeeting & {
@@ -62,7 +62,7 @@ const fromLocalMeeting = (local: LocalMeeting): Meeting => ({
   segments: [],
   summary: local.summary ?? undefined,
   transcript: local.transcript,
-  source: local.source as Meeting["source"],
+  source: local.source,
 });
 
 const fromLocalSegment = (local: LocalMeetingSegment): MeetingSegment => ({

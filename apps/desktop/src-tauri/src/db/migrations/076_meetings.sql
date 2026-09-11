@@ -1,5 +1,8 @@
 -- 076: Meeting notes domain tables.
 -- Stores meetings, timed transcript segments, and speaker identities.
+-- Segments reference their speaker through the meeting-scoped
+-- (meeting_id, speaker_id) key, so a segment can only point at a speaker
+-- of the same meeting. Writers must insert speakers before segments.
 CREATE TABLE IF NOT EXISTS meetings (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -13,6 +16,15 @@ CREATE TABLE IF NOT EXISTS meetings (
 
 CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS meeting_speakers (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    label TEXT,
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+    UNIQUE (meeting_id, id)
+);
+
 CREATE TABLE IF NOT EXISTS meeting_segments (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
@@ -21,16 +33,10 @@ CREATE TABLE IF NOT EXISTS meeting_segments (
     end_time_ms INTEGER NOT NULL,
     text TEXT NOT NULL,
     confidence REAL,
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+    FOREIGN KEY (meeting_id, speaker_id)
+        REFERENCES meeting_speakers (meeting_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_meeting_segments_meeting_start
     ON meeting_segments (meeting_id, start_time_ms ASC);
-
-CREATE TABLE IF NOT EXISTS meeting_speakers (
-    id TEXT PRIMARY KEY,
-    meeting_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    label TEXT,
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-);

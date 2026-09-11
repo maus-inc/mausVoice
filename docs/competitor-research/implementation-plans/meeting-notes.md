@@ -9,8 +9,8 @@
 
 ## Goal
 
-Deliver a separate meeting domain that records microphone audio (and optionally
-system audio), transcribes it with timed segments, supports speaker diarization
+Deliver a separate meeting domain that records microphone audio,
+transcribes it with timed segments, supports speaker diarization
 via Deepgram, generates AI summaries, provides Ask AI over meeting notes, and
 supports export. This is the single largest gap vs Vowen and Wispr Flow.
 
@@ -82,6 +82,15 @@ CREATE TABLE IF NOT EXISTS meetings (
 
 CREATE INDEX IF NOT EXISTS idx_meetings_created_at ON meetings (created_at DESC);
 
+CREATE TABLE IF NOT EXISTS meeting_speakers (
+    id TEXT PRIMARY KEY,
+    meeting_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    label TEXT,
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+    UNIQUE (meeting_id, id)
+);
+
 CREATE TABLE IF NOT EXISTS meeting_segments (
     id TEXT PRIMARY KEY,
     meeting_id TEXT NOT NULL,
@@ -90,24 +99,25 @@ CREATE TABLE IF NOT EXISTS meeting_segments (
     end_time_ms INTEGER NOT NULL,
     text TEXT NOT NULL,
     confidence REAL,
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+    FOREIGN KEY (meeting_id, speaker_id)
+        REFERENCES meeting_speakers (meeting_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_meeting_segments_meeting_start
     ON meeting_segments (meeting_id, start_time_ms ASC);
 
-CREATE TABLE IF NOT EXISTS meeting_speakers (
-    id TEXT PRIMARY KEY,
-    meeting_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    label TEXT,
-    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
-);
+Writers insert speakers before segments: the meeting-scoped speaker key
+rejects segments that point at unknown or cross-meeting speakers, and
+`meeting_complete` deletes and re-inserts details in that order.
 ```
 
 ## Rust domain types
 
-- `domain/meeting.rs` — `Meeting`, `MeetingSegment`, `MeetingSpeaker` structs.
+- `domain/meeting.rs` — `Meeting`, `MeetingSegment`, `MeetingSpeaker` structs
+  plus a `MeetingSource` enum (`microphone` | `system` | `mixed`) with
+  explicit TEXT conversion in `meeting_queries`, so an invalid source can
+  never cross the command boundary.
 - `db/meeting_queries.rs` — CRUD queries for all three tables.
 
 ## Tauri commands

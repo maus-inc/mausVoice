@@ -25,9 +25,14 @@ response includes `words[]` with `start`, `end`, `punctuated_word`, and
 
 ### 2. Deepgram diarization
 
-Deepgram Nova-3 supports `diarize=true` parameter. The current
-`buildDeepgramWebSocketUrl()` does NOT include this parameter. When enabled,
-the WebSocket response includes `speaker` per word in `words[]`.
+Meeting sessions need per-word speaker labels, which Deepgram returns as
+`speaker` per word in `words[]` once diarization is enabled on the session.
+The current `buildDeepgramWebSocketUrl()` does NOT enable diarization. When
+the meeting recording slice lands, it must opt into diarization per the
+current Deepgram docs and cover both URL variants with tests before
+consuming `words[].speaker`. (The exact parameter name was left
+unpinned here on purpose: verify it against the live Deepgram docs at
+implementation time rather than trusting a remembered flag.)
 
 ### 3. Conversation linking
 

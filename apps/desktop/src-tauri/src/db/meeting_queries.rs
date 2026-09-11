@@ -1,6 +1,8 @@
+use std::str::FromStr;
+
 use sqlx::{Row, SqlitePool};
 
-use crate::domain::{Meeting, MeetingSegment, MeetingSpeaker};
+use crate::domain::{Meeting, MeetingSegment, MeetingSource, MeetingSpeaker};
 
 /// Build the `SET` clause and bind order for `update_meeting`.
 /// Returning the assignment order alongside the query string makes the
@@ -50,7 +52,7 @@ pub async fn insert_meeting(
     .bind(&meeting.status)
     .bind(&meeting.summary)
     .bind(&meeting.transcript)
-    .bind(&meeting.source)
+    .bind(meeting.source.as_db_str())
     .execute(&pool)
     .await?;
     Ok(())
@@ -76,7 +78,10 @@ pub async fn fetch_meeting(
         status: r.get::<String, _>("status"),
         summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
         transcript: r.get::<String, _>("transcript"),
-        source: r.get::<String, _>("source"),
+        source: r
+            .get::<String, _>("source")
+            .parse::<MeetingSource>()
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?,
     }))
 }
 
@@ -102,7 +107,10 @@ pub async fn fetch_meetings(
             status: r.get::<String, _>("status"),
             summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
             transcript: r.get::<String, _>("transcript"),
-            source: r.get::<String, _>("source"),
+            source: r
+            .get::<String, _>("source")
+            .parse::<MeetingSource>()
+            .map_err(|err| sqlx::Error::Decode(Box::new(err)))?,
         })
         .collect())
 }
@@ -170,30 +178,30 @@ pub async fn complete_meeting(
         .bind(meeting_id)
         .execute(&mut *tx)
         .await?;
-    for segment in segments {
-        sqlx::query(
-            "INSERT INTO meeting_segments (id, meeting_id, speaker_id, start_time_ms, end_time_ms, text, confidence)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )
-        .bind(&segment.id)
-        .bind(&segment.meeting_id)
-        .bind(&segment.speaker_id)
-        .bind(segment.start_time_ms)
-        .bind(segment.end_time_ms)
-        .bind(&segment.text)
-        .bind(segment.confidence)
-        .execute(&mut *tx)
-        .await?;
-    }
     for speaker in speakers {
         sqlx::query(
             "INSERT INTO meeting_speakers (id, meeting_id, name, label)
              VALUES (?1, ?2, ?3, ?4)",
         )
         .bind(&speaker.id)
-        .bind(&speaker.meeting_id)
+        .bind(meeting_id)
         .bind(&speaker.name)
         .bind(&speaker.label)
+        .execute(&mut *tx)
+        .await?;
+    }
+    for segment in segments {
+        sqlx::query(
+            "INSERT INTO meeting_segments (id, meeting_id, speaker_id, start_time_ms, end_time_ms, text, confidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(&segment.id)
+        .bind(meeting_id)
+        .bind(&segment.speaker_id)
+        .bind(segment.start_time_ms)
+        .bind(segment.end_time_ms)
+        .bind(&segment.text)
+        .bind(segment.confidence)
         .execute(&mut *tx)
         .await?;
     }

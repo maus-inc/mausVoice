@@ -3,7 +3,9 @@ import {
   MeetingSegment,
   MeetingSpeaker,
 } from "../types/meetings.types";
+import type { Conversation } from "@maus-inc/types";
 import { getGenerateTextRepo, getMeetingRepo } from "../repos";
+import { createConversation } from "./chat.actions";
 import { createId } from "../utils/id.utils";
 import { isExpansionFeatureEnabled } from "../features/featureFlags";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
@@ -67,6 +69,32 @@ export const stopMeetingRecording = async (
     segments,
     speakers,
   });
+
+  await createMeetingConversation(meetingId);
+};
+
+export const createMeetingConversation = async (
+  meetingId: string,
+): Promise<Conversation> => {
+  ensureMeetingNotesEnabled();
+  ensurePersistenceAllowed();
+  const repo = getMeetingRepo();
+  const meeting = await repo.getMeeting(meetingId);
+  const now = new Date().toISOString();
+  try {
+    return await createConversation({
+      id: createId(),
+      title: meeting.title,
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (err) {
+    const redacted = await redactError(err);
+    getLogger().warning(
+      `Meeting conversation creation failed for meeting ${meetingId}: ${redacted}`,
+    );
+    throw err;
+  }
 };
 
 export const generateMeetingSummary = async (
@@ -102,6 +130,12 @@ export const generateMeetingSummary = async (
 
   let output;
   try {
+    if (!isPersistenceAllowed()) {
+      getLogger().warning(
+        `Skipping meeting summary: persistence suppressed for meeting ${meetingId}`,
+      );
+      return;
+    }
     output = await genRepo.generateText({
       system:
         "You are a meeting assistant. Given the transcript of a meeting, produce a concise summary capturing the key discussion points, decisions, and action items.",
@@ -120,6 +154,13 @@ export const generateMeetingSummary = async (
   if (!summary) {
     getLogger().warning(
       `Summary generation returned empty for meeting ${meetingId}`,
+    );
+    return;
+  }
+
+  if (!isPersistenceAllowed()) {
+    getLogger().warning(
+      `Skipping meeting summary persist: persistence suppressed for meeting ${meetingId}`,
     );
     return;
   }

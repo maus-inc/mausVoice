@@ -9,9 +9,10 @@ export type SnippetVariableChoice = {
 /**
  * A snippet variable definition.
  *
- * For `multiselect`, the selected values are stored as a comma-joined string
- * in `SnippetFillIn.variableValues[name]`. Consumers split on "," to recover
- * the array. `choices` enumerates the allowed options.
+ * For `multiselect`, the selected values are stored as a JSON-encoded string
+ * array in `SnippetFillIn.variableValues[name]`. Use
+ * `encodeMultiselectValue`/`decodeMultiselectValue` so values containing
+ * commas round-trip losslessly. `choices` enumerates the allowed options.
  */
 export type SnippetVariable = {
   name: string;

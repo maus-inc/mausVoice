@@ -1,39 +1,74 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateMeetingSummary } from "./meeting.actions";
+import type { MeetingSegment } from "../types/meetings.types";
+import {
+  createMeetingConversation,
+  generateMeetingSummary,
+  stopMeetingRecording,
+} from "./meeting.actions";
 
-const { loggerMock } = vi.hoisted(() => ({
+const {
+  loggerMock,
+  completeMeetingMock,
+  updateMeetingMock,
+  generateTextMock,
+  createConversationMock,
+} = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
     error: vi.fn(),
     verbose: vi.fn(),
   },
+  completeMeetingMock: vi.fn(),
+  updateMeetingMock: vi.fn(),
+  generateTextMock: vi.fn(),
+  createConversationMock: vi.fn(),
 }));
+
+let persistenceAllowed = true;
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 vi.mock("../features/featureFlags", () => ({
   isExpansionFeatureEnabled: () => true,
 }));
 vi.mock("../utils/incognito.utils", () => ({
-  isPersistenceAllowed: () => true,
+  isPersistenceAllowed: () => persistenceAllowed,
 }));
 vi.mock("../repos", () => ({
   getMeetingRepo: () => ({
-    getMeeting: async () => ({ id: "meeting-1", transcript: "hello" }),
+    getMeeting: async () => ({
+      id: "meeting-1",
+      title: "Weekly sync",
+      transcript: "hello",
+    }),
+    completeMeeting: completeMeetingMock,
+    updateMeeting: updateMeetingMock,
   }),
   getGenerateTextRepo: () => ({
     warnings: [] as string[],
-    repo: {
-      generateText: async () => {
-        throw new Error("boom sk-abcdefghijklmnopqrstuvwxyz123456");
-      },
-    },
+    repo: { generateText: generateTextMock },
   }),
 }));
+vi.mock("./chat.actions", () => ({
+  createConversation: createConversationMock,
+}));
+
+const segment = (text: string, endTimeMs: number): MeetingSegment => ({
+  id: "seg-1",
+  meetingId: "meeting-1",
+  speakerId: "spk-1",
+  startTimeMs: 0,
+  endTimeMs,
+  text,
+});
 
 describe("generateMeetingSummary failure logging", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    persistenceAllowed = true;
+    generateTextMock.mockRejectedValue(
+      new Error("boom sk-abcdefghijklmnopqrstuvwxyz123456"),
+    );
   });
 
   it("logs the redacted message instead of [object Promise]", async () => {
@@ -47,5 +82,84 @@ describe("generateMeetingSummary failure logging", () => {
     expect(message).not.toContain("[object Promise]");
     expect(message).not.toContain("sk-abcdefghijklmnopqrstuvwxyz123456");
     expect(message).toContain("[redacted-secret]");
+  });
+
+  it("skips generation when persistence is suppressed mid-flight", async () => {
+    persistenceAllowed = false;
+    generateTextMock.mockResolvedValue({ text: "summary" });
+
+    await generateMeetingSummary("meeting-1");
+
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(updateMeetingMock).not.toHaveBeenCalled();
+    expect(loggerMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping meeting summary"),
+    );
+  });
+
+  it("skips the persist when persistence is suppressed after generation", async () => {
+    generateTextMock.mockImplementation(async () => {
+      persistenceAllowed = false;
+      return { text: "summary" };
+    });
+
+    await generateMeetingSummary("meeting-1");
+
+    expect(generateTextMock).toHaveBeenCalledTimes(1);
+    expect(updateMeetingMock).not.toHaveBeenCalled();
+    expect(loggerMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping meeting summary persist"),
+    );
+  });
+});
+
+describe("stopMeetingRecording conversation creation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    persistenceAllowed = true;
+    completeMeetingMock.mockResolvedValue(undefined);
+    createConversationMock.mockImplementation(async (c) => c);
+  });
+
+  it("creates the meeting conversation after completion", async () => {
+    await stopMeetingRecording("meeting-1", [segment("hello", 1200)], []);
+
+    expect(completeMeetingMock).toHaveBeenCalledTimes(1);
+    expect(createConversationMock).toHaveBeenCalledTimes(1);
+    expect(createConversationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Weekly sync" }),
+    );
+    expect(completeMeetingMock.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
+      createConversationMock.mock.invocationCallOrder[0] ?? 1,
+    );
+  });
+
+  it("surfaces conversation failure without losing the completion", async () => {
+    createConversationMock.mockRejectedValue(new Error("db full"));
+
+    await expect(
+      stopMeetingRecording("meeting-1", [segment("hello", 1200)], []),
+    ).rejects.toThrow("db full");
+    expect(completeMeetingMock).toHaveBeenCalledTimes(1);
+    expect(loggerMock.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Meeting conversation creation failed"),
+    );
+  });
+});
+
+describe("createMeetingConversation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    persistenceAllowed = true;
+    createConversationMock.mockImplementation(async (c) => c);
+  });
+
+  it("titles the conversation after the meeting", async () => {
+    const result = await createMeetingConversation("meeting-1");
+
+    expect(createConversationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Weekly sync" }),
+    );
+    expect(result).toEqual(expect.objectContaining({ title: "Weekly sync" }));
   });
 });
