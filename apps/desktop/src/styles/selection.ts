@@ -1,5 +1,5 @@
 import type { Theme } from "@mui/material";
-import { duration, easeOutCubic } from "./motion";
+import { cssEase, duration, easeOutCubic } from "./motion";
 
 /**
  * Shared active-row treatment for the AI menus (transcription + post-processing).
@@ -44,7 +44,7 @@ export const selectedOutlineSx = (theme: Theme, ringWidth = 1) => ({
 /** Width of the rail that marks the active row. */
 const RAIL_WIDTH = 3;
 
-const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
+const ease = cssEase(easeOutCubic);
 const transition = `${duration.fast}s ${ease}`;
 
 /**

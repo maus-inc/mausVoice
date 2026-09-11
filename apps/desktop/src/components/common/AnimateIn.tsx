@@ -5,7 +5,12 @@ import {
   useReducedMotion,
 } from "framer-motion";
 import type { ReactElement, ReactNode } from "react";
-import { duration, springSnappy } from "../../styles/motion";
+import {
+  enterTransition,
+  exitTransition,
+  fadeVariants,
+  riseVariants,
+} from "../../styles/motion";
 
 export type AnimateInProps = {
   children: ReactElement;
@@ -25,14 +30,11 @@ export const AnimateIn = ({ children, visible = true }: AnimateInProps) => {
       {visible ? (
         <motion.div
           key="animate-in"
-          initial={
-            reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.99 }
-          }
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={
-            reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.99 }
-          }
-          transition={reduceMotion ? { duration: duration.exit } : springSnappy}
+          variants={reduceMotion ? fadeVariants : riseVariants}
+          initial="hidden"
+          animate="shown"
+          exit="gone"
+          transition={reduceMotion ? exitTransition : enterTransition}
         >
           <PresenceGuard>{children}</PresenceGuard>
         </motion.div>
@@ -92,10 +94,11 @@ export const AnimateSwitch = ({ activeKey, children }: AnimateSwitchProps) => {
       <motion.div
         key={activeKey}
         style={{ width: "100%" }}
-        initial={{ opacity: 0, y: 8, scale: 0.99 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: -8, scale: 0.99 }}
-        transition={springSnappy}
+        variants={reduceMotion ? fadeVariants : riseVariants}
+        initial="hidden"
+        animate="shown"
+        exit="gone"
+        transition={reduceMotion ? exitTransition : enterTransition}
       >
         <PresenceGuard>{children}</PresenceGuard>
       </motion.div>

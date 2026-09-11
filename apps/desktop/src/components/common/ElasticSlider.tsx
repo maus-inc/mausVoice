@@ -49,14 +49,14 @@ export const buildElasticSliderSx = (
     borderRadius: 99,
     backgroundColor: rail,
     opacity: 1,
-    transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+    transition: "height 160ms var(--ease-out-quint)",
   },
   "& .MuiSlider-track": {
     height: 4,
     borderRadius: 99,
     border: "none",
     backgroundColor: blue,
-    transition: "height 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+    transition: "height 160ms var(--ease-out-quint)",
   },
   "& .MuiSlider-thumb": {
     width: 16,
@@ -65,7 +65,7 @@ export const buildElasticSliderSx = (
     border: `2px solid ${blue}`,
     boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
     transition:
-      "transform 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1)",
+      "transform 160ms var(--ease-out-quint), box-shadow 160ms var(--ease-out-quint)",
     "&:hover": {
       transform: `${THUMB_CENTER_TRANSFORM} scale(1.15)`,
       boxShadow: `0 1px 4px rgba(0, 0, 0, 0.3), 0 0 0 6px color-mix(in srgb, ${blue} 14%, transparent)`,
