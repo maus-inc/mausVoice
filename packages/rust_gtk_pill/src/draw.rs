@@ -154,7 +154,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let deformed = dsx != 1.0 || dsy != 1.0;
     if deformed {
         let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
-        cr.save();
+        cr.save().ok();
         cr.translate(dcx, dcy);
         cr.scale(dsx, dsy);
         cr.translate(-dcx, -dcy);
