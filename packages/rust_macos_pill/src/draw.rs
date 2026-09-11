@@ -287,6 +287,23 @@ fn draw_loading(
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.clip();
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        ctx.select_font_face("Satoshi", false, false);
+        ctx.set_font_size(12.0);
+        let ext = ctx.text_extents(stage);
+        let tx = rx + (pill_w - ext.width) / 2.0 - ext.x_bearing;
+        let ty = ry + (pill_h - ext.height) / 2.0 - ext.y_bearing;
+        ctx.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+        ctx.save();
+        ctx.move_to(tx, ty);
+        ctx.show_text(stage);
+        ctx.restore();
+        ctx.restore();
+
+        draw_edge_gradient(ctx, rx, ry, pill_w, pill_h, radius, expand_t);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;

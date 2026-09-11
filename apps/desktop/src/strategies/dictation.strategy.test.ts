@@ -67,6 +67,19 @@ vi.mock("../utils/log.utils", () => ({
     error: () => undefined,
   }),
 }));
+vi.mock("../utils/overlay.utils", () => ({
+  sendPillStageText: vi.fn(),
+}));
+vi.mock("../i18n/intl", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../i18n/intl")>();
+  return {
+    ...actual,
+    getIntl: () => ({
+      formatMessage: (descriptor: { defaultMessage: string }) =>
+        descriptor.defaultMessage,
+    }),
+  };
+});
 
 const seedState = () => {
   const state = structuredClone(INITIAL_APP_STATE);

@@ -128,6 +128,7 @@ pub enum InMessage {
     Flame { message: String },
     FlashBlue,
     BroadcastTranscript { text: String },
+    StageText { text: Option<String> },
     AssistantState {
         active: bool,
         input_mode: String,

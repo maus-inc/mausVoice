@@ -141,6 +141,9 @@ pub enum InMessage {
     BroadcastTranscript {
         text: String,
     },
+    StageText {
+        text: Option<String>,
+    },
     AssistantState {
         active: bool,
         input_mode: String,

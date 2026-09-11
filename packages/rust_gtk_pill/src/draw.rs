@@ -518,6 +518,21 @@ fn draw_loading(
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.clip();
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.set_font_size(12.0);
+        let ext = cr.text_extents(stage).unwrap();
+        let tx = rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing();
+        let ty = ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing();
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+        cr.move_to(tx, ty);
+        let _ = cr.show_text(stage);
+        cr.restore().ok();
+
+        draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;
