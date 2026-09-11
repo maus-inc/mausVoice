@@ -172,6 +172,26 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
     void editAndResend(message.conversationId, id, text);
   };
 
+  const bodyContent = isEmpty ? (
+    <Typography
+      variant="body2"
+      sx={{
+        width: "fit-content",
+        fontWeight: 500,
+        color: "transparent",
+        backgroundImage: `linear-gradient(90deg, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 0%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.9) 50%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 100%)`,
+        backgroundSize: "200% 100%",
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+        animation: `${thinkingShimmer} 1.6s linear infinite`,
+      }}
+    >
+      <FormattedMessage defaultMessage="Thinking…" />
+    </Typography>
+  ) : (
+    <BubbleTextContent texts={texts} />
+  );
+
   return (
     <Stack
       onContextMenu={(e) => {
@@ -253,24 +273,8 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
                 </Button>
               </Stack>
             </Stack>
-          ) : isEmpty ? (
-            <Typography
-              variant="body2"
-              sx={{
-                width: "fit-content",
-                fontWeight: 500,
-                color: "transparent",
-                backgroundImage: `linear-gradient(90deg, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 0%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.9) 50%, rgb(${theme.vars?.palette.text.primaryChannel} / 0.35) 100%)`,
-                backgroundSize: "200% 100%",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                animation: `${thinkingShimmer} 1.6s linear infinite`,
-              }}
-            >
-              <FormattedMessage defaultMessage="Thinking…" />
-            </Typography>
           ) : (
-            <BubbleTextContent texts={texts} />
+            bodyContent
           )}
         </Box>
       </Stack>
