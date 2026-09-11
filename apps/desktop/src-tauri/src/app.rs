@@ -1,5 +1,5 @@
 use sqlx::sqlite::SqlitePoolOptions;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
@@ -275,6 +275,26 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::init::ensure_background_services();
                 crate::system::bridge_server::start(app.handle().clone());
                 crate::platform::compositor::deploy_trigger_script(app.handle());
+            }
+
+            // Local automation API: loopback-only HTTP with bearer auth for
+            // future CLI/MCP clients. The bind address is a constant
+            // (127.0.0.1) inside the module, never a setting.
+            {
+                let automation =
+                    Arc::new(crate::automation_server::AutomationState::new());
+                app.manage(Arc::clone(&automation));
+                tauri::async_runtime::spawn(async move {
+                    match crate::automation_server::serve_automation_api(
+                        automation,
+                        crate::automation_server::AUTOMATION_DEFAULT_PORT,
+                    )
+                    .await
+                    {
+                        Ok(addr) => log::info!("Automation API started on {addr}"),
+                        Err(err) => log::error!("Failed to start automation API: {err}"),
+                    }
+                });
             }
 
             // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set

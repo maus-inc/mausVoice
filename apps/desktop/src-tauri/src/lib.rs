@@ -1,4 +1,5 @@
 pub mod app;
+pub mod automation_server;
 pub mod commands;
 pub mod db;
 pub mod domain;
