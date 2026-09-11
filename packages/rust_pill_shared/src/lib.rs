@@ -6,6 +6,10 @@
 //! platform traces the *same* path for the same input rectangle, so the
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
+pub mod drag;
+pub mod hover;
+pub mod spring;
+
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
 
@@ -676,26 +680,6 @@ pub fn ring_alpha(held: bool, hold_elapsed: f64, release_elapsed: f64, hold_dela
 /// Outward drift of the ring while it fades after release, in pixels.
 pub fn ring_release_drift(release_elapsed: f64) -> f64 {
     RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
-}
-
-/// Resolves the hover flag for one pointer sample.
-///
-/// `probed` is the raw hit test of the cursor against the pill. While the
-/// button is held that hit test must be ignored: the press owns the pointer,
-/// and dragging the pill moves its window, so the cursor routinely lands
-/// outside the pill's last painted rect for a frame or two. Trusting it would
-/// collapse the pill to its unhovered size mid-drag and re-expand on release.
-///
-/// `pointer_down` — not `dragging` — is the correct gate. Moving more than
-/// `LONG_PRESS_MOVE_THRESHOLD` before the hold completes cancels the long
-/// press *without* arming a drag, so there is a window in which the button is
-/// still down but both gesture flags are false. Keying off those flags leaves
-/// exactly the "drag across without releasing" collapse this prevents.
-///
-/// A press can only begin on the pill body, so while it is held the pill is by
-/// definition still under the pointer.
-pub fn resolve_hover(probed: bool, pointer_down: bool) -> bool {
-    pointer_down || probed
 }
 
 /// The pill must be at least this expanded before the style tooltip appears,
@@ -1667,35 +1651,6 @@ mod tests {
         advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: -1.0 }, 0.12);
         assert!(a.press_elapsed >= 0.0);
         assert!((0.0..=1.0).contains(&a.alpha));
-    }
-
-    #[test]
-    fn hover_survives_a_drag_that_outruns_the_window() {
-        // The raw hit test misses while the pointer is captured, but the pill
-        // must stay hovered so it does not collapse mid-gesture.
-        assert!(resolve_hover(false, true));
-        assert!(resolve_hover(true, true));
-    }
-
-    #[test]
-    fn hover_follows_the_cursor_once_the_button_is_released() {
-        assert!(!resolve_hover(false, false));
-        assert!(resolve_hover(true, false));
-    }
-
-    /// Regression: moving past the cancel threshold before the hold completes
-    /// clears `long_press_active` without setting `dragging`, so a gate keyed
-    /// on those two flags would drop the pin while the button is still down.
-    #[test]
-    fn hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag() {
-        let dragging = false;
-        let long_press_active = false;
-        let pointer_down = true;
-        assert!(
-            !(dragging || long_press_active),
-            "this is the state the old gate could not see",
-        );
-        assert!(resolve_hover(false, pointer_down));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::ffi::c_void;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
@@ -16,6 +17,8 @@ use crate::input;
 use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -38,6 +41,10 @@ thread_local! {
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+    // Cached reduced-motion probe (see reduced_motion()); re-read at most
+    // every 2 s so the frame loop never pays for a settings call per tick.
+    static REDUCED_MOTION_CACHED: Cell<bool> = const { Cell::new(false) };
+    static REDUCED_MOTION_CHECKED: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 const PILL_PLACEMENT_BOTTOM: u8 = 0;
@@ -179,8 +186,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
-        drag_grab_offset_x: Cell::new(0.0),
-        drag_grab_offset_y: Cell::new(0.0),
+        drag_motion: RefCell::new(DragController::new()),
+        hover_intent: RefCell::new(HoverIntent::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
@@ -458,6 +465,7 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
+            tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
             update_visibility(hwnd, state);
             update_typing_focus(hwnd, state);
@@ -514,6 +522,64 @@ fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
         None => true,
         Some(prev) => now.duration_since(prev) >= TOPMOST_REASSERT_INTERVAL,
     }
+}
+
+/// Monotonic clock in seconds for the gesture controllers (drag, hover
+/// intent). One origin per process; controllers only ever compare samples
+/// with each other.
+fn drag_now() -> f64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+#[link(name = "user32")]
+extern "system" {
+    // Raw declaration for SystemParametersInfoW (user32): the pill reads one
+    // SPI value, so it declares the single function it needs instead of
+    // depending on generated binding names.
+    #[link_name = "SystemParametersInfoW"]
+    fn system_parameters_info(
+        ui_action: u32,
+        ui_param: u32,
+        pv_param: *mut c_void,
+        f_win_ini: u32,
+    ) -> i32;
+}
+
+/// True when the user turned off Windows animation effects. Win32 has no
+/// direct "reduce motion" query; menu animation state follows the same toggle,
+/// so it stands in as the proxy. Re-read at most every 2 s.
+fn reduced_motion() -> bool {
+    let now = Instant::now();
+    let stale = REDUCED_MOTION_CHECKED.with(|c| {
+        if let Some(prev) = c.get() {
+            now.duration_since(prev) >= Duration::from_secs(2)
+        } else {
+            true
+        }
+    });
+    if !stale {
+        return REDUCED_MOTION_CACHED.with(|c| c.get());
+    }
+    // SPI_GETMENUANIMATION (0x1002 per winuser.h): menu animation state
+    // follows the same toggle as the animation effects, so it stands in as
+    // the reduced-motion proxy. A failed call degrades to full motion.
+    let mut enabled: i32 = 1;
+    let off = unsafe {
+        // SAFETY: SPI_GETMENUANIMATION writes a BOOL to the out pointer;
+        // enabled is a valid, aligned i32 out slot.
+        system_parameters_info(
+            0x1002,
+            0,
+            &mut enabled as *mut i32 as *mut c_void,
+            0,
+        ) != 0
+            && enabled == 0
+    };
+    REDUCED_MOTION_CACHED.with(|c| c.set(off));
+    REDUCED_MOTION_CHECKED.with(|c| c.set(Some(now)));
+    off
 }
 
 fn clear_flash(state: &PillState) {
@@ -681,6 +747,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
         }
         InMessage::ResetPosition { strategy } => {
             state.has_saved_position.set(false);
+            state.drag_motion.borrow_mut().reset();
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
             let hwnd = HWND_CELL.with(|c| c.get());
@@ -791,7 +858,7 @@ fn tick(state: &PillState, dt: f64) {
         } else {
             0.0
         };
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.expand_t,
         &state.expand_velocity,
         expand_target,
@@ -800,7 +867,7 @@ fn tick(state: &PillState, dt: f64) {
     );
 
     let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     if is_loading {
         state
@@ -816,10 +883,10 @@ fn tick(state: &PillState, dt: f64) {
         hovered,
         state.expand_t.get(),
     );
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
 
     let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.panel_open_t,
         &state.panel_open_velocity,
         panel_target,
@@ -833,7 +900,7 @@ fn tick(state: &PillState, dt: f64) {
     } else {
         0.0
     };
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.kb_button_t,
         &state.kb_button_velocity,
         kb_target,
@@ -843,14 +910,14 @@ fn tick(state: &PillState, dt: f64) {
 
     let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    spring_px(
+    rust_pill_shared::spring::spring_px(
         &state.draw_width,
         &state.draw_w_velocity,
         tw as f64,
         SPRING_STIFFNESS,
         dt,
     );
-    spring_px(
+    rust_pill_shared::spring::spring_px(
         &state.draw_height,
         &state.draw_h_velocity,
         th as f64,
@@ -884,7 +951,7 @@ fn tick(state: &PillState, dt: f64) {
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_target > 0.5,
     );
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -893,7 +960,7 @@ fn tick(state: &PillState, dt: f64) {
     } else {
         0.0
     };
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.pause_t,
         &state.pause_velocity,
         pause_target,
@@ -913,7 +980,7 @@ fn tick(state: &PillState, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.cancel_t,
         &state.cancel_velocity,
         cancel_target,
@@ -930,7 +997,7 @@ fn tick(state: &PillState, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(
+    rust_pill_shared::spring::spring_01(
         &state.inflate_t,
         &state.inflate_velocity,
         inflate_target,
@@ -1215,23 +1282,26 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    // A held button owns the pointer, so the hit tests above cannot be trusted:
-    // dragging moves the window and easily outruns it, which would collapse the
-    // pill to its unhovered size mid-gesture.
-    let new_hovered = rust_pill_shared::resolve_hover(
-        in_pill || in_tooltip || in_panel,
-        state.pointer_down.get(),
-    );
-    let was_hovered = state.hovered.get();
-
-    if new_hovered != was_hovered {
-        state.hovered.set(new_hovered);
+    // Hover intent: the pointer must dwell on the pill at low speed before
+    // expansion and tooltips fire, and they linger through a short grace once
+    // it leaves, so fast pass-throughs never flicker the pill. A held button
+    // pins hover regardless of the hit tests above: dragging moves the window
+    // and easily outruns it, which would collapse the pill mid-gesture.
+    let output = state.hover_intent.borrow_mut().advance(&HoverFrame {
+        probed: in_pill || in_tooltip || in_panel,
+        pointer_x: cx,
+        pointer_y: cy,
+        now: drag_now(),
+        pointer_down: state.pointer_down.get(),
+    });
+    state.hovered.set(output.hovered);
+    if output.entered || output.exited {
         state.dirty.set(true);
         ipc::send(&OutMessage::Hover {
-            hovered: new_hovered,
+            hovered: output.hovered,
         });
     }
-    if !new_hovered {
+    if !output.hovered {
         state.mouse_x.set(-1000.0);
         state.mouse_y.set(-1000.0);
     }
@@ -1293,6 +1363,11 @@ fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 
 }
 
 fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
+    // The frame loop owns the window while a drag is held or settling; the
+    // cursor tick must not fight it with a stale saved position.
+    if state.dragging.get() || state.drag_motion.borrow().is_settling() {
+        return;
+    }
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1305,12 +1380,11 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let win_w = current.right - current.left;
         let win_h = current.bottom - current.top;
 
-        // A drag belongs to whichever monitor the cursor is on. Everything
-        // else belongs to the monitor the pill actually lives on — resolving
+        // A parked pill belongs to the monitor it actually lives on. Resolving
         // the monitor from the live cursor here is what made a pinned pill hop
         // monitors (and clamp into the wrong work area) whenever the pointer
-        // crossed a screen edge.
-        let dragging = state.dragging.get();
+        // crossed a screen edge. Drags and their release settles never reach
+        // this function; the frame loop positions them on the cursor's monitor.
         let (px, py, pw, ph) =
             draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
@@ -1318,9 +1392,7 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let footprint_cy = (coy + py + ph / 2.0).round() as i32;
         let reset_to_cursor =
             !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let monitor = if dragging {
-            MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
-        } else if reset_to_cursor {
+        let monitor = if reset_to_cursor {
             // One-shot re-home onto the cursor's monitor, then revert so the
             // pill stays put on subsequent ticks.
             state.reset_strategy.set(ResetStrategy::Current);
@@ -1347,48 +1419,15 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
 
-        // The OS window is a fixed 600×362 transparent canvas; the visible pill
-        // is drawn inside it, centred horizontally and bottom-anchored.
-        // Clamping the *window* into the work area boxes the pill into the
-        // middle of the screen — the invisible canvas margins eat hundreds of
-        // pixels on every side. In dictation mode, clamp the pill's visible
-        // footprint instead so it can be parked at the true screen edges;
-        // panel/typing modes fill the canvas, so they keep whole-window
-        // clamping.
-        let (min_x, min_y, max_x, max_y) =
-            if state.effective_window_mode() == WindowMode::Dictation
-                && !state.assistant_active.get()
-            {
-                let fx = (cox + px).round() as i32;
-                let fy = (coy + py).round() as i32;
-                let fw = pw.round().max(1.0) as i32;
-                let fh = ph.round().max(1.0) as i32;
-                (
-                    wa.left - fx,
-                    wa.top - fy,
-                    wa.right - fx - fw,
-                    wa.bottom - fy - fh,
-                )
-            } else {
-                (wa.left, wa.top, wa.right - win_w, wa.bottom - win_h)
-            };
+        let bounds = window_clamp_bounds(state, wa, win_w, win_h);
+        let (min_x, min_y, max_x, max_y) = (
+            bounds.min_x as i32,
+            bounds.min_y as i32,
+            bounds.max_x as i32,
+            bounds.max_y as i32,
+        );
 
-        // A visible frame smaller than the clamp target inverts the bounds;
-        // keep max >= min so the clamp cannot push the origin off screen.
-        let max_x = max_x.max(min_x);
-        let max_y = max_y.max(min_y);
-
-        let (x, y) = if dragging {
-            // Drag mode: keep the grabbed point of the pill under the cursor so
-            // the window tracks the pointer 1:1 instead of jumping to centre it.
-            let mut dx = cursor.x - state.drag_grab_offset_x.get().round() as i32;
-            let mut dy = cursor.y - state.drag_grab_offset_y.get().round() as i32;
-            // Clamp the pill's footprint to the work area of whichever monitor
-            // holds the cursor.
-            dx = dx.max(min_x).min(max_x);
-            dy = dy.max(min_y).min(max_y);
-            (dx, dy)
-        } else if state.has_saved_position.get() {
+        let (x, y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
             // of the monitor that position belongs to.
             let mut sx = state.saved_x.get();
@@ -1415,6 +1454,113 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
+    }
+}
+
+/// Clamp bounds for the window top-left inside a monitor work area.
+///
+/// The OS window is a fixed transparent canvas; the visible pill is drawn
+/// inside it, centred horizontally and bottom-anchored. Clamping the *window*
+/// into the work area boxes the pill into the middle of the screen, because
+/// the invisible canvas margins eat hundreds of pixels on every side. In dictation
+/// mode, clamp the pill's visible footprint instead so it can be parked at the
+/// true screen edges; panel/typing modes fill the canvas, so they keep
+/// whole-window clamping. Shared by the cursor-tick repositioning and the
+/// frame-loop drag so the two can never disagree about the work area.
+fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> DragBounds {
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    let (min_x, min_y, max_x, max_y) =
+        if state.effective_window_mode() == WindowMode::Dictation
+            && !state.assistant_active.get()
+        {
+            let fx = (cox + px).round() as i32;
+            let fy = (coy + py).round() as i32;
+            let fw = pw.round().max(1.0) as i32;
+            let fh = ph.round().max(1.0) as i32;
+            (
+                wa.left - fx,
+                wa.top - fy,
+                wa.right - fx - fw,
+                wa.bottom - fy - fh,
+            )
+        } else {
+            (wa.left, wa.top, wa.right - win_w, wa.bottom - win_h)
+        };
+
+    // A work area smaller than the clamp target inverts the bounds; keep
+    // max >= min so the clamp cannot push the origin off screen.
+    DragBounds {
+        min_x: min_x as f64,
+        min_y: min_y as f64,
+        max_x: max_x.max(min_x) as f64,
+        max_y: max_y.max(min_y) as f64,
+    }
+}
+
+/// Frame-loop drag input: the cursor position, the current window rect, and
+/// the clamp bounds on the cursor's monitor. A drag (and its release settle)
+/// belongs to whichever monitor holds the cursor.
+fn drag_placement(hwnd: HWND, state: &PillState) -> (DragBounds, POINT, RECT) {
+    unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        let mut current = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut current);
+        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let _ = GetMonitorInfoW(monitor, &mut info);
+        let bounds = window_clamp_bounds(
+            state,
+            info.rcWork,
+            current.right - current.left,
+            current.bottom - current.top,
+        );
+        (bounds, cursor, current)
+    }
+}
+
+/// Advances one frame of drag motion: pushes the newest cursor position into
+/// the shared controller and applies its output. Runs on the frame clock (not
+/// the cursor timer) so a held drag tracks at display rate. When a release
+/// settle finishes, the final position is persisted.
+fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    if !dragging && !settling {
+        return;
+    }
+    let (bounds, cursor, current) = drag_placement(hwnd, state);
+    let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+        pointer_x: cursor.x as f64,
+        pointer_y: cursor.y as f64,
+        now: drag_now(),
+        dt,
+        bounds,
+        held: dragging,
+        reduced_motion: reduced_motion(),
+    });
+    let x = output.x.round() as i32;
+    let y = output.y.round() as i32;
+    if current.left != x || current.top != y {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+    if settling && output.settled {
+        persist_drag_position(hwnd, state);
     }
 }
 
@@ -1471,12 +1617,21 @@ fn tick_long_press(state: &PillState, dt: f64) {
             let hwnd = HWND_CELL.with(|c| c.get());
             let mut rect = RECT::default();
             let _ = GetWindowRect(hwnd, &mut rect);
+
+            // Arm the shared controller with the grab point, and seed it
+            // with the arm sample so a quick release still has velocity data.
+            let now = drag_now();
+            state.drag_motion.borrow_mut().begin_drag(
+                cursor.x as f64 - rect.left as f64,
+                cursor.y as f64 - rect.top as f64,
+                rect.left as f64,
+                rect.top as f64,
+                now,
+            );
             state
-                .drag_grab_offset_x
-                .set(cursor.x as f64 - rect.left as f64);
-            state
-                .drag_grab_offset_y
-                .set(cursor.y as f64 - rect.top as f64);
+                .drag_motion
+                .borrow_mut()
+                .push_sample(cursor.x as f64, cursor.y as f64, now);
 
             // Take an OS-level pointer capture so we keep receiving mouse
             // input (and, critically, the button release) even when the
@@ -1526,21 +1681,15 @@ fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
 fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 
-    if was_dragging && persist_position {
-        // Leave the pill where it was dropped instead of snapping back.
-        let mut rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(hwnd, &mut rect);
+    if was_dragging {
+        if persist_position {
+            // The drop point persists when the release settle finishes (the
+            // frame loop calls persist_drag_position on the settled frame),
+            // so the saved position always matches where the pill landed.
+            state.drag_motion.borrow_mut().end_drag(drag_now());
+        } else {
+            state.drag_motion.borrow_mut().reset();
         }
-        state.saved_x.set(rect.left);
-        state.saved_y.set(rect.top);
-        state.has_saved_position.set(true);
-        let (win_rect, monitor) = current_pill_geometry(hwnd);
-        ipc::send(&OutMessage::PositionChanged {
-            has_saved_position: true,
-            rect: Some(win_rect),
-            monitor,
-        });
     }
 
     state.dragging.set(false);
@@ -1554,6 +1703,26 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     }
 
     was_dragging
+}
+
+/// Persists the position the pill settled at after a drag: stores the live
+/// window origin (not the cursor) and tells the desktop, so the saved point
+/// matches the parked pill exactly.
+fn persist_drag_position(hwnd: HWND, state: &PillState) {
+    // Leave the pill where it was dropped instead of snapping back.
+    let mut rect = RECT::default();
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut rect);
+    }
+    state.saved_x.set(rect.left);
+    state.saved_y.set(rect.top);
+    state.has_saved_position.set(true);
+    let (win_rect, monitor) = current_pill_geometry(hwnd);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect: Some(win_rect),
+        monitor,
+    });
 }
 
 /// Fallback release detection.
@@ -1642,48 +1811,6 @@ fn tick_ring(state: &PillState, dt: f64) {
         || (was_pulsing && !rust_pill_shared::pulse_is_running(anim.arm_pulse))
     {
         state.dirty.set(true);
-    }
-}
-
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 {
-        return;
-    }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) {
-            0.0
-        } else {
-            new_vel
-        });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 {
-        return;
-    }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.5 && (new_vel * dt).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
     }
 }
 
