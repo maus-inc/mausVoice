@@ -4,6 +4,7 @@ import { keyframes, useTheme } from "@mui/material/styles";
 import { FormattedMessage, useIntl } from "react-intl";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import type { ChatPart } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   editAndResend,
@@ -32,6 +33,18 @@ const thinkingShimmer = keyframes`
 type ChatMessageBubbleProps = {
   id: string;
 };
+
+const BubbleTextContent = ({ texts }: { texts: ChatPart[] }) => (
+  <Stack spacing={1}>
+    {texts.map((part, index) =>
+      part.kind === "text" ? (
+        <Markdown key={`text-${index}`} remarkPlugins={[remarkGfm]}>
+          {part.text}
+        </Markdown>
+      ) : null,
+    )}
+  </Stack>
+);
 
 const bubbleSx = (isMe: boolean) => ({
   maxWidth: "75%",
@@ -257,15 +270,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
               <FormattedMessage defaultMessage="Thinking…" />
             </Typography>
           ) : (
-            <Stack spacing={1}>
-              {texts.map((part, index) =>
-                part.kind === "text" ? (
-                  <Markdown key={`text-${index}`} remarkPlugins={[remarkGfm]}>
-                    {part.text}
-                  </Markdown>
-                ) : null,
-              )}
-            </Stack>
+            <BubbleTextContent texts={texts} />
           )}
         </Box>
       </Stack>
