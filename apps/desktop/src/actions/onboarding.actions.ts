@@ -143,6 +143,7 @@ export const submitOnboarding = async () => {
     };
 
     const preferences: UserPreferences = {
+      updateChannel: "stable",
       gpuEnumerationEnabled:
         transcriptionPreference.mode === "local"
           ? transcriptionPreference.gpuEnumerationEnabled
