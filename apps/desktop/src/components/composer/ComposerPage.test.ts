@@ -94,35 +94,58 @@ import { invoke } from "@tauri-apps/api/core";
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+const setupComposerContainer = (): HTMLDivElement => {
+  constructCount = 0;
+  disposeCount = 0;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  return container;
+};
+
+const mountComposerPage = async (
+  container: HTMLDivElement,
+): Promise<ReturnType<typeof createRoot>> => {
+  let mounted: ReturnType<typeof createRoot> | null = null;
+  await act(async () => {
+    mounted = createRoot(container);
+    mounted.render(
+      createElement(StrictMode, null, createElement(ComposerPage)),
+    );
+  });
+  // Let the StrictMode mount, cleanup, remount cycle and microtasks settle.
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  if (!mounted) throw new Error("composer root did not mount");
+  return mounted;
+};
+
+const teardownComposerContainer = (
+  root: ReturnType<typeof createRoot> | null,
+  container: HTMLDivElement,
+): void => {
+  act(() => {
+    root?.unmount();
+  });
+  container.remove();
+};
+
 describe("ComposerPage VoiceInstructionRecorder lifecycle", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot> | null = null;
 
   beforeEach(() => {
-    constructCount = 0;
-    disposeCount = 0;
-    container = document.createElement("div");
-    document.body.appendChild(container);
+    container = setupComposerContainer();
   });
 
   afterEach(() => {
-    act(() => {
-      root?.unmount();
-    });
+    teardownComposerContainer(root, container);
     root = null;
-    container.remove();
   });
 
   it("builds exactly one live recorder under StrictMode (no render-phase leak)", async () => {
-    await act(async () => {
-      root = createRoot(container);
-      root.render(createElement(StrictMode, null, createElement(ComposerPage)));
-    });
-    // Let the StrictMode mount → cleanup → remount cycle and microtasks settle.
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    root = await mountComposerPage(container);
 
     // StrictMode mounts, runs the recorder effect (construct #1), cleans it up
     // (dispose #1), then remounts and runs the effect again (construct #2).
@@ -145,8 +168,6 @@ describe("ComposerPage VoiceInstructionRecorder hydration", () => {
     );
 
   beforeEach(() => {
-    constructCount = 0;
-    disposeCount = 0;
     // Fresh empty store: no generation provider and no capture path, so Voice
     // Edit Mode is unavailable until async RootSideEffects populate the store.
     fakeState = {
@@ -154,27 +175,16 @@ describe("ComposerPage VoiceInstructionRecorder hydration", () => {
       apiKeyById: {},
       userPrefs: { hasProvider: false },
     };
-    container = document.createElement("div");
-    document.body.appendChild(container);
+    container = setupComposerContainer();
   });
 
   afterEach(() => {
-    act(() => {
-      root?.unmount();
-    });
+    teardownComposerContainer(root, container);
     root = null;
-    container.remove();
   });
 
   it("enables the mic after the store hydrates without recreating the recorder", async () => {
-    await act(async () => {
-      root = createRoot(container);
-      root.render(createElement(StrictMode, null, createElement(ComposerPage)));
-    });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    root = await mountComposerPage(container);
 
     // Initially the store is empty, so the mic must be disabled.
     const before = micButton();

@@ -94,6 +94,18 @@ const pruneSessions = (): void => {
   }
 };
 
+/** Mark the session decided from a composer result and drop old sessions. */
+const decideSession = (id: string, result: string | null): string | null => {
+  touchSession(id, {
+    status: "decided",
+    decision: result === null ? "cancel" : "insert",
+    draftText: result,
+    decidedAt: Date.now(),
+  });
+  pruneSessions();
+  return result;
+};
+
 /** The session for `id`, if this desktop has ever seen it. */
 export const getReviewSession = (id: string): ReviewSession | null =>
   sessions.get(id) ?? null;
@@ -382,15 +394,7 @@ export const reviewTranscriptOnPill = async (
       presentation: "composer",
       decidedAt: Date.now(),
     });
-    const result = await reviewTextInComposer(text);
-    touchSession(id, {
-      status: "decided",
-      decision: result === null ? "cancel" : "insert",
-      draftText: result,
-      decidedAt: Date.now(),
-    });
-    pruneSessions();
-    return result;
+    return decideSession(id, await reviewTextInComposer(text));
   }
 
   const session = sessions.get(id);
@@ -454,13 +458,5 @@ export const reviewTranscriptBeforeInsert = async (
     updatedAt: now,
     decidedAt: null,
   });
-  const result = await reviewTextInComposer(text);
-  touchSession(id, {
-    status: "decided",
-    decision: result === null ? "cancel" : "insert",
-    draftText: result,
-    decidedAt: Date.now(),
-  });
-  pruneSessions();
-  return result;
+  return decideSession(id, await reviewTextInComposer(text));
 };

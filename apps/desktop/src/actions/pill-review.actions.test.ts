@@ -81,6 +81,21 @@ const currentReviewId = (): string => {
   return review.id;
 };
 
+const startPillReview = async (
+  ...args: Parameters<typeof reviewTranscriptOnPill>
+): Promise<string | null> => {
+  const pending = reviewTranscriptOnPill(...args);
+  await flush(() => getAppState().pendingPillReview !== null);
+  return pending;
+};
+
+const cancelPillReview = async (
+  pending: Promise<string | null>,
+): Promise<void> => {
+  decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
+  await expect(pending).resolves.toBeNull();
+};
+
 describe("reviewTranscriptOnPill", () => {
   beforeEach(() => {
     cancelAllPillReviews();
@@ -98,8 +113,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("publishes the transcript to the pill and inserts it on Insert", async () => {
-    const pending = reviewTranscriptOnPill("hello world");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("hello world");
 
     expect(getAppState().pendingPillReview?.text).toBe("hello world");
 
@@ -112,17 +126,13 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("returns null and keeps the transcript out of the target on Cancel", async () => {
-    const pending = reviewTranscriptOnPill("draft");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("draft");
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 
   it("copies to the clipboard instead of inserting on Copy", async () => {
-    const pending = reviewTranscriptOnPill("copy me");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("copy me");
 
     decide?.({ payload: { reviewId: currentReviewId(), action: "copy" } });
 
@@ -133,8 +143,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("inserts the text edited in the pill panel, not the original", async () => {
-    const pending = reviewTranscriptOnPill("rough text");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough text");
 
     decide?.({
       payload: {
@@ -150,8 +159,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("copies the edited text rather than the original on Copy", async () => {
-    const pending = reviewTranscriptOnPill("rough text");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough text");
 
     decide?.({
       payload: {
@@ -168,8 +176,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("falls back to the transcript when the pill sends an empty edit", async () => {
-    const pending = reviewTranscriptOnPill("original words");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("original words");
 
     decide?.({
       payload: { reviewId: currentReviewId(), action: "insert", text: "   " },
@@ -179,8 +186,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("queues a second transcript behind the one on the pill", async () => {
-    const first = reviewTranscriptOnPill("first");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const first = await startPillReview("first");
     const firstId = currentReviewId();
 
     const second = reviewTranscriptOnPill("second");
@@ -196,14 +202,12 @@ describe("reviewTranscriptOnPill", () => {
     await flush(() => getAppState().pendingPillReview?.text === "second");
     expect(getAppState().pendingPillReview?.text).toBe("second");
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(second).resolves.toBeNull();
+    await cancelPillReview(second);
     expect(getAppState().pendingPillReview).toBeNull();
   });
 
   it("ignores a decision for a review that is no longer on the pill", async () => {
-    const pending = reviewTranscriptOnPill("current");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("current");
 
     decide?.({ payload: { reviewId: "stale-id", action: "insert" } });
     await flush(() => false);
@@ -211,8 +215,7 @@ describe("reviewTranscriptOnPill", () => {
     // The stale click neither resolved nor replaced the live review.
     expect(getAppState().pendingPillReview?.text).toBe("current");
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 
   it("falls back to the composer when the decision listener cannot be registered", async () => {
@@ -243,21 +246,18 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("ignores an unknown action instead of resolving the review", async () => {
-    const pending = reviewTranscriptOnPill("safe");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("safe");
 
     decide?.({ payload: { reviewId: currentReviewId(), action: "explode" } });
     await flush(() => false);
 
     expect(getAppState().pendingPillReview?.text).toBe("safe");
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 
   it("records source, queued status, and timestamps on enqueue", async () => {
-    const pending = reviewTranscriptOnPill("rough take", "assistant-tool");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough take", "assistant-tool");
 
     const [queued] = getQueuedSessions();
     const session = getReviewSession(queued.id);
@@ -268,24 +268,20 @@ describe("reviewTranscriptOnPill", () => {
     expect(session?.decision).toBeNull();
     expect(session?.createdAt).toBeLessThanOrEqual(Date.now());
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 
   it("defaults the source to dictation", async () => {
-    const pending = reviewTranscriptOnPill("spoken words");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("spoken words");
 
     const [queued] = getQueuedSessions();
     expect(getReviewSession(queued.id)?.source).toBe("dictation");
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 
   it("positions queued sessions behind the open head", async () => {
-    const first = reviewTranscriptOnPill("first");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const first = await startPillReview("first");
     const second = reviewTranscriptOnPill("second");
     await flush(() => getQueuedSessions().length === 2);
 
@@ -302,8 +298,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("records the draft on the decided session", async () => {
-    const pending = reviewTranscriptOnPill("rough take");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough take");
     const id = currentReviewId();
 
     decide?.({
@@ -320,8 +315,7 @@ describe("reviewTranscriptOnPill", () => {
 
   it("hands Edit to the composer and settles with its result", async () => {
     mocks.reviewTextInComposer.mockResolvedValueOnce("composed take");
-    const pending = reviewTranscriptOnPill("rough take");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough take");
     const id = currentReviewId();
 
     decide?.({
@@ -341,8 +335,7 @@ describe("reviewTranscriptOnPill", () => {
 
   it("falls back to the original when the pill sends an empty edit for Edit", async () => {
     mocks.reviewTextInComposer.mockResolvedValueOnce("composed take");
-    const pending = reviewTranscriptOnPill("rough take");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const pending = await startPillReview("rough take");
 
     decide?.({
       payload: { reviewId: currentReviewId(), action: "edit", text: "   " },
@@ -375,8 +368,7 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("marks queued reviews cancelled on teardown", async () => {
-    const first = reviewTranscriptOnPill("first");
-    await flush(() => getAppState().pendingPillReview !== null);
+    const first = await startPillReview("first");
     const second = reviewTranscriptOnPill("second");
     await flush(() => getQueuedSessions().length === 2);
     const ids = getQueuedSessions().map((session) => session.id);
@@ -416,7 +408,6 @@ describe("reviewTranscriptOnPill", () => {
     expect(getAppState().pendingPillReview?.text).toBe("spoken words");
     expect(mocks.reviewTextInComposer).not.toHaveBeenCalled();
 
-    decide?.({ payload: { reviewId: currentReviewId(), action: "cancel" } });
-    await expect(pending).resolves.toBeNull();
+    await cancelPillReview(pending);
   });
 });
