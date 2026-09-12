@@ -963,6 +963,9 @@ fn clear_pointer_pin(state: &PillState, _window: &gtk::Window) {
                     max_x: 1e9,
                     max_y: 1e9,
                 },
+                // Same backend as the Wayland tick below: no work area, so
+                // the edge ease stays off here too.
+                edge_work: None,
                 held: true,
                 reduced_motion: reduced_motion(),
             });
