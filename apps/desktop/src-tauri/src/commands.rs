@@ -2781,6 +2781,76 @@ pub async fn meeting_complete(
     .await
     .map_err(|err| err.to_string())
 }
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookCreateArgs {
+    pub id: String,
+    pub url: String,
+    pub events: Vec<String>,
+    pub secret: Option<String>,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn webhook_create(
+    args: WebhookCreateArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::Webhook, String> {
+    let (secret_salt, secret_ciphertext) = match args.secret.as_deref().filter(|v| !v.is_empty()) {
+        Some(secret) => {
+            let protected = crate::system::crypto::protect_api_key(secret);
+            (Some(protected.salt_b64), Some(protected.ciphertext_b64))
+        }
+        None => (None, None),
+    };
+    let webhook = crate::domain::Webhook {
+        id: args.id,
+        url: args.url,
+        events: serde_json::to_string(&args.events).map_err(|err| err.to_string())?,
+        secret_salt,
+        secret_ciphertext,
+        enabled: args.enabled,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    };
+    crate::db::webhook_queries::insert_webhook(database.pool(), &webhook)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(webhook)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn webhook_list(
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Webhook>, String> {
+    crate::db::webhook_queries::fetch_webhooks(database.pool())
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn webhook_delete(
+    id: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::webhook_queries::delete_webhook(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn webhook_emit(
+    event: String,
+    payload: serde_json::Value,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::webhooks::emit_event(database.pool(), &event, payload).await;
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn automation_api_token(

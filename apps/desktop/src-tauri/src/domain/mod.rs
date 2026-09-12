@@ -15,6 +15,7 @@ pub mod term;
 pub mod tone;
 pub mod transcription;
 pub mod user;
+pub mod webhook;
 
 pub use api_key::{ApiKey, ApiKeyCreateRequest, ApiKeyUpdateRequest, ApiKeyView};
 pub use app_target::{AppTarget, EVT_REGISTER_CURRENT_APP};
@@ -40,3 +41,4 @@ pub use term::Term;
 pub use tone::Tone;
 pub use transcription::{Transcription, TranscriptionAudioSnapshot};
 pub use user::User;
+pub use webhook::{Webhook, WebhookDelivery};

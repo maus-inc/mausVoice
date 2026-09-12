@@ -447,6 +447,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::meeting_search,
             crate::commands::meeting_export,
             crate::commands::automation_api_token,
+            crate::commands::webhook_create,
+            crate::commands::webhook_list,
+            crate::commands::webhook_delete,
+            crate::commands::webhook_emit,
         ])
 }
 

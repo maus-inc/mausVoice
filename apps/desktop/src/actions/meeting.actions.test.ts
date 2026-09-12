@@ -13,6 +13,7 @@ const {
   generateTextMock,
   createConversationMock,
   createChatMessageMock,
+  emitEventMock,
 } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
@@ -25,6 +26,7 @@ const {
   generateTextMock: vi.fn(),
   createConversationMock: vi.fn(),
   createChatMessageMock: vi.fn(),
+  emitEventMock: vi.fn(),
 }));
 
 let persistenceAllowed = true;
@@ -45,6 +47,9 @@ vi.mock("../repos", () => ({
     }),
     completeMeeting: completeMeetingMock,
     updateMeeting: updateMeetingMock,
+  }),
+  getWebhookRepo: () => ({
+    emitEvent: emitEventMock,
   }),
   getGenerateTextRepo: () => ({
     warnings: [] as string[],
@@ -131,6 +136,10 @@ describe("stopMeetingRecording conversation creation", () => {
     expect(createConversationMock).toHaveBeenCalledTimes(1);
     expect(createConversationMock).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Weekly sync" }),
+    );
+    expect(emitEventMock).toHaveBeenCalledWith(
+      "meeting.completed",
+      expect.objectContaining({ id: "meeting-1" }),
     );
     expect(completeMeetingMock.mock.invocationCallOrder[0] ?? 0).toBeLessThan(
       createConversationMock.mock.invocationCallOrder[0] ?? 1,

@@ -10,6 +10,7 @@ pub mod term_queries;
 pub mod tone_queries;
 pub mod transcription_queries;
 pub mod user_queries;
+pub mod webhook_queries;
 
 pub const DB_FILENAME: &str = "mausvoice.db";
 pub const DB_CONNECTION: &str = "sqlite:mausvoice.db";
@@ -148,6 +149,8 @@ pub const EXPANSION_FLAGS_MIGRATION_SQL: &str =
     include_str!("migrations/075_expansion_flags.sql");
 pub const MEETINGS_MIGRATION_SQL: &str =
     include_str!("migrations/076_meetings.sql");
+pub const WEBHOOKS_MIGRATION_SQL: &str =
+    include_str!("migrations/077_webhooks.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -593,6 +596,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 76,
             description: "create_meetings_tables",
             sql: MEETINGS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 77,
+            description: "create_webhooks_tables",
+            sql: WEBHOOKS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

@@ -10,6 +10,7 @@ pub mod platform;
 pub mod state;
 pub mod system;
 pub mod utils;
+pub mod webhooks;
 
 pub fn run() {
     app::run(tauri::generate_context!()).expect("tauri runtime failure");

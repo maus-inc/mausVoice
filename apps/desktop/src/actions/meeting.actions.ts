@@ -4,7 +4,7 @@ import {
   MeetingSpeaker,
 } from "../types/meetings.types";
 import type { Conversation } from "@maus-inc/types";
-import { getGenerateTextRepo, getMeetingRepo } from "../repos";
+import { getGenerateTextRepo, getMeetingRepo, getWebhookRepo } from "../repos";
 import type { MeetingExportFormat } from "../repos/meeting.repo";
 import { createChatMessage, createConversation } from "./chat.actions";
 import { createId } from "../utils/id.utils";
@@ -72,6 +72,17 @@ export const stopMeetingRecording = async (
   });
 
   await createMeetingConversation(meetingId);
+
+  try {
+    await getWebhookRepo().emitEvent("meeting.completed", {
+      id: meetingId,
+      durationMs,
+    });
+  } catch (error) {
+    getLogger().warning(
+      `Meeting webhook emit failed for meeting ${meetingId}: ${error instanceof Error ? error.message : "unknown"}`,
+    );
+  }
 };
 
 export const createMeetingConversation = async (

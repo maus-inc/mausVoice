@@ -10,6 +10,7 @@ import {
   getGenerateTextRepo,
   getTranscribeAudioRepo,
   getTranscriptionRepo,
+  getWebhookRepo,
 } from "../repos";
 import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
 import { getAppState, produceAppState } from "../store";
@@ -472,6 +473,17 @@ export const storeTranscription = async (
       ...existingIds,
     ];
   });
+
+  try {
+    await getWebhookRepo().emitEvent("transcription.completed", {
+      id: storedTranscription.id,
+      wordCount: wordsAdded,
+    });
+  } catch (error) {
+    getLogger().warning(
+      `Transcription webhook emit failed: ${error instanceof Error ? error.message : "unknown"}`,
+    );
+  }
 
   if (wordsAdded > 0) {
     try {
