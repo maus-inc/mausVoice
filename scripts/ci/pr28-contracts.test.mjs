@@ -30,6 +30,7 @@ const source = Object.fromEntries(
     ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
     ["windowsState", "packages/rust_windows_pill/src/state.rs"],
     ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+    ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
     ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
     ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
     ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
@@ -111,12 +112,14 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     assert.match(
       source.gtkPill,
-      // The X11 drop position is still persisted (now via the shared
-      // clear_pointer_pin teardown, which both the release handler and the
-      // missed-release backstop call).
-      /x11::persist_drop_position\(/,
+      // The X11 drop position is still persisted through the shared
+      // clear_pointer_pin teardown, which the release handler, the motion
+      // stale-pin check, and the missed-release backstop all call. The
+      // persist_drop_position call itself moved into the x11 module, so it
+      // no longer carries the x11:: prefix at its pill.rs call sites.
+      /clear_pointer_pin\(/,
     );
-    assert.match(source.gtkPill, /x11_release_persisted\.set\(persisted\)/);
+    assert.match(source.gtkX11, /x11_release_persisted\.set\(true\)/);
     assert.match(source.gtkX11, /pub\(crate\) fn persist_drop_position/);
     assert.match(
       source.gtkX11,
@@ -228,28 +231,27 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // Dragging moves the pill's own window, so a fast drag outruns it and the
     // cursor hit test misses. Trusting that would collapse the pill to its
     // unhovered size mid-gesture and re-expand it on release.
-    assert.match(source.sharedPill, /pub fn resolve_hover/);
+    assert.match(source.sharedHover, /pub struct HoverIntent/);
     assert.match(
-      source.sharedPill,
-      /hover_survives_a_drag_that_outruns_the_window/,
+      source.sharedHover,
+      /pub fn advance\(&mut self, frame: &HoverFrame\)/,
     );
+    assert.match(source.sharedHover, /fn enters_after_dwell_not_before/);
+    assert.match(source.sharedHover, /fn fast_pass_never_arms/);
     assert.match(
-      source.sharedPill,
-      /hover_follows_the_cursor_once_the_button_is_released/,
+      source.sharedHover,
+      /fn pin_holds_while_down_regardless_of_probe/,
     );
 
     // The gate must be `pointer_down`, NOT the gesture flags. Moving past the
     // cancel threshold before the hold completes clears `long_press_active`
     // without setting `dragging`, so a gesture-keyed gate drops the pin while
     // the button is still down — the "drag across without releasing" collapse.
-    assert.match(
-      source.sharedPill,
-      /hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag/,
-    );
-    assert.match(
-      source.sharedPill,
-      /pub fn resolve_hover\(probed:\s*bool,\s*pointer_down:\s*bool\)/,
-    );
+    assert.match(source.sharedHover, /fn release_outside_exits_after_grace/);
+    assert.match(source.sharedHover, /pub probed: bool/);
+    assert.match(source.sharedHover, /pub pointer_down: bool/);
+    assert.match(source.sharedHover, /pub entered: bool/);
+    assert.match(source.sharedHover, /pub exited: bool/);
 
     for (const [pill, state] of [
       [source.gtkPill, source.gtkState],
@@ -257,18 +259,20 @@ describe("PR28 ring-alpha render-loop policy", () => {
       [source.windowsPill, source.windowsState],
     ]) {
       assert.match(state, /pointer_down: Cell<bool>/);
-      assert.match(pill, /resolve_hover\(/);
+      assert.match(pill, /hover_intent\.borrow_mut\(\)\.advance\(/);
       assert.match(pill, /pointer_down\.get\(\)/);
       assert.match(pill, /pointer_down\.set\(true\)/);
       assert.match(pill, /pointer_down\.set\(false\)/);
-      // A gesture-flag gate must not creep back in.
-      assert.doesNotMatch(pill, /resolve_hover\([\s\S]{0,200}?gesture_active/);
+      // The hover IPC fires only on entered/exited edges, so each transition
+      // reports exactly once instead of every frame.
+      assert.match(pill, /output\.entered \|\| output\.exited/);
     }
 
     // The pin must be released when the button comes up, or a drag finishing
     // away from the pill would leave it stuck open.
     assert.match(source.macApp, /update_hover\(ctx\.view, ctx\);/);
-    assert.match(source.gtkPill, /let now_hovered = input::is_over_pill_area/);
+    // Probes feed the shared controller, which decides once per frame.
+    assert.match(source.gtkPill, /input::is_over_pill_area/);
     assert.match(source.windowsPill, /check_hover\(hwnd, state\);/);
 
     // A release event can be missed (stolen grab, locked session), so every
