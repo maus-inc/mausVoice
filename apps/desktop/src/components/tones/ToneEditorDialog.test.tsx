@@ -20,16 +20,9 @@ const {
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-intl")>();
-  return {
-    ...actual,
-    useIntl: () => ({
-      formatMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-        defaultMessage,
-    }),
-    FormattedMessage: ({ defaultMessage }: { defaultMessage: string }) =>
-      defaultMessage,
-  };
+  const { reactIntlMockModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlMockModule(importOriginal);
 });
 
 vi.mock("../../actions/tone.actions", () => ({
@@ -51,29 +44,12 @@ import { setAppState } from "../../store";
 import { TonePreviewNoProviderError } from "../../actions/tone-preview.actions";
 import { ToneEditorDialog } from "./ToneEditorDialog";
 
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true;
+import {
+  ensureUiHarness,
+  setMatchMedia,
+} from "../../../test/helpers/jsdom-ui-harness";
 
-// jsdom has no ResizeObserver or matchMedia; MUI needs both.
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
-
-const setMatchMedia = (matches: boolean) => {
-  window.matchMedia = ((query: string) => ({
-    matches,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-};
+ensureUiHarness();
 
 let container: HTMLDivElement;
 let root: Root;
