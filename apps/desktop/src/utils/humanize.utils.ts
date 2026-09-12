@@ -123,14 +123,7 @@ const splitProtectedSegments = (
     }
     if (openFence !== null) {
       openFence.lines.push(line);
-      // A closing fence is marker-only (plus blanks). Lines with an info
-      // string (e.g. ```python) inside an open fence are content; treating
-      // them as closers would split the block and scrub its interior.
-      if (
-        marker &&
-        FENCE_CLOSE_LINE.test(line) &&
-        closesFence(marker, openFence.marker)
-      ) {
+      if (tryCloseFence(openFence, line, marker)) {
         lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
         openFence = null;
       }
@@ -138,18 +131,11 @@ const splitProtectedSegments = (
       continue;
     }
 
-    if (
-      isMarkdownTableRow(line) &&
-      isMarkdownTableDelimiter(lines[lineIndex + 1] ?? "")
-    ) {
+    const table = readTableBlock(lines, lineIndex);
+    if (table) {
       flushProse();
-      const tableLines = [line, lines[lineIndex + 1]];
-      lineIndex += 2;
-      while (lineIndex < lines.length && isMarkdownTableRow(lines[lineIndex])) {
-        tableLines.push(lines[lineIndex]);
-        lineIndex++;
-      }
-      lineBlocks.push({ protected: true, text: tableLines.join("\n") });
+      lineBlocks.push({ protected: true, text: table.text });
+      lineIndex = table.nextIndex;
       continue;
     }
 
@@ -162,6 +148,38 @@ const splitProtectedSegments = (
     lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
   }
   return lineBlocks;
+};
+
+const tryCloseFence = (
+  openFence: { lines: string[]; marker: string },
+  line: string,
+  marker: string | null,
+): boolean => {
+  // A closing fence is marker-only (plus blanks). Lines with an info
+  // string (e.g. ```python) inside an open fence are content; treating
+  // them as closers would split the block and scrub its interior.
+  if (!marker) return false;
+  return FENCE_CLOSE_LINE.test(line) && closesFence(marker, openFence.marker);
+};
+
+const readTableBlock = (
+  lines: string[],
+  startIndex: number,
+): { text: string; nextIndex: number } | null => {
+  const line = lines[startIndex];
+  if (
+    !isMarkdownTableRow(line) ||
+    !isMarkdownTableDelimiter(lines[startIndex + 1] ?? "")
+  ) {
+    return null;
+  }
+  const tableLines = [line, lines[startIndex + 1]];
+  let nextIndex = startIndex + 2;
+  while (nextIndex < lines.length && isMarkdownTableRow(lines[nextIndex])) {
+    tableLines.push(lines[nextIndex]);
+    nextIndex++;
+  }
+  return { text: tableLines.join("\n"), nextIndex };
 };
 
 // An opening fence is a line whose first non-blank characters are a backtick

@@ -97,7 +97,7 @@ export const copyPendingPasteReview = async (
   text: string,
 ): Promise<void> => {
   const pending = getPendingPasteReview(message.metadata);
-  if (!pending || pending.status !== "pending") {
+  if (pending?.status !== "pending") {
     throw new Error("This Paste review is no longer pending");
   }
   if (!text.trim()) {
@@ -120,7 +120,7 @@ export const cancelPendingPasteReview = async (
   text: string,
 ): Promise<void> => {
   const pending = getPendingPasteReview(message.metadata);
-  if (!pending || pending.status !== "pending") {
+  if (pending?.status !== "pending") {
     throw new Error("This Paste review is no longer pending");
   }
 

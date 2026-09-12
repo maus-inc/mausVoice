@@ -6,16 +6,46 @@ import { pathToFileURL } from "node:url";
  * Strict SemVer 2.0.0 validation for the release dispatcher. Keeping this
  * separate from the workflow makes the grammar executable and regression
  * testable instead of approximating it with a shell glob.
+ *
+ * Implemented as a small parser over dot-separated identifiers rather than
+ * one large regular expression: each identifier rule stays readable and the
+ * whole grammar stays linear with no backtracking risk.
  */
-const SEMVER =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const isNumericIdentifier = (id) => /^(0|[1-9]\d*)$/.test(id);
+const isBuildIdentifier = (id) => id.length > 0 && /^[0-9A-Za-z-]+$/.test(id);
+const isPrereleaseIdentifier = (id) =>
+  id.length > 0 &&
+  (isNumericIdentifier(id) ||
+    (/^[0-9A-Za-z-]+$/.test(id) && /[A-Za-z-]/.test(id)));
 
-export const isStrictSemver = (version) => SEMVER.test(version);
-
-export const isPrereleaseVersion = (version) => {
-  const match = SEMVER.exec(version);
-  return match?.[4] !== undefined;
+const parseSemver = (version) => {
+  if (typeof version !== "string") return null;
+  const buildIndex = version.indexOf("+");
+  const withoutBuild =
+    buildIndex === -1 ? version : version.slice(0, buildIndex);
+  const build = buildIndex === -1 ? null : version.slice(buildIndex + 1);
+  if (build !== null && !build.split(".").every(isBuildIdentifier)) {
+    return null;
+  }
+  const dashIndex = withoutBuild.indexOf("-");
+  const core = dashIndex === -1 ? withoutBuild : withoutBuild.slice(0, dashIndex);
+  const prerelease = dashIndex === -1 ? null : withoutBuild.slice(dashIndex + 1);
+  if (core.split(".").length !== 3 || !core.split(".").every(isNumericIdentifier)) {
+    return null;
+  }
+  if (
+    prerelease !== null &&
+    !prerelease.split(".").every(isPrereleaseIdentifier)
+  ) {
+    return null;
+  }
+  return { prerelease };
 };
+
+export const isStrictSemver = (version) => parseSemver(version) !== null;
+
+export const isPrereleaseVersion = (version) =>
+  parseSemver(version)?.prerelease != null;
 
 /**
  * Return the release channel encoded by a strict SemVer version. Keeping this

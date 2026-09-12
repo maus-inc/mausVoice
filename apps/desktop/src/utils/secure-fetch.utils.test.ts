@@ -147,7 +147,7 @@ describe("secureFetch", () => {
       ([command]) => command === "private_http_request",
     )?.[1]?.request;
     const decoded = decodeBase64(privateRequest.bodyBase64);
-    expect(decoded.length).toBe(requestBody.length);
+    expect(decoded).toHaveLength(requestBody.length);
     expect(
       Uint8Array.from(decoded, (character) => character.charCodeAt(0)),
     ).toEqual(requestBody);

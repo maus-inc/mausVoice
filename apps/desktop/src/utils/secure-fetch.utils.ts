@@ -52,7 +52,7 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
   ) {
     const chunk = bytes.subarray(offset, offset + BASE64_INPUT_CHUNK_BYTES);
     let binary = "";
-    for (const byte of chunk) binary += String.fromCharCode(byte);
+    for (const byte of chunk) binary += String.fromCodePoint(byte);
     encodedChunks.push(btoa(binary));
   }
   return encodedChunks.join("");
@@ -165,7 +165,7 @@ const base64ToBytes = (encoded: string): Uint8Array => {
   }
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
+    bytes[index] = binary.codePointAt(index) ?? 0;
   }
   return bytes;
 };
