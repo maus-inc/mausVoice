@@ -289,7 +289,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 );
                 app.manage(Arc::clone(&automation));
                 if let Err(err) = crate::automation_server::write_connection_file(
-                    app.handle(),
+                    app.handle().clone(),
                     &automation,
                     crate::automation_server::AUTOMATION_DEFAULT_PORT,
                 ) {
