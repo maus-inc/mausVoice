@@ -48,7 +48,9 @@ export const SignInForm = () => {
       setAwaitingSignInNavigation(false);
       setEmailDialogOpen(false);
       setDidSignUpWithAccount(!isPersonalUse);
-      goToOnboardingPage(isPersonalUse ? "personalCredentials" : "userDetails");
+      goToOnboardingPage(
+        isPersonalUse ? "personalCredentials" : "chooseTranscription",
+      );
     }
   }, [isSignedIn, awaitingSignInNavigation, isPersonalUse]);
 
@@ -85,7 +87,9 @@ export const SignInForm = () => {
   const handleContinue = () => {
     trackButtonClick("onboarding_continue_signed_in");
     setDidSignUpWithAccount(!isPersonalUse);
-    goToOnboardingPage(isPersonalUse ? "personalCredentials" : "userDetails");
+    goToOnboardingPage(
+      isPersonalUse ? "personalCredentials" : "chooseTranscription",
+    );
   };
 
   const handleSignOut = async () => {

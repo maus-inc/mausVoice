@@ -19,6 +19,7 @@ fn main() {
         check_accessibility_permission,
         check_app_location_writable,
         check_focused_paste_target,
+        check_for_channel_update,
         check_microphone_permission,
         clear_local_data,
         composer_discard_text,

@@ -1,7 +1,10 @@
 import { Box, Button, Stack } from "@mui/material";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
-import { goToOnboardingPage } from "../../actions/onboarding.actions";
+import {
+  goToOnboardingPage,
+  markPrerequisite,
+} from "../../actions/onboarding.actions";
 import enableA11yVideo from "../../assets/enable-a11y.mp4";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -46,12 +49,22 @@ export const A11yPermsForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_a11y_perms_continue");
+    markPrerequisite("accessibility");
     goToOnboardingPage("keybindings");
   };
 
+  // A restart that lands back here with the permission already granted
+  // moves on without replaying the step.
+  useEffect(() => {
+    if (isAuthorized) {
+      markPrerequisite("accessibility");
+      goToOnboardingPage("keybindings");
+    }
+  }, [isAuthorized]);
+
   const handleSkip = () => {
     trackButtonClick("onboarding_a11y_perms_skip");
-    goToOnboardingPage("keybindings");
+    goToOnboardingPage("keybindings", "skip");
   };
 
   const form = (

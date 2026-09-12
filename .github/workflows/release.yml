@@ -516,6 +516,44 @@ jobs:
           node scripts/ci/build-updater-manifest.mjs
           cat dist/latest.json
 
+      # The in-app changelog history reads the per-release changelog.json
+      # asset, so every release — stable or beta — publishes one built from
+      # the same notes input as the release body and the updater manifest.
+      - name: Build changelog artifact
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_NAME: ${{ steps.tag.outputs.release_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_BODY_FILE: ${{ steps.body.outputs.body_file }}
+          CHANGELOG_OUT: dist/changelog.json
+        run: |
+          node scripts/ci/build-changelog.mjs
+          cat dist/changelog.json
+
+      # Beta clients check a rolling latest-beta.json under a dedicated
+      # release instead of the versioned manifest, so one asset always names
+      # the newest beta. Unsigned betas fail closed like stable releases:
+      # an unverifiable manifest is worse than none.
+      - name: Build beta channel manifest
+        if: inputs.prerelease == true
+        env:
+          ARTIFACTS_DIR: dist
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+          OUTPUT_PATH: dist/latest-beta.json
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+        run: |
+          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
+            echo "::error::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured. A beta release must publish a signed latest-beta.json, or beta clients will 404 and lose the ability to update." >&2
+            exit 1
+          fi
+          node scripts/ci/build-updater-manifest.mjs
+          cat dist/latest-beta.json
+
       - name: Publish release
         uses: softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 # v3.0.3
         # 'token' input (default: github.token) overrides GITHUB_TOKEN, so pass the
@@ -538,6 +576,24 @@ jobs:
             dist/**/*.AppImage
             dist/**/*.sig
             dist/latest.json
+            dist/changelog.json
+
+      # The beta channel reads one rolling asset, so every beta publish
+      # refreshes it under the dedicated beta-channel release (created once,
+      # then updated in place).
+      - name: Update beta-channel rolling manifest
+        if: inputs.prerelease == true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view beta-channel --repo maus-inc/mausVoice >/dev/null 2>&1; then
+            gh release create beta-channel --repo maus-inc/mausVoice \
+              --prerelease \
+              --title "mausVoice beta channel" \
+              --notes "Rolling beta manifest. Refreshed by every beta release; install it by joining the beta update channel in Settings."
+          fi
+          gh release upload beta-channel dist/latest-beta.json --repo maus-inc/mausVoice --clobber
 
   publish-cask:
     name: Publish Homebrew cask
