@@ -22,3 +22,29 @@ describe("supportsOpenAIJsonSchema", () => {
     }
   });
 });
+
+import { createJsonResponseFormatTests } from "../src/test-helpers/shared-json-response-format.helper";
+
+createJsonResponseFormatTests({
+  describeName: "openaiGenerateTextResponse response_format selection",
+  loadModule: async () => {
+    const mod = await import("../src/openai.utils");
+    return mod;
+  },
+  functionName: "openaiGenerateTextResponse",
+  jsonObjectModels: [
+    "gpt-4-turbo",
+    "gpt-3.5-turbo",
+    "gpt-4-1106-preview",
+    "gpt-4-turbo-preview",
+    "gpt-4-0314",
+    "gpt-3.5-turbo-16k",
+    "gpt-4-vision-preview",
+  ],
+  jsonSchemaModels: [
+    "o3-mini",
+    "gpt-4o-mini",
+    "gpt-4o-2024-08-06",
+    "gpt-5-mini",
+  ],
+});

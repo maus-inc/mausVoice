@@ -115,10 +115,22 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
                 ClickAction::OpenInNew => {
-                    if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                        ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    if let Some(review_id) = review_id {
+                        // The desktop receives this exact edit and settles the
+                        // review only after its caller confirms it is durable.
+                        let text = state.entry_text.borrow().clone();
+                        send_review_decision(&review_id, "open", Some(text));
+                    } else {
+                        if let Some(ref id) = *state.assistant_conversation_id.borrow() {
+                            ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                        }
+                        ipc::send(&OutMessage::AssistantClose);
                     }
-                    ipc::send(&OutMessage::AssistantClose);
                 }
                 ClickAction::KeyboardButton => {
                     ipc::send(&OutMessage::EnableTypeMode);

@@ -6,6 +6,7 @@ import type {
 import { getToolRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
+import type { ToolExecutionContext } from "../tools/base.tool";
 import { registerToolInfos, registerToolPermission } from "../utils/app.utils";
 
 export const loadTools = async (): Promise<void> => {
@@ -90,6 +91,7 @@ export const consumeToolToken = (
 export const executeTool = async (
   toolId: string,
   params: Record<string, unknown>,
+  context?: ToolExecutionContext,
 ): Promise<Record<string, unknown>> => {
   const state = getAppState();
   const toolInfo = state.toolInfoById[toolId];
@@ -97,7 +99,7 @@ export const executeTool = async (
     throw new Error(`Unknown tool: ${toolId}`);
   }
   const tool = createTool(toolInfo);
-  return await tool.execute(params);
+  return await tool.execute(params, context);
 };
 
 export const setToolAlwaysAllow = (opts: {

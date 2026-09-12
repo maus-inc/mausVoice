@@ -9,7 +9,7 @@ mausVoice updates itself from GitHub Releases. The app reads a manifest publishe
 
 ## How the app checks
 
-The desktop app checks for updates when it starts and every six hours after that, as long as the window is not hidden. Development builds never check, because they run against a locally built bundle no release manifest describes.
+The desktop app checks for updates when it starts and every six hours after that. Development builds never check, because they run against a locally built bundle no release manifest describes.
 
 When a newer version exists you will see:
 
@@ -24,9 +24,9 @@ Open **Settings → More settings → Software update**. The section shows the v
 
 ## Installing
 
-Choose **Update** in the dialog and mausVoice downloads the new version with a progress bar, installs it, and restarts. Your preferences, history, dictionary, and API keys live outside the application bundle and are untouched.
+For an in-place update, choose **Update** in the dialog and mausVoice downloads the new version with a progress bar, installs it, and restarts. The macOS fallback described below verifies and opens a disk image for you to complete manually. Your preferences, history, dictionary, and API keys live outside the application bundle and are untouched.
 
-On macOS, the in-place update fails when the app runs from a read-only volume, a quarantined download, or a directory owned by another user. mausVoice detects this and falls back to downloading the `.pkg` installer and opening it in Installer.app; that path only ever downloads over HTTPS from `github.com`. The cleanest fix is to move mausVoice into `/Applications` and update from there.
+On macOS, when mausVoice cannot write to its install location, including a read-only filesystem or cross-device move, it falls back to downloading the `.dmg` installer. It verifies the disk image against its updater signature before opening it through macOS's default handler. The fallback starts from `github.com` over HTTPS and only follows trusted GitHub-release redirects. The cleanest fix for a read-only install is to move mausVoice into `/Applications` and update from there.
 
 Homebrew users can also run `brew upgrade --cask mausvoice-desktop`. The tap is only ever pointed at stable releases.
 

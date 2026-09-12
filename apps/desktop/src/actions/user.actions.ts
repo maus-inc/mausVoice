@@ -672,6 +672,14 @@ export const setIncognitoModeIncludeInStats = async (
   }, "Failed to save incognito mode stats preference. Please try again.");
 };
 
+export const setPreserveAudioOnFailure = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.preserveAudioOnFailure = enabled;
+  }, "Failed to save failed-transcription audio preference. Please try again.");
+};
+
 export const setDictationPillVisibility = async (
   visibility: DictationPillVisibility,
 ): Promise<void> => {
@@ -841,9 +849,9 @@ export const setReviewBeforeInsert = async (
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.reviewBeforeInsert = enabled;
-    // A composer review step conflicts with live interim streaming; see the
-    // realtime counterpart above. Turning review on therefore turns
-    // real-time output off in the same persisted write.
+    // A review step conflicts with live interim streaming; see the realtime
+    // counterpart above. Turning review on therefore turns real-time output
+    // off in the same persisted write.
     if (enabled) {
       preferences.realtimeOutputEnabled = false;
     }

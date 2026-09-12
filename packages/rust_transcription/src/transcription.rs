@@ -107,11 +107,11 @@ impl TranscriptionEngine {
             return Err("samples must not be empty".to_string());
         }
 
-        let filtered_samples: Vec<f32> = input
-            .samples
-            .into_iter()
-            .filter(|sample| sample.is_finite())
-            .collect();
+        // Keep the request's allocation and compact it in place. Building a
+        // second vector before resampling doubles peak memory for the largest
+        // accepted sidecar payloads.
+        let mut filtered_samples = input.samples;
+        filtered_samples.retain(|sample| sample.is_finite());
 
         if filtered_samples.is_empty() {
             return Err("no finite samples provided".to_string());

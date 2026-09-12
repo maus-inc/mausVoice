@@ -9,7 +9,7 @@
     "dev:mac": "cross-env TAURI_PLATFORM=macos pnpm run dev:tauri",
     "dev:linux": "cross-env TAURI_PLATFORM=linux pnpm run dev:tauri",
     "dev:windows": "cross-env TAURI_PLATFORM=windows pnpm run dev:tauri",
-    "dev:tauri": "pnpm run prepare:sidecars && node -e \"const c=process.env.TAURI_DEV_CONFIG||'src-tauri/tauri.local.conf.json';require('child_process').execSync('pnpm tauri dev --features debug-assist --config '+c,{stdio:'inherit'})\"",
+    "dev:tauri": "node scripts/run-tauri-dev.mjs",
     "dev:vite": "node scripts/run-vite-with-flavor.mjs dev",
     "build:mac:debug": "pnpm run prepare:sidecars && pnpm tauri build --debug --features debug-assist --bundles app --config src-tauri/tauri.local.conf.json --no-sign",
     "open:mac:debug": "open \"src-tauri/target/debug/bundle/macos/mausVoice (local).app\"",
@@ -24,7 +24,7 @@
     "lint": "prettier --check src test && oxlint src test",
     "check-types": "tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run src scripts",
+    "test:unit": "vitest run src scripts --exclude scripts/run-tauri-dev.test.mjs --exclude scripts/run-tauri-with-sidecars.test.mjs && node --test scripts/run-tauri-dev.test.mjs scripts/run-tauri-with-sidecars.test.mjs",
     "test:integration": "vitest run test/integration",
     "test:evals": "vitest run test/evals"
   },

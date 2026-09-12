@@ -8,7 +8,7 @@ Authoritative docs: [Desktop architecture](https://maus-inc.github.io/mausVoice/
 
 - **Node.js from repo `.nvmrc` (v24).** Root `engines.node` is `>=20`.
 - **pnpm 10.34.5** (do not use npm for workspace scripts).
-- **Rust** stable (Tauri v2; 1.77+ historical floor) and **CMake** (whisper-rs).
+- **Rust 1.88.0** (the repository pin for Tauri v2) and **CMake** (whisper-rs).
 - Platform tools: Xcode CLT (macOS), VS Build Tools (Windows). Linux deps: `.github/scripts/install-desktop-linux-deps.sh`.
 
 From the **repository root**:
@@ -32,7 +32,7 @@ pnpm --filter desktop dev:linux
 
 Or from this directory: `pnpm dev:mac` / `dev:windows` / `dev:linux`.
 
-Do not use bare `pnpm dev` / `npm run dev` for native work. Generic `pnpm dev` only runs the platform-selection helper.
+Prefer an explicit platform command for native work. From this directory, bare `pnpm dev` runs the platform-selection helper and then launches the matching platform command, but `pnpm dev:mac`, `pnpm dev:windows`, or `pnpm dev:linux` makes a bug report reproducible. Do not use npm for workspace scripts.
 
 Local flavor uses identifier `com.mausinc.desktop.local` via `src-tauri/tauri.local.conf.json`.
 

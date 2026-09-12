@@ -39,6 +39,7 @@ import { AgentStrategy } from "../../strategies/agent.strategy";
 import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
+import type { ReviewedTranscriptPersistenceInput } from "../../types/strategy.types";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -123,10 +124,10 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
-type HandleEmptyResultInput = {
+export type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
-  strategy: BaseStrategy;
+  strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
   showToast: (options: {
     message: string;
@@ -180,6 +181,49 @@ export const handleEmptyTranscriptionResult = async (
   return { handled: true };
 };
 
+/**
+ * UI handoff happens only after the reviewed History row is durable. Neither a
+ * native surface failure nor a client-side route failure may turn that durable
+ * success into a retry that creates a duplicate transcription.
+ */
+export const surfacePersistedReviewInHistory = async (): Promise<void> => {
+  try {
+    await surfaceMainWindow();
+  } catch (error) {
+    getLogger().warning(
+      `Could not surface the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    await browserRouter.navigate("/dashboard/transcriptions");
+  } catch (error) {
+    getLogger().warning(
+      `Could not navigate to the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+
+type ReviewMessageFormatter = (descriptor: {
+  defaultMessage: string;
+}) => string;
+
+/** Both message descriptors must remain literal so FormatJS can extract them. */
+export const formatReviewPersistenceFailure = (
+  formatMessage: ReviewMessageFormatter,
+  incognitoModeEnabled: boolean,
+): string => {
+  if (incognitoModeEnabled) {
+    return formatMessage({
+      defaultMessage:
+        "History is unavailable in Incognito Mode. Your edited transcript remains on the pill.",
+    });
+  }
+  return formatMessage({
+    defaultMessage:
+      "Could not save the edited transcript. It remains on the pill so you can retry.",
+  });
+};
+
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
@@ -191,12 +235,11 @@ type FinalizedRecording = {
 
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
-// Review-before-insert keeps the composer open for up to its own
-// 5-minute decision window (COMPOSER_TIMEOUT_MS in composer.utils).
-// Budget the wrapper above that plus slack: a wrapper smaller than the
-// review window would reject mid-review, skip storeTranscription below,
-// and silently drop the transcript from history while the window still
-// inserts on Save — with a recovery toast promising the opposite.
+// Review-before-insert can remain open for its 5-minute decision window on
+// either the native pill or the composer fallback. Budget the wrapper above
+// that plus slack: a wrapper smaller than the review window would reject
+// mid-review, skip storeTranscription below, and silently drop the transcript
+// from history while the review could still insert on Save.
 const REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS = 6 * 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
 /** Dictation backlog poll interval: how often to check whether the user
@@ -611,13 +654,55 @@ export const DictationSideEffects = () => {
       }
 
       getLogger().info("Post-processing transcript");
-      // When review-before-insert is on, the composer owns the pacing;
-      // give the wrapper a budget above the composer's own so the two
-      // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
+      // When review-before-insert is on, its decision window owns the pacing;
+      // give the wrapper a budget above it so the two timeouts can never race
+      // (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
       const handleTranscriptTimeoutMs = getMyUserPreferences(getAppState())
         ?.reviewBeforeInsert
         ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
         : HANDLE_TRANSCRIPT_TIMEOUT_MS;
+      const persistReviewedTranscript = async ({
+        transcript: reviewedTranscript,
+        sanitizedTranscript: reviewedSanitizedTranscript,
+        postProcessMetadata: reviewedPostProcessMetadata,
+        postProcessWarnings: reviewedPostProcessWarnings,
+      }: ReviewedTranscriptPersistenceInput): Promise<boolean> => {
+        try {
+          const stored = await storeTranscription({
+            audio,
+            rawTranscript: rawTranscript ?? null,
+            sanitizedTranscript: reviewedSanitizedTranscript,
+            transcript: reviewedTranscript,
+            transcriptionMetadata: transcribeResult.metadata,
+            postProcessMetadata: reviewedPostProcessMetadata,
+            warnings: [
+              ...transcribeResult.warnings,
+              ...reviewedPostProcessWarnings,
+            ],
+            remoteStatus: null,
+            remoteDeviceId: null,
+          });
+          if (stored.transcription) {
+            await surfacePersistedReviewInHistory();
+            return true;
+          }
+        } catch (error) {
+          getLogger().warning(
+            `Could not store the reviewed transcript: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        await showToast({
+          message: formatReviewPersistenceFailure(
+            intl.formatMessage,
+            getAppState().userPrefs?.incognitoModeEnabled === true,
+          ),
+          toastType: "error",
+          duration: 8_000,
+        });
+        return false;
+      };
+
       const result = await withTimeout(
         strategy.handleTranscript({
           rawTranscript,
@@ -630,6 +715,7 @@ export const DictationSideEffects = () => {
           audio,
           transcriptionMetadata: transcribeResult.metadata,
           transcriptionWarnings: transcribeResult.warnings,
+          persistReviewedTranscript,
         }),
         handleTranscriptTimeoutMs,
         "Transcript post-processing",
@@ -643,7 +729,7 @@ export const DictationSideEffects = () => {
         `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
       );
 
-      if (strategy.shouldStoreTranscript()) {
+      if (strategy.shouldStoreTranscript() && !result.historyPersisted) {
         getLogger().verbose("Storing transcription");
         await storeTranscription({
           audio,
@@ -685,14 +771,17 @@ export const DictationSideEffects = () => {
         await saveManualStyleForApp(appTarget);
       }
 
-      // Manual mode: the tone selected at recording START styles the whole
-      // utterance, so a mid-dictation switch (pill / hotkey / Left-Right)
-      // only affects the NEXT recording, matching the label shown at start.
-      // The stop snapshot is a race-safety fallback if start was missed.
-      // Automatic mode prefers the app-target tone and falls back to the
-      // live selection when the app has none. Streamed interim text is
-      // never restyled here — DictationStrategy skips post-processing once
-      // segments are inserted.
+      // Manual mode: ONE style applies to the whole utterance and the LATEST
+      // selection while recording wins. The stop snapshot (captured in
+      // stopRecording) is the authoritative style, so a mid-dictation switch
+      // (pill / hotkey / Left-Right) restyles the ENTIRE final transcript,
+      // not just the words spoken after the switch — and, because the switch
+      // also persists the selection, it becomes the default for the next
+      // recording. toneIdAtStart is only the last-resort fallback when the
+      // stop snapshot was never taken. Automatic mode prefers the app-target
+      // tone and falls back to the live selection when the app has none.
+      // Streamed interim text is never restyled here — DictationStrategy
+      // skips post-processing once segments are inserted.
       const utteranceTones = utteranceTonesRef.current.read();
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),

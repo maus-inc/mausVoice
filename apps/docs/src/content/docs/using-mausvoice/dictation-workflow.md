@@ -16,7 +16,7 @@ A dictation crosses distinct stages, and most configuration and troubleshooting 
 7. **Symbol conversions:** "hashtag" and "pound sign" are converted to `#`.
 8. **Post-processing:** when enabled, a generative provider applies the active writing style. With post-processing off, the text from the previous stages is the output.
 9. **Persistence:** unless Incognito suppresses it, the app stores the transcription record and attempts to retain its audio snapshot. Automatic cleanup keeps managed audio for only the 20 newest transcription rows that have audio.
-10. **Delivery:** mausVoice writes to the clipboard and invokes the selected paste or simulated-typing strategy for the focused target.
+10. **Delivery:** mausVoice invokes the selected paste or simulated-typing strategy for the focused target. The paste strategy uses the clipboard; simulated typing sends keystrokes instead.
 
 The target application's focus matters at delivery time. If you start in one field and click elsewhere while a network provider is still processing, the later focus can receive the text.
 

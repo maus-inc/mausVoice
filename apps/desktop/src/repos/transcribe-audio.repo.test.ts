@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as voiceAi from "@maus-inc/voice-ai";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
 import { setAppState } from "../store";
 import { getModelProviderRepo, getTranscribeAudioRepo } from ".";
@@ -509,6 +510,34 @@ describe("GladiaTranscribeAudioRepo", () => {
       overlap: 5,
       concurrency: 1,
     });
+  });
+
+  it("records the normalized model rather than an unsupported persisted value", async () => {
+    const transcribe = vi
+      .spyOn(voiceAi, "gladiaTranscribeAudio")
+      .mockResolvedValue({
+        text: "recognized speech",
+        warnings: [
+          "Unsupported Gladia model “retired-model” was replaced with solaria-1.",
+        ],
+      });
+    const repo = new GladiaTranscribeAudioRepo("key", "retired-model", {
+      vocabulary: [],
+      spellingDictionary: {},
+    });
+
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(transcribe).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "retired-model" }),
+    );
+    expect(result.metadata?.modelSize).toBe("solaria-1");
+    expect(result.warnings).toContain(
+      "Unsupported Gladia model “retired-model” was replaced with solaria-1.",
+    );
   });
 });
 

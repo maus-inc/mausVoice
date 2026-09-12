@@ -2,8 +2,12 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
-import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
+import {
+  buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
@@ -34,26 +38,23 @@ export const OPENROUTER_FAVORITE_MODELS = [
 /** Default generation model when no selection is saved. */
 export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
 
-// OpenRouter routes requests to many providers; most reject `json_schema`
-// and only accept the legacy `json_object` shape. Use `json_schema` only for
-// models that explicitly support structured outputs upstream.
-const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
-  "openai/gpt-4o",
-  "openai/gpt-4o-mini",
-  "openai/gpt-4-turbo",
-  "openai/gpt-3.5-turbo",
-  "openai/gpt-5.2",
-  "openai/gpt-5.3",
-  "openai/gpt-5.4",
-  "openai/gpt-oss-20b",
-  "openai/gpt-oss-120b",
-  "moonshotai/kimi-k2-instruct-0905",
-]);
+// Legacy chat models (OpenAI id space, "openai/"-prefixed) that predate
+// Structured Outputs and reject `json_schema`. Every other model — including
+// ones discovered from the OpenRouter catalog — defaults to `json_schema`,
+// which the o-series and all gpt-4o-2024-08-06+ models require/accept and
+// which `json_object` callers would otherwise get 400s for (the o-series
+// rejects json_object outright).
+const JSON_OBJECT_ONLY_MODELS = new Set<string>(
+  OPENAI_LEGACY_CHAT_MODELS.map((model) => `openai/${model}`),
+);
+
+export const isOpenRouterJsonObjectOnlyModel = (model: string): boolean =>
+  JSON_OBJECT_ONLY_MODELS.has(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
   buildJsonSchemaResponseFormat(
     model,
-    JSON_SCHEMA_SUPPORTED_MODELS,
+    isOpenRouterJsonObjectOnlyModel,
     jsonResponse,
   );
 
@@ -197,9 +198,18 @@ export const openrouterGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
+      // The `json_object` shape (legacy models only) requires the word "JSON"
+      // somewhere in the context or the upstream API rejects the request;
+      // append the schema instruction only on that branch so json_schema
+      // calls are unchanged.
+      const finalPrompt =
+        jsonResponse && isOpenRouterJsonObjectOnlyModel(model)
+          ? buildJsonObjectPrompt({ prompt, jsonResponse })
+          : prompt;
+
       const messages = buildOpenAICompatibleMessages({
         system,
-        prompt,
+        prompt: finalPrompt,
       });
 
       const response_format = buildResponseFormat(model, jsonResponse);

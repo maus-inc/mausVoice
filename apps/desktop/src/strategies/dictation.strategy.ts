@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
+import { getIntl } from "../i18n/intl";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -329,6 +330,7 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessMetadata: PostProcessMetadata = {};
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
+    let historyPersisted = false;
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
@@ -349,8 +351,20 @@ export class DictationStrategy extends BaseStrategy {
         }
       }
 
-      if (transcript) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      if (postProcessMetadata.postProcessFailed) {
+        getLogger().warning(
+          "Post-processing failed; preserving the transcript in History without insertion",
+        );
+        await showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Styling failed. The raw transcript is saved in History.",
+          }),
+          toastType: "error",
+          duration: 8000,
+          action: "open_transcriptions",
+        });
+      } else if (transcript) {
         try {
           getLogger().verbose(
             `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
@@ -361,7 +375,35 @@ export class DictationStrategy extends BaseStrategy {
             text: textToPaste,
             mode: "dictation",
             currentAppId: args.currentApp?.id ?? null,
+            onReviewOpen: async (reviewedText) => {
+              // `textToPaste` carries the normal insertion separator. When
+              // the entry was not edited, retain the post-processed History
+              // text; otherwise persist exactly what the user edited.
+              const transcriptForHistory =
+                reviewedText === textToPaste ? transcript : reviewedText;
+              if (!transcriptForHistory || !args.persistReviewedTranscript) {
+                return false;
+              }
+              const persisted = await args.persistReviewedTranscript({
+                transcript: transcriptForHistory,
+                sanitizedTranscript,
+                postProcessMetadata,
+                postProcessWarnings,
+              });
+              if (persisted) {
+                transcript = transcriptForHistory;
+                historyPersisted = true;
+              }
+              return persisted;
+            },
           });
+          if (
+            result.delivered &&
+            result.deliveredText !== null &&
+            result.deliveredText !== textToPaste
+          ) {
+            transcript = result.deliveredText;
+          }
           if (result.remote && result.delivered) {
             remoteStatus = "sent";
             showSnackbar("Transcript sent to paired receiver.", {
@@ -400,6 +442,7 @@ export class DictationStrategy extends BaseStrategy {
       postProcessWarnings,
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
+      historyPersisted,
     };
   }
 

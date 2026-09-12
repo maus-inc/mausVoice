@@ -507,6 +507,12 @@ const runPostProcessingRequest = async ({
     // or transcript.
     recordPostProcessFailure(error, metadata, warnings, postprocessStart);
     return rawTranscript;
+  } finally {
+    // `withTimeout` aborts a hung request, but a provider can also reject
+    // before its network work has fully unwound. Always signal completion so
+    // every adapter receives the same cancellation boundary on success and
+    // failure, without leaving a request to consume quota after this turn.
+    postProcessAbort.abort();
   }
 };
 

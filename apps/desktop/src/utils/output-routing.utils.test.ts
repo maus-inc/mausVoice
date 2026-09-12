@@ -4,7 +4,10 @@ import {
   routeTranscriptOutput,
 } from "./output-routing.utils";
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, reviewTranscriptBeforeInsertMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  reviewTranscriptBeforeInsertMock: vi.fn(),
+}));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -39,6 +42,9 @@ vi.mock("./log.utils", () => ({
 vi.mock("./overlay.utils", () => ({
   sendPillFlashMessage: vi.fn(),
 }));
+vi.mock("../actions/pill-review.actions", () => ({
+  reviewTranscriptBeforeInsert: reviewTranscriptBeforeInsertMock,
+}));
 
 vi.mock("../i18n/intl", () => ({
   getIntl: () => ({
@@ -56,6 +62,7 @@ describe("routeTranscriptOutput hands-free delay", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
+    reviewTranscriptBeforeInsertMock.mockReset();
     invokeMock.mockResolvedValue("pasted");
     getAppStateMock.mockReturnValue(baseState);
     getPrefsMock.mockReturnValue({
@@ -107,6 +114,60 @@ describe("routeTranscriptOutput hands-free delay", () => {
     });
   });
 
+  it("does not insert a review Open decision after History persistence", async () => {
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      reviewBeforeInsert: true,
+    });
+    reviewTranscriptBeforeInsertMock.mockResolvedValue({
+      action: "open",
+      text: "edited transcript",
+    });
+
+    await expect(
+      routeTranscriptOutput({
+        text: "post-processed transcript ",
+        mode: "dictation",
+        currentAppId: null,
+        onReviewOpen: vi.fn(),
+      }),
+    ).resolves.toEqual({
+      delivered: false,
+      remote: false,
+      deliveredText: null,
+      reviewOpened: true,
+      reviewedText: "edited transcript",
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the edited review text after it reaches the target", async () => {
+    getPrefsMock.mockReturnValue({
+      insertionMethod: "paste",
+      reviewBeforeInsert: true,
+    });
+    reviewTranscriptBeforeInsertMock.mockResolvedValue({
+      action: "insert",
+      text: "edited transcript",
+    });
+
+    await expect(
+      routeTranscriptOutput({
+        text: "post-processed transcript ",
+        mode: "dictation",
+        currentAppId: null,
+      }),
+    ).resolves.toEqual({
+      delivered: true,
+      remote: false,
+      deliveredText: "edited transcript",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("paste", {
+      text: "edited transcript",
+      keybind: null,
+    });
+  });
+
   it("drops an older delayed transcript when a newer transcript completes", async () => {
     const olderRouting = routeTranscriptOutput({
       text: "older words",
@@ -124,10 +185,12 @@ describe("routeTranscriptOutput hands-free delay", () => {
     await expect(olderRouting).resolves.toEqual({
       delivered: false,
       remote: false,
+      deliveredText: null,
     });
     await expect(newerRouting).resolves.toEqual({
       delivered: true,
       remote: false,
+      deliveredText: "newer words",
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith("paste", {
@@ -159,6 +222,7 @@ describe("routeTranscriptOutput hands-free delay", () => {
     await expect(olderRouting).resolves.toEqual({
       delivered: false,
       remote: false,
+      deliveredText: null,
     });
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith(

@@ -37,6 +37,13 @@ describe("findEditCorrections", () => {
     ).toEqual(["Soniya"]);
   });
 
+  it("detects a casing-only correction in the field", () => {
+    // The user capitalized a word the STT engine had written lowercase;
+    // the capital is the proper-noun signal. Case-insensitive diffing made
+    // this correction invisible (added and removed were both empty).
+    expect(find("i work at google", "i work at Google")).toEqual(["Google"]);
+  });
+
   it("returns nothing when the text is unchanged", () => {
     expect(find("hello world", "hello world")).toEqual([]);
   });

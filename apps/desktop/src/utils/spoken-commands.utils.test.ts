@@ -64,6 +64,20 @@ describe("applySpokenCommands", () => {
     );
   });
 
+  it("scratches the previous sentence when the buffer ends in a newline", () => {
+    // A "new line" / "new paragraph" command leaves the buffer ending in a
+    // newline. lastSentenceBoundary used to stop at that trailing newline,
+    // so "scratch that" was a no-op: "Hello, new line, scratch that" kept
+    // "Hello," instead of dropping it.
+    expect(applySpokenCommands("Hello, new line, scratch that")).toBe("");
+    expect(applySpokenCommands("First. Second. new line scratch that")).toBe(
+      "First.",
+    );
+    expect(
+      applySpokenCommands("First paragraph. Second new paragraph scratch that"),
+    ).toBe("First paragraph.");
+  });
+
   it("keeps the space after a partial scratch", () => {
     expect(
       applySpokenCommands("First sentence. Second scratch that more"),

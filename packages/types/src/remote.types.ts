@@ -67,11 +67,19 @@ export type RouteTranscriptOutputArgs = {
    * must never spawn a blocking review popout on every token.
    */
   skipReview?: boolean;
+  /**
+   * Called only for the review pill's Open action. It must return true only
+   * after the edited text is durable, so the pill can safely settle and route
+   * the user to History without losing an edit.
+   */
+  onReviewOpen?: (editedText: string) => Promise<boolean>;
 };
 
 export type RouteTranscriptOutputResult = {
   delivered: boolean;
   remote: boolean;
+  /** Text actually delivered to the local or paired target, if any. */
+  deliveredText: Nullable<string>;
 };
 
 export type PairingRequest = {

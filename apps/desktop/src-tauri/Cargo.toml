@@ -27,6 +27,11 @@ tauri-build = { version = "=2.5.6", features = [] }
 tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 log = "0.4"
+# Refcounted buffer for the private-HTTP request body: a redirect hop that
+# re-sends the body clones the body into the reqwest builder, and a
+# Vec<u8> clone would copy the entire (up to 128 MiB) payload per hop.
+# Bytes::clone is O(1).
+bytes = "1"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "=2.4.2"
 tauri-plugin-single-instance = "2"
@@ -76,6 +81,10 @@ once_cell = "1"
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 specta-typescript = "=0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+# Hold managed-audio directory capabilities across destructive operations. The
+# 4.0.3 floor includes the patched resolver; do not downgrade below it.
+cap-std = "=4.0.3"
+cap-fs-ext = { version = "=4.0.3", default-features = false }
 
 [dev-dependencies]
 filetime = "0.2"

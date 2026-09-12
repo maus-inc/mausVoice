@@ -2,6 +2,7 @@ import {
   convertFloat32ToPCM16,
   createGladiaStreamingSession,
   type GladiaStreamingSession,
+  normalizeGladiaModel,
 } from "@maus-inc/voice-ai";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
@@ -201,7 +202,10 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       const missing = sessionMissingResult("Gladia");
       const result = {
         ...missing,
-        metadata: { ...missing.metadata, modelSize: this.model ?? "solaria-1" },
+        metadata: {
+          ...missing.metadata,
+          modelSize: normalizeGladiaModel(this.model),
+        },
         warnings: Array.from(new Set([...this.warnings, ...missing.warnings])),
       };
       this.cleanup();
@@ -248,7 +252,9 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       return await finalizeStreamingSession({
         session: activeSession,
         providerLabel: "Gladia",
-        modelSize: this.model ?? "solaria-1",
+        // The Voice AI adapter normalizes the wire request, so History must
+        // identify the actual model rather than a stale persisted value.
+        modelSize: normalizeGladiaModel(this.model),
         log: console.log,
         getWarnings: () => [...this.warnings, ...activeSession.getWarnings()],
       });

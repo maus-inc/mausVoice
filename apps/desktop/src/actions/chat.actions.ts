@@ -197,13 +197,11 @@ export const runAgentForConversation = async (
   ) {
     return;
   }
-  try {
-    await runAgent(conversationId, CHAT_AGENT_CONFIG);
-  } finally {
-    produceAppState((draft) => {
-      delete draft.agentStateByConversationId[conversationId];
-    });
-  }
+  // runAgent owns the agent-state cleanup with an identity guard (it only
+  // removes the state object it created). A superseded run finishing after
+  // a newer run started must not delete the newer run's state, so no
+  // cleanup is done here.
+  await runAgent(conversationId, CHAT_AGENT_CONFIG);
 };
 
 const applySendToConversation = async (

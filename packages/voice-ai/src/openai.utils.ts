@@ -9,8 +9,12 @@ import type {
 } from "@maus-inc/types";
 import { retry } from "@maus-inc/utilities";
 import OpenAI, { toFile } from "openai";
-import { buildJsonSchemaResponseFormat } from "./response-format.utils";
 import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
+import {
+  buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
@@ -44,36 +48,26 @@ export const OPENAI_TRANSCRIPTION_MODELS = [
 export type OpenAITranscriptionModel =
   (typeof OPENAI_TRANSCRIPTION_MODELS)[number] | DiscoveredModelId;
 
-// Models that support `response_format: { type: "json_schema" }`. The base
-// OpenAI endpoint does, but downstream OpenAI-compatible providers and
-// proxied open-source models often reject `json_schema` and require the
-// legacy `json_object` shape. Proxied callers pass their own `model` strings,
-// so the fallback is keyed off the model name itself.
-const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
-  "gpt-4o",
-  "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-3.5-turbo",
-  "gpt-5.2",
-  "gpt-5.3",
-  "gpt-5.4",
-  "gpt-5",
-  "gpt-5-mini",
-  "gpt-5-nano",
-  "gpt-5-pro",
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-]);
+// Legacy chat models that predate Structured Outputs and therefore REJECT
+// `response_format: { type: "json_schema" }` (400 from the API). Only these
+// may receive the legacy `json_object` shape; every other model — including
+// discovered ones (o-series, gpt-4.1, gpt-5.x, gpt-oss) — defaults to
+// `json_schema`, which is the only structured format the o-series accepts.
+const JSON_OBJECT_ONLY_MODELS = new Set<string>(OPENAI_LEGACY_CHAT_MODELS);
 
+/** True when the model accepts `response_format: { type: "json_schema" }`. */
 export function supportsOpenAIJsonSchema(model: string): boolean {
-  return JSON_SCHEMA_SUPPORTED_MODELS.has(model);
+  return !JSON_OBJECT_ONLY_MODELS.has(model);
 }
+
+/** True for legacy models that need the `json_object` shape instead. */
+export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
+  JSON_OBJECT_ONLY_MODELS.has(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
   buildJsonSchemaResponseFormat(
     model,
-    JSON_SCHEMA_SUPPORTED_MODELS,
+    isOpenAIJsonObjectOnlyModel,
     jsonResponse,
   );
 
@@ -198,9 +192,18 @@ export const openaiGenerateTextResponse = async ({
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 
+      // The `json_object` shape (legacy models only) requires the word "JSON"
+      // somewhere in the context or the API rejects the request; append the
+      // schema instruction only on that branch so json_schema calls are
+      // unchanged.
+      const finalPrompt =
+        jsonResponse && isOpenAIJsonObjectOnlyModel(model)
+          ? buildJsonObjectPrompt({ prompt, jsonResponse })
+          : prompt;
+
       const messages = buildOpenAICompatibleMessages({
         system,
-        prompt,
+        prompt: finalPrompt,
         imageUrls,
       });
 

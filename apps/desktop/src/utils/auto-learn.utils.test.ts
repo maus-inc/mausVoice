@@ -91,6 +91,19 @@ describe("extractAutoLearnTerms", () => {
     expect(learn("I said A", "I said B")).toEqual([]);
   });
 
+  it("learns a casing-only correction (the word exists, capitalization changed)", () => {
+    // The STT engine wrote the right letters but lowercase; the user's
+    // capital is the proper-noun signal. A case-insensitive diff made this
+    // correction invisible and the feature never learned anything.
+    expect(learn("i work at google", "i work at Google")).toEqual(["Google"]);
+    expect(learn("the apple is red", "the Apple is red")).toEqual(["Apple"]);
+  });
+
+  it("does not learn a casing-only de-capitalization", () => {
+    // Lowercasing a word is not a proper-noun signal.
+    expect(learn("I work at Google", "I work at google")).toEqual([]);
+  });
+
   it("learns a corrected name that starts with a supplementary-plane letter", () => {
     expect(learn("my friend Unicode", "my friend \u{1D518}nicode")).toEqual([
       "\u{1D518}nicode",

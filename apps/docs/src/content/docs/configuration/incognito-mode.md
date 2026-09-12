@@ -11,11 +11,11 @@ Incognito mode suppresses new transcription history and managed audio snapshots 
 
 Usage statistics have their own toggle, **Include incognito in stats**. With it on, words dictated in Incognito still count toward your personal totals; with it off, they do not. The two settings are independent.
 
-Incognito only controls mausVoice's local persistence. It does not stop API processing at the provider, suppress target-app or clipboard retention, or clear operating-system diagnostics. Use local transcription and post-processing Off when the goal is also to avoid provider transmission.
+Incognito prevents mausVoice from persisting the transcript and audio snapshot locally. It does not stop API processing at the provider, suppress target-app or clipboard retention, or clear operating-system diagnostics. Aggregate usage statistics can still be recorded when **Include incognito in stats** is on. Use local transcription and post-processing Off when the goal is also to avoid provider transmission.
 
 ## Audio retention on failed transcriptions
 
-Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: Incognito guarantees that nothing about the recording is persisted locally, at the cost of being unable to recover a failed Incognito dictation.
+Incognito never writes the audio snapshot. The transcription result is also not added to your history. If the transcription later fails, the audio is gone too, so there is no on-disk recovery path for an Incognito recording. This is the privacy trade-off: Incognito keeps the audio and transcript out of local persistence, at the cost of being unable to recover a failed Incognito dictation. Aggregate usage statistics can still be persisted when **Include incognito in stats** is enabled.
 
 The behavior at a glance:
 
@@ -26,7 +26,7 @@ The behavior at a glance:
 
 ## Preserve audio on failure
 
-**Settings → General → Privacy → Preserve audio on failure** controls whether the audio snapshot is kept when a non-Incognito transcription fails. The default is **on**:
+In **Settings → More settings**, **Preserve audio on failure** controls whether the audio snapshot is kept when a non-Incognito transcription fails. The default is **on**:
 
 - **On (default):** the audio is retained alongside the failed transcription row, so you can replay it and recover the words.
 - **Off:** the audio is dropped for failed transcriptions. Successful transcriptions still keep their audio. This is the older behavior and is useful when disk space matters more than recovery.

@@ -89,7 +89,7 @@ describe("AssemblyAITranscriptionSession finalize contract", () => {
     const finalizePromise = session.finalize({
       samples: [],
       sampleRate: 16000,
-    } as never);
+    });
     await flushMicrotasks();
 
     // The Terminate frame must have gone out over the still-open socket.

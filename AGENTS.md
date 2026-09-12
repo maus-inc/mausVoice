@@ -43,11 +43,11 @@ Your Identity as far as you're working in this repository, you are MausAgent, yo
 
 **`apps/desktop` — Tauri desktop app (Rust + TypeScript/React)**
 
-- "Rust is the API, TypeScript is the Brain" — all business logic lives in TypeScript, never duplicated in Rust. Rust provides pure API capabilities without decision-making.
+- "Rust is the API, TypeScript is the Brain" — provider selection, styles, prompts, and output routing live in TypeScript and must not be duplicated in Rust. Rust provides native capabilities and enforces native validation and safety boundaries.
 - Single source of truth for state is Zustand (with Immer) in TypeScript.
 - Data flow: User/Native Event → Actions (`src/actions/`) → Repos (`src/repos/`) → Tauri Commands (`src-tauri/src/commands.rs`) → SQLite / transcription sidecar / external providers.
 - Repos resolve to local implementations in this build. `BaseXxxRepo` defines the interface and `LocalXxxRepo` (and `PersonalAuthRepo`) implements it. Use `toLocalXxx()` / `fromLocalXxx()` at the Tauri boundary.
-- Local transcription runs in the `packages/rust_transcription` sidecar (whisper.cpp GGML and ONNX Parakeet/Canary), not in-process.
+- Local transcription runs in the `packages/rust_transcription` sidecar (whisper.cpp GGML plus ONNX Parakeet, Canary, and SenseVoice), not in-process.
 - Database migrations go in `src-tauri/src/db/migrations/` as `NNN_description.sql`, then `include_str!` and register them in `db/mod.rs`. Numbering is intentionally irregular (021, 069, and 070 are absent) — never renumber applied migrations.
 - New Tauri commands: define in `commands.rs`, register in `app.rs` invoke_handler, expose via Specta + `pnpm gen:bindings`, wrap in a repo, and call it from an action.
 
@@ -134,7 +134,7 @@ query($owner:String!, $name:String!, $number:Int!, $after:String) {
         nodes {
           id isResolved path line
           comments(first:20) {
-            nodes { author { login } body createdAt }
+            nodes { author { login __typename } body createdAt }
           }
         }
       }
@@ -144,7 +144,7 @@ query($owner:String!, $name:String!, $number:Int!, $after:String) {
 ```
 
      Filter `isResolved == false` client-side. Needs repo-scoped auth. If GraphQL is unavailable, fetch both `gh api repos/<owner>/<repo>/pulls/<pr-number>/comments` and `gh api repos/<owner>/<repo>/issues/<pr-number>/comments` (paginate). REST cannot see `isResolved` directly; correlate `in_reply_to_id` and timestamps and treat threads without a later resolve or fix reply as open. Prefer GraphQL whenever possible.
-   - Newest inline and issue comments from bots. Detect bots generically (GraphQL: `actor.__typename == "Bot"`; REST: `user.type == "Bot"`) and as a heuristic accept logins ending with `[bot]` (case-insensitive). Do not hardcode vendor names. Any new bot comment is a signal to re-evaluate the head.
+   - Newest inline and issue comments from bots. Detect bots generically (GraphQL: `comments.nodes[].author.__typename == "Bot"`; REST: `user.type == "Bot"`) and as a heuristic accept logins ending with `[bot]` (case-insensitive). Do not hardcode vendor names. Any new bot comment is a signal to re-evaluate the head.
    - Sonar on the current HEAD: check-run conclusion and summary (for example N New issues) plus `check-runs/<id>/annotations` (path, line, title). Treat the PR as unfinished if N > 0 or any annotations are present.
 4. Stop conditions that force an immediate fix cycle (do not keep spinning):
    - Any hard CI fail (not a soft skip).

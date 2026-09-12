@@ -51,22 +51,16 @@ pub fn resample_to_rate(
     source_rate: u32,
     target_rate: u32,
 ) -> Result<Vec<f32>, ResampleError> {
-    if samples.is_empty() {
-        return Ok(Vec::new());
-    }
     if source_rate == 0 || target_rate == 0 {
         return Err(ResampleError::UnsupportedRate {
             source_rate,
             target_rate,
         });
     }
-    if source_rate == target_rate {
-        return Ok(samples.to_vec());
-    }
 
-    // Reject untrusted/unsupported rates before the table allocator. Rates
-    // outside the supported band indicate corrupt or attacker-controlled
-    // headers and would otherwise allocate unbounded memory.
+    // Reject untrusted/unsupported rates before every output path, including
+    // the identity fast path. Returning samples labeled with an out-of-band
+    // source rate would otherwise bypass the input-header validation.
     if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&source_rate)
         || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&target_rate)
     {
@@ -75,18 +69,25 @@ pub fn resample_to_rate(
             target_rate,
         });
     }
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+    if source_rate == target_rate {
+        let mut output = allocate_resampled_output(samples.len())?;
+        output.extend_from_slice(samples);
+        return Ok(output);
+    }
 
     // Build (or fetch a cached) table. A `None` here means the ratio would
     // exceed the coefficient budget — return an explicit error rather than
     // relabeling source-rate audio as the target rate.
-    let table = get_table(source_rate, target_rate).ok_or(ResampleError::RatioTooComplex {
+    let table = get_table(source_rate, target_rate)?.ok_or(ResampleError::RatioTooComplex {
         source_rate,
         target_rate,
     })?;
 
-    let ratio = target_rate as f64 / source_rate as f64;
-    let output_len = ((samples.len() as f64) * ratio).ceil().max(1.0) as usize;
-    let mut output = Vec::with_capacity(output_len);
+    let output_len = resampled_output_len(samples.len(), source_rate, target_rate)?;
+    let mut output = allocate_resampled_output(output_len)?;
 
     for output_index in 0..output_len {
         // Source position of this output sample, in source-sample units.
@@ -122,6 +123,47 @@ pub fn resample_to_rate(
     Ok(output)
 }
 
+/// Allocate an output buffer through `try_reserve_exact` so both the identity
+/// copy path and the resampling path report allocation failure to the caller.
+fn allocate_resampled_output(output_len: usize) -> Result<Vec<f32>, ResampleError> {
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(output_len)
+        .map_err(|_| ResampleError::OutputAllocationFailed { output_len })?;
+    Ok(output)
+}
+
+/// Calculate the target buffer length before allocating it. Integer ceiling
+/// division keeps the count exact for very large inputs; a floating-point
+/// ratio could round a length near `usize::MAX` down before it is cast back.
+fn resampled_output_len(
+    input_len: usize,
+    source_rate: u32,
+    target_rate: u32,
+) -> Result<usize, ResampleError> {
+    let source_rate_u128 = u128::from(source_rate);
+    let scaled_len = (input_len as u128)
+        .checked_mul(u128::from(target_rate))
+        .ok_or(ResampleError::OutputTooLarge {
+            input_len,
+            source_rate,
+            target_rate,
+        })?;
+    let rounded_len = scaled_len
+        .checked_add(source_rate_u128 - 1)
+        .ok_or(ResampleError::OutputTooLarge {
+            input_len,
+            source_rate,
+            target_rate,
+        })?;
+    let output_len = (rounded_len / source_rate_u128).max(1);
+    usize::try_from(output_len).map_err(|_| ResampleError::OutputTooLarge {
+        input_len,
+        source_rate,
+        target_rate,
+    })
+}
+
 /// Error returned when audio cannot be resampled to the requested rate.
 ///
 /// Callers must treat the original samples as *unresampled* when this is
@@ -132,6 +174,18 @@ pub enum ResampleError {
     UnsupportedRate { source_rate: u32, target_rate: u32 },
     /// The requested ratio would allocate an unsafe number of coefficients.
     RatioTooComplex { source_rate: u32, target_rate: u32 },
+    /// The requested output count cannot be represented by a `Vec`.
+    OutputTooLarge {
+        input_len: usize,
+        source_rate: u32,
+        target_rate: u32,
+    },
+    /// Reserving the target buffer failed, so no partially relabeled audio is
+    /// returned to the caller.
+    OutputAllocationFailed { output_len: usize },
+    /// Reserving a polyphase table failed before any untrusted-rate table
+    /// entries were retained.
+    TableAllocationFailed { coefficient_count: u64 },
 }
 
 impl std::fmt::Display for ResampleError {
@@ -150,6 +204,22 @@ impl std::fmt::Display for ResampleError {
             } => write!(
                 f,
                 "resampling ratio {source_rate}->{target_rate} is too complex to resample safely"
+            ),
+            ResampleError::OutputTooLarge {
+                input_len,
+                source_rate,
+                target_rate,
+            } => write!(
+                f,
+                "resampling {input_len} samples from {source_rate} Hz to {target_rate} Hz would exceed the addressable output size"
+            ),
+            ResampleError::OutputAllocationFailed { output_len } => write!(
+                f,
+                "unable to allocate the {output_len}-sample resampling output buffer"
+            ),
+            ResampleError::TableAllocationFailed { coefficient_count } => write!(
+                f,
+                "unable to allocate the {coefficient_count}-coefficient resampling table"
             ),
         }
     }
@@ -187,9 +257,12 @@ impl PolyphaseTable {
 }
 
 /// Build the polyphase coefficient table for a rate pair. This is the only
-/// place trigonometric functions run. Returns `None` when the requested ratio
-/// would allocate more than `MAX_POLYPHASE_COEFFICIENTS` coefficients.
-fn build_polyphase_table(source_rate: u32, target_rate: u32) -> Option<PolyphaseTable> {
+/// place trigonometric functions run. Returns `Ok(None)` when the requested
+/// ratio would allocate more than `MAX_POLYPHASE_COEFFICIENTS` coefficients.
+fn build_polyphase_table(
+    source_rate: u32,
+    target_rate: u32,
+) -> Result<Option<PolyphaseTable>, ResampleError> {
     let g = gcd(source_rate, target_rate).max(1);
     let up = target_rate / g;
     let down = source_rate / g;
@@ -197,16 +270,26 @@ fn build_polyphase_table(source_rate: u32, target_rate: u32) -> Option<Polyphase
     let cutoff = (0.5 / source_ratio * 0.95) as f32;
     let radius = (8.0 * source_ratio).ceil() as isize;
     let coeffs_per_phase = (2 * radius + 1) as u64;
+    let coefficient_count = up as u64 * coeffs_per_phase;
     // Reject ratios that would allocate an unsafe number of coefficients.
-    if up as u64 * coeffs_per_phase > MAX_POLYPHASE_COEFFICIENTS {
-        return None;
+    if coefficient_count > MAX_POLYPHASE_COEFFICIENTS {
+        return Ok(None);
     }
 
-    let mut phase_tables = Vec::with_capacity(up as usize);
+    // The source rate comes from the decoded recording. Even under the
+    // coefficient cap, reserve fallibly so low-memory machines return an
+    // ordinary transcription error rather than aborting the sidecar.
+    let mut phase_tables = Vec::new();
+    phase_tables
+        .try_reserve_exact(up as usize)
+        .map_err(|_| ResampleError::TableAllocationFailed { coefficient_count })?;
     for phase in 0..up {
         // Fractional center offset this phase represents, in [0, 1).
         let frac = phase as f32 / up as f32;
-        let mut coeffs = Vec::with_capacity((2 * radius + 1) as usize);
+        let mut coeffs = Vec::new();
+        coeffs
+            .try_reserve_exact(coeffs_per_phase as usize)
+            .map_err(|_| ResampleError::TableAllocationFailed { coefficient_count })?;
         let mut weight_sum = 0.0_f32;
         for k in -radius..=radius {
             let distance = k as f32 - frac;
@@ -232,12 +315,12 @@ fn build_polyphase_table(source_rate: u32, target_rate: u32) -> Option<Polyphase
         phase_tables.push(coeffs);
     }
 
-    Some(PolyphaseTable {
+    Ok(Some(PolyphaseTable {
         up,
         down,
         radius,
         phase_tables,
-    })
+    }))
 }
 
 struct CacheEntry {
@@ -276,7 +359,10 @@ fn touch(order: &mut Vec<(u32, u32)>, key: &(u32, u32)) {
     order.insert(0, *key);
 }
 
-fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> {
+fn get_table(
+    source_rate: u32,
+    target_rate: u32,
+) -> Result<Option<Arc<PolyphaseTable>>, ResampleError> {
     // Fast path: return a cached table without rebuilding. The lock is released
     // before any table generation so concurrent callers are not serialized.
     let cached = {
@@ -294,12 +380,14 @@ fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> 
         cloned
     };
     if let Some(entry) = cached {
-        return Some(entry);
+        return Ok(Some(entry));
     }
 
     // Build the table outside the lock — generating the windowed-sinc kernels is
     // CPU-bound and must not block other callers.
-    let built = build_polyphase_table(source_rate, target_rate)?;
+    let Some(built) = build_polyphase_table(source_rate, target_rate)? else {
+        return Ok(None);
+    };
     let coeff_count = built.coeff_count();
     let shared = Arc::new(built);
 
@@ -307,7 +395,7 @@ fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> 
     let mut guard = cache.lock().unwrap();
     // Another thread may have built and inserted the same pair meanwhile.
     if let Some(entry) = guard.map.get(&(source_rate, target_rate)) {
-        return Some(Arc::clone(&entry.table));
+        return Ok(Some(Arc::clone(&entry.table)));
     }
     // Evict least-recently-used entries until the budget allows the new entry.
     while (guard.total_coeffs + coeff_count > MAX_TOTAL_COEFFICIENTS
@@ -321,6 +409,12 @@ fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> 
             guard.total_coeffs -= evicted.coeff_count;
         }
     }
+    // Cache bookkeeping is an optimization. If it cannot reserve room, use
+    // the completed table for this request and let it be released afterward
+    // instead of aborting or turning a successful conversion into an error.
+    if guard.map.try_reserve(1).is_err() || guard.order.try_reserve(1).is_err() {
+        return Ok(Some(shared));
+    }
     guard.map.insert(
         (source_rate, target_rate),
         CacheEntry {
@@ -330,7 +424,7 @@ fn get_table(source_rate: u32, target_rate: u32) -> Option<Arc<PolyphaseTable>> 
     );
     guard.total_coeffs += coeff_count;
     guard.order.insert(0, (source_rate, target_rate));
-    Some(shared)
+    Ok(Some(shared))
 }
 
 #[cfg(test)]
@@ -456,6 +550,30 @@ mod tests {
     }
 
     #[test]
+    fn resampling_rejects_an_unrepresentable_output_length_before_allocating() {
+        // A lower valid source rate can upscale the complete IPC buffer. The
+        // length calculation must reject an address-space overflow instead of
+        // saturating its float-to-usize cast and letting `Vec` grow until the
+        // process aborts.
+        let err = resampled_output_len(usize::MAX, 8_000, 16_000).unwrap_err();
+        assert!(matches!(err, ResampleError::OutputTooLarge { .. }));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn resampling_keeps_exact_lengths_beyond_f64_integer_precision() {
+        // f64 cannot distinguish every integer above 2^53. Calculate with a
+        // value just beyond that boundary and verify the integer ceiling is
+        // preserved instead of silently rounding the number of output frames.
+        let input_len = (1_usize << 54) + 1;
+        let output_len = resampled_output_len(input_len, 16_000, 16_001)
+            .expect("this count is representable on a 64-bit target");
+        let expected =
+            (((input_len as u128 * 16_001) + 15_999) / 16_000) as usize;
+        assert_eq!(output_len, expected);
+    }
+
+    #[test]
     fn resampling_ordinary_rate_within_range_resamples() {
         // 44_101 Hz is a valid hardware-adjacent rate and must resample.
         let samples = vec![0.25; 44_101];
@@ -466,15 +584,29 @@ mod tests {
     #[test]
     fn resampling_rejects_out_of_band_rates() {
         // Rates outside the supported band must be rejected, never passed
-        // through and relabeled as the target rate.
+        // through and relabeled as the target rate. Include identity requests:
+        // their fast path must not bypass the same header validation.
         for &rate in &[1_000u32, 100u32, 1_000_000u32, u32::MAX] {
             let samples = vec![0.0_f32; 16];
-            let err = resample_to_rate(&samples, rate, 16_000).unwrap_err();
-            assert!(
-                matches!(err, ResampleError::UnsupportedRate { .. }),
-                "expected UnsupportedRate for rate {rate}, got {err:?}"
-            );
+            for &(source_rate, target_rate) in &[(rate, 16_000), (rate, rate)] {
+                for input in [&samples[..], &[]] {
+                    let err = resample_to_rate(input, source_rate, target_rate).unwrap_err();
+                    assert!(
+                        matches!(err, ResampleError::UnsupportedRate { .. }),
+                        "expected UnsupportedRate for {source_rate}->{target_rate}, got {err:?}"
+                    );
+                }
+            }
         }
+    }
+
+    #[test]
+    fn resampling_output_allocation_reports_capacity_overflow() {
+        // This must fail before asking the allocator for memory, so the test is
+        // deterministic on both low- and high-memory hosts. The identity path
+        // shares this allocation helper rather than using `samples.to_vec()`.
+        let err = allocate_resampled_output(usize::MAX).unwrap_err();
+        assert!(matches!(err, ResampleError::OutputAllocationFailed { .. }));
     }
 
     #[test]
