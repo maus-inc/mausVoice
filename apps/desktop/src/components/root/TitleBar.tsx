@@ -8,6 +8,7 @@ import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
 import { LogoWithText } from "../common/LogoWithText";
+import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
@@ -155,6 +156,129 @@ const captionButtonSx = {
  * buttons with full-height hover backplates. Glyphs are stable (no morphing,
  * no scale press) so small icons stay crisp.
  */
+type TrafficLightProps = {
+  focused: boolean;
+  dark: boolean;
+  closeLabel: string;
+  minimizeLabel: string;
+  maximizeLabel: string;
+  onClose: () => void;
+  onMinimize: () => void;
+  onToggleMax: () => void;
+};
+
+const MacTrafficLights = ({
+  focused,
+  dark,
+  closeLabel,
+  minimizeLabel,
+  maximizeLabel,
+  onClose,
+  onMinimize,
+  onToggleMax,
+}: TrafficLightProps) => (
+  <Stack
+    direction="row"
+    spacing={1}
+    sx={{
+      alignItems: "center",
+      position: "relative",
+      zIndex: 1,
+      opacity: focused ? 1 : 0.55,
+    }}
+  >
+    <TrafficButton
+      label={closeLabel}
+      color={focused ? "#FF5F57" : "#8E8E93"}
+      dark={dark}
+      onClick={onClose}
+      glyph={<MorphNavIcon icon={X} size={8} strokeWidth={2.5} />}
+    />
+    <TrafficButton
+      label={minimizeLabel}
+      color={focused ? "#FEBC2E" : "#8E8E93"}
+      dark={dark}
+      onClick={onMinimize}
+      glyph={<MorphNavIcon icon={Minus} size={8} strokeWidth={2.5} />}
+    />
+    <TrafficButton
+      label={maximizeLabel}
+      color={focused ? "#28C840" : "#8E8E93"}
+      dark={dark}
+      onClick={onToggleMax}
+      glyph={<MorphNavIcon icon={Plus} size={8} strokeWidth={2.5} />}
+    />
+  </Stack>
+);
+
+type CaptionButtonProps = {
+  focused: boolean;
+  minimizeLabel: string;
+  maximizeLabel: string;
+  closeLabel: string;
+  maximized: boolean;
+  onMinimize: () => void;
+  onToggleMax: () => void;
+  onClose: () => void;
+};
+
+const CaptionButtons = ({
+  focused,
+  minimizeLabel,
+  maximizeLabel,
+  closeLabel,
+  maximized,
+  onMinimize,
+  onToggleMax,
+  onClose,
+}: CaptionButtonProps) => (
+  <Stack
+    direction="row"
+    spacing={0}
+    sx={{
+      alignItems: "stretch",
+      alignSelf: "stretch",
+      position: "relative",
+      zIndex: 1,
+      opacity: focused ? 1 : 0.6,
+    }}
+  >
+    <IconButton
+      size="small"
+      onClick={onMinimize}
+      aria-label={minimizeLabel}
+      sx={captionButtonSx}
+    >
+      <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+    </IconButton>
+    <IconButton
+      size="small"
+      onClick={onToggleMax}
+      aria-label={maximizeLabel}
+      sx={captionButtonSx}
+    >
+      {maximized ? (
+        <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
+      ) : (
+        <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
+      )}
+    </IconButton>
+    <IconButton
+      size="small"
+      onClick={onClose}
+      aria-label={closeLabel}
+      sx={{
+        ...captionButtonSx,
+        "&:hover": {
+          backgroundColor: "rgba(232, 77, 77, 0.92)",
+          color: "#fff",
+        },
+      }}
+    >
+      <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+    </IconButton>
+  </Stack>
+);
 export const TitleBar = () => {
   const { mode, systemMode } = useColorScheme();
   const resolved = mode === "system" ? systemMode : mode;
@@ -202,7 +326,7 @@ export const TitleBar = () => {
         */}
         <Box
           data-tauri-drag-region
-          onDoubleClick={() => void toggleMax()}
+          onDoubleClick={toggleMax}
           sx={{
             position: "absolute",
             inset: 0,
@@ -211,38 +335,16 @@ export const TitleBar = () => {
         />
 
         {isMac ? (
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{
-              alignItems: "center",
-              position: "relative",
-              zIndex: 1,
-              opacity: focused ? 1 : 0.55,
-            }}
-          >
-            <TrafficButton
-              label={closeLabel}
-              color={focused ? "#FF5F57" : "#8E8E93"}
-              dark={dark}
-              onClick={() => void close()}
-              glyph={<X size={8} strokeWidth={2.5} />}
-            />
-            <TrafficButton
-              label={minimizeLabel}
-              color={focused ? "#FEBC2E" : "#8E8E93"}
-              dark={dark}
-              onClick={() => void minimize()}
-              glyph={<Minus size={8} strokeWidth={2.5} />}
-            />
-            <TrafficButton
-              label={maximizeLabel}
-              color={focused ? "#28C840" : "#8E8E93"}
-              dark={dark}
-              onClick={() => void toggleMax()}
-              glyph={<Plus size={8} strokeWidth={2.5} />}
-            />
-          </Stack>
+          <MacTrafficLights
+            focused={focused}
+            dark={dark}
+            closeLabel={closeLabel}
+            minimizeLabel={minimizeLabel}
+            maximizeLabel={maximizeLabel}
+            onClose={close}
+            onMinimize={minimize}
+            onToggleMax={toggleMax}
+          />
         ) : null}
 
         <Stack
@@ -264,56 +366,20 @@ export const TitleBar = () => {
         <Box
           sx={{ flex: 1 }}
           data-tauri-drag-region
-          onDoubleClick={() => void toggleMax()}
+          onDoubleClick={toggleMax}
         />
 
         {isMac ? null : (
-          <Stack
-            direction="row"
-            spacing={0}
-            sx={{
-              alignItems: "stretch",
-              alignSelf: "stretch",
-              position: "relative",
-              zIndex: 1,
-              opacity: focused ? 1 : 0.6,
-            }}
-          >
-            <IconButton
-              size="small"
-              onClick={() => void minimize()}
-              aria-label={minimizeLabel}
-              sx={captionButtonSx}
-            >
-              <Minus size={CONTROL_ICON_SIZE} />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={() => void toggleMax()}
-              aria-label={maximizeLabel}
-              sx={captionButtonSx}
-            >
-              {maximized ? (
-                <Copy size={CONTROL_ICON_SIZE} />
-              ) : (
-                <Square size={CONTROL_ICON_SIZE} />
-              )}
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={() => void close()}
-              aria-label={closeLabel}
-              sx={{
-                ...captionButtonSx,
-                "&:hover": {
-                  backgroundColor: "rgba(232, 77, 77, 0.92)",
-                  color: "#fff",
-                },
-              }}
-            >
-              <X size={CONTROL_ICON_SIZE} />
-            </IconButton>
-          </Stack>
+          <CaptionButtons
+            focused={focused}
+            minimizeLabel={minimizeLabel}
+            maximizeLabel={maximizeLabel}
+            closeLabel={closeLabel}
+            maximized={maximized}
+            onMinimize={minimize}
+            onToggleMax={toggleMax}
+            onClose={close}
+          />
         )}
       </Box>
     </>
