@@ -1,0 +1,35 @@
+{
+  "name": "@maus-inc/automation-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CLI client for the mausVoice local automation API (loopback only).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mausvoice/mausvoice.git",
+    "directory": "packages/automation-cli"
+  },
+  "bin": {
+    "mausvoice-api": "dist/bin.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "@maus-inc/typescript-config": "workspace:*",
+    "typescript": "5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

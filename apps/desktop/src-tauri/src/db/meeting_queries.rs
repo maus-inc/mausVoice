@@ -252,12 +252,235 @@ mod tests {
     }
 
     #[test]
+    fn escape_like_pattern_escapes_wildcards() {
+        assert_eq!(escape_like_pattern("q4 review"), "%q4 review%");
+        assert_eq!(escape_like_pattern("100%_x\\y"), "%100\\%\\_x\\\\y%");
+    }
+
+    #[test]
+    fn timestamp_srt_formats_with_comma_millis() {
+        assert_eq!(timestamp_srt(0), "00:00:00,000");
+        assert_eq!(timestamp_srt(3_723_456), "01:02:03,456");
+    }
+
+    #[test]
+    fn timestamp_vtt_formats_with_dot_millis() {
+        assert_eq!(timestamp_vtt(61_000), "00:01:01.000");
+    }
+
+    #[test]
+    fn format_meeting_srt_numbers_cues() {
+        let segments = vec![
+            MeetingSegment {
+                id: "a".to_string(),
+                meeting_id: "m".to_string(),
+                speaker_id: "s".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 1_500,
+                text: "hello".to_string(),
+                confidence: None,
+            },
+            MeetingSegment {
+                id: "b".to_string(),
+                meeting_id: "m".to_string(),
+                speaker_id: "s".to_string(),
+                start_time_ms: 2_000,
+                end_time_ms: 3_000,
+                text: "world".to_string(),
+                confidence: None,
+            },
+        ];
+        let out = format_meeting_srt(&segments);
+        assert!(out.starts_with("1\n00:00:00,000 --> 00:00:01,500\nhello\n"));
+        assert!(out.contains("\n2\n00:00:02,000 --> 00:00:03,000\nworld\n"));
+    }
+
+    #[test]
+    fn format_meeting_vtt_has_header() {
+        let segments = vec![MeetingSegment {
+            id: "a".to_string(),
+            meeting_id: "m".to_string(),
+            speaker_id: "s".to_string(),
+            start_time_ms: 0,
+            end_time_ms: 1_000,
+            text: "hi".to_string(),
+            confidence: None,
+        }];
+        let out = format_meeting_vtt(&segments);
+        assert!(out.starts_with("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhi\n"));
+    }
+
+    #[test]
+    fn format_meeting_markdown_names_speakers() {
+        let meeting = Meeting {
+            id: "m".to_string(),
+            title: "Weekly".to_string(),
+            created_at: 0,
+            duration_ms: 0,
+            status: "completed".to_string(),
+            summary: Some("Decided X".to_string()),
+            transcript: "full".to_string(),
+            source: MeetingSource::Microphone,
+        };
+        let speakers = vec![MeetingSpeaker {
+            id: "s".to_string(),
+            meeting_id: "m".to_string(),
+            name: "Alice".to_string(),
+            label: None,
+        }];
+        let segments = vec![MeetingSegment {
+            id: "a".to_string(),
+            meeting_id: "m".to_string(),
+            speaker_id: "s".to_string(),
+            start_time_ms: 0,
+            end_time_ms: 1_000,
+            text: "hello".to_string(),
+            confidence: None,
+        }];
+        let out = format_meeting_markdown(&meeting, &segments, &speakers);
+        assert!(out.contains("# Weekly\n"));
+        assert!(out.contains("Decided X"));
+        assert!(out.contains("- Alice\n"));
+        assert!(out.contains("**Alice:** hello"));
+    }
+
+    #[test]
     fn meeting_update_clauses_returns_empty_when_all_none() {
         assert_eq!(
             meeting_update_clauses(None, None, None, None, None),
             "",
         );
     }
+}
+
+fn escape_like_pattern(query: &str) -> String {
+    let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+pub async fn search_meetings(
+    pool: SqlitePool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<Meeting>, sqlx::Error> {
+    let pattern = escape_like_pattern(query);
+    let rows = sqlx::query(
+        "SELECT id, title, created_at, duration_ms, status, summary, transcript, source
+         FROM meetings
+         WHERE title LIKE ?1 ESCAPE '\\' OR transcript LIKE ?2 ESCAPE '\\'
+         ORDER BY created_at DESC LIMIT ?3",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .bind(limit)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut meetings = Vec::with_capacity(rows.len());
+    for r in rows {
+        meetings.push(Meeting {
+            id: r.get::<String, _>("id"),
+            title: r.get::<String, _>("title"),
+            created_at: r.get::<i64, _>("created_at"),
+            duration_ms: r.get::<i64, _>("duration_ms"),
+            status: r.get::<String, _>("status"),
+            summary: r.try_get::<Option<String>, _>("summary").unwrap_or(None),
+            transcript: r.get::<String, _>("transcript"),
+            source: parse_meeting_source(&r)?,
+        });
+    }
+    Ok(meetings)
+}
+
+fn timestamp_srt(ms: i64) -> String {
+    let ms = ms.max(0);
+    format!(
+        "{:02}:{:02}:{:02},{:03}",
+        ms / 3_600_000,
+        (ms / 60_000) % 60,
+        (ms / 1_000) % 60,
+        ms % 1_000
+    )
+}
+
+fn timestamp_vtt(ms: i64) -> String {
+    let ms = ms.max(0);
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        ms / 3_600_000,
+        (ms / 60_000) % 60,
+        (ms / 1_000) % 60,
+        ms % 1_000
+    )
+}
+
+pub fn format_meeting_srt(segments: &[MeetingSegment]) -> String {
+    segments
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            format!(
+                "{}\n{} --> {}\n{}\n",
+                i + 1,
+                timestamp_srt(s.start_time_ms),
+                timestamp_srt(s.end_time_ms),
+                s.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn format_meeting_vtt(segments: &[MeetingSegment]) -> String {
+    let body = segments
+        .iter()
+        .map(|s| {
+            format!(
+                "{} --> {}\n{}\n",
+                timestamp_vtt(s.start_time_ms),
+                timestamp_vtt(s.end_time_ms),
+                s.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("WEBVTT\n\n{body}")
+}
+
+pub fn format_meeting_markdown(
+    meeting: &Meeting,
+    segments: &[MeetingSegment],
+    speakers: &[MeetingSpeaker],
+) -> String {
+    let mut out = format!("# {}\n\n", meeting.title);
+    if let Some(summary) = meeting.summary.as_deref().filter(|v| !v.is_empty()) {
+        out.push_str(summary);
+        out.push_str("\n\n");
+    }
+    if !speakers.is_empty() {
+        out.push_str("## Speakers\n\n");
+        for speaker in speakers {
+            out.push_str(&format!("- {}\n", speaker.name));
+        }
+        out.push('\n');
+    }
+    out.push_str("## Transcript\n\n");
+    if segments.is_empty() {
+        out.push_str(&meeting.transcript);
+        out.push('\n');
+    } else {
+        let names: std::collections::HashMap<&str, &str> = speakers
+            .iter()
+            .map(|speaker| (speaker.id.as_str(), speaker.name.as_str()))
+            .collect();
+        for segment in segments {
+            match names.get(segment.speaker_id.as_str()) {
+                Some(name) => out.push_str(&format!("**{name}:** {}\n\n", segment.text)),
+                None => out.push_str(&format!("{}\n\n", segment.text)),
+            }
+        }
+    }
+    out
 }
 
 pub async fn delete_meeting(pool: SqlitePool, id: &str) -> Result<(), sqlx::Error> {

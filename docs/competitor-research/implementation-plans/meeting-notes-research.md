@@ -38,13 +38,18 @@ definition): `diarize?: boolean` is marked "Deprecated: use
 `buildDeepgramWebSocketUrl()` gains a diarization option that appends the
 parameter only for enabled meeting sessions and omits it otherwise; cover
 both URL variants with tests before consuming `words[].speaker`.
+Self-hosted deployments may behave differently (older diarizer models can
+be absent, so no speaker labels arrive) — treat a missing `speaker` as
+normal and gate speaker-dependent UI on labels actually arriving.
 
 ### 3. Conversation linking
 
 Conversations are created via `conversation_create` Tauri command and stored in
-`conversations` table. Chat messages reference `conversation_id`. There is no
-existing FK from conversations to domain entities (transcriptions, meetings).
-We add `meetingId` as metadata on the conversation.
+`conversations` table. Chat messages reference `conversation_id`. The
+`conversations` table itself carries no metadata column, so the meeting link
+rides on the auto-created conversation's first message: a `system` message
+holding the meeting transcript with `metadata: { meetingId }` (the messages
+table already persists metadata as TEXT).
 
 ### 4. Migration pattern
 

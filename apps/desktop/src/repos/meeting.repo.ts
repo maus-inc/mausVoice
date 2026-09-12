@@ -127,10 +127,17 @@ export type CompleteMeetingParams = UpdateMeetingParams & {
   speakers: MeetingSpeaker[];
 };
 
+export type MeetingExportFormat = "txt" | "md" | "srt" | "vtt";
+
 export abstract class BaseMeetingRepo extends BaseRepo {
   abstract createMeeting(meeting: Meeting): Promise<Meeting>;
   abstract getMeeting(id: string): Promise<Meeting>;
   abstract listMeetings(limit?: number): Promise<Meeting[]>;
+  abstract searchMeetings(query: string, limit?: number): Promise<Meeting[]>;
+  abstract exportMeeting(
+    id: string,
+    format: MeetingExportFormat,
+  ): Promise<boolean>;
   abstract updateMeeting(params: UpdateMeetingParams): Promise<void>;
   abstract deleteMeeting(id: string): Promise<void>;
   abstract insertSegments(
@@ -167,6 +174,26 @@ export class LocalMeetingRepo extends BaseMeetingRepo {
       limit,
     });
     return stored.map(fromLocalMeeting);
+  }
+
+  async searchMeetings(
+    this: LocalMeetingRepo,
+    query: string,
+    limit = 20,
+  ): Promise<Meeting[]> {
+    const stored = await invoke<LocalMeeting[]>("meeting_search", {
+      query,
+      limit,
+    });
+    return stored.map(fromLocalMeeting);
+  }
+
+  async exportMeeting(
+    this: LocalMeetingRepo,
+    id: string,
+    format: MeetingExportFormat,
+  ): Promise<boolean> {
+    return invoke<boolean>("meeting_export", { id, format });
   }
 
   async updateMeeting(

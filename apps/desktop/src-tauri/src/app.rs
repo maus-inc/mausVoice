@@ -1,5 +1,5 @@
 use sqlx::sqlite::SqlitePoolOptions;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Manager, PhysicalPosition, RunEvent, Window, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind, TimezoneStrategy};
@@ -277,6 +277,37 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 crate::platform::compositor::deploy_trigger_script(app.handle());
             }
 
+            // Local automation API: loopback-only HTTP with bearer auth for
+            // future CLI/MCP clients. The bind address is a constant
+            // (127.0.0.1) inside the module, never a setting.
+            {
+                let pool = app
+                    .state::<crate::state::OptionKeyDatabase>()
+                    .pool();
+                let automation = Arc::new(
+                    crate::automation_server::AutomationState::with_pool(Some(pool)),
+                );
+                app.manage(Arc::clone(&automation));
+                if let Err(err) = crate::automation_server::write_connection_file(
+                    app.handle().clone(),
+                    &automation,
+                    crate::automation_server::AUTOMATION_DEFAULT_PORT,
+                ) {
+                    log::warn!("Failed to write automation API details: {err}");
+                }
+                tauri::async_runtime::spawn(async move {
+                    match crate::automation_server::serve_automation_api(
+                        automation,
+                        crate::automation_server::AUTOMATION_DEFAULT_PORT,
+                    )
+                    .await
+                    {
+                        Ok(addr) => log::info!("Automation API started on {addr}"),
+                        Err(err) => log::error!("Failed to start automation API: {err}"),
+                    }
+                });
+            }
+
             // Open dev tools if MAUSVOICE_ENABLE_DEVTOOLS is set
             if std::env::var("MAUSVOICE_ENABLE_DEVTOOLS").is_ok() {
                 log::info!("MAUSVOICE_ENABLE_DEVTOOLS detected, opening dev tools...");
@@ -413,6 +444,9 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::meeting_segment_insert,
             crate::commands::meeting_speaker_insert,
             crate::commands::meeting_complete,
+            crate::commands::meeting_search,
+            crate::commands::meeting_export,
+            crate::commands::automation_api_token,
         ])
 }
 
