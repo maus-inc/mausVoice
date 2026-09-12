@@ -1,12 +1,13 @@
-import { SendRounded } from "@mui/icons-material";
-import { Box, IconButton, InputBase, Stack, Typography } from "@mui/material";
+import { ArrowDownwardRounded } from "@mui/icons-material";
+import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { FormattedMessage } from "react-intl";
 import { sendChatMessage } from "../../actions/chat.actions";
 import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
 import { ChatMessageBubble } from "./ChatMessageBubble";
+import { ChatPromptBox } from "./ChatPromptBox";
 import { ToolPermissionCard } from "./ToolPermissionCard";
 
 type ConversationLayoutProps = {
@@ -22,20 +23,26 @@ const isNearBottom = (node: HTMLDivElement) =>
 export const ConversationLayout = ({
   conversationId,
 }: ConversationLayoutProps) => {
-  const intl = useIntl();
   const messageIds = useAppStore(
     (s) => s.chatMessageIdsByConversationId[conversationId] ?? [],
   );
   const toolPermissions = useAppStore((s) => s.toolPermissionById);
+  const agentRunning = useAppStore((s) => {
+    const status = s.agentStateByConversationId?.[conversationId]?.status;
+    return status === "calling-llm" || status === "processing-tools";
+  });
   const conversationPermissions = useMemo(
     () =>
       Object.values(toolPermissions).filter(
-        (p) => p.conversationId === conversationId && p.status === "pending",
+        (p) =>
+          p.conversationId === conversationId &&
+          p.status === "pending" &&
+          !p.toolCallId,
       ),
     [toolPermissions, conversationId],
   );
-  const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [stuck, setStuck] = useState(true);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -50,6 +57,7 @@ export const ConversationLayout = ({
     const node = scrollViewportRef.current;
     if (!node) return;
     shouldStickToBottomRef.current = isNearBottom(node);
+    setStuck(shouldStickToBottomRef.current);
   }, []);
 
   useEffect(() => {
@@ -82,14 +90,11 @@ export const ConversationLayout = ({
     return () => observer.disconnect();
   }, [conversationId, scrollToBottom]);
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-
+  const handlePrompt = async (text: string) => {
+    if (sending) return;
     shouldStickToBottomRef.current = true;
-    setInput("");
+    setStuck(true);
     setSending(true);
-
     try {
       await sendChatMessage(conversationId, text);
     } catch (error) {
@@ -97,6 +102,11 @@ export const ConversationLayout = ({
     } finally {
       setSending(false);
     }
+  };
+
+  const handleSent = () => {
+    shouldStickToBottomRef.current = true;
+    setStuck(true);
   };
 
   return (
@@ -127,14 +137,47 @@ export const ConversationLayout = ({
                 justifyContent: "center",
               }}
             >
-              <Typography
-                variant="body2"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                <FormattedMessage defaultMessage="No messages yet" />
-              </Typography>
+              <Stack sx={{ alignItems: "center", gap: 1.5, maxWidth: 420 }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  <FormattedMessage defaultMessage="No messages yet" />
+                </Typography>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ flexWrap: "wrap", justifyContent: "center" }}
+                >
+                  <Chip
+                    label={
+                      <FormattedMessage defaultMessage="Polish my last dictation" />
+                    }
+                    variant="outlined"
+                    clickable
+                    onClick={() =>
+                      void handlePrompt("Polish my last dictation.")
+                    }
+                  />
+                  <Chip
+                    label={
+                      <FormattedMessage defaultMessage="Fix the grammar" />
+                    }
+                    variant="outlined"
+                    clickable
+                    onClick={() =>
+                      void handlePrompt("Fix the grammar in my last dictation.")
+                    }
+                  />
+                  <Chip
+                    label={
+                      <FormattedMessage defaultMessage="Summarize it briefly" />
+                    }
+                    variant="outlined"
+                    clickable
+                    onClick={() =>
+                      void handlePrompt("Summarize my last dictation briefly.")
+                    }
+                  />
+                </Stack>
+              </Stack>
             </Box>
           ) : (
             <Stack spacing={1.5}>
@@ -149,42 +192,30 @@ export const ConversationLayout = ({
         </Stack>
       </FadingScrollArea>
 
-      <Box sx={{ px: 2, pb: 2 }}>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1,
-            p: 1,
-            borderRadius: 1,
-            border: 1,
-            borderColor: "divider",
-          }}
-        >
-          <InputBase
-            fullWidth
-            placeholder={intl.formatMessage({
-              defaultMessage: "Type a message…",
-            })}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            sx={{ px: 1 }}
-          />
-          <IconButton
-            onClick={handleSend}
-            color="primary"
+      {!stuck && messageIds.length > 0 && (
+        <Box sx={{ display: "flex", justifyContent: "center", mt: -4 }}>
+          <Button
             size="small"
-            disabled={sending}
+            variant="contained"
+            startIcon={<ArrowDownwardRounded />}
+            onClick={() => {
+              shouldStickToBottomRef.current = true;
+              setStuck(true);
+              scrollToBottom();
+            }}
+            sx={{ zIndex: 1 }}
           >
-            <SendRounded />
-          </IconButton>
+            <FormattedMessage defaultMessage="Back to latest" />
+          </Button>
         </Box>
+      )}
+
+      <Box sx={{ px: 2, pb: 2 }}>
+        <ChatPromptBox
+          conversationId={conversationId}
+          running={agentRunning}
+          onSend={handleSent}
+        />
       </Box>
     </Stack>
   );

@@ -66,7 +66,7 @@ const reviewOutputText = async (
   // misclassified as a hang and skip history persistence. True phase
   // decoupling needs the review wait lifted out of stopRecording and is
   // tracked as a follow-up.
-  return reviewTranscriptBeforeInsert(text);
+  return reviewTranscriptBeforeInsert(text, "dictation");
 };
 
 const insertLocalOutput = async (
