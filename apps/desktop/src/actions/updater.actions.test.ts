@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
+import { createDefaultPreferences } from "./user.actions";
 
 const { updaterMock, toastMock, invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(async () => null),
   updaterMock: {
     checkForUpdate: vi.fn(),
+    checkForChannelUpdate: vi.fn(async (...args: unknown[]) =>
+      (updaterMock.checkForUpdate as (...callArgs: unknown[]) => unknown)(
+        ...args,
+      ),
+    ),
     hasAvailableUpdate: vi.fn(() => false),
     closeAvailableUpdate: vi.fn(async () => {}),
     installAvailableUpdate: vi.fn(async () => {}),
@@ -222,5 +228,39 @@ describe("checkForAppUpdates", () => {
     expect(updaterMock.checkForUpdate).toHaveBeenCalledTimes(1);
     expect(getAppState().updater.dialogOpen).toBe(true);
     expect(toastMock.showToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkForAppUpdates update channel", () => {
+  it("checks stable by default and clears the channel badge", async () => {
+    updaterMock.checkForUpdate.mockResolvedValue(null);
+
+    await checkForAppUpdates();
+
+    expect(updaterMock.checkForChannelUpdate).toHaveBeenCalledWith(
+      "darwin",
+      "stable",
+    );
+    expect(getAppState().updater.offeredChannel).toBeNull();
+  });
+
+  it("checks beta and badges it when beta is preferred", async () => {
+    setAppState((state) => {
+      state.userPrefs = {
+        ...createDefaultPreferences(),
+        updateChannel: "beta",
+      };
+      return state;
+    });
+    updaterMock.checkForUpdate.mockResolvedValue(availableUpdate);
+
+    await checkForAppUpdates({ userInitiated: true });
+
+    expect(updaterMock.checkForChannelUpdate).toHaveBeenCalledWith(
+      "darwin",
+      "beta",
+    );
+    expect(getAppState().updater.offeredChannel).toBe("beta");
+    expect(getAppState().updater.availableVersion).toBe("0.1.7");
   });
 });

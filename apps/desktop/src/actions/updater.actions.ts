@@ -1,4 +1,5 @@
 import {
+  checkForChannelUpdate,
   checkForUpdate,
   closeAvailableUpdate,
   downloadAndOpenMacInstaller,
@@ -79,13 +80,18 @@ export const checkForAppUpdates = async (
     });
 
     let update: Awaited<ReturnType<typeof checkForUpdate>>;
+    let updateChannel: "stable" | "beta" = "stable";
     try {
-      update = await checkForUpdate(platform);
+      const prefs = getMyUserPreferences(getAppState());
+      const channel = prefs?.updateChannel === "beta" ? "beta" : "stable";
+      update = await checkForChannelUpdate(platform, channel);
+      updateChannel = channel;
     } catch (error) {
       console.error("Failed to check for updates", error);
       produceAppState((draft) => {
         draft.updater.status = "error";
         draft.updater.errorMessage = String(error);
+        draft.updater.offeredChannel = null;
         draft.updater.manualInstallerUrl = null;
         draft.updater.manualInstallerSignatureUrl = null;
         draft.updater.lastCheckedAt = Date.now();
@@ -110,6 +116,7 @@ export const checkForAppUpdates = async (
         draft.updater.totalBytes = null;
         draft.updater.lastCheckedAt = Date.now();
         draft.updater.upToDateConfirmed = checkingUserInitiated;
+        draft.updater.offeredChannel = null;
       });
       syncMenuIcon(false);
       return false;
@@ -143,6 +150,7 @@ export const checkForAppUpdates = async (
       draft.updater.totalBytes = null;
       draft.updater.lastCheckedAt = Date.now();
       draft.updater.upToDateConfirmed = false;
+      draft.updater.offeredChannel = updateChannel;
       if (shouldAutoShowDialog) {
         draft.updater.dialogOpen = true;
       }

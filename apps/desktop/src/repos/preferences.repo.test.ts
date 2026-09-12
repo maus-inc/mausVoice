@@ -213,6 +213,33 @@ describe("pillPlacement preference", () => {
   });
 });
 
+describe("updateChannel preference", () => {
+  it("defaults to stable when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+    });
+    expect(loaded.updateChannel).toBe("stable");
+  });
+
+  it("preserves a beta channel across a round-trip", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({ ...base, updateChannel: "beta" });
+    expect(loaded.updateChannel).toBe("beta");
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.updateChannel).toBe("beta");
+  });
+
+  it("normalises an unknown channel to stable", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({
+      ...base,
+      updateChannel: "nightly",
+    });
+    expect(loaded.updateChannel).toBe("stable");
+  });
+});
+
 describe("hallucination filter default and persistence", () => {
   it("defaults hallucinationFilterEnabled to true for a fresh profile", () => {
     const prefs = createDefaultPreferences();

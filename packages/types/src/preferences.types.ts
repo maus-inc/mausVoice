@@ -6,6 +6,7 @@ import type {
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
+  UpdateChannel,
 } from "./common.types";
 
 export type UserPreferences = {
@@ -46,6 +47,8 @@ export type UserPreferences = {
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
   pillPlacement: PillPlacement;
+  /** Update channel; beta offers prereleases and may lag back to stable. */
+  updateChannel: UpdateChannel;
   alwaysRequestAdminOnStartup: boolean;
   handsFreeDelayMs: Nullable<number>;
   /** Optional opt-in for activation-key + arrow style cycling while dictating. */
