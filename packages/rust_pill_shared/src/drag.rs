@@ -967,6 +967,7 @@ mod tests {
             bounds: wide_bounds(),
             held: true,
             reduced_motion: false,
+            edge_work: None,
         });
         assert_eq!(tracked.phase, DragPhase::Held);
         assert_eq!((tracked.x, tracked.y), (18.0, 14.0));
