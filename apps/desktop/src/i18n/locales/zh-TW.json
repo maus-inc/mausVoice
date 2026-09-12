@@ -827,5 +827,20 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "您目前使用的是版本 {version}。應用程式將在更新完成後重新啟動。",
   "you_re_up_to_date": "已是最新版本。",
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 資源端點網址",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "作業系統正在封鎖 mausVoice 修改其目前安裝位置中的檔案。請使用下載按鈕取得最新安裝程式，然後執行它以手動完成更新。"
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "作業系統正在封鎖 mausVoice 修改其目前安裝位置中的檔案。請使用下載按鈕取得最新安裝程式，然後執行它以手動完成更新。",
+  "could_not_add_the_selection_to_your_dictionary_please_try_ag": "無法將所選內容加入詞典。請再試一次。",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "無法複製轉錄文本。它已儲存在你的歷史記錄中。",
+  "elevenlabs_keyterms": "ElevenLabs 關鍵詞",
+  "enable_elevenlabs_keyterms": "啟用 ElevenLabs 關鍵詞？",
+  "enable_with_20_surcharge": "啟用並承擔 20% 附加費",
+  "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice 偶爾可能聽錯。新增詞彙表詞條有助於更準確地辨識您常用的名稱和詞語，也可以定義取代規則來自動修正拼寫。",
+  "new_styles_local_transcription_audio_import_and_a_reviewable": "新風格、本地轉寫、音訊匯入和可審閱的編輯器",
+  "on_linux_corrections_made_in_other_apps_are_not_captured_whe": "在 Linux 上，其他應用程式中所做的更正不會被擷取。當您在歷史記錄中更正已儲存的轉錄時，更正後的名稱和詞語會自動新增到您的詞典中。",
+  "open_an_editable_composer_so_you_can_review_or_change_dictat": "開啟可編輯的編寫器，在插入前審閱或更改聽寫文字。審閱會暫停串流輸出，因此啟用此項會關閉即時輸出。",
+  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "將您的詞典作為關鍵詞傳送給 ElevenLabs，以便它辨識您的詞語。這會為每次 ElevenLabs 轉錄增加 20% 的附加費，因此預設為關閉。",
+  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "將您的詞典作為關鍵詞傳送給 ElevenLabs 會為每次 ElevenLabs 轉錄增加 20% 的附加費。只會傳送您非空的詞典，您可以隨時關閉此功能。",
+  "text_is_already_in_your_dictionary": "「{text}」已在詞典中",
+  "the_selection_is_too_long_to_add_to_the_dictionary": "所選內容過長，無法加入詞典。",
+  "turn_on_review_before_insert_to_edit_dictated_text_in_a_comp": "開啟「插入前審閱」可在編寫器中編輯聽寫文字，使用語音編輯模式進行轉換，並設定允許在代理模式下執行的工具。",
+  "when_you_correct_a_saved_transcription_in_history_add_the_co": "當您在歷史記錄中修改已儲存的轉錄時，修改後的名稱和詞語會自動加入詞典。在其他應用程式中所做的修改由「從糾正中學習」處理。"
 }

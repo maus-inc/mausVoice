@@ -445,16 +445,19 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
   private readonly model: string | null;
   private readonly customFetch: typeof secureFetch;
+  private readonly wordBoost: string[];
 
   constructor(
     apiKey: string,
     model: string | null,
     customFetch: typeof secureFetch = secureFetch,
+    wordBoost: string[] = [],
   ) {
     super();
     this.apiKey = apiKey;
     this.model = model;
     this.customFetch = customFetch;
+    this.wordBoost = wordBoost;
   }
 
   protected async transcribeSegment(
@@ -467,6 +470,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       model: this.model,
       blob: wavBuffer,
       language: input.language,
+      wordBoost: this.wordBoost,
       customFetch: this.customFetch,
     });
 
@@ -483,10 +487,12 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
+  private readonly keyterms: string[];
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, keyterms: string[] = []) {
     super();
     this.apiKey = apiKey;
+    this.keyterms = keyterms;
   }
 
   protected async transcribeSegment(
@@ -499,6 +505,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      keyterms: this.keyterms,
       customFetch: secureFetch,
     });
 
@@ -517,16 +524,19 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
   private model: string;
   private customFetch: typeof secureFetch;
+  private readonly keyterms: string[];
 
   constructor(
     apiKey: string,
     model: string | null,
     customFetch: typeof secureFetch = secureFetch,
+    keyterms: string[] = [],
   ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "nova-3";
     this.customFetch = customFetch;
+    this.keyterms = keyterms;
   }
 
   protected async transcribeSegment(
@@ -540,6 +550,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      keyterms: this.keyterms,
       customFetch: this.customFetch,
     });
 
@@ -639,11 +650,13 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private azureSubscriptionKey: string;
   private azureRegion: string;
+  private readonly phrases: string[];
 
-  constructor(subscriptionKey: string, region: string) {
+  constructor(subscriptionKey: string, region: string, phrases: string[] = []) {
     super();
     this.azureSubscriptionKey = subscriptionKey;
     this.azureRegion = region;
+    this.phrases = phrases;
   }
 
   protected async transcribeSegment(
@@ -655,7 +668,7 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       subscriptionKey: this.azureSubscriptionKey,
       region: this.azureRegion,
       blob: wavBuffer,
-      prompt: input.prompt ?? undefined,
+      phrases: this.phrases,
       language: input.language,
     });
 

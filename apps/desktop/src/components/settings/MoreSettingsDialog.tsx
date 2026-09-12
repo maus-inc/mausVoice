@@ -37,8 +37,9 @@ import {
   setStylingMode,
   setAutoLearnDictionaryEnabled,
   setAutoLearnFromEditsEnabled,
+  setElevenLabsKeytermsEnabled,
 } from "../../actions/user.actions";
-import { isMacOS, isWindows } from "../../utils/env.utils";
+import { isLinux, isMacOS, isWindows } from "../../utils/env.utils";
 import { produceAppState, useAppStore } from "../../store";
 import {
   getEffectiveDictationLimitMinutes,
@@ -59,6 +60,7 @@ import {
 import { PillPlacementSetting } from "./PillPlacementSetting";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 
 export const MoreSettingsDialog = () => {
   const intl = useIntl();
@@ -81,10 +83,12 @@ export const MoreSettingsDialog = () => {
     handsFreeDelayMs,
     autoLearnDictionaryEnabled,
     autoLearnFromEditsEnabled,
+    elevenLabsKeytermsEnabled,
     spokenCommandsEnabled,
     reviewBeforeInsert,
     hallucinationFilterEnabled,
     inDictationStyleSwitchingEnabled,
+    transcriptionProvider,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -107,10 +111,12 @@ export const MoreSettingsDialog = () => {
       getEffectiveHandsFreeDelayMs(prefs),
       prefs?.autoLearnDictionaryEnabled ?? true,
       prefs?.autoLearnFromEditsEnabled ?? false,
+      prefs?.elevenLabsKeytermsEnabled ?? false,
       prefs?.spokenCommandsEnabled ?? true,
       prefs?.reviewBeforeInsert ?? false,
       prefs?.hallucinationFilterEnabled ?? true,
       prefs?.inDictationStyleSwitchingEnabled ?? false,
+      transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
     ] as const;
   });
   const [dictationLimitInput, setDictationLimitInput] = useState(
@@ -121,6 +127,8 @@ export const MoreSettingsDialog = () => {
     String(handsFreeDelayMs),
   );
   const lastCommittedHandsFreeDelayMsRef = useRef(handsFreeDelayMs);
+  const [confirmElevenLabsSurcharge, setConfirmElevenLabsSurcharge] =
+    useState(false);
 
   useEffect(() => {
     lastCommittedDictationLimitMinutesRef.current = dictationLimitMinutes;
@@ -286,6 +294,33 @@ export const MoreSettingsDialog = () => {
     );
   };
 
+  const handleToggleElevenLabsKeyterms = (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    // Turning this on adds a 20% ElevenLabs transcription surcharge, so the
+    // opt-in only persists after the user acknowledges the cost.
+    if (event.target.checked) {
+      setConfirmElevenLabsSurcharge(true);
+      return;
+    }
+    logOnRejection(
+      setElevenLabsKeytermsEnabled(false),
+      "settings dialog: setElevenLabsKeytermsEnabled",
+    );
+  };
+
+  const acknowledgeElevenLabsSurcharge = () => {
+    setConfirmElevenLabsSurcharge(false);
+    logOnRejection(
+      setElevenLabsKeytermsEnabled(true),
+      "settings dialog: setElevenLabsKeytermsEnabled",
+    );
+  };
+
+  const dismissElevenLabsSurcharge = () => {
+    setConfirmElevenLabsSurcharge(false);
+  };
+
   const handleToggleDisablePillRewards = (
     event: ChangeEvent<HTMLInputElement>,
   ) => {
@@ -429,7 +464,11 @@ export const MoreSettingsDialog = () => {
           <SettingSection
             title={<FormattedMessage defaultMessage="Auto-learn dictionary" />}
             description={
-              <FormattedMessage defaultMessage="When you correct a transcription, add the corrected names and words to your dictionary automatically." />
+              isLinux() ? (
+                <FormattedMessage defaultMessage="On Linux, corrections made in other apps are not captured. When you correct a saved transcription in History, add the corrected names and words to your dictionary automatically." />
+              ) : (
+                <FormattedMessage defaultMessage="When you correct a saved transcription in History, add the corrected names and words to your dictionary automatically. Corrections you make in other apps are handled by Learn from corrections." />
+              )
             }
             action={
               <Switch
@@ -453,6 +492,22 @@ export const MoreSettingsDialog = () => {
                   edge="end"
                   checked={autoLearnFromEditsEnabled}
                   onChange={handleToggleAutoLearnFromEdits}
+                />
+              }
+            />
+          )}
+
+          {transcriptionProvider === "elevenlabs" && (
+            <SettingSection
+              title={<FormattedMessage defaultMessage="ElevenLabs keyterms" />}
+              description={
+                <FormattedMessage defaultMessage="Send your dictionary to ElevenLabs as keyterms so it recognizes your words. This adds a 20% surcharge to every ElevenLabs transcription, so it is off by default." />
+              }
+              action={
+                <Switch
+                  edge="end"
+                  checked={elevenLabsKeytermsEnabled}
+                  onChange={handleToggleElevenLabsKeyterms}
                 />
               }
             />
@@ -741,6 +796,20 @@ export const MoreSettingsDialog = () => {
           <FormattedMessage defaultMessage="Close" />
         </Button>
       </DialogActions>
+      <ConfirmDialog
+        isOpen={confirmElevenLabsSurcharge}
+        title={
+          <FormattedMessage defaultMessage="Enable ElevenLabs keyterms?" />
+        }
+        content={
+          <FormattedMessage defaultMessage="Sending your dictionary as ElevenLabs keyterms adds a 20% surcharge to every ElevenLabs transcription. Only your non-empty dictionary is sent, and you can turn this off at any time." />
+        }
+        confirmLabel={
+          <FormattedMessage defaultMessage="Enable with 20% surcharge" />
+        }
+        onCancel={dismissElevenLabsSurcharge}
+        onConfirm={acknowledgeElevenLabsSurcharge}
+      />
     </Dialog>
   );
 };

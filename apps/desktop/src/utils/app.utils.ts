@@ -48,6 +48,19 @@ export const registerTranscriptions = (
   }
 };
 
+/**
+ * Every written value in the user's dictionary: each source plus each
+ * replacement destination. Glossary terms carry an empty destination, so
+ * they contribute only their source. Consumers use this to dedupe against
+ * existing dictionary values.
+ */
+export const collectTermValues = (state: AppState): string[] =>
+  Object.values(state.termById).flatMap((term) =>
+    term.destinationValue
+      ? [term.sourceValue, term.destinationValue]
+      : [term.sourceValue],
+  );
+
 export const registerTerms = (draft: AppState, terms: Term[]): void => {
   for (const term of terms) {
     draft.termById[term.id] = term;

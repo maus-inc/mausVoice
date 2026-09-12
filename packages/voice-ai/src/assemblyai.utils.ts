@@ -80,6 +80,11 @@ export type AssemblyAITranscriptionArgs = {
   language?: string;
   /** Speech model to transcribe with. Omitted => AssemblyAI default. */
   model?: string | null;
+  /**
+   * Word boosting biases recognition toward these terms (up to 1,000 words
+   * per the AssemblyAI API).
+   */
+  wordBoost?: string[];
   /** Total time budget for the transcript to reach "completed" (default 180 s). */
   timeoutMs?: number;
   /** Delay between status polls (default 3 s). */
@@ -306,6 +311,7 @@ const createTranscriptRequest = async (
   uploadUrl: string,
   language: string | undefined,
   speechModels: AssemblyAITranscriptionModel[] | undefined,
+  wordBoost: string[] | undefined,
   signal: AbortSignal,
   deadline: number,
   customFetch: CustomFetch,
@@ -313,6 +319,9 @@ const createTranscriptRequest = async (
   const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
   if (speechModels) {
     transcriptPayload.speech_models = speechModels;
+  }
+  if (wordBoost && wordBoost.length > 0) {
+    transcriptPayload.word_boost = wordBoost;
   }
   if (!language || language === "auto") {
     transcriptPayload.language_detection = true;
@@ -408,6 +417,7 @@ export const assemblyaiTranscribeAudio = async ({
   blob,
   language,
   model,
+  wordBoost,
   timeoutMs = 180_000,
   pollIntervalMs = 3000,
   customFetch = fetch,
@@ -441,6 +451,7 @@ export const assemblyaiTranscribeAudio = async ({
       uploadUrl,
       language,
       speechModels,
+      wordBoost?.map((term) => term.trim()).filter(Boolean),
       controller.signal,
       deadline,
       customFetch,

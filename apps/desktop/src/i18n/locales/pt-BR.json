@@ -827,5 +827,20 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Você está atualmente na versão {version}. O aplicativo será reiniciado após a conclusão da atualização.",
   "you_re_up_to_date": "Você está atualizado.",
   "your_azure_openai_resource_endpoint_url": "URL do endpoint do seu recurso Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Seu sistema operacional está impedindo o mausVoice de modificar arquivos no local de instalação atual. Use o botão de download para obter o instalador mais recente e execute-o para concluir a atualização manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Seu sistema operacional está impedindo o mausVoice de modificar arquivos no local de instalação atual. Use o botão de download para obter o instalador mais recente e execute-o para concluir a atualização manualmente.",
+  "could_not_add_the_selection_to_your_dictionary_please_try_ag": "Não foi possível adicionar a seleção ao seu dicionário. Tente novamente.",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "Não foi possível copiar a transcrição. Ela está salva no seu histórico.",
+  "elevenlabs_keyterms": "Termos da ElevenLabs",
+  "enable_elevenlabs_keyterms": "Ativar termos da ElevenLabs?",
+  "enable_with_20_surcharge": "Ativar com taxa extra de 20%",
+  "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "O mausVoice pode entender errado de vez em quando. Adicione termos ao glossário para melhorar o reconhecimento dos nomes e palavras que você usa, ou defina uma regra de substituição para corrigir a grafia automaticamente.",
+  "new_styles_local_transcription_audio_import_and_a_reviewable": "Novos estilos, transcrição local, importação de áudio e um editor de revisão",
+  "on_linux_corrections_made_in_other_apps_are_not_captured_whe": "No Linux, as correções feitas em outros aplicativos não são capturadas. Quando você corrige uma transcrição salva no Histórico, os nomes e palavras corrigidos são adicionados ao seu dicionário automaticamente.",
+  "open_an_editable_composer_so_you_can_review_or_change_dictat": "Abra um editor editável para revisar ou alterar o texto ditado antes de inseri-lo. A revisão pausa o streaming, então ativar esta opção desativa a saída em tempo real.",
+  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "Envie seu dicionário para a ElevenLabs como termos para que ela reconheça suas palavras. Isso adiciona uma taxa extra de 20% a cada transcrição ElevenLabs, por isso está desativado por padrão.",
+  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "Enviar seu dicionário para a ElevenLabs como termos adiciona uma taxa extra de 20% a cada transcrição ElevenLabs. Apenas seu dicionário não vazio é enviado e você pode desativar o envio de termos-chave a qualquer momento.",
+  "text_is_already_in_your_dictionary": "\"{text}\" já está no seu dicionário",
+  "the_selection_is_too_long_to_add_to_the_dictionary": "A seleção é longa demais para ser adicionada ao dicionário.",
+  "turn_on_review_before_insert_to_edit_dictated_text_in_a_comp": "Ative Revisar antes de inserir para editar o texto ditado em um editor, use o modo de edição por voz para transformações e configure quais ferramentas do modo agente podem ser executadas.",
+  "when_you_correct_a_saved_transcription_in_history_add_the_co": "Quando você corrige uma transcrição salva no Histórico, os nomes e palavras corrigidos são adicionados automaticamente ao seu dicionário. As correções feitas em outros aplicativos são tratadas por Aprender com correções."
 }

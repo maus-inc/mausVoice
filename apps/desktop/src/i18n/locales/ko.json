@@ -827,5 +827,20 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "현재 버전 {version}을(를) 사용 중입니다. 업데이트가 완료되면 앱이 다시 시작됩니다.",
   "you_re_up_to_date": "최신 상태입니다.",
   "your_azure_openai_resource_endpoint_url": "Azure OpenAI 리소스 엔드포인트 URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제로 인해 mausVoice가 현재 설치 위치의 파일을 수정할 수 없습니다. 다운로드 버튼으로 최신 설치 파일을 내려받은 뒤 실행하여 업데이트를 수동으로 완료하세요."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제로 인해 mausVoice가 현재 설치 위치의 파일을 수정할 수 없습니다. 다운로드 버튼으로 최신 설치 파일을 내려받은 뒤 실행하여 업데이트를 수동으로 완료하세요.",
+  "could_not_add_the_selection_to_your_dictionary_please_try_ag": "선택한 텍스트를 사전에 추가하지 못했습니다. 다시 시도해 주세요.",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "녹음 내용을 복사할 수 없습니다. 기록에 저장되어 있습니다.",
+  "elevenlabs_keyterms": "ElevenLabs 키워드",
+  "enable_elevenlabs_keyterms": "ElevenLabs 키워드 사용 설정?",
+  "enable_with_20_surcharge": "20% 추가 요금 적용하여 사용 설정",
+  "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice는 가끔 잘못 알아들을 수 있습니다. 자주 쓰는 이름과 단어를 잘 인식하도록 용어집에 추가하거나, 맞춤법을 자동으로 수정하는 교체 규칙을 정의하세요.",
+  "new_styles_local_transcription_audio_import_and_a_reviewable": "새 스타일, 로컬 전사, 오디오 가져오기, 검토 가능한 작성기",
+  "on_linux_corrections_made_in_other_apps_are_not_captured_whe": "Linux에서는 다른 앱에서 수정한 내용이 캡처되지 않습니다. 기록에서 저장된 전사를 수정하면 수정된 이름과 단어가 자동으로 사전에 추가됩니다.",
+  "open_an_editable_composer_so_you_can_review_or_change_dictat": "편집 가능한 작성기를 열어 삽입 전에 받아쓴 텍스트를 검토하거나 수정할 수 있습니다. 검토는 스트리밍을 일시 중지하므로, 이 옵션을 켜면 실시간 출력이 꺼집니다.",
+  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "단어를 인식하도록 사전을 ElevenLabs에 키워드로 보냅니다. 이렇게 하면 모든 ElevenLabs 전사에 20% 추가 요금이 부과되므로 기본적으로 비활성화되어 있습니다.",
+  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "사전을 ElevenLabs에 키워드로 보내면 모든 ElevenLabs 전사에 20% 추가 요금이 부과됩니다. 비어 있지 않은 사전만 전송되며 언제든지 사용을 중지할 수 있습니다.",
+  "text_is_already_in_your_dictionary": "“{text}”은(는) 이미 사전에 있습니다",
+  "the_selection_is_too_long_to_add_to_the_dictionary": "선택한 텍스트가 너무 길어서 사전에 추가할 수 없습니다.",
+  "turn_on_review_before_insert_to_edit_dictated_text_in_a_comp": "삽입 전 검토를 켜서 작성기에서 받아쓴 텍스트를 편집하고, 변환에는 음성 편집 모드를 사용하며, 에이전트 모드에서 실행할 도구를 설정하세요.",
+  "when_you_correct_a_saved_transcription_in_history_add_the_co": "기록에서 저장된 전사를 수정하면 수정된 이름과 단어가 자동으로 사전에 추가됩니다. 다른 앱에서 하는 수정은 “수정에서 학습”이 처리합니다."
 }

@@ -1,5 +1,11 @@
+import { getAppState } from "../store";
 import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET,
+  buildProviderVocabulary,
+  collectDictionaryEntries,
+} from "../utils/prompt.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
@@ -15,9 +21,17 @@ type AssemblyAIStreamingSession = {
 
 const LOGGER_PREFIX = "AssemblyAI WebSocket";
 
-const startAssemblyAIStreaming = async (
+/**
+ * Opens an AssemblyAI v3 streaming WebSocket. The `speech_model` query
+ * parameter pins the universal streaming model that supports `keyterms_prompt`
+ * biasing; without it the account default may be an older model that silently
+ * ignores the keyterms. `keyterms` (the user's dictionary, already capped to
+ * the streaming budget) is sent as a JSON array when non-empty.
+ */
+export const startAssemblyAIStreaming = async (
   apiKey: string,
   sampleRate: number,
+  keyterms: string[],
   onInterimResult?: (segment: string) => void,
 ): Promise<AssemblyAIStreamingSession> => {
   getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
@@ -107,7 +121,14 @@ const startAssemblyAIStreaming = async (
       });
     };
 
-    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&token=${apiKey}`;
+    // Keyterms prompting: a JSON-encoded array of terms (up to 100, each at
+    // most 50 characters) biases the streaming model toward the user's
+    // dictionary vocabulary.
+    const keytermsPrompt =
+      keyterms.length > 0
+        ? `&keyterms_prompt=${encodeURIComponent(JSON.stringify(keyterms))}`
+        : "";
+    const wsUrl = `wss://streaming.assemblyai.com/v3/ws?sample_rate=${sampleRate}&speech_model=universal-3-5-pro&token=${encodeURIComponent(apiKey)}${keytermsPrompt}`;
     getLogger().info(
       `[${LOGGER_PREFIX}] Connecting (api key present:`,
       Boolean(apiKey),
@@ -225,11 +246,20 @@ export class AssemblyAITranscriptionSession extends BaseApiTranscriptionSession 
   async onRecordingStart(sampleRate: number): Promise<void> {
     try {
       getLogger().info("[AssemblyAI] Starting streaming session...");
+      const { terms: keyterms, warning } = buildProviderVocabulary(
+        collectDictionaryEntries(getAppState()),
+        ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET,
+        "AssemblyAI",
+      );
+      if (warning) {
+        getLogger().warning(warning);
+      }
       // Must land in the inherited `streamSession` field: the base
       // `finalize()` and `cleanup()` read that field, not any local one.
       this.streamSession = await startAssemblyAIStreaming(
         this.apiKey,
         sampleRate,
+        keyterms,
         this.interimCallback ?? undefined,
       );
       getLogger().info("[AssemblyAI] Streaming session started successfully");

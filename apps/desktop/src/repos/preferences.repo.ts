@@ -67,6 +67,7 @@ type LocalUserPreferences = {
   handsFreeDelayMs?: Nullable<number>;
   autoLearnDictionaryEnabled?: boolean;
   autoLearnFromEditsEnabled?: boolean;
+  elevenLabsKeytermsEnabled?: boolean;
   inDictationStyleSwitchingEnabled?: boolean;
   hallucinationFilterEnabled?: boolean;
   reviewBeforeInsert?: Nullable<boolean>;
@@ -217,6 +218,7 @@ const fromLocalOutputPreferences = (preferences: LocalUserPreferences) => ({
 const fromLocalFeaturePreferences = (preferences: LocalUserPreferences) => ({
   autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled ?? true,
   autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled ?? false,
+  elevenLabsKeytermsEnabled: preferences.elevenLabsKeytermsEnabled ?? false,
   inDictationStyleSwitchingEnabled: orFalse(
     preferences.inDictationStyleSwitchingEnabled,
   ),
@@ -300,6 +302,7 @@ const toLocalOutputPreferences = (preferences: UserPreferences) => ({
 const toLocalFeaturePreferences = (preferences: UserPreferences) => ({
   autoLearnDictionaryEnabled: preferences.autoLearnDictionaryEnabled,
   autoLearnFromEditsEnabled: preferences.autoLearnFromEditsEnabled,
+  elevenLabsKeytermsEnabled: preferences.elevenLabsKeytermsEnabled,
   inDictationStyleSwitchingEnabled:
     preferences.inDictationStyleSwitchingEnabled,
   hallucinationFilterEnabled: preferences.hallucinationFilterEnabled,

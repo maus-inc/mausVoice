@@ -74,9 +74,10 @@ pub async fn upsert_user_preferences(
              agent_permission_timeout_ms,
              spoken_commands_enabled,
              auto_learn_dictionary_enabled,
-             auto_learn_from_edits_enabled
+             auto_learn_from_edits_enabled,
+             eleven_labs_keyterms_enabled
           )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -128,7 +129,8 @@ pub async fn upsert_user_preferences(
             agent_permission_timeout_ms = excluded.agent_permission_timeout_ms,
             spoken_commands_enabled = excluded.spoken_commands_enabled,
             auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled,
-            auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled",
+            auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled,
+            eleven_labs_keyterms_enabled = excluded.eleven_labs_keyterms_enabled"
         )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -182,6 +184,7 @@ pub async fn upsert_user_preferences(
     .bind(preferences.spoken_commands_enabled)
     .bind(preferences.auto_learn_dictionary_enabled)
     .bind(preferences.auto_learn_from_edits_enabled)
+    .bind(preferences.eleven_labs_keyterms_enabled)
     .execute(&pool)
     .await?;
 
@@ -245,7 +248,8 @@ pub async fn fetch_user_preferences(
             agent_permission_timeout_ms,
             spoken_commands_enabled,
             auto_learn_dictionary_enabled,
-            auto_learn_from_edits_enabled
+            auto_learn_from_edits_enabled,
+            eleven_labs_keyterms_enabled
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -427,6 +431,10 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("auto_learn_from_edits_enabled")
             .map(|v| v != 0)
             .unwrap_or(false),
+        eleven_labs_keyterms_enabled: row
+            .try_get::<i64, _>("eleven_labs_keyterms_enabled")
+            .map(|v| v != 0)
+            .unwrap_or(false),
     });
 
     Ok(preferences)
@@ -456,4 +464,51 @@ pub async fn fetch_transcription_mode(pool: SqlitePool) -> Result<Option<String>
     .await?;
 
     Ok(row.flatten())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn migrated_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect to in-memory database");
+
+        for migration in crate::db::migrations() {
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply migration {} ({}): {error}",
+                        migration.version, migration.description
+                    )
+                });
+        }
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn eleven_labs_keyterms_enabled_round_trips_through_storage() {
+        let pool = migrated_pool().await;
+        let preferences: UserPreferences = serde_json::from_value(serde_json::json!({
+            "userId": "keyterms-user",
+            "elevenLabsKeytermsEnabled": true,
+        }))
+        .expect("deserialize preferences");
+
+        upsert_user_preferences(pool.clone(), &preferences)
+            .await
+            .expect("save preferences");
+        let loaded = fetch_user_preferences(pool, "keyterms-user")
+            .await
+            .expect("load preferences")
+            .expect("saved preferences must exist");
+
+        assert!(loaded.eleven_labs_keyterms_enabled);
+    }
 }

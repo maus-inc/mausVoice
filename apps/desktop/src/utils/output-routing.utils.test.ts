@@ -14,11 +14,18 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   return { ...actual, invoke: invokeMock };
 });
 
-const { getAppStateMock, getPrefsMock } = vi.hoisted(() => ({
-  getAppStateMock: vi.fn(),
-  getPrefsMock: vi.fn(),
+const { getAppStateMock, getPrefsMock, produceAppStateMock } = vi.hoisted(
+  () => ({
+    getAppStateMock: vi.fn(),
+    getPrefsMock: vi.fn(),
+    produceAppStateMock: vi.fn(),
+  }),
+);
+vi.mock("../store", () => ({
+  getAppState: getAppStateMock,
+  // beginEditWatch clears any pending auto-learn proposal through the store.
+  produceAppState: produceAppStateMock,
 }));
-vi.mock("../store", () => ({ getAppState: getAppStateMock }));
 vi.mock("./user.utils", () => ({
   getMyUserPreferences: getPrefsMock,
 }));

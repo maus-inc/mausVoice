@@ -140,6 +140,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   agentPermissionTimeoutMs: 60_000,
   autoLearnDictionaryEnabled: true,
   autoLearnFromEditsEnabled: false,
+  elevenLabsKeytermsEnabled: false,
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits
@@ -757,6 +758,14 @@ export const setAutoLearnFromEditsEnabled = async (
   await updateUserPreferences((preferences) => {
     preferences.autoLearnFromEditsEnabled = enabled;
   }, "Failed to save learn-from-corrections preference. Please try again.");
+};
+
+export const setElevenLabsKeytermsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.elevenLabsKeytermsEnabled = enabled;
+  }, "Failed to save ElevenLabs keyterms preference. Please try again.");
 };
 
 export const setRealtimeOutputEnabled = async (

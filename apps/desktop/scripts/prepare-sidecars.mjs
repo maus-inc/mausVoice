@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { randomInt } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -89,6 +90,71 @@ if (gpuBuildState.canBuildNative) {
   mirrorCpuSidecarAsGpu(cpuSidecarPath);
 }
 
+function sleepSync(ms) {
+  try {
+    const sab = new SharedArrayBuffer(4);
+    const int32 = new Int32Array(sab);
+    Atomics.wait(int32, 0, 0, ms);
+    return;
+  } catch {
+    // Atomics.wait unavailable — try Node process sleep.
+  }
+  if (tryNodeProcessSleep(ms)) {
+    return;
+  }
+  busyWait(ms);
+}
+
+function tryNodeProcessSleep(ms) {
+  try {
+    const res = spawnSync(
+      process.execPath,
+      ["-e", `setTimeout(()=>{}, ${ms})`],
+      {
+        stdio: "ignore",
+      },
+    );
+    if (!res?.error && res?.status === 0) {
+      return true;
+    }
+    let reason = res?.error?.code;
+    if (!reason && res?.error?.message) {
+      reason = res.error.message;
+    }
+    if (!reason && res?.signal) {
+      reason = `signal:${res.signal}`;
+    }
+    if (!reason) {
+      reason = res?.status ?? "unknown";
+    }
+    let messageSuffix = "";
+    if (res?.error?.message && reason !== res.error.message) {
+      messageSuffix = ` — ${res.error.message}`;
+    } else if (res?.signal) {
+      messageSuffix = ` — killed by signal ${res.signal}`;
+    }
+    console.warn(
+      `[sidecar] sleepSync spawnSync failed: ${reason}${messageSuffix}`,
+    );
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function busyWait(ms) {
+  // Final spawnSync attempt before CPU busy-wait. The first attempt in
+  // sleepSync may have failed on a transient issue, so a second attempt
+  // can still recover before burning CPU in a tight loop.
+  if (tryNodeProcessSleep(ms)) {
+    return;
+  }
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    // intentional empty
+  }
+}
+
 function buildAndCopy(binaryName, gpuEnabled, options = {}) {
   const allowFailure = options.allowFailure === true;
   const cargoArgs = [
@@ -115,7 +181,37 @@ function buildAndCopy(binaryName, gpuEnabled, options = {}) {
     );
   }
 
-  const buildOk = run("cargo", cargoArgs, repoRoot, { allowFailure });
+  // Transient network failures (e.g. GitHub 500 for sherpa-onnx) can
+  // break the first attempt. Retry with back-off, reusing the existing
+  // `run` helper so no new `cargo` PATH hotspot is introduced.
+  const maxAttempts = 3;
+  let buildOk = false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const isLastAttempt = attempt === maxAttempts;
+    // Intermediate failures should not abort the process; only the final
+    // attempt respects the caller's allowFailure flag.
+    const currentAllowFailure = isLastAttempt ? allowFailure : true;
+    const ok = run("cargo", cargoArgs, repoRoot, {
+      allowFailure: currentAllowFailure,
+    });
+    if (ok) {
+      buildOk = true;
+      break;
+    }
+    // `run` already logged the failure when allowFailure is true
+    if (!isLastAttempt) {
+      // Exponential backoff with jitter to reduce thundering-herd retries.
+      const baseDelayMs = 5000;
+      const maxDelayMs = 30000;
+      const exponential = baseDelayMs * 2 ** (attempt - 1);
+      const jitter = randomInt(0, 1000);
+      const backoffMs = Math.min(exponential + jitter, maxDelayMs);
+      console.warn(
+        `[sidecar] Retrying cargo build for ${binaryName} (${attempt}/${maxAttempts}) in ${backoffMs}ms — transient network may have caused sherpa download 500`,
+      );
+      sleepSync(backoffMs);
+    }
+  }
   if (!buildOk) {
     return null;
   }

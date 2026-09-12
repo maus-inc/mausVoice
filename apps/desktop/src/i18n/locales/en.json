@@ -827,5 +827,20 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "You're currently on version {version}. The app will restart after the update finishes.",
   "you_re_up_to_date": "You're up to date.",
   "your_azure_openai_resource_endpoint_url": "Your Azure OpenAI resource endpoint URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually.",
+  "could_not_add_the_selection_to_your_dictionary_please_try_ag": "Could not add the selection to your dictionary. Please try again.",
+  "could_not_copy_the_transcript_it_is_saved_in_your_history": "Could not copy the transcript. It is saved in your history.",
+  "elevenlabs_keyterms": "ElevenLabs keyterms",
+  "enable_elevenlabs_keyterms": "Enable ElevenLabs keyterms?",
+  "enable_with_20_surcharge": "Enable with 20% surcharge",
+  "mausvoice_may_misunderstand_you_on_occasion_add_glossary_ter": "mausVoice may misunderstand you on occasion. Add glossary terms to bias recognition toward the names and words you use, or define a replacement rule to fix the spelling automatically.",
+  "new_styles_local_transcription_audio_import_and_a_reviewable": "New styles, local transcription, audio import, and a reviewable composer",
+  "on_linux_corrections_made_in_other_apps_are_not_captured_whe": "On Linux, corrections made in other apps are not captured. When you correct a saved transcription in History, add the corrected names and words to your dictionary automatically.",
+  "open_an_editable_composer_so_you_can_review_or_change_dictat": "Open an editable composer so you can review or change dictated text before it is inserted. Review pauses streaming, so turning this on turns Real-time output off.",
+  "send_your_dictionary_to_elevenlabs_as_keyterms_so_it_recogni": "Send your dictionary to ElevenLabs as keyterms so it recognizes your words. This adds a 20% surcharge to every ElevenLabs transcription, so it is off by default.",
+  "sending_your_dictionary_as_elevenlabs_keyterms_adds_a_20_sur": "Sending your dictionary as ElevenLabs keyterms adds a 20% surcharge to every ElevenLabs transcription. Only your non-empty dictionary is sent, and you can turn this off at any time.",
+  "text_is_already_in_your_dictionary": "\"{text}\" is already in your dictionary",
+  "the_selection_is_too_long_to_add_to_the_dictionary": "The selection is too long to add to the dictionary.",
+  "turn_on_review_before_insert_to_edit_dictated_text_in_a_comp": "Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run.",
+  "when_you_correct_a_saved_transcription_in_history_add_the_co": "When you correct a saved transcription in History, add the corrected names and words to your dictionary automatically. Corrections you make in other apps are handled by Learn from corrections."
 }

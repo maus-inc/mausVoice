@@ -18,6 +18,16 @@ describe("findEditCorrections", () => {
     );
   });
 
+  it("detects a case-only correction of a lowercased proper noun", () => {
+    expect(
+      find("i spoke to sonia yesterday", "i spoke to Sonia yesterday"),
+    ).toEqual(["Sonia"]);
+  });
+
+  it("detects a case-only correction of a single-word dictation", () => {
+    expect(find("sonia", "Sonia")).toEqual(["Sonia"]);
+  });
+
   it("locates the corrected word when surrounded by other document text", () => {
     expect(
       find(

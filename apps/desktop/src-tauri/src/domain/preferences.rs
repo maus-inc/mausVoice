@@ -123,6 +123,10 @@ pub struct UserPreferences {
     /// text field through the accessibility APIs.
     #[serde(default)]
     pub auto_learn_from_edits_enabled: bool,
+    /// Opt-in consent for sending dictionary terms as ElevenLabs keyterms,
+    /// which adds a 20% transcription surcharge. Off by default.
+    #[serde(default)]
+    pub eleven_labs_keyterms_enabled: bool,
 }
 
 fn default_hallucination_filter_enabled() -> bool {
