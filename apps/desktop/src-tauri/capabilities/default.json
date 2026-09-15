@@ -2,10 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window and any floating-* webview spawned via floating_window_create. The webview CSP connect-src stays the strict allow-list for in-page fetches; the http:default scope below only governs plugin-http calls (webview fetch routed through Rust, which the CSP cannot see). Note that remote.urls is a different key and must stay loopback-only: it decides which remote origins may call native commands at all.",
-  "windows": [
-    "main",
-    "floating-*"
-  ],
+  "windows": ["main", "floating-*"],
   "remote": {
     "urls": [
       "http://localhost",
@@ -137,6 +134,12 @@
         },
         {
           "url": "https://api.anthropic.com/**"
+        },
+        {
+          "url": "https://api.github.com"
+        },
+        {
+          "url": "https://api.github.com/**"
         },
         {
           "url": "https://api.groq.com"

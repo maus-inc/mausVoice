@@ -32,8 +32,15 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     // the painted tooltip (including after a Wayland drag).
     if state.tooltip_t.get() >= TOOLTIP_VISIBLE_T {
         let tooltip_w = state.tooltip_width.get();
-        let (tooltip_x, tooltip_y) =
-            tooltip_rendered_origin(px, py, pw, tooltip_w, state.tooltip_t.get());
+        let (tooltip_x, tooltip_y) = tooltip_rendered_origin(
+            px,
+            py,
+            pw,
+            ph,
+            tooltip_w,
+            state.tooltip_t.get(),
+            state.selector_placement.borrow().blend(),
+        );
         if x >= tooltip_x && x <= tooltip_x + tooltip_w
             && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
         {
@@ -294,7 +301,7 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
 fn build_input_region(
     ox: f64, oy: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
-    tooltip_t: f64, tooltip_w: f64,
+    tooltip_t: f64, tooltip_w: f64, blend: f64,
     include_side_controls: bool,
 ) -> cairo::Region {
     let pill_rect = cairo::RectangleInt::new(
@@ -309,7 +316,7 @@ fn build_input_region(
         // painted tooltip. Centring on the pill rather than the window also
         // keeps them aligned horizontally once a drag moves the pill.
         let (tooltip_rx, tooltip_ry) =
-            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, blend);
         let tooltip_rect = cairo::RectangleInt::new(
             (ox + tooltip_rx).floor() as i32,
             (oy + tooltip_ry).floor() as i32,
@@ -340,6 +347,7 @@ fn input_region(
         ox, oy,
         pill_x, pill_y, pill_w, pill_h,
         state.tooltip_t.get(), state.tooltip_width.get(),
+        state.selector_placement.borrow().blend(),
         state.phase.get() != Phase::Idle,
     );
     union_flash_action(&region, state, ox, oy);
@@ -470,7 +478,7 @@ mod input_region_tests {
         let region = build_input_region(
             ox, oy,
             pill_x, pill_y, pill_w, pill_h,
-            0.0, 0.0,   // no tooltip
+            0.0, 0.0, 0.0, // no tooltip
             true,       // include side controls
         );
 
@@ -515,13 +523,13 @@ mod input_region_tests {
             let region = build_input_region(
                 ox, oy,
                 pill_x, pill_y, pill_w, pill_h,
-                1.0, tooltip_w,  // tooltip fully shown
+                1.0, tooltip_w, 0.0, // tooltip fully shown, above
                 false,
             );
 
             // Every corner and the centre of the painted tooltip must be
             // covered, so the whole selector is clickable.
-            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, 1.0);
+            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, 1.0, 0.0);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
@@ -538,18 +546,26 @@ mod input_region_tests {
         }
     }
 
-    /// The tooltip is centred on the pill and sits directly above it.
+    /// The tooltip is centred on the pill and sits on the picked side of it.
     #[test]
     fn tooltip_origin_tracks_the_pill() {
-        let (x0, y0) = tooltip_origin(240.0, 100.0, 120.0, 160.0);
+        let (x0, y0) = tooltip_origin(240.0, 100.0, 120.0, 32.0, 160.0, 0.0);
         // Centred: pill centre 300 - half tooltip 80 = 220.
         assert_eq!(x0, 220.0);
         assert_eq!(y0, 100.0 - TOOLTIP_GAP - TOOLTIP_HEIGHT);
 
         // A drag shifts the tooltip by exactly the same delta as the pill.
-        let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 160.0);
+        let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 32.0, 160.0, 0.0);
         assert_eq!(x1 - x0, 80.0);
         assert_eq!(y1 - y0, 40.0);
+    }
+
+    /// Below the pill the tooltip hangs off the pill bottom instead.
+    #[test]
+    fn tooltip_origin_below_hangs_off_the_bottom() {
+        let (x, y) = tooltip_origin(240.0, 100.0, 120.0, 32.0, 160.0, 1.0);
+        assert_eq!(x, 220.0);
+        assert_eq!(y, 100.0 + 32.0 + TOOLTIP_GAP);
     }
 
     /// Mid-animation the tooltip is painted a few pixels low. The region must
@@ -566,12 +582,12 @@ mod input_region_tests {
             let region = build_input_region(
                 ox, oy,
                 pill_x, pill_y, pill_w, pill_h,
-                tooltip_t, tooltip_w,
+                tooltip_t, tooltip_w, 0.0,
                 false,
             );
 
             let (tx, ty) =
-                tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+                tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, 0.0);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
@@ -588,6 +604,42 @@ mod input_region_tests {
         }
     }
 
+    /// Below the pill the region must cover the hung tooltip and stop
+    /// claiming the strip above it.
+    #[test]
+    fn below_tooltip_sits_inside_region() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let tooltip_w = 160.0f64;
+        let region = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            1.0, tooltip_w, 1.0,
+            false,
+        );
+        let (tx, ty) =
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, 1.0, 1.0);
+        assert_eq!(ty, pill_y + pill_h + TOOLTIP_GAP);
+        for (px, py, label) in [
+            (tx + 1.0, ty + 1.0, "top-left"),
+            (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
+            (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
+            (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
+            (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+        ] {
+            assert!(
+                region.contains_point(px as i32, py as i32),
+                "below tooltip {label} outside region"
+            );
+        }
+        assert!(
+            !region.contains_point(
+                (tx + tooltip_w / 2.0) as i32,
+                (pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT / 2.0) as i32
+            ),
+            "above strip must not claim input while the tooltip hangs below"
+        );
+    }
+
     /// Drawing and input must agree on when the tooltip exists, otherwise it
     /// is painted before it becomes clickable.
     #[test]
@@ -599,11 +651,11 @@ mod input_region_tests {
         let region = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            TOOLTIP_VISIBLE_T, tooltip_w,
+            TOOLTIP_VISIBLE_T, tooltip_w, 0.0,
             false,
         );
         let (tx, ty) =
-            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, TOOLTIP_VISIBLE_T);
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, TOOLTIP_VISIBLE_T, 0.0);
         assert!(
             region.contains_point(
                 (tx + tooltip_w / 2.0) as i32,
@@ -617,7 +669,7 @@ mod input_region_tests {
         let hidden = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            0.0, tooltip_w,
+            0.0, tooltip_w, 0.0,
             false,
         );
         assert!(
@@ -651,10 +703,10 @@ mod input_region_tests {
         let with_tooltip = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            1.0, measured_w,
+            1.0, measured_w, 0.0,
             false,
         );
-        let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, measured_w, 1.0);
+        let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, measured_w, 1.0, 0.0);
         let probe = (
             (tx + measured_w / 2.0) as i32,
             (ty + TOOLTIP_HEIGHT / 2.0) as i32,
@@ -670,7 +722,7 @@ mod input_region_tests {
         let cleared = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            1.0, 0.0,
+            1.0, 0.0, 0.0,
             false,
         );
         assert!(
@@ -693,7 +745,7 @@ mod input_region_tests {
         let region = build_input_region(
             ox, oy,
             240.0, 100.0, 120.0, 32.0,
-            0.0, 0.0,
+            0.0, 0.0, 0.0,
             false,
         );
         assert!(region.contains_point(300, 116), "pill centre should be inside");
