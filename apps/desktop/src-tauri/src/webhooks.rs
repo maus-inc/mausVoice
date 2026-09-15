@@ -116,8 +116,9 @@ pub async fn emit_event(pool: SqlitePool, event: &str, payload: serde_json::Valu
         }
         let task_pool = pool.clone();
         let delivery_id = delivery.id.clone();
+        let body_for_retry = body.clone();
         tauri::async_runtime::spawn(async move {
-            deliver_with_retry(task_pool, delivery_id, webhook, body).await;
+            deliver_with_retry(task_pool, delivery_id, webhook, body_for_retry).await;
         });
     }
 }
