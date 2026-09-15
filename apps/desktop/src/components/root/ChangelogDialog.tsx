@@ -58,9 +58,9 @@ const ReleaseRow = ({
           size="small"
           label={
             entry.prerelease ? (
-              <FormattedMessage defaultMessage="Beta" />
+              <FormattedMessage id="changelog.beta" defaultMessage="Beta" />
             ) : (
-              <FormattedMessage defaultMessage="Stable" />
+              <FormattedMessage id="changelog.stable" defaultMessage="Stable" />
             )
           }
           color={entry.prerelease ? "warning" : "success"}
@@ -69,7 +69,12 @@ const ReleaseRow = ({
         {installed && (
           <Chip
             size="small"
-            label={<FormattedMessage defaultMessage="Installed" />}
+            label={
+              <FormattedMessage
+                id="changelog.installed"
+                defaultMessage="Installed"
+              />
+            }
             color="primary"
           />
         )}
@@ -86,7 +91,10 @@ const ReleaseRow = ({
         <Markdown>{entry.body}</Markdown>
       ) : (
         <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          <FormattedMessage defaultMessage="No notes for this release." />
+          <FormattedMessage
+            id="changelog.noNotes"
+            defaultMessage="No notes for this release."
+          />
         </Typography>
       )}
       <Button
@@ -95,7 +103,10 @@ const ReleaseRow = ({
         sx={{ mt: 0.5, px: 0 }}
         onClick={() => void openUrl(entry.url)}
       >
-        <FormattedMessage defaultMessage="View on GitHub" />
+        <FormattedMessage
+          id="changelog.viewOnGitHub"
+          defaultMessage="View on GitHub"
+        />
       </Button>
     </Box>
   );
@@ -170,14 +181,17 @@ export const ChangelogDialog = ({
       fullScreen={fullScreen}
     >
       <DialogTitle>
-        <FormattedMessage defaultMessage="What's new" />
+        <FormattedMessage id="changelog.title" defaultMessage="What's new" />
       </DialogTitle>
       <DialogContent dividers sx={{ minHeight: 280 }}>
         {status === "loading" && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 1, py: 4 }}>
             <CircularProgress size={18} />
             <Typography variant="body2" color="text.secondary">
-              <FormattedMessage defaultMessage="Loading release history..." />
+              <FormattedMessage
+                id="changelog.loading"
+                defaultMessage="Loading release history..."
+              />
             </Typography>
           </Box>
         )}
@@ -186,7 +200,7 @@ export const ChangelogDialog = ({
             <Alert severity="error">{error}</Alert>
             <Box>
               <Button variant="outlined" size="small" onClick={handleRetry}>
-                <FormattedMessage defaultMessage="Retry" />
+                <FormattedMessage id="changelog.retry" defaultMessage="Retry" />
               </Button>
             </Box>
           </Stack>
@@ -194,7 +208,10 @@ export const ChangelogDialog = ({
         {status === "done" &&
           (entries.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-              <FormattedMessage defaultMessage="No releases found yet." />
+              <FormattedMessage
+                id="changelog.noReleases"
+                defaultMessage="No releases found yet."
+              />
             </Typography>
           ) : (
             <Stack spacing={2} divider={<Divider flexItem />} sx={{ pt: 1 }}>
@@ -214,7 +231,7 @@ export const ChangelogDialog = ({
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button variant="text" onClick={onClose}>
-          <FormattedMessage defaultMessage="Close" />
+          <FormattedMessage id="common.close" defaultMessage="Close" />
         </Button>
       </DialogActions>
     </Dialog>
