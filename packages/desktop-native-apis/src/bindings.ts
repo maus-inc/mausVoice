@@ -131,6 +131,21 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Check a non-default update channel at runtime. Stable keeps using the
+ * updater plugin's bundled endpoint; this builds an identical updater aimed
+ * at the channel manifest and registers the found update in the same
+ * resource table, so download, install, relaunch, and signature
+ * verification all run the stock plugin path untouched.
+ */
+async checkForChannelUpdate(channel: string) : Promise<Result<ChannelUpdateMetadata | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_channel_update", { channel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_microphone_permission") };
@@ -1154,7 +1169,14 @@ export type AppProcessMatch = { pid: number; exePath: string | null; appName: st
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
-export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
+/**
+ * Update metadata for a channel check. Mirrors the updater plugin's own
+ * metadata shape so the frontend reuses the stock install path; `rawJson`
+ * travels as text because specta cannot type an open JSON value, and the
+ * date travels as unix seconds for the same reason.
+ */
+export type ChannelUpdateMetadata = { rid: number; currentVersion: string; version: string; dateUnix: number | null; body: string | null; rawJson: string }
+export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; updatedAt: number }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
 export type CreateFloatingWindowArgs = { url: string; 

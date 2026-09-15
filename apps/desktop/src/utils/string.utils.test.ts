@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyReplacements,
   applySymbolConversions,
+  countWords,
   editDistance,
   escapeRegExp,
   getFirstAndLastName,
@@ -9,6 +10,20 @@ import {
   getStringSimilarity,
   sanitizeIndentation,
 } from "./string.utils";
+
+describe("countWords", () => {
+  it("should return 0 for empty or blank input", () => {
+    expect(countWords("")).toBe(0);
+    expect(countWords("   ")).toBe(0);
+  });
+
+  it("should count whitespace-separated tokens", () => {
+    expect(countWords("hello")).toBe(1);
+    expect(countWords("hello world")).toBe(2);
+    expect(countWords("  hello   world  ")).toBe(2);
+    expect(countWords("one\ntwo\tthree")).toBe(3);
+  });
+});
 
 describe("editDistance", () => {
   it("should return 0 for identical strings", () => {

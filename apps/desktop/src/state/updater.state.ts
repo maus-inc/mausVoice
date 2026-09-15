@@ -1,3 +1,5 @@
+import type { Nullable } from "@maus-inc/types";
+
 export type UpdaterStatus =
   "idle" | "checking" | "ready" | "downloading" | "installing" | "error";
 
@@ -17,6 +19,8 @@ export type UpdaterState = {
   errorMessage: string | null;
   dismissedUntil: number | null;
   lastCheckedAt: number | null;
+  /** Channel that offered the pending update, if any. Drives the dialog badge. */
+  offeredChannel: Nullable<string>;
   /**
    * True once a user-initiated check completed and found nothing. Cleared by
    * the next check so the "You're up to date" confirmation does not linger.
@@ -40,5 +44,6 @@ export const INITIAL_UPDATER_STATE: UpdaterState = {
   errorMessage: null,
   dismissedUntil: null,
   lastCheckedAt: null,
+  offeredChannel: null,
   upToDateConfirmed: false,
 };
