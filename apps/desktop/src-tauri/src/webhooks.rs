@@ -9,7 +9,7 @@ use crate::domain::Webhook;
 /// vector below locks the construction.
 pub fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
     const BLOCK: usize = 64;
-    let mut key_block = vec![0u8; BLOCK];
+    let mut key_block = [0u8; BLOCK];
     if key.len() > BLOCK {
         let digest = Sha256::digest(key);
         key_block[..digest.len()].copy_from_slice(&digest);
