@@ -16,6 +16,8 @@ on:
       - "scripts/ci/generate-release-body.mjs"
       - "scripts/ci/build-updater-manifest.mjs"
       - "scripts/ci/updater-manifest.test.mjs"
+      - "scripts/ci/build-changelog.mjs"
+      - "scripts/ci/build-changelog.test.mjs"
       - ".github/workflows/release.yml"
       - "pnpm-lock.yaml"
       - ".github/workflows/test-docs.yml"
@@ -53,6 +55,8 @@ jobs:
         run: node --test scripts/ci/pr28-contracts.test.mjs
       - name: Run updater manifest tests
         run: node --test scripts/ci/updater-manifest.test.mjs
+      - name: Run changelog artifact tests
+        run: node --test scripts/ci/build-changelog.test.mjs
       - name: Run release shell contract tests
         run: node --test scripts/ci/release-shell-contracts.test.mjs
       - name: Check docs types

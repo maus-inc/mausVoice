@@ -24,6 +24,71 @@ export const abortAgent = (conversationId: string): void => {
   abortAgentLoop(conversationId);
 };
 
+const isAgentRunning = (conversationId: string): boolean => {
+  const status =
+    getAppState().agentStateByConversationId[conversationId]?.status;
+  return status === "calling-llm" || status === "processing-tools";
+};
+
+/**
+ * Re-run the assistant for the latest user message. Drops the trailing
+ * assistant attempt (if any) so the retry replaces it instead of stacking
+ * a second answer, then runs the loop fresh.
+ */
+export const retryAssistant = async (conversationId: string): Promise<void> => {
+  if (isAgentRunning(conversationId)) return;
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  let lastUser = -1;
+  for (let i = 0; i < ids.length; i += 1) {
+    if (state.chatMessageById[ids[i]]?.role === "user") lastUser = i;
+  }
+  if (lastUser === -1) return;
+  const drop = ids.slice(lastUser + 1);
+  if (drop.length > 0) {
+    await deleteChatMessages(conversationId, drop);
+  }
+  await runAgentForConversation(conversationId);
+};
+
+/** True when messages after `messageId` hold tool activity the edit would drop. */
+export const laterMessagesHaveToolActivity = (
+  conversationId: string,
+  messageId: string,
+): boolean => {
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  return ids.slice(ids.indexOf(messageId) + 1).some((id) => {
+    const message = state.chatMessageById[id];
+    if (!message || message.role !== "assistant") return false;
+    const metadata = message.metadata as Record<string, unknown> | null;
+    return (
+      metadata?.type === "reasoning" &&
+      Array.isArray(metadata.toolCalls) &&
+      metadata.toolCalls.length > 0
+    );
+  });
+};
+
+/**
+ * Replace a user message and everything after it with a fresh send. The
+ * caller confirms first when laterMessagesHaveToolActivity is true.
+ */
+export const editAndResend = async (
+  conversationId: string,
+  messageId: string,
+  newText: string,
+): Promise<void> => {
+  if (isAgentRunning(conversationId)) return;
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  const index = ids.indexOf(messageId);
+  if (index === -1) return;
+  if (state.chatMessageById[messageId]?.role !== "user") return;
+  await deleteChatMessages(conversationId, ids.slice(index));
+  await sendChatMessage(conversationId, newText);
+};
+
 export const loadConversations = async (): Promise<void> => {
   produceAppState((draft) => {
     draft.chat.status = "loading";

@@ -429,8 +429,14 @@ function createAgentTools(
     name: info.id,
     description: `${info.description}. ${info.instructions}`,
     parameters: info.schema,
-    async execute({ params, reason }) {
-      return executeWithPermission(info, params, reason, conversationId);
+    async execute({ params, reason, toolCallId }) {
+      return executeWithPermission(
+        info,
+        params,
+        reason,
+        conversationId,
+        toolCallId,
+      );
     },
   }));
 }
@@ -440,6 +446,7 @@ async function executeWithPermission(
   params: Record<string, unknown>,
   reason: string,
   conversationId: string,
+  toolCallId: string,
 ) {
   const tool = createTool(info);
   const permissionScope = `conversation:${conversationId}`;
@@ -461,6 +468,7 @@ async function executeWithPermission(
     info.id,
     permissionParams,
     conversationId,
+    toolCallId,
   );
 
   produceAppState((draft) => {

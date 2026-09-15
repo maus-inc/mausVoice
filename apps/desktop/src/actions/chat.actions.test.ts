@@ -97,10 +97,24 @@ vi.mock("../repos", () => ({
         ),
       );
     },
+    updateChatMessage: (message: ChatMessage) => {
+      messageStorage.set(message.id, message);
+      return Promise.resolve(message);
+    },
+    deleteChatMessages: (ids: string[]) => {
+      for (const id of ids) messageStorage.delete(id);
+      return Promise.resolve();
+    },
   }),
 }));
 
-import { deleteConversation, sendChatMessage } from "./chat.actions";
+import {
+  deleteConversation,
+  editAndResend,
+  laterMessagesHaveToolActivity,
+  retryAssistant,
+  sendChatMessage,
+} from "./chat.actions";
 
 const baseConversation: Conversation = {
   id: "conv-1",
@@ -453,5 +467,225 @@ describe("deleteConversation", () => {
 
     expect(abortAgentLoopMock).toHaveBeenCalledTimes(1);
     expect(abortAgentLoopMock).toHaveBeenCalledWith("conv-1");
+  });
+});
+
+describe("retryAssistant", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repoMocks.rejectNextUpdate = false;
+    repoMocks.rejectNextCreate = false;
+    repoMocks.rejectNextDelete = false;
+    repoMocks.rejectNextList = false;
+    conversationStorage.clear();
+    messageStorage.clear();
+    seed();
+  });
+
+  const seedThread = () => {
+    const user = {
+      id: "u1",
+      conversationId: "conv-1",
+      role: "user",
+      content: "question",
+      createdAt: "2026-08-20T10:01:00.000Z",
+      metadata: null,
+    } as ChatMessage;
+    const assistant = {
+      id: "a1",
+      conversationId: "conv-1",
+      role: "assistant",
+      content: "stale answer",
+      createdAt: "2026-08-20T10:02:00.000Z",
+      metadata: null,
+    } as ChatMessage;
+    const state = getAppState();
+    messageStorage.set(user.id, { ...user });
+    messageStorage.set(assistant.id, { ...assistant });
+    const next = structuredClone(state);
+    next.chatMessageById[user.id] = { ...user };
+    next.chatMessageById[assistant.id] = { ...assistant };
+    next.chatMessageIdsByConversationId["conv-1"] = [user.id, assistant.id];
+    setAppState(next, true);
+  };
+
+  it("drops the trailing attempt and reruns the agent", async () => {
+    seedThread();
+    await retryAssistant("conv-1");
+
+    const state = getAppState();
+    expect(state.chatMessageIdsByConversationId["conv-1"]).toEqual(["u1"]);
+    expect(state.chatMessageById["a1"]).toBeUndefined();
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
+    expect(runAgentMock).toHaveBeenCalledWith("conv-1", {
+      agentType: "chat",
+    });
+  });
+
+  it("just reruns when the user message has no attempt yet", async () => {
+    const state = getAppState();
+    const user = {
+      id: "u1",
+      conversationId: "conv-1",
+      role: "user",
+      content: "question",
+      createdAt: "2026-08-20T10:01:00.000Z",
+      metadata: null,
+    } as ChatMessage;
+    messageStorage.set(user.id, { ...user });
+    const next = structuredClone(state);
+    next.chatMessageById[user.id] = { ...user };
+    next.chatMessageIdsByConversationId["conv-1"] = [user.id];
+    setAppState(next, true);
+
+    await retryAssistant("conv-1");
+
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([
+      "u1",
+    ]);
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing without a user message", async () => {
+    await retryAssistant("conv-1");
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while the agent is running", async () => {
+    seedThread();
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.agentStateByConversationId["conv-1"] = {
+      status: "calling-llm",
+      agentType: "chat",
+      iteration: 1,
+      maxIterations: 10,
+      toolCalls: [],
+      currentToolIndex: 0,
+      aborted: false,
+    };
+    setAppState(next, true);
+
+    await retryAssistant("conv-1");
+
+    expect(runAgentMock).not.toHaveBeenCalled();
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([
+      "u1",
+      "a1",
+    ]);
+  });
+});
+
+describe("editAndResend", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    repoMocks.rejectNextUpdate = false;
+    repoMocks.rejectNextCreate = false;
+    repoMocks.rejectNextDelete = false;
+    repoMocks.rejectNextList = false;
+    conversationStorage.clear();
+    messageStorage.clear();
+    seed();
+  });
+
+  const seedThread = (assistantMetadata: Record<string, unknown> | null) => {
+    const messages = [
+      {
+        id: "u1",
+        conversationId: "conv-1",
+        role: "user",
+        content: "first",
+        createdAt: "2026-08-20T10:01:00.000Z",
+        metadata: null,
+      },
+      {
+        id: "a1",
+        conversationId: "conv-1",
+        role: "assistant",
+        content: "answer",
+        createdAt: "2026-08-20T10:02:00.000Z",
+        metadata: assistantMetadata,
+      },
+      {
+        id: "u2",
+        conversationId: "conv-1",
+        role: "user",
+        content: "second",
+        createdAt: "2026-08-20T10:03:00.000Z",
+        metadata: null,
+      },
+    ] as ChatMessage[];
+    const state = getAppState();
+    const next = structuredClone(state);
+    for (const m of messages) {
+      messageStorage.set(m.id, { ...m });
+      next.chatMessageById[m.id] = { ...m };
+    }
+    next.chatMessageIdsByConversationId["conv-1"] = messages.map((m) => m.id);
+    setAppState(next, true);
+  };
+
+  it("replaces the edited message and everything after it", async () => {
+    seedThread(null);
+    await editAndResend("conv-1", "u1", "first, revised");
+
+    const state = getAppState();
+    const ids = state.chatMessageIdsByConversationId["conv-1"] ?? [];
+    expect(ids).toHaveLength(1);
+    expect(state.chatMessageById[ids[0]]?.content).toBe("first, revised");
+    expect(state.chatMessageById[ids[0]]?.role).toBe("user");
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("flags later tool activity for confirmation", () => {
+    seedThread({
+      type: "reasoning",
+      toolCalls: [{ id: "tc1", name: "paste", arguments: "{}" }],
+    });
+    expect(laterMessagesHaveToolActivity("conv-1", "u1")).toBe(true);
+    expect(laterMessagesHaveToolActivity("conv-1", "a1")).toBe(false);
+    expect(laterMessagesHaveToolActivity("conv-1", "u2")).toBe(false);
+  });
+
+  it("sees no tool activity without tool calls", () => {
+    seedThread(null);
+    expect(laterMessagesHaveToolActivity("conv-1", "u1")).toBe(false);
+  });
+
+  it("refuses a non-user target", async () => {
+    seedThread(null);
+    await editAndResend("conv-1", "a1", "hijack");
+
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([
+      "u1",
+      "a1",
+      "u2",
+    ]);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while the agent is running", async () => {
+    seedThread(null);
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.agentStateByConversationId["conv-1"] = {
+      status: "processing-tools",
+      agentType: "chat",
+      iteration: 1,
+      maxIterations: 10,
+      toolCalls: [],
+      currentToolIndex: 0,
+      aborted: false,
+    };
+    setAppState(next, true);
+
+    await editAndResend("conv-1", "u1", "revised");
+
+    expect(getAppState().chatMessageIdsByConversationId["conv-1"]).toEqual([
+      "u1",
+      "a1",
+      "u2",
+    ]);
+    expect(runAgentMock).not.toHaveBeenCalled();
   });
 });

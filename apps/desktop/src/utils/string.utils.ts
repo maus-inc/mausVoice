@@ -157,7 +157,7 @@ const collapseWhitespace = (text: string): string => text.replace(/\s+/g, " ");
 const normalizePhrase = (phrase: string): string =>
   extractPunctuation(collapseWhitespace(phrase.trim())).word;
 
-const countWords = (phrase: string): number => {
+export const countWords = (phrase: string): number => {
   const trimmed = phrase.trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };

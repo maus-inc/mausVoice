@@ -157,6 +157,7 @@ export class AgentLoop {
 
   private async executeTool(
     tool: AgentTool,
+    toolCallId: string,
     toolParams: Record<string, unknown>,
     reason: unknown,
   ): Promise<AgentToolOutput> {
@@ -164,6 +165,7 @@ export class AgentLoop {
       return await tool.execute({
         params: toolParams,
         reason: (reason as string) ?? "",
+        toolCallId,
       });
     } catch (err) {
       // A tool must never abort the whole agent loop. Surface the failure
@@ -208,7 +210,7 @@ export class AgentLoop {
         continue;
       }
 
-      const output = await this.executeTool(tool, toolParams, reason);
+      const output = await this.executeTool(tool, tc.id, toolParams, reason);
       const resultStr = output.success
         ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
