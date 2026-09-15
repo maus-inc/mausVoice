@@ -34,6 +34,8 @@ import {
 } from "./generate-text.repo";
 import { BaseHotkeyRepo, LocalHotkeyRepo } from "./hotkey.repo";
 import { BaseMeetingRepo, LocalMeetingRepo } from "./meeting.repo";
+import { BaseSnippetRepo, LocalSnippetRepo } from "./snippet.repo";
+import { BaseTranslationRepo, LocalTranslationRepo } from "./translation.repo";
 import { BaseWebhookRepo, LocalWebhookRepo } from "./webhook.repo";
 import { BaseMemberRepo, LocalMemberRepo } from "./member.repo";
 import { BaseNativeRepo, LocalNativeRepo } from "./native.repo";
@@ -144,6 +146,14 @@ export const getMeetingRepo = (): BaseMeetingRepo => {
 
 export const getWebhookRepo = (): BaseWebhookRepo => {
   return new LocalWebhookRepo();
+};
+
+export const getSnippetRepo = (): BaseSnippetRepo => {
+  return new LocalSnippetRepo();
+};
+
+export const getTranslationRepo = (): BaseTranslationRepo => {
+  return new LocalTranslationRepo();
 };
 
 export const getApiKeyRepo = (): BaseApiKeyRepo => {

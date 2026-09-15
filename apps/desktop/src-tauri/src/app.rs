@@ -451,6 +451,13 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             crate::commands::webhook_list,
             crate::commands::webhook_delete,
             crate::commands::webhook_emit,
+            crate::commands::snippet_create,
+            crate::commands::snippet_list,
+            crate::commands::snippet_update,
+            crate::commands::snippet_delete,
+            crate::commands::translation_insert,
+            crate::commands::translation_list,
+            crate::commands::translation_search,
         ])
 }
 

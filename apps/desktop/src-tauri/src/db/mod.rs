@@ -9,6 +9,8 @@ pub mod preferences_queries;
 pub mod term_queries;
 pub mod tone_queries;
 pub mod transcription_queries;
+pub mod snippet_queries;
+pub mod translation_queries;
 pub mod user_queries;
 pub mod webhook_queries;
 
@@ -151,6 +153,10 @@ pub const MEETINGS_MIGRATION_SQL: &str =
     include_str!("migrations/076_meetings.sql");
 pub const WEBHOOKS_MIGRATION_SQL: &str =
     include_str!("migrations/077_webhooks.sql");
+pub const SNIPPETS_MIGRATION_SQL: &str =
+    include_str!("migrations/078_snippets.sql");
+pub const TRANSLATIONS_MIGRATION_SQL: &str =
+    include_str!("migrations/079_translations.sql");
 
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
@@ -602,6 +608,18 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 77,
             description: "create_webhooks_tables",
             sql: WEBHOOKS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 78,
+            description: "create_snippets_table",
+            sql: SNIPPETS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 79,
+            description: "create_translations_table",
+            sql: TRANSLATIONS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

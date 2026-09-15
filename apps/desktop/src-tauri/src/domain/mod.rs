@@ -14,6 +14,8 @@ pub mod recording;
 pub mod term;
 pub mod tone;
 pub mod transcription;
+pub mod snippet;
+pub mod translation;
 pub mod user;
 pub mod webhook;
 
@@ -40,5 +42,7 @@ pub use recording::{
 pub use term::Term;
 pub use tone::Tone;
 pub use transcription::{Transcription, TranscriptionAudioSnapshot};
+pub use snippet::Snippet;
+pub use translation::TranslationEntry;
 pub use user::User;
 pub use webhook::{Webhook, WebhookDelivery};

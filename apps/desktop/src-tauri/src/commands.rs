@@ -47,7 +47,7 @@ static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 16] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 18] = [
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -64,6 +64,8 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 16] = [
     "meeting_speakers",
     "webhook_deliveries",
     "webhooks",
+    "snippets",
+    "translations",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 
@@ -2851,6 +2853,160 @@ pub async fn webhook_emit(
 ) -> Result<(), String> {
     crate::webhooks::emit_event(database.pool(), &event, payload).await;
     Ok(())
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SnippetCreateArgs {
+    pub id: String,
+    pub trigger: String,
+    pub body: String,
+    pub variables: Vec<serde_json::Value>,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn snippet_create(
+    args: SnippetCreateArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::Snippet, String> {
+    if args.trigger.trim().is_empty() {
+        return Err("trigger must not be empty".to_string());
+    }
+    if args.body.is_empty() {
+        return Err("body must not be empty".to_string());
+    }
+    let now = chrono::Utc::now().timestamp_millis();
+    let snippet = crate::domain::Snippet {
+        id: args.id,
+        trigger: args.trigger,
+        body: args.body,
+        variables: serde_json::to_string(&args.variables).map_err(|err| err.to_string())?,
+        enabled: args.enabled,
+        created_at: now,
+        updated_at: now,
+    };
+    crate::db::snippet_queries::insert_snippet(database.pool(), &snippet)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(snippet)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn snippet_list(
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Snippet>, String> {
+    crate::db::snippet_queries::fetch_snippets(database.pool())
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn snippet_update(
+    args: SnippetCreateArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::Snippet, String> {
+    if args.trigger.trim().is_empty() {
+        return Err("trigger must not be empty".to_string());
+    }
+    let snippet = crate::domain::Snippet {
+        id: args.id,
+        trigger: args.trigger,
+        body: args.body,
+        variables: serde_json::to_string(&args.variables).map_err(|err| err.to_string())?,
+        enabled: args.enabled,
+        created_at: 0,
+        updated_at: chrono::Utc::now().timestamp_millis(),
+    };
+    // Preserve created_at from existing row
+    let existing = crate::db::snippet_queries::fetch_snippets(database.pool())
+        .await
+        .map_err(|err| err.to_string())?;
+    let created_at = existing
+        .iter()
+        .find(|row| row.id == snippet.id)
+        .map(|row| row.created_at)
+        .unwrap_or(snippet.updated_at);
+    let snippet = crate::domain::Snippet {
+        created_at,
+        ..snippet
+    };
+    crate::db::snippet_queries::update_snippet(database.pool(), &snippet)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(snippet)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn snippet_delete(
+    id: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<(), String> {
+    crate::db::snippet_queries::delete_snippet(database.pool(), &id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn translation_insert(
+    source_text: String,
+    translated_text: String,
+    source_language: String,
+    target_language: String,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::TranslationEntry, String> {
+    if source_text.trim().is_empty() || translated_text.trim().is_empty() {
+        return Err("source and translated text must not be empty".to_string());
+    }
+    let entry = crate::domain::TranslationEntry {
+        id: {
+            use rand::{rngs::OsRng, RngCore};
+            let mut bytes = [0u8; 8];
+            OsRng.fill_bytes(&mut bytes);
+            format!(
+                "tr_{}_{}",
+                chrono::Utc::now().timestamp_millis(),
+                bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            )
+        },
+        source_text,
+        translated_text,
+        source_language,
+        target_language,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    };
+    crate::db::translation_queries::insert_translation(database.pool(), &entry)
+        .await
+        .map_err(|err| err.to_string())?;
+    Ok(entry)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn translation_list(
+    limit: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::TranslationEntry>, String> {
+    crate::db::translation_queries::fetch_translations(database.pool(), limit)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn translation_search(
+    query: String,
+    limit: i64,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::TranslationEntry>, String> {
+    crate::db::translation_queries::search_translations(database.pool(), &query, limit)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
