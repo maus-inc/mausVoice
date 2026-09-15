@@ -31,9 +31,17 @@ export const UpdateChannelSetting = () => {
   return (
     <>
       <SettingSection
-        title={<FormattedMessage defaultMessage="Update channel" />}
+        title={
+          <FormattedMessage
+            id="settings.updateChannel.title"
+            defaultMessage="Update channel"
+          />
+        }
         description={
-          <FormattedMessage defaultMessage="Stable ships tested releases. Beta offers prereleases early and may wait for a newer stable before switching back." />
+          <FormattedMessage
+            id="settings.updateChannel.description"
+            defaultMessage="Stable ships tested releases. Beta offers prereleases early and may wait for a newer stable before switching back."
+          />
         }
         action={
           <SegmentedControl<UpdateChannel>
@@ -42,14 +50,21 @@ export const UpdateChannelSetting = () => {
             options={[
               {
                 value: "stable",
-                label: intl.formatMessage({ defaultMessage: "Stable" }),
+                label: intl.formatMessage({
+                  id: "settings.updateChannel.stable",
+                  defaultMessage: "Stable",
+                }),
               },
               {
                 value: "beta",
-                label: intl.formatMessage({ defaultMessage: "Beta" }),
+                label: intl.formatMessage({
+                  id: "settings.updateChannel.beta",
+                  defaultMessage: "Beta",
+                }),
               },
             ]}
             ariaLabel={intl.formatMessage({
+              id: "settings.updateChannel.ariaLabel",
               defaultMessage: "Update channel",
             })}
           />
@@ -58,13 +73,26 @@ export const UpdateChannelSetting = () => {
 
       <ConfirmDialog
         isOpen={pendingBeta}
-        title={<FormattedMessage defaultMessage="Join the beta channel?" />}
+        title={
+          <FormattedMessage
+            id="settings.updateChannel.confirmTitle"
+            defaultMessage="Join the beta channel?"
+          />
+        }
         content={
-          <FormattedMessage defaultMessage="Beta builds arrive earlier but may carry rough edges. Returning to stable can wait until a newer stable release passes your beta version." />
+          <FormattedMessage
+            id="settings.updateChannel.confirmContent"
+            defaultMessage="Beta builds arrive earlier but may carry rough edges. Returning to stable can wait until a newer stable release passes your beta version."
+          />
         }
         onCancel={() => setPendingBeta(false)}
         onConfirm={handleConfirmBeta}
-        confirmLabel={<FormattedMessage defaultMessage="Join beta" />}
+        confirmLabel={
+          <FormattedMessage
+            id="settings.updateChannel.confirmLabel"
+            defaultMessage="Join beta"
+          />
+        }
       />
     </>
   );
