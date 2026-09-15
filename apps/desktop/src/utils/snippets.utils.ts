@@ -24,7 +24,8 @@ type ExpandOptions = {
 const formatDate = (date: Date): string => date.toISOString().slice(0, 10);
 const formatTime = (date: Date): string =>
   `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-const formatDateTime = (date: Date): string => `${formatDate(date)} ${formatTime(date)}`;
+const formatDateTime = (date: Date): string =>
+  `${formatDate(date)} ${formatTime(date)}`;
 
 export const expandSnippetBody = (
   body: string,

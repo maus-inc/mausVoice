@@ -28,7 +28,10 @@ export abstract class BaseTranslationRepo extends BaseRepo {
     targetLanguage: string;
   }): Promise<TranslationHistoryEntry>;
   abstract list(limit?: number): Promise<TranslationHistoryEntry[]>;
-  abstract search(query: string, limit?: number): Promise<TranslationHistoryEntry[]>;
+  abstract search(
+    query: string,
+    limit?: number,
+  ): Promise<TranslationHistoryEntry[]>;
 }
 
 export class LocalTranslationRepo extends BaseTranslationRepo {
@@ -48,7 +51,9 @@ export class LocalTranslationRepo extends BaseTranslationRepo {
   }
 
   async list(limit = 20): Promise<TranslationHistoryEntry[]> {
-    const stored = await invoke<LocalTranslation[]>("translation_list", { limit });
+    const stored = await invoke<LocalTranslation[]>("translation_list", {
+      limit,
+    });
     return stored.map(fromLocal);
   }
 
