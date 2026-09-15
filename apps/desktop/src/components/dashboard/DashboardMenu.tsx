@@ -2,6 +2,7 @@ import { Box, List, Stack, useColorScheme } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   BookMarked,
+  CircleHelp,
   History,
   Home,
   MessageSquare,
@@ -67,6 +68,11 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         label: <FormattedMessage defaultMessage="Styles" />,
         path: "/dashboard/styling",
         icon: Palette,
+      },
+      {
+        label: <FormattedMessage defaultMessage="Help" />,
+        path: "/dashboard/help",
+        icon: CircleHelp,
       },
       ...(assistantModeEnabled
         ? [

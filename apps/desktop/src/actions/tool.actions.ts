@@ -19,6 +19,7 @@ export const requestToolPermission = (
   toolId: string,
   params: Record<string, unknown>,
   conversationId: string,
+  toolCallId?: string,
 ): string => {
   const permission: ToolPermission = {
     id: crypto.randomUUID(),
@@ -26,6 +27,7 @@ export const requestToolPermission = (
     params,
     status: "pending",
     conversationId,
+    ...(toolCallId ? { toolCallId } : {}),
     createdAt: Date.now(),
   };
   produceAppState((draft) => {

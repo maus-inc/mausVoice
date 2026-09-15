@@ -144,6 +144,18 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
+    // Monitor-crossing deformation: paint-only scale about the pill center.
+    // Click regions below keep the unscaled footprint.
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        ctx.save();
+        ctx.translate(dcx, dcy);
+        ctx.scale(dsx, dsy);
+        ctx.translate(-dcx, -dcy);
+    }
+
     gfx::rounded_rect(ctx, rx, ry, pill_w, pill_h, radius);
     ctx.set_source_rgba(0.0, 0.0, 0.0, bg_alpha);
     ctx.fill();
@@ -179,6 +191,9 @@ fn draw_pill(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+    if deformed {
+        ctx.restore();
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -365,7 +380,18 @@ fn draw_tooltip(ctx: &Ctx, state: &PillState, ww: f64, pill_area_top: f64) {
 
     let tooltip_rx = (ww - tooltip_w) / 2.0;
     let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+    let blend = state.selector_placement.borrow().blend();
+    let (_, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
+        0.0,
+        pill_area_top,
+        ww,
+        PILL_AREA_HEIGHT,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    );
+    let tooltip_ry = tooltip_base + y_offset * (1.0 - 2.0 * blend);
     let alpha = tooltip_t;
 
     gfx::rounded_rect(ctx, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);
@@ -1205,6 +1231,7 @@ fn draw_review_actions(
     // the edge of the panel, matching the permission card's layout.
     let buttons = [
         ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        ("Edit", ClickAction::ReviewEdit(review_id.to_string()), 0.8),
         ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
         ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
     ];

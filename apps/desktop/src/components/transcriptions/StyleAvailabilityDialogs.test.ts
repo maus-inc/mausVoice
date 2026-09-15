@@ -2,6 +2,7 @@
 import type { ApiKey, Tone } from "@maus-inc/types";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
@@ -138,7 +139,13 @@ describe("Import audio style availability", () => {
   const renderPage = async () => {
     root = createRoot(container);
     await act(async () => {
-      root?.render(createElement(TranscriptionsPage));
+      root?.render(
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/dashboard/transcriptions"] },
+          createElement(TranscriptionsPage),
+        ),
+      );
     });
   };
 

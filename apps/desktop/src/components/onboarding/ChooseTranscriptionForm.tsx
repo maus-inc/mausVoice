@@ -3,6 +3,7 @@ import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { isMacOS } from "../../utils/env.utils";
 import remoteImage from "../../assets/2-remote.png";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
 import {
@@ -22,7 +23,7 @@ export const ChooseTranscriptionForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_transcription_continue");
-    goToOnboardingPage("chooseLlm");
+    goToOnboardingPage(isMacOS() ? "micPerms" : "keybindings");
   };
 
   const form = (
