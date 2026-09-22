@@ -30,7 +30,7 @@ pre-releases. This means:
   report the newest published release (including pre-releases).
 - The download URL is templated on the release `tag` and asset `version`. A
   published cask is rendered from the repo template with the exact `version`,
-  `tag`, and `sha256` (see "How the tap is published" below) — it is not edited
+  `tag`, and `sha256` (see "How the tap is published" below). It is not edited
   by hand.
 
 Why not fully "latest" URL: the release asset is named with its version
@@ -72,7 +72,7 @@ git remote add origin https://github.com/maus-inc/homebrew-mausvoice.git
 git push -u origin main
 ```
 
-The cask is not committed here — it is rendered from the repo template on every
+The cask is not committed here. It is rendered from the repo template on every
 release. `render-cask.mjs` refuses to emit a cask that still contains
 `:no_check`, so a checksum-less cask is never published.
 

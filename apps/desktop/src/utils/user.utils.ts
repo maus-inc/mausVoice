@@ -133,7 +133,6 @@ export const getActiveDictationLanguage = (state: AppState): string => {
 };
 
 export const getMyDictationLanguage = (state: AppState): string => {
-  // TODO: We should pass the dictation language into the processors instead of overriding
   const override = state.dictationLanguageOverride;
   if (override) {
     return override;
@@ -216,8 +215,17 @@ export const setUserPreferences = (
   draft: AppState,
   value: UserPreferences,
 ): void => {
-  draft.userPrefs = value;
-  applyAiPreferences(draft, value);
+  // Invariant enforcement, one write-site wide: realtime output and
+  // review-before-insert cannot both be on (interim streaming always runs
+  // with skipReview, so dual-true would silently skip review). Setters keep
+  // the pair exclusive on write; this normalize also repairs legacy rows
+  // that predate that rule. Realtime wins to match the runtime preference.
+  const normalized =
+    value.realtimeOutputEnabled === true && value.reviewBeforeInsert === true
+      ? { ...value, reviewBeforeInsert: false }
+      : value;
+  draft.userPrefs = normalized;
+  applyAiPreferences(draft, normalized);
 };
 
 type BaseTranscriptionPrefs = {
@@ -260,11 +268,13 @@ const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "assemblyai",
   "elevenlabs",
   "deepgram",
+  "gladia",
   "openai-compatible",
   "azure",
   "gemini",
   "speaches",
   "xai",
+  "openrouter",
 ]);
 
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {

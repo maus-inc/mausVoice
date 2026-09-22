@@ -1,8 +1,10 @@
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use url::Url;
 
 /// Per-command re-entry guards. When an IPC command mutates global OS state
@@ -61,6 +63,7 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
     "paired_remote_devices",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::domain::{
     ApiKey, ApiKeyCreateRequest, ApiKeyView, AudioChunkPayload, OverlayPhase, OverlayPhasePayload,
@@ -68,9 +71,13 @@ use crate::domain::{
     EVT_REC_LEVEL,
 };
 use crate::platform::{ChunkCallback, LevelCallback};
+
+#[path = "../../../../packages/rust_transcription/src/audio.rs"]
+mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
 use sqlx::Row;
+use rodio::Source;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
@@ -406,108 +413,1210 @@ pub struct UserPreferencesGetArgs {
     pub user_id: String,
 }
 
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPreferencesSetExpansionFlagsArgs {
+    pub flags: String,
+}
+
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
+const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
+    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+// Keep one absolute memory ceiling for pathological sample rates while the
+// normal limit below is derived from the file's actual rate and channel count.
+const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+const MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES: usize =
+    MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES / std::mem::size_of::<f32>();
 
 #[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionAudioData {
+    /// Little-endian signed 16-bit mono PCM. The IPC serializer still carries
+    /// bytes as a JSON number array, but packed PCM is materially smaller than
+    /// sending each sample as a floating-point JSON value.
+    pub pcm16_le: Vec<u8>,
+    pub sample_rate: u32,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionAudioSamplesData {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
 }
 
+const MAX_PRIVATE_HTTP_REQUEST_BYTES: usize = 128 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PRIVATE_HTTP_REDIRECTS: usize = 5;
+const MAX_PRIVATE_HTTP_ACTIVE_REQUESTS: usize = 1_024;
+const MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS: usize = 256;
+const PRIVATE_HTTP_PRESTART_CANCELLATION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30);
+const PRIVATE_HTTP_CANCELLED_ERROR: &str = "Private-network request was cancelled";
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpRequest {
+    pub request_id: String,
+    pub url: String,
+    pub method: String,
+    pub headers: std::collections::HashMap<String, String>,
+    /// RFC 4648 standard Base64 body. A string is substantially smaller than
+    /// the JSON number array Specta generates for `Vec<u8>` and keeps large
+    /// local audio/model requests within the command's explicit limits.
+    pub body_base64: Option<String>,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivateHttpResponse {
+    pub status: u16,
+    pub headers: std::collections::HashMap<String, String>,
+    /// RFC 4648 standard Base64 response body, decoded by secureFetch.
+    pub body_base64: String,
+}
+
+const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize =
+    MAX_PRIVATE_HTTP_REQUEST_BYTES.div_ceil(3) * 4;
+
+fn private_http_request_body_limit_error() -> String {
+    format!(
+        "Private-network request body exceeds the {} MiB limit",
+        MAX_PRIVATE_HTTP_REQUEST_BYTES / (1024 * 1024)
+    )
+}
+
+fn validate_private_http_encoded_body_length(encoded_length: usize) -> Result<(), String> {
+    if encoded_length > MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn validate_private_http_decoded_body_length(decoded_length: usize) -> Result<(), String> {
+    if decoded_length > MAX_PRIVATE_HTTP_REQUEST_BYTES {
+        return Err(private_http_request_body_limit_error());
+    }
+    Ok(())
+}
+
+fn private_http_invalid_base64_body_error() -> String {
+    "Private-network request body is not valid base64".to_string()
+}
+
+/// Validates a standard RFC 4648 Base64 frame and calculates its decoded size
+/// without allocating a destination buffer. The Base64 engine performs the
+/// actual decode afterwards; this preflight stops malformed or oversized IPC
+/// input from determining an allocation size.
+fn maximum_private_http_base64_decoded_length(encoded: &str) -> Result<usize, String> {
+    let encoded_length = encoded.len();
+    let remainder = encoded_length % 4;
+    if remainder == 1 {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let mut trailing_padding = 0;
+    for byte in encoded.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' if trailing_padding == 0 => {}
+            b'=' => trailing_padding += 1,
+            _ => return Err(private_http_invalid_base64_body_error()),
+        }
+    }
+    if trailing_padding > 2 || (trailing_padding > 0 && remainder != 0) {
+        return Err(private_http_invalid_base64_body_error());
+    }
+
+    let blocks = encoded_length.div_ceil(4);
+    let omitted_padding = if trailing_padding == 0 && remainder != 0 {
+        // An unpadded final group has two or three input characters and
+        // therefore produces one or two bytes less than a full group.
+        4 - remainder
+    } else {
+        trailing_padding
+    };
+    Ok(blocks * 3 - omitted_padding)
+}
+
+fn decode_private_http_body(body_base64: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    let Some(encoded) = body_base64 else {
+        return Ok(None);
+    };
+    // Check both the wire frame and its maximum decoded size before allocation.
+    // `decode_slice` specifically requires its conservative buffer estimate,
+    // which can be two bytes larger than the decoded output for padded input.
+    validate_private_http_encoded_body_length(encoded.len())?;
+    let maximum_decoded_length = maximum_private_http_base64_decoded_length(encoded)?;
+    validate_private_http_decoded_body_length(maximum_decoded_length)?;
+    let decoded_buffer_length = base64::decoded_len_estimate(encoded.len());
+
+    let mut decoded = Vec::new();
+    decoded
+        .try_reserve_exact(decoded_buffer_length)
+        .map_err(|_| "Unable to allocate the private-network request body".to_string())?;
+    decoded.resize(decoded_buffer_length, 0);
+    let decoded_length = base64::engine::general_purpose::STANDARD
+        .decode_slice(encoded, &mut decoded)
+        .map_err(|_| private_http_invalid_base64_body_error())?;
+    decoded.truncate(decoded_length);
+    Ok(Some(decoded))
+}
+
+fn reserve_private_http_response_body(
+    body: &mut Vec<u8>,
+    additional: usize,
+) -> Result<(), String> {
+    body.try_reserve(additional)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())
+}
+
+fn encode_private_http_body(body: &[u8]) -> Result<String, String> {
+    let encoded_len = base64::encoded_len(body.len(), true)
+        .ok_or_else(|| "Private-network response body is too large to encode".to_string())?;
+    // The native bridge already caps response bytes, but allocating the Base64
+    // transport string must still fail normally on a memory-constrained host.
+    // `encode_slice` does not allocate after this fallible reservation.
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(encoded_len)
+        .map_err(|_| "Unable to allocate the private-network response body".to_string())?;
+    encoded.resize(encoded_len, 0);
+    let written = base64::engine::general_purpose::STANDARD
+        .encode_slice(body, &mut encoded)
+        .map_err(|_| "Unable to encode the private-network response body".to_string())?;
+    debug_assert_eq!(written, encoded_len);
+    String::from_utf8(encoded)
+        .map_err(|_| "Private-network response Base64 was not valid UTF-8".to_string())
+}
+
+// Process-global by design: audio import runs the picker + decode pipeline
+// that is only ever invoked from the main window's settings surface. A second
+// call — from any window — returns a clear "already in progress" error rather
+// than stacking two decode sessions. If a future surface adds import, the
+// flag must become window- or session-keyed before that ships.
+static IMPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+enum PrivateHttpCancellationState {
+    Active {
+        registration_id: u64,
+        sender: tokio::sync::oneshot::Sender<()>,
+    },
+    CancelledBeforeStart(std::time::Instant),
+}
+
+static NEXT_PRIVATE_HTTP_REGISTRATION_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+static PRIVATE_HTTP_CANCELLATIONS: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, PrivateHttpCancellationState>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn prune_private_http_prestart_cancellations(
+    requests: &mut std::collections::HashMap<String, PrivateHttpCancellationState>,
+) {
+    requests.retain(|_, state| match state {
+        PrivateHttpCancellationState::Active { .. } => true,
+        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+            created_at.elapsed() <= PRIVATE_HTTP_PRESTART_CANCELLATION_TTL
+        }
+    });
+}
+
+struct PrivateHttpCancellationGuard {
+    request_id: String,
+    registration_id: u64,
+}
+
+impl PrivateHttpCancellationGuard {
+    fn register(request_id: String) -> Result<(Self, tokio::sync::oneshot::Receiver<()>), String> {
+        if !is_valid_private_http_request_id(&request_id) {
+            return Err("Private-network request ID is invalid".to_string());
+        }
+
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+        prune_private_http_prestart_cancellations(&mut requests);
+        if matches!(
+            requests.get(&request_id),
+            Some(PrivateHttpCancellationState::CancelledBeforeStart(_))
+        ) {
+            requests.remove(&request_id);
+            return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+        }
+        if requests.contains_key(&request_id) {
+            return Err("Private-network request ID is already in use".to_string());
+        }
+        let active_requests = requests
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::Active { .. }))
+            .count();
+        if active_requests >= MAX_PRIVATE_HTTP_ACTIVE_REQUESTS {
+            return Err("Too many private-network requests are in progress".to_string());
+        }
+        let registration_id = NEXT_PRIVATE_HTTP_REGISTRATION_ID.fetch_add(1, Ordering::Relaxed);
+        requests.insert(
+            request_id.clone(),
+            PrivateHttpCancellationState::Active {
+                registration_id,
+                sender,
+            },
+        );
+        Ok((
+            Self {
+                request_id,
+                registration_id,
+            },
+            receiver,
+        ))
+    }
+}
+
+impl Drop for PrivateHttpCancellationGuard {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = PRIVATE_HTTP_CANCELLATIONS.lock() {
+            let owns_registration = matches!(
+                requests.get(&self.request_id),
+                Some(PrivateHttpCancellationState::Active {
+                    registration_id,
+                    ..
+                }) if *registration_id == self.registration_id
+            );
+            if owns_registration {
+                requests.remove(&self.request_id);
+            }
+        }
+    }
+}
+
+fn is_valid_private_http_request_id(request_id: &str) -> bool {
+    let bytes = request_id.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Returns true when `path` lives at or under any of `allowed_roots`. The
+/// Rust-owned import picker is the authorization boundary; this additional
+/// confinement keeps sensitive home-directory dotfiles out of scope even after
+/// an accidental or malicious picker-path substitution.
+fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
+    allowed_roots.iter().any(|root| path.starts_with(root))
+}
+
+/// Stable Windows file identity: the volume serial number paired with the
+/// 64-bit file index. Used to detect a TOCTOU swap of a validated file for a
+/// different one between the path check and the open/read.
+///
+/// `std::os::windows::fs::MetadataExt::{volume_serial_number,file_index}` would
+/// be the natural source, but those methods are gated behind the nightly-only
+/// `windows_by_handle` feature and break the stable-toolchain Windows build.
+/// `GetFileInformationByHandle` exposes the same identity through the stable
+/// `windows` crate, so we read it from the live file handle instead.
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Option<(u32, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
+    let mut info = windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: `handle` is a valid, borrowed file handle for the lifetime of the
+    // call, and `info` is a valid out-parameter we own.
+    unsafe {
+        windows::Win32::Storage::FileSystem::GetFileInformationByHandle(handle, &mut info).ok()?;
+    }
+    let file_index =
+        ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+    Some((info.dwVolumeSerialNumber, file_index))
+}
+
+fn is_rfc1918_ipv4(address: std::net::Ipv4Addr) -> bool {
+    let [first, second, _, _] = address.octets();
+    first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
+}
+
+/// Shared host-validation predicate used by both the HTTP private-network
+/// path and the HTTPS saved-endpoint path. Returns `true` when the host is
+/// loopback, RFC1918, unique-local IPv6, or a `.local` domain. Public
+/// domain names (e.g. `api.openai.com`) return `false`.
+fn host_is_private_or_local(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            domain == "localhost"
+                || (domain.ends_with(".local")
+                    && domain.len() > ".local".len()
+                    && !domain.contains(".."))
+        }
+        url::Host::Ipv4(address) => address.is_loopback() || is_rfc1918_ipv4(*address),
+        url::Host::Ipv6(address) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            address.is_loopback() || (address.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Validate a user-configured plaintext endpoint without confusing hostname
+/// prefix globs (for example `10.evil.example`) with RFC1918 address ranges.
+/// Link-local addresses are deliberately excluded to keep cloud metadata
+/// services such as 169.254.169.254 unreachable.
+fn validate_private_http_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "http" {
+        return Err("Private-network requests must use http".to_string());
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("Private-network URLs must not contain credentials".to_string());
+    }
+
+    match url.host() {
+        Some(host) if host_is_private_or_local(&host) => Ok(()),
+        _ => Err(format!(
+            "Private-network URL host is not loopback, RFC1918, unique-local IPv6, or .local: {}",
+            url.host_str().unwrap_or("<missing>")
+        )),
+    }
+}
+
+#[derive(Clone)]
+enum HttpRequestPolicy {
+    PrivateNetwork,
+    SavedOpenAiCompatibleEndpoint { base_url: Url },
+}
+
+fn normalized_url_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn validate_saved_endpoint_url(url: &Url, base_url: &Url) -> Result<(), String> {
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || !base_url.username().is_empty()
+        || base_url.password().is_some()
+    {
+        return Err("OpenAI-compatible endpoint URLs must not contain credentials".to_string());
+    }
+    if !matches!(base_url.scheme(), "http" | "https") {
+        return Err("OpenAI-compatible endpoints must use http or https".to_string());
+    }
+    if base_url.scheme() == "http" {
+        validate_private_http_url(base_url)?;
+        validate_private_http_url(url)?;
+    }
+    // HTTPS saved endpoints deliberately do NOT mirror the HTTP path's
+    // private-network-only restriction. HTTPS encrypts credentials, so a
+    // public cloud domain is a legitimate endpoint; plaintext HTTP is
+    // confined to private/local hosts because cleartext credentials must
+    // never cross the public internet. The HTTPS branch below still rejects
+    // public IP literals to mitigate SSRF (see the comment there).
+    if base_url.scheme() == "https" {
+        let https_host_check = |u: &Url| -> Result<(), String> {
+            match u.host() {
+                Some(h) => {
+                    // Intentionally asymmetric with the HTTP path below, and
+                    // safe by design:
+                    //   * Plaintext HTTP carries the bearer API key in
+                    //     cleartext, so it is confined to private/local
+                    //     networks only (no plaintext to public hosts).
+                    //   * HTTPS encrypts the credential, so reaching a
+                    //     user-configured OpenAI-compatible provider at a
+                    //     public cloud domain (e.g. api.openai.com) is the
+                    //     expected, legitimate use case and is allowed.
+                    //   * Even over HTTPS we still reject public IP literals
+                    //     that are not loopback/RFC1918/unique-local. This
+                    //     blocks SSRF to raw addressable infrastructure
+                    //     (cloud metadata 169.254.169.254, internal services
+                    //     reachable by IP) and forces DNS + TLS hostname
+                    //     validation. Private/local IPs and any domain name
+                    //     remain permitted.
+                    // Both schemes share `host_is_private_or_local` so the
+                    // private-network rule cannot silently drift.
+                    if host_is_private_or_local(&h) || matches!(h, url::Host::Domain(_)) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "OpenAI-compatible HTTPS endpoint host is not loopback, RFC1918, or unique-local: {}",
+                            u.host_str().unwrap_or("<missing>")
+                        ))
+                    }
+                }
+                None => Err("OpenAI-compatible endpoint has no host".to_string()),
+            }
+        };
+        https_host_check(base_url)?;
+        https_host_check(url)?;
+    }
+    if url.scheme() != base_url.scheme()
+        || url.host() != base_url.host()
+        || url.port_or_known_default() != base_url.port_or_known_default()
+    {
+        return Err("Request URL is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+
+    let base_path = normalized_url_path(base_url.path());
+    let request_path = normalized_url_path(url.path());
+    let path_allowed = base_path == "/"
+        || request_path == base_path
+        || request_path
+            .strip_prefix(base_path)
+            .is_some_and(|remainder| remainder.starts_with('/'));
+    if !path_allowed {
+        return Err("Request path is outside the saved OpenAI-compatible endpoint".to_string());
+    }
+    Ok(())
+}
+
+/// Origin equality for redirect-hop header sanitization. Mirrors the
+/// curl/reqwest behavior my manual redirect loop replaces: when a redirect
+/// changes scheme, host, or port, sensitive request headers must NOT follow.
+fn urls_share_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host() == b.host()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+fn validate_http_request_url(url: &Url, policy: &HttpRequestPolicy) -> Result<(), String> {
+    match policy {
+        HttpRequestPolicy::PrivateNetwork => validate_private_http_url(url),
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            validate_saved_endpoint_url(url, base_url)
+        }
+    }
+}
+
+/// Loopback, RFC1918, or unique-local: the set of destinations the
+/// plaintext/private paths may reach. Mirrors `host_is_private_or_local`'s
+/// IP-literal arms for resolved addresses.
+fn ip_is_private_or_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || is_rfc1918_ipv4(v4),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return mapped.is_loopback() || is_rfc1918_ipv4(mapped);
+            }
+            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Link-local (including the cloud metadata address 169.254.169.254) and
+/// unspecified (0.0.0.0 / ::) addresses are never legitimate API targets for
+/// any request policy. URL-string validation cannot see them when the
+/// attacker controls a DNS/mDNS answer behind a permitted hostname.
+fn ip_is_link_local_or_unspecified(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_link_local() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return mapped.is_link_local() || mapped.is_unspecified();
+            }
+            v6.is_unicast_link_local() || v6.is_unspecified()
+        }
+    }
+}
+
+/// Validate a URL's DNS-resolved addresses against the request policy.
+///
+/// Plaintext policies (private-network requests, `http://` saved endpoints)
+/// require every resolved address to stay private/local, so a poisoned DNS
+/// answer cannot redirect a bearer credential to the public internet or to
+/// metadata services. HTTPS saved endpoints additionally allow public
+/// destinations (TLS binds the credential to the configured hostname) but
+/// still reject link-local and unspecified resolutions.
+fn validate_resolved_addresses(
+    addrs: &[std::net::SocketAddr],
+    policy: &HttpRequestPolicy,
+) -> Result<(), String> {
+    for addr in addrs {
+        let ip = addr.ip();
+        if ip_is_link_local_or_unspecified(ip) {
+            return Err(format!(
+                "HTTP request host resolved to a link-local or unspecified address: {ip}"
+            ));
+        }
+    }
+    let restrict_to_private = match policy {
+        HttpRequestPolicy::PrivateNetwork => true,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            base_url.scheme() == "http"
+        }
+    };
+    if restrict_to_private {
+        for addr in addrs {
+            let ip = addr.ip();
+            if !ip_is_private_or_local(ip) {
+                return Err(format!(
+                    "Private-network request host resolved to a non-private address: {ip}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the URL's host and validate every answer against the policy.
+/// Returns the validated addresses so the caller can pin them for the actual
+/// connection, closing the check-then-connect (rebinding) gap.
+async fn resolve_and_validate_url(
+    url: &Url,
+    policy: &HttpRequestPolicy,
+) -> Result<Vec<std::net::SocketAddr>, String> {
+    let host = url
+        .host()
+        .ok_or_else(|| "HTTP request URL has no host".to_string())?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "HTTP request URL has no port".to_string())?;
+    let addrs: Vec<std::net::SocketAddr> = match host {
+        url::Host::Ipv4(v4) => vec![std::net::SocketAddr::new(
+            std::net::IpAddr::V4(v4.to_owned()),
+            port,
+        )],
+        url::Host::Ipv6(v6) => vec![std::net::SocketAddr::new(
+            std::net::IpAddr::V6(v6.to_owned()),
+            port,
+        )],
+        url::Host::Domain(domain) => {
+            let domain = domain.to_ascii_lowercase();
+            let resolved = tokio::net::lookup_host((domain.as_str(), port))
+                .await
+                .map_err(|_| "Unable to resolve the HTTP request host".to_string())?;
+            let collected: Vec<std::net::SocketAddr> = resolved.collect();
+            if collected.is_empty() {
+                return Err("HTTP request host resolved to no addresses".to_string());
+            }
+            collected
+        }
+    };
+    validate_resolved_addresses(&addrs, policy)?;
+    Ok(addrs)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_private_http_request(request_id: String) -> Result<bool, String> {
+    if !is_valid_private_http_request_id(&request_id) {
+        return Err("Private-network request ID is invalid".to_string());
+    }
+
+    let mut requests = PRIVATE_HTTP_CANCELLATIONS
+        .lock()
+        .map_err(|_| "Private-network cancellation registry is unavailable".to_string())?;
+    prune_private_http_prestart_cancellations(&mut requests);
+    match requests.remove(&request_id) {
+        Some(PrivateHttpCancellationState::Active { sender, .. }) => {
+            // Removing frees active capacity immediately. The guard carries a
+            // unique registration ID, so its later cleanup cannot remove a new
+            // request that reuses this renderer-generated request ID.
+            Ok(sender.send(()).is_ok())
+        }
+        Some(marker @ PrivateHttpCancellationState::CancelledBeforeStart(_)) => {
+            requests.insert(request_id, marker);
+            Ok(false)
+        }
+        None => {
+            // IPC messages can race: remember an abort that arrives before the
+            // async request command is first polled. Pre-start markers have a
+            // separate cap and never consume active-request capacity. At the
+            // cap, evict the oldest marker so the latest abort remains reliable.
+            let prestart_cancellations = requests
+                .values()
+                .filter(|state| {
+                    matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_))
+                })
+                .count();
+            if prestart_cancellations >= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS {
+                let oldest = requests
+                    .iter()
+                    .filter_map(|(request_id, state)| match state {
+                        PrivateHttpCancellationState::CancelledBeforeStart(created_at) => {
+                            Some((request_id.clone(), *created_at))
+                        }
+                        PrivateHttpCancellationState::Active { .. } => None,
+                    })
+                    .min_by_key(|(_, created_at)| *created_at)
+                    .map(|(request_id, _)| request_id);
+                if let Some(oldest) = oldest {
+                    requests.remove(&oldest);
+                }
+            }
+            requests.insert(
+                request_id,
+                PrivateHttpCancellationState::CancelledBeforeStart(std::time::Instant::now()),
+            );
+            Ok(false)
+        }
+    }
+}
+
+async fn execute_http_request(
+    request: PrivateHttpRequest,
+    policy: HttpRequestPolicy,
+) -> Result<PrivateHttpResponse, String> {
+    // Register before validation or any await so an abort IPC that wins the
+    // command-scheduling race is consumed before networking can begin.
+    let (_cancellation_guard, mut cancellation) =
+        PrivateHttpCancellationGuard::register(request.request_id.clone())?;
+
+    // The decoder preflights both the Base64 frame and its decoded size before
+    // allocating the request body. Move and explicitly release the encoded
+    // frame before networking: at the 128 MiB payload limit it is about 171
+    // MiB, and retaining it alongside the decoded request body needlessly
+    // raises the peak memory for every redirectable request.
+    //
+    // The decoded body is a `bytes::Bytes` (a refcounted buffer) rather than
+    // a `Vec<u8>`: 307/308 redirect hops re-send the body, and each hop
+    // clones it into the reqwest builder. A Vec clone would copy the entire
+    // payload per hop (up to 128 MiB x 5 hops); Bytes::clone is O(1).
+    let encoded_request_body = request.body_base64;
+    let decoded_request_body =
+        decode_private_http_body(encoded_request_body.as_deref())?.map(bytes::Bytes::from);
+    drop(encoded_request_body);
+
+    let initial_url = Url::parse(&request.url)
+        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    // The redirect loop owns the mutable hop URL; credentials belong to this
+    // original origin alone for the rest of the chain.
+    let credential_origin = initial_url.clone();
+
+    let method = reqwest::Method::from_bytes(request.method.trim().as_bytes())
+        .map_err(|_| "Private-network request method is invalid".to_string())?;
+    if ![
+        reqwest::Method::GET,
+        reqwest::Method::POST,
+        reqwest::Method::PUT,
+        reqwest::Method::PATCH,
+        reqwest::Method::DELETE,
+        reqwest::Method::HEAD,
+    ]
+    .contains(&method)
+    {
+        return Err("Private-network request method is not allowed".to_string());
+    }
+
+    // Normalize header forwarding once; the redirect loop below reapplies the
+    // same list to every hop.
+    let mut forwarded_headers: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> =
+        Vec::new();
+    for (name, value) in request.headers {
+        let normalized = name.trim().to_ascii_lowercase();
+        if matches!(
+            normalized.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "proxy-authorization"
+                | "proxy-connection"
+                | "transfer-encoding"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        let name = reqwest::header::HeaderName::from_bytes(normalized.as_bytes())
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(&value)
+            .map_err(|_| "Private-network request contains an invalid header".to_string())?;
+        forwarded_headers.push((name, value));
+    }
+
+    // Manual redirect loop. reqwest's redirect closure can validate the next
+    // URL string but cannot pin DNS for a host it has not seen yet, so every
+    // hop is validated, resolved, policy-checked, and dialed against the very
+    // addresses that passed the check.
+    let mut current_url = initial_url;
+    let mut current_method = method;
+    let mut current_body = decoded_request_body;
+    // Plaintext policies connect directly: an environment HTTP proxy could
+    // otherwise tunnel a private-network (or saved plaintext endpoint)
+    // request, and its bearer credential, to an arbitrary public host.
+    //
+    // RESIDUAL (documented, accepted): HTTPS saved endpoints may still use the
+    // system proxy, because corporate proxies are the only way some machines
+    // can reach public providers at all. In that case the proxy performs its
+    // own DNS for the CONNECT target, so the resolve_and_validate pinning
+    // above does not govern the dispatch address; TLS certificate validation
+    // (against the configured hostname) is what binds the bearer credential
+    // instead. An attacker without a valid certificate cannot learn it.
+    let bypass_proxy = match &policy {
+        HttpRequestPolicy::PrivateNetwork => true,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url } => {
+            base_url.scheme() == "http"
+        }
+    };
+
+    let mut redirects_left = MAX_PRIVATE_HTTP_REDIRECTS;
+    // Once a hop leaves the original origin, credentials are gone for the
+    // rest of the chain — re-attaching them on a later same-origin hop (or a
+    // hop back) would leak them to whatever origin bounced the request. This
+    // mirrors curl/reqwest, which remove and never re-add these headers.
+    let mut credentials_stripped = false;
+    let mut response = loop {
+        validate_http_request_url(&current_url, &policy)?;
+        let addrs = resolve_and_validate_url(&current_url, &policy).await?;
+
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10 * 60))
+            .redirect(reqwest::redirect::Policy::none());
+        if bypass_proxy {
+            client_builder = client_builder.no_proxy();
+        }
+        if let url::Host::Domain(domain) = current_url
+            .host()
+            .ok_or_else(|| "HTTP request URL has no host".to_string())?
+        {
+            // Pin the dial to the validated answers so a DNS flip between
+            // validation and connect cannot land elsewhere.
+            client_builder = client_builder
+                .resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
+        }
+        let client = client_builder
+            .build()
+            .map_err(|_| "Unable to initialize the HTTP client".to_string())?;
+
+        let mut builder = client.request(current_method.clone(), current_url.clone());
+        if !urls_share_origin(&credential_origin, &current_url) {
+            credentials_stripped = true;
+        }
+        for (name, value) in &forwarded_headers {
+            // proxy-authorization is filtered at intake, but stays in the
+            // strip list as defense-in-depth against a future intake change.
+            // (www-authenticate is a response header and can never arrive.)
+            if credentials_stripped
+                && matches!(
+                    name.as_str(),
+                    "authorization" | "cookie" | "proxy-authorization"
+                )
+            {
+                continue;
+            }
+            builder = builder.header(name.clone(), value.clone());
+        }
+        if let Some(body) = current_body.clone() {
+            builder = builder.body(body);
+        }
+
+        let next_response = tokio::select! {
+            _ = &mut cancellation => return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string()),
+            result = builder.send() => result
+                .map_err(|_| "Private-network request failed".to_string())?,
+        };
+
+        let status = next_response.status();
+        if !status.is_redirection() {
+            break next_response;
+        }
+        let Some(location) = next_response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+        else {
+            // 3xx without Location: no follow is possible; hand the response
+            // back like any other status.
+            break next_response;
+        };
+        if redirects_left == 0 {
+            return Err("HTTP request exceeded the redirect limit".to_string());
+        }
+        redirects_left -= 1;
+        let next_url = current_url
+            .join(location)
+            .map_err(|_| "HTTP redirect location is invalid".to_string())?;
+        // Mirror reqwest's redirect semantics: 307/308 re-send the original
+        // method and body; 301/302/303 downgrade to a bodiless GET.
+        match status.as_u16() {
+            307 | 308 => {}
+            _ => {
+                current_method = reqwest::Method::GET;
+                current_body = None;
+            }
+        }
+        current_url = next_url;
+    };
+
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES)
+    {
+        return Err(format!(
+            "Private-network response exceeds the {} MiB limit",
+            MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+    let initial_capacity = response
+        .content_length()
+        .unwrap_or_default()
+        .min(MAX_PRIVATE_HTTP_RESPONSE_BYTES) as usize;
+    let mut body = Vec::new();
+    reserve_private_http_response_body(&mut body, initial_capacity)?;
+    loop {
+        let chunk = tokio::select! {
+            _ = &mut cancellation => {
+                return Err(PRIVATE_HTTP_CANCELLED_ERROR.to_string());
+            }
+            result = response.chunk() => result
+                .map_err(|_| "Unable to read the private-network response".to_string())?,
+        };
+        let Some(chunk) = chunk else {
+            break;
+        };
+        if body
+            .len()
+            .checked_add(chunk.len())
+            .is_none_or(|length| length > MAX_PRIVATE_HTTP_RESPONSE_BYTES as usize)
+        {
+            return Err(format!(
+                "Private-network response exceeds the {} MiB limit",
+                MAX_PRIVATE_HTTP_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        reserve_private_http_response_body(&mut body, chunk.len())?;
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(PrivateHttpResponse {
+        status,
+        headers,
+        body_base64: encode_private_http_body(&body)?,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn private_http_request(
+    request: PrivateHttpRequest,
+) -> Result<PrivateHttpResponse, String> {
+    execute_http_request(request, HttpRequestPolicy::PrivateNetwork).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+#[specta::specta]
+pub async fn openai_compatible_http_request(
+    api_key_id: String,
+    request: PrivateHttpRequest,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<PrivateHttpResponse, String> {
+    let pool = database.pool();
+    let row = sqlx::query(
+        "SELECT base_url FROM api_keys WHERE id = ?1 AND provider = 'openai-compatible'",
+    )
+    .bind(&api_key_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|_| "Unable to authorize the OpenAI-compatible endpoint".to_string())?
+    .ok_or_else(|| "OpenAI-compatible endpoint is not saved".to_string())?;
+    let saved_base_url = row
+        .get::<Option<String>, _>("base_url")
+        .ok_or_else(|| "Saved OpenAI-compatible endpoint has no base URL".to_string())?;
+    let base_url = Url::parse(saved_base_url.trim())
+        .map_err(|_| "Saved OpenAI-compatible endpoint URL is invalid".to_string())?;
+
+    execute_http_request(
+        request,
+        HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url },
+    )
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn transcription_import_audio(
+    app: tauri::AppHandle,
+) -> Result<Option<TranscriptionAudioData>, String> {
+    // Acquire before opening the native picker. The renderer receives neither
+    // a path argument nor a reusable authorization token: only a path returned
+    // directly by this Rust-owned OS dialog can reach the decoder. This closes
+    // the remaining renderer-to-Documents file-read surface.
+    let _import_guard = match ReentryGuard::acquire(&IMPORT_IN_FLIGHT) {
+        Ok(guard) => guard,
+        Err(_) => {
+            return Err(
+                "An audio import is already in progress. Please wait for it to finish.".to_string(),
+            );
+        }
+    };
+    let selection = rfd::AsyncFileDialog::new()
+        .set_title("Choose audio file")
+        .add_filter("Audio", &["wav", "mp3", "flac", "ogg"])
+        .pick_file()
+        .await;
+    let Some(selection) = selection else {
+        return Ok(None);
+    };
+    let path = selection
+        .path()
+        .canonicalize()
+        .map_err(|_| "Unable to resolve the selected audio file.".to_string())?;
+
+    // Confine imports to well-known user directories and the app's audio
+    // store so this command cannot be used as a file-read oracle over the
+    // whole filesystem (e.g. reading `~/.ssh/id_rsa`). The home directory
+    // itself is intentionally excluded so sensitive dot-directories stay out
+    // of reach; only common media/download sub-directories are allowed.
+    let home_dir = app.path().home_dir().ok();
+    let mut allowed: Vec<PathBuf> = Vec::new();
+    if let Some(home) = home_dir {
+        for subdir in [
+            "Music",
+            "Downloads",
+            "Documents",
+            "Desktop",
+            "Pictures",
+            "Videos",
+            "Movies",
+            "Public",
+        ] {
+            allowed.push(home.join(subdir));
+        }
+    }
+    for dir in [
+        app.path().document_dir().ok(),
+        app.path().download_dir().ok(),
+        app.path().desktop_dir().ok(),
+        app.path().picture_dir().ok(),
+        crate::system::audio_store::audio_dir(&app).ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        allowed.push(dir);
+    }
+    let allowed_roots: Vec<PathBuf> = allowed
+        .into_iter()
+        .filter_map(|root| std::fs::canonicalize(&root).ok())
+        .collect();
+    if !is_path_within_allowed_roots(&path, &allowed_roots) {
+        return Err(
+            "The selected file is outside the allowed import locations.".to_string(),
+        );
+    }
+
+    // Open first, then re-resolve and revalidate the path against the opened
+    // handle. If an attacker swaps the entry before open, the post-open
+    // canonical path exposes the new target and confinement rejects it. If it
+    // changes between canonicalization and metadata lookup, the identity check
+    // rejects it. Changes after this point cannot redirect the already-open fd.
+    let file = std::fs::File::open(&path)
+        .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+    let opened_path = std::fs::canonicalize(&path)
+        .map_err(|_| "The selected audio file changed during import.".to_string())?;
+    if !is_path_within_allowed_roots(&opened_path, &allowed_roots) {
+        return Err("The selected file is outside the allowed import locations.".to_string());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file
+            .metadata()
+            .map_err(|_| "Unable to open the selected audio file.".to_string())?;
+        let resolved = std::fs::metadata(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
+        if opened.dev() != resolved.dev() || opened.ino() != resolved.ino() {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+    #[cfg(windows)]
+    {
+        let resolved_file = std::fs::File::open(&opened_path)
+            .map_err(|_| "The selected audio file changed during import.".to_string())?;
+        let opened_id = windows_file_identity(&file)
+            .ok_or_else(|| "Unable to open the selected audio file.".to_string())?;
+        let resolved_id = windows_file_identity(&resolved_file)
+            .ok_or_else(|| "The selected audio file changed during import.".to_string())?;
+        if opened_id != resolved_id {
+            return Err("The selected audio file changed during import.".to_string());
+        }
+    }
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let file_bytes = file
+            .metadata()
+            .map_err(|_| "Unable to inspect the selected audio file.".to_string())?
+            .len();
+        if file_bytes > MAX_AUDIO_IMPORT_FILE_BYTES {
+            return Err(format!(
+                "The selected audio file is too large (maximum is {} MiB)",
+                MAX_AUDIO_IMPORT_FILE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        let decoder = rodio::Decoder::new(BufReader::new(file))
+            .map_err(|_| "Unable to decode the selected audio file.".to_string())?;
+        let source_rate = decoder.sample_rate();
+        let channels = decoder.channels().max(1) as usize;
+        if source_rate == 0 {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        // The decoded stream is interleaved, so derive its duration limit from
+        // the source rate and channel count rather than multiplying the
+        // 16 kHz mono output cap by a fixed factor. This accepts ordinary
+        // 44.1/48 kHz stereo recordings while retaining an absolute memory
+        // ceiling for unusual high-rate files.
+        let duration_sample_limit = (source_rate as usize)
+            .saturating_mul(channels)
+            .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
+        let max_decoded_samples = duration_sample_limit
+            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
+        let memory_limited = duration_sample_limit > max_decoded_samples;
+        let decoded: Vec<f32> = decoder
+            .convert_samples::<f32>()
+            .take(max_decoded_samples.saturating_add(1))
+            .collect();
+
+        if decoded.len() > max_decoded_samples {
+            let reason = if memory_limited {
+                "the decoded audio exceeds the safe memory limit"
+            } else {
+                "the audio exceeds the duration limit"
+            };
+            return Err(format!(
+                "The selected audio file cannot be imported because {reason}"
+            ));
+        }
+        if decoded.is_empty() {
+            return Err("The selected audio file contains no usable samples".to_string());
+        }
+
+        let mono = if channels == 1 {
+            decoded
+        } else {
+            decoded
+                .chunks(channels)
+                .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+                .collect()
+        };
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
+            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
+        })?;
+        if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
+            return Err(format!(
+                "The selected audio file exceeds the {} minute import limit",
+                MAX_AUDIO_IMPORT_DURATION_SECONDS / 60
+            ));
+        }
+
+        Ok(TranscriptionAudioData {
+            pcm16_le: encode_pcm16_le(&samples),
+            sample_rate: 16_000,
+        })
+    })
+    .await
+    .map_err(|err| format!("audio import task failed: {err}"));
+    result?.map(Some)
+}
+
+fn encode_pcm16_le(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len().saturating_mul(2));
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let value = if clamped < 0.0 {
+            (clamped * 0x8000 as f32) as i16
+        } else {
+            (clamped * 0x7fff as f32) as i16
+        };
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
+    matches!(audio_path, Some(path) if !path.is_empty())
+}
+
 async fn delete_audio_entries(
     app: AppHandle,
-    entries: Vec<(String, String)>,
+    entries: Vec<(String, bool)>,
 ) -> Result<Vec<String>, String> {
     if entries.is_empty() {
         return Ok(Vec::new());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
+        let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+            .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
         let mut removed = Vec::new();
-        for (id, path) in entries {
-            let file_path = PathBuf::from(&path);
-            if let Err(err) = crate::system::audio_store::delete_audio_file(&app, &file_path) {
-                log::error!("Failed to delete audio file for transcription {id}: {err}");
+        for (id, has_file_path) in entries {
+            // `audio_path` is only a presence marker. Preserve the historical
+            // empty-marker behavior (clear metadata but do not delete a file),
+            // while deriving every non-empty marker's filename from its ID.
+            if has_file_path {
+                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id)
+                {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        log::error!("Failed to delete audio file for transcription {id}: {err}");
+                    }
+                }
             }
+            // Match the existing recovery behavior: an unavailable file must
+            // not keep stale snapshot metadata indefinitely.
             removed.push(id);
         }
-        removed
+        Ok::<Vec<String>, String>(removed)
     })
     .await
-    .map_err(|err| err.to_string())
+    .map_err(|err| err.to_string())?
 }
 
-/// Resolve `path` to the exact file to delete, or `None` when it does not
-/// live directly inside the managed transcription-audio directory. Both the
-/// candidate's parent directory and `audio_dir` are canonicalized before
-/// comparison, so a `..` traversal, an intermediate symlink, or an
-/// `audio_dir` spelled with `.`/`..` all resolve to real paths first — a
-/// lexical `starts_with` cannot do that. Callers must delete the returned
-/// path — never the raw input — because a relative input is resolved
-/// against `audio_dir` here.
-fn resolve_managed_audio_path(
-    path: &std::path::Path,
-    audio_dir: &std::path::Path,
-) -> Option<std::path::PathBuf> {
-    // Resolve the candidate: an absolute `path` is taken as-is; a relative
-    // `path` is resolved against `audio_dir`.
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        audio_dir.join(path)
-    };
-
-    // Managed audio is a flat directory of `<id>.wav` files, so the file
-    // must sit directly inside `audio_dir`. Canonicalize the parent only:
-    // the entry itself may be a symlink we want to unlink rather than
-    // follow, and it may already be gone.
-    let file_name = candidate.file_name()?;
-    let real_parent = std::fs::canonicalize(candidate.parent()?).ok()?;
-    let real_audio_dir = std::fs::canonicalize(audio_dir).ok()?;
-    if real_parent != real_audio_dir {
-        return None;
-    }
-
-    Some(real_parent.join(file_name))
-}
-
-/// Delete listed audio files that still live under `audio_dir`. Paths
-/// outside the managed directory (including traversal attempts) are skipped
-/// (not an error).
-fn delete_listed_audio_files(audio_dir: &std::path::Path, paths: &[String]) {
-    for path in paths {
-        // Delete the validated path, not the raw DB value: a relative entry
-        // such as `clip.wav` must resolve inside `audio_dir` rather than
-        // against the process working directory.
-        let Some(file_path) = resolve_managed_audio_path(&PathBuf::from(path), audio_dir) else {
-            continue;
-        };
-        if let Err(err) = std::fs::remove_file(&file_path) {
+/// Delete snapshots whose non-null database marker was collected before a
+/// local-data reset. The storage path itself is intentionally ignored: each
+/// ID maps to its one generated filename in the directory capability.
+fn delete_listed_audio_files(audio_dir: &cap_std::fs::Dir, ids: &[String]) {
+    for id in ids {
+        if let Err(err) = crate::system::audio_store::delete_audio_file(audio_dir, id) {
             if err.kind() != std::io::ErrorKind::NotFound {
                 log::warn!(
-                    "Failed to delete audio file {} during clear: {err}",
-                    file_path.display()
+                    "Failed to delete audio file for transcription {id} during clear: {err}"
                 );
             }
         }
     }
 }
 
-/// Remove leftover `.wav` files in the managed audio directory after the
-/// DB table has been wiped (orphans from an interrupted record, etc.).
-fn sweep_orphaned_wavs(audio_dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(audio_dir) else {
+/// Remove leftover `.wav` files from the directory capability after the DB
+/// table has been wiped (for example, after an interrupted recording).
+fn sweep_orphaned_wavs(audio_dir: &cap_std::fs::Dir) {
+    let Ok(entries) = audio_dir.entries() else {
         return;
     };
     for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()) == Some("wav") {
-            if let Err(err) = std::fs::remove_file(&p) {
-                log::warn!(
-                    "Failed to remove orphaned audio file {}: {err}",
-                    p.display()
-                );
+        let file_name = entry.file_name();
+        if std::path::Path::new(&file_name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("wav")
+        {
+            if let Err(err) =
+                crate::system::audio_store::delete_audio_file_named(audio_dir, &file_name)
+            {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "Failed to remove orphaned audio file {}: {err}",
+                        file_name.to_string_lossy()
+                    );
+                }
             }
         }
     }
@@ -554,6 +1663,23 @@ pub async fn user_preferences_get(
     crate::db::preferences_queries::fetch_user_preferences(database.pool(), &args.user_id)
         .await
         .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn user_preferences_set_expansion_flags(
+    args: UserPreferencesSetExpansionFlagsArgs,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<crate::domain::UserPreferences, String> {
+    use crate::db::preferences_queries::{set_expansion_flags, LOCAL_USER_ID};
+    set_expansion_flags(database.pool(), &args.flags)
+        .await
+        .map_err(|err| err.to_string())?;
+    let prefs = crate::db::preferences_queries::fetch_user_preferences(database.pool(), LOCAL_USER_ID)
+        .await
+        .map_err(|err| err.to_string())?
+        .ok_or_else(|| "Preferences not found".to_string())?;
+    Ok(prefs)
 }
 
 #[tauri::command]
@@ -819,8 +1945,12 @@ pub async fn transcription_delete(
     .await
     .map_err(|err| err.to_string())?;
 
-    if let Some(path) = audio_path {
-        delete_audio_entries(app.clone(), vec![(id.clone(), path)]).await?;
+    if let Some(audio_path) = audio_path {
+        delete_audio_entries(
+            app.clone(),
+            vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
+        )
+        .await?;
     }
 
     crate::db::transcription_queries::delete_transcription(pool, &id)
@@ -845,7 +1975,7 @@ pub async fn transcription_audio_load(
     app: AppHandle,
     id: String,
     database: State<'_, crate::state::OptionKeyDatabase>,
-) -> Result<TranscriptionAudioData, String> {
+) -> Result<TranscriptionAudioSamplesData, String> {
     let pool = database.pool();
 
     let audio_path: Option<String> = sqlx::query_scalar(
@@ -858,24 +1988,23 @@ pub async fn transcription_audio_load(
     .await
     .map_err(|err| err.to_string())?;
 
-    let audio_path = audio_path
-        .ok_or_else(|| "No audio snapshot available for this transcription".to_string())?;
-
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
-    let audio_path_buf = PathBuf::from(&audio_path);
-
-    if !audio_path_buf.starts_with(&audio_dir) {
-        return Err("Audio snapshot path is outside the managed directory".to_string());
+    if !audio_path_has_file_path(audio_path.as_deref()) {
+        return Err("No audio snapshot available for this transcription".to_string());
     }
 
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| err.to_string())?;
+    let mut audio_file = crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
+        .map_err(|err| format!("Unable to open the managed audio snapshot: {err}"))?;
+
     let (samples, sample_rate) = tauri::async_runtime::spawn_blocking(move || {
-        crate::system::audio_store::load_audio_samples(&audio_path_buf)
+        crate::system::audio_store::load_audio_samples(&mut audio_file)
             .map_err(|err| err.to_string())
     })
     .await
     .map_err(|err| err.to_string())??;
 
-    Ok(TranscriptionAudioData {
+    Ok(TranscriptionAudioSamplesData {
         samples,
         sample_rate,
     })
@@ -917,9 +2046,11 @@ pub async fn export_transcription(
         None => return Ok(false),
     };
 
-    let audio_dir = crate::system::audio_store::audio_dir(&app).map_err(|err| err.to_string())?;
+    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
+        .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
         use std::io::Write;
         use zip::write::SimpleFileOptions;
 
@@ -943,10 +2074,15 @@ pub async fn export_transcription(
             }
         }
 
-        if let Some(ref audio_path_str) = audio_path {
-            let audio_path_buf = PathBuf::from(audio_path_str);
-            if audio_path_buf.starts_with(&audio_dir) && audio_path_buf.exists() {
-                let audio_data = std::fs::read(&audio_path_buf)
+        if audio_path_has_file_path(audio_path.as_deref()) {
+            // A non-empty value marks a saved snapshot; the generated ID name
+            // and held directory capability select the actual file.
+            if let Ok(mut audio_file) =
+                crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
+            {
+                let mut audio_data = Vec::new();
+                audio_file
+                    .read_to_end(&mut audio_data)
                     .map_err(|err| format!("Failed to read audio: {err}"))?;
                 zip.start_file("audio.wav", options)
                     .map_err(|err| err.to_string())?;
@@ -1100,6 +2236,25 @@ pub async fn hotkey_delete(
         .map_err(|err| err.to_string())
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn hotkey_replace_style_hotkeys(
+    prefix: String,
+    hotkeys: Vec<crate::domain::Hotkey>,
+    database: State<'_, crate::state::OptionKeyDatabase>,
+) -> Result<Vec<crate::domain::Hotkey>, String> {
+    if prefix.is_empty() {
+        return Err("hotkey prefix must not be empty".to_string());
+    }
+    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
+        database.pool(),
+        &prefix,
+        &hotkeys,
+    )
+    .await
+    .map_err(|err| err.to_string())
+}
+
 fn current_timestamp_millis() -> Result<i64, String> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1125,6 +2280,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     } = api_key;
 
     let protected = protect_api_key(&key);
@@ -1145,6 +2301,7 @@ pub async fn api_key_create(
         base_url,
         azure_region,
         include_v1_path,
+        transcription_path,
     };
 
     crate::db::api_key_queries::insert_api_key(database.pool(), &stored)
@@ -1329,10 +2486,11 @@ pub async fn clear_local_data(
     // Table names are all `&'static str` literals from this source file
     // (never user input), so `format!` is safe from SQL injection here.
 
-    // Collect audio file paths BEFORE wiping transcriptions so we can delete
-    // them from disk after the transaction commits.
-    let audio_paths: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
+    // Collect IDs with non-empty snapshot markers before wiping
+    // transcriptions so their generated managed filenames can be deleted
+    // after commit. This preserves the existing empty-marker behavior.
+    let audio_ids: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM transcriptions WHERE audio_path IS NOT NULL AND audio_path != ''",
     )
     .fetch_all(&pool)
     .await
@@ -1348,13 +2506,11 @@ pub async fn clear_local_data(
     }
     transaction.commit().await.map_err(|err| err.to_string())?;
 
-    // After commit, delete every audio WAV on disk that the DB used to know
-    // about, then sweep orphans. Each path goes through
-    // `resolve_managed_audio_path`, which canonicalizes the path and its
-    // parent so only files that really sit inside the managed audio
-    // directory are deleted.
-    if let Ok(audio_dir) = crate::system::audio_store::audio_dir(&app) {
-        delete_listed_audio_files(&audio_dir, &audio_paths);
+    // After commit, open the managed root once, delete every filename derived
+    // from the recorded IDs, then sweep orphaned WAVs through that same held
+    // directory. A root replacement cannot redirect either destructive step.
+    if let Ok(audio_dir) = crate::system::audio_store::open_managed_audio_dir(&app) {
+        delete_listed_audio_files(&audio_dir, &audio_ids);
         sweep_orphaned_wavs(&audio_dir);
     }
 
@@ -1363,6 +2519,25 @@ pub async fn clear_local_data(
     }
 
     Ok(())
+}
+
+/// A23: Mirror the TS playInteractionChime preference into Rust so the
+/// native thock path (pill overlays call audio_feedback::play_thock directly,
+/// bypassing the TS gate in tryPlayAudioChime) honors the user's choice.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_chime_enabled(enabled: bool) {
+    crate::system::audio_feedback::set_interaction_chime_enabled(enabled);
+}
+
+/// Mirror the TS interactionFeedbackVolume preference into Rust so the
+/// thock gain is applied on the warm path AND the fallback path. The
+/// Rust side clamps to a safe range, so an out-of-range value from the
+/// frontend can never blow out the sink.
+#[tauri::command]
+#[specta::specta]
+pub fn set_interaction_feedback_volume(volume: f32) {
+    crate::system::audio_feedback::set_interaction_feedback_volume(volume);
 }
 
 #[tauri::command]
@@ -1599,13 +2774,14 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())?;
 
-    let stale_entries: Vec<(String, String)> = rows
+    let stale_entries: Vec<(String, bool)> = rows
         .into_iter()
         .skip(MAX_RETAINED_TRANSCRIPTION_AUDIO)
         .map(|row| {
+            let audio_path = row.get::<String, _>("audio_path");
             (
                 row.get::<String, _>("id"),
-                row.get::<String, _>("audio_path"),
+                audio_path_has_file_path(Some(&audio_path)),
             )
         })
         .collect();
@@ -1837,6 +3013,23 @@ pub fn set_pill_visibility(app: AppHandle, visibility: String) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn set_pill_placement(app: AppHandle, placement: String) -> Result<(), String> {
+    validate_pill_placement(&placement)?;
+    crate::platform::overlay::notify_pill_placement(&app, &placement);
+    Ok(())
+}
+
+/// Accept-list for [`set_pill_placement`]; kept separate so the policy is
+/// unit-testable without an `AppHandle`.
+fn validate_pill_placement(placement: &str) -> Result<(), String> {
+    match placement {
+        "top" | "bottom" => Ok(()),
+        other => Err(format!("invalid pill placement: {other:?}")),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn notify_pill_style_info(app: AppHandle, count: u32, name: String) {
     crate::platform::overlay::notify_style_info(&app, count, &name);
 }
@@ -1877,6 +3070,16 @@ pub fn get_key_listener_health() -> String {
 #[specta::specta]
 pub fn retry_key_listener(app: AppHandle) -> Result<(), String> {
     crate::platform::keyboard::start_key_listener(&app)
+}
+
+/// Re-registers the global keyboard hook. Used by the Windows resume
+/// handler in `platform::windows::lifecycle` to recover from a
+/// sleep/wake or session-unlock transition that tore down the
+/// low-level hook installed by `rdev::grab`.
+#[tauri::command]
+#[specta::specta]
+pub fn restart_key_listener(app: AppHandle) -> Result<(), String> {
+    retry_key_listener(app)
 }
 
 #[tauri::command]
@@ -2060,6 +3263,18 @@ pub fn request_admin_relaunch(app: tauri::AppHandle) -> crate::platform::NativeS
     }
 }
 
+/// Fully terminates the application process (including the tray icon).
+///
+/// Distinct from the main-window close path, which only hides to tray.
+/// Used by the elevation-declined dialog's "Close mausVoice" action and any
+/// other UI that must actually quit rather than background the app.
+#[tauri::command]
+#[specta::specta]
+pub fn quit_app(app: tauri::AppHandle) {
+    log::info!("quit_app: terminating process");
+    app.exit(0);
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_title(app: AppHandle, title: Option<String>) -> Result<(), String> {
@@ -2112,6 +3327,18 @@ pub fn set_register_app_label(app: AppHandle, app_name: Option<String>) -> Resul
     crate::system::tray::set_register_app_label(&app, app_name)
 }
 
+/// Set the localized dashboard action labels and sync the tray item to the
+/// main window's actual visibility.
+#[tauri::command]
+#[specta::specta]
+pub fn set_dashboard_menu_labels(
+    app: AppHandle,
+    open_label: String,
+    hide_label: String,
+) -> Result<(), String> {
+    crate::system::tray::set_dashboard_menu_labels(&app, open_label, hide_label)
+}
+
 /// Sync the tray's pill-visibility label.
 ///
 /// Presentation only — the frontend owns the preference, resolves the localized
@@ -2132,6 +3359,20 @@ pub fn set_pill_visibility_menu_state(app: AppHandle, label: String) -> Result<(
 #[specta::specta]
 pub fn set_reset_pill_position_enabled(app: AppHandle, enabled: bool) -> Result<(), String> {
     crate::system::tray::set_reset_pill_position_enabled(&app, enabled)
+}
+
+/// Ask the native pill overlay to re-publish its current geometry.
+///
+/// The pill emits `pill-position-changed` on its own only after the user drags
+/// it, so a session that never moved the pill left the desktop without any
+/// geometry and windows anchored to the pill (the review composer) opened at
+/// the OS-chosen centre of the screen. The frontend calls this once its
+/// listener is registered, which makes the anchor available from the first
+/// use instead of the second.
+#[tauri::command]
+#[specta::specta]
+pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
+    crate::platform::overlay::notify_request_position(&app)
 }
 
 /// Send a reset-position IPC message to the native pill overlay.
@@ -2483,7 +3724,6 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
     AllowedCommand { binary: "ls", fixed_args: &[] },
     AllowedCommand { binary: "pwd", fixed_args: &[] },
     AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "cat", fixed_args: &[] },
     AllowedCommand { binary: "which", fixed_args: &[] },
     AllowedCommand { binary: "whoami", fixed_args: &[] },
     AllowedCommand { binary: "date", fixed_args: &[] },
@@ -2524,9 +3764,12 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// Characters that are forbidden inside any argv token passed through
 /// `run_terminal_command`. Blocked as defense-in-depth even though we never
 /// invoke a shell — makes it obvious to model authors that shell
-/// composition is out.
+/// composition is out. `/` and `\` are forbidden so an allow-listed reader
+/// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
+/// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`. A standalone `..` token
+/// is explicitly rejected; the `/` guard prevents traversal sequences.
 const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
+    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and
@@ -2559,6 +3802,11 @@ fn validate_terminal_command_args(
                 ));
             }
         }
+        if *token == ".." {
+            return Err(format!(
+                "Path traversal (..) is not permitted in command arguments (found in {token:?})"
+            ));
+        }
     }
 
     let allowed = ALLOWED_COMMANDS
@@ -2575,8 +3823,14 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
     match url.scheme() {
         "http" | "https" => {
             let host = url.host_str().unwrap_or("");
-            let is_localhost =
-                host == "localhost" || host == "127.0.0.1" || host == "[::1]";
+            // url::Url::host_str() typically returns IPv6 without brackets,
+            // but accept bracketed form and any loopback address too.
+            let is_loopback_ip = host
+                .trim_matches(|c| c == '[' || c == ']')
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+            let is_localhost = host == "localhost" || is_loopback_ip;
             // Docs-site windows are allowed to load, but they do not inherit
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
@@ -2603,14 +3857,1165 @@ fn parse_floating_window_url(url: &str) -> Result<Url, String> {
     Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))
 }
 
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = bytes.get(index + 1).and_then(|value| hex_value(*value));
+            let low = bytes.get(index + 2).and_then(|value| hex_value(*value));
+            match (high, low) {
+                (Some(h), Some(l)) => {
+                    decoded.push((h << 4) | l);
+                    index += 3;
+                }
+                _ => {
+                    // Leftover bare `%` (e.g. "100%done") is a literal.
+                    decoded.push(b'%');
+                    index += 1;
+                }
+            }
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded)
+        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+}
+
+fn percent_decode_route_path(path: &str) -> Result<String, String> {
+    // Webview/runtime layers may decode a route more than once. Validate the
+    // fully decoded path so double-encoded traversal cannot become dangerous
+    // only after this check. Bound nesting to reject pathological input.
+    let mut decoded = path.to_string();
+    let mut last_error: Option<String> = None;
+    for iteration in 0..4 {
+        match percent_decode_route_path_once(&decoded) {
+            Ok(next) => {
+                if next == decoded {
+                    return Ok(decoded);
+                }
+                decoded = next;
+            }
+            Err(e) if iteration > 0 => {
+                last_error = Some(e);
+                break;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    if decoded.contains('%') {
+        if let Some(err) = last_error {
+            return Err(err);
+        }
+        let still_encoded = decoded.as_bytes().windows(3).any(|w| {
+            w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some()
+        });
+        if still_encoded {
+            return Err("Floating app route has excessive percent encoding".to_string());
+        }
+    }
+    Ok(decoded)
+}
+
+/// Validate only the path portion of a local app route. Query values are
+/// opaque user data; rejecting `..` anywhere in the full route would reject
+/// legitimate transcript text such as "Wait... what?".
+fn validate_local_app_route(route: &str) -> Result<(), String> {
+    let path = route.split(['?', '#']).next().unwrap_or(route);
+    let decoded_path = percent_decode_route_path(path)?;
+    let has_parent_segment = decoded_path.split('/').any(|segment| segment == "..");
+    // `https://evil.example/x` and `http:evil` parse as absolute references;
+    // `Url::join` against the app origin would replace the base and open the
+    // floating window off-origin. A scheme only ever appears before the first
+    // `/`, so the first segment carrying `:` is enough to reject it.
+    let first_segment_has_scheme = decoded_path
+        .split('/')
+        .next()
+        .is_some_and(|segment| segment.contains(':'))
+        || decoded_path.contains("://");
+
+    if decoded_path.is_empty()
+        || decoded_path.starts_with('/')
+        || decoded_path.contains('\\')
+        || has_parent_segment
+        || first_segment_has_scheme
+    {
+        return Err(
+            "Floating app routes must be relative and cannot contain path traversal or a URL scheme"
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Strict, shell-free execution for an allow-listed command.
+///
+/// Security properties:
+/// - No shell is invoked; `command` is tokenized into argv by whitespace only
+///   (no quoting, no metacharacter evaluation). A token like `;rm -rf /` is
+///   passed as a single literal argument to the binary.
+/// - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
+///   traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
+/// - Per-command timeout and output-size cap bound resource use.
+#[tauri::command]
+#[specta::specta]
+pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
+    // Whitespace-tokenize without shell interpretation. Quoting is deliberately
+    // unsupported — AI tools pass structured argv tokens separated by spaces.
+    // All validation is centralised in validate_terminal_command_args so the
+    // production path and unit tests can't drift.
+    let (allowed, user) = validate_terminal_command_args(&command)?;
+
+    let fixed = allowed.fixed_args.to_vec();
+    let bin = allowed.binary.to_string();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(&fixed);
+        cmd.args(&user);
+
+        // Never inherit the user's shell environment wholesale; clear dangerous vars.
+        cmd.env_clear();
+        // skipcq: RS-W1015 - PATH is read to re-seed a scrubbed child env.
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", path);
+        }
+        cmd.env("LANG", "C.UTF-8");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("Failed to spawn {bin}: {err}"))?;
+
+        // Take the pipes and drain them on dedicated threads. Each reader
+        // retains at most TERMINAL_COMMAND_MAX_OUTPUT_BYTES, so a command
+        // streaming gigabytes cannot exhaust memory, and because the readers
+        // keep draining to EOF the child never blocks on a full pipe.
+        let stdout_pipe = child
+            .stdout
+            .take()
+            .ok_or_else(|| format!("Failed to capture stdout of {bin}"))?;
+        let stderr_pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("Failed to capture stderr of {bin}"))?;
+
+        let stdout_reader =
+            std::thread::spawn(move || read_capped(stdout_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+        let stderr_reader =
+            std::thread::spawn(move || read_capped(stderr_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
+
+        // Poll for exit so this thread retains ownership of `child` and can
+        // actually kill it on timeout. `wait_with_output` would move the
+        // child into a worker and leave the process unkillable.
+        let deadline = std::time::Instant::now() + TERMINAL_COMMAND_TIMEOUT;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        // Kill the process and reap it so we don't leak a
+                        // zombie; repeated timeouts must not pile up
+                        // long-running children.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "Command {bin} timed out after {}s and was terminated",
+                            TERMINAL_COMMAND_TIMEOUT.as_secs()
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(err) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("Failed to await {bin}: {err}"));
+                }
+            }
+        };
+
+        let (stdout_bytes, stdout_total) = stdout_reader
+            .join()
+            .map_err(|_| format!("Failed to read stdout of {bin}"))?;
+        let (stderr_bytes, stderr_total) = stderr_reader
+            .join()
+            .map_err(|_| format!("Failed to read stderr of {bin}"))?;
+
+        Ok(RunTerminalCommandResponse {
+            stdout: format_capped_output(&stdout_bytes, stdout_total),
+            stderr: format_capped_output(&stderr_bytes, stderr_total),
+            exit_code: status.code().unwrap_or(-1),
+        })
+    })
+    .await
+    .map_err(|err| format!("Terminal command task panicked: {err}"))?;
+
+    result
+}
+
+/// Returns `true` when the running app bundle can be updated in-place.
+/// On macOS this checks whether the process can write to the directory that
+/// contains the `.app` bundle (typically `/Applications`).
+/// Non-macOS platforms always return `true`.
+#[tauri::command]
+#[specta::specta]
+pub fn check_app_location_writable() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+
+        // macOS layout: <dir>/mausVoice.app/Contents/MacOS/mausvoice-desktop
+        let app_parent = exe
+            .parent() // MacOS/
+            .and_then(|p| p.parent()) // Contents/
+            .and_then(|p| p.parent()) // mausVoice.app/
+            .and_then(|p| p.parent()) // containing directory
+            .ok_or("Could not determine app parent directory")?;
+
+        let probe = app_parent.join(".mausvoice_write_probe");
+        match std::fs::File::create(&probe) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&probe);
+                Ok(true)
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+/// Maximum size we are willing to download for a macOS installer (`.pkg`,
+/// `.dmg`, or `.app.tar.gz`).
+const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
+const INSTALLER_MAX_REDIRECTS: usize = 10;
+
+/// Installer file extensions we are willing to download and open. Tauri v2
+/// direct-sign produces `.dmg` (and `.app.tar.gz`) for macOS; `.pkg` is kept
+/// for v1-compatible installs. The list is explicit so a future artifact type
+/// cannot be opened by accident.
+const ALLOWED_INSTALLER_EXTENSIONS: &[&str] = &[".pkg", ".dmg", ".app.tar.gz"];
+
+/// Decide whether a redirect hop is allowed. Applied to every hop so an
+/// allowed host cannot bounce us onto an untrusted origin. `trusted_namespace`
+/// is the `/owner/repo/` namespace of the originally requested release.
+fn installer_redirect_allowed(
+    previous_hops: usize,
+    url: &Url,
+    trusted_namespace: &str,
+) -> Result<(), String> {
+    if previous_hops >= INSTALLER_MAX_REDIRECTS {
+        return Err("too many redirects".to_string());
+    }
+    validate_installer_url(url, trusted_namespace)
+}
+
+/// Reject an advertised Content-Length above the streaming cap before any
+/// bytes are written.
+fn installer_content_length_ok(len: Option<u64>) -> Result<(), String> {
+    if let Some(n) = len {
+        if n > INSTALLER_MAX_BYTES {
+            return Err("Installer download exceeded 250MiB safety limit".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Accumulate a downloaded chunk against the streaming cap.
+fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
+    let next = written.saturating_add(chunk_len);
+    if next > INSTALLER_MAX_BYTES {
+        return Err("Installer download exceeded 250MiB safety limit".to_string());
+    }
+    Ok(next)
+}
+
+/// A detached minisign signature is only a few hundred bytes. Reusing the
+/// installer's 250 MiB cap here would let a malicious or malformed response
+/// without a `Content-Length` consume the full cap before being rejected, so
+/// the signature download enforces a tight dedicated limit instead.
+const SIGNATURE_MAX_BYTES: u64 = 16 * 1024;
+
+/// Reject an advertised Content-Length above the signature cap before any bytes
+/// are read.
+fn signature_content_length_ok(len: Option<u64>) -> Result<(), String> {
+    if let Some(n) = len {
+        if n > SIGNATURE_MAX_BYTES {
+            return Err("Installer signature exceeded 16KiB safety limit".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Accumulate a downloaded signature chunk against the signature cap.
+fn signature_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
+    let next = written.saturating_add(chunk_len);
+    if next > SIGNATURE_MAX_BYTES {
+        return Err("Installer signature exceeded 16KiB safety limit".to_string());
+    }
+    Ok(next)
+}
+
+/// Extensions accepted for the detached signature artifact.
+const ALLOWED_SIGNATURE_EXTENSIONS: &[&str] = &[".sig"];
+
+/// Validate the *initial* signature URL: it must come from the trusted GitHub
+/// repository's release download path and name a `.sig` file. Redirect hops are
+/// validated separately (host + extension only) for the same reasons as
+/// `validate_initial_installer_url`.
+fn validate_initial_signature_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Signature URL must use https".to_string());
+    }
+    if url.host_str() != Some("github.com") {
+        return Err(format!(
+            "Installer signature must come from github.com, got {:?}",
+            url.host_str()
+        ));
+    }
+    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Installer signature must be a maus-inc/mausVoice release asset: {}",
+            url.path()
+        ));
+    }
+    if !ALLOWED_SIGNATURE_EXTENSIONS
+        .iter()
+        .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Signature URL must point to a .sig file, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a signature URL (scheme, host allow-list, accepted extension).
+/// Applied to every *redirect* hop, mirroring `validate_installer_url`.
+/// `trusted_namespace` is the `/owner/repo/` namespace of the originally
+/// requested release, captured from the initial URL so a redirect cannot
+/// bounce us into a different repository.
+fn validate_signature_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Signature URL must use https".to_string());
+    }
+    let host = url.host_str().unwrap_or("");
+    if !matches!(
+        host,
+        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+    ) {
+        return Err(format!(
+            "Signature URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    // Every redirect hop must stay within the repository namespace that was
+    // originally requested. github.com hops already carry the full release
+    // path, and objects.githubusercontent.com may serve either the namespace
+    // path or the full release-download prefix. The release-assets CDN is the
+    // single intentional carve-out: it answers an opaque token path whose real
+    // target is encoded in signed query parameters, so it is exempt from both
+    // the namespace and extension checks. A hop escaping the namespace is
+    // rejected fail-closed — minisign verification is the backstop, not the
+    // only line of defense.
+    if host != "release-assets.githubusercontent.com"
+        && !url.path().starts_with(trusted_namespace)
+        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
+    {
+        return Err(format!(
+            "Signature redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
+            url.path()
+        ));
+    }
+    if host != "release-assets.githubusercontent.com"
+        && !ALLOWED_SIGNATURE_EXTENSIONS
+            .iter()
+            .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Signature URL must point to a .sig file, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+/// Decide whether a signature redirect hop is allowed.
+fn signature_redirect_allowed(
+    previous_hops: usize,
+    url: &Url,
+    trusted_namespace: &str,
+) -> Result<(), String> {
+    if previous_hops >= INSTALLER_MAX_REDIRECTS {
+        return Err("too many redirects".to_string());
+    }
+    validate_signature_url(url, trusted_namespace)
+}
+
+/// Resolve the embedded updater public key (minisign text, base64-encoded in
+/// the compiled Tauri config) from the running app. The release build injects
+/// the real key from a secret; dev/test builds intentionally keep it empty so
+/// an unsigned build cannot silently trust anything.
+fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
+    let raw = app
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|v| v.get("pubkey"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Updater public key is not configured".to_string())?;
+    if raw.is_empty() {
+        return Err("Updater public key is not configured".to_string());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .map_err(|e| format!("Failed to decode updater public key: {e}"))?;
+    String::from_utf8(decoded)
+        .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
+}
+
+/// Download the detached `.sig` (a Base64-encoded minisign signature) for an
+/// installer, validating every redirect hop against the trusted allow-list and
+/// enforcing a tight dedicated size cap (a signature is only a few hundred
+/// bytes, so it must not reuse the installer's 250 MiB streaming budget).
+async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, String> {
+    let parsed = Url::parse(signature_url).map_err(|e| format!("Invalid signature URL: {e}"))?;
+    validate_initial_signature_url(&parsed)?;
+    let trusted_namespace = extract_repo_namespace(&parsed);
+
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        match signature_redirect_allowed(
+            attempt.previous().len(),
+            attempt.url(),
+            &trusted_namespace,
+        ) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(err),
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Signature download failed with status {}",
+            response.status()
+        ));
+    }
+    signature_content_length_ok(response.content_length())?;
+
+    let mut sig = Vec::new();
+    let mut written: u64 = 0;
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        written = signature_account_chunk(written, chunk.len() as u64)?;
+        sig.extend_from_slice(&chunk);
+    }
+    Ok(sig)
+}
+
+/// Decode the outer RFC 4648 frame that Tauri writes to each updater `.sig`
+/// file. The decoded payload is the ordinary, four-line minisign signature
+/// text that `minisign_verify` parses.
+fn decode_tauri_installer_signature(signature_base64: &[u8]) -> Result<String, String> {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(signature_base64)
+        .map_err(|error| format!("Installer signature is not valid Tauri Base64: {error}"))?;
+    String::from_utf8(decoded)
+        .map_err(|error| format!("Installer signature is not valid UTF-8: {error}"))
+}
+
+/// Verify `data` against a minisign detached signature using the embedded
+/// updater public key. Returns `Ok(())` only when the signature is valid.
+fn verify_minisign_data(
+    public_key_text: &str,
+    data: &[u8],
+    signature_text: &str,
+) -> Result<(), String> {
+    let public_key = minisign_verify::PublicKey::decode(public_key_text)
+        .map_err(|e| format!("Failed to parse updater public key: {e}"))?;
+    let signature = minisign_verify::Signature::decode(signature_text)
+        .map_err(|e| format!("Failed to parse installer signature: {e}"))?;
+    public_key
+        .verify(data, &signature, true)
+        .map_err(|e| format!("Installer signature verification failed: {e}"))?;
+    Ok(())
+}
+
+/// Download and verify the detached signature for the already-downloaded
+/// installer at `dmg_path`. On any failure the caller must delete the temp
+/// file; this function never opens or executes anything.
+async fn verify_installer_signature(
+    app: &AppHandle,
+    dmg_path: &std::path::Path,
+    signature_url: &str,
+) -> Result<(), String> {
+    if signature_url.is_empty() {
+        return Err("No installer signature provided; refusing to open unverified installer".to_string());
+    }
+    let public_key_text = updater_public_key_text(app)?;
+    let sig_bytes = download_installer_signature(signature_url).await?;
+    let signature_text = decode_tauri_installer_signature(&sig_bytes)?;
+    // Reading the whole installer and verifying its signature are CPU- and
+    // memory-bound; move them off the async runtime so unrelated IPC/native
+    // work is not stalled by a 250 MiB read + verification.
+    let dmg_path = dmg_path.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        let data = std::fs::read(&dmg_path).map_err(|e| e.to_string())?;
+        verify_minisign_data(&public_key_text, &data, &signature_text)
+    })
+    .await
+    .map_err(|e| format!("installer verification task failed: {e}"))?
+}
+
+/// Only mausVoice release assets from this exact repository path may be used
+/// as a manual installer source. A renderer with IPC access must not be able
+/// to make us download and open a release asset from an arbitrary repository.
+const TRUSTED_RELEASE_PATH_PREFIX: &str = "/maus-inc/mausVoice/releases/download/";
+
+/// The repository namespace every redirect hop must retain. A hop may serve
+/// either this namespace path or the full trusted release-download prefix;
+/// anything else is rejected fail-closed.
+const TRUSTED_REPO_NAMESPACE: &str = "/maus-inc/mausVoice/";
+
+/// Derive the repository namespace (`/owner/repo/`) a release URL belongs to,
+/// so redirect hops are checked against the exact repository originally
+/// requested rather than a hardcoded constant. The initial URL is always
+/// validated against `TRUSTED_RELEASE_PATH_PREFIX` first, but deriving the
+/// namespace from the parsed URL keeps the per-hop check tied to the real
+/// request even if the trusted prefix ever changes.
+fn extract_repo_namespace(url: &Url) -> String {
+    let segments: Vec<&str> = url
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
+    if segments.len() >= 2 {
+        format!("/{}/{}/", segments[0], segments[1])
+    } else {
+        TRUSTED_REPO_NAMESPACE.to_string()
+    }
+}
+
+/// Validate the *initial* installer URL: it must come from the trusted GitHub
+/// repository's release download path. Redirect hops are validated separately
+/// (host + extension only) because a legitimate asset is served from GitHub's
+/// CDN after a normal `302`.
+fn validate_initial_installer_url(url: &Url) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Installer URL must use https".to_string());
+    }
+    if url.host_str() != Some("github.com") {
+        return Err(format!(
+            "Manual installer must come from github.com, got {:?}",
+            url.host_str()
+        ));
+    }
+    if !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX) {
+        return Err(format!(
+            "Manual installer must be a maus-inc/mausVoice release asset: {}",
+            url.path()
+        ));
+    }
+    if !ALLOWED_INSTALLER_EXTENSIONS
+        .iter()
+        .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+/// Validate an installer URL (scheme, host allow-list, accepted extension).
+/// Applied to every *redirect* hop, because the redirect chain is
+/// attacker-influenced: an allowed host could otherwise bounce us to an
+/// untrusted origin whose bytes we would write and execute. `trusted_namespace`
+/// is the `/owner/repo/` namespace of the originally requested release,
+/// captured from the initial URL so a redirect cannot bounce us into a
+/// different repository.
+fn validate_installer_url(url: &Url, trusted_namespace: &str) -> Result<(), String> {
+    if url.scheme() != "https" {
+        return Err("Installer URL must use https".to_string());
+    }
+    let host = url.host_str().unwrap_or("");
+    if !matches!(
+        host,
+        "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com"
+    ) {
+        return Err(format!(
+            "Installer URL host {host:?} is not in the trusted allow-list"
+        ));
+    }
+    // Every redirect hop must stay within the repository namespace that was
+    // originally requested. github.com hops already carry the full release
+    // path, and objects.githubusercontent.com may serve either the namespace
+    // path or the full release-download prefix. The release-assets CDN is the
+    // single intentional carve-out: it answers an opaque token path whose real
+    // target is encoded in signed query parameters, so it is exempt from both
+    // the namespace and extension checks. A hop escaping the namespace is
+    // rejected fail-closed — minisign verification is the backstop, not the
+    // only line of defense.
+    if host != "release-assets.githubusercontent.com"
+        && !url.path().starts_with(trusted_namespace)
+        && !url.path().starts_with(TRUSTED_RELEASE_PATH_PREFIX)
+    {
+        return Err(format!(
+            "Installer redirect must stay within the trusted repository namespace {trusted_namespace:?}, got {}",
+            url.path()
+        ));
+    }
+    // GitHub's release-asset CDN answers an opaque path whose real filename
+    // lives in the signed query parameters, so an extension check would reject
+    // every legitimate redirect. Every other allowed host keeps its
+    // path-based extension requirement.
+    if host != "release-assets.githubusercontent.com"
+        && !ALLOWED_INSTALLER_EXTENSIONS
+            .iter()
+            .any(|ext| url.path().ends_with(ext))
+    {
+        return Err(format!(
+            "Installer URL must point to one of {ALLOWED_INSTALLER_EXTENSIONS:?}, got {}",
+            url.path()
+        ));
+    }
+    Ok(())
+}
+
+fn unix_epoch_nanos(now: SystemTime) -> Result<u128, String> {
+    now.duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock is before the Unix epoch: {error}"))
+        .map(|duration| duration.as_nanos())
+}
+
+/// Stream a response into a new installer file. Once the file exists, this
+/// function owns it: every transfer, write, or flush error closes and removes
+/// the incomplete file before returning. The caller owns cleanup after a
+/// complete file has moved on to signature verification or hand-off.
+async fn download_installer_response_to_file(
+    response: &mut reqwest::Response,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    // `create_new` avoids following or overwriting an entry planted at this
+    // predictable-by-design temp path. A collision is safe to report; the next
+    // update attempt receives a fresh random filename.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|error| error.to_string())?;
+
+    let transfer_result: Result<(), String> = async {
+        let mut written: u64 = 0;
+        while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+            written = installer_account_chunk(written, chunk.len() as u64)?;
+            std::io::Write::write_all(&mut file, &chunk).map_err(|error| error.to_string())?;
+        }
+        std::io::Write::flush(&mut file).map_err(|error| error.to_string())
+    }
+    .await;
+
+    // Closing first is required before removing a failed download on Windows.
+    drop(file);
+    if transfer_result.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    transfer_result
+}
+
+/// Downloads a `.dmg` installer to a temp directory and opens it through
+/// macOS's default handler. This is used as a fallback when the normal
+/// in-place updater cannot write to the app's install location.
+#[tauri::command]
+#[specta::specta]
+pub async fn download_and_open_mac_installer(
+    app: AppHandle,
+    url: String,
+    signature_url: String,
+) -> Result<(), String> {
+    // Defense-in-depth: only allow downloads from the trusted release host.
+    // The TS caller derives this URL from the signed updater manifest, but
+    // any future caller (including a compromised webview) must not be able
+    // to make us download+execute arbitrary files.
+    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
+    validate_initial_installer_url(&parsed)?;
+    let trusted_namespace = extract_repo_namespace(&parsed);
+
+    // Use a unique temp filename (not the URL-derived basename) so a crafted
+    // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
+    // timestamp, process ID, and random token make collisions vanishingly
+    // unlikely; `create_new` below still refuses to overwrite any collision.
+    // Match the extension to the downloaded artifact so `open` selects the
+    // right macOS handler.
+    let downloaded_ext = if parsed.path().ends_with(".app.tar.gz") {
+        ".app.tar.gz"
+    } else if parsed.path().ends_with(".pkg") {
+        ".pkg"
+    } else {
+        ".dmg"
+    };
+    let nanos = unix_epoch_nanos(SystemTime::now())?;
+    let pid = std::process::id();
+    let token = rand::random::<u64>();
+    let dest = std::env::temp_dir().join(format!(
+        "mausvoice-update-{nanos}-{pid}-{token:016x}{downloaded_ext}"
+    ));
+
+    // Validate every redirect hop rather than trusting the initial URL: the
+    // default policy would silently follow an allowed host to an arbitrary one.
+    let redirect_policy = reqwest::redirect::Policy::custom(move |attempt| {
+        match installer_redirect_allowed(
+            attempt.previous().len(),
+            attempt.url(),
+            &trusted_namespace,
+        ) {
+            Ok(()) => attempt.follow(),
+            Err(err) => attempt.error(err),
+        }
+    });
+    let client = reqwest::Client::builder()
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut response = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status {}", response.status()));
+    }
+
+    // Reject an oversized advertised length before transferring anything.
+    installer_content_length_ok(response.content_length())?;
+
+    // Stream to disk, enforcing the cap as we go so a server that lies about
+    // (or omits) Content-Length cannot exhaust memory or fill the disk. The
+    // helper removes an incomplete file for every transfer/write/flush error.
+    download_installer_response_to_file(&mut response, &dest).await?;
+
+    // Verify the downloaded DMG against its detached minisign signature
+    // BEFORE opening it. On any failure (missing/invalid key, missing or
+    // bad signature, mismatched bytes) we delete the temp file and abort so
+    // an unverified installer is never handed to `open`.
+    if let Err(err) = verify_installer_signature(&app, &dest, &signature_url).await {
+        let _ = std::fs::remove_file(&dest);
+        return Err(err);
+    }
+
+    // The handler may still need to read the verified file after `open`
+    // returns, so retain it on success. If the hand-off itself fails, no other
+    // process owns the file and it must not be left behind in the temp dir.
+    if let Err(error) = std::process::Command::new("open").arg(&dest).spawn() {
+        let _ = std::fs::remove_file(&dest);
+        return Err(error.to_string());
+    }
+
+    Ok(())
+}
+
+/// Update metadata for a channel check. Mirrors the updater plugin's own
+/// metadata shape so the frontend reuses the stock install path; `rawJson`
+/// travels as text because specta cannot type an open JSON value, and the
+/// date travels as unix seconds for the same reason.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelUpdateMetadata {
+    pub rid: u32,
+    pub current_version: String,
+    pub version: String,
+    pub date_unix: Option<i64>,
+    pub body: Option<String>,
+    pub raw_json: String,
+}
+
+/// Manifest URL per update channel. Stable is the bundled default; beta is a
+/// rolling manifest under a dedicated release that only ever lists beta
+/// builds, so the two channels can never offer each other.
+fn channel_manifest_url(channel: &str) -> &'static str {
+    match channel {
+        "beta" => {
+            "https://github.com/maus-inc/mausVoice/releases/download/beta-channel/latest-beta.json"
+        }
+        _ => "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json",
+    }
+}
+
+/// Check a non-default update channel at runtime. Stable keeps using the
+/// updater plugin's bundled endpoint; this builds an identical updater aimed
+/// at the channel manifest and registers the found update in the same
+/// resource table, so download, install, relaunch, and signature
+/// verification all run the stock plugin path untouched.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_for_channel_update(
+    webview: tauri::Webview<tauri::Wry>,
+    channel: String,
+) -> Result<Option<ChannelUpdateMetadata>, String> {
+    let url = Url::parse(channel_manifest_url(channel.as_str()))
+        .map_err(|e| e.to_string())?;
+    let updater = webview
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| e.to_string())?
+        .build()
+        .map_err(|e| e.to_string())?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
+    match update {
+        Some(update) => {
+            let metadata = ChannelUpdateMetadata {
+                rid: 0,
+                current_version: update.current_version.clone(),
+                version: update.version.clone(),
+                date_unix: update.date.map(|date| date.unix_timestamp()),
+                body: update.body.clone(),
+                raw_json: serde_json::to_string(&update.raw_json)
+                    .map_err(|e| e.to_string())?,
+            };
+            let rid = webview.resources_table().add(update);
+            Ok(Some(ChannelUpdateMetadata { rid, ..metadata }))
+        }
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod channel_update_tests {
+    use super::channel_manifest_url;
+
+    #[test]
+    fn beta_channel_uses_the_rolling_beta_manifest() {
+        assert_eq!(
+            channel_manifest_url("beta"),
+            "https://github.com/maus-inc/mausVoice/releases/download/beta-channel/latest-beta.json"
+        );
+    }
+
+    #[test]
+    fn unknown_channels_fall_back_to_stable() {
+        assert_eq!(
+            channel_manifest_url("stable"),
+            "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
+        );
+        assert_eq!(
+            channel_manifest_url("nightly"),
+            "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json"
+        );
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_system_volume() -> Result<f64, String> {
+    crate::platform::volume::get_system_volume()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn set_system_volume(volume: f64) -> Result<(), String> {
+    let clamped = volume.clamp(0.0, 1.0);
+    crate::platform::volume::set_system_volume(clamped)
+}
+
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateFloatingWindowArgs {
+    pub url: String,
+    /// When set, load a local app route instead of an external URL. This is
+    /// used by the composer so it never depends on localhost or a network
+    /// origin.
+    pub route: Option<String>,
+    pub title: Option<String>,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub min_width: Option<f64>,
+    pub min_height: Option<f64>,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub decorations: Option<bool>,
+    pub transparent: Option<bool>,
+    pub resizable: Option<bool>,
+    pub focused: Option<bool>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_register_text(
+    request_id: String,
+    text: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    let request_id = request_id.trim().to_string();
+    if request_id.is_empty() {
+        return Err("composer request id must not be empty".to_string());
+    }
+    state.register_composer_text(request_id, text)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_peek_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<Option<String>, String> {
+    state.peek_composer_text(request_id.trim())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn composer_discard_text(
+    request_id: String,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<(), String> {
+    state.discard_composer_text(request_id.trim())
+}
+
+#[derive(serde::Serialize, specta::Type, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FloatingWindowInfo {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+}
+
+/// Opens a draggable, always-on-top webview window pointed at the given URL
+/// or a trusted local app route and returns a stable id that can be used to
+/// destroy it later.
+///
+/// External URLs are restricted to http(s) and to a small allow-list of
+/// trusted schemes/hosts. This is the only place in the app that creates a
+/// webview pointed at a non-local origin. Localhost loopback is the only
+/// remote host that also receives IPC (via `floating-*` `remote.urls`);
+/// the GitHub Pages docs host is allowed to load but has no IPC capability.
+/// We keep the navigation allow-list small to avoid a compromised or
+/// confused caller creating a floating window on an attacker-controlled origin.
+#[tauri::command]
+#[specta::specta]
+pub async fn floating_window_create(
+    args: CreateFloatingWindowArgs,
+    app: AppHandle,
+    state: State<'_, crate::state::FloatingWindowState>,
+) -> Result<FloatingWindowInfo, String> {
+    let label = state.next_label();
+    let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
+    let (webview_url, reported_url) = if let Some(route) = args
+        .route
+        .as_deref()
+        .map(str::trim)
+        .filter(|route| !route.is_empty())
+    {
+        validate_local_app_route(route)?;
+        (
+            tauri::WebviewUrl::App(route.into()),
+            format!("app://{route}"),
+        )
+    } else {
+        let parsed_url = parse_floating_window_url(&args.url)?;
+        validate_floating_window_url(&parsed_url)?;
+        (tauri::WebviewUrl::External(parsed_url), args.url.clone())
+    };
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        label.clone(),
+        webview_url,
+    )
+    .title(title.clone())
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .visible(true)
+    .decorations(args.decorations.unwrap_or(true))
+    .resizable(args.resizable.unwrap_or(true))
+    .focused(args.focused.unwrap_or(false));
+
+    // Windows: apply the same renderer-backgrounding mitigations the main
+    // window uses, so a composer webview cannot be suspended before it has
+    // rendered (the reported "white tab flashes then vanishes" failure).
+    // Tauri only accepts this method on Windows; guard by cfg so other
+    // platforms still compile.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.additional_browser_args(
+            "--disable-features=CalculateNativeWinOcclusion \
+             --disable-renderer-backgrounding \
+             --disable-background-timer-throttling \
+             --disable-backgrounding-occluded-windows",
+        );
+    }
+
+    if args.transparent.unwrap_or(false) {
+        builder = builder.transparent(true);
+    }
+
+    if let (Some(w), Some(h)) = (args.width, args.height) {
+        builder = builder.inner_size(w, h);
+    }
+    if let (Some(min_w), Some(min_h)) = (args.min_width, args.min_height) {
+        builder = builder.min_inner_size(min_w, min_h);
+    }
+    if let (Some(x), Some(y)) = (args.x, args.y) {
+        builder = builder.position(x, y);
+    }
+
+    builder.build().map_err(|err| {
+        let detail = err.to_string();
+        // WebView2 returns HRESULT 0x8007139F (E_UNEXPECTED / "The group or
+        // resource is not in the correct state") when a second webview is
+        // created before the runtime is ready or on a broken install. Surface
+        // a sanitized, actionable message. `label` is always a server-generated
+        // "floating-{n}" (see FloatingWindowState::next_label), never caller
+        // text, so interpolating it cannot inject content into the toast.
+        log::error!(
+            "floating_window_create failed (label={label}): {detail}"
+        );
+        if detail.to_ascii_lowercase().contains("0x8007139f")
+            || detail.to_ascii_lowercase().contains("webview2")
+        {
+            format!(
+                "Could not open the review window (WebView2 error). \
+                 The transcript was saved to history. Try again or open it in the main app. ({label})"
+            )
+        } else {
+            detail
+        }
+    })?;
+
+    Ok(FloatingWindowInfo {
+        id: label,
+        url: reported_url,
+        title,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn floating_window_destroy(id: String, app: AppHandle) -> Result<(), String> {
+    if !id.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
+        return Err(format!("invalid floating window id: {id}"));
+    }
+    match app.get_webview_window(&id) {
+        Some(window) => window.close().map_err(|err| err.to_string()),
+        None => Ok(()),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowInfo>, String> {
+    let mut out = Vec::new();
+    for (label, window) in app.webview_windows() {
+        if !label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
+            continue;
+        }
+        let title = window.title().unwrap_or_default();
+        let url = window
+            .url()
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| String::new());
+        out.push(FloatingWindowInfo {
+            id: label,
+            url,
+            title,
+        });
+    }
+    Ok(out)
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    #[test]
+    fn private_http_base64_framing_preserves_bytes_and_rejects_invalid_data() {
+        let original = [0_u8, 1, 2, 253, 254, 255, 17];
+        let encoded =
+            encode_private_http_body(&original).expect("small response bytes must encode");
+        assert_eq!(
+            decode_private_http_body(Some(&encoded)),
+            Ok(Some(original.to_vec()))
+        );
+        assert_eq!(decode_private_http_body(None), Ok(None));
+        assert_eq!(
+            decode_private_http_body(Some("not-base64!")),
+            Err("Private-network request body is not valid base64".to_string())
+        );
+    }
+
+    #[test]
+    fn private_http_base64_framing_enforces_encoded_and_decoded_limits() {
+        assert_eq!(maximum_private_http_base64_decoded_length("AA=="), Ok(1));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAE="), Ok(2));
+        assert_eq!(maximum_private_http_base64_decoded_length("AAEC"), Ok(3));
+        assert!(validate_private_http_encoded_body_length(
+            MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES
+        )
+        .is_ok());
+        assert_eq!(
+            validate_private_http_encoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+        assert!(validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES).is_ok());
+        assert_eq!(
+            validate_private_http_decoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BYTES + 1),
+            Err(private_http_request_body_limit_error())
+        );
+    }
+
+    #[test]
+    fn private_http_response_reservation_returns_an_error_on_capacity_overflow() {
+        let mut response = Vec::new();
+        assert!(reserve_private_http_response_body(&mut response, usize::MAX).is_err());
+        assert!(response.is_empty());
+    }
 
     #[test]
     fn terminal_command_rejects_empty() {
         assert!(validate_terminal_command_args("").is_err());
         assert!(validate_terminal_command_args("   ").is_err());
+    }
+
+    #[test]
+    fn terminal_command_allows_benign_double_dots_inside_a_token() {
+        assert!(validate_terminal_command_args("echo file..txt").is_ok());
+        assert!(validate_terminal_command_args("echo ..").is_err());
     }
 
     #[test]
@@ -2629,6 +5034,18 @@ mod tests {
         assert!(validate_terminal_command_args("echo $(whoami)").is_err());
         assert!(validate_terminal_command_args("echo `whoami`").is_err());
         assert!(validate_terminal_command_args("echo > file").is_err());
+    }
+
+    #[test]
+    fn terminal_command_rejects_path_traversal_in_args() {
+        // Even with an allow-listed binary, path separators and `..` in
+        // arguments must be refused so a reader cannot reach arbitrary files.
+        assert!(validate_terminal_command_args("ls /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("cat /etc/passwd").is_err());
+        assert!(validate_terminal_command_args("echo ../../secrets").is_err());
+        assert!(validate_terminal_command_args("echo ..").is_err());
+        assert!(validate_terminal_command_args("ls ~/.ssh/id_rsa").is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2680,14 +5097,93 @@ mod tests {
     }
 
     #[test]
+    fn terminal_command_rejects_binary_with_embedded_space() {
+        // A binary name that contains a space can never match an allow-list
+        // entry (entries are single, space-free tokens), so it is rejected
+        // rather than silently collapsing into a different command.
+        assert!(validate_terminal_command_args("\"ls -rf\"").is_err());
+        assert!(validate_terminal_command_args("my binary").is_err());
+    }
+
+    #[test]
+    fn terminal_command_accepts_allowed_command_with_empty_args() {
+        // An allow-listed binary with no user-supplied arguments is accepted
+        // and reports an empty argv tail.
+        #[cfg(not(target_os = "windows"))]
+        let binary = "ls";
+        #[cfg(target_os = "windows")]
+        let binary = "whoami";
+        let (allowed, args) = validate_terminal_command_args(binary).unwrap();
+        assert_eq!(allowed.binary, binary);
+        assert!(args.is_empty());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn terminal_command_runs_ls_without_path_in_environment() {
+        // Serialize env mutation so it cannot race any other test.
+        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = PATH_GUARD.lock().unwrap();
+
+        // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
+        let original = std::env::var("PATH").ok();
+        // Simulate a process environment that has no PATH at all.
+        // `set_var`/`remove_var` are unsafe since 1.87.
+        #[allow(unused_unsafe)]
+        unsafe {
+            std::env::remove_var("PATH"); // skipcq: RS-W1015 - fixed OS contract.
+        }
+
+        let result = run_terminal_command("ls".to_string()).await;
+
+        // Restore the environment for any subsequent code.
+        #[allow(unused_unsafe)]
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var("PATH", value), // skipcq: RS-W1015 - fixed OS contract.
+                None => std::env::remove_var("PATH"), // skipcq: RS-W1015 - fixed OS contract.
+            }
+        }
+        drop(_guard);
+
+        // `cmd.env_clear()` drops PATH from the child, but the OS default
+        // search path still resolves `ls`, so the command must succeed rather
+        // than fail to spawn with a missing-PATH error.
+        let response = result.expect("ls should run even without a PATH env var");
+        assert_eq!(response.exit_code, 0);
+        assert!(!response.stdout.is_empty());
+    }
+
+    #[test]
     fn installer_url_accepts_trusted_release_hosts() {
         assert!(validate_installer_url(
             &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
-                .unwrap()
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
         assert!(validate_installer_url(
-            &Url::parse("https://objects.githubusercontent.com/foo/app.pkg").unwrap()
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice_0.1.7_universal.dmg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/mausVoice.app.tar.gz"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+        // The objects CDN is allowed only when the hop retains the trusted
+        // repository namespace.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
     }
@@ -2697,14 +5193,28 @@ mod tests {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
         assert!(
-            validate_installer_url(&Url::parse("https://evil.com/app.pkg").unwrap()).is_err()
+            validate_installer_url(
+                &Url::parse("https://evil.com/app.pkg").unwrap(),
+                TRUSTED_REPO_NAMESPACE
+            )
+            .is_err()
         );
         assert!(validate_installer_url(
-            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap()
+            &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
         assert!(validate_installer_url(
-            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap()
+            &Url::parse("https://github.com/maus-inc/payload.sh").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        // An objects CDN hop that escapes into a different repository namespace
+        // must be rejected even though the host is allow-listed.
+        assert!(validate_installer_url(
+            &Url::parse("https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg")
+                .unwrap(),
+            TRUSTED_REPO_NAMESPACE
         )
         .is_err());
     }
@@ -2731,6 +5241,38 @@ mod tests {
     fn floating_window_allows_localhost() {
         assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
         assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+    }
+
+    #[test]
+    fn local_app_route_allows_dots_in_query_data() {
+        assert!(validate_local_app_route("composer?text=Wait...%20what%3F").is_ok());
+        assert!(validate_local_app_route("composer/../settings").is_err());
+        assert!(validate_local_app_route("composer/%2e%2e/settings").is_err());
+        assert!(validate_local_app_route("composer/%252e%252e%252fsettings").is_err());
+        // A leftover bare `%` after the first successful decode is a terminal
+        // value, not another encoding round.
+        assert!(validate_local_app_route("composer/100%done").is_ok());
+        assert!(percent_decode_route_path("composer/100%done").is_ok());
+    }
+
+    #[test]
+    fn local_app_route_rejects_absolute_urls_and_schemes() {
+        // Absolute references replace the app origin under Url::join, which
+        // would float a window onto an attacker-controlled origin.
+        assert!(validate_local_app_route("https://evil.example/x").is_err());
+        assert!(validate_local_app_route("http:evil.example").is_err());
+        assert!(validate_local_app_route("//evil.example/x").is_err());
+        assert!(validate_local_app_route("https:%2F%2Fevil.example").is_err());
+        // Scheme-looking text in query values stays opaque user data.
+        assert!(validate_local_app_route("composer?text=https://example.com").is_ok());
+    }
+
+    #[test]
+    fn floating_window_treats_ipv6_loopback_as_localhost() {
+        assert!(validate_floating_window_url(
+            &Url::parse("http://[::1]:1420/").unwrap()
+        )
+        .is_ok());
     }
 
     #[test]
@@ -2768,6 +5310,19 @@ mod tests {
             "always_on_top",
             "hidden" | "persistent" | "while_active"
         ));
+    }
+
+    #[test]
+    fn pill_placement_accepts_top_and_bottom_only() {
+        // Exercise the validator extracted from set_pill_placement so a
+        // regression in the accept-list (typo in the literal, removal of a
+        // branch, etc.) cannot ship silently — the previous test simply
+        // re-asserted the implementation against the implementation.
+        assert!(validate_pill_placement("top").is_ok());
+        assert!(validate_pill_placement("bottom").is_ok());
+        assert!(validate_pill_placement("center").is_err());
+        assert!(validate_pill_placement("").is_err());
+        assert!(validate_pill_placement("TOP").is_err());
     }
 
     #[test]
@@ -2961,92 +5516,727 @@ mod tests {
     }
 
     #[test]
-    fn managed_audio_path_rejects_paths_outside_the_audio_dir() {
-        let root = std::env::temp_dir()
-            .join(format!("mausvoice-audio-guard-{}", std::process::id()));
-        let audio_dir = root.join("audio");
-        let other_dir = root.join("other");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&other_dir).unwrap();
-        // Canonicalized because the guard returns real paths (e.g. macOS
-        // maps /tmp to /private/tmp).
-        let expected = std::fs::canonicalize(&audio_dir).unwrap().join("clip.wav");
-
-        let inside = audio_dir.join("clip.wav");
-        let outside = other_dir.join("clip.wav");
-        // A traversal attempt must NOT escape the managed directory.
-        let traversal = audio_dir.join("..").join("escaped.wav");
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &audio_dir),
-            Some(expected.clone())
-        );
-        assert_eq!(resolve_managed_audio_path(&outside, &audio_dir), None);
-        assert_eq!(resolve_managed_audio_path(&traversal, &audio_dir), None);
-        // A relative entry must resolve inside the managed directory, never
-        // against the process working directory.
-        assert_eq!(
-            resolve_managed_audio_path(std::path::Path::new("clip.wav"), &audio_dir),
-            Some(expected.clone())
-        );
-        // An `audio_dir` spelled with `.` still matches its own contents.
-        assert_eq!(
-            resolve_managed_audio_path(&inside, &root.join(".").join("audio")),
-            Some(expected)
-        );
-
-        #[cfg(unix)]
-        {
-            // A symlinked subdirectory must not tunnel out of audio_dir.
-            let link = audio_dir.join("link");
-            std::os::unix::fs::symlink(&other_dir, &link).unwrap();
-            assert_eq!(
-                resolve_managed_audio_path(&link.join("clip.wav"), &audio_dir),
-                None
-            );
-        }
-
-        let _ = std::fs::remove_dir_all(&root);
+    fn empty_and_null_audio_markers_do_not_authorize_file_access() {
+        assert!(!audio_path_has_file_path(None));
+        assert!(!audio_path_has_file_path(Some("")));
+        assert!(audio_path_has_file_path(Some("managed/snapshot.wav")));
     }
 
     #[test]
-    fn clear_local_data_file_helpers_respect_the_audio_dir_guard() {
+    fn private_http_url_accepts_only_private_or_local_hosts() {
+        for accepted in [
+            "http://localhost:11434/api/tags",
+            "http://127.0.0.1:8000/health",
+            "http://10.0.0.5:11434/api/tags",
+            "http://172.16.5.4:8080/v1/models",
+            "http://172.31.255.254:8080/v1/models",
+            "http://192.168.1.20:8000/health",
+            "http://speaker.local:8000/health",
+            "http://[::1]:8000/health",
+            "http://[fd00::1]:8000/health",
+        ] {
+            let url = Url::parse(accepted).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_ok(),
+                "expected private URL to be accepted: {accepted}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_http_url_rejects_hostname_globs_public_hosts_and_imds() {
+        for rejected in [
+            "http://10.evil.example:443/",
+            "http://192.168.attacker.example:443/",
+            "http://100.64.0.1/",
+            "http://100.127.255.254/",
+            "http://[::ffff:100.64.0.1]/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://8.8.8.8/",
+            "http://example.com/",
+            "https://10.0.0.5/",
+            "http://user:password@127.0.0.1/",
+        ] {
+            let url = Url::parse(rejected).unwrap();
+            assert!(
+                validate_private_http_url(&url).is_err(),
+                "expected URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_openai_compatible_endpoint_confines_origin_and_path() {
+        let base = Url::parse("https://llm.example.com/proxy/openai").unwrap();
+        for accepted in [
+            "https://llm.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai/v1/chat/completions",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok());
+        }
+        for rejected in [
+            "https://evil.example.com/proxy/openai/v1/models",
+            "https://llm.example.com/other/v1/models",
+            "http://llm.example.com/proxy/openai/v1/models",
+        ] {
+            assert!(validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err());
+        }
+    }
+
+    #[test]
+    fn saved_endpoint_url_handles_normalized_host_path_and_query_edges() {
+        let base = Url::parse("HTTPS://LLM.Example.COM:443/proxy/openai/?tenant=alpha").unwrap();
+
+        for accepted in [
+            "https://llm.example.com/proxy/openai?tenant=alpha",
+            "https://LLM.EXAMPLE.COM/proxy/openai/?tenant=beta",
+            "https://llm.example.com/proxy/openai/v1/models?after=model%2Fone",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(accepted).unwrap(), &base).is_ok(),
+                "expected saved-endpoint URL to be accepted: {accepted}"
+            );
+        }
+
+        for rejected in [
+            "https://llm.example.com:444/proxy/openai/v1/models",
+            "https://llm.example.com/proxy/openai-tenant/v1/models",
+            "https://llm.example.com/proxy/openai/../admin/models",
+            "https://llm.example.com/proxy/OpenAI/v1/models",
+            "https://llm.example.com.evil/proxy/openai/v1/models",
+        ] {
+            assert!(
+                validate_saved_endpoint_url(&Url::parse(rejected).unwrap(), &base).is_err(),
+                "expected saved-endpoint URL to be rejected: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_https_endpoint_allows_domains_but_rejects_public_ip_literals() {
+        let domain = Url::parse("https://api.example.com/v1").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/v1/models").unwrap(),
+            &domain,
+        )
+        .is_ok());
+
+        for public_ip in [
+            "https://8.8.8.8/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[2606:4700:4700::1111]/v1",
+            "https://[fe80::1]/v1",
+        ] {
+            let base = Url::parse(public_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_err(),
+                "expected public or link-local IP literal to be rejected: {public_ip}"
+            );
+        }
+
+        for private_ip in ["https://10.0.0.5/v1", "https://[fd00::1]/v1"] {
+            let base = Url::parse(private_ip).unwrap();
+            assert!(
+                validate_saved_endpoint_url(&base, &base).is_ok(),
+                "expected private IP literal to be accepted: {private_ip}"
+            );
+        }
+    }
+
+    /// Minimal HTTP responder for redirect-chain tests: serves the queued
+    /// responses in accept order and collects each request head (up to the
+    /// blank line) into the channel.
+    fn spawn_head_capturing_server(
+        listener: tokio::net::TcpListener,
+        responses: Vec<String>,
+    ) -> tokio::sync::mpsc::Receiver<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (sender, receiver) = tokio::sync::mpsc::channel::<String>(responses.len());
+        tokio::spawn(async move {
+            for response in responses {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buffer.extend_from_slice(&chunk[..n]);
+                            if buffer.len() > 64 * 1024 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if sender
+                    .send(String::from_utf8_lossy(&buffer).into_owned())
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        receiver
+    }
+
+    fn redirect_response(target: &Url) -> String {
+        format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        )
+    }
+
+    const REDIRECT_OK_RESPONSE: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+
+    fn credentialed_post(request_id: &str, url: &Url) -> PrivateHttpRequest {
+        PrivateHttpRequest {
+            // Distinct per test: a failing sibling must not leave a stale
+            // cancellation registration behind that poisons the next run.
+            request_id: request_id.to_string(),
+            url: url.to_string(),
+            method: "POST".to_string(),
+            headers: [(
+                "authorization".to_string(),
+                "Bearer redirect-test-secret".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            body_base64: Some(
+                encode_private_http_body(b"{}").expect("small test body must encode"),
+            ),
+        }
+    }
+
+    fn redirect_chain_test_id() -> &'static str {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(42);
+        // Leaks one boxed string per test — fine for a bounded test set.
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        Box::leak(
+            format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str(),
+        )
+    }
+
+    /// Drives a chain of hops across listeners as specified; returns the
+    /// captured request heads in order.
+    async fn run_redirect_chain(
+        listeners: Vec<(tokio::net::TcpListener, Vec<String>)>,
+        start: &Url,
+        policy: HttpRequestPolicy,
+    ) -> (Result<PrivateHttpResponse, String>, Vec<String>) {
+        let mut receivers = Vec::new();
+        for (listener, responses) in listeners {
+            receivers.push(spawn_head_capturing_server(listener, responses));
+        }
+        let outcome =
+            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy)
+                .await;
+        let mut heads = Vec::new();
+        for mut receiver in receivers {
+            while let Ok(head) = receiver.try_recv() {
+                heads.push(head);
+            }
+        }
+        (outcome, heads)
+    }
+
+    #[tokio::test]
+    async fn cross_origin_redirect_strips_credentials_permanently() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Chain: A:/start --307--> B:/hop --307--> A:/back --> 200. Each port
+        // is a separate origin, so B never sees the credential and the return
+        // hop to A must not re-attach it either (matches curl/reqwest).
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/start")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/hop")).unwrap();
+        let url_back = Url::parse(&format!("http://127.0.0.1:{port_a}/back")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (
+                    listener_a,
+                    vec![redirect_response(&url_hop), REDIRECT_OK_RESPONSE.to_string()],
+                ),
+                (listener_b, vec![redirect_response(&url_back)]),
+            ],
+            &url_start,
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 3);
+        assert!(
+            heads[0].to_ascii_lowercase().contains("authorization"),
+            "the credential origin receives its header"
+        );
+        for (index, head) in heads.iter().enumerate().skip(1) {
+            assert!(
+                !head.to_ascii_lowercase().contains("authorization"),
+                "hop {index} must not carry credentials: {head}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn same_origin_redirect_keeps_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/next")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+            HttpRequestPolicy::PrivateNetwork,
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "same-origin hop {index} keeps credentials"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_refuses_redirect_outside_the_saved_origin() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+
+        // Saved endpoint lives at A; its response redirects to B (a different
+        // port, hence a different origin). The request must fail closed and
+        // B must never be contacted.
+        let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_a = listener_a.local_addr().unwrap().port();
+        let listener_b = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port_b = listener_b.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port_a}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port_a}/v1/models")).unwrap();
+        let url_hop = Url::parse(&format!("http://127.0.0.1:{port_b}/v1/models")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![
+                (listener_a, vec![redirect_response(&url_hop)]),
+                // B would only answer if the invalid hop were attempted; it
+                // must starve instead.
+                (listener_b, vec![REDIRECT_OK_RESPONSE.to_string()]),
+            ],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(
+            outcome.is_err(),
+            "redirect leaving the saved origin must fail"
+        );
+        let error_message = outcome.as_ref().err().cloned().unwrap_or_default();
+        assert!(
+            error_message.contains("outside the saved OpenAI-compatible endpoint"),
+            "the refusal must come from the endpoint-confinement check: {error_message}"
+        );
+        assert_eq!(
+            heads.len(),
+            1,
+            "the foreign host must never receive a request"
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_endpoint_follows_same_origin_redirects_with_credentials() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = Url::parse(&format!("http://127.0.0.1:{port}/v1")).unwrap();
+        let url_start = Url::parse(&format!("http://127.0.0.1:{port}/v1/models")).unwrap();
+        let url_next = Url::parse(&format!("http://127.0.0.1:{port}/v1/catalog")).unwrap();
+
+        let (outcome, heads) = run_redirect_chain(
+            vec![(
+                listener,
+                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+            )],
+            &url_start,
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
+        )
+        .await;
+
+        assert!(outcome.is_ok(), "chain completes: {:?}", outcome.err());
+        assert_eq!(heads.len(), 2);
+        for (index, head) in heads.iter().enumerate() {
+            assert!(
+                head.to_ascii_lowercase().contains("authorization"),
+                "saved-endpoint hop {index} keeps credentials in-origin"
+            );
+        }
+    }
+
+    #[test]
+    fn urls_share_origin_compares_scheme_host_and_default_port() {
+        let ollama = Url::parse("http://127.0.0.1:11434/v1/chat/completions").unwrap();
+        // Same origin (trailing path/query never counts).
+        assert!(urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:11434/api/generate").unwrap()
+        ));
+        // Default-vs-explicit port still shares the origin.
+        assert!(urls_share_origin(
+            &Url::parse("http://localhost/v1").unwrap(),
+            &Url::parse("http://localhost:80/models").unwrap()
+        ));
+        // Different host, port, and scheme each switch origin.
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://192.168.1.5:11434/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("http://127.0.0.1:9000/").unwrap()
+        ));
+        assert!(!urls_share_origin(
+            &ollama,
+            &Url::parse("https://127.0.0.1:11434/").unwrap()
+        ));
+    }
+
+    #[test]
+    fn saved_endpoint_url_normalizes_dot_segments_before_the_prefix_check() {
+        // RFC 3986 dot-segment removal happens in the URL parser, so a
+        // request spelling like `/v1/../admin` must NOT sneak past the
+        // saved-endpoint path confinement.
+        let base = Url::parse("https://api.example.com/v1").unwrap();
+        let escaped = Url::parse("https://api.example.com/v1/../admin").unwrap();
+        assert_eq!(escaped.path(), "/admin");
+        assert!(validate_saved_endpoint_url(&escaped, &base).is_err());
+
+        let base_root = Url::parse("https://api.example.com/").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("https://api.example.com/./v1/models").unwrap(),
+            &base_root,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn resolved_addresses_reject_link_local_and_unspecified_for_every_policy() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        let private = HttpRequestPolicy::PrivateNetwork;
+        let https_base = Url::parse("https://api.example.com").unwrap();
+        let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
+        let https_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+        let http_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+
+        for ip in [
+            // Cloud metadata and generic link-local.
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1)),
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+            // Unspecified.
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            // IPv4-mapped IPv6 must not tunnel the metadata address through.
+            IpAddr::V6(Ipv4Addr::new(169, 254, 169, 254).to_ipv6_mapped()),
+        ] {
+            for policy in [&private, &https_policy, &http_policy] {
+                let addrs = [SocketAddr::new(ip, 443)];
+                assert!(
+                    validate_resolved_addresses(&addrs, policy).is_err(),
+                    "expected {ip} to be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn resolved_addresses_plaintext_policy_requires_private_targets() {
+        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+        let private = HttpRequestPolicy::PrivateNetwork;
+        let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
+        let http_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let https_base = Url::parse("https://api.example.com").unwrap();
+        let https_policy =
+            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+
+        // A poisoned `.local`/`localhost` answer resolving to a public address
+        // must fail the plaintext policies after resolution.
+        let public = [SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 80)];
+        assert!(validate_resolved_addresses(&public, &private).is_err());
+        assert!(validate_resolved_addresses(&public, &http_policy).is_err());
+
+        // The same public address stays legal for an HTTPS endpoint whose
+        // credential is bound by TLS to the configured hostname.
+        assert!(validate_resolved_addresses(&public, &https_policy).is_ok());
+
+        // Private, loopback, and unique-local answers pass every policy.
+        for ip in [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+            IpAddr::V4(Ipv4Addr::new(172, 16, 5, 9)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6(Ipv4Addr::new(192, 168, 1, 5).to_ipv6_mapped()),
+            IpAddr::V6(Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 9)),
+        ] {
+            for policy in [&private, &https_policy, &http_policy] {
+                let addrs = [SocketAddr::new(ip, 443)];
+                assert!(
+                    validate_resolved_addresses(&addrs, policy).is_ok(),
+                    "expected {ip} to be accepted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn saved_plaintext_endpoint_remains_private_network_only() {
+        let local = Url::parse("http://192.168.1.20:8080").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://192.168.1.20:8080/v1/models").unwrap(),
+            &local,
+        )
+        .is_ok());
+
+        let public = Url::parse("http://example.com").unwrap();
+        assert!(validate_saved_endpoint_url(
+            &Url::parse("http://example.com/v1/models").unwrap(),
+            &public,
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn private_http_cancellation_is_preserved_when_abort_arrives_first() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let request_id = "00000000-0000-4000-8000-000000000000".to_string();
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+
+        let result = private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: "http://127.0.0.1:1/never-started".to_string(),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body_base64: None,
+        })
+        .await;
+        match result {
+            Err(error) => assert_eq!(error, PRIVATE_HTTP_CANCELLED_ERROR),
+            Ok(_) => panic!("a pre-cancelled private request unexpectedly started"),
+        }
+        assert!(!PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .contains_key(&request_id));
+    }
+
+    #[tokio::test]
+    async fn private_http_prestart_cancellations_have_separate_bounded_capacity() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let prestart_ids: Vec<String> = (0..=MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000099"))
+            .collect();
+        for request_id in &prestart_ids {
+            assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        }
+
+        let active_ids: Vec<String> = (0..MAX_PRIVATE_HTTP_ACTIVE_REQUESTS)
+            .map(|index| format!("{index:08x}-0000-4000-8000-000000000098"))
+            .collect();
+        let mut active_registrations = Vec::with_capacity(MAX_PRIVATE_HTTP_ACTIVE_REQUESTS);
+        for request_id in &active_ids {
+            active_registrations.push(
+                PrivateHttpCancellationGuard::register(request_id.clone())
+                    .expect("pre-start markers must not consume active-request capacity"),
+            );
+        }
+        match PrivateHttpCancellationGuard::register(
+            "fffffffe-0000-4000-8000-000000000097".to_string(),
+        ) {
+            Err(error) => assert_eq!(error, "Too many private-network requests are in progress"),
+            Ok(_) => panic!("the active private-request limit was not enforced"),
+        }
+
+        // Cancellation must free active capacity immediately even though the
+        // old guard has not unwound yet.
+        assert!(cancel_private_http_request(active_ids[0].clone()).unwrap());
+        let (replacement_guard, _replacement_receiver) = PrivateHttpCancellationGuard::register(
+            "ffffffff-0000-4000-8000-000000000097".to_string(),
+        )
+        .expect("a cancelled request must release its active-capacity slot");
+
+        let prestart_count = PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|state| matches!(state, PrivateHttpCancellationState::CancelledBeforeStart(_)))
+            .count();
+        assert!(prestart_count <= MAX_PRIVATE_HTTP_PRESTART_CANCELLATIONS);
+
+        drop(replacement_guard);
+        drop(active_registrations);
+        let mut requests = PRIVATE_HTTP_CANCELLATIONS.lock().unwrap();
+        for request_id in prestart_ids {
+            requests.remove(&request_id);
+        }
+    }
+
+    #[tokio::test]
+    async fn private_http_request_cancellation_stops_the_rust_operation() {
+        let _test_guard = PRIVATE_HTTP_CANCELLATION_TEST_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_sender, accepted_receiver) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (_socket, _) = listener.accept().await.unwrap();
+            let _ = accepted_sender.send(());
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+
+        let request_id = "00000000-0000-4000-8000-000000000001".to_string();
+        let request = tokio::spawn(private_http_request(PrivateHttpRequest {
+            request_id: request_id.clone(),
+            url: format!("http://{address}/slow"),
+            method: "GET".to_string(),
+            headers: std::collections::HashMap::new(),
+            body_base64: None,
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(2), accepted_receiver)
+            .await
+            .expect("the local server should accept the request")
+            .expect("the acceptance signal should be delivered");
+
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        let (replacement_guard, replacement_cancellation) =
+            PrivateHttpCancellationGuard::register(request_id.clone())
+                .expect("a cancelled request ID may be safely reused");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+            .await
+            .expect("the cancelled request must not wait for the client timeout")
+            .expect("the private request task should not panic");
+        match result {
+            Err(error) => assert_eq!(error, "Private-network request was cancelled"),
+            Ok(_) => panic!("the cancelled private request unexpectedly succeeded"),
+        }
+
+        // The old request's guard has now dropped. Its registration token must
+        // not remove the replacement registration that reused the same ID.
+        assert!(cancel_private_http_request(request_id.clone()).unwrap());
+        replacement_cancellation
+            .await
+            .expect("the replacement request should receive its cancellation");
+        drop(replacement_guard);
+        assert!(!cancel_private_http_request(request_id.clone()).unwrap());
+        PRIVATE_HTTP_CANCELLATIONS
+            .lock()
+            .unwrap()
+            .remove(&request_id);
+        server.abort();
+    }
+
+    #[test]
+    fn import_path_is_rejected_outside_allowed_roots() {
+        // Mirrors the confinement check in `transcription_import_audio`: a path
+        // outside the allowed import roots must be rejected so the command
+        // cannot be used as a filesystem read oracle.
+        let tmp = std::env::temp_dir()
+            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let allowed = vec![tmp.join("allowed")];
+        std::fs::create_dir_all(&allowed[0]).unwrap();
+        let inside = allowed[0].join("clip.wav");
+        let outside = tmp.join("outside.wav");
+        assert!(is_path_within_allowed_roots(&inside, &allowed));
+        assert!(!is_path_within_allowed_roots(&outside, &allowed));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn clear_local_data_deletes_derived_names_and_only_sweeps_wavs() {
         let root = std::env::temp_dir().join(format!(
             "mausvoice-clear-local-{}",
             std::process::id()
         ));
-        let audio_dir = root.join("audio");
-        let outside_dir = root.join("outside");
-        std::fs::create_dir_all(&audio_dir).unwrap();
-        std::fs::create_dir_all(&outside_dir).unwrap();
-
-        let inside = audio_dir.join("keep-me-not.wav");
-        let relative = audio_dir.join("relative.wav");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let expected = audio_dir.join("known-id.wav");
         let orphan = audio_dir.join("orphan.wav");
         let other = audio_dir.join("notes.txt");
-        let outside = outside_dir.join("do-not-delete.wav");
-        std::fs::write(&inside, b"in").unwrap();
-        std::fs::write(&relative, b"rel").unwrap();
-        std::fs::write(&orphan, b"or").unwrap();
-        std::fs::write(&other, b"txt").unwrap();
-        std::fs::write(&outside, b"out").unwrap();
+        let outside = root.join("outside.wav");
+        std::fs::write(&expected, b"managed").expect("managed fixture must be writable");
+        std::fs::write(&orphan, b"orphan").expect("orphan fixture must be writable");
+        std::fs::write(&other, b"notes").expect("non-WAV fixture must be writable");
+        std::fs::write(&outside, b"do not delete").expect("outside fixture must be writable");
 
-        delete_listed_audio_files(
-            &audio_dir,
-            &[
-                inside.to_string_lossy().into_owned(),
-                // A relative row must be deleted from inside `audio_dir`.
-                "relative.wav".to_string(),
-                outside.to_string_lossy().into_owned(),
-            ],
+        // The list contains IDs collected from non-null database markers, not
+        // mutable filesystem paths. It therefore cannot name `outside.wav`.
+        delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()]);
+        assert!(!expected.exists(), "the derived managed file must be deleted");
+        assert!(outside.exists(), "an outside file must remain untouched");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+        assert!(!orphan.exists(), "the held-root WAV orphan must be removed");
+        assert!(other.exists(), "non-WAV files must not be swept");
+        assert!(outside.exists(), "the sweep must not reach outside the root");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orphan_sweep_stays_in_the_held_root_after_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "mausvoice-clear-local-held-root-{}",
+            std::process::id()
+        ));
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let original = app_data.join("transcription-audio");
+        let detached = app_data.join("former-transcription-audio");
+        let original_orphan = original.join("orphan.wav");
+        std::fs::write(&original_orphan, b"delete").expect("orphan fixture must be writable");
+
+        std::fs::rename(&original, &detached)
+            .expect("an open Unix directory can be renamed for this regression");
+        std::fs::create_dir(&original).expect("replacement directory must be creatable");
+        let replacement_orphan = original.join("orphan.wav");
+        std::fs::write(&replacement_orphan, b"do not delete")
+            .expect("replacement fixture must be writable");
+
+        sweep_orphaned_wavs(&held_audio_dir);
+
+        assert!(
+            !detached.join("orphan.wav").exists(),
+            "the sweep must delete from the original held directory"
         );
-        assert!(!inside.exists());
-        assert!(!relative.exists());
-        assert!(outside.exists());
-
-        sweep_orphaned_wavs(&audio_dir);
-        assert!(!orphan.exists());
-        assert!(other.exists());
-        assert!(outside.exists());
+        assert!(
+            replacement_orphan.exists(),
+            "the replacement directory must not be swept"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3058,10 +6248,29 @@ mod tests {
         )
         .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
-        assert!(installer_redirect_allowed(0, &ok).is_ok());
-        assert!(installer_redirect_allowed(9, &ok).is_ok());
-        assert!(installer_redirect_allowed(10, &ok).is_err());
-        assert!(installer_redirect_allowed(0, &evil).is_err());
+        assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
+        assert!(installer_redirect_allowed(10, &ok, TRUSTED_REPO_NAMESPACE).is_err());
+        assert!(installer_redirect_allowed(0, &evil, TRUSTED_REPO_NAMESPACE).is_err());
+    }
+
+    #[test]
+    fn installer_redirect_allows_opaque_cdn_path() {
+        // GitHub's release-asset CDN returns an opaque UUID path; the real
+        // filename is carried in the signed query parameters. The validator must
+        // accept this normal redirect rather than demanding a path extension.
+        let cdn = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1234/\
+             abcdef-1234-5678?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &cdn, TRUSTED_REPO_NAMESPACE).is_ok());
+        // A non-GitHub host must still be rejected even with a dmg-looking query.
+        let bad = Url::parse(
+            "https://evil-cdn.example.com/uuid?response-content-disposition=attachment%3Bfilename%3DmausVoice_1.0.0_universal.dmg",
+        )
+        .unwrap();
+        assert!(installer_redirect_allowed(1, &bad, TRUSTED_REPO_NAMESPACE).is_err());
     }
 
     #[test]
@@ -3076,6 +6285,66 @@ mod tests {
         assert!(installer_account_chunk(INSTALLER_MAX_BYTES, 1).is_err());
     }
 
+    #[tokio::test]
+    async fn incomplete_installer_download_removes_its_partial_temp_file() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener must bind");
+        let address = listener.local_addr().expect("test listener has an address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("test client connects");
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await;
+            // The declared body is longer than the bytes sent. reqwest returns
+            // the response first and reports the broken transfer from
+            // `response.chunk`, exercising the file-owning cleanup path.
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 16\r\nconnection: close\r\n\r\npartial",
+                )
+                .await
+                .expect("test response writes");
+            socket.shutdown().await.expect("test response closes");
+        });
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock is after the Unix epoch")
+            .as_nanos();
+        let dest = std::env::temp_dir().join(format!(
+            "mausvoice-partial-installer-{}-{unique}.dmg",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&dest);
+        let mut response = reqwest::Client::new()
+            .get(format!("http://{address}/installer.dmg"))
+            .send()
+            .await
+            .expect("test server returns headers");
+
+        let result = download_installer_response_to_file(&mut response, &dest).await;
+        let was_removed = !dest.exists();
+        let _ = std::fs::remove_file(&dest);
+        server.await.expect("test server completes");
+
+        assert!(result.is_err(), "a truncated HTTP body must fail");
+        assert!(was_removed, "a failed transfer must remove its partial file");
+    }
+
+    #[test]
+    fn signature_size_cap_rejects_advertised_and_streamed_oversize() {
+        assert!(signature_content_length_ok(None).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES)).is_ok());
+        assert!(signature_content_length_ok(Some(SIGNATURE_MAX_BYTES + 1)).is_err());
+        assert_eq!(
+            signature_account_chunk(0, SIGNATURE_MAX_BYTES).unwrap(),
+            SIGNATURE_MAX_BYTES
+        );
+        assert!(signature_account_chunk(SIGNATURE_MAX_BYTES, 1).is_err());
+    }
+
     #[test]
     fn current_timestamp_ok() {
         // Replicate the function body to avoid a public exposure. SystemTime
@@ -3088,410 +6357,262 @@ mod tests {
     }
 }
 
-/// Strict, shell-free execution for an allow-listed command.
-///
-/// Security properties:
-/// - No shell is invoked; `command` is tokenized into argv by whitespace only
-///   (no quoting, no metacharacter evaluation). A token like `;rm -rf /` is
-///   passed as a single literal argument to the binary.
-/// - The binary must appear in `ALLOWED_COMMANDS` (exact name match); path
-///   traversal (e.g. `/bin/sh`, `../../sh`) is rejected.
-/// - Per-command timeout and output-size cap bound resource use.
-#[tauri::command]
-#[specta::specta]
-pub async fn run_terminal_command(command: String) -> Result<RunTerminalCommandResponse, String> {
-    // Whitespace-tokenize without shell interpretation. Quoting is deliberately
-    // unsupported — AI tools pass structured argv tokens separated by spaces.
-    // All validation is centralised in validate_terminal_command_args so the
-    // production path and unit tests can't drift.
-    let (allowed, user) = validate_terminal_command_args(&command)?;
+#[cfg(test)]
+mod installer_url_tests {
+    use super::*;
 
-    let fixed = allowed.fixed_args.to_vec();
-    let bin = allowed.binary.to_string();
+    #[test]
+    fn installer_temp_timestamp_rejects_a_pre_epoch_clock() {
+        let before_epoch = UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(1))
+            .expect("one second before the Unix epoch must be representable");
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new(&bin);
-        cmd.args(&fixed);
-        cmd.args(&user);
-
-        // Never inherit the user's shell environment wholesale; clear dangerous vars.
-        cmd.env_clear();
-        if let Ok(path) = std::env::var("PATH") {
-            cmd.env("PATH", path);
-        }
-        cmd.env("LANG", "C.UTF-8");
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        let mut child = cmd
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|err| format!("Failed to spawn {bin}: {err}"))?;
-
-        // Take the pipes and drain them on dedicated threads. Each reader
-        // retains at most TERMINAL_COMMAND_MAX_OUTPUT_BYTES, so a command
-        // streaming gigabytes cannot exhaust memory, and because the readers
-        // keep draining to EOF the child never blocks on a full pipe.
-        let stdout_pipe = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("Failed to capture stdout of {bin}"))?;
-        let stderr_pipe = child
-            .stderr
-            .take()
-            .ok_or_else(|| format!("Failed to capture stderr of {bin}"))?;
-
-        let stdout_reader =
-            std::thread::spawn(move || read_capped(stdout_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
-        let stderr_reader =
-            std::thread::spawn(move || read_capped(stderr_pipe, TERMINAL_COMMAND_MAX_OUTPUT_BYTES));
-
-        // Poll for exit so this thread retains ownership of `child` and can
-        // actually kill it on timeout. `wait_with_output` would move the
-        // child into a worker and leave the process unkillable.
-        let deadline = std::time::Instant::now() + TERMINAL_COMMAND_TIMEOUT;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if std::time::Instant::now() >= deadline {
-                        // Kill the process and reap it so we don't leak a
-                        // zombie; repeated timeouts must not pile up
-                        // long-running children.
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(format!(
-                            "Command {bin} timed out after {}s and was terminated",
-                            TERMINAL_COMMAND_TIMEOUT.as_secs()
-                        ));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                Err(err) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("Failed to await {bin}: {err}"));
-                }
-            }
-        };
-
-        let (stdout_bytes, stdout_total) = stdout_reader
-            .join()
-            .map_err(|_| format!("Failed to read stdout of {bin}"))?;
-        let (stderr_bytes, stderr_total) = stderr_reader
-            .join()
-            .map_err(|_| format!("Failed to read stderr of {bin}"))?;
-
-        Ok(RunTerminalCommandResponse {
-            stdout: format_capped_output(&stdout_bytes, stdout_total),
-            stderr: format_capped_output(&stderr_bytes, stderr_total),
-            exit_code: status.code().unwrap_or(-1),
-        })
-    })
-    .await
-    .map_err(|err| format!("Terminal command task panicked: {err}"))?;
-
-    result
-}
-
-/// Returns `true` when the running app bundle can be updated in-place.
-/// On macOS this checks whether the process can write to the directory that
-/// contains the `.app` bundle (typically `/Applications`).
-/// Non-macOS platforms always return `true`.
-#[tauri::command]
-#[specta::specta]
-pub fn check_app_location_writable() -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-
-        // macOS layout: <dir>/mausVoice.app/Contents/MacOS/mausvoice-desktop
-        let app_parent = exe
-            .parent() // MacOS/
-            .and_then(|p| p.parent()) // Contents/
-            .and_then(|p| p.parent()) // mausVoice.app/
-            .and_then(|p| p.parent()) // containing directory
-            .ok_or("Could not determine app parent directory")?;
-
-        let probe = app_parent.join(".mausvoice_write_probe");
-        match std::fs::File::create(&probe) {
-            Ok(_) => {
-                let _ = std::fs::remove_file(&probe);
-                Ok(true)
-            }
-            Err(_) => Ok(false),
-        }
+        assert!(unix_epoch_nanos(before_epoch).is_err());
     }
 
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(true)
-    }
-}
+    #[test]
+    fn initial_installer_url_requires_trusted_repo_path() {
+        // The exact URL the TS layer builds for the macOS manual fallback.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_ok());
 
-/// Maximum size we are willing to download for a `.pkg` installer.
-const INSTALLER_MAX_BYTES: u64 = 250 * 1024 * 1024;
-const INSTALLER_MAX_REDIRECTS: usize = 10;
+        // A release asset from a *different* repository must be rejected.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/evil/repo/releases/download/v1/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
 
-/// Decide whether a redirect hop is allowed. Applied to every hop so an
-/// allowed host cannot bounce us onto an untrusted origin.
-fn installer_redirect_allowed(previous_hops: usize, url: &Url) -> Result<(), String> {
-    if previous_hops >= INSTALLER_MAX_REDIRECTS {
-        return Err("too many redirects".to_string());
-    }
-    validate_installer_url(url)
-}
+        // The redirect CDN host is not a valid *initial* URL.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
 
-/// Reject an advertised Content-Length above the streaming cap before any
-/// bytes are written.
-fn installer_content_length_ok(len: Option<u64>) -> Result<(), String> {
-    if let Some(n) = len {
-        if n > INSTALLER_MAX_BYTES {
-            return Err("Installer download exceeded 250MiB safety limit".to_string());
-        }
-    }
-    Ok(())
-}
-
-/// Accumulate a downloaded chunk against the streaming cap.
-fn installer_account_chunk(written: u64, chunk_len: u64) -> Result<u64, String> {
-    let next = written.saturating_add(chunk_len);
-    if next > INSTALLER_MAX_BYTES {
-        return Err("Installer download exceeded 250MiB safety limit".to_string());
-    }
-    Ok(next)
-}
-
-/// Validate an installer URL (scheme, host allow-list, `.pkg` path). Applied
-/// to the initial URL *and* to every redirect hop, because the redirect chain
-/// is attacker-influenced: an allowed host could otherwise bounce us to an
-/// untrusted origin whose bytes we would write and execute.
-fn validate_installer_url(url: &Url) -> Result<(), String> {
-    if url.scheme() != "https" {
-        return Err("Installer URL must use https".to_string());
-    }
-    let host = url.host_str().unwrap_or("");
-    if !matches!(host, "github.com" | "objects.githubusercontent.com") {
-        return Err(format!(
-            "Installer URL host {host:?} is not in the trusted allow-list"
-        ));
-    }
-    if !url.path().ends_with(".pkg") {
-        return Err("Installer URL must point to a .pkg file".to_string());
-    }
-    Ok(())
-}
-
-/// Downloads a `.pkg` installer to a temp directory and opens it with
-/// macOS Installer.app. This is used as a fallback when the normal in-place
-/// updater cannot write to the app's install location.
-#[tauri::command]
-#[specta::specta]
-pub async fn download_and_open_mac_installer(url: String) -> Result<(), String> {
-    // Defense-in-depth: only allow downloads from the trusted release host.
-    // The TS caller derives this URL from the signed updater manifest, but
-    // any future caller (including a compromised webview) must not be able
-    // to make us download+execute arbitrary files.
-    let parsed = Url::parse(&url).map_err(|e| format!("Invalid URL: {e}"))?;
-    validate_installer_url(&parsed)?;
-
-    // Use a unique temp filename (not the URL-derived basename) so a crafted
-    // path like "../../../LaunchAgents/foo" cannot escape the temp dir. The
-    // nanosecond timestamp + pid is unique enough for our purposes; we
-    // overwrite then delete on installer completion anyway.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
-    let dest = std::env::temp_dir().join(format!("mausvoice-update-{nanos}-{pid}.pkg"));
-
-    // Remove any stale previous download (best-effort).
-    let _ = std::fs::remove_file(&dest);
-
-    // Validate every redirect hop rather than trusting the initial URL: the
-    // default policy would silently follow an allowed host to an arbitrary one.
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        match installer_redirect_allowed(attempt.previous().len(), attempt.url()) {
-            Ok(()) => attempt.follow(),
-            Err(err) => attempt.error(err),
-        }
-    });
-    let client = reqwest::Client::builder()
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("Download failed with status {}", response.status()));
+        // Non-installer extensions are rejected.
+        assert!(validate_initial_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt"
+            )
+            .unwrap()
+        )
+        .is_err());
     }
 
-    // Reject an oversized advertised length before transferring anything.
-    installer_content_length_ok(response.content_length())?;
+    #[test]
+    fn redirect_hop_allows_github_cdn() {
+        // The normal GitHub `302` to its release-asset CDN must be permitted.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
 
-    // Stream to disk, enforcing the cap as we go so a server that lies about
-    // (or omits) Content-Length cannot exhaust memory or fill the disk.
-    let mut file = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-    let mut written: u64 = 0;
-    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
-        written = match installer_account_chunk(written, chunk.len() as u64) {
-            Ok(next) => next,
-            Err(err) => {
-                drop(file);
-                let _ = std::fs::remove_file(&dest);
-                return Err(err);
-            }
-        };
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| e.to_string())?;
-    }
-    std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
-    drop(file);
-
-    std::process::Command::new("open")
-        .arg(&dest)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_system_volume() -> Result<f64, String> {
-    crate::platform::volume::get_system_volume()
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn set_system_volume(volume: f64) -> Result<(), String> {
-    let clamped = volume.clamp(0.0, 1.0);
-    crate::platform::volume::set_system_volume(clamped)
-}
-
-#[derive(serde::Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateFloatingWindowArgs {
-    pub url: String,
-    pub title: Option<String>,
-    pub width: Option<f64>,
-    pub height: Option<f64>,
-    pub min_width: Option<f64>,
-    pub min_height: Option<f64>,
-    pub x: Option<f64>,
-    pub y: Option<f64>,
-    pub decorations: Option<bool>,
-    pub transparent: Option<bool>,
-    pub resizable: Option<bool>,
-    pub focused: Option<bool>,
-}
-
-#[derive(serde::Serialize, specta::Type, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct FloatingWindowInfo {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-}
-
-/// Opens a draggable, always-on-top webview window pointed at the given URL
-/// and returns a stable id that can be used to destroy it later.
-///
-/// External URLs are restricted to http(s) and to a small allow-list of
-/// trusted schemes/hosts. This is the only place in the app that creates a
-/// webview pointed at a non-local origin. Localhost loopback is the only
-/// remote host that also receives IPC (via `floating-*` `remote.urls`);
-/// the GitHub Pages docs host is allowed to load but has no IPC capability.
-/// We keep the navigation allow-list small to avoid a compromised or
-/// confused caller creating a floating window on an attacker-controlled origin.
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_create(
-    args: CreateFloatingWindowArgs,
-    app: AppHandle,
-    state: State<'_, crate::state::FloatingWindowState>,
-) -> Result<FloatingWindowInfo, String> {
-    let parsed_url = parse_floating_window_url(&args.url)?;
-    validate_floating_window_url(&parsed_url)?;
-
-    let label = state.next_label();
-    let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
-
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        label.clone(),
-        tauri::WebviewUrl::External(parsed_url),
-    )
-    .title(title.clone())
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .decorations(args.decorations.unwrap_or(true))
-    .resizable(args.resizable.unwrap_or(true))
-    .focused(args.focused.unwrap_or(false));
-
-    if args.transparent.unwrap_or(false) {
-        builder = builder.transparent(true);
+        // An untrusted host in the redirect chain is rejected.
+        assert!(validate_installer_url(
+            &Url::parse("https://evil.example.com/x.dmg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
     }
 
-    if let (Some(w), Some(h)) = (args.width, args.height) {
-        builder = builder.inner_size(w, h);
-    }
-    if let (Some(min_w), Some(min_h)) = (args.min_width, args.min_height) {
-        builder = builder.min_inner_size(min_w, min_h);
-    }
-    if let (Some(x), Some(y)) = (args.x, args.y) {
-        builder = builder.position(x, y);
+    #[test]
+    fn redirect_hop_rejects_github_com_path_outside_trusted_repo() {
+        // A redirect hop back to github.com must not escape the trusted
+        // repository namespace even though the host itself is on the
+        // allow-list.
+        assert!(validate_installer_url(
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+
+        // A github.com hop that stays within the trusted repo is still allowed.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
     }
 
-    builder.build().map_err(|err| err.to_string())?;
-
-    Ok(FloatingWindowInfo {
-        id: label,
-        url: args.url,
-        title,
-    })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_destroy(id: String, app: AppHandle) -> Result<(), String> {
-    if !id.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
-        return Err(format!("invalid floating window id: {id}"));
+    #[test]
+    fn signature_redirect_rejects_github_com_path_outside_trusted_repo() {
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
     }
-    match app.get_webview_window(&id) {
-        Some(window) => window.close().map_err(|err| err.to_string()),
-        None => Ok(()),
-    }
-}
 
-#[tauri::command]
-#[specta::specta]
-pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowInfo>, String> {
-    let mut out = Vec::new();
-    for (label, window) in app.webview_windows() {
-        if !label.starts_with(crate::state::FLOATING_WINDOW_LABEL_PREFIX) {
-            continue;
-        }
-        let title = window.title().unwrap_or_default();
-        let url = window
-            .url()
-            .map(|u| u.to_string())
-            .unwrap_or_else(|_| String::new());
-        out.push(FloatingWindowInfo {
-            id: label,
-            url,
-            title,
-        });
+    #[test]
+    fn signature_url_requires_trusted_repo_and_sig_extension() {
+        // The detached `.dmg.sig` for the macOS manual fallback.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap()
+        )
+        .is_ok());
+
+        // A non-signature extension is rejected.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg"
+            )
+            .unwrap()
+        )
+        .is_err());
+
+        // A release asset from a *different* repository is rejected.
+        assert!(validate_initial_signature_url(
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig")
+                .unwrap()
+        )
+        .is_err());
+
+        // The redirect CDN host is not a valid *initial* signature URL.
+        assert!(validate_initial_signature_url(
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/x.sig"
+            )
+            .unwrap()
+        )
+        .is_err());
     }
-    Ok(out)
+
+    #[test]
+    fn signature_redirect_allows_github_cdn() {
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+
+        // An untrusted host in the redirect chain is rejected.
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse("https://evil.example.com/x.sig").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn redirect_hop_enforces_repo_namespace_for_cdn() {
+        // A hop onto the objects CDN that escapes into a *different* repository
+        // namespace must be rejected, even though the host is on the
+        // allow-list. This is the defense-in-depth gap flagged in PR #63: a
+        // redirect to objects.githubusercontent.com was previously accepted for
+        // ANY repository path.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+
+        // A redirect hop that preserves the trusted `/maus-inc/mausVoice/`
+        // namespace is accepted.
+        assert!(validate_installer_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+
+        // The same namespace enforcement applies to the signature validator.
+        assert!(validate_signature_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/other-org/otherRepo/releases/download/v1/x.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
+        assert!(validate_signature_url(
+            &Url::parse(
+                "https://objects.githubusercontent.com/maus-inc/mausVoice/releases/download/v1/x.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+
+        // The release-assets CDN carve-out (opaque signed token path) is still
+        // honored and must not be broken by the namespace check.
+        assert!(signature_redirect_allowed(
+            1,
+            &Url::parse(
+                "https://release-assets.githubusercontent.com/maus-inc/mausVoice/releases/download/v0.1.5/mausVoice_0.1.5_universal.dmg.sig"
+            )
+            .unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn minisign_signature_accepts_valid_and_rejects_invalid() {
+        // Known minisign test vector: public key + signature over "test".
+        let public_key = "untrusted comment: minisign public key ABCDEF\n\
+RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
+        let signature = "untrusted comment: signature from minisign secret key\n\
+RUQf6LRCGA9i559r3g7V1qNyJDApGip8MfqcadIgT9CuhV3EMhHoN1mGTkUidF/z7SrlQgXdy8ofjb7bNJJylDOocrCo8KLzZwo=\n\
+trusted comment: timestamp:1633700835\tfile:test\tprehashed\n\
+wLMDjy9FLAuxZ3q4NlEvkgtyhrr0gtTu6KC4KBJdITbbOeAi1zBIYo0v4iTgt8jJpIidRJnp94ABQkJAgAooBQ==";
+
+        // Tauri stores the complete minisign signature text in an outer Base64
+        // frame. The manual-installer fallback must decode that frame before
+        // passing it to minisign-verify; passing the downloaded `.sig` bytes
+        // directly makes every valid Tauri-signed installer fail to parse.
+        let tauri_signature = base64::engine::general_purpose::STANDARD.encode(signature);
+        let decoded_signature = decode_tauri_installer_signature(tauri_signature.as_bytes())
+            .expect("a Tauri-generated signature frame must decode");
+        assert_eq!(decoded_signature, signature);
+        assert!(verify_minisign_data(public_key, b"test", &decoded_signature).is_ok());
+
+        // A malformed outer frame must fail before minisign parsing.
+        assert!(decode_tauri_installer_signature(b"not-base64!").is_err());
+        // A tampered payload must fail verification.
+        assert!(verify_minisign_data(public_key, b"tampered", &decoded_signature).is_err());
+        // A different payload must fail verification.
+        assert!(verify_minisign_data(public_key, b"other", &decoded_signature).is_err());
+        // A malformed decoded signature must fail to parse.
+        assert!(verify_minisign_data(public_key, b"test", "not-a-signature").is_err());
+    }
 }

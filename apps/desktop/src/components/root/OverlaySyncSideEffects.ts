@@ -1,9 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ChatMessage, ToolPermission } from "@maus-inc/types";
 import { isEqual } from "lodash-es";
 import { useEffect, useRef } from "react";
 import type { AppState, StreamingMessageState } from "../../state/app.state";
 import { useAppStore } from "../../store";
+import { markdownToPillText } from "../../utils/assistant-pill-text.utils";
+import { getLogger } from "../../utils/log.utils";
 
 export const OverlaySyncSideEffects = () => {
   useNativePillAssistantSync();
@@ -39,6 +42,8 @@ type NativePillPayload = {
     description: string | null;
     reason: string | null;
   }[];
+  /** Transcript awaiting a review decision on the pill, if any. */
+  review: { id: string; text: string } | null;
 };
 
 const formatPromptPreview = (text: string): string | null => {
@@ -68,9 +73,16 @@ const buildNativePillMessages = (
       const toolName = (meta?.toolName as string) ?? null;
       const reason = (meta?.reason as string) ?? null;
       const toolInfo = toolName ? toolInfoById[toolName] : undefined;
+      // A04: Strip markdown from assistant messages so the native pill
+      // (which has no markdown renderer) shows clean plain text.
+      const rawContent = m.content || null;
+      const cleanedContent =
+        m.role === "assistant" && rawContent
+          ? markdownToPillText(rawContent, { maxLength: 600 })
+          : rawContent;
       return {
         id: m.id,
-        content: m.content || null,
+        content: cleanedContent,
         is_error: m.role === "system",
         is_tool_result: isToolResult,
         tool_name: toolName,
@@ -123,6 +135,7 @@ const buildNativePillPermissions = (
 
 type NativePillSyncState = {
   activeRecordingMode: AppState["activeRecordingMode"];
+  pendingPillReview: AppState["pendingPillReview"];
   assistantInputMode: AppState["assistantInputMode"];
   pillConversationId: AppState["pillConversationId"];
   chatMessageById: AppState["chatMessageById"];
@@ -134,6 +147,7 @@ type NativePillSyncState = {
 
 const selectNativePillState = (s: AppState): NativePillSyncState => ({
   activeRecordingMode: s.activeRecordingMode,
+  pendingPillReview: s.pendingPillReview,
   assistantInputMode: s.assistantInputMode,
   pillConversationId: s.pillConversationId,
   chatMessageById: s.chatMessageById,
@@ -148,11 +162,18 @@ const useNativePillAssistantSync = () => {
   const prevRef = useRef<NativePillSyncState | null>(null);
 
   useEffect(() => {
+    // Only the main window owns the assistant pill. The composer popout is a
+    // separate webview with its own empty store, so pushing its (likely empty)
+    // assistant state to native would blank or reset the live pill.
+    if (getCurrentWindow().label !== "main") {
+      return;
+    }
     if (prevRef.current !== null && isEqual(prevRef.current, state)) {
       return;
     }
     prevRef.current = state;
 
+    const review = state.pendingPillReview;
     const active = state.activeRecordingMode === "agent";
 
     const conversationId = state.pillConversationId ?? null;
@@ -189,7 +210,8 @@ const useNativePillAssistantSync = () => {
     const compact =
       state.assistantInputMode !== "type" &&
       messages.length === 0 &&
-      permissions.length === 0;
+      permissions.length === 0 &&
+      review === null;
 
     const payload: NativePillPayload = {
       type: "assistant_state",
@@ -201,10 +223,13 @@ const useNativePillAssistantSync = () => {
       messages: pillMessages,
       streaming,
       permissions,
+      review,
     };
 
     invoke("sync_native_pill_assistant", {
       payload: JSON.stringify(payload),
-    }).catch(() => {});
+    }).catch((error) => {
+      getLogger().error("Failed to sync pill assistant state", error);
+    });
   }, [state]);
 };

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assemblyaiTranscribeAudio } from "@maus-inc/voice-ai";
+import {
+  assemblyaiTestIntegration,
+  assemblyaiTranscribeAudio,
+} from "@maus-inc/voice-ai";
 
 const UPLOAD_URL = "https://cdn.assemblyai.com/upload/abc123";
 
@@ -61,7 +64,10 @@ describe("assemblyaiTranscribeAudio", () => {
     });
 
     expect(text).toBe("bonjour");
-    expect(createBody).toEqual({ audio_url: UPLOAD_URL, language_code: "fr" });
+    expect(createBody).toEqual({
+      audio_url: UPLOAD_URL,
+      language_code: "fr",
+    });
   });
 
   it("omits language_code and requests detection when language is not provided", async () => {
@@ -516,5 +522,177 @@ describe("assemblyaiTranscribeAudio", () => {
 
     // Validation happens before any request is issued.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the Universal-2 fallback pair when Universal-3.5 Pro is selected", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-3-5-pro",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-3-5-pro", "universal-2"],
+    });
+  });
+
+  it("sends only Universal-2 when Universal-2 is selected", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+    });
+
+    const { text } = await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      model: "universal-2",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(text).toBe("hi");
+    expect(createBody).toMatchObject({
+      audio_url: UPLOAD_URL,
+      speech_models: ["universal-2"],
+    });
+  });
+
+  it.each([
+    ["best", ["universal-3-5-pro", "universal-2"]],
+    ["nano", ["universal-2"]],
+  ] as const)(
+    "migrates the legacy %s tier to its successor",
+    async (model, expected) => {
+      let createBody: Record<string, unknown> | null = null;
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/v2/upload")) {
+          return jsonResponse({ upload_url: UPLOAD_URL });
+        }
+        if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+          createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return jsonResponse({ id: "t1", status: "queued" });
+        }
+        return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+      });
+
+      await assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        model,
+        blob: new ArrayBuffer(8),
+      });
+
+      expect(createBody).toMatchObject({
+        audio_url: UPLOAD_URL,
+        speech_models: expected,
+      });
+    },
+  );
+
+  it("omits speech_models when no model is selected", async () => {
+    let createBody: Record<string, unknown> | null = null;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/v2/upload")) {
+        return jsonResponse({ upload_url: UPLOAD_URL });
+      }
+      if (url.endsWith("/v2/transcript") && init?.method === "POST") {
+        createBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ id: "t1", status: "queued" });
+      }
+      return jsonResponse({ id: "t1", status: "completed", text: "hi" });
+    });
+
+    await assemblyaiTranscribeAudio({
+      apiKey: "aa-key",
+      blob: new ArrayBuffer(8),
+    });
+
+    expect(createBody).not.toHaveProperty("speech_models");
+  });
+
+  it("rejects an unknown speech model before any network call", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse({ upload_url: UPLOAD_URL }));
+
+    await expect(
+      assemblyaiTranscribeAudio({
+        apiKey: "aa-key",
+        model: "whisper-1",
+        blob: new ArrayBuffer(8),
+      }),
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("assemblyaiTestIntegration", () => {
+  it("validates the API key without any network call when the model is unknown", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "whisper-1" }),
+    ).rejects.toThrow(/Unknown AssemblyAI speech model "whisper-1"/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("migrates a legacy model instead of failing the key test", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "best" }),
+    ).resolves.toBe(true);
+    await expect(
+      assemblyaiTestIntegration({ apiKey: "aa-key", model: "nano" }),
+    ).resolves.toBe(true);
+  });
+
+  it("validates the API key when the selected model is supported", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(
+      assemblyaiTestIntegration({
+        apiKey: "aa-key",
+        model: "universal-3-5-pro",
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it("still validates the API key when no model is selected", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("[]", { status: 200 }),
+    );
+
+    await expect(assemblyaiTestIntegration({ apiKey: "aa-key" })).resolves.toBe(
+      true,
+    );
   });
 });

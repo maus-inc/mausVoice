@@ -1,14 +1,16 @@
-import { ArrowForward } from "@mui/icons-material";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Stack } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { isMacOS } from "../../utils/env.utils";
 import remoteImage from "../../assets/2-remote.png";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
 import {
   BackButton,
   DualPaneLayout,
+  OnboardingContinueButton,
+  OnboardingFormHeader,
   OnboardingFormLayout,
 } from "./OnboardingCommon";
 
@@ -21,43 +23,26 @@ export const ChooseTranscriptionForm = () => {
 
   const handleContinue = () => {
     trackButtonClick("onboarding_transcription_continue");
-    goToOnboardingPage("chooseLlm");
+    goToOnboardingPage(isMacOS() ? "micPerms" : "keybindings");
   };
 
   const form = (
     <OnboardingFormLayout
       back={<BackButton />}
       actions={
-        <Button
-          variant="contained"
-          endIcon={<ArrowForward />}
+        <OnboardingContinueButton
           onClick={handleContinue}
           disabled={!canContinue}
-        >
-          <FormattedMessage defaultMessage="Continue" />
-        </Button>
+        />
       }
     >
       <Stack spacing={3}>
-        <Box>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 600,
-              pb: 1,
-            }}
-          >
-            <FormattedMessage defaultMessage="Set up transcription" />
-          </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
+        <OnboardingFormHeader
+          title={<FormattedMessage defaultMessage="Set up transcription" />}
+          subtitle={
             <FormattedMessage defaultMessage="Decide how mausVoice should process your recordings. Locally or through an API." />
-          </Typography>
-        </Box>
+          }
+        />
 
         <AITranscriptionConfiguration />
       </Stack>

@@ -1,4 +1,4 @@
-import { AccountCircleOutlined } from "@mui/icons-material";
+import { CircleUser } from "lucide-react";
 import { getIdentifier } from "@tauri-apps/api/app";
 import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
 import { useMemo, useState } from "react";
@@ -83,7 +83,7 @@ export const AppHeader = () => {
         });
         close();
       },
-      leading: <AccountCircleOutlined />,
+      leading: <CircleUser size={20} strokeWidth={1.9} />,
     },
   ];
 

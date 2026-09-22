@@ -1,8 +1,12 @@
 use crate::platform::permissions;
 
+/// No-op on macOS: X11 input threads only exist on Linux.
 pub fn init_x11_threads() {}
 
+/// No-op on macOS: display backends are configured by the system.
 pub fn configure_display_backend() {}
+
+pub fn apply_webkit_workarounds() {}
 
 pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
     let mic = permissions::check_microphone_permission();

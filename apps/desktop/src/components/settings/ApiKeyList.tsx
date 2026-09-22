@@ -1,7 +1,4 @@
-import AddIcon from "@mui/icons-material/Add";
-import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Autocomplete,
   Box,
@@ -36,6 +33,7 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
 import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
@@ -60,16 +58,74 @@ const getAvailableProviders = (context: ApiKeyListContext): ApiKeyProvider[] =>
       : repo.supportsGenerativeTextModels();
   });
 
+const ApiKeyFormActions = ({
+  onCancel,
+  onSave,
+  saving,
+  canSave,
+  onTest,
+  testing,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  canSave: boolean;
+  onTest?: () => void;
+  testing?: boolean;
+}) => {
+  return (
+    <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
+      {onTest && (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={onTest}
+          disabled={testing || saving}
+        >
+          {testing ? (
+            <FormattedMessage defaultMessage="Testing..." />
+          ) : (
+            <FormattedMessage defaultMessage="Test" />
+          )}
+        </Button>
+      )}
+      <Button
+        variant="outlined"
+        onClick={onCancel}
+        size="small"
+        disabled={saving}
+      >
+        <FormattedMessage defaultMessage="Cancel" />
+      </Button>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onSave}
+        disabled={!canSave || saving}
+      >
+        {saving ? (
+          <FormattedMessage defaultMessage="Saving..." />
+        ) : (
+          <FormattedMessage defaultMessage="Save" />
+        )}
+      </Button>
+    </Box>
+  );
+};
+
+type AddApiKeyPayload = {
+  name: string;
+  provider: SettingsApiKeyProvider;
+  key: string;
+  baseUrl?: string;
+  azureRegion?: string;
+  transcriptionModel?: string;
+  includeV1Path?: boolean;
+  transcriptionPath?: string;
+};
+
 type AddApiKeyCardProps = {
-  onSave: (
-    name: string,
-    provider: SettingsApiKeyProvider,
-    key: string,
-    baseUrl?: string,
-    azureRegion?: string,
-    transcriptionModel?: string,
-    includeV1Path?: boolean,
-  ) => Promise<void>;
+  onSave: (payload: AddApiKeyPayload) => Promise<void>;
   onCancel: () => void;
   context: ApiKeyListContext;
 };
@@ -108,16 +164,20 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
       const includeV1PathValue = config.showIncludeV1Path
         ? includeV1Path
         : undefined;
+      const transcriptionPath = fieldValues.transcriptionPath
+        ? fieldValues.transcriptionPath
+        : undefined;
 
-      await onSave(
+      await onSave({
         name,
         provider,
-        apiKeyValue,
+        key: apiKeyValue,
         baseUrl,
         azureRegion,
         transcriptionModel,
-        includeV1PathValue,
-      );
+        includeV1Path: includeV1PathValue,
+        transcriptionPath,
+      });
       setName("");
       setFieldValues({});
       setIncludeV1Path(true);
@@ -183,28 +243,12 @@ const AddApiKeyCard = ({ onSave, onCancel, context }: AddApiKeyCardProps) => {
         includeV1Path={includeV1Path}
         onIncludeV1PathChange={setIncludeV1Path}
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+      />
     </Paper>
   );
 };
@@ -218,6 +262,7 @@ type EditApiKeyCardProps = {
     azureRegion?: string | null;
     includeV1Path?: boolean | null;
     transcriptionModel?: string | null;
+    transcriptionPath?: string | null;
   }) => Promise<void>;
   onCancel: () => void;
   onTest: (overrides: Partial<SettingsApiKey>) => void;
@@ -240,6 +285,8 @@ const EditApiKeyCard = ({
     if (apiKey.azureRegion) initial.azureRegion = apiKey.azureRegion;
     if (apiKey.transcriptionModel)
       initial.transcriptionModel = apiKey.transcriptionModel;
+    if (apiKey.transcriptionPath)
+      initial.transcriptionPath = apiKey.transcriptionPath;
     return initial;
   });
   const [includeV1Path, setIncludeV1Path] = useState(
@@ -281,6 +328,12 @@ const EditApiKeyCard = ({
       const transcriptionModel = hasTranscriptionModelField
         ? fieldValues.transcriptionModel || null
         : undefined;
+      const hasTranscriptionPathField = config.fields.some(
+        (f) => f.key === "transcriptionPath",
+      );
+      const transcriptionPath = hasTranscriptionPathField
+        ? fieldValues.transcriptionPath || null
+        : undefined;
 
       await onSave({
         name,
@@ -289,6 +342,7 @@ const EditApiKeyCard = ({
         azureRegion,
         includeV1Path: includeV1PathValue,
         transcriptionModel,
+        transcriptionPath,
       });
     } catch (error) {
       console.error("Failed to save API key", error);
@@ -313,20 +367,26 @@ const EditApiKeyCard = ({
       overrides.baseUrl = fieldValues.baseUrl || config.defaultBaseUrl;
     if (fieldValues.azureRegion)
       overrides.azureRegion = fieldValues.azureRegion;
+    const hasTranscriptionModelField = config.fields.some(
+      (f) => f.key === "transcriptionModel",
+    );
+    if (hasTranscriptionModelField) {
+      overrides.transcriptionModel = fieldValues.transcriptionModel || null;
+    }
+    if (config.showIncludeV1Path) overrides.includeV1Path = includeV1Path;
     onTest(overrides);
-  }, [name, fieldValues, config.defaultBaseUrl, onTest]);
+  }, [name, fieldValues, config, includeV1Path, onTest]);
 
   return (
     <Paper
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         p: 2,
         display: "flex",
         flexDirection: "column",
         gap: 1.5,
-        borderColor: "primary.main",
-        borderWidth: 1,
-      }}
+        ...selectedOutlineSx(theme),
+      })}
     >
       <Typography
         variant="body2"
@@ -357,40 +417,14 @@ const EditApiKeyCard = ({
         onIncludeV1PathChange={setIncludeV1Path}
         isEditing
       />
-      <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleTest}
-          disabled={testing || saving}
-        >
-          {testing ? (
-            <FormattedMessage defaultMessage="Testing..." />
-          ) : (
-            <FormattedMessage defaultMessage="Test" />
-          )}
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-          size="small"
-          disabled={saving}
-        >
-          <FormattedMessage defaultMessage="Cancel" />
-        </Button>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={handleSave}
-          disabled={!canSave || saving}
-        >
-          {saving ? (
-            <FormattedMessage defaultMessage="Saving..." />
-          ) : (
-            <FormattedMessage defaultMessage="Save" />
-          )}
-        </Button>
-      </Box>
+      <ApiKeyFormActions
+        onCancel={onCancel}
+        onSave={() => void handleSave()}
+        saving={saving}
+        canSave={canSave}
+        onTest={handleTest}
+        testing={testing}
+      />
     </Paper>
   );
 };
@@ -452,8 +486,10 @@ const ModelPickerForProvider = ({
     return (
       <Box onClick={(e) => e.stopPropagation()}>
         <OpenAICompatibleModelPicker
+          apiKeyId={apiKey.id}
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
+          includeV1Path={apiKey.includeV1Path}
           selectedModel={currentModel}
           onModelSelect={onModelChange}
           disabled={disabled}
@@ -497,7 +533,9 @@ const GenericModelPicker = ({
   useEffect(() => {
     const options: FetchModelsOptions = {
       apiKey: apiKey.keyFull ?? undefined,
+      apiKeyId: apiKey.id,
       baseUrl: apiKey.baseUrl ?? undefined,
+      includeV1Path: apiKey.includeV1Path,
     };
 
     let cancelled = false;
@@ -522,7 +560,14 @@ const GenericModelPicker = ({
     return () => {
       cancelled = true;
     };
-  }, [repo, apiKey.keyFull, apiKey.baseUrl, context]);
+  }, [
+    repo,
+    apiKey.id,
+    apiKey.keyFull,
+    apiKey.baseUrl,
+    apiKey.includeV1Path,
+    context,
+  ]);
 
   if (models.length === 0 && !isLoading) return null;
 
@@ -603,23 +648,26 @@ const ApiKeyCard = ({
     <Paper
       variant="outlined"
       onClick={onSelect}
-      sx={{
-        p: 2,
-        borderColor: selected ? "primary.main" : "divider",
-        borderWidth: 1,
-        cursor: "pointer",
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-        boxShadow: selected
-          ? (theme) => `0 0 0 1px ${theme.palette.primary.main}`
-          : "none",
-        ":hover": {
-          borderColor: selected ? "primary.main" : "action.active",
+      sx={[
+        {
+          p: 2,
+          borderColor: "divider",
+          borderWidth: 1,
+          cursor: "pointer",
+          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+          // Hover lives here, in one place: a selected card keeps its stroke
+          // (never reverts to an invisible state), an unselected card lights
+          // up with the active border colour.
+          ":hover": {
+            borderColor: selected ? "text.primary" : "action.active",
+          },
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          width: "100%",
         },
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        width: "100%",
-      }}
+        selected && selectedOutlineSx,
+      ]}
     >
       <Stack
         direction="row"
@@ -647,10 +695,11 @@ const ApiKeyCard = ({
               {apiKey.name}
             </Typography>
             {selected && (
-              <CheckRoundedIcon
-                fontSize="small"
-                sx={{ color: "text.primary", flexShrink: 0 }}
-                titleAccess={intl.formatMessage({ defaultMessage: "Selected" })}
+              <Check
+                size={16}
+                strokeWidth={1.9}
+                aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
+                style={{ flexShrink: 0 }}
               />
             )}
           </Stack>
@@ -708,7 +757,7 @@ const ApiKeyCard = ({
                 }}
                 disabled={deleting || testing}
               >
-                <EditOutlinedIcon fontSize="small" />
+                <Pencil size={16} strokeWidth={1.9} />
               </IconButton>
             </span>
           </Tooltip>
@@ -723,7 +772,7 @@ const ApiKeyCard = ({
                 }}
                 disabled={deleting || testing}
               >
-                <DeleteOutlineIcon fontSize="small" />
+                <Trash2 size={16} strokeWidth={1.9} />
               </IconButton>
             </span>
           </Tooltip>
@@ -786,15 +835,16 @@ export const ApiKeyList = ({
   }, [apiKeys, selectedApiKeyId, onChange]);
 
   const handleAddApiKey = useCallback(
-    async (
-      name: string,
-      provider: SettingsApiKeyProvider,
-      key: string,
-      baseUrl?: string,
-      azureRegion?: string,
-      transcriptionModel?: string,
-      includeV1Path?: boolean,
-    ) => {
+    async ({
+      name,
+      provider,
+      key,
+      baseUrl,
+      azureRegion,
+      transcriptionModel,
+      includeV1Path,
+      transcriptionPath,
+    }: AddApiKeyPayload) => {
       const created = await createApiKey({
         id: generateApiKeyId(),
         name,
@@ -803,6 +853,7 @@ export const ApiKeyList = ({
         baseUrl,
         azureRegion,
         includeV1Path,
+        transcriptionPath,
       });
 
       if (transcriptionModel) {
@@ -894,6 +945,7 @@ export const ApiKeyList = ({
         azureRegion?: string | null;
         includeV1Path?: boolean | null;
         transcriptionModel?: string | null;
+        transcriptionPath?: string | null;
       },
     ) => {
       await updateApiKey({
@@ -907,6 +959,10 @@ export const ApiKeyList = ({
           payload.transcriptionModel !== undefined
             ? payload.transcriptionModel
             : undefined,
+        transcriptionPath:
+          payload.transcriptionPath !== undefined
+            ? payload.transcriptionPath
+            : undefined,
       });
       setEditingApiKeyId(null);
     },
@@ -916,6 +972,13 @@ export const ApiKeyList = ({
   const handleTestEditingApiKey = useCallback(
     async (apiKey: SettingsApiKey, overrides: Partial<SettingsApiKey>) => {
       const merged = { ...apiKey, ...overrides };
+      if (
+        apiKey.provider === "openai-compatible" &&
+        merged.baseUrl !== apiKey.baseUrl
+      ) {
+        showErrorSnackbar("Save endpoint URL changes before testing them.");
+        return;
+      }
       setTestingApiKeyId(apiKey.id);
       try {
         const config = getProviderFormConfig(merged.provider, context);
@@ -1009,7 +1072,7 @@ export const ApiKeyList = ({
       </Typography>
       <Button
         variant="contained"
-        startIcon={<AddIcon />}
+        startIcon={<Plus size={16} strokeWidth={1.9} />}
         onClick={() => setShowAddCard(true)}
       >
         <FormattedMessage defaultMessage="Add API key" />
@@ -1081,7 +1144,7 @@ export const ApiKeyList = ({
       ) : apiKeys.length > 0 || shouldShowError ? (
         <Button
           variant="outlined"
-          startIcon={<AddIcon />}
+          startIcon={<Plus size={16} strokeWidth={1.9} />}
           onClick={() => setShowAddCard(true)}
           sx={{ alignSelf: "flex-start" }}
         >

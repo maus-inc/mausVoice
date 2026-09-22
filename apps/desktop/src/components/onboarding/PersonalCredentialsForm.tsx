@@ -78,7 +78,7 @@ export const PersonalCredentialsForm = () => {
       if (trimmedDeepgram) {
         await savePersonalDeepgramApiKey(trimmedDeepgram);
       }
-      goToOnboardingPage("userDetails");
+      goToOnboardingPage("chooseTranscription");
     } catch (err) {
       setError(
         err instanceof Error
@@ -94,7 +94,7 @@ export const PersonalCredentialsForm = () => {
 
   const handleSkip = () => {
     trackButtonClick("onboarding_personal_credentials_skip");
-    goToOnboardingPage("userDetails");
+    goToOnboardingPage("chooseTranscription", "skip");
   };
 
   const form = (

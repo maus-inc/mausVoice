@@ -9,7 +9,7 @@ Uninstalling the executable does not necessarily erase the database, model downl
 
 ## Before uninstalling
 
-If mausVoice still launches, review **History** for text you need. **Settings → Danger zone → Clear local data** clears profile, preference, key, conversation, transcription, dictionary, and hotkey rows after you type `clear`; it is irreversible. It does not remove downloaded models, logs, general storage, the database file itself, or saved audio files, so inspect the platform app-data locations separately.
+If mausVoice still launches, review **History** for text you need. **Settings → Danger zone → Clear local data** clears profile, preference, key, conversation, transcription, dictionary, and hotkey rows after you type `clear`; it is irreversible. It also attempts to remove managed audio referenced by deleted transcription rows and sweeps orphaned WAVs in the managed audio directory. It does not remove downloaded models, logs, general storage, or the database file itself, so inspect the platform app-data locations separately.
 
 Remove the app through the platform's normal mechanism:
 

@@ -9,7 +9,7 @@ use cocoa::appkit::{
     NSWindow, NSWindowCollectionBehavior,
 };
 use cocoa::base::{id, nil, NO, YES};
-use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize, NSString};
+use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSSize};
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel, BOOL};
 // Note: `Object` import kept for potential future use (currently only `&Object` is needed)
@@ -18,7 +18,10 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::{self, Ctx};
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
+use crate::nsstring::with_ns_string;
+use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 
 // ── Safe wrappers around common Cocoa FFI patterns ─────────────────────
 // Issue #4: These reduce the blast radius of unsafe blocks by encapsulating
@@ -53,6 +56,34 @@ unsafe fn screens() -> id {
 /// Returns the visible frame of a screen.
 unsafe fn screen_visible_frame(screen: id) -> NSRect {
     msg_send![screen, visibleFrame]
+}
+
+/// Converts an AppKit (bottom-left origin, y-up) rectangle into the top-left,
+/// y-down coordinate space Tauri uses for window positions. `primary_top` is
+/// the AppKit y of the primary screen's top edge, so windows on screens above
+/// the primary correctly come out with negative y values.
+unsafe fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
+    Rect {
+        x: rect.origin.x,
+        y: primary_top - (rect.origin.y + rect.size.height),
+        width: rect.size.width,
+        height: rect.size.height,
+    }
+}
+
+/// Reads the pill window's screen rect and the visible frame of the monitor it
+/// lives on, already flipped into Tauri's top-down coordinate space, so the
+/// desktop can anchor the composer next to the real pill.
+unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
+    let frame = window_frame(window);
+    let screen: id = msg_send![window, screen];
+    let primary_screens = screens();
+    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    let rect = to_top_down(frame, primary_top);
+    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    (rect, monitor)
 }
 
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
@@ -139,6 +170,15 @@ fn register_pill_view_class() -> &'static Class {
         decl.add_method(sel!(tick:), tick_callback as extern "C" fn(&Object, Sel, id));
         decl.add_method(sel!(hitTest:), hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id);
         decl.add_method(sel!(textFieldAction:), text_field_action as extern "C" fn(&Object, Sel, id));
+        decl.add_method(
+            sel!(controlTextDidChange:),
+            control_text_did_change as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
+            sel!(control:textView:doCommandBySelector:),
+            control_do_command as extern "C" fn(&Object, Sel, id, id, Sel) -> BOOL,
+        );
+        decl.add_method(sel!(cancelOperation:), cancel_operation as extern "C" fn(&Object, Sel, id));
     }
 
     decl.register()
@@ -166,10 +206,7 @@ extern "C" fn accepts_first_responder(_this: &Object, _sel: Sel) -> BOOL {
 }
 
 extern "C" fn can_become_key_window(_this: &Object, _sel: Sel) -> BOOL {
-    let is_typing = with_ctx(|ctx| {
-        ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type"
-    });
+    let is_typing = with_ctx(|ctx| ctx.state.is_typing());
     if is_typing.unwrap_or(false) { YES } else { NO }
 }
 
@@ -218,8 +255,11 @@ extern "C" fn mouse_exited(_this: &Object, _sel: Sel, _event: id) {
         if ctx.state.pointer_down.get() {
             return;
         }
-        if ctx.state.hovered.get() {
-            ctx.state.hovered.set(false);
+        // Leaving the tracking area is decisive: exit now instead of waiting
+        // out the grace, and reset the controller so it cannot disagree.
+        let was_hovered = ctx.state.hover_intent.borrow_mut().reset();
+        ctx.state.hovered.set(false);
+        if was_hovered {
             ipc::send(&OutMessage::Hover { hovered: false });
         }
     });
@@ -229,10 +269,11 @@ extern "C" fn mouse_up(_this: &Object, _sel: Sel, event: id) {
     with_ctx(|ctx| {
         // Track whether we were dragging (to suppress click on release)
         let was_dragging = ctx.state.dragging.get();
-        // End the gesture and persist the dropped position (if still dragging)
+        // End the gesture and start the release settle (if still dragging)
         // through the shared teardown, so the mouseUp path and the frame-tick
         // missed-release backstop cannot drift apart.
-        end_drag(&ctx.state, ctx.window);
+        let now = unsafe { CFAbsoluteTimeGetCurrent() };
+        end_drag(&ctx.state, ctx.window, now);
 
         // Only fire click if the user wasn't dragging
         if !was_dragging {
@@ -307,19 +348,98 @@ extern "C" fn hit_test(this: &Object, _sel: Sel, point: NSPoint) -> id {
     }
 }
 
+/// Read what a text field currently holds. A field that hands back nothing at
+/// all reads as an empty string, and bytes that are not valid UTF-8 are
+/// replaced rather than dropping the whole entry.
+///
+/// # Safety
+/// `field` must be a live `NSTextField`.
+unsafe fn field_string(field: id) -> String {
+    let ns_text: id = msg_send![field, stringValue];
+    if ns_text.is_null() {
+        return String::new();
+    }
+    let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
+    if cstr.is_null() {
+        return String::new();
+    }
+    std::ffi::CStr::from_ptr(cstr).to_string_lossy().into_owned()
+}
+
 extern "C" fn text_field_action(_this: &Object, _sel: Sel, sender: id) {
     with_ctx(|ctx| {
         unsafe {
-            let ns_text: id = msg_send![sender, stringValue];
-            let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-            let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                ipc::send(&OutMessage::TypedMessage { text });
-                let empty: id = NSString::alloc(nil).init_str("");
-                let _: () = msg_send![sender, setStringValue:empty];
-                *ctx.state.entry_text.borrow_mut() = String::new();
-            }
+            *ctx.state.entry_text.borrow_mut() = field_string(sender);
         }
+        // Enter submits: an insert decision while a transcript is under review,
+        // a message to the assistant otherwise.
+        if input::submit_entry(&ctx.state) {
+            set_entry_text("");
+        }
+    });
+}
+
+/// Mirror every keystroke into state, the way the GTK pill does on `changed`.
+///
+/// The field only fires its action once the edit is committed, so without this
+/// the buttons on the review panel would answer with the text as it stood at
+/// the last frame instead of the text on screen.
+extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: id) {
+    with_ctx(|ctx| unsafe {
+        let control: id = msg_send![notification, object];
+        *ctx.state.entry_text.borrow_mut() = field_string(control);
+    });
+}
+
+/// Escape while a transcript is under review cancels it, the same as on the
+/// Windows pill. The field editor holds the keyboard while the entry is being
+/// edited, and it routes Escape here as `cancelOperation:`. Every other command
+/// keeps its standard behaviour.
+extern "C" fn control_do_command(
+    _this: &Object,
+    _sel: Sel,
+    _control: id,
+    _text_view: id,
+    command: Sel,
+) -> BOOL {
+    if command != sel!(cancelOperation:) {
+        return NO;
+    }
+    if cancel_pending_review() {
+        YES
+    } else {
+        NO
+    }
+}
+
+/// Escape when the panel, rather than its entry, holds the keyboard.
+///
+/// The chain deliberately stops here: an Escape with no review to answer must
+/// not travel up to the panel, which would close the pill window.
+extern "C" fn cancel_operation(_this: &Object, _sel: Sel, _sender: id) {
+    cancel_pending_review();
+}
+
+/// Send a cancel decision for the transcript under review, if there is one.
+/// Returns whether a review was cancelled.
+fn cancel_pending_review() -> bool {
+    with_ctx(|ctx| match ctx.state.pending_review_id() {
+        Some(review_id) => {
+            input::send_review_decision(&review_id, "cancel", None);
+            true
+        }
+        None => false,
+    })
+    .unwrap_or(false)
+}
+
+/// Put `text` in the panel's text field. Used to load a transcript into the
+/// entry for review and to empty the field once it has been answered.
+pub(crate) fn set_entry_text(text: &str) {
+    with_ctx(|ctx| unsafe {
+        with_ns_string(text, |ns| {
+            let _: () = msg_send![ctx.entry, setStringValue:ns];
+        });
     });
 }
 
@@ -362,6 +482,15 @@ fn perform_tick() {
                     }
                     let prev = ctx.state.phase.get();
                     ctx.state.phase.set(phase);
+                    ctx.state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&ctx.state);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         ctx.state.target_level.set(0.0);
                         ctx.state.current_level.set(0.0);
@@ -375,25 +504,26 @@ fn perform_tick() {
                     ctx.state.style_count.set(count);
                     *ctx.state.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *ctx.state.flash_action.borrow_mut() = action;
                     *ctx.state.flash_action_label.borrow_mut() = action_label;
+                    *ctx.state.flash_reject_action.borrow_mut() = reject_action;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
-                    ctx.state.flash_visible.set(false);
-                    ctx.state.flash_timer.set(0.0);
-                    *ctx.state.flash_action.borrow_mut() = None;
-                    *ctx.state.flash_action_label.borrow_mut() = None;
+                    clear_flash(&ctx.state);
                 }
                 InMessage::Fireworks { message } => {
                     *ctx.state.flash_message.borrow_mut() = message;
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -407,6 +537,8 @@ fn perform_tick() {
                     ctx.state.flash_is_error.set(false);
                     *ctx.state.flash_action.borrow_mut() = None;
                     *ctx.state.flash_action_label.borrow_mut() = None;
+                    *ctx.state.flash_reject_action.borrow_mut() = None;
+                    *ctx.state.flash_reject_action_label.borrow_mut() = None;
                     ctx.state.flash_visible.set(true);
                     ctx.state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -422,6 +554,9 @@ fn perform_tick() {
                     *ctx.state.transcript_text.borrow_mut() = text;
                     ctx.state.transcript_time_since_update.set(0.0);
                     ctx.state.transcript_has_message.set(true);
+                }
+                InMessage::StageText { text } => {
+                    *ctx.state.stage_text.borrow_mut() = text;
                 }
                 InMessage::Visibility { visibility } => {
                     ctx.state.visibility.set(visibility);
@@ -439,8 +574,27 @@ fn perform_tick() {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = ctx.state.assistant_active.get();
+                    let previous_review_id = ctx
+                        .state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
+                    *ctx.state.assistant_review.borrow_mut() = review;
+
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *ctx.state.entry_text.borrow_mut() = text.clone();
+                        set_entry_text(&text);
+                    }
                     ctx.state.assistant_active.set(active);
                     *ctx.state.assistant_input_mode.borrow_mut() = input_mode;
                     ctx.state.assistant_compact.set(compact);
@@ -450,15 +604,33 @@ fn perform_tick() {
                     *ctx.state.assistant_streaming.borrow_mut() = streaming;
                     *ctx.state.assistant_permissions.borrow_mut() = permissions;
 
-                    if active && !was_active {
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         ctx.state.should_stick.set(true);
                         ctx.state.scroll_offset.set(0.0);
                     }
                 }
                 InMessage::ResetPosition { strategy } => {
                     ctx.state.has_saved_position.set(false);
+                    ctx.state.drag_motion.borrow_mut().reset();
+                    ctx.state.selector_placement.borrow_mut().reset();
+                    ctx.state.crossing.borrow_mut().reset();
                     ctx.state.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
+                }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = unsafe { pill_geometry(ctx.window) };
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: ctx.state.has_saved_position.get(),
+                        rect: Some(rect),
+                        monitor: Some(monitor),
+                    });
                 }
                 InMessage::Quit => {
                     ctx.quit.set(true);
@@ -490,8 +662,7 @@ fn perform_tick() {
         tick(&ctx.state, ctx.window, dt);
 
         // Show/hide entry for typing mode
-        let is_typing = ctx.state.assistant_active.get()
-            && *ctx.state.assistant_input_mode.borrow() == "type";
+        let is_typing = ctx.state.is_typing();
         unsafe {
             let entry = ctx.entry;
             let entry_hidden: BOOL = msg_send![entry, isHidden];
@@ -504,24 +675,20 @@ fn perform_tick() {
                 let _: () = msg_send![ctx.window, resignKeyWindow];
             }
 
-            // Sync entry text to state
+            // Sync entry text to state. `controlTextDidChange:` already does
+            // this on every keystroke; this covers changes the delegate does
+            // not see, such as a paste routed by the system.
             if is_typing {
-                let ns_text: id = msg_send![entry, stringValue];
-                let cstr: *const std::os::raw::c_char = msg_send![ns_text, UTF8String];
-                let text = std::ffi::CStr::from_ptr(cstr).to_str().unwrap_or("").to_string();
-                *ctx.state.entry_text.borrow_mut() = text;
+                *ctx.state.entry_text.borrow_mut() = field_string(entry);
             }
         }
 
         // Visibility
-        let visibility = ctx.state.visibility.get();
-        let is_active = ctx.state.phase.get() != Phase::Idle;
-        let is_assistant = ctx.state.assistant_active.get();
-        let should_show = match visibility {
-            Visibility::Hidden => is_assistant,
-            Visibility::WhileActive => is_active || is_assistant,
-            Visibility::Persistent => true,
-        };
+        let should_show = rust_pill_shared::should_show_pill(
+            ctx.state.visibility.get().into(),
+            ctx.state.phase.get() != Phase::Idle,
+            ctx.state.owns_panel(),
+        );
         unsafe {
             if should_show {
                 let _: () = msg_send![ctx.window, orderFront:nil];
@@ -531,7 +698,7 @@ fn perform_tick() {
         }
 
         // Reposition window: follow cursor when dragging, auto-center otherwise
-        reposition_window(ctx.window, &ctx.state);
+        reposition_window(ctx.window, &ctx.state, dt, now);
 
         // Request redraw
         unsafe {
@@ -552,18 +719,42 @@ fn perform_tick() {
 /// Persists the dropped window position when a drag was in progress, then
 /// clears the drag and gesture flags, so a missed `mouseUp:` caught by the
 /// frame-tick backstop does not strand the pill at its old position.
-fn end_drag(state: &PillState, window: id) {
+fn end_drag(state: &PillState, _window: id, now: f64) {
     if state.dragging.get() {
-        let frame = unsafe { window_frame(window) };
-        state.saved_x.set(frame.origin.x);
-        state.saved_y.set(frame.origin.y);
-        state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        // The drop point persists when the release settle finishes (the frame
+        // tick calls persist_drag_position on the settled frame), so the saved
+        // position always matches where the pill landed.
+        state.drag_motion.borrow_mut().end_drag(now);
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
+}
+
+/// Persists the position the pill settled at after a drag: stores the live
+/// window origin (not the cursor) and tells the desktop, so the saved point
+/// matches the parked pill exactly.
+fn persist_drag_position(state: &PillState, window: id) {
+    let frame = unsafe { window_frame(window) };
+    state.saved_x.set(frame.origin.x);
+    state.saved_y.set(frame.origin.y);
+    state.has_saved_position.set(true);
+    let (rect, monitor) = unsafe { pill_geometry(window) };
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect: Some(rect),
+        monitor: Some(monitor),
+    });
+}
+
+/// True when macOS accessibility asks for reduced motion.
+fn reduced_motion() -> bool {
+    unsafe {
+        let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceMotion];
+        reduce == YES
+    }
 }
 
 /// Clears the pointer-down pin if the physical button is no longer held.
@@ -581,31 +772,90 @@ fn release_pointer_if_button_up(state: &PillState, window: id) {
     if buttons & 1 != 0 {
         return;
     }
-    end_drag(state, window);
+    let now = unsafe { CFAbsoluteTimeGetCurrent() };
+    end_drag(state, window, now);
 }
 
 fn update_hover(view: id, ctx: &AppContext) {
-    let probed = unsafe {
+    let (probed, mouse_x, mouse_y) = unsafe {
         let window: id = msg_send![view, window];
         let mouse_screen: NSPoint = msg_send![class!(NSEvent), mouseLocation];
         let mouse_win: NSPoint = msg_send![window, convertPointFromScreen:mouse_screen];
         let mouse_view: NSPoint = msg_send![view, convertPoint:mouse_win fromView:nil];
-        input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y)
+        (
+            input::is_in_hover_zone(&ctx.state, mouse_view.x, mouse_view.y),
+            mouse_view.x,
+            mouse_view.y,
+        )
     };
 
-    // A held button owns the pointer, so the hit test above cannot be trusted
-    // until it is released.
-    let new_hovered =
-        rust_pill_shared::resolve_hover(probed, ctx.state.pointer_down.get());
-
-    let was_hovered = ctx.state.hovered.get();
-    if new_hovered != was_hovered {
-        ctx.state.hovered.set(new_hovered);
-        ipc::send(&OutMessage::Hover { hovered: new_hovered });
+    // Hover intent: the pointer must dwell on the pill at low speed before
+    // expansion and tooltips fire, and they linger through a short grace once
+    // it leaves, so fast pass-throughs never flicker the pill. A held button
+    // pins hover regardless of the hit test above.
+    let output = ctx.state.hover_intent.borrow_mut().advance(&HoverFrame {
+        probed,
+        pointer_x: mouse_x,
+        pointer_y: mouse_y,
+        now: unsafe { CFAbsoluteTimeGetCurrent() },
+        pointer_down: ctx.state.pointer_down.get(),
+    });
+    ctx.state.hovered.set(output.hovered);
+    if output.entered || output.exited {
+        ipc::send(&OutMessage::Hover {
+            hovered: output.hovered,
+        });
     }
 }
 
 // ── Animation tick ────────────────────────────────────────────────
+
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
+
+/// Origin of the visible frame containing the pill center, plus the center
+/// itself, in top-down points. Drives the crossing detector; the transparent
+/// canvas may straddle a boundary the pill itself has not crossed. Unknown
+/// when no screen contains the center.
+unsafe fn pill_center_monitor(window: id, state: &PillState) -> (f64, f64, f64, f64) {
+    let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    let frame = window_frame(window);
+    let (px, py, pw, ph) = draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    // View is flipped y-down; the window origin is bottom-left y-up.
+    let cx_up = frame.origin.x + cox + px + pw / 2.0;
+    let cy_up = frame.origin.y + frame.size.height - (coy + py + ph / 2.0);
+    let screens = screens();
+    let count: usize = msg_send![screens, count];
+    let primary: id = if count > 0 {
+        msg_send![screens, objectAtIndex:0usize]
+    } else {
+        return unknown;
+    };
+    let pf: NSRect = msg_send![primary, frame];
+    let primary_top = pf.origin.y + pf.size.height;
+    for i in 0..count {
+        let screen: id = msg_send![screens, objectAtIndex:i];
+        let frame: NSRect = msg_send![screen, frame];
+        if cx_up >= frame.origin.x
+            && cx_up < frame.origin.x + frame.size.width
+            && cy_up >= frame.origin.y
+            && cy_up < frame.origin.y + frame.size.height
+        {
+            let visible = to_top_down(screen_visible_frame(screen), primary_top);
+            return (visible.x, visible.y, primary_top - cx_up, primary_top - cy_up);
+        }
+    }
+    unknown
+}
 
 /// Advances all pill animations by `dt` seconds: audio levels, springs
 /// (expand, tooltip, panel, keyboard button, window size, pause crossfade,
@@ -666,7 +916,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
     } else {
         0.0
     };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
 
     // Loading offset
     if is_loading {
@@ -674,30 +924,77 @@ fn tick(state: &PillState, window: id, dt: f64) {
     }
 
     // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+
+    // Monitor crossing from the pill center: deformation is paint-only, so
+    // hit regions and saved positions never see it. A reduced-motion trigger
+    // arms the border flash instead.
+    let (mon_x, mon_y, pcx, pcy) = unsafe { pill_center_monitor(window, state) };
+    let rm = reduced_motion();
+    let out = state.crossing.borrow_mut().advance(
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: mon_x,
+            monitor_y: mon_y,
+            pill_cx: pcx,
+            pill_cy: pcy,
+            now: unsafe { CFAbsoluteTimeGetCurrent() },
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
+
+    // Selector side from the live headroom: the selector drops below the
+    // pill exactly when the strip above no longer fits it. Draw and hit
+    // testing read the blend back every frame, so both track the animation.
+    // The pill sits a fixed typing-canvas offset above the window bottom, so
+    // the headroom needs no live height.
+    let space_above = unsafe {
+        let (rect, monitor) = pill_geometry(window);
+        rect.y + (WINDOW_H_TYPING as f64 - PILL_AREA_HEIGHT) - monitor.y
+    };
+    state.selector_placement.borrow_mut().advance(
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
 
     // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
 
     // Keyboard button (spring)
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
     let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
 
     // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
 
     // Shimmer phase
     state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
@@ -725,17 +1022,23 @@ fn tick(state: &PillState, window: id, dt: f64) {
             state.flash_timer.set(0.0);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
         } else {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
     let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -749,7 +1052,7 @@ fn tick(state: &PillState, window: id, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+    rust_pill_shared::spring::spring_01(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -760,7 +1063,10 @@ fn tick(state: &PillState, window: id, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
 
     tick_ring(state, dt);
 
@@ -998,8 +1304,20 @@ fn tick_long_press(state: &PillState, window: id, dt: f64) {
         unsafe {
             let mouse = mouse_location();
             let origin = window_frame(window).origin;
-            state.drag_grab_offset_x.set(mouse.x - origin.x);
-            state.drag_grab_offset_y.set(mouse.y - origin.y);
+            // Arm the shared controller with the grab point, and seed it
+            // with the arm sample so a quick release still has velocity data.
+            let now = CFAbsoluteTimeGetCurrent();
+            state.drag_motion.borrow_mut().begin_drag(
+                mouse.x - origin.x,
+                mouse.y - origin.y,
+                origin.x,
+                origin.y,
+                now,
+            );
+            state
+                .drag_motion
+                .borrow_mut()
+                .push_sample(mouse.x, mouse.y, now);
         }
     }
 }
@@ -1044,43 +1362,10 @@ fn tick_ring(state: &PillState, dt: f64) {
     state.arm_pulse.set(anim.arm_pulse);
 }
 
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.5 && (new_vel * dt).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
-    }
-}
 
 // ── Window positioning ────────────────────────────────────────────
 
-fn reposition_window(window: id, state: &PillState) {
+fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
     unsafe {
         let mouse_loc = mouse_location();
         let screens = screens();
@@ -1177,7 +1462,7 @@ fn reposition_window(window: id, state: &PillState) {
         // coordinates, while the view is flipped y-down, so a view-space top
         // edge at `fy` maps to screen y = origin.y + win_h − fy.)
         let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation
+            if state.effective_window_mode() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
                 (
@@ -1200,16 +1485,38 @@ fn reposition_window(window: id, state: &PillState) {
         let max_x = max_x.max(min_x);
         let max_y = max_y.max(min_y);
 
-        let (target_x, target_y) = if dragging {
-            // Drag mode: keep the grabbed point of the window under the cursor
-            // (1:1 tracking instead of snapping the window centre to it),
-            // clamped so the pill's footprint stays inside the visible frame.
-            let mut tx = mouse_loc.x - state.drag_grab_offset_x.get();
-            let mut ty = mouse_loc.y - state.drag_grab_offset_y.get();
-            tx = tx.max(min_x).min(max_x);
-            ty = ty.max(min_y).min(max_y);
-            (tx, ty)
-        } else if state.has_saved_position.get() {
+        // Drag motion runs through the shared controller: direct 1:1 tracking
+        // while held, a velocity-aware settle after release. Both apply every
+        // frame with no deadband, so the window never trails the cursor; the
+        // parked branches below keep their 1 px deadband against jitter.
+        let settling = state.drag_motion.borrow().is_settling();
+        if dragging || settling {
+            let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+                pointer_x: mouse_loc.x,
+                pointer_y: mouse_loc.y,
+                now,
+                dt,
+                bounds: DragBounds {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                },
+                edge_work: Some(rust_pill_shared::edge::EdgeWork {
+                    width: visible.size.width,
+                    height: visible.size.height,
+                }),
+                held: dragging,
+                reduced_motion: reduced_motion(),
+            });
+            set_window_origin(window, NSPoint::new(output.x, output.y));
+            if settling && output.settled {
+                persist_drag_position(state, window);
+            }
+            return;
+        }
+
+        let (target_x, target_y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the visible
             // frame of the screen that position belongs to.
             let mut tx = state.saved_x.get();
@@ -1241,7 +1548,11 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let ui_scale = 1.0; // macOS handles Retina scaling automatically
 
     let window_w = WINDOW_W_TYPING as f64;
-    let window_h = WINDOW_H_TYPING as f64;
+    // The window keeps room for the below selector slot under the pill, so a
+    // side flip animates inside space that is already there. Content math
+    // stays on the typing constants, so the pill never moves for it.
+    let window_h =
+        WINDOW_H_TYPING as f64 + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT);
 
     // Create window (NSPanel with non-activating mask so clicks don't steal focus)
     let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(window_w, window_h));
@@ -1302,11 +1613,16 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
     let font: id = crate::font::satoshi_font(14.0, false);
     let _: () = msg_send![entry, setFont:font];
 
-    let placeholder = NSString::alloc(nil).init_str("Type a message...");
-    let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    with_ns_string("Type a message...", |placeholder| {
+        let _: () = msg_send![entry, setPlaceholderString:placeholder];
+    });
 
     let _: () = msg_send![entry, setTarget:view];
     let _: () = msg_send![entry, setAction:sel!(textFieldAction:)];
+    // The view is also the field's editing delegate: it mirrors each keystroke
+    // into state and turns Escape into a cancel decision while a transcript is
+    // under review.
+    let _: () = msg_send![entry, setDelegate:view];
     let _: () = msg_send![entry, setHidden:YES];
     let _: () = msg_send![view, addSubview:entry];
 
@@ -1327,6 +1643,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         ui_scale,
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
@@ -1341,6 +1658,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -1364,6 +1682,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -1377,14 +1697,17 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
         long_press_start_y: Cell::new(0.0),
         dragging: Cell::new(false),
         drag_cancelled: Cell::new(false),
-        drag_grab_offset_x: Cell::new(0.0),
-        drag_grab_offset_y: Cell::new(0.0),
+        drag_motion: RefCell::new(DragController::new()),
+        hover_intent: RefCell::new(HoverIntent::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
@@ -1392,6 +1715,8 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
         first_placement_done: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -1433,7 +1758,7 @@ unsafe fn setup(receiver: Receiver<InMessage>, embedded: bool) {
 
     // Position and show (orderFront only — don't steal focus from other apps)
     with_ctx(|ctx| {
-        reposition_window(window, &ctx.state);
+        reposition_window(window, &ctx.state, 1.0 / 60.0, CFAbsoluteTimeGetCurrent());
     });
     let _: () = msg_send![window, orderFront:nil];
 

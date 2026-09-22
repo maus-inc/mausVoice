@@ -5,7 +5,8 @@ export type AzureTranscriptionArgs = {
   region: string;
   blob: ArrayBuffer | Buffer;
   language?: string;
-  prompt?: string;
+  /** Vocabulary terms fed to the recognizer's phrase list. */
+  phrases?: string[];
 };
 
 export type AzureTranscribeAudioOutput = {
@@ -13,6 +14,21 @@ export type AzureTranscribeAudioOutput = {
 };
 
 const AZURE_LOCALE_REGEX = /^[a-z]{2,3}-[A-Z]{2}$/;
+
+const applyPhraseList = (
+  recognizer: sdk.SpeechRecognizer,
+  phrases: string[] | undefined,
+): void => {
+  if (!phrases || phrases.length === 0) return;
+  // The phrase list takes plain terms and supports multi-word phrases, so
+  // the caller passes vocabulary terms directly and never a prompt sentence,
+  // whose instruction words would bias recognition.
+  const phraseListGrammar = sdk.PhraseListGrammar.fromRecognizer(recognizer);
+  phrases
+    .map((phrase) => phrase.trim())
+    .filter((phrase) => phrase.length > 0)
+    .forEach((phrase) => phraseListGrammar.addPhrase(phrase));
+};
 
 const mapToAzureLocale = (language?: string): string => {
   if (!language || language.trim() === "") {
@@ -112,7 +128,7 @@ export const azureTranscribeAudio = async ({
   region,
   blob,
   language = "en-US",
-  prompt,
+  phrases,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -149,13 +165,7 @@ export const azureTranscribeAudio = async ({
 
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
-    }
+    applyPhraseList(recognizer, phrases);
 
     recognizer.recognizeOnceAsync(
       (result) => {
@@ -214,7 +224,8 @@ export type CreateAzureStreamingSessionArgs = {
   region: string;
   sampleRate: number;
   language?: string;
-  prompt?: string;
+  /** Vocabulary terms fed to the recognizer's phrase list. */
+  phrases?: string[];
 };
 
 export const createAzureStreamingSession = async ({
@@ -222,7 +233,7 @@ export const createAzureStreamingSession = async ({
   region,
   sampleRate,
   language,
-  prompt,
+  phrases,
 }: CreateAzureStreamingSessionArgs): Promise<AzureStreamingSession> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -243,13 +254,7 @@ export const createAzureStreamingSession = async ({
     const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
     const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-    if (prompt) {
-      const phraseListGrammar =
-        sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      const phrases = prompt.split(/[\s,]+/).filter((p) => p.length > 0);
-      phrases.forEach((phrase) => phraseListGrammar.addPhrase(phrase));
-    }
+    applyPhraseList(recognizer, phrases);
 
     let fullTranscript = "";
     let isFinalized = false;

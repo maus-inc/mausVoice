@@ -1,3 +1,3 @@
-# `@turbo/eslint-config`
+# @maus-inc/eslint-config
 
-Collection of internal eslint configurations.
+Shared ESLint configurations for the mausVoice monorepo.

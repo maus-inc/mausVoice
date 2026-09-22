@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::ffi::{c_int, c_ulong, c_void};
+use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -10,12 +10,15 @@ use gtk::prelude::*;
 use crate::constants::MARGIN_BOTTOM;
 use crate::ipc::{self, OutMessage, ResetStrategy};
 use crate::state::{PillState, WindowMode};
+use rust_pill_shared::drag::{DragBounds, DragFrame, DragPhase};
 
 type XDisplay = c_void;
 type XWindow = c_ulong;
+type XAtom = c_ulong;
 
 extern "C" {
     fn gdk_x11_display_get_xdisplay(display: *mut c_void) -> *mut XDisplay;
+    fn gdk_x11_window_get_xid(window: *mut c_void) -> XWindow;
 }
 
 #[link(name = "X11")]
@@ -32,6 +35,15 @@ extern "C" {
         win_y_return: *mut c_int,
         mask_return: *mut u32,
     ) -> c_int;
+    fn XInternAtom(
+        display: *mut XDisplay, name: *const c_char, only_if_exists: c_int,
+    ) -> XAtom;
+    fn XChangeProperty(
+        display: *mut XDisplay, w: XWindow, property: XAtom, type_: XAtom,
+        format: c_int, mode: c_int, data: *const c_uchar, nelements: c_int,
+    ) -> c_int;
+    fn XMoveWindow(display: *mut XDisplay, w: XWindow, x: c_int, y: c_int) -> c_int;
+    fn XFlush(display: *mut XDisplay) -> c_int;
 }
 
 fn query_root_pointer(xdisplay: *mut XDisplay) -> (c_int, c_int) {
@@ -56,77 +68,160 @@ fn query_root_pointer(xdisplay: *mut XDisplay) -> (c_int, c_int) {
     }
 }
 
-/// Persists the X11 drop position at button-release time.
-///
-/// The timer in `setup_x11_window` remains a fallback for release events that
-/// GTK misses, but normal releases must use the pointer position from the
-/// release handler rather than a later 100 ms poll.
-pub(crate) fn persist_drop_position(
-    window: &gtk::Window,
-    state: &PillState,
-) -> bool {
+fn xdisplay_for_window(window: &gtk::Window) -> *mut XDisplay {
     let display = window.display();
-    let xdisplay = unsafe {
+    unsafe {
         gdk_x11_display_get_xdisplay(
             glib::translate::ToGlibPtr::<*mut gdk::ffi::GdkDisplay>::to_glib_none(&display).0
                 as *mut c_void,
         )
+    }
+}
+
+fn toplevel_xid(window: &gtk::Window) -> Option<XWindow> {
+    let gdk_window = window.window()?;
+    unsafe {
+        Some(gdk_x11_window_get_xid(
+            glib::translate::ToGlibPtr::<*mut gdk::ffi::GdkWindow>::to_glib_none(&gdk_window).0
+                as *mut c_void,
+        ))
+    }
+}
+
+/// Current root-pointer position in physical pixels.
+fn root_pointer(window: &gtk::Window) -> (c_int, c_int) {
+    query_root_pointer(xdisplay_for_window(window))
+}
+
+/// Moves the toplevel to an absolute root position.
+fn move_toplevel(window: &gtk::Window, x: c_int, y: c_int) {
+    let Some(xid) = toplevel_xid(window) else {
+        return;
     };
-    let (root_x, root_y) = query_root_pointer(xdisplay);
-    let Some((drop_x, drop_y)) = pill_pos_on_monitor(
+    let xdisplay = xdisplay_for_window(window);
+    unsafe {
+        XMoveWindow(xdisplay, xid, x, y);
+        XFlush(xdisplay);
+    }
+}
+
+/// Persists the X11 drop position derived from the live pointer.
+///
+/// Only the slow timer calls this now, as a net for drags that ended without
+/// a settle (a release landing between the arm moment and the first drag
+/// frame, which starts no settle because the controller never left idle).
+/// Normal releases persist the settled window position instead, so the saved
+/// point matches where the pill landed rather than where the pointer is.
+pub(crate) fn persist_drop_position(
+    window: &gtk::Window,
+    state: &PillState,
+) -> Option<(c_int, c_int)> {
+    let (root_x, root_y) = root_pointer(window);
+    let (drop_x, drop_y) = pill_pos_on_monitor(
         root_x as f64,
         root_y as f64,
         true,
-        &display,
+        &window.display(),
         window,
         state,
-    ) else {
-        return false;
-    };
+    )?;
 
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
+    let (rect, monitor) = crate::pill::pill_geometry(window, state);
     ipc::send(&OutMessage::PositionChanged {
         has_saved_position: true,
+        rect,
+        monitor,
     });
-    true
+    Some((drop_x, drop_y))
+}
+
+/// Persists an explicit window position as the X11 drop point (the frame tick
+/// calls this when a release settle finishes) and marks the release consumed
+/// so the slow timer cannot overwrite it with a later cursor poll.
+pub(crate) fn persist_window_position(
+    window: &gtk::Window,
+    state: &PillState,
+    x: f64,
+    y: f64,
+) {
+    state.saved_x.set(x);
+    state.saved_y.set(y);
+    state.has_saved_position.set(true);
+    state.x11_release_persisted.set(true);
+    let (rect, monitor) = crate::pill::pill_geometry(window, state);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect,
+        monitor,
+    });
+}
+
+/// Advances one frame of X11 drag motion on the frame clock: samples the root
+/// pointer, runs it through the shared controller, and moves the toplevel.
+/// The first frame lazily arms the controller (the arm moment has no display
+/// access; the press point and monitor scale are identical a frame later).
+pub(crate) fn tick_drag_frame(
+    window: &gtk::Window,
+    state: &PillState,
+    now: f64,
+    dt: f64,
+) {
+    let dragging = state.dragging.get();
+    {
+        let motion = state.drag_motion.borrow();
+        if !dragging && !motion.is_settling() {
+            return;
+        }
+    }
+    let display = window.display();
+    let (cx, cy) = root_pointer(window);
+    let Some(p) = placement_on_monitor(cx as f64, cy as f64, &display, window, state) else {
+        return;
+    };
+    let mut motion = state.drag_motion.borrow_mut();
+    if dragging && motion.phase() != DragPhase::Held {
+        // A re-grab while the previous release still settles re-arms here too;
+        // begin_drag cancels the running settle, so the new drag never fights
+        // it with a stale grab offset.
+        motion.begin_drag(
+            state.drag_cursor_x.get() * p.scale,
+            state.drag_cursor_y.get() * p.scale,
+            0.0,
+            0.0,
+            now,
+        );
+    }
+    let was_settling = motion.is_settling();
+    let output = motion.advance(&DragFrame {
+        pointer_x: cx as f64,
+        pointer_y: cy as f64,
+        now,
+        dt,
+        bounds: p.bounds,
+        edge_work: Some(rust_pill_shared::edge::EdgeWork {
+            width: p.work_w,
+            height: p.work_h,
+        }),
+        held: dragging,
+        reduced_motion: crate::pill::reduced_motion(),
+    });
+    drop(motion);
+    let x = output.x.round() as c_int;
+    let y = output.y.round() as c_int;
+    if state.x11_drag_applied.get() != (x, y) {
+        state.x11_drag_applied.set((x, y));
+        move_toplevel(window, x, y);
+    }
+    if was_settling && output.settled {
+        persist_window_position(window, state, output.x.round(), output.y.round());
+    }
 }
 
 pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
-    use std::ffi::{c_char, c_int, c_uchar, c_uint, c_ulong, c_void};
-
-    type XDisplay = c_void;
-    type XWindow = c_ulong;
-    type XAtom = c_ulong;
-
     const XA_ATOM: XAtom = 4;
-
-    extern "C" {
-        fn gdk_x11_display_get_xdisplay(display: *mut c_void) -> *mut XDisplay;
-        fn gdk_x11_window_get_xid(window: *mut c_void) -> XWindow;
-    }
-
-    #[link(name = "X11")]
-    extern "C" {
-        fn XInternAtom(
-            display: *mut XDisplay, name: *const c_char, only_if_exists: c_int,
-        ) -> XAtom;
-        fn XChangeProperty(
-            display: *mut XDisplay, w: XWindow, property: XAtom, type_: XAtom,
-            format: c_int, mode: c_int, data: *const c_uchar, nelements: c_int,
-        ) -> c_int;
-        fn XMoveWindow(display: *mut XDisplay, w: XWindow, x: c_int, y: c_int) -> c_int;
-        fn XFlush(display: *mut XDisplay) -> c_int;
-        fn XDefaultRootWindow(display: *mut XDisplay) -> XWindow;
-        fn XQueryPointer(
-            display: *mut XDisplay, w: XWindow,
-            root_return: *mut XWindow, child_return: *mut XWindow,
-            root_x_return: *mut c_int, root_y_return: *mut c_int,
-            win_x_return: *mut c_int, win_y_return: *mut c_int,
-            mask_return: *mut c_uint,
-        ) -> c_int;
-    }
 
     let display = window.display();
     let gdk_window = window.window().expect("window after realize");
@@ -223,38 +318,28 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     glib::timeout_add_local(Duration::from_millis(100), move || {
         let dragging = state_tick.dragging.get();
 
-        // Drag just ended: persist the actual drop point. `last_pos` is only
-        // refreshed on the placement tick (up to a 100ms cadence), so reusing
-        // it here can persist a position one interval behind the real drop.
-        // Query the pointer at release and resolve the top-left directly.
-        if !dragging
-            && was_dragging.get()
-            && !state_tick.x11_release_persisted.replace(false)
-        {
-            let (cx, cy) = cursor_pos();
-            let (dx, dy) = pill_pos_on_monitor(
-                cx as f64,
-                cy as f64,
-                true,
-                &display,
-                &win_tick,
-                &state_tick,
-            )
-            .unwrap_or_else(|| last_pos.get());
-            // `pill_pos_on_monitor` returns the window top-left, and
-            // `saved_x`/`saved_y` are used verbatim as the top-left when parked
-            // (see the has_saved_position branch), so store it directly.
-            last_pos.set((dx, dy));
-            state_tick.saved_x.set(dx as f64);
-            state_tick.saved_y.set(dy as f64);
-            state_tick.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
+        // The frame tick owns the window while a drag is held or settling;
+        // this slow timer only parks idle pills and heals hot-plug states.
+        if dragging || state_tick.drag_motion.borrow().is_settling() {
+            was_dragging.set(dragging);
+            return ControlFlow::Continue;
         }
-        was_dragging.set(dragging);
 
-        // Pick the anchor that decides which monitor owns the pill: the cursor
-        // while dragging, the saved drop point when parked, else wherever the
-        // pill already is. Resolving the monitor from the live cursor
+        // Net for a drag that ended without a settle (a release landing
+        // between the arm moment and the first drag frame). Normal releases
+        // persist the settled position and mark it consumed, so this skips.
+        // Past the guard above, dragging is always false here.
+        if was_dragging.get() && !state_tick.x11_release_persisted.replace(false) {
+            if let Some(pos) = persist_drop_position(&win_tick, &state_tick) {
+                last_pos.set(pos);
+            }
+        }
+        was_dragging.set(false);
+
+        // Pick the anchor that decides which monitor owns the pill: the saved
+        // drop point when parked, else wherever the pill already is. (Drags
+        // never reach this timer; the frame tick owns the window while one is
+        // held or settling.) Resolving the monitor from the live cursor
         // unconditionally is what used to make the pill leap to another
         // screen — and snap back to bottom-centre — on every crossing.
         //
@@ -282,14 +367,10 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
         // A reset with the "cursor" strategy re-homes onto the monitor under
         // the pointer exactly once; the strategy is consumed so later ticks
         // keep the pill where it landed instead of chasing the cursor.
-        let reset_to_cursor = !dragging
-            && !state_tick.has_saved_position.get()
+        let reset_to_cursor = !state_tick.has_saved_position.get()
             && state_tick.reset_strategy.get() == ResetStrategy::Cursor;
 
-        let (anchor_x, anchor_y) = if dragging {
-            let (ax, ay) = cursor_pos();
-            (ax as f64, ay as f64)
-        } else if state_tick.has_saved_position.get() {
+        let (anchor_x, anchor_y) = if state_tick.has_saved_position.get() {
             (
                 state_tick.saved_x.get() + center_x,
                 state_tick.saved_y.get() + center_y,
@@ -333,26 +414,43 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
 /// anchor when the cursor sits on a transiently-missing monitor at realize().
 fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
     let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
-    let g = primary.geometry();
-    let scale = primary.scale_factor() as f64;
-    let centre_x = (g.x() as f64 + g.width() as f64 / 2.0) * scale;
-    // Containment is exclusive on the lower edge (`anchor_y < phys_y + phys_h`),
+    let phys = crate::pill::logical_rect_to_physical(
+        &primary.geometry(),
+        primary.scale_factor() as f64,
+    );
+    let centre_x = phys.x + phys.width / 2.0;
+    // Containment is exclusive on the lower edge (`anchor_y < phys.y + phys.height`),
     // so sit one physical pixel inside rather than on the boundary.
-    let bottom_y = (g.y() as f64 + g.height() as f64) * scale - 1.0;
+    let bottom_y = phys.y + phys.height - 1.0;
     Some((centre_x, bottom_y))
 }
 
-/// Computes where the toplevel belongs, given the anchor point that decides
-/// which monitor owns the pill. All coordinates are physical pixels: cursor
-/// queries are physical root coords, and monitor geometry is scaled to match.
-fn pill_pos_on_monitor(
+/// Everything the X11 placement math needs about the monitor an anchor point
+/// landed on. All coordinates are physical pixels: cursor queries are physical
+/// root coords, and monitor geometry/work areas are converted via
+/// `logical_rect_to_physical` to match.
+pub(crate) struct MonitorPlacement {
+    pub bounds: DragBounds,
+    pub scale: f64,
+    pub work_x: f64,
+    pub work_y: f64,
+    pub work_w: f64,
+    pub work_h: f64,
+    pub win_w: f64,
+    pub win_h: f64,
+    pub margin: f64,
+}
+
+/// Finds the monitor an anchor point belongs to and resolves its work area,
+/// scale, and clamp bounds. Shared by the slow-timer parking and the
+/// frame-tick drag so the two can never disagree about the work area.
+fn placement_on_monitor(
     anchor_x: f64,
     anchor_y: f64,
-    dragging: bool,
     display: &gdk::Display,
     window: &gtk::Window,
     state: &PillState,
-) -> Option<(c_int, c_int)> {
+) -> Option<MonitorPlacement> {
     let n = display.n_monitors();
     for i in 0..n {
         // A monitor can disappear between the count query and this handle query
@@ -361,22 +459,17 @@ fn pill_pos_on_monitor(
         let Some(monitor) = display.monitor(i) else {
             continue;
         };
-        let g = monitor.geometry();
         let scale = monitor.scale_factor() as f64;
-        let phys_x = g.x() as f64 * scale;
-        let phys_y = g.y() as f64 * scale;
-        let phys_w = g.width() as f64 * scale;
-        let phys_h = g.height() as f64 * scale;
-        if anchor_x >= phys_x
-            && anchor_x < phys_x + phys_w
-            && anchor_y >= phys_y
-            && anchor_y < phys_y + phys_h
+        // Monitor geometry and work areas come back in logical pixels; the
+        // hit-test and placement math below (and XMoveWindow itself) work in
+        // physical root pixels, so convert through the shared helper.
+        let phys = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
+        if anchor_x >= phys.x
+            && anchor_x < phys.x + phys.width
+            && anchor_y >= phys.y
+            && anchor_y < phys.y + phys.height
         {
-            let wa = monitor.workarea();
-            let wa_x = wa.x() as f64 * scale;
-            let wa_y = wa.y() as f64 * scale;
-            let wa_w = wa.width() as f64 * scale;
-            let wa_h = wa.height() as f64 * scale;
+            let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
             let (alloc_w, alloc_h) = window.size();
             // window.size() returns logical pixels; XMoveWindow and the
             // workarea math above are in physical pixels, so scale here too.
@@ -392,8 +485,13 @@ fn pill_pos_on_monitor(
             // pill's visible footprint instead so it can be parked at the true
             // screen edges; panel/typing modes fill the canvas, so they keep
             // whole-window clamping.
+            //
+            // Inverted bounds (a zero-size work area or a footprint larger than
+            // the monitor) are fine to pass through: `clamp_point` normalizes
+            // max to min, so the clamp resolves to the minimum boundary instead
+            // of placing the window outside the work area.
             let (min_x, min_y, max_x, max_y) =
-                if state.window_mode.get() == WindowMode::Dictation
+                if state.effective_window_mode() == WindowMode::Dictation
                     && !state.assistant_active.get()
                 {
                     let (px, py, pw, ph) = crate::draw::pill_position(
@@ -407,52 +505,73 @@ fn pill_pos_on_monitor(
                     let fw = pw * scale;
                     let fh = ph * scale;
                     (
-                        wa_x - fx,
-                        wa_y - fy,
-                        wa_x + wa_w - fx - fw,
-                        wa_y + wa_h - fy - fh,
+                        wa.x - fx,
+                        wa.y - fy,
+                        wa.x + wa.width - fx - fw,
+                        wa.y + wa.height - fy - fh,
                     )
                 } else {
-                    (wa_x, wa_y, wa_x + wa_w - win_w, wa_y + wa_h - win_h)
+                    (wa.x, wa.y, wa.x + wa.width - win_w, wa.y + wa.height - win_h)
                 };
 
-            // Guard against inverted bounds (e.g. a zero-size work area or a
-            // footprint larger than the monitor): normalize the max to the min so
-            // the clamp below resolves to the minimum boundary instead of placing
-            // the window outside the work area.
-            let max_x = max_x.max(min_x);
-            let max_y = max_y.max(min_y);
-
-            if dragging {
-                // Keep the grabbed point of the window under the cursor (1:1
-                // tracking instead of snapping the window centre to it),
-                // clamped so the pill's footprint stays in the work area.
-                let drag_x = state.drag_cursor_x.get() * scale;
-                let drag_y = state.drag_cursor_y.get() * scale;
-                let mut x = anchor_x - drag_x;
-                let mut y = anchor_y - drag_y;
-                x = x.max(min_x).min(max_x);
-                y = y.max(min_y).min(max_y);
-                return Some((x as c_int, y as c_int));
-            }
-
-            if state.has_saved_position.get() {
-                // Park at the persisted drop position, clamped into the work
-                // area of the monitor that position belongs to.
-                let mut x = state.saved_x.get();
-                let mut y = state.saved_y.get();
-                x = x.max(min_x).min(max_x);
-                y = y.max(min_y).min(max_y);
-                return Some((x as c_int, y as c_int));
-            }
-
-            return Some((
-                (wa_x + (wa_w - win_w) / 2.0) as c_int,
-                (wa_y + wa_h - win_h - margin) as c_int,
-            ));
+            return Some(MonitorPlacement {
+                bounds: DragBounds {
+                    min_x,
+                    min_y,
+                    max_x,
+                    max_y,
+                },
+                scale,
+                work_x: wa.x,
+                work_y: wa.y,
+                work_w: wa.width,
+                work_h: wa.height,
+                win_w,
+                win_h,
+                margin,
+            });
         }
     }
     None
+}
+
+/// Computes where the toplevel belongs, given the anchor point that decides
+/// which monitor owns the pill. All coordinates are physical pixels.
+fn pill_pos_on_monitor(
+    anchor_x: f64,
+    anchor_y: f64,
+    dragging: bool,
+    display: &gdk::Display,
+    window: &gtk::Window,
+    state: &PillState,
+) -> Option<(c_int, c_int)> {
+    let p = placement_on_monitor(anchor_x, anchor_y, display, window, state)?;
+
+    if dragging {
+        // Keep the grabbed point of the window under the cursor (1:1
+        // tracking instead of snapping the window centre to it),
+        // clamped so the pill's footprint stays in the work area.
+        let drag_x = state.drag_cursor_x.get() * p.scale;
+        let drag_y = state.drag_cursor_y.get() * p.scale;
+        let (x, y) = p
+            .bounds
+            .clamp_point(anchor_x - drag_x, anchor_y - drag_y);
+        return Some((x as c_int, y as c_int));
+    }
+
+    if state.has_saved_position.get() {
+        // Park at the persisted drop position, clamped into the work
+        // area of the monitor that position belongs to.
+        let (x, y) = p
+            .bounds
+            .clamp_point(state.saved_x.get(), state.saved_y.get());
+        return Some((x as c_int, y as c_int));
+    }
+
+    Some((
+        (p.work_x + (p.work_w - p.win_w) / 2.0) as c_int,
+        (p.work_y + p.work_h - p.win_h - p.margin) as c_int,
+    ))
 }
 
 pub(crate) fn force_keyboard_focus(window: &gtk::Window) {

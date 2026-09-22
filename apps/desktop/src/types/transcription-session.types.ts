@@ -31,5 +31,7 @@ export interface TranscriptionSession {
   ): Promise<TranscriptionSessionResult>;
   cleanup(): void;
   supportsStreaming(): boolean;
+  /** Provider-owned hard limit, measured as wall-clock time from recording start. */
+  getMaximumRecordingDurationMs?(): number;
   setInterimResultCallback(callback: InterimResultCallback): void;
 }

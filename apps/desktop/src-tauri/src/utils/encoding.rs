@@ -1,20 +1,24 @@
+fn decode_utf16(
+    bytes: &[u8],
+    decode_code_unit: fn([u8; 2]) -> u16,
+) -> Result<String, String> {
+    let (code_unit_bytes, trailing_bytes) = bytes.as_chunks::<2>();
+    if !trailing_bytes.is_empty() {
+        return Err("UTF-16 input has an odd number of bytes".to_owned());
+    }
+
+    let code_units: Vec<u16> = code_unit_bytes
+        .iter()
+        .map(|bytes| decode_code_unit(*bytes))
+        .collect();
+    String::from_utf16(&code_units).map_err(|error| error.to_string())
+}
+
 pub fn decode_to_utf8(bytes: &[u8]) -> Result<String, String> {
     if bytes.starts_with(&[0xFF, 0xFE]) {
-        let u16s: Vec<u16> = bytes[2..]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_le_bytes(*c))
-            .collect();
-        String::from_utf16(&u16s).map_err(|e| e.to_string())
+        decode_utf16(&bytes[2..], u16::from_le_bytes)
     } else if bytes.starts_with(&[0xFE, 0xFF]) {
-        let u16s: Vec<u16> = bytes[2..]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_be_bytes(*c))
-            .collect();
-        String::from_utf16(&u16s).map_err(|e| e.to_string())
+        decode_utf16(&bytes[2..], u16::from_be_bytes)
     } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         String::from_utf8(bytes[3..].to_vec()).map_err(|e| e.to_string())
     } else {
@@ -30,7 +34,7 @@ mod tests {
     fn plain_utf8() {
         let input = b"{\"gatewayUrl\":\"https://example.com\"}";
         assert_eq!(
-            decode_to_utf8(input).unwrap(),
+            decode_to_utf8(input).expect("valid UTF-8 must decode"),
             "{\"gatewayUrl\":\"https://example.com\"}"
         );
     }
@@ -39,7 +43,10 @@ mod tests {
     fn utf8_with_bom() {
         let mut input = vec![0xEF, 0xBB, 0xBF];
         input.extend_from_slice(b"{\"key\":\"value\"}");
-        assert_eq!(decode_to_utf8(&input).unwrap(), "{\"key\":\"value\"}");
+        assert_eq!(
+            decode_to_utf8(&input).expect("valid UTF-8 with BOM must decode"),
+            "{\"key\":\"value\"}"
+        );
     }
 
     #[test]
@@ -49,7 +56,10 @@ mod tests {
         for u in json.encode_utf16() {
             input.extend_from_slice(&u.to_le_bytes());
         }
-        assert_eq!(decode_to_utf8(&input).unwrap(), json);
+        assert_eq!(
+            decode_to_utf8(&input).expect("valid UTF-16 LE with BOM must decode"),
+            json
+        );
     }
 
     #[test]
@@ -59,12 +69,27 @@ mod tests {
         for u in json.encode_utf16() {
             input.extend_from_slice(&u.to_be_bytes());
         }
-        assert_eq!(decode_to_utf8(&input).unwrap(), json);
+        assert_eq!(
+            decode_to_utf8(&input).expect("valid UTF-16 BE with BOM must decode"),
+            json
+        );
     }
 
     #[test]
-    fn invalid_utf8_returns_error() {
-        let input = vec![0xFF, 0xFE, 0x00];
-        assert!(decode_to_utf8(&input).is_ok() || decode_to_utf8(&input).is_err());
+    fn utf16_le_with_bom_rejects_a_trailing_byte() {
+        let input = vec![0xFF, 0xFE, 0x7B];
+        assert_eq!(
+            decode_to_utf8(&input),
+            Err("UTF-16 input has an odd number of bytes".to_owned())
+        );
+    }
+
+    #[test]
+    fn utf16_be_with_bom_rejects_a_trailing_byte() {
+        let input = vec![0xFE, 0xFF, 0x7B];
+        assert_eq!(
+            decode_to_utf8(&input),
+            Err("UTF-16 input has an odd number of bytes".to_owned())
+        );
     }
 }

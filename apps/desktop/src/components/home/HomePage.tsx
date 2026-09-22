@@ -1,4 +1,4 @@
-import { LocalFireDepartmentRounded } from "@mui/icons-material";
+import { Flame } from "lucide-react";
 import {
   Box,
   Card,
@@ -126,11 +126,7 @@ export default function HomePage() {
             <StatCard
               value={streak.toString()}
               label={intl.formatMessage({ defaultMessage: "Day streak" })}
-              icon={
-                <LocalFireDepartmentRounded
-                  sx={{ color: "#FF6B35", fontSize: 24 }}
-                />
-              }
+              icon={<Flame size={22} strokeWidth={2} color="#FF6B35" />}
             />
             <StatCard
               value={wordsThisMonth.toLocaleString()}

@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
-use crate::ipc::{Phase, PillMessage, PillPermission, PillStreaming, ResetStrategy, Visibility};
+use crate::ipc::{
+    Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
+};
 
 use crate::constants::*;
 
@@ -18,8 +20,15 @@ pub(crate) enum ClickAction {
     PermissionAllow(String),
     PermissionDeny(String),
     PermissionAlwaysAllow(String),
+    /// Review-before-insert decisions. The id identifies the reviewed
+    /// transcript so a decision can never be applied to a newer one.
+    ReviewInsert(String),
+    ReviewCopy(String),
+    ReviewEdit(String),
+    ReviewCancel(String),
     SendButton,
     FlashAction,
+    FlashReject,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +133,7 @@ pub(crate) struct PillState {
     pub(crate) tooltip_t: Cell<f64>,
     pub(crate) tooltip_velocity: Cell<f64>,
     pub(crate) tooltip_width: Cell<f64>,
+    pub(crate) style_tooltip_gate: rust_pill_shared::StyleTooltipGate,
     pub(crate) ui_scale: f64,
 
     // Window sizing
@@ -142,6 +152,7 @@ pub(crate) struct PillState {
     pub(crate) assistant_messages: RefCell<Vec<PillMessage>>,
     pub(crate) assistant_streaming: RefCell<Option<PillStreaming>>,
     pub(crate) assistant_permissions: RefCell<Vec<PillPermission>>,
+    pub(crate) assistant_review: RefCell<Option<PillReview>>,
 
     // Assistant UI animation
     pub(crate) panel_open_t: Cell<f64>,
@@ -179,6 +190,8 @@ pub(crate) struct PillState {
     pub(crate) flash_is_error: Cell<bool>,
     pub(crate) flash_action: RefCell<Option<String>>,
     pub(crate) flash_action_label: RefCell<Option<String>>,
+    pub(crate) flash_reject_action: RefCell<Option<String>>,
+    pub(crate) flash_reject_action_label: RefCell<Option<String>>,
 
     // Fireworks
     pub(crate) fireworks_active: Cell<bool>,
@@ -200,6 +213,7 @@ pub(crate) struct PillState {
     pub(crate) transcript_time_since_update: Cell<f64>,
     pub(crate) transcript_opacity: Cell<f64>,
     pub(crate) transcript_has_message: Cell<bool>,
+    pub(crate) stage_text: RefCell<Option<String>>,
 
     // Long-press balloon pop + drag
     pub(crate) long_press_active: Cell<bool>,
@@ -208,11 +222,21 @@ pub(crate) struct PillState {
     pub(crate) long_press_start_y: Cell<f64>,
     pub(crate) dragging: Cell<bool>,
     pub(crate) drag_cancelled: Cell<bool>,
-    /// Window-space offset from the window origin to the cursor, captured when
-    /// the drag arms. Keeping it fixed means the pill tracks the pointer 1:1
-    /// instead of snapping its centre under the cursor.
-    pub(crate) drag_grab_offset_x: Cell<f64>,
-    pub(crate) drag_grab_offset_y: Cell<f64>,
+    /// Shared drag-motion controller: owns pointer samples, release velocity,
+    /// and the release settle spring. The frame tick advances it while a drag
+    /// is held or settling; see rust_pill_shared::drag.
+    pub(crate) drag_motion: RefCell<rust_pill_shared::drag::DragController>,
+    /// Hover-intent state machine: dwells before arming hover and lingers
+    /// through a grace before exiting, so fast pass-throughs never flicker
+    /// the pill. See rust_pill_shared::hover.
+    pub(crate) hover_intent: RefCell<rust_pill_shared::hover::HoverIntent>,
+    /// Crossing-deformation state machine: squeezes the paint briefly when
+    /// the pill changes monitors. See rust_pill_shared::deform.
+    pub(crate) crossing: RefCell<rust_pill_shared::deform::CrossingDeform>,
+    /// Selector-placement state machine: picks above or below from the live
+    /// headroom and eases the blend between them. See
+    /// rust_pill_shared::placement.
+    pub(crate) selector_placement: RefCell<rust_pill_shared::placement::SelectorPlacement>,
     pub(crate) has_saved_position: Cell<bool>,
     /// Monitor strategy for the next re-home after a reset-position command.
     pub(crate) reset_strategy: Cell<ResetStrategy>,
@@ -228,6 +252,8 @@ pub(crate) struct PillState {
     // Inflate animation — pill slightly expands when entering drag, contracts on release.
     pub(crate) inflate_t: Cell<f64>,
     pub(crate) inflate_velocity: Cell<f64>,
+    pub(crate) drag_label_t: Cell<f64>,
+    pub(crate) drag_label_velocity: Cell<f64>,
 
     // Master alpha for the long-press outline. Driven by the tick: pinned at
     // 1 while the gesture is held, eased to 0 over LONG_PRESS_RING_FADE after
@@ -263,6 +289,49 @@ pub(crate) struct PillState {
 }
 
 impl PillState {
+    /// The transcript waiting for a review decision, if there is one.
+    pub(crate) fn pending_review_id(&self) -> Option<String> {
+        self.assistant_review
+            .borrow()
+            .as_ref()
+            .map(|review| review.id.clone())
+    }
+
+    /// Whether the panel, rather than the bare pill, owns the window.
+    ///
+    /// The assistant owns it while it runs, and a transcript under review owns
+    /// it too: the review draws its buttons in the panel area, so hit testing,
+    /// hover and the clickable window region all have to cover the panel even
+    /// when no assistant session is open.
+    pub(crate) fn owns_panel(&self) -> bool {
+        self.assistant_active.get() || self.assistant_review.borrow().is_some()
+    }
+
+    /// The window mode to lay the content out in.
+    ///
+    /// A transcript under review needs the panel and its entry whatever size
+    /// the desktop last asked for. The review and the window size arrive as two
+    /// independent messages, so the pill decides its own room rather than
+    /// drawing a panel into a pill-sized box until the other message lands.
+    pub(crate) fn effective_window_mode(&self) -> WindowMode {
+        if self.assistant_review.borrow().is_some() {
+            WindowMode::AssistantTyping
+        } else {
+            self.window_mode.get()
+        }
+    }
+
+    /// Whether the panel shows its text entry.
+    ///
+    /// Assistant type mode owns the entry, and so does a transcript under
+    /// review: the entry is where the transcript is edited before it is
+    /// inserted, so the review reuses the assistant surface instead of opening
+    /// a window of its own.
+    pub(crate) fn is_typing(&self) -> bool {
+        (self.assistant_active.get() && *self.assistant_input_mode.borrow() == "type")
+            || self.assistant_review.borrow().is_some()
+    }
+
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();
