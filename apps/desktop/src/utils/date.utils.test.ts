@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createIntl } from "react-intl";
-import { formatShortDate, formatShortTime, nowIso } from "./date.utils";
+import {
+  formatShortDate,
+  formatShortTime,
+  nowIso,
+  threadDayGroup,
+} from "./date.utils";
 
 const intl = createIntl({ locale: "en" });
 
@@ -37,6 +42,21 @@ describe("formatShortTime", () => {
     );
     expect(formatShortTime(intl, localIso(currentYear, 7, 25, 10))).toBe(
       "10:40 AM",
+    );
+  });
+});
+
+describe("threadDayGroup", () => {
+  it("buckets local calendar days into today, yesterday, and earlier", () => {
+    const now = new Date(2026, 8, 8, 18, 0);
+    expect(threadDayGroup(new Date(2026, 8, 8, 9, 0).toISOString(), now)).toBe(
+      "today",
+    );
+    expect(threadDayGroup(new Date(2026, 8, 7, 23, 0).toISOString(), now)).toBe(
+      "yesterday",
+    );
+    expect(threadDayGroup(new Date(2026, 8, 6, 12, 0).toISOString(), now)).toBe(
+      "earlier",
     );
   });
 });

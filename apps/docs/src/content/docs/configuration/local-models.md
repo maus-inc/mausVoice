@@ -26,13 +26,13 @@ The three NVIDIA models run through ONNX Runtime (Parakeet CTC/TDT 0.6B and Cana
 
 A model is selectable only when its status says both downloaded and valid. Validation loads the model through its runtime (whisper.cpp for GGML, ONNX Runtime for Parakeet/Canary, sherpa-onnx for SenseVoice), so a corrupt or incompatible file is not treated as ready. The runtime also attempts to download an active missing model automatically, but doing that at dictation start can create a long, poorly timed wait; download and verify it in Settings first.
 
-**Delete** removes the model file (or, for ONNX models, the model's artifact directory). If the deleted model was selected, the UI chooses the first remaining valid model in displayed order. If none remains, download one before the next dictation. Keep more free space than the displayed file size for partial downloads, ONNX companion artifacts, and filesystem overhead.
+**Delete** removes the model file (or, for ONNX and sherpa-onnx models, the model's artifact directory). If the deleted model was selected, the UI chooses the first remaining valid model in displayed order. If none remains, download one before the next dictation. Keep more free space than the displayed file size for partial downloads, companion artifacts, and filesystem overhead.
 
 ## Manual placement (advanced)
 
 The Settings panel downloads every supported file and validates it before it is selectable. If the network blocks the built-in download, an air-gapped machine needs an offline archive, or a custom build must point at a private mirror, place the files directly under `transcription-models/` and restart the app. The runtime rescans the directory on launch and runs the same validation as a download, so a misplaced, truncated, or wrong-format file is not marked ready.
 
-The parent directory is the Tauri app data directory. Production uses bundle id `com.mausinc.desktop`; local development uses `com.mausinc.desktop.local`, so dev and release do not share files.
+The parent directory is the Tauri app data directory. Production uses bundle id `com.mausinc.desktop`; the standard `pnpm dev:*` workflow uses `com.mausinc.desktop.local`, so normal development and release do not share files. The alternate `tauri.dev.conf.json` configuration instead uses `com.mausinc.desktop.dev`.
 
 | OS      | `transcription-models/` parent                                                        |
 | ------- | ------------------------------------------------------------------------------------- |
@@ -51,6 +51,6 @@ Whisper files go straight into that directory. The filename must match the model
 | Whisper Large v3       | `large`  | `ggml-large-v3.bin`       |
 | Whisper Large v3 Turbo | `turbo`  | `ggml-large-v3-turbo.bin` |
 
-ONNX models (Parakeet CTC, Parakeet TDT, Canary 1B) ship multiple artifacts, so each gets its own subdirectory named after the model ID. The sidecar marks the model ready only after the encoder, decoder, tokenizer, and any companion files for that model are present together. Downloading from the Settings panel handles this grouping; manual placement must keep every artifact in the same subdirectory, or validation will keep failing.
+ONNX and sherpa-onnx models ship multiple artifacts, so each gets its own subdirectory named after the model ID. The sidecar marks the model ready only after the required graph, tokenizer or vocabulary, and other companion files are present together. For SenseVoice, place both `model.int8.onnx` and `tokens.txt` in `transcription-models/sense-voice/`. Downloading from the Settings panel handles this grouping; manual placement must keep every artifact in the same subdirectory, or validation will keep failing.
 
-Sources: the `ggerganov/whisper.cpp` Hugging Face repository for Whisper files, and the published NVIDIA ONNX checkpoints for Parakeet and Canary. The model id, expected filename, and required artifacts are defined in `packages/rust_transcription/src/models.rs`. After placing files, open **Settings → Processing → AI transcription → Local** and confirm the row's status reads both downloaded and valid before selecting it for the next dictation.
+Sources: the `ggerganov/whisper.cpp` Hugging Face repository for Whisper files, published NVIDIA ONNX checkpoints for Parakeet and Canary, and the sherpa-onnx SenseVoice checkpoint. The model id, expected filename, and required artifacts are defined in `packages/rust_transcription/src/models.rs`. After placing files, open **Settings → Processing → AI transcription → Local** and confirm the row's status reads both downloaded and valid before selecting it for the next dictation.

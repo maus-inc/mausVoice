@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
+import { createDefaultPreferences } from "./user.actions";
 import { getAppState, produceAppState, setAppState } from "../store";
 
 const {
@@ -544,5 +545,71 @@ describe("retranscribeTranscription feedback", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(showCompletionToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("retranscribeTranscription persistence gate", () => {
+  const seedGated = (ephemeralSessionActive: boolean) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = createDefaultPreferences();
+    state.local.ephemeralSessionActive = ephemeralSessionActive;
+    const transcription = sampleTranscription("tx-gate");
+    transcription.transcript = "original text";
+    state.transcriptionById["tx-gate"] = transcription;
+    setAppState(state, true);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadTranscriptionAudio.mockResolvedValue({
+      samples: [0.1, 0.2],
+      sampleRate: 16000,
+    });
+    updateTranscription.mockImplementation(
+      async (payload: Transcription) => payload,
+    );
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: "raw retranscribed",
+      sanitizedTranscript: "raw retranscribed",
+      warnings: [],
+      metadata: {},
+    });
+    postProcessTranscript.mockResolvedValue({
+      transcript: "retranscribed text",
+      warnings: [],
+      metadata: {},
+    });
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("persists the retranscribed payload when persistence is allowed", async () => {
+    seedGated(false);
+
+    await retranscribeTranscription({ transcriptionId: "tx-gate" });
+
+    expect(updateTranscription).toHaveBeenCalledTimes(1);
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "tx-gate",
+        transcript: "retranscribed text",
+      }),
+    );
+    expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
+      "retranscribed text",
+    );
+  });
+
+  it("updates memory only and skips the repo write during an ephemeral session", async () => {
+    seedGated(true);
+
+    await retranscribeTranscription({ transcriptionId: "tx-gate" });
+
+    expect(updateTranscription).not.toHaveBeenCalled();
+    expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
+      "retranscribed text",
+    );
   });
 });

@@ -133,12 +133,28 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     let text = state.entry_text.borrow().clone();
                     send_review_decision(id, "copy", Some(text));
                 }
+                ClickAction::ReviewEdit(id) => {
+                    let text = state.entry_text.borrow().clone();
+                    send_review_decision(id, "edit", Some(text));
+                }
                 ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
                 ClickAction::OpenInNew => {
-                    if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                        ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    if let Some(review_id) = review_id {
+                        // The desktop receives this exact edit and settles the
+                        // review only after its caller confirms it is durable.
+                        let text = state.entry_text.borrow().clone();
+                        send_review_decision(&review_id, "open", Some(text));
+                    } else {
+                        if let Some(ref id) = *state.assistant_conversation_id.borrow() {
+                            ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                        }
+                        ipc::send(&OutMessage::AssistantClose);
                     }
-                    ipc::send(&OutMessage::AssistantClose);
                 }
                 ClickAction::KeyboardButton => {
                     ipc::send(&OutMessage::EnableTypeMode);
@@ -292,9 +308,18 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     if currently_hovered {
         if state.tooltip_t.get() > 0.1 {
             let tooltip_w = state.tooltip_width.get();
-            let tooltip_x = (dw - tooltip_w) / 2.0;
             let pill_area_top = dh - PILL_AREA_HEIGHT;
-            let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT;
+            let blend = state.selector_placement.borrow().blend();
+            let (tooltip_x, tooltip_y) = rust_pill_shared::placement::tooltip_origin(
+                0.0,
+                pill_area_top,
+                dw,
+                PILL_AREA_HEIGHT,
+                tooltip_w,
+                TOOLTIP_HEIGHT,
+                TOOLTIP_GAP,
+                blend,
+            );
             if x >= tooltip_x && x <= tooltip_x + tooltip_w
                 && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
             {
@@ -338,8 +363,17 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
     // Tooltip area
     if state.tooltip_t.get() > 0.1 {
         let tooltip_w = state.tooltip_width.get();
-        let tooltip_x = (dw - tooltip_w) / 2.0;
-        let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT;
+        let blend = state.selector_placement.borrow().blend();
+        let (tooltip_x, tooltip_y) = rust_pill_shared::placement::tooltip_origin(
+            0.0,
+            pill_area_top,
+            dw,
+            PILL_AREA_HEIGHT,
+            tooltip_w,
+            TOOLTIP_HEIGHT,
+            TOOLTIP_GAP,
+            blend,
+        );
         if x >= tooltip_x && x <= tooltip_x + tooltip_w
             && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
         {

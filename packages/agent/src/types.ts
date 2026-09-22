@@ -8,6 +8,7 @@ import type {
 export interface AgentToolInput {
   params: Record<string, unknown>;
   reason: string;
+  toolCallId: string;
 }
 
 export interface AgentToolOutput {

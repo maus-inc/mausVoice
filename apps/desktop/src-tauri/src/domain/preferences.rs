@@ -90,6 +90,10 @@ pub struct UserPreferences {
     /// default so existing behavior is unchanged.
     #[serde(default)]
     pub always_request_admin_on_startup: bool,
+    /// JSON object of expansion feature-name -> boolean flag. Stored as a
+    /// serialized string; defaults to an empty object so every flag is off.
+    #[serde(default = "default_expansion_flags")]
+    pub expansion_flags: String,
     /// Where the dictation pill anchors on screen. Accepted values are
     /// "top" or "bottom"; any other value is treated as the default
     /// "bottom" so legacy data never breaks the UI.
@@ -127,6 +131,9 @@ pub struct UserPreferences {
     /// which adds a 20% transcription surcharge. Off by default.
     #[serde(default)]
     pub eleven_labs_keyterms_enabled: bool,
+    /// Update channel this client is subscribed to: "stable" or "beta".
+    #[serde(default = "default_update_channel")]
+    pub update_channel: String,
 }
 
 fn default_hallucination_filter_enabled() -> bool {
@@ -147,6 +154,14 @@ fn default_auto_learn_dictionary_enabled() -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_expansion_flags() -> String {
+    "{}".to_string()
+}
+
+fn default_update_channel() -> String {
+    "stable".to_string()
 }
 
 fn default_pill_reset_monitor_strategy() -> String {
@@ -171,4 +186,31 @@ fn default_preserve_audio_on_failure() -> bool {
 
 fn default_pill_placement() -> String {
     "bottom".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expansion_flags_defaults_to_empty_object_when_missing() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{}");
+    }
+
+    #[test]
+    fn expansion_flags_preserves_explicit_value() {
+        let payload = json!({
+            "userId": "user-1",
+            "transcriptionMode": "online",
+            "expansionFlags": "{\"meetingNotesEnabled\":true}",
+        });
+        let prefs: UserPreferences = serde_json::from_value(payload).unwrap();
+        assert_eq!(prefs.expansion_flags, "{\"meetingNotesEnabled\":true}");
+    }
 }

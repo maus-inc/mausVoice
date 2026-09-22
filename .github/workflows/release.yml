@@ -181,26 +181,10 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          case "$RELEASE_VERSION" in
-            ''|*[!0-9A-Za-z.\-]*|.*|..*)
-              echo "Invalid version '$RELEASE_VERSION' (expected semver like 0.1.3)" >&2
-              exit 1 ;;
-            *) echo "Version OK: $RELEASE_VERSION" ;;
-          esac
-          # The update channel is decided by GitHub's prerelease flag, not by
-          # the version string. A semver carrying a pre-release identifier
-          # (anything after the first '-', e.g. 0.2.0-rc.1) must be released
-          # with the prerelease checkbox set, and a clean version must not be.
-          # A mismatch would either ship an RC to stable clients or hide a real
-          # stable release from "latest", so fail instead of publishing.
-          VERSION_IS_PRERELEASE="false"
-          case "$RELEASE_VERSION" in
-            *-*) VERSION_IS_PRERELEASE="true" ;;
-          esac
-          if [ "$VERSION_IS_PRERELEASE" != "$INPUT_PRERELEASE" ]; then
-            echo "::error::Version '$RELEASE_VERSION' is a $([ "$VERSION_IS_PRERELEASE" = "true" ] && echo prerelease || echo stable) version, but the 'prerelease' input is $INPUT_PRERELEASE. Set the prerelease checkbox to match the version, or the release will land in the wrong update channel." >&2
-            exit 1
-          fi
+          # Validate the exact SemVer grammar before mutating any build
+          # configuration. The script also requires the channel checkbox to
+          # match the version's prerelease component.
+          node scripts/ci/validate-release-inputs.mjs
 
       - name: Setup pnpm
         uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
@@ -480,18 +464,12 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          # Semver pre-release identifier (anything after the first '-').
-          VERSION_IS_PRERELEASE="false"
-          case "$RELEASE_VERSION" in
-            *-*) VERSION_IS_PRERELEASE="true" ;;
-          esac
-          # The build job already fails on a checkbox/version mismatch, but
-          # refuse here too so a manifest is never emitted for the wrong
-          # channel even if that guard regresses.
-          if [ "$VERSION_IS_PRERELEASE" != "$RELEASE_PRERELEASE" ]; then
-            echo "::error::Version '$RELEASE_VERSION' prerelease status ($VERSION_IS_PRERELEASE) disagrees with the prerelease input ($RELEASE_PRERELEASE). Refusing to emit a manifest." >&2
-            exit 1
-          fi
+          # Use the strict SemVer parser that validates dispatcher input. A
+          # shell hyphen check is wrong: `1.2.3+build-foo` is stable build
+          # metadata, not a prerelease. The command also repeats the
+          # checkbox/version consistency check here before a manifest can be
+          # emitted, so this release-side guard cannot drift from validation.
+          VERSION_IS_PRERELEASE="$(INPUT_PRERELEASE="$RELEASE_PRERELEASE" node scripts/ci/validate-release-inputs.mjs --print-prerelease)"
           if [ "$VERSION_IS_PRERELEASE" = "true" ]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             echo "Prerelease: skipping the stable update manifest."
@@ -502,6 +480,53 @@ jobs:
             exit 1
           fi
           echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      # A nonempty public-key secret is not enough: it must be the public half
+      # of the private key that signed every published updater bundle. Verify
+      # the actual artifacts before writing latest.json; otherwise a rotated or
+      # mismatched secret produces a stable release that every installed client
+      # downloads but rejects.
+      - name: Verify updater signatures against the shipped trust anchor
+        if: steps.manifest.outputs.eligible == 'true'
+        shell: bash
+        env:
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          # Tauri stores the minisign public-key file and each detached
+          # minisign signature as a single Base64 value. That is the form its
+          # updater consumes, but the `minisign` CLI expects decoded text files.
+          PUBLIC_KEY_FILE="$RUNNER_TEMP/mausvoice-updater.pub"
+          if ! printf '%s' "$UPDATER_PUBLIC_KEY" | base64 --decode > "$PUBLIC_KEY_FILE"; then
+            echo "::error::UPDATER_PUBLIC_KEY is not a valid Tauri public-key value" >&2
+            exit 1
+          fi
+          verified=0
+          while IFS= read -r -d '' bundle; do
+            if [ ! -f "$bundle.sig" ]; then
+              echo "::error::Missing signature for updater bundle $bundle" >&2
+              exit 1
+            fi
+            signature_file="$(mktemp "$RUNNER_TEMP/mausvoice-updater-signature.XXXXXX")"
+            if ! base64 --decode < "$bundle.sig" > "$signature_file"; then
+              rm -f "$signature_file"
+              echo "::error::Signature for updater bundle $bundle is not valid Tauri minisign data" >&2
+              exit 1
+            fi
+            minisign -Vm "$bundle" -x "$signature_file" -p "$PUBLIC_KEY_FILE"
+            rm -f "$signature_file"
+            verified=$((verified + 1))
+          done < <(find dist -type f \( \
+            -name '*.app.tar.gz' -o -name '*.dmg' -o -name '*.msi' -o \
+            -name '*.nsis.zip' -o -name '*.exe' -o -name '*.AppImage' \
+          \) -print0)
+          rm -f "$PUBLIC_KEY_FILE"
+          if [ "$verified" -eq 0 ]; then
+            echo "::error::No updater bundles found to verify" >&2
+            exit 1
+          fi
 
       - name: Build updater manifest
         if: steps.manifest.outputs.eligible == 'true'
@@ -515,6 +540,45 @@ jobs:
         run: |
           node scripts/ci/build-updater-manifest.mjs
           cat dist/latest.json
+
+      # The in-app changelog history reads the per-release changelog.json
+      # asset, so every release — stable or beta — publishes one built from
+      # the same notes input as the release body and the updater manifest.
+      - name: Build changelog artifact
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_NAME: ${{ steps.tag.outputs.release_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_BODY_FILE: ${{ steps.body.outputs.body_file }}
+          CHANGELOG_OUT: dist/changelog.json
+        run: |
+          node scripts/ci/build-changelog.mjs
+          cat dist/changelog.json
+
+      # Beta clients check a rolling latest-beta.json under a dedicated
+      # release instead of the versioned manifest, so one asset always names
+      # the newest beta. Unsigned betas fail closed like stable releases:
+      # an unverifiable manifest is worse than none.
+      - name: Build beta channel manifest
+        shell: bash
+        if: inputs.prerelease == true
+        env:
+          ARTIFACTS_DIR: dist
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+          OUTPUT_PATH: dist/latest-beta.json
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+        run: |
+          if [ -z "$UPDATER_PRIVATE_KEY" ] || [ -z "$UPDATER_PUBLIC_KEY" ]; then
+            echo "::error::UPDATER_PRIVATE_KEY/UPDATER_PUBLIC_KEY are not configured. A beta release must publish a signed latest-beta.json, or beta clients will 404 and lose the ability to update." >&2
+            exit 1
+          fi
+          node scripts/ci/build-updater-manifest.mjs
+          cat dist/latest-beta.json
 
       - name: Publish release
         uses: softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 # v3.0.3
@@ -538,6 +602,25 @@ jobs:
             dist/**/*.AppImage
             dist/**/*.sig
             dist/latest.json
+            dist/changelog.json
+
+      # The beta channel reads one rolling asset, so every beta publish
+      # refreshes it under the dedicated beta-channel release (created once,
+      # then updated in place).
+      - name: Update beta-channel rolling manifest
+        shell: bash
+        if: inputs.prerelease == true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! gh release view beta-channel --repo maus-inc/mausVoice >/dev/null 2>&1; then
+            gh release create beta-channel --repo maus-inc/mausVoice \
+              --prerelease \
+              --title "mausVoice beta channel" \
+              --notes "Rolling beta manifest. Refreshed by every beta release; install it by joining the beta update channel in Settings."
+          fi
+          gh release upload beta-channel dist/latest-beta.json --repo maus-inc/mausVoice --clobber
 
   publish-cask:
     name: Publish Homebrew cask

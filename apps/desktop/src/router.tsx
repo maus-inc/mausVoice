@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom";
 import AppsPage from "./components/apps/AppsPage.tsx";
 import ChatsPage from "./components/chats/ChatsPage.tsx";
@@ -5,6 +6,7 @@ import { ComposerPage } from "./components/composer/ComposerPage.tsx";
 import { PageLayout } from "./components/common/PageLayout.tsx";
 import DashboardPage from "./components/dashboard/DashboardPage.tsx";
 import DictionaryPage from "./components/dictionary/DictionaryPage.tsx";
+import HelpPage from "./components/help/HelpPage.tsx";
 import HomePage from "./components/home/HomePage.tsx";
 import LoginPage from "./components/login/LoginPage.tsx";
 import OnboardingPage from "./components/onboarding/OnboardingPage.tsx";
@@ -27,10 +29,10 @@ const AppWrapper = () => {
   );
 };
 
-export const browserRouter = createBrowserRouter([
+const appRoutes = (root: ReactNode) => [
   {
     path: "/",
-    element: <Root />,
+    element: root,
     errorElement: <ErrorBoundary />,
     children: [
       {
@@ -119,13 +121,22 @@ export const browserRouter = createBrowserRouter([
                 path: "apps",
                 element: <AppsPage />,
               },
+              {
+                path: "help",
+                element: <HelpPage />,
+              },
             ],
           },
         ],
       },
     ],
   },
-]);
+];
+
+export const createAppRouter = (root: ReactNode = <Root />) =>
+  createBrowserRouter(appRoutes(root));
+
+export const browserRouter = createAppRouter();
 
 export default function Router() {
   return (

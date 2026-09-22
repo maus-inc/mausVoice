@@ -141,7 +141,17 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
-        run: cargo test --lib
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          cargo test --lib 2>&1 | tee "$RUNNER_TEMP/rust-unit.log"
+          status=$?
+          set +o pipefail
+          { grep -E '^(error|warning)(\[|:)|^  --> |^test .* FAILED|^failures:|panicked' "$RUNNER_TEMP/rust-unit.log" || true; } | head -n 60 | sed 's/^/::error::rust-unit: /'
+          { tail -n 25 "$RUNNER_TEMP/rust-unit.log" || true; } | sed 's/^/::error::rust-unit-tail: /'
+          if [ ! -s "$RUNNER_TEMP/rust-unit.log" ]; then echo "::error::rust-unit: EMPTY LOG status=$status"; fi
+          exit "$status"
       - name: Test check-bindings tracked-file guard
         run: node --test scripts/ci/check-bindings-guard.test.mjs
       - name: Test workflow action pin guard
@@ -153,4 +163,14 @@ jobs:
         # (or vice versa), which previously shipped silently.
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
-        run: bash scripts/check-bindings.sh
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          bash scripts/check-bindings.sh 2>&1 | tee "$RUNNER_TEMP/bindings.log"
+          status=$?
+          set +o pipefail
+          { grep -E "^(error|warning)(\[|:)|^  --> |ERROR:|^diff |^@@ |^\+[^+]|^-[^-]" "$RUNNER_TEMP/bindings.log" || true; } | head -n 120 | sed 's/^/::error::bindings: /'
+          { tail -n 60 "$RUNNER_TEMP/bindings.log" || true; } | sed 's/^/::error::bindings-tail: /'
+          if [ ! -s "$RUNNER_TEMP/bindings.log" ]; then echo "::error::bindings: EMPTY LOG status=$status"; fi
+          exit "$status"

@@ -43,5 +43,5 @@ Use **pnpm** with the frozen lockfile, same as the rest of the monorepo. Do not 
 
 ## Notes
 
-- WebView2 is bundled as an offline installer.
+- WebView2 uses Tauri's embedded bootstrapper.
 - First-install UX only; later updates use the desktop updater, not this wrapper.

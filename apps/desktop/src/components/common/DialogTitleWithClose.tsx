@@ -1,4 +1,4 @@
-import CloseIcon from "@mui/icons-material/Close";
+import { X } from "lucide-react";
 import { DialogTitle, IconButton } from "@mui/material";
 import type { ReactNode } from "react";
 import { useIntl } from "react-intl";
@@ -22,7 +22,7 @@ export const DialogTitleWithClose = ({
         sx={{ ml: "auto" }}
         aria-label={intl.formatMessage({ defaultMessage: "Close" })}
       >
-        <CloseIcon fontSize="small" />
+        <X size={16} strokeWidth={2} />
       </IconButton>
     </DialogTitle>
   );

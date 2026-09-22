@@ -35,11 +35,11 @@ on the Welcome and Finish pages of the Windows NSIS setup, replacing the stock
 blue NSIS panel.
 
 - Format: PNG (8-bit, non-interlaced) or BMP (24/32-bit uncompressed).
-- Must be fully opaque at the exact 164:314 panel aspect - the committed
-  art is 328x628 (exactly 2x). BMPs store no alpha, so transparent margins
-  flatten into flat dark bands around the art, and other aspect ratios are
-  contain-fit and letterboxed with a background sampled from the art's edges
-  (white when the art has no opaque edge, e.g. a bare logo).
+- For edge-to-edge art, use a fully opaque 164:314 panel aspect ratio. The
+  committed art is 328x628 (exactly 2x). The generator composites transparent
+  pixels onto an edge-sampled background before writing the BMP; other aspect
+  ratios are contain-fit and letterboxed with that background (white when the
+  art has no opaque edge, e.g. a bare logo).
 
 The NSIS wizard only accepts a 24-bit BMP, so the bitmap is regenerated from
 the root art on every build:

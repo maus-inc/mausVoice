@@ -124,6 +124,25 @@ describe("humanizeScrub structure preservation", () => {
     expect(result).toContain(json);
   });
 
+  it("keeps standalone JSON byte-for-byte intact", () => {
+    const json = '{\n  "unlock": "delve",\n  "spacing": "keep   this"\n}\n';
+    expect(humanizeScrub(json)).toBe(json);
+  });
+
+  it("keeps GitHub-Flavored Markdown tables intact while scrubbing prose", () => {
+    const table = [
+      "| Status | Detail |",
+      "| :--- | ---: |",
+      "| unlock | delve   unchanged |",
+    ].join("\n");
+    const result = humanizeScrub(
+      `Please utilize this table:\n\n${table}\n\nDone.`,
+    );
+
+    expect(result).toContain(table);
+    expect(result).toContain("Please use this table:");
+  });
+
   it("keeps paragraph breaks in plain prose", () => {
     const result = humanizeScrub("First paragraph.\n\nSecond paragraph.");
     expect(result).toBe("First paragraph.\n\nSecond paragraph.");

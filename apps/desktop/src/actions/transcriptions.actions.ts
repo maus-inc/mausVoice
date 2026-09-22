@@ -2,6 +2,7 @@ import { Transcription } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import {
   beginRetranscribe,
   clearRetranscribeSuccess,
@@ -131,7 +132,7 @@ const updateStoredTranscription = async (
   const finalTranscript = postProcessResult.transcript;
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
 
-  return getTranscriptionRepo().updateTranscription({
+  const payload: Transcription = {
     ...transcription,
     transcript: finalTranscript,
     sanitizedTranscript,
@@ -156,7 +157,12 @@ const updateStoredTranscription = async (
     // otherwise leaves stale timings in history after a retranscription.
     transcriptionDurationMs: metadata.transcriptionDurationMs ?? null,
     postprocessDurationMs: metadata.postprocessDurationMs ?? null,
-  });
+  };
+  // During an ephemeral session the update stays memory-only: build the fresh
+  // payload for the caller but never write it through to the repository.
+  return isPersistenceAllowed()
+    ? getTranscriptionRepo().updateTranscription(payload)
+    : payload;
 };
 
 type RetranscribeTranscriptionParams = {

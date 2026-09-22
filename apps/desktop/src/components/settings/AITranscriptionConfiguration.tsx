@@ -62,12 +62,12 @@ import {
   activeRowSx,
   selectedOutlineSx,
 } from "../../styles/selection";
-import { duration, easeOutCubic } from "../../styles/motion";
+import { cssEase, duration, easeOutCubic } from "../../styles/motion";
 import { AnimateSwitch } from "../common/AnimateIn";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { ApiKeyList } from "./ApiKeyList";
 
-const ease = `cubic-bezier(${easeOutCubic.join(", ")})`;
+const ease = cssEase(easeOutCubic);
 const buttonTransition = `background-color ${duration.fast}s ${ease}, border-color ${duration.fast}s ${ease}, transform ${duration.instant}s ${ease}`;
 
 const buttonSx = {

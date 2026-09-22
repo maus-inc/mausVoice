@@ -4,6 +4,10 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const tauriCli = require.resolve("@tauri-apps/cli/tauri.js");
 
 // Resolved from this file's own location rather than the caller's working
 // directory: a cwd outside apps/desktop would otherwise push `../../scripts`
@@ -87,7 +91,10 @@ if (tauriCommand === "build" && !inCi && !isReleaseBuild) {
   }
 }
 
-run("tauri", tauriArgs, process.env);
+// Invoke Tauri's JavaScript entry point with Node rather than its package-manager
+// shim. This works on Windows too (where the shim is a .cmd file) without
+// starting a shell, so user-supplied Tauri arguments remain literal arguments.
+run(process.execPath, [tauriCli, ...tauriArgs], process.env);
 
 function resolveTargets(requestedTarget) {
   if (!requestedTarget) {
@@ -159,7 +166,9 @@ function run(command, args, env) {
     cwd: process.cwd(),
     stdio: "inherit",
     env,
-    shell: true,
+    // `args` may include developer-provided Tauri options. Never route them
+    // through a command shell, where metacharacters would be interpreted.
+    shell: false,
   });
 
   if (result.status !== 0) {

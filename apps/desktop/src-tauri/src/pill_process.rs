@@ -492,6 +492,8 @@ pub(crate) enum PillReviewAction {
     Insert,
     Copy,
     Cancel,
+    Open,
+    Edit,
 }
 
 impl PillReviewAction {
@@ -501,6 +503,8 @@ impl PillReviewAction {
             "insert" => Some(Self::Insert),
             "copy" => Some(Self::Copy),
             "cancel" => Some(Self::Cancel),
+            "open" => Some(Self::Open),
+            "edit" => Some(Self::Edit),
             _ => None,
         }
     }
@@ -510,6 +514,8 @@ impl PillReviewAction {
             Self::Insert => "insert",
             Self::Copy => "copy",
             Self::Cancel => "cancel",
+            Self::Open => "open",
+            Self::Edit => "edit",
         }
     }
 }
@@ -521,9 +527,9 @@ impl PillReviewAction {
 /// transcript the user is being asked about. Dropping it leaves the transcript
 /// on the pill, so the click can simply be repeated.
 ///
-/// The text is what the pill's entry held at the time, so an edit made in the
-/// panel is what gets inserted. It is absent for decisions that do not carry
-/// one.
+/// The text is what the pill's entry held at the time. Insert, Copy, Open,
+/// and Edit carry it so the desktop can preserve the edit before settling
+/// the review. Cancel leaves it out.
 pub(crate) fn parse_review_decision(
     line: &str,
 ) -> Option<(String, PillReviewAction, Option<String>)> {
@@ -653,6 +659,8 @@ mod review_decision_parse_tests {
             ("insert", PillReviewAction::Insert),
             ("copy", PillReviewAction::Copy),
             ("cancel", PillReviewAction::Cancel),
+            ("open", PillReviewAction::Open),
+            ("edit", PillReviewAction::Edit),
         ] {
             let line =
                 format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
@@ -673,6 +681,20 @@ mod review_decision_parse_tests {
             Some((
                 "r1".to_string(),
                 PillReviewAction::Insert,
+                Some("edited words".to_string())
+            ))
+        );
+    }
+
+    #[test]
+    fn keeps_the_text_edited_before_opening_history() {
+        assert_eq!(
+            parse_review_decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"open","text":"edited words"}"#
+            ),
+            Some((
+                "r1".to_string(),
+                PillReviewAction::Open,
                 Some("edited words".to_string())
             ))
         );

@@ -42,12 +42,12 @@ const IntroPage = () => {
           height: 80,
           borderRadius: "50%",
           background:
-            "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-blue) 80%, #FFFFFF) 0%, var(--app-palette-blue) 100%)",
+            "linear-gradient(135deg, color-mix(in srgb, var(--app-palette-chrome) 80%, #FFFFFF) 0%, var(--app-palette-chrome) 100%)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           boxShadow:
-            "0 8px 32px color-mix(in srgb, var(--app-palette-blue) 40%, transparent)",
+            "0 8px 32px color-mix(in srgb, var(--app-palette-chrome) 40%, transparent)",
         }}
       >
         <AutoAwesome sx={{ fontSize: 40, color: "white" }} />
@@ -81,7 +81,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and a reviewable composer" />
+          <FormattedMessage defaultMessage="New styles, local transcription, audio import, and review in the pill" />
         </Typography>
       </Stack>
       <Stack
@@ -113,7 +113,7 @@ const IntroPage = () => {
             color: "text.secondary",
           }}
         >
-          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in a composer, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
+          <FormattedMessage defaultMessage="Turn on Review before insert to edit dictated text in the pill, use voice Edit Mode for transformations, and configure which Agent Mode tools may run." />
         </Typography>
       </Stack>
     </Stack>

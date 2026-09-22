@@ -19,7 +19,7 @@ export class PasteTool extends BaseTool {
     const requestedText = typeof params.text === "string" ? params.text : "";
     const text =
       getAppState().userPrefs?.reviewBeforeInsert === true
-        ? await reviewTranscriptBeforeInsert(requestedText)
+        ? await reviewTranscriptBeforeInsert(requestedText, "assistant-tool")
         : requestedText;
     if (!text?.trim()) {
       return { canceled: true };

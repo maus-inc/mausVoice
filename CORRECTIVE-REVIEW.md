@@ -438,3 +438,339 @@ the stack trace for the invalid resource id.
 
 Static review does not prove desktop-runtime behavior. The required platform and
 end-to-end checks remain necessary before release.
+
+## 11. Takeover state (September 9, 2026)
+
+The coordinating session stopped before it opened its pull request. A second
+session took the branch over at commit `052e6e4` (single squashed snapshot)
+and opened the pull request from `arena/01a08611-mausvoice` against
+`fix/superfix-review-findings`, the head of PR 63.
+
+State of the re-review at handover.
+
+- Compared against the PR 63 head `f13ab95`: 128 changed files, 4,381 lines
+  added and 1,822 removed. Every changed file was re-read against the final
+  tree; the fixes in sections 4 and 5 are intact and not regressed by later
+  commits.
+- The final session stage added, on top of the fixes above: the Open decision
+  on the review card (header open button) with durable persistence before the
+  card closes, the pending Paste review bubble in Chats for agent Paste calls,
+  an integer ceiling division and fallible allocation in the resampler, Base64
+  framing with a decoded-size preflight in the private HTTP bridge, the
+  capability-based managed audio directory, strict SemVer release validation
+  with minisign verification of every updater bundle before `latest.json` is
+  written, OpenRouter transcription model discovery, and non-shell dev
+  runners.
+- Verified locally on this tree: `pnpm install --frozen-lockfile`, workspace
+  build, desktop and root type checks, desktop lint, desktop unit tests, the
+  i18n extractor (idempotent, nine locales in sync), and the repo formatting
+  gate. Rust compiles and tests only in CI: there is no Rust toolchain in this
+  sandbox, and the download hosts are unreachable. The CI jobs that cover the
+  Rust changes are the lint matrix (clippy with `-D warnings` on all three
+  platforms plus crate tests), the desktop Rust unit tests (which also run
+  `scripts/check-bindings.sh`), and the three-platform transcription tests.
+- The desktop integration tests fail locally only for the missing
+  `GROQ_API_KEY`; CI provides the secret for same-repo pull requests.
+
+Open items carried forward: the assistant invalid-resource-id repro (section
+4.5), the platform sound parity decision (section 4.6), and the manual QA
+matrix in section 10.
+
+## 12. Deep-dive re-audit (September 9, 2026, second pass)
+
+A second audit pass executed the pure-logic code instead of reading it
+(every pure function run with constructed inputs), and web-verified each
+external claim against the governing source (HTML Standard, Cerebras
+docs, OpenRouter docs, Tauri updater docs, semver.org). Five confirmed
+behavioural defects were found, fixed, and pinned with regression tests:
+
+1. **Auto-learn never learned casing corrections** (`auto-learn.utils.ts`).
+   The multiset difference between inserted and corrected text was
+   case-insensitive, so the feature's primary signal — a user correcting
+   "google" to "Google" — produced no added token and nothing was
+   learned. The diff is now case-sensitive; the initial-capital check and
+   the case-insensitive existing-terms skip are unchanged.
+2. **Pill text lost content on numeric ranges**
+   (`assistant-pill-text.utils.ts`). The HTML tag scanner treated a `<`
+   followed by a digit as a tag start (HTML tag names start with an ASCII
+   letter), so "I have <3> apples" became "I have apples" and a long span
+   up to the next `>` was deleted. Tag start is now letter/`!`/`?` only.
+3. **"scratch that" was a no-op after "new line"/"new paragraph"**
+   (`spoken-commands.utils.ts`). The scratch boundary search stopped at
+   the trailing newline the structural command had inserted, keeping the
+   sentence the user asked to drop. Trailing stops and whitespace are now
+   trimmed together before the boundary search.
+4. **A second agent run made Stop dead for the first** (`run-agent.ts`,
+   `chat.actions.ts`). Two concurrent sends for one conversation (pill
+   typed message while a dashboard run is live) let the newer run
+   overwrite `activeLoops`; the superseded run's cleanup then deleted the
+   NEWER run's registration and agent state, so `abortAgentLoop` reached
+   nothing and two loops interleaved one conversation. A new run now
+   supersedes (aborts) the previous loop, and both cleanups are
+   identity-guarded so only the current run deregisters itself.
+5. **Hardcoded English aria-label** (`PendingPasteReviewBubble.tsx`), in
+   this branch's diff. Now goes through the i18n pipeline with real
+   translations in all eight non-English locales (catalogs 829 keys).
+
+Also corrected a stale contract comment in `DictationSideEffects.tsx`
+that described the superseded start-tone contract; the implemented and
+tested contract is that the stop-time snapshot is authoritative and a
+mid-dictation switch restyles the whole transcript.
+
+Verification: the full desktop unit gate (1,339 tests), the node
+dev-script tests (4), the formatting gate, and the idempotent i18n sync
+all pass locally. Pre-existing hardcoded aria-labels in `main`
+(`HotkeySetting` "Enable hotkey" and four others) were noted and left
+untouched as out of scope for this PR.
+
+## 13. PR #190 review round (opened September 9, 2026)
+
+After the PR opened, the review bots returned:
+
+1. **CodeSpect (major, the only finding it actually posted):** the
+   private-HTTP path decodes the request body to a `Vec<u8>` (up to the
+   128 MiB limit), and the existing redirect loop cloned that buffer into
+   the reqwest builder on every 307/308 hop - a full copy of the payload
+   per hop (up to 5 hops), so a redirecting server could push peak memory
+   toward several hundred MiB. This branch introduced the decoded-Vec
+   source, so it was in scope. **Fixed in `0a09a93`:** the decoded body is
+   now a `bytes::Bytes` (a refcounted buffer, wrapped zero-copy from the
+   decoded `Vec`), so per-hop clones are O(1) and reqwest stores the body
+   as its reusable variant (verified against the reqwest 0.12.28 source:
+   `impl From<Bytes> for Body`). `bytes = "1"` added to the desktop Cargo
+   manifest and lockfile (already in the tree via reqwest, no new version).
+2. **Kilo Code Review check failed with "Assistant request was rate
+   limited"** - a failure of the bot's own service, not a code finding.
+   It re-runs automatically on the next push.
+3. **Buoy (neutral):** suggested design tokens for two MUI scale values in
+   `PendingPasteReviewBubble.tsx`. Those values (`border: 1`,
+   `borderRadius: 1`) are scale units, not raw pixels, and are the
+   established convention in this component family (ChatMessageBubble,
+   ConversationLayout, ConversationListItem all use the same). The
+   suggested tokens do not exist in the design system; replying that we
+   keep the family convention and would rather add the tokens for the
+   whole family in a follow-up than invent them for one component.
+
+## 14. Line-by-line re-audit of the full PR content (September 10, 2026)
+
+Per the standing directive, the entire diff (main `72d4163` -> this branch,
+662 files) was re-audited line by line: Rust executed against reqwest/Tauri
+docs, TypeScript executed locally (merge algorithm, spoken commands,
+unit suite) and checked against provider API references, web-verified
+against OpenAI, Hugging Face, k2-fsa, ElevenLabs, Gladia, and Tauri
+sources. One confirmed behavioral bug class was found and fixed:
+
+### 14.1 FIXED: JSON response-format selection (voice-ai)
+
+`openai.utils.ts`, `openrouter.utils.ts`, and `azure-openai.utils.ts`
+decided, per model, whether to send OpenAI's new `json_schema` response
+format or the legacy `json_object` format. Two defects, both verified
+against OpenAI's official Structured Outputs documentation and the
+documented 400 errors:
+
+1. The "supports json_schema" allow-list wrongly included
+   `gpt-4-turbo` / `gpt-3.5-turbo` (OpenAI and OpenRouter) and `gpt-4` /
+   `gpt-35-turbo` (Azure deployment names). Those predate Structured
+   Outputs and are rejected with a 400 when sent `json_schema`, so any
+   post-processing run targeting one of them failed.
+2. The `json_object` fallback never put the word "JSON" into the prompt.
+   OpenAI's API rejects `json_object` requests whose context never
+   mentions JSON ("the API will throw an error if the string 'JSON' does
+   not appear somewhere in the context"). Cerebras and DeepSeek already
+   injected the schema instruction; the other three providers did not.
+   OpenRouter made this reachable for every discovered model outside the
+   allow-list, including the o-series, which additionally rejects
+   `json_object` outright - so those got a 400 from the wrong format too.
+
+**Fix (smallest root cause):** inverted the decision to a small
+legacy-only `json_object` set (the pre-Structured-Outputs chat models);
+every other model - curated or discovered - defaults to `json_schema`.
+On the legacy branch, the schema instruction ("Respond with valid JSON
+matching this schema: ...") is appended to the prompt, exactly as
+Cerebras/DeepSeek already did. Azure additionally keeps `json_object` for
+user-deployed open-model families (llama/phi/mistral/mixtral), which
+Azure serves through JSON mode only (an existing test pins this
+behavior). 9 regression tests added (legacy model -> `json_object` +
+prompt hint; o-series/discovered model -> `json_schema`, prompt
+untouched; Azure `gpt-4` deployment and open-model deployments ->
+`json_object` + hint). voice-ai: 159/159 tests pass; full workspace
+build green; desktop `test:unit` green.
+
+### 14.2 Re-verified OK (no behavioral bugs)
+
+- **Merge/overlap algorithm** (`transcribe.utils.ts`): executed 8 cases
+  (exact overlap, truncated word, fuzzy contraction, no overlap, prefix
+  coincidence). The one imperfect case (a complete word that is a prefix
+  of the next segment's first word, e.g. "you"/"your") is a pre-existing
+  heuristic present in main before this PR - the PR only refactored the
+  same algorithm for speed. Not a regression; noted as a known
+  limitation.
+- **Silence gating:** `gateSilentSegments` (all-gated -> empty text, not
+  fallback), `analyzeSilence` (requires global AND windowed RMS and peak
+  below thresholds - quiet real speech survives), `joinKeptSegmentTexts`
+  spacing rules.
+- **Spoken-commands engine:** traced scratch/abbreviation stops
+  (incl. `Dr.` and 2-letter `a.`), blocked follower/predecessor pairs,
+  gap/whitespace preservation, attach-left punctuation.
+- **Pill review queue** (`pill-review.actions.ts`): busy-flag
+  double-click guard, expiry-vs-persistence race (timer cleared before
+  the await), stale-click identity check, composer fallback when no
+  native pill, queue-advance semantics (later arrivals do not extend the
+  open card's expiry).
+- **Dictation backlog** (strategy + `drainDictationBacklog`):
+  non-destructive snapshot + nonce pre/post checks, serial paste queue,
+  cleanup on session end prevents stale-session delivery, 1s drain poll
+  only while a backlog exists.
+- **Output routing / secure-fetch:** review gate before remote and local
+  delivery, hands-free delay invalidation by session id, http ->
+  native SSRF-guarded command / https -> curated capability allow-list,
+  body stream capping at 128 MiB with abort support.
+- **macOS manual installer path:** TS derives the `.dmg` + detached
+  `.sig` URLs (exact `${dmgUrl}.sig` only), Rust re-validates the host,
+  validates every redirect hop, caps the download, and verifies the
+  minisign signature before `open` - an unverified installer is never
+  launched.
+- **Gladia provider (new, 861 lines):** language mapping, WS endpoint
+  allow-list, transcript accumulator (finals never overwritten,
+  authoritative post-final override), finalize deadline clamping,
+  remote session deletion in all paths; desktop session feeds PCM16
+  matching the declared encoding.
+- **Stop flow / tone contract:** stop-snapshot wins (whole utterance
+  restyled, persisted selection seeds the next recording), start
+  snapshot only as fallback, awaited style load before seeding,
+  provider timer anchored to native capture success, empty-result
+  handling preserves the recording with a retry toast.
+- **Hotkeys:** level-based hold model with `allowedAdditionalKeys`
+  (arrows during hold do not break hold-to-talk release), native fire
+  model contamination logic unchanged from main, release-on-key-up for
+  style actions, main-window-only guards against double dictation from
+  the composer popout.
+- **run-agent / chat actions:** `safeSideEffect` isolation in the loop,
+  block-atomic context trimming (tool-call/result pairs never split),
+  supersede identity guard, delete-vs-send race (flag + queue drain +
+  abort + post-delete guard).
+- **Provider model pins:** OpenAI transcription response formats
+  (web-verified), ElevenLabs `scribe_v2` (web-verified), Gladia
+  `solaria-1` + API shape, OpenRouter default/favorites, xAI `format`
+  field ordering.
+- **Release pipeline:** hardcoded throwaway signing key removed from
+  `release.yml`; updater keypair lives only in repository secrets;
+  manifest entries emitted only with a matching `.sig`; release tag
+  round-trips through the manifest URL into the manual-installer URL.
+- **SQL migrations:** additive only, safe defaults, all matching the TS
+  preference defaults (verified per column).
+- **Scripts/workflows/locale parity:** CI-enforced (Format+i18n gate
+  green on this branch).
+
+Residual: `TutorialForm`, `MoreSettingsDialog`, `StyleHotkeysDialog`,
+`ApiKeyList`, `MicrophoneTester`, `ScrollListPage`,
+`TranscriptionsPage`, `ConversationListItem` were structurally reviewed
+(form/UI wiring whose underlying logic lives in the audited
+utils/actions/repos); no behavioral logic was found inline.
+
+## 15. CI gates after the PR opened (September 10, 2026)
+
+### 15.1 SonarCloud "8.5% duplication on new code" — fixed
+
+The three provider response-format test blocks were near-identical.
+Extracted the shared block into
+`packages/voice-ai/src/test-helpers/shared-json-response-format.helper.ts`;
+the three test files now only declare their own model lists and options.
+Committed as `9927135` (net -164 lines); all 160 voice-ai tests and the
+full monorepo build pass, so the duplication gate should clear on the
+next analysis.
+
+### 15.2 macOS build failure at `9927135` — assessed as environmental
+
+The "Build Desktop (macOS)" job failed at the "Build Tauri app" step
+after ~2m12s; Windows and Linux jobs on the same commit passed. Evidence
+that this is not a code regression:
+
+- Nothing Rust changed since the last green macOS build (`0a09a93`,
+  run 34379415766): the delta is TS test files, one test helper, and
+  this document.
+- The frontend half of the build (the only part that consumes TS) passed
+  on all three OSes at this commit.
+- A concurrent branch (`arena/01a08680-mausvoice-item02`, commit
+  4c6fae1) failed all three OS builds at the frontend step in the same
+  window, with its own follow-up commit building green — the build
+  queue was producing scattered failures that night.
+  The token in this environment cannot re-run the failed job (403), so a
+  new commit (this document) re-triggers the full build; if macOS fails
+  again at the same step on the new commit, the job log in the GitHub UI
+  must be inspected by a maintainer, because the error text is not
+  downloadable from this sandbox.
+
+Resolved: the macOS build then passed at `5742244` (Windows, macOS and
+Linux all green), where the Rust code is byte-identical to `9927135` —
+the delta since the last green macOS build is TS test files, one test
+helper, and this document. The failure was an environmental flake; no
+code change was needed.
+
+### 15.3 Ito QA diff review (0a09a93 -> 9927135): two real Azure bugs — fixed
+
+Ito QA ran its own tests against the diff and reported two failures,
+both confirmed against OpenAI's documentation:
+
+1. **Case-variant deployment names.** The legacy-set lookup compared the
+   raw deployment name while the open-model prefix check compared the
+   lowercased name, so a deployment named `GPT-4` was misclassified as
+   modern and received `json_schema`, which the frozen model rejects
+   with a 400. Fix: the set lookup is now case-insensitive (all
+   canonical names are lowercase).
+2. **Missing frozen preview snapshot names on Azure.** The Azure legacy
+   set had drifted out of sync with the OpenAI one (it was a second,
+   hand-maintained list): it missed `gpt-4-1106-preview`,
+   `gpt-4-0125-preview`, `gpt-4-turbo-preview`, the vision previews,
+   and other real ids, and it even listed `gpt-4-0301`, which is not a
+   real OpenAI id (the March 2023 snapshot is `gpt-4-0314`, per
+   OpenAI's launch announcement and deprecation list). Fix: the
+   canonical list in `response-format.utils.ts` is now complete (every
+   entry verified against the OpenAI catalog/deprecation page) and the
+   Azure set is DERIVED from it (plus the dot-less `gpt-35-turbo`
+   names), so the two can no longer drift apart.
+   Regression tests: 18 new cases across the OpenAI, OpenRouter and Azure
+   response-format suites (case variants, preview snapshots, dot-less
+   Azure names). 178/178 voice-ai tests pass; full build green.
+
+### 15.4 Bot checks with no findings — classified as bot-side failures
+
+Across every commit of this PR (`f76804c`, `9927135`, `5742244`,
+`35233ea`):
+
+- **CodeSpect**: the check marked itself failed with zero annotations
+  and no new inline comments each time. Its single real finding (the
+  request-body OOM risk in `commands.rs`) was fixed in `0a09a93` and
+  answered in-thread.
+- **Kilo Code Review**: stuck in the queued state on every commit, no
+  output.
+- **DeepSource**: skipped with no output.
+
+None of these three has ever posted a finding on this branch, so their
+red or queued state is treated as their own infrastructure problem, not
+a code issue. Ito QA, SonarCloud, CodeRabbit, Socket, Gitleaks, Buoy,
+and every first-party gate (builds for all three OSes, desktop unit,
+integration, lint, format, i18n, Rust unit, voice-ai unit) are green or
+clean.
+
+Final bot outcomes (as of HEAD `1b3e51f`):
+
+- **Ito QA re-run (9927135 -> 1b3e51f): PASSED** — "2 fixed, 12
+  passing", "safe to merge, no PR-attributable regressions". Both of
+  its earlier failures (case-variant and preview deployment names) are
+  confirmed fixed inline.
+- **Kilo Code Review (after being stuck queued all PR): posted a full
+  independent review — "No new code defects found in changed code",
+  recommendation to merge.** Its advisory notes: (1) SonarCloud reports
+  7 new non-gate issues that are only visible on the authenticated
+  dashboard (gate still passed; flagged for a maintainer to glance at
+  before merging — not enumerable from this environment); (2) the
+  CodeSpect review is stale and should be dismissed (all 3 of its
+  issues are fixed — answered on the review itself); (3) the
+  `console.log` llm-usage lines in the OpenAI utils are pre-existing,
+  out of scope.
+- **CodeSpect:** its single CHANGES_REQUESTED review (1 major + 2
+  minors) is fully addressed on HEAD — major fixed in `0a09a93`, the
+  two minors are the Azure defects fixed in `5742244`. A comment has
+  been posted on the review requesting re-analysis/dismissal by a
+  maintainer (the token in this environment cannot dismiss reviews).

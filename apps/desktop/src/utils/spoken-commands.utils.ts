@@ -294,9 +294,20 @@ const trimHorizontalSpaceEnd = (text: string): string => {
   return text.slice(0, end);
 };
 
-const trimTrailingStops = (text: string): string => {
+// Strips trailing sentence stops and whitespace in any interleaving
+// ("...Second. \n" -> "...Second"). Stops and whitespace are trimmed
+// together, not in separate passes: a "new line" or "new paragraph"
+// command leaves the buffer ending in a newline (or a stop after a
+// newline), and either class alone shielding the other would make
+// lastSentenceBoundary stop at the trailing boundary and turn
+// "scratch that" into a no-op even though a real sentence precedes it.
+const trimTrailingStopWhitespace = (text: string): string => {
   let end = text.length;
-  while (end > 0 && isSentenceStop(text[end - 1] ?? "")) {
+  while (
+    end > 0 &&
+    (isSentenceStop(text[end - 1] ?? "") ||
+      isWhitespaceChar(text[end - 1] ?? ""))
+  ) {
     end -= 1;
   }
   return text.slice(0, end);
@@ -310,7 +321,7 @@ const applyScratch = (parts: string[]): void => {
     return;
   }
 
-  const withoutTrailingStop = trimHorizontalSpaceEnd(trimTrailingStops(joined));
+  const withoutTrailingStop = trimTrailingStopWhitespace(joined);
   const boundary = lastSentenceBoundary(withoutTrailingStop);
 
   if (boundary < 0) {

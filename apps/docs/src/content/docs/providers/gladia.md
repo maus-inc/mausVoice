@@ -20,7 +20,7 @@ The credential test makes `GET /v2/pre-recorded?limit=1` with your key. It check
 
 The live session sends mono, little-endian 16-bit PCM over Gladia's secure WebSocket. Supported microphone rates are passed through; another capture rate is converted with a stateful streaming resampler. mausVoice registers its audio listener before network initialization and keeps a bounded startup buffer so opening the session does not silently lose the first words or grow memory without limit.
 
-Only finalized Gladia utterances enter [real-time output](../../using-mausvoice/real-time-output/). Partial revisions stay internal, finalized utterance IDs are emitted once, and the authoritative post-final transcript wins when Gladia returns one. Startup and reconnect behavior uses bounded SDK retries. The temporary WebSocket endpoint must be on `wss://api.gladia.io`; token-bearing URLs are never written to application logs.
+Only finalized Gladia utterances enter [real-time output](../using-mausvoice/real-time-output/). Partial revisions stay internal, finalized utterance IDs are emitted once, and the authoritative post-final transcript wins when Gladia returns one. Startup and reconnect behavior uses bounded SDK retries. The temporary WebSocket endpoint must be on `wss://api.gladia.io`; token-bearing URLs are never written to application logs.
 
 Gladia documents a three-hour live-session maximum. mausVoice warns one minute before and automatically stops at 179 minutes, leaving safety margin before the provider cutoff. This provider-owned timer uses wall-clock time from microphone start and continues while dictation is paused, even if the optional user dictation timer is disabled or restarted.
 

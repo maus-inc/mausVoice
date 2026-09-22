@@ -110,29 +110,37 @@ const splitProtectedSegments = (
     }
   };
 
-  for (const line of text.split("\n")) {
+  const lines = text.split("\n");
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const line = lines[lineIndex];
     const marker = fenceMarker(line);
     if (openFence === null && marker) {
       flushProse();
       openFence = { lines: [line], marker };
+      lineIndex++;
       continue;
     }
     if (openFence !== null) {
       openFence.lines.push(line);
-      // A closing fence is marker-only (plus blanks). Lines with an info
-      // string (e.g. ```python) inside an open fence are content; treating
-      // them as closers would split the block and scrub its interior.
-      if (
-        marker &&
-        FENCE_CLOSE_LINE.test(line) &&
-        closesFence(marker, openFence.marker)
-      ) {
+      if (tryCloseFence(openFence, line, marker)) {
         lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
         openFence = null;
       }
+      lineIndex++;
       continue;
     }
+
+    const table = readTableBlock(lines, lineIndex);
+    if (table) {
+      flushProse();
+      lineBlocks.push({ protected: true, text: table.text });
+      lineIndex = table.nextIndex;
+      continue;
+    }
+
     proseLines.push(line);
+    lineIndex++;
   }
   flushProse();
   // Fail closed: an unterminated fence protects the rest of the text.
@@ -140,6 +148,38 @@ const splitProtectedSegments = (
     lineBlocks.push({ protected: true, text: openFence.lines.join("\n") });
   }
   return lineBlocks;
+};
+
+const tryCloseFence = (
+  openFence: { lines: string[]; marker: string },
+  line: string,
+  marker: string | null,
+): boolean => {
+  // A closing fence is marker-only (plus blanks). Lines with an info
+  // string (e.g. ```python) inside an open fence are content; treating
+  // them as closers would split the block and scrub its interior.
+  if (!marker) return false;
+  return FENCE_CLOSE_LINE.test(line) && closesFence(marker, openFence.marker);
+};
+
+const readTableBlock = (
+  lines: string[],
+  startIndex: number,
+): { text: string; nextIndex: number } | null => {
+  const line = lines[startIndex];
+  if (
+    !isMarkdownTableRow(line) ||
+    !isMarkdownTableDelimiter(lines[startIndex + 1] ?? "")
+  ) {
+    return null;
+  }
+  const tableLines = [line, lines[startIndex + 1]];
+  let nextIndex = startIndex + 2;
+  while (nextIndex < lines.length && isMarkdownTableRow(lines[nextIndex])) {
+    tableLines.push(lines[nextIndex]);
+    nextIndex++;
+  }
+  return { text: tableLines.join("\n"), nextIndex };
 };
 
 // An opening fence is a line whose first non-blank characters are a backtick
@@ -155,6 +195,21 @@ const FENCE_CLOSE_LINE = /^[ \t]*(`{3,}|~{3,})[ \t]*\r?$/;
 
 const closesFence = (marker: string, opener: string): boolean =>
   marker.startsWith(opener.charAt(0)) && marker.length >= opener.length;
+
+// GitHub Flavored Markdown tables have a header row followed by a delimiter
+// row. The delimiter contains only optional alignment colons and hyphens.
+// Recognizing that pair lets the scrubber preserve every table cell verbatim.
+const isMarkdownTableDelimiter = (line: string): boolean => {
+  const cells = line
+    .trim()
+    .replace(/^\||\|\r?$/g, "")
+    .split("|");
+  return (
+    cells.length > 1 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
+  );
+};
+
+const isMarkdownTableRow = (line: string): boolean => line.includes("|");
 
 /** End index of the inline code span starting at `from`, or -1. */
 const findInlineCodeEnd = (text: string, from: number): number => {
@@ -198,16 +253,30 @@ const splitInlineCode = (
  * Apply the post‑hoc scrubber to a string of LLM‑generated text.
  *
  * Returns the cleaned text. Code and structured content (fenced blocks,
- * inline code) pass through untouched. Whitespace normalization collapses
- * horizontal runs only — paragraph breaks and line structure are preserved.
+ * inline code, tables, and standalone JSON) pass through untouched.
+ * Whitespace normalization collapses horizontal runs only — paragraph breaks
+ * and line structure are preserved.
  * If `normalizeWhitespace` is true (default), leading/trailing whitespace is
  * trimmed.
  */
+const isStandaloneJson = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const humanizeScrub = (
   text: string | null | undefined,
   options: HumanizeOptions = {},
 ): string => {
   if (!text) return "";
+  // JSON is structured output even when a model did not put it in a fenced
+  // block. Leave it byte-for-byte intact rather than rewriting a value or
+  // normalizing its whitespace.
+  if (isStandaloneJson(text)) return text;
 
   const { normalizeWhitespace = true } = options;
 

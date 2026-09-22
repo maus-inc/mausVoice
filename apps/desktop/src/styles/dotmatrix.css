@@ -1,0 +1,91 @@
+/* Port of zzzzshawn/matrix (dotmatrix.zzzzshawn.cloud) — 5x5 CSS loaders. */
+.mv-dmx {
+  display: inline-grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
+  vertical-align: middle;
+  --mv-dmx-cycle: 1400ms;
+  --mv-dmx-base: 0.16;
+  --mv-dmx-peak: 1;
+  color: var(--mui-palette-text-secondary);
+}
+
+.mv-dmx-dot {
+  border-radius: 999px;
+  background: currentColor;
+  opacity: var(--mv-dmx-base);
+  transform-origin: center;
+}
+
+.mv-dmx-ripple .mv-dmx-dot {
+  animation: mv-dmx-pulse var(--mv-dmx-cycle) cubic-bezier(0.42, 0, 0.58, 1)
+    infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.12 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-spiral .mv-dmx-dot {
+  animation: mv-dmx-snake var(--mv-dmx-cycle) linear infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.04 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-column .mv-dmx-dot {
+  animation: mv-dmx-pulse calc(var(--mv-dmx-cycle) * 0.9) steps(5, end) infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.18 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-diagonal .mv-dmx-dot {
+  animation: mv-dmx-pulse var(--mv-dmx-cycle) linear infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.14 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-ring .mv-dmx-dot {
+  animation: mv-dmx-snake calc(var(--mv-dmx-cycle) * 1.1) linear infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.07 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-core .mv-dmx-dot {
+  animation: mv-dmx-pulse calc(var(--mv-dmx-cycle) * 0.82) ease-in-out infinite;
+  animation-delay: calc(var(--mv-dmx-delay, 0) * 0.16 * var(--mv-dmx-cycle));
+}
+
+.mv-dmx-dot.mv-dmx-off {
+  opacity: 0;
+  animation: none;
+  visibility: hidden;
+}
+
+@keyframes mv-dmx-pulse {
+  0%,
+  100% {
+    opacity: var(--mv-dmx-base);
+  }
+  50% {
+    opacity: var(--mv-dmx-peak);
+  }
+}
+
+@keyframes mv-dmx-snake {
+  0%,
+  100% {
+    opacity: calc(0.5 * var(--mv-dmx-base));
+  }
+  8% {
+    opacity: var(--mv-dmx-peak);
+  }
+  24% {
+    opacity: 0.35;
+  }
+  40% {
+    opacity: var(--mv-dmx-base);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mv-dmx-dot {
+    animation: none !important;
+    opacity: 0.55;
+  }
+  .mv-dmx-dot.mv-dmx-off {
+    opacity: 0;
+  }
+}

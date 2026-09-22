@@ -188,9 +188,13 @@ async function main() {
     throw new Error("RELEASE_VERSION and RELEASE_TAG are required");
   }
 
-  if (isPrerelease(process.env.RELEASE_PRERELEASE)) {
-    // A prerelease must never reach stable-channel clients. The workflow
-    // already guards this, so reaching here means the guard regressed.
+  if (
+    isPrerelease(process.env.RELEASE_PRERELEASE) &&
+    !outputPath.endsWith("latest-beta.json")
+  ) {
+    // A prerelease must never reach stable-channel clients. The explicit
+    // beta-channel output (latest-beta.json) is the one intentional
+    // prerelease artifact and is allowed through.
     throw new Error("Refusing to build an updater manifest for a prerelease");
   }
 

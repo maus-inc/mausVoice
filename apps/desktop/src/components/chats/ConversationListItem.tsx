@@ -1,4 +1,4 @@
-import { DeleteOutlineRounded, MoreVertRounded } from "@mui/icons-material";
+import { Ellipsis, Trash2 } from "lucide-react";
 import { Box, IconButton, ListItemButton, ListItemText } from "@mui/material";
 import { useMemo, useState } from "react";
 import { useIntl } from "react-intl";
@@ -74,6 +74,7 @@ export const ConversationListItem = ({
     () => [
       {
         label: intl.formatMessage({ defaultMessage: "Delete conversation" }),
+        icon: <Trash2 size={16} strokeWidth={1.9} />,
         danger: true,
         onClick: onDelete,
       },
@@ -85,7 +86,7 @@ export const ConversationListItem = ({
     {
       kind: "listItem",
       title: intl.formatMessage({ defaultMessage: "Delete" }),
-      leading: <DeleteOutlineRounded fontSize="small" />,
+      leading: <Trash2 size={16} strokeWidth={1.9} />,
       onClick: ({ close }) => {
         close();
         onDelete();
@@ -104,10 +105,21 @@ export const ConversationListItem = ({
     >
       <ListItemButton
         selected={selected}
+        aria-current={selected ? "true" : undefined}
+        data-active={selected ? "true" : undefined}
         onClick={onSelect}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        sx={{ borderRadius: 1, py: 0.75, px: 1, pr: hovered ? 0.5 : 1.5 }}
+        sx={{
+          borderRadius: 1.5,
+          py: 0.75,
+          px: 1,
+          minHeight: 36,
+          pr: 0.5,
+          "&:hover": {
+            bgcolor: "action.hover",
+          },
+        }}
       >
         {/* ListItemText slots are required here. The MuiListItemButton theme
            re-colors `.MuiListItemText-primary/secondary` when the row is
@@ -143,27 +155,41 @@ export const ConversationListItem = ({
           }}
           sx={{ my: 0 }}
         />
-        {hovered && (
-          <MenuPopoverBuilder
-            items={menuItems}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-          >
-            {({ ref, open }) => (
-              <IconButton
-                ref={ref}
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  open();
-                }}
-                sx={{ ml: 0.5, flexShrink: 0 }}
-              >
-                <MoreVertRounded sx={{ fontSize: 16 }} />
-              </IconButton>
-            )}
-          </MenuPopoverBuilder>
-        )}
+        <MenuPopoverBuilder
+          items={menuItems}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          {({ ref, open }) => (
+            <IconButton
+              ref={ref}
+              size="small"
+              aria-label={intl.formatMessage({
+                defaultMessage: "More options",
+              })}
+              onClick={(e) => {
+                e.stopPropagation();
+                open();
+              }}
+              sx={{
+                ml: 0.5,
+                flexShrink: 0,
+                opacity: hovered || selected ? 1 : 0,
+                pointerEvents: hovered || selected ? "auto" : "none",
+                "&:focus-within, &:focus-visible": {
+                  opacity: 1,
+                  pointerEvents: "auto",
+                },
+                transition: "opacity 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+                "@media (prefers-reduced-motion: reduce)": {
+                  transition: "none",
+                },
+              }}
+            >
+              <Ellipsis size={16} strokeWidth={1.9} />
+            </IconButton>
+          )}
+        </MenuPopoverBuilder>
       </ListItemButton>
       {ctxMenu.renderMenu()}
     </Box>

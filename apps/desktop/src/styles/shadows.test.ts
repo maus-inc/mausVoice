@@ -5,6 +5,8 @@ import {
   accentSurface,
   parseShadowLayers,
   premiumSurface,
+  switchThumb,
+  switchTrack,
   titleBarShadow,
   type ShadowLayer,
 } from "./shadows";
@@ -193,7 +195,7 @@ describe("accentSurface", () => {
       expect(alphas(layers)).toEqual(accentAlphas[mode]);
       expect(layers.map((layer) => layer.inset)).toEqual([true, true, false]);
       expect(rgb(layers[2])).toBe(
-        mode === "light" ? "27, 138, 248" : "49, 152, 255",
+        mode === "light" ? "107, 103, 96" : "196, 192, 184",
       );
     },
   );
@@ -249,6 +251,8 @@ describe("theme.ts consumers", () => {
       accentSurface.light,
       accentSurface.dark,
       ...Object.values(titleBarShadow),
+      ...Object.values(switchThumb),
+      ...Object.values(switchTrack),
       "none",
     ]);
     const found = new Set<string>();

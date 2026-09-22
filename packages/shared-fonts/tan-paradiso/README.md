@@ -1,1 +1,1 @@
-TAN-PARADISO Regular (woff2). App-wide typeface for mausVoice.
+TAN-PARADISO Regular (woff2). Display typeface bundled for the mausVoice wordmark and welcome/name.

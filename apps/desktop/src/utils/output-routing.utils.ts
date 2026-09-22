@@ -9,7 +9,8 @@ import { getAppState, produceAppState } from "../store";
 import { getEffectiveHandsFreeDelayMs } from "./hands-free-delay.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { getLogger } from "./log.utils";
-import { sendPillFlashMessage } from "./overlay.utils";
+import { sendPillFlashMessage, sendPillStageText } from "./overlay.utils";
+import { markPipeline, type PipelineTrace } from "./pipeline-trace";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
 
@@ -38,7 +39,9 @@ const deliverRemoteOutput = async (
   args: RouteTranscriptOutputArgs,
   prefs: NonNullable<OutputContext["prefs"]>,
 ): Promise<RouteTranscriptOutputResult> => {
-  if (!args.text.trim()) return { delivered: false, remote: true };
+  if (!args.text.trim()) {
+    return { delivered: false, remote: true, deliveredText: null };
+  }
   await invoke<void>("remote_sender_deliver_final_text", {
     args: {
       targetDeviceId: prefs.remoteTargetDeviceId,
@@ -46,7 +49,7 @@ const deliverRemoteOutput = async (
       mode: args.mode,
     },
   });
-  return { delivered: true, remote: true };
+  return { delivered: true, remote: true, deliveredText: args.text };
 };
 
 const reviewOutputText = async (
@@ -66,7 +69,20 @@ const reviewOutputText = async (
   // misclassified as a hang and skip history persistence. True phase
   // decoupling needs the review wait lifted out of stopRecording and is
   // tracked as a follow-up.
-  return reviewTranscriptBeforeInsert(text);
+  return reviewTranscriptBeforeInsert(text, "dictation");
+};
+
+const reviewOutputTextWithStage = async (
+  text: string,
+  prefs: OutputContext["prefs"],
+  skipReview: boolean | undefined,
+  trace: PipelineTrace | null,
+): Promise<string | null> => {
+  if (!skipReview && prefs?.reviewBeforeInsert === true && text.trim()) {
+    sendPillStageText(getIntl().formatMessage({ defaultMessage: "Reviewing" }));
+    markPipeline(trace, "reviewing");
+  }
+  return reviewOutputText(text, prefs, skipReview);
 };
 
 const insertLocalOutput = async (
@@ -95,23 +111,39 @@ const insertLocalOutput = async (
 
 export const routeTranscriptOutput = async (
   args: RouteTranscriptOutputArgs,
+  trace: PipelineTrace | null = null,
 ): Promise<RouteTranscriptOutputResult> => {
   const context = getOutputContext(args);
   const { prefs } = context;
   const sessionId = ++handsFreeSessionId;
 
   if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
-    const outputText = await reviewOutputText(
+    const outputText = await reviewOutputTextWithStage(
       args.text,
       prefs,
       args.skipReview,
+      trace,
     );
-    if (!outputText?.trim()) return { delivered: false, remote: true };
-    return deliverRemoteOutput({ ...args, text: outputText }, prefs);
+    if (!outputText?.trim()) {
+      return { delivered: false, remote: true, deliveredText: null };
+    }
+    const delivered = await deliverRemoteOutput(
+      { ...args, text: outputText },
+      prefs,
+    );
+    if (!args.isInterim) markPipeline(trace, "inserted");
+    return delivered;
   }
 
-  const outputText = await reviewOutputText(args.text, prefs, args.skipReview);
-  if (!outputText?.trim()) return { delivered: false, remote: false };
+  const outputText = await reviewOutputTextWithStage(
+    args.text,
+    prefs,
+    args.skipReview,
+    trace,
+  );
+  if (!outputText?.trim()) {
+    return { delivered: false, remote: false, deliveredText: null };
+  }
 
   const handsFreeDelayMs = getEffectiveHandsFreeDelayMs(prefs);
 
@@ -120,11 +152,15 @@ export const routeTranscriptOutput = async (
       setTimeout(resolve, handsFreeDelayMs);
     });
     if (sessionId !== handsFreeSessionId) {
-      return { delivered: false, remote: false };
+      return { delivered: false, remote: false, deliveredText: null };
     }
   }
 
+  if (!args.isInterim) {
+    sendPillStageText(getIntl().formatMessage({ defaultMessage: "Inserting" }));
+  }
   await insertLocalOutput(context, outputText);
+  if (!args.isInterim) markPipeline(trace, "inserted");
 
   // After a final dictation lands in the target app, watch for corrections
   // the user makes there and offer to learn them. Interim streamed segments
@@ -133,7 +169,7 @@ export const routeTranscriptOutput = async (
     beginEditWatch(outputText);
   }
 
-  return { delivered: true, remote: false };
+  return { delivered: true, remote: false, deliveredText: outputText };
 };
 
 export const insertLocalTranscriptOutputViaPaste = async (

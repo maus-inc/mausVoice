@@ -20,17 +20,27 @@ describe("retry", () => {
   });
 
   it("does not call fn again when isRetryable becomes false during the delay", async () => {
-    let retryable = true;
-    const fn = vi.fn().mockRejectedValue(new Error("transient"));
-    const promise = retry({
-      fn,
-      retries: 3,
-      delay: 40,
-      isRetryable: () => retryable,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    retryable = false;
-    await expect(promise).rejects.toThrow("transient");
-    expect(fn).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+    try {
+      let retryable = true;
+      const fn = vi.fn().mockRejectedValue(new Error("transient"));
+      const promise = retry({
+        fn,
+        retries: 3,
+        delay: 40,
+        isRetryable: () => retryable,
+      });
+      // Attach the rejection handler before advancing virtual time so Vitest
+      // never observes the expected failure as an unhandled rejection.
+      const rejected = expect(promise).rejects.toThrow("transient");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fn).toHaveBeenCalledTimes(1);
+      retryable = false;
+      await vi.advanceTimersByTimeAsync(40);
+      await rejected;
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -21,6 +21,22 @@ export const formatShortDate = (intl: IntlShape, isoDate: string): string => {
   });
 };
 
+/** assistant-ui thread-list day buckets, local calendar days. */
+export type ThreadDayGroup = "today" | "yesterday" | "earlier";
+
+export const threadDayGroup = (
+  isoDate: string,
+  now: Date = new Date(),
+): ThreadDayGroup => {
+  const date = new Date(isoDate);
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startYesterday = new Date(startToday);
+  startYesterday.setDate(startYesterday.getDate() - 1);
+  if (date >= startToday) return "today";
+  if (date >= startYesterday) return "yesterday";
+  return "earlier";
+};
+
 /** Compact time for chat surfaces, e.g. "10:40 PM". */
 export const formatShortTime = (intl: IntlShape, isoDate: string): string =>
   intl.formatTime(new Date(isoDate), {

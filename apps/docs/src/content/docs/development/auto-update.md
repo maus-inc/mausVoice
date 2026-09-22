@@ -5,11 +5,11 @@ sidebar:
   order: 14
 ---
 
-The updater is a code-execution channel: whatever the manifest names is downloaded, verified, and run on a user's machine. The pipeline is therefore built so that the untrusted parts (endpoints, artifacts, release metadata) live in the repository, and the one trusted part, the signing key, never does.
+The updater is a code-execution channel: whatever the manifest names is downloaded, verified, and run on a user's machine. The pipeline therefore treats endpoints, build artifacts, and release metadata as untrusted inputs; the signing key is the only trust anchor and never lives in the repository.
 
 ## Trust model
 
-Tauri's updater verifies every download against a minisign public key compiled into the binary. Two properties follow:
+Tauri's updater verifies every download against a minisign public key compiled into the binary. Tauri serializes its public-key file and detached signatures as Base64 values; its runtime decodes those values before verification. Two properties follow:
 
 - **The private key must never be committed.** Anyone holding it can sign a build that every installed copy of mausVoice will accept and execute. It lives only in repository secrets.
 - **The public key in a build must match the key that signed the updater bundles.** The manifest references those bundles, and Tauri verifies each download against the compiled-in key; the manifest itself is not signed. A build carrying a throwaway key cannot install a properly signed release, and vice versa. Rotating the key means shipping a new build before the next signed release.
@@ -18,18 +18,24 @@ Accordingly `apps/desktop/src-tauri/tauri.conf.json` commits `createUpdaterArtif
 
 ## Required secrets
 
-| Secret                         | Purpose                                                                     |
-| :----------------------------- | :-------------------------------------------------------------------------- |
-| `UPDATER_PRIVATE_KEY`          | minisign private key Tauri signs bundles with (`TAURI_SIGNING_PRIVATE_KEY`) |
-| `UPDATER_PRIVATE_KEY_PASSWORD` | passphrase for that key; set to an empty secret if the key has none         |
-| `UPDATER_PUBLIC_KEY`           | matching public key, patched into `plugins.updater.pubkey` for the build    |
+| Secret                         | Purpose                                                                            |
+| :----------------------------- | :--------------------------------------------------------------------------------- |
+| `UPDATER_PRIVATE_KEY`          | Tauri's Base64-serialized minisign private-key value (`TAURI_SIGNING_PRIVATE_KEY`) |
+| `UPDATER_PRIVATE_KEY_PASSWORD` | passphrase for that key; set to an empty secret if the key has none                |
+| `UPDATER_PUBLIC_KEY`           | matching Base64-serialized public-key value, patched into `plugins.updater.pubkey` |
+
+Keep these values exactly as `tauri signer generate` wrote them; do not Base64-decode or reformat them before storing them. The release workflow decodes the public key and generated `.sig` files only for its independent `minisign` command-line verification.
 
 Generate a pair with `pnpm --filter desktop exec tauri signer generate -w ~/.tauri/mausvoice.key`. Keep the private key and its passphrase offline; store both halves plus the passphrase in the repository's secret store.
 
-:::caution[Windows writes the key inside the repository]
-PowerShell does not expand `~`, so on Windows that command creates a literal `~` directory inside the working tree at `apps/desktop/~/.tauri/mausvoice.key` rather than in your home directory. `.gitignore` covers `*.key`, `*.key.pub`, `.tauri/`, and `**/~/` so it cannot be committed accidentally, but move it out of the repository once the secrets are set, and delete the stray `~` directory.
+:::caution[Keep generated keys outside the checkout]
+Create the key files outside the repository. In PowerShell, use an explicit home-directory path:
 
-PowerShell also rejects `<` for input redirection. Set the secrets with `-b` instead:
+```powershell
+pnpm --filter desktop exec tauri signer generate -w "$HOME\.tauri\mausvoice.key"
+```
+
+Set the secrets with `-b` so PowerShell passes each generated value as one argument:
 
 ```powershell
 gh secret set UPDATER_PRIVATE_KEY --repo maus-inc/mausVoice -b (Get-Content -Raw "path\to\mausvoice.key")
@@ -37,7 +43,7 @@ gh secret set UPDATER_PUBLIC_KEY  --repo maus-inc/mausVoice -b (Get-Content -Raw
 gh secret set UPDATER_PRIVATE_KEY_PASSWORD --repo maus-inc/mausVoice
 ```
 
-`Get-Content -Raw` matters: without it PowerShell strips the trailing newline and reflows the content, which can corrupt the stored key.
+`Get-Content -Raw` preserves the generated value as one string. Do not edit or re-encode either key file before storing it.
 :::
 
 If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits a warning and builds unsigned installers with no `.sig` files and no manifest. Publishing then depends on the channel, and a **stable release fails closed**: the manifest-eligibility gate in the publish job errors out (`::error::`, non-zero exit) before anything is uploaded, because clients resolve `latest.json` from `releases/latest/download/` and a stable release without it would 404 every installed copy and permanently disable updates. A prerelease is the one case that degrades gracefully: it publishes the unsigned installers and deliberately skips the manifest. Nothing silently ships a build that clients would refuse or, worse, wrongly trust.
@@ -48,9 +54,10 @@ If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits
 2. **Enable updater artifacts.** Only when signing is enabled: `createUpdaterArtifacts` is set to `true` and the real `pubkey` is patched into the config inside the build checkout. The edit is never committed.
 3. **Build.** Each platform runs `tauri build`, producing installers plus, when signing is on, the updater bundles (`.app.tar.gz`, `.nsis.zip`, `.AppImage`) and a detached `.sig` beside each.
 4. **Resolve manifest eligibility.** The publish job derives the channel from the version itself. A version whose prerelease identifier disagrees with the workflow's prerelease input fails the job; a prerelease skips the manifest; a stable release missing the signing secrets fails closed rather than publish without `latest.json`.
-5. **Build the manifest.** After artifacts are downloaded, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes `latest.json`.
-6. **Publish.** `latest.json` and the `.sig` files are uploaded as release assets alongside the installers.
-7. **Homebrew.** The cask job runs for stable releases only.
+5. **Verify signatures.** For a stable release, the workflow decodes Tauri's Base64 key and `.sig` values to temporary files, then has `minisign` verify every recognized updater bundle before a manifest is written.
+6. **Build the manifest.** After artifacts are downloaded and verified, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes `latest.json`.
+7. **Publish.** `latest.json` and the `.sig` files are uploaded as release assets alongside the installers.
+8. **Homebrew.** The cask job runs for stable releases only.
 
 The app resolves the manifest from `https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json`. GitHub's `releases/latest` always points at the newest **non-prerelease** release, so the endpoint is stable across versions and a pre-release cannot become the update target.
 

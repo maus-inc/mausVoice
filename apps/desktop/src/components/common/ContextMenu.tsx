@@ -40,9 +40,16 @@ import {
   type SxProps,
   type Theme,
 } from "@mui/material";
+import {
+  ClipboardCopy,
+  ClipboardPaste,
+  Scissors,
+  SquareDashedMousePointer,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useIntl } from "react-intl";
+import { hairline, premiumSurface } from "../../styles/shadows";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -284,25 +291,31 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
       role="menu"
       tabIndex={-1}
       onKeyDown={handleKeyDown}
-      sx={{
-        position: "fixed",
-        zIndex: 1400,
-        minWidth: MENU_MIN_WIDTH,
-        maxHeight: MENU_MAX_HEIGHT,
-        overflowY: "auto",
-        py: 0.5,
-        borderRadius: 1.5,
-        boxShadow: (t) => t.shadows[8],
-        border: "1px solid",
-        borderColor: "divider",
-        backgroundColor: "background.paper",
-        outline: "none",
-        "&:focus-visible": {
-          outline: "2px solid",
-          outlineColor: "primary.main",
-        },
-        ...sx,
-      }}
+      sx={[
+        (theme) => ({
+          position: "fixed",
+          zIndex: 1400,
+          minWidth: MENU_MIN_WIDTH,
+          maxHeight: MENU_MAX_HEIGHT,
+          overflowY: "auto",
+          py: 0.5,
+          borderRadius: 1.5,
+          boxShadow: premiumSurface.light.hover,
+          border: hairline.light(),
+          backgroundColor: "background.paper",
+          outline: "none",
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+          },
+          ...theme.applyStyles("dark", {
+            boxShadow: premiumSurface.dark.hover,
+            border: hairline.dark(),
+          }),
+        }),
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
+      autoFocus
     >
       {items.map((item, index) => {
         if (item.kind === "divider") {
@@ -650,6 +663,7 @@ export const ContextMenuProvider = ({
       ctxMenu.handleContextMenu(e, [
         {
           label: intl.formatMessage({ defaultMessage: "Cut" }),
+          icon: <Scissors size={16} strokeWidth={1.9} />,
           disabled: !hasSelection,
           onClick: () => {
             // Restore focus + selection to the editable so the native cut
@@ -662,6 +676,7 @@ export const ContextMenuProvider = ({
         },
         {
           label: intl.formatMessage({ defaultMessage: "Copy" }),
+          icon: <ClipboardCopy size={16} strokeWidth={1.9} />,
           disabled: !hasSelection,
           onClick: copySelection,
           accelerator: modKey + "+C",
@@ -669,6 +684,7 @@ export const ContextMenuProvider = ({
         { kind: "divider" },
         {
           label: intl.formatMessage({ defaultMessage: "Paste" }),
+          icon: <ClipboardPaste size={16} strokeWidth={1.9} />,
           onClick: () => {
             // `readText` can reject (permission denied / no clipboard access);
             // swallow it rather than surface an unhandled rejection.
@@ -685,6 +701,7 @@ export const ContextMenuProvider = ({
         { kind: "divider" },
         {
           label: intl.formatMessage({ defaultMessage: "Select All" }),
+          icon: <SquareDashedMousePointer size={16} strokeWidth={1.9} />,
           onClick: () => {
             focusEditable(editable);
             if (isTextInput(editable.el)) {

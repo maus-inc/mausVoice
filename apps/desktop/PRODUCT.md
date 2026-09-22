@@ -2,22 +2,22 @@
 
 ## Who uses this
 
-Individual knowledge workers who dictate more than they can type: one person dictating into any **macOS, Windows, or Linux** app. No heavy team or admin surface. Local-first, bring-your-own-key. Default register: **Operate** (tool that disappears into the task).
+Individual knowledge workers who dictate more than they can type on **macOS, Windows, or Linux**. No heavy team or admin surface. Local-first, bring-your-own-key. Default register: **Operate** (tool that disappears into the task).
 
 ## Product purpose
 
-mausVoice turns speech into text and inserts it into whatever app has focus, then optionally cleans it up with an LLM in a chosen writing style. Hotkey-first. A small native overlay "pill" shows state; the system tray keeps it resident.
+mausVoice turns speech into text and delivers it to the focused app by paste or simulated typing, with a clipboard fallback when direct insertion is unavailable. It can optionally clean the text up with an LLM in a chosen writing style. Hotkey-first. A small native overlay "pill" shows state; the system tray keeps it resident.
 
 ## Product truth (do not invent or hype)
 
-- Hybrid: recognition can be fully local (Whisper GGML / ONNX Parakeet, Canary, SenseVoice) or API (Deepgram `nova-3` streaming is the personal default; Groq and others are batch). **Post-processing is a separate API/Off choice.** Local STT does not imply offline cleanup.
+- Hybrid: recognition can be fully local (Whisper GGML / ONNX Parakeet, Canary, SenseVoice) or API (Azure Speech, Deepgram `nova-3`, Gladia, AssemblyAI, and ElevenLabs support live sessions; other supported providers use batch routes). **Post-processing is a separate API/Off choice.** Local STT does not imply offline cleanup.
 - BYO keys entered in-app, encrypted at rest (XChaCha20-Poly1305), never baked into the build. Rotate in Settings.
 - Features that exist: dictation overlay, global hotkeys, personal dictionary (glossary + replacements), writing styles/tones (including per-app and hotkey cycle), experimental Assistant / Chats, history, multi-device remote output.
 - This tree is a personal/local build: paywall and Flutter mobile were removed; Linux desktop is retained (GTK pill + Linux packaging).
 
 ## Brand / tone
 
-- Name: **mausVoice**. Display face TAN-PARADISO only on logo + welcome; body/UI is Satoshi / Plus Jakarta.
+- Name: **mausVoice**. Display face TAN-PARADISO only on logo + welcome; body/UI is Satoshi.
 - UI copy: direct, task-named. Buttons name the action ("Save and continue", not "Proceed").
 - Nothing gimmicky. It is a tool a professional uses all day.
 

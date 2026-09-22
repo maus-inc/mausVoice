@@ -1,0 +1,72 @@
+/* Real product fonts (Satoshi + TAN-PARADISO) + duration/easing vars. */
+@import "@desktop/styles/fonts.css";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--app-palette-level0);
+  color: var(--app-palette-text-primary);
+}
+
+/* Rendered spec markdown (react-markdown, unstyled by default). */
+.preview-markdown h1 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+.preview-markdown h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 24px 0 8px;
+}
+.preview-markdown h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 16px 0 6px;
+}
+.preview-markdown p,
+.preview-markdown li {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.preview-markdown ul,
+.preview-markdown ol {
+  padding-left: 20px;
+}
+.preview-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: var(--app-palette-level2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.preview-markdown pre {
+  background: var(--app-palette-level2);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.preview-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.preview-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.preview-markdown th,
+.preview-markdown td {
+  border: 1px solid var(--app-palette-divider);
+  padding: 6px 10px;
+  text-align: left;
+}
+.preview-markdown th {
+  background: var(--app-palette-level2);
+}

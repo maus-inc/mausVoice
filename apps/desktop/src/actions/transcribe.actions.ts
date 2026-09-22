@@ -23,6 +23,7 @@ import {
   unwrapNestedLlmResponse,
 } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import {
   coerceToDictationLanguage,
   mapDictationLanguageToWhisperLanguage,
@@ -30,6 +31,12 @@ import {
 import { orFalse, orNull } from "../utils/nullable.utils";
 import { withTimeout } from "../utils/timeout.utils";
 import { getLogger } from "../utils/log.utils";
+import {
+  appendTimingSample,
+  markPipeline,
+  summarizePipeline,
+  type PipelineTrace,
+} from "../utils/pipeline-trace";
 import {
   buildLocalizedTranscriptionPrompt,
   buildPostProcessingPrompt,
@@ -57,6 +64,7 @@ export type TranscribeAudioInput = {
   samples: AudioSamples;
   sampleRate: number;
   dictationLanguage?: string;
+  trace?: PipelineTrace | null;
 };
 
 export type TranscribeAudioMetadata = {
@@ -82,6 +90,7 @@ export type PostProcessInput = {
   rawTranscript: string;
   toneId: Nullable<string>;
   dictationLanguage?: string;
+  trace?: PipelineTrace | null;
 };
 
 export type PostProcessMetadata = {
@@ -119,6 +128,7 @@ export const transcribeAudio = async ({
   samples,
   sampleRate,
   dictationLanguage: dictationLanguageOverride,
+  trace,
 }: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
   const state = getAppState();
 
@@ -230,6 +240,8 @@ export const transcribeAudio = async ({
   metadata.transcriptionApiKeyId = transcriptionApiKeyId;
   metadata.transcriptionMode =
     transcribeOutput.metadata?.transcriptionMode || null;
+
+  markPipeline(trace, "transcribed");
 
   return {
     rawTranscript,
@@ -507,6 +519,12 @@ const runPostProcessingRequest = async ({
     // or transcript.
     recordPostProcessFailure(error, metadata, warnings, postprocessStart);
     return rawTranscript;
+  } finally {
+    // `withTimeout` aborts a hung request, but a provider can also reject
+    // before its network work has fully unwound. Always signal completion so
+    // every adapter receives the same cancellation boundary on success and
+    // failure, without leaving a request to consume quota after this turn.
+    postProcessAbort.abort();
   }
 };
 
@@ -561,6 +579,8 @@ export const postProcessTranscript = async (
     warnings,
   );
 
+  markPipeline(input.trace, "polished");
+
   return {
     transcript,
     warnings: dedup(warnings),
@@ -578,6 +598,7 @@ export type StoreTranscriptionInput = {
   warnings: string[];
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
+  trace?: PipelineTrace | null;
 };
 
 export type StoreTranscriptionOutput = {
@@ -617,7 +638,7 @@ const persistAudioSnapshot = async (
       },
     );
   } catch (error) {
-    console.error("Failed to persist audio snapshot", error);
+    getLogger().error("Failed to persist audio snapshot", error);
     return undefined;
   }
 };
@@ -755,11 +776,13 @@ export const storeTranscription = async (
   const wordsAdded = getWordsAdded(input.transcript);
   const transcriptionId = createId();
 
-  if (incognitoEnabled) {
+  if (!isPersistenceAllowed()) {
     getLogger().verbose(
-      `Incognito mode: skipping storage (includeInStats=${includeInStats}, words=${wordsAdded})`,
+      `Persistence suppressed: skipping storage (incognito=${incognitoEnabled}, includeInStats=${includeInStats}, words=${wordsAdded})`,
     );
-    if (wordsAdded > 0 && includeInStats) {
+    // Counting words is an incognito-only option. An ephemeral session never
+    // opted into usage statistics.
+    if (wordsAdded > 0 && includeInStats && incognitoEnabled) {
       await recordUsageWords(wordsAdded);
     }
 
@@ -796,6 +819,23 @@ export const storeTranscription = async (
 
   await recordUsageWords(wordsAdded);
   await purgeStaleAudioSnapshots();
+
+  markPipeline(input.trace, "persisted");
+  const summary = summarizePipeline(input.trace);
+  if (summary) {
+    const providerKey = [
+      input.transcriptionMetadata.transcriptionMode ?? "unknown",
+      input.transcriptionMetadata.modelSize ?? "",
+      input.transcriptionMetadata.inferenceDevice ?? "",
+      input.postProcessMetadata.postProcessMode ?? "",
+    ].join("|");
+    produceAppState((draft) => {
+      draft.local.providerTiming[providerKey] = appendTimingSample(
+        draft.local.providerTiming[providerKey],
+        summary,
+      );
+    });
+  }
 
   return { transcription: storedTranscription, wordCount: wordsAdded };
 };

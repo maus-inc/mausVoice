@@ -16,7 +16,7 @@ mausVoice filters credentials by task. "Available for transcription" means audio
 | ElevenLabs        | Yes, live session and batch |         No          | API key                                                 |
 | Deepgram          |      Yes, live session      |         No          | API key                                                 |
 | Gladia            | Yes, live session and batch |         No          | API key                                                 |
-| OpenRouter        |             No              |         Yes         | API key                                                 |
+| OpenRouter        |         Yes, batch          |         Yes         | API key                                                 |
 | Ollama            |             No              |         Yes         | Base URL; optional key                                  |
 | OpenAI Compatible |         Yes, batch          |         Yes         | Base URL; optional key; `/v1` choice                    |
 | Azure             | Yes, current bulk delivery  | Yes as Azure OpenAI | Speech region or OpenAI endpoint, plus the matching key |
@@ -27,7 +27,7 @@ mausVoice filters credentials by task. "Available for transcription" means audio
 | Speaches          |         Yes, batch          |         No          | Base URL and transcription model                        |
 | xAI Grok          |         Yes, batch          |         No          | API key                                                 |
 
-"Live session" describes microphone transport during recording. AssemblyAI, Deepgram, ElevenLabs, and Gladia emit committed segments into mausVoice's optional [real-time output](../../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
+"Live session" describes microphone transport during recording. AssemblyAI, Deepgram, ElevenLabs, and Gladia emit committed segments into mausVoice's optional [real-time output](../using-mausvoice/real-time-output/). Azure has a dedicated recognition session but currently returns its assembled transcript in bulk.
 
 ## Capability filter and dispatcher agreement
 

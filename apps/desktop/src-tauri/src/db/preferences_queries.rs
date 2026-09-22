@@ -75,9 +75,11 @@ pub async fn upsert_user_preferences(
              spoken_commands_enabled,
              auto_learn_dictionary_enabled,
              auto_learn_from_edits_enabled,
-             eleven_labs_keyterms_enabled
+             eleven_labs_keyterms_enabled,
+             expansion_flags,
+             update_channel
           )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)
          ON CONFLICT(user_id) DO UPDATE SET
             transcription_mode = excluded.transcription_mode,
             transcription_api_key_id = excluded.transcription_api_key_id,
@@ -130,7 +132,9 @@ pub async fn upsert_user_preferences(
             spoken_commands_enabled = excluded.spoken_commands_enabled,
             auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled,
             auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled,
-            eleven_labs_keyterms_enabled = excluded.eleven_labs_keyterms_enabled"
+            eleven_labs_keyterms_enabled = excluded.eleven_labs_keyterms_enabled,
+            update_channel = excluded.update_channel,
+            expansion_flags = expansion_flags"
         )
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
@@ -185,6 +189,8 @@ pub async fn upsert_user_preferences(
     .bind(preferences.auto_learn_dictionary_enabled)
     .bind(preferences.auto_learn_from_edits_enabled)
     .bind(preferences.eleven_labs_keyterms_enabled)
+    .bind(&preferences.expansion_flags)
+    .bind(&preferences.update_channel)
     .execute(&pool)
     .await?;
 
@@ -249,7 +255,9 @@ pub async fn fetch_user_preferences(
             spoken_commands_enabled,
             auto_learn_dictionary_enabled,
             auto_learn_from_edits_enabled,
-            eleven_labs_keyterms_enabled
+            eleven_labs_keyterms_enabled,
+            expansion_flags,
+            update_channel
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
@@ -435,6 +443,12 @@ pub async fn fetch_user_preferences(
             .try_get::<i64, _>("eleven_labs_keyterms_enabled")
             .map(|v| v != 0)
             .unwrap_or(false),
+        expansion_flags: row
+            .try_get::<String, _>("expansion_flags")
+            .unwrap_or_else(|_| "{}".to_string()),
+        update_channel: row
+            .try_get::<String, _>("update_channel")
+            .unwrap_or_else(|_| "stable".to_string()),
     });
 
     Ok(preferences)
@@ -465,6 +479,29 @@ pub async fn fetch_transcription_mode(pool: SqlitePool) -> Result<Option<String>
 
     Ok(row.flatten())
 }
+
+/// Single-column write path that owns `expansion_flags`.
+///
+/// `upsert_user_preferences` deliberately preserves the stored value on
+/// conflict (`expansion_flags = expansion_flags`), so every flag mutation
+/// must go through this statement — never through a full-row upsert, which
+/// would let a stale preferences snapshot overwrite concurrent flag changes.
+pub fn expansion_flags_update_sql() -> &'static str {
+    "UPDATE user_preferences SET expansion_flags = ?1 WHERE user_id = ?2"
+}
+
+pub async fn set_expansion_flags(
+    pool: SqlitePool,
+    flags: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(expansion_flags_update_sql())
+        .bind(flags)
+        .bind(LOCAL_USER_ID)
+        .execute(&pool)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +547,13 @@ mod tests {
             .expect("saved preferences must exist");
 
         assert!(loaded.eleven_labs_keyterms_enabled);
+    }
+
+    #[test]
+    fn expansion_flags_update_sql_targets_only_the_flag_column() {
+        let sql = expansion_flags_update_sql();
+        assert!(sql.contains("SET expansion_flags = ?1"));
+        assert!(sql.contains("WHERE user_id = ?2"));
+        assert!(!sql.contains("excluded."));
     }
 }

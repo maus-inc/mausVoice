@@ -79,6 +79,10 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   // Opened in the external browser via @tauri-apps/plugin-opener (openUrl),
   // never fetched by the webview.
   ["console.deepgram.com", "openUrl external-browser link"],
+  [
+    "www.w3.org",
+    "SVG xmlns namespace identifier inside an inline SVG markup string (preview runtime) — never fetched",
+  ],
   ["console.groq.com", "openUrl external-browser link / doc comment"],
   ["maus-inc.github.io", "openUrl link + OpenRouter HTTP-Referer header value"],
   // <iframe> embeds are governed by frame-src, asserted separately below.

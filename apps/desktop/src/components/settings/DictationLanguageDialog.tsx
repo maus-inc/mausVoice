@@ -1,4 +1,4 @@
-import { Add, Close } from "@mui/icons-material";
+import { Plus, X } from "lucide-react";
 import {
   Alert,
   Box,
@@ -94,7 +94,7 @@ const DictationLanguageRow = ({
       </Box>
       {canDelete && (
         <IconButton size="small" onClick={onDelete}>
-          <Close color="disabled" />
+          <X size={16} strokeWidth={1.9} />
         </IconButton>
       )}
     </Stack>
@@ -294,7 +294,7 @@ export const DictationLanguageDialog = () => {
           ))}
           <Button
             variant="text"
-            startIcon={<Add />}
+            startIcon={<Plus size={16} strokeWidth={1.9} />}
             size="small"
             onClick={handleAddLanguage}
             sx={{ alignSelf: "flex-end", py: 0.5 }}

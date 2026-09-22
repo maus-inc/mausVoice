@@ -223,6 +223,68 @@ export const checkForUpdate = async (
     return null;
   }
 
+  return retainUpdate(update, platform);
+};
+
+export type UpdateChannelName = "stable" | "beta";
+
+type ChannelUpdateMetadataWire = {
+  rid: number;
+  currentVersion: string;
+  version: string;
+  dateUnix: number | null;
+  body: string | null;
+  rawJson: string;
+};
+
+/**
+ * Checks a non-default update channel. Stable reuses the bundled plugin
+ * endpoint untouched; beta goes through the `check_for_channel_update`
+ * command, which builds an identical updater aimed at the beta manifest and
+ * registers the handle in the same resource table, so install, relaunch,
+ * and signature verification all run the stock path.
+ */
+export const checkForChannelUpdate = async (
+  platform: DesktopPlatform,
+  channel: UpdateChannelName,
+): Promise<AvailableUpdateInfo | null> => {
+  if (channel !== "beta") {
+    return checkForUpdate(platform);
+  }
+
+  const metadata = await invoke<ChannelUpdateMetadataWire | null>(
+    "check_for_channel_update",
+    { channel },
+  );
+
+  if (!metadata) {
+    await closeAvailableUpdate();
+    return null;
+  }
+
+  const update = new Update({
+    rid: metadata.rid,
+    currentVersion: metadata.currentVersion,
+    version: metadata.version,
+    date:
+      metadata.dateUnix == null
+        ? undefined
+        : new Date(metadata.dateUnix * 1000).toISOString(),
+    body: metadata.body ?? undefined,
+    rawJson: JSON.parse(metadata.rawJson) as Record<string, unknown>,
+  });
+  return retainUpdate(update, platform);
+};
+
+/**
+ * Retains an `Update` handle from any channel and resolves the install
+ * metadata the actions layer consumes. Shared by the bundled and channel
+ * check paths so both behave identically past this point.
+ */
+const retainUpdate = async (
+  update: Update,
+  platform: DesktopPlatform,
+): Promise<AvailableUpdateInfo> => {
   if (availableUpdate && availableUpdate !== update) {
     try {
       await availableUpdate.close();

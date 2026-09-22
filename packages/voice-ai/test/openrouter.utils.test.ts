@@ -107,3 +107,16 @@ describe("openrouterTranscribeAudio", () => {
     ).rejects.toThrow("Transcription failed");
   });
 });
+
+import { createJsonResponseFormatTests } from "../src/test-helpers/shared-json-response-format.helper";
+
+createJsonResponseFormatTests({
+  describeName: "openrouterGenerateTextResponse response_format selection",
+  loadModule: async () => {
+    const mod = await import("../src/openrouter.utils");
+    return mod;
+  },
+  functionName: "openrouterGenerateTextResponse",
+  jsonObjectModels: ["openai/gpt-4-turbo", "openai/gpt-4-1106-preview"],
+  jsonSchemaModels: ["openai/o3-mini", "openai/gpt-oss-20b"],
+});

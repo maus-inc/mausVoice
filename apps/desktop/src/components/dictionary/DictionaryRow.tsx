@@ -1,6 +1,4 @@
-import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
-import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import { PublicOutlined } from "@mui/icons-material";
+import { ArrowRight, Globe, Trash2 } from "lucide-react";
 import { IconButton, Stack, TextField, Tooltip } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
 import {
@@ -124,6 +122,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         : [
             {
               label: intl.formatMessage({ defaultMessage: "Delete" }),
+              icon: <Trash2 size={16} strokeWidth={1.9} />,
               danger: true,
               onClick: handleDelete,
             },
@@ -172,7 +171,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
         />
         {isReplacement ? (
           <>
-            <ArrowForwardRoundedIcon color="action" fontSize="small" />
+            <ArrowRight size={16} strokeWidth={1.9} aria-hidden />
             <TextField
               variant="outlined"
               size="small"
@@ -199,7 +198,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
           >
             <span>
               <IconButton size="small" disabled>
-                <PublicOutlined fontSize="small" />
+                <Globe size={16} strokeWidth={1.9} />
               </IconButton>
             </span>
           </Tooltip>
@@ -212,7 +211,7 @@ export const DictionaryRow = ({ id }: DictionaryRowProps) => {
             onClick={handleDelete}
             size="small"
           >
-            <DeleteOutlineRoundedIcon fontSize="small" />
+            <Trash2 size={16} strokeWidth={1.9} />
           </IconButton>
         )}
       </Stack>

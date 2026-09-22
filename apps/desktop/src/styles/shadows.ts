@@ -88,7 +88,7 @@ export const premiumSurface = {
 } as const;
 
 /**
- * The accent CTA (variant "blue") keeps the machined emboss but casts its
+ * The accent CTA (variant "chrome") keeps the machined emboss but casts its
  * drop with the accent instead of neutral ink — the one colored lift in the
  * language.
  */
@@ -115,6 +115,23 @@ export const accentSurface = {
 export const titleBarShadow = {
   light: `inset 0 -1px 0 ${highlight(0.3)}, 0 10px 28px ${ink(0.14)}`,
   dark: `inset 0 -1px 0 ${highlight(0.04)}, 0 10px 28px ${darkInk(0.35)}`,
+} as const;
+
+/**
+ * Compact switch chrome: 1px top rim + contact drop on the thumb, inset
+ * well on the track. Same geometry in both schemes; alphas follow
+ * premiumSurface (light warm ink, dark neutral).
+ */
+export const switchThumb = {
+  light: `inset 0 1px 0 ${highlight(0.42)}, 0 1px 2px ${ink(0.18)}`,
+  dark: `inset 0 1px 0 ${highlight(0.12)}, 0 1px 2px ${darkInk(0.45)}`,
+} as const;
+
+export const switchTrack = {
+  light: `inset 0 1px 2px ${ink(0.12)}`,
+  lightChecked: `inset 0 1px 2px ${ink(0.28)}`,
+  dark: `inset 0 1px 2px ${darkInk(0.45)}`,
+  darkChecked: `inset 0 1px 2px ${darkInk(0.35)}`,
 } as const;
 
 /**

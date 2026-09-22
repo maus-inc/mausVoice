@@ -17,22 +17,22 @@ Spoken formatting commands allow you to control layout and punctuation hands-fre
 
 When spoken commands are enabled, mausVoice recognizes the following phrases:
 
-| Spoken phrase | Effect / insertion |
-| :--- | :--- |
-| `"new line"`, `"next line"`, `"line break"`, or `"newline"` | Inserts a single line break (`\n`). |
-| `"new paragraph"` or `"next paragraph"` | Inserts a double line break (`\n\n`). |
-| `"scratch that"` | Removes speech after the previous sentence boundary; if there is no earlier boundary, removes the preceding text in the current dictation. |
-| `"comma"` | Inserts a comma (`,`). |
-| `"period"` or `"full stop"` | Inserts a period (`.`). |
-| `"colon"` | Inserts a colon (`:`). |
-| `"semicolon"` | Inserts a semicolon (`;`). |
-| `"question mark"` | Inserts a question mark (`?`). |
-| `"exclamation mark"` or `"exclamation point"` | Inserts an exclamation mark (`!`). |
-| `"dot dot dot"` | Inserts an ellipsis (`...`). |
-| `"open parenthesis"`, `"left parenthesis"`, or `"open paren"` | Inserts an opening parenthesis (`(`). |
-| `"close parenthesis"`, `"right parenthesis"`, or `"close paren"` | Inserts a closing parenthesis (`)`). |
-| `"open quote"` or `"open quotes"` | Inserts an opening double quote (`"`). |
-| `"close quote"` or `"close quotes"` | Inserts a closing double quote (`"`). |
+| Spoken phrase                                                    | Effect / insertion                                                                                                                         |
+| :--------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------- |
+| `"new line"`, `"next line"`, `"line break"`, or `"newline"`      | Inserts a single line break (`\n`).                                                                                                        |
+| `"new paragraph"` or `"next paragraph"`                          | Inserts a double line break (`\n\n`).                                                                                                      |
+| `"scratch that"`                                                 | Removes speech after the previous sentence boundary; if there is no earlier boundary, removes the preceding text in the current dictation. |
+| `"comma"`                                                        | Inserts a comma (`,`).                                                                                                                     |
+| `"period"` or `"full stop"`                                      | Inserts a period (`.`).                                                                                                                    |
+| `"colon"`                                                        | Inserts a colon (`:`).                                                                                                                     |
+| `"semicolon"`                                                    | Inserts a semicolon (`;`).                                                                                                                 |
+| `"question mark"`                                                | Inserts a question mark (`?`).                                                                                                             |
+| `"exclamation mark"` or `"exclamation point"`                    | Inserts an exclamation mark (`!`).                                                                                                         |
+| `"dot dot dot"`                                                  | Inserts an ellipsis (`...`).                                                                                                               |
+| `"open parenthesis"`, `"left parenthesis"`, or `"open paren"`    | Inserts an opening parenthesis (`(`).                                                                                                      |
+| `"close parenthesis"`, `"right parenthesis"`, or `"close paren"` | Inserts a closing parenthesis (`)`).                                                                                                       |
+| `"open quote"` or `"open quotes"`                                | Inserts an opening double quote (`"`).                                                                                                     |
+| `"close quote"` or `"close quotes"`                              | Inserts a closing double quote (`"`).                                                                                                      |
 
 Commas, periods, colons, semicolons, question marks, exclamation marks, and closing parentheses or quotes are attached to the preceding word; their following spacing is preserved. An ellipsis preserves its surrounding transcription spacing. Line and paragraph breaks, as well as opening parentheses and quotes, absorb the following spacing so that the next dictated word starts immediately after the inserted character or break.
 

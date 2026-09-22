@@ -39,6 +39,7 @@ import { AgentStrategy } from "../../strategies/agent.strategy";
 import { BaseStrategy } from "../../strategies/base.strategy";
 import { DictationStrategy } from "../../strategies/dictation.strategy";
 import { TextFieldInfo } from "../../types/accessibility.types";
+import type { ReviewedTranscriptPersistenceInput } from "../../types/strategy.types";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -87,6 +88,12 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import { sendPillStageText } from "../../utils/overlay.utils";
+import {
+  markPipeline,
+  startPipelineTrace,
+  type PipelineTrace,
+} from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
 import {
@@ -123,10 +130,10 @@ type RawStopResp = {
   abortMessage?: string;
 };
 
-type HandleEmptyResultInput = {
+export type HandleEmptyResultInput = {
   audio: StopRecordingResponse;
   transcribeResult: TranscriptionSessionResult | undefined;
-  strategy: BaseStrategy;
+  strategy: Pick<BaseStrategy, "shouldStoreTranscript">;
   formatMessage: (descriptor: { defaultMessage: string }) => string;
   showToast: (options: {
     message: string;
@@ -180,6 +187,148 @@ export const handleEmptyTranscriptionResult = async (
   return { handled: true };
 };
 
+/**
+ * UI handoff happens only after the reviewed History row is durable. Neither a
+ * native surface failure nor a client-side route failure may turn that durable
+ * success into a retry that creates a duplicate transcription.
+ */
+export const surfacePersistedReviewInHistory = async (): Promise<void> => {
+  try {
+    await surfaceMainWindow();
+  } catch (error) {
+    getLogger().warning(
+      `Could not surface the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    await browserRouter.navigate("/dashboard/transcriptions");
+  } catch (error) {
+    getLogger().warning(
+      `Could not navigate to the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+
+type ReviewMessageFormatter = (descriptor: {
+  defaultMessage: string;
+}) => string;
+
+/** Both message descriptors must remain literal so FormatJS can extract them. */
+export const formatReviewPersistenceFailure = (
+  formatMessage: ReviewMessageFormatter,
+  incognitoModeEnabled: boolean,
+): string => {
+  if (incognitoModeEnabled) {
+    return formatMessage({
+      defaultMessage:
+        "History is unavailable in Incognito Mode. Your edited transcript remains on the pill.",
+    });
+  }
+  return formatMessage({
+    defaultMessage:
+      "Could not save the edited transcript. It remains on the pill so you can retry.",
+  });
+};
+
+export type PhaseBookkeeper = {
+  issue: () => number;
+  markSent: (seq: number, phase: OverlayPhase) => void;
+  getLastSent: () => OverlayPhase | null;
+};
+
+export const createPhaseBookkeeper = (): PhaseBookkeeper => {
+  let issued = 0;
+  let lastSent: OverlayPhase | null = null;
+  return {
+    issue: () => {
+      issued += 1;
+      return issued;
+    },
+    markSent: (seq, phase) => {
+      if (seq === issued) {
+        lastSent = phase;
+      }
+    },
+    getLastSent: () => lastSent,
+  };
+};
+
+export type PostTranscriptInput = {
+  audio: StopRecordingResponse;
+  a11yInfo: TextFieldInfo | null;
+  appTarget: AppTarget | null;
+  toneId: string | null;
+  rawTranscript: string;
+  transcribeResult: TranscriptionSessionResult;
+  strategy: Pick<BaseStrategy, "handleTranscript" | "shouldStoreTranscript">;
+  isAgentMode: boolean;
+  handleTranscriptTimeoutMs: number;
+  sendIdle: () => Promise<void>;
+  storeTranscriptionFn: typeof storeTranscription;
+  refreshMember: () => void;
+  /** Review-before-insert persistence hook; forwarded to the strategy. */
+  persistReviewedTranscript?: (
+    input: ReviewedTranscriptPersistenceInput,
+  ) => Promise<boolean>;
+  /** Pipeline timing marks threaded through to History storage. */
+  trace?: PipelineTrace | null;
+};
+
+export const postProcessFinalizedTranscript = async (
+  input: PostTranscriptInput,
+): Promise<RawStopResp> => {
+  const { strategy } = input;
+  if (input.isAgentMode) {
+    await input.sendIdle();
+  }
+  getLogger().info("Post-processing transcript");
+  const result = await withTimeout(
+    strategy.handleTranscript({
+      rawTranscript: input.rawTranscript,
+      processedTranscript: input.transcribeResult.processedTranscript,
+      serverPostProcessMetadata: input.transcribeResult.postProcessMetadata,
+      toneId: input.toneId,
+      a11yInfo: input.a11yInfo,
+      currentApp: input.appTarget,
+      loadingToken: null,
+      audio: input.audio,
+      transcriptionMetadata: input.transcribeResult.metadata,
+      transcriptionWarnings: input.transcribeResult.warnings,
+      persistReviewedTranscript: input.persistReviewedTranscript,
+      trace: input.trace ?? null,
+    }),
+    input.handleTranscriptTimeoutMs,
+    "Transcript post-processing",
+  );
+  const transcript = result.transcript;
+  const sanitizedTranscript = result.sanitizedTranscript;
+  const postProcessMetadata = result.postProcessMetadata;
+  const postProcessWarnings = result.postProcessWarnings;
+  getLogger().verbose(
+    `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
+  );
+  await input.sendIdle();
+  if (strategy.shouldStoreTranscript() && !result.historyPersisted) {
+    getLogger().verbose("Storing transcription");
+    await input.storeTranscriptionFn({
+      audio: input.audio,
+      rawTranscript: input.rawTranscript ?? null,
+      sanitizedTranscript,
+      transcript,
+      transcriptionMetadata: input.transcribeResult.metadata,
+      postProcessMetadata,
+      warnings: [...input.transcribeResult.warnings, ...postProcessWarnings],
+      remoteStatus: result.remoteStatus,
+      remoteDeviceId: result.remoteDeviceId,
+      trace: input.trace ?? null,
+    });
+  }
+  input.refreshMember();
+  return {
+    shouldContinue: result.shouldContinue,
+  };
+};
+
 type FinalizedRecording = {
   audio: StopRecordingResponse;
   a11yInfo: TextFieldInfo | null;
@@ -191,12 +340,11 @@ type FinalizedRecording = {
 
 const FINALIZE_TIMEOUT_MS = 90_000;
 const HANDLE_TRANSCRIPT_TIMEOUT_MS = 60_000;
-// Review-before-insert keeps the composer open for up to its own
-// 5-minute decision window (COMPOSER_TIMEOUT_MS in composer.utils).
-// Budget the wrapper above that plus slack: a wrapper smaller than the
-// review window would reject mid-review, skip storeTranscription below,
-// and silently drop the transcript from history while the window still
-// inserts on Save — with a recovery toast promising the opposite.
+// Review-before-insert can remain open for its 5-minute decision window on
+// either the native pill or the composer fallback. Budget the wrapper above
+// that plus slack: a wrapper smaller than the review window would reject
+// mid-review, skip storeTranscription below, and silently drop the transcript
+// from history while the review could still insert on Save.
 const REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS = 6 * 60_000;
 const PHASE_HEARTBEAT_INTERVAL_MS = 5_000;
 /** Dictation backlog poll interval: how often to check whether the user
@@ -234,6 +382,8 @@ export const DictationSideEffects = () => {
   const cancelPromptTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isStoppingRef = useRef(false);
   const isPausedRef = useRef(false);
+  const phaseBookkeeperRef = useRef(createPhaseBookkeeper());
+  const pipelineTraceRef = useRef<PipelineTrace | null>(null);
   // Last phase actually sent to the pill; drives the idle-reconciliation
   // heartbeat and keeps duplicate idle writes out of the pipe.
   const lastPhaseSentRef = useRef<OverlayPhase | null>(null);
@@ -259,8 +409,12 @@ export const DictationSideEffects = () => {
   const dictateCombos = useAppStore((state) =>
     getHotkeyCombosForAction(state, DICTATE_HOTKEY),
   );
+  const hasPendingReview = useAppStore(
+    (state) => state.pendingPillReview !== null,
+  );
   const isDictationUnlocked = useAppStore(getIsDictationUnlocked);
-  const isDictationInteractable = isDictationUnlocked && !isStopping;
+  const isDictationInteractable =
+    isDictationUnlocked && !isStopping && !hasPendingReview;
   const pillVisibility = useAppStore((state) =>
     getEffectivePillVisibility(state.userPrefs?.dictationPillVisibility),
   );
@@ -429,14 +583,19 @@ export const DictationSideEffects = () => {
    */
   const sendPhaseToPill = useCallback(async (phase: OverlayPhase) => {
     lastPhaseSentRef.current = phase;
+    if (phase === "idle") sendPillStageText(null);
+    const bookkeeper = phaseBookkeeperRef.current;
+    const seq = bookkeeper.issue();
     try {
       await invoke<void>("set_phase", { phase });
+      bookkeeper.markSent(seq, phase);
     } catch (error) {
       getLogger().warning(
         `Failed to send phase ${phase} to pill: ${error}; retrying once`,
       );
       try {
         await invoke<void>("set_phase", { phase });
+        bookkeeper.markSent(seq, phase);
       } catch (retryError) {
         getLogger().error(
           `Failed to send phase ${phase} to pill on retry: ${retryError}`,
@@ -454,7 +613,7 @@ export const DictationSideEffects = () => {
       if (state.activeRecordingMode !== null) {
         return;
       }
-      if (lastPhaseSentRef.current === "idle") {
+      if (phaseBookkeeperRef.current.getLastSent() === "idle") {
         return;
       }
       void sendPhaseToPill("idle");
@@ -552,7 +711,7 @@ export const DictationSideEffects = () => {
 
           getLogger().verbose("Invoking stop_recording and fetching a11y info");
           const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
-            strategyRef.current?.setPhase("loading"),
+            sendPhaseToPill("loading"),
             invoke<StopRecordingResponse>("stop_recording"),
             invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
               getLogger().verbose(`Failed to get text field info: ${error}`);
@@ -586,7 +745,7 @@ export const DictationSideEffects = () => {
     );
 
     return { audio, a11yInfo, appTarget };
-  }, [intl]);
+  }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
     async ({
@@ -606,62 +765,67 @@ export const DictationSideEffects = () => {
         return { shouldContinue: false };
       }
 
-      if (getAppState().activeRecordingMode === "agent") {
-        await sendPhaseToPill("idle");
-      }
+      const persistReviewedTranscript = async ({
+        transcript: reviewedTranscript,
+        sanitizedTranscript: reviewedSanitizedTranscript,
+        postProcessMetadata: reviewedPostProcessMetadata,
+        postProcessWarnings: reviewedPostProcessWarnings,
+      }: ReviewedTranscriptPersistenceInput): Promise<boolean> => {
+        try {
+          const stored = await storeTranscription({
+            audio,
+            rawTranscript: rawTranscript ?? null,
+            sanitizedTranscript: reviewedSanitizedTranscript,
+            transcript: reviewedTranscript,
+            transcriptionMetadata: transcribeResult.metadata,
+            postProcessMetadata: reviewedPostProcessMetadata,
+            warnings: [
+              ...transcribeResult.warnings,
+              ...reviewedPostProcessWarnings,
+            ],
+            remoteStatus: null,
+            remoteDeviceId: null,
+          });
+          if (stored.transcription) {
+            await surfacePersistedReviewInHistory();
+            return true;
+          }
+        } catch (error) {
+          getLogger().warning(
+            `Could not store the reviewed transcript: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
 
-      getLogger().info("Post-processing transcript");
-      // When review-before-insert is on, the composer owns the pacing;
-      // give the wrapper a budget above the composer's own so the two
-      // timeouts can never race (see REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS).
-      const handleTranscriptTimeoutMs = getMyUserPreferences(getAppState())
-        ?.reviewBeforeInsert
-        ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
-        : HANDLE_TRANSCRIPT_TIMEOUT_MS;
-      const result = await withTimeout(
-        strategy.handleTranscript({
-          rawTranscript,
-          processedTranscript: transcribeResult.processedTranscript,
-          serverPostProcessMetadata: transcribeResult.postProcessMetadata,
-          toneId,
-          a11yInfo,
-          currentApp: appTarget,
-          loadingToken: null,
-          audio,
-          transcriptionMetadata: transcribeResult.metadata,
-          transcriptionWarnings: transcribeResult.warnings,
-        }),
-        handleTranscriptTimeoutMs,
-        "Transcript post-processing",
-      );
-
-      const transcript = result.transcript;
-      const sanitizedTranscript = result.sanitizedTranscript;
-      const postProcessMetadata = result.postProcessMetadata;
-      const postProcessWarnings = result.postProcessWarnings;
-      getLogger().verbose(
-        `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
-      );
-
-      if (strategy.shouldStoreTranscript()) {
-        getLogger().verbose("Storing transcription");
-        await storeTranscription({
-          audio,
-          rawTranscript: rawTranscript ?? null,
-          sanitizedTranscript,
-          transcript,
-          transcriptionMetadata: transcribeResult.metadata,
-          postProcessMetadata,
-          warnings: [...transcribeResult.warnings, ...postProcessWarnings],
-          remoteStatus: result.remoteStatus,
-          remoteDeviceId: result.remoteDeviceId,
+        await showToast({
+          message: formatReviewPersistenceFailure(
+            intl.formatMessage,
+            getAppState().userPrefs?.incognitoModeEnabled === true,
+          ),
+          toastType: "error",
+          duration: 8_000,
         });
-      }
-
-      refreshMember();
-      return {
-        shouldContinue: result.shouldContinue,
+        return false;
       };
+
+      return postProcessFinalizedTranscript({
+        audio,
+        a11yInfo,
+        appTarget,
+        toneId,
+        rawTranscript,
+        transcribeResult,
+        strategy,
+        isAgentMode: getAppState().activeRecordingMode === "agent",
+        handleTranscriptTimeoutMs: getMyUserPreferences(getAppState())
+          ?.reviewBeforeInsert
+          ? REVIEW_HANDLE_TRANSCRIPT_TIMEOUT_MS
+          : HANDLE_TRANSCRIPT_TIMEOUT_MS,
+        sendIdle: () => sendPhaseToPill("idle"),
+        storeTranscriptionFn: storeTranscription,
+        refreshMember,
+        persistReviewedTranscript,
+        trace: pipelineTraceRef.current,
+      });
     },
     [sendPhaseToPill],
   );
@@ -685,14 +849,17 @@ export const DictationSideEffects = () => {
         await saveManualStyleForApp(appTarget);
       }
 
-      // Manual mode: the tone selected at recording START styles the whole
-      // utterance, so a mid-dictation switch (pill / hotkey / Left-Right)
-      // only affects the NEXT recording, matching the label shown at start.
-      // The stop snapshot is a race-safety fallback if start was missed.
-      // Automatic mode prefers the app-target tone and falls back to the
-      // live selection when the app has none. Streamed interim text is
-      // never restyled here — DictationStrategy skips post-processing once
-      // segments are inserted.
+      // Manual mode: ONE style applies to the whole utterance and the LATEST
+      // selection while recording wins. The stop snapshot (captured in
+      // stopRecording) is the authoritative style, so a mid-dictation switch
+      // (pill / hotkey / Left-Right) restyles the ENTIRE final transcript,
+      // not just the words spoken after the switch — and, because the switch
+      // also persists the selection, it becomes the default for the next
+      // recording. toneIdAtStart is only the last-resort fallback when the
+      // stop snapshot was never taken. Automatic mode prefers the app-target
+      // tone and falls back to the live selection when the app has none.
+      // Streamed interim text is never restyled here — DictationStrategy
+      // skips post-processing once segments are inserted.
       const utteranceTones = utteranceTonesRef.current.read();
       const toneId = getEffectiveToneIdAtFinalize({
         stylingMode: getEffectiveStylingMode(getAppState()),
@@ -709,6 +876,10 @@ export const DictationSideEffects = () => {
         FINALIZE_TIMEOUT_MS,
         "Transcription finalize",
       );
+      markPipeline(pipelineTraceRef.current, "audioFinalized");
+      if (!pipelineTraceRef.current?.marks.transcribed) {
+        markPipeline(pipelineTraceRef.current, "transcribed");
+      }
       const rawTranscript = transcribeResult?.rawTranscript;
       getLogger().verbose(
         `Transcription result: rawTranscript=${rawTranscript ? `${rawTranscript.length} chars` : "empty"}, toneId=${toneId ?? "none"}, app=${appTarget?.name ?? "unknown"}`,
@@ -745,6 +916,7 @@ export const DictationSideEffects = () => {
           abortMessage: "No audio data received",
         };
       }
+      sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
       return await finalizeAndPostProcess({ audio, a11yInfo, appTarget });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
@@ -766,6 +938,7 @@ export const DictationSideEffects = () => {
     finalizeAndPostProcess,
     restoreSystemVolume,
     sendPhaseToPill,
+    intl,
   ]);
 
   const stopRecording = useCallback(async () => {
@@ -782,6 +955,11 @@ export const DictationSideEffects = () => {
     getLogger().info("stopRecording entered");
     isStoppingRef.current = true;
     setIsStopping(true);
+    pipelineTraceRef.current = startPipelineTrace();
+    markPipeline(pipelineTraceRef.current, "stopped");
+    sendPillStageText(
+      intl.formatMessage({ defaultMessage: "Finalizing audio" }),
+    );
     // Capture the live tone at stop: this is the style the whole utterance is
     // finalized with, so a mid-dictation style switch restyles the entire
     // transcript (and, being persisted, starts the next recording too).
@@ -827,6 +1005,7 @@ export const DictationSideEffects = () => {
     hardResetHotkeyState,
     stopRecordingRaw,
     setIsStopping,
+    intl,
   ]);
 
   const startUserRecordingTimers = useCallback(() => {
@@ -1086,6 +1265,11 @@ export const DictationSideEffects = () => {
       getLogger().verbose("Dictation not unlocked, ignoring start");
       return;
     }
+    if (state.pendingPillReview !== null) {
+      getLogger().info("Dictation blocked: review is pending");
+      playAlertSound();
+      return;
+    }
 
     getLogger().info("Starting dictation recording");
     trackDictationStart();
@@ -1105,6 +1289,11 @@ export const DictationSideEffects = () => {
     const state = getAppState();
     if (!getIsDictationUnlocked(state)) {
       getLogger().verbose("Dictation not unlocked, ignoring agent start");
+      return;
+    }
+    if (state.pendingPillReview !== null) {
+      getLogger().info("Agent start blocked: review is pending");
+      playAlertSound();
       return;
     }
 
@@ -1505,10 +1694,6 @@ export const DictationSideEffects = () => {
         p.conversationId === state.pillConversationId && p.status === "pending",
     );
   });
-
-  const hasPendingReview = useAppStore(
-    (state) => state.pendingPillReview !== null,
-  );
 
   useEffect(() => {
     if (!isMainWindow) return;

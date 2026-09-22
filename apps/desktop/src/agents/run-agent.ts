@@ -111,6 +111,15 @@ export async function runAgent(
     maxIterations: config.maxIterations,
   });
 
+  // A second run for the same conversation supersedes the first: a send can
+  // arrive from the pill while a dashboard send's agent is still running.
+  // Aborting the previous loop keeps at most one live loop per conversation
+  // and keeps the Stop button (abortAgentLoop) pointed at the run that is
+  // actually executing.
+  const superseded = activeLoops.get(conversationId);
+  if (superseded) {
+    superseded.abort();
+  }
   activeLoops.set(conversationId, loop);
 
   let currentMessageId: string | null = null;
@@ -341,7 +350,21 @@ export async function runAgent(
         delete draft.streamingMessageById[finishedMessageId];
       });
     }
-    activeLoops.delete(conversationId);
+    // Only deregister if we are still the current run for this
+    // conversation. A superseded (aborted) run can finish after a newer
+    // run has replaced it; an unconditional delete here would remove the
+    // NEWER run's registration and leave it un-abortable (Stop button
+    // stops working) and would wipe the newer run's status UI.
+    if (activeLoops.get(conversationId) === loop) {
+      activeLoops.delete(conversationId);
+    }
+    if (
+      getAppState().agentStateByConversationId[conversationId] === agentState
+    ) {
+      produceAppState((draft) => {
+        delete draft.agentStateByConversationId[conversationId];
+      });
+    }
   }
 }
 
@@ -382,10 +405,7 @@ async function finalizeAssistantMessage(
   const final = {
     ...message,
     content: cleaned,
-    metadata:
-      toolCalls.length > 0
-        ? ({ type: "reasoning", toolCalls } as Record<string, unknown>)
-        : null,
+    metadata: toolCalls.length > 0 ? { type: "reasoning", toolCalls } : null,
   };
 
   // Retire the streaming entry regardless of the persistence outcome.
@@ -429,8 +449,14 @@ function createAgentTools(
     name: info.id,
     description: `${info.description}. ${info.instructions}`,
     parameters: info.schema,
-    async execute({ params, reason }) {
-      return executeWithPermission(info, params, reason, conversationId);
+    async execute({ params, reason, toolCallId }) {
+      return executeWithPermission(
+        info,
+        params,
+        reason,
+        conversationId,
+        toolCallId,
+      );
     },
   }));
 }
@@ -440,13 +466,14 @@ async function executeWithPermission(
   params: Record<string, unknown>,
   reason: string,
   conversationId: string,
+  toolCallId: string,
 ) {
   const tool = createTool(info);
   const permissionScope = `conversation:${conversationId}`;
 
   if (tool.getAlwaysAllow(params, permissionScope)) {
     try {
-      const result = await executeTool(info.id, params);
+      const result = await executeTool(info.id, params, { conversationId });
       return { success: true, result };
     } catch (err) {
       return {
@@ -461,6 +488,7 @@ async function executeWithPermission(
     info.id,
     permissionParams,
     conversationId,
+    toolCallId,
   );
 
   produceAppState((draft) => {
@@ -481,7 +509,7 @@ async function executeWithPermission(
 
   if (resolution === "allowed") {
     try {
-      const result = await executeTool(info.id, params);
+      const result = await executeTool(info.id, params, { conversationId });
       return { success: true, result };
     } catch (err) {
       return {
@@ -495,10 +523,11 @@ async function executeWithPermission(
 }
 
 /**
- * Poll app state until the user resolves a tool permission request,
- * or return denied when the conversation is aborted first.
+ * Poll app state until the user resolves a tool permission request or the
+ * conversation is aborted. `getToolPermissionStatus` owns timeout expiry so
+ * that it can record the expired request as denied before this loop settles.
  */
-async function pollForPermission(
+export async function pollForPermission(
   conversationId: string,
   permissionId: string,
 ): Promise<"allowed" | "denied"> {
@@ -522,9 +551,12 @@ type ResolvedConversationBlock = ConversationMessageBlock & {
   nextIndex: number;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object";
+
 const isValidPersistedToolCall = (value: unknown): value is LlmToolCall => {
-  if (!value || typeof value !== "object") return false;
-  const call = value as Record<string, unknown>;
+  if (!isRecord(value)) return false;
+  const call = value;
   return (
     typeof call.id === "string" &&
     call.id.length > 0 &&
@@ -684,7 +716,7 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     const msg = state.chatMessageById[id];
     if (!msg) continue;
 
-    const metadata = msg.metadata as Record<string, unknown> | null;
+    const metadata = msg.metadata;
 
     // Tool results are persisted with role "system" plus metadata.type
     // (see the tool-call-result persist branch above). Rehydrate them

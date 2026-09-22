@@ -5,6 +5,7 @@ import {
   PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
+  UpdateChannel,
   User,
   UserPreferences,
 } from "@maus-inc/types";
@@ -118,6 +119,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
   pillPlacement: "bottom",
+  updateChannel: "stable",
 
   alwaysRequestAdminOnStartup: false,
   spokenCommandsEnabled: true,
@@ -141,6 +143,7 @@ export const createDefaultPreferences = (): UserPreferences => ({
   autoLearnDictionaryEnabled: true,
   autoLearnFromEditsEnabled: false,
   elevenLabsKeytermsEnabled: false,
+  expansionFlags: "{}",
 });
 
 // Serializes preference mutations so overlapping tool toggles or numeric edits
@@ -150,7 +153,9 @@ const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 
 export const updateUserPreferences = (
   updateCallback: (preferences: UserPreferences) => void,
-  saveErrorMessage = "Failed to save AI preferences. Please try again.",
+  saveErrorMessage = getIntl().formatMessage({
+    defaultMessage: "Failed to save AI preferences. Please try again.",
+  }),
 ): Promise<void> =>
   enqueuePrefsMutation(async () => {
     const state = getAppState();
@@ -672,6 +677,14 @@ export const setIncognitoModeIncludeInStats = async (
   }, "Failed to save incognito mode stats preference. Please try again.");
 };
 
+export const setPreserveAudioOnFailure = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.preserveAudioOnFailure = enabled;
+  }, "Failed to save failed-transcription audio preference. Please try again.");
+};
+
 export const setDictationPillVisibility = async (
   visibility: DictationPillVisibility,
 ): Promise<void> => {
@@ -701,6 +714,20 @@ export const setPillPlacement = async (
       `Failed to push pill placement to native pill: ${error}`,
     );
   }
+};
+
+export const setUpdateChannel = async (
+  channel: UpdateChannel,
+): Promise<void> => {
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.updateChannel = channel;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save update channel preference. Please try again.",
+    }),
+  );
 };
 
 export const setAlwaysRequestAdminOnStartup = async (
@@ -841,9 +868,9 @@ export const setReviewBeforeInsert = async (
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.reviewBeforeInsert = enabled;
-    // A composer review step conflicts with live interim streaming; see the
-    // realtime counterpart above. Turning review on therefore turns
-    // real-time output off in the same persisted write.
+    // A review step conflicts with live interim streaming; see the realtime
+    // counterpart above. Turning review on therefore turns real-time output
+    // off in the same persisted write.
     if (enabled) {
       preferences.realtimeOutputEnabled = false;
     }

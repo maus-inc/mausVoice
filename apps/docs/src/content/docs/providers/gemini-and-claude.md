@@ -5,7 +5,7 @@ sidebar:
   order: 8
 ---
 
-Gemini and Claude are not interchangeable in mausVoice. [Gemini](../gemini/) has both batch transcription and generative routes. **Claude** is exposed only in post-processing and Assistant key lists; it cannot receive microphone audio through the transcription dispatcher.
+Gemini and Claude are not interchangeable in mausVoice. [Gemini](./gemini/) has both batch transcription and generative routes. **Claude** is exposed only in post-processing and Assistant key lists; it cannot receive microphone audio through the transcription dispatcher.
 
 Add a Claude key under **Settings → Processing → AI post processing** or **Assistant mode**, then select the saved entry for that task. Both task selectors can reference the same record, but they store their selections independently. **Test** asks Anthropic's `/v1/models` endpoint to list models; it checks authentication, not a complete style or tool call.
 

@@ -15,4 +15,4 @@ If the binding works only with mausVoice focused, global capture is blocked or n
 
 ## Global hotkey stops working after sleep or unlock (Windows)
 
-The Windows low-level keyboard hook used for global capture is torn down when the workstation sleeps or the session is locked. mausVoice installs a hidden message-only window that subscribes to `WM_POWERBROADCAST` and `WM_WTSSESSION_CHANGE` and re-registers the hook on resume or unlock. If a hotkey still does not work after waking the machine, file a diagnostic report; the listener may have entered a degraded `listen()` fallback and needs a fresh attempt.
+The Windows low-level keyboard hook used for global capture is torn down when the workstation sleeps or the session is locked. mausVoice installs a hidden top-level tool window that subscribes to `WM_POWERBROADCAST` and `WM_WTSSESSION_CHANGE` and re-registers the hook on resume or unlock. If a hotkey still does not work after waking the machine, file a diagnostic report; the listener may have entered a degraded `listen()` fallback and needs a fresh attempt.

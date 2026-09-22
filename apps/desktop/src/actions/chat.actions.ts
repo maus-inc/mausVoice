@@ -12,6 +12,10 @@ import { getIsDevMode } from "../utils/env.utils";
 import { getLogger } from "../utils/log.utils";
 
 const sendQueuesByConversationId = new Map<string, Promise<void>>();
+// Conversations with an edit-and-resend in flight. The pre-await
+// `isAgentRunning` check is not enough: two rapid saves both pass it before
+// either deletion marks the conversation active.
+const editingResendConversationIds = new Set<string>();
 
 // Conversations whose delete is in progress. persistSend and
 // runAgentForConversation both check this set so a send initiated
@@ -22,6 +26,77 @@ const deletingConversationIds = new Set<string>();
 
 export const abortAgent = (conversationId: string): void => {
   abortAgentLoop(conversationId);
+};
+
+const isAgentRunning = (conversationId: string): boolean => {
+  const status =
+    getAppState().agentStateByConversationId[conversationId]?.status;
+  return status === "calling-llm" || status === "processing-tools";
+};
+
+/**
+ * Re-run the assistant for the latest user message. Drops the trailing
+ * assistant attempt (if any) so the retry replaces it instead of stacking
+ * a second answer, then runs the loop fresh.
+ */
+export const retryAssistant = async (conversationId: string): Promise<void> => {
+  if (isAgentRunning(conversationId)) return;
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  let lastUser = -1;
+  for (let i = 0; i < ids.length; i += 1) {
+    if (state.chatMessageById[ids[i]]?.role === "user") lastUser = i;
+  }
+  if (lastUser === -1) return;
+  const drop = ids.slice(lastUser + 1);
+  if (drop.length > 0) {
+    await deleteChatMessages(conversationId, drop);
+  }
+  await runAgentForConversation(conversationId);
+};
+
+/** True when messages after `messageId` hold tool activity the edit would drop. */
+export const laterMessagesHaveToolActivity = (
+  conversationId: string,
+  messageId: string,
+): boolean => {
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  return ids.slice(ids.indexOf(messageId) + 1).some((id) => {
+    const message = state.chatMessageById[id];
+    if (!message || message.role !== "assistant") return false;
+    const metadata = message.metadata as Record<string, unknown> | null;
+    return (
+      metadata?.type === "reasoning" &&
+      Array.isArray(metadata.toolCalls) &&
+      metadata.toolCalls.length > 0
+    );
+  });
+};
+
+/**
+ * Replace a user message and everything after it with a fresh send. The
+ * caller confirms first when laterMessagesHaveToolActivity is true.
+ */
+export const editAndResend = async (
+  conversationId: string,
+  messageId: string,
+  newText: string,
+): Promise<void> => {
+  if (editingResendConversationIds.has(conversationId)) return;
+  if (isAgentRunning(conversationId)) return;
+  const state = getAppState();
+  const ids = state.chatMessageIdsByConversationId[conversationId] ?? [];
+  const index = ids.indexOf(messageId);
+  if (index === -1) return;
+  if (state.chatMessageById[messageId]?.role !== "user") return;
+  editingResendConversationIds.add(conversationId);
+  try {
+    await deleteChatMessages(conversationId, ids.slice(index));
+    await sendChatMessage(conversationId, newText);
+  } finally {
+    editingResendConversationIds.delete(conversationId);
+  }
 };
 
 export const loadConversations = async (): Promise<void> => {
@@ -197,13 +272,11 @@ export const runAgentForConversation = async (
   ) {
     return;
   }
-  try {
-    await runAgent(conversationId, CHAT_AGENT_CONFIG);
-  } finally {
-    produceAppState((draft) => {
-      delete draft.agentStateByConversationId[conversationId];
-    });
-  }
+  // runAgent owns the agent-state cleanup with an identity guard (it only
+  // removes the state object it created). A superseded run finishing after
+  // a newer run started must not delete the newer run's state, so no
+  // cleanup is done here.
+  await runAgent(conversationId, CHAT_AGENT_CONFIG);
 };
 
 const applySendToConversation = async (

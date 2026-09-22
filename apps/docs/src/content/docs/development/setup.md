@@ -46,11 +46,27 @@ Each sets `TAURI_PLATFORM`, runs `scripts/prepare-sidecars.mjs`, and starts Taur
 
 `pnpm --filter desktop build` compiles TypeScript and the Vite frontend only. A packaged native build goes through the desktop `tauri` script or an OS-specific Tauri build command and needs sidecars present.
 
+## Run the browser UI preview
+
+For UI/UX work that does not require native audio, global hotkeys, accessibility, sidecars, SQLite, or real provider traffic, start the deterministic browser preview from `apps/desktop`:
+
+```bash
+pnpm dev:preview
+```
+
+It uses the production route tree and components with an in-memory mock desktop transport; it does **not** initialize Firebase, create Tauri globals, contact emulators, or expose real API keys. The floating **Browser preview** control switches between populated, empty, welcome, onboarding, and permission-needed scenarios. A scenario can also be linked directly, for example:
+
+```text
+http://localhost:1420/dashboard?scenario=empty
+```
+
+Use **Reset data** to restore a scenario after exercising UI mutations. Browser preview intentionally reports a preview-only error for unsupported privileged operations rather than simulating access to local files, external apps, recording, or provider APIs. Build and host the static version with `pnpm build:preview` and `pnpm serve:preview`; its generated `index.html` opens the preview at the server root.
+
 ### Environment variables
 
 | Variable                     | Role                                                                                                                                                          |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VITE_FLAVOR`                | Frontend flavor. Desktop dev defaults to `emulators`. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
+| `VITE_FLAVOR`                | Frontend flavor. Desktop dev defaults to `emulators`; `preview` enables the browser-only mock runtime. `dev` / `prod` are live names; `enterprise` / `enterprise-dev` are leftover flavor names, not backends. |
 | `MAUSVOICE_ENABLE_DEVTOOLS`  | Open webview devtools on launch (only effective when built with `--features debug-assist`)                                                                    |
 | `MAUSVOICE_DESKTOP_PLATFORM` | Override platform detection for Node scripts                                                                                                                  |
 | `TAURI_PLATFORM`             | Native target used by desktop scripts and Turbo cache                                                                                                         |

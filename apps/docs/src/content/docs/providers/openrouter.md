@@ -19,4 +19,4 @@ Expand **Advanced Routing** to set an ordered provider list, allow or forbid fal
 
 Denying data collection narrows eligibility, but it is not a complete local-privacy guarantee: requests still pass through OpenRouter and an eligible upstream. Review both services' current policies. Disabling fallbacks improves determinism but can reduce availability.
 
-**Test** performs a small chat-completions request, so it exercises the key and current model rather than only listing models. The live model and provider catalogs can load successfully while a later request fails because the selected model has no eligible upstream under your routing rules. Record the exact model ID, ordered provider slugs, fallback setting, and data-collection setting when troubleshooting.
+**Test** authenticates by listing models instead of spending tokens on a fixed inference model. The live model and provider catalogs can load successfully while a later request fails because the selected model has no eligible upstream under your routing rules. Record the exact model ID, ordered provider slugs, fallback setting, and data-collection setting when troubleshooting.

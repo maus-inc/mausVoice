@@ -23,6 +23,20 @@ export function trackOnboardingStep(step: string) {
   getMixpanel()?.track("Onboarding Step", { step });
 }
 
+export type OnboardingOutcome = "complete" | "skip" | "back" | "error";
+
+export function trackOnboardingOutcome(
+  step: string,
+  outcome: OnboardingOutcome,
+  elapsedMs?: number,
+) {
+  getMixpanel()?.track("Onboarding Step Outcome", {
+    step,
+    outcome,
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+  });
+}
+
 export function trackDictationStart() {
   getMixpanel()?.track("Activate Dictation Mode");
 }

@@ -12,8 +12,9 @@ The mausVoice release pipeline is **`.github/workflows/release.yml`** (single,
 workflow_dispatch-based). The old upstream multi-channel release stack
 (`_release-desktop-impl.yml`, `release-unsigned.yml`, release-enterprise-\*,
 release-docs, retry-release, publish-packages) was deleted. Do not reintroduce
-it. Releases are unsigned and authored by the maintainer's PAT (`RELEASE_TOKEN`
-secret) when present.
+it. Release installers have no OS code signing and are authored by the maintainer's
+PAT (`RELEASE_TOKEN`) when present; stable updater payloads use the separate
+secrets-based signing described in `docs/RELEASE.md`.
 
 To re-apply CI templates:
 

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
+import { getIntl } from "../i18n/intl";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -15,6 +16,7 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
+import { sendPillStageText } from "../utils/overlay.utils";
 import {
   routeTranscriptOutput,
   appendToDictationBacklog,
@@ -329,6 +331,7 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessMetadata: PostProcessMetadata = {};
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
+    let historyPersisted = false;
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
@@ -338,9 +341,13 @@ export class DictationStrategy extends BaseStrategy {
           transcript = args.processedTranscript;
           postProcessMetadata = args.serverPostProcessMetadata ?? {};
         } else {
+          sendPillStageText(
+            getIntl().formatMessage({ defaultMessage: "Polishing" }),
+          );
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
             toneId: args.toneId,
+            trace: args.trace,
           });
 
           transcript = result.transcript;
@@ -349,19 +356,51 @@ export class DictationStrategy extends BaseStrategy {
         }
       }
 
-      if (transcript) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      if (postProcessMetadata.postProcessFailed) {
+        getLogger().warning(
+          "Post-processing failed; preserving the transcript in History without insertion",
+        );
+        await showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Styling failed. The raw transcript is saved in History.",
+          }),
+          toastType: "error",
+          duration: 8000,
+          action: "open_transcriptions",
+        });
+      } else if (transcript) {
         try {
           getLogger().verbose(
             `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
           );
 
           const textToPaste = transcript.trim() + " ";
-          const result = await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: args.currentApp?.id ?? null,
-          });
+          const result = await routeTranscriptOutput(
+            {
+              text: textToPaste,
+              mode: "dictation",
+              currentAppId: args.currentApp?.id ?? null,
+            },
+            args.trace ?? null,
+          );
+          if (
+            result.delivered &&
+            result.deliveredText !== null &&
+            result.deliveredText !== textToPaste
+          ) {
+            // The review settled on an edited text. Adopt it for History and
+            // persist now so the exact edit becomes durable as soon as it lands.
+            transcript = result.deliveredText;
+            if (args.persistReviewedTranscript) {
+              historyPersisted = await args.persistReviewedTranscript({
+                transcript,
+                sanitizedTranscript,
+                postProcessMetadata,
+                postProcessWarnings,
+              });
+            }
+          }
           if (result.remote && result.delivered) {
             remoteStatus = "sent";
             showSnackbar("Transcript sent to paired receiver.", {
@@ -400,6 +439,7 @@ export class DictationStrategy extends BaseStrategy {
       postProcessWarnings,
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
+      historyPersisted,
     };
   }
 

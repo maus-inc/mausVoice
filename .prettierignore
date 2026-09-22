@@ -12,6 +12,9 @@ FULL-REVIEW.md
 # Repo-root docs/ holds loose planning and review notes, not gated source.
 docs/
 
+# Agent working notes for the PR reconciliation session; never committed.
+.recon/
+
 # Build and dependency artifacts.
 **/dist
 **/target

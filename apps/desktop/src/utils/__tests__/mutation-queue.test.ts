@@ -19,14 +19,14 @@ describe("createMutationQueue", () => {
     const a = deferred();
     const b = deferred();
 
-    enqueue(() => a.promise.then(() => void order.push("A")));
-    enqueue(() => b.promise.then(() => void order.push("B")));
+    const first = enqueue(() => a.promise.then(() => void order.push("A")));
+    const second = enqueue(() => b.promise.then(() => void order.push("B")));
 
     // Resolve B before A to prove ordering is not a side-effect of resolution.
     b.resolve();
     a.resolve();
 
-    await new Promise((r) => setTimeout(r, 10));
+    await Promise.all([first, second]);
     expect(order).toEqual(["A", "B"]);
   });
 
@@ -35,30 +35,44 @@ describe("createMutationQueue", () => {
     let active = 0;
     let maxConcurrent = 0;
 
-    const make = (d: { promise: Promise<unknown> }) => () =>
-      d.promise.then(
-        () =>
-          new Promise<void>((resolve) => {
-            active += 1;
-            maxConcurrent = Math.max(maxConcurrent, active);
-            setTimeout(() => {
-              active -= 1;
-              resolve();
-            }, 5);
-          }),
-      );
-
     const a = deferred();
     const b = deferred();
     const c = deferred();
+    const aStarted = deferred();
+    const bStarted = deferred();
+    const cStarted = deferred();
+    const aRelease = deferred();
+    const bRelease = deferred();
+    const cRelease = deferred();
+    const make =
+      (
+        start: { promise: Promise<void> },
+        entered: { resolve: (value: void) => void },
+        release: { promise: Promise<void> },
+      ) =>
+      async () => {
+        await start.promise;
+        active += 1;
+        maxConcurrent = Math.max(maxConcurrent, active);
+        entered.resolve();
+        await release.promise;
+        active -= 1;
+      };
 
-    const p1 = enqueue(make(a));
-    const p2 = enqueue(make(b));
-    const p3 = enqueue(make(c));
+    const p1 = enqueue(make(a, aStarted, aRelease));
+    const p2 = enqueue(make(b, bStarted, bRelease));
+    const p3 = enqueue(make(c, cStarted, cRelease));
 
     b.resolve();
     c.resolve();
     a.resolve();
+
+    await aStarted.promise;
+    aRelease.resolve();
+    await bStarted.promise;
+    bRelease.resolve();
+    await cStarted.promise;
+    cRelease.resolve();
 
     await Promise.all([p1, p2, p3]);
     expect(maxConcurrent).toBe(1);

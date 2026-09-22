@@ -23,7 +23,8 @@ describe("logOnRejection", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       logOnRejection(Promise.reject(new Error("boom")), "saving the toggle");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await Promise.resolve();
+      await Promise.resolve();
       expect(warningMock).toHaveBeenCalledTimes(1);
       expect(warningMock.mock.calls[0]?.[0]).toContain("saving the toggle");
       expect(onUnhandled).not.toHaveBeenCalled();
@@ -34,7 +35,8 @@ describe("logOnRejection", () => {
 
   it("leaves fulfilled promises alone", async () => {
     logOnRejection(Promise.resolve("ok"), "idle path");
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await Promise.resolve();
+    await Promise.resolve();
     expect(warningMock).not.toHaveBeenCalled();
   });
 
@@ -46,7 +48,8 @@ describe("logOnRejection", () => {
     process.on("unhandledRejection", onUnhandled);
     try {
       logOnRejection(Promise.reject(new Error("boom")), "crashy logger path");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await Promise.resolve();
+      await Promise.resolve();
       expect(warningMock).toHaveBeenCalledTimes(1);
       expect(onUnhandled).not.toHaveBeenCalled();
     } finally {

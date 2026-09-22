@@ -68,6 +68,7 @@ describe("theme mode configuration", () => {
     expect(THEME_PROVIDER_CONFIG).toEqual({
       defaultMode: "system",
       modeStorageKey: THEME_MODE_STORAGE_KEY,
+      disableTransitionOnChange: true,
     });
     expect(indexHtml).toContain(
       `localStorage.getItem("${THEME_MODE_STORAGE_KEY}")`,
@@ -126,5 +127,24 @@ describe("theme mode configuration", () => {
 
     expect(appliedScheme).toBe("dark");
     expect(storage.get(THEME_MODE_STORAGE_KEY)).toBe("dark");
+  });
+
+  it("lets selected lucide icons inherit list item color in both schemes", () => {
+    const themeSource = readFileSync(
+      new URL("./theme.ts", import.meta.url),
+      "utf8",
+    );
+    const listItemButtonBlock = themeSource.slice(
+      themeSource.indexOf("MuiListItemButton:"),
+      themeSource.indexOf("MuiListItemIcon:"),
+    );
+    const darkStyleStart = listItemButtonBlock.indexOf('applyStyles("dark"');
+    const lightStyleBlock = listItemButtonBlock.slice(0, darkStyleStart);
+    const darkStyleBlock = listItemButtonBlock.slice(darkStyleStart);
+    const lucideInheritanceRule = /"& svg\.lucide": \{\s*color: "inherit"/g;
+
+    expect(darkStyleBlock).toContain('applyStyles("dark"');
+    expect(lightStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
+    expect(darkStyleBlock.match(lucideInheritanceRule) ?? []).toHaveLength(1);
   });
 });

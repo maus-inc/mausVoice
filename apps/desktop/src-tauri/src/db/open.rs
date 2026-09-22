@@ -161,8 +161,21 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
         .map(|migration| migration.version)
         .collect();
+    let mut retired: Vec<i64> = Vec::new();
     for version in applied_checksums.keys() {
         if !configured.contains(version) {
+            // Migrations 71-88 were folded into the single post-0.1.5
+            // consolidation step (69) for the 0.1.6 release. Databases
+            // written by intermediate builds recorded those steps
+            // individually; that schema is already part of this build's
+            // target, so the rows are retired below instead of failing the
+            // open as a downgrade. Any other unconfigured version keeps the
+            // strict behavior: a database from a genuinely newer release
+            // must surface loudly, not be rewritten underneath it.
+            if (71..=88).contains(version) {
+                retired.push(*version);
+                continue;
+            }
             // A version recorded in `_sqlx_migrations` that this build does not
             // ship means the database was written by a newer release (a normal
             // downgrade/rollback). The file is perfectly readable, so this is
@@ -175,6 +188,14 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
                  the database was likely created by a newer version of the app"
             )));
         }
+    }
+    for version in retired {
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = ?1")
+            .bind(version)
+            .execute(pool)
+            .await
+            .map_err(|err| classify_sqlx("retire consolidated migration", err))?;
+        log::info!("Retired migration row {version} superseded by consolidation step 69");
     }
 
     for migration in migrations() {
@@ -598,16 +619,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migration_78_and_79_upgrade_legacy_1_5_x_db() {
-        // Simulate a user upgrading from a pre-078 (1.5.x) build:
-        // create the transcriptions table without the three new columns,
-        // record migrations 1..77 as already applied with their real
-        // checksums, then open the DB. apply_migrations must run only 78
-        // (ADD COLUMN) and the legacy row must survive with NULLs.
+    async fn migration_69_upgrades_legacy_1_5_x_db() {
+        // Simulate a user upgrading from a 0.1.5 build (its last migration
+        // was 68): apply and record every earlier migration for real, seed
+        // era-typical rows, then open. The single consolidated step 69 must
+        // rebuild the post-0.1.5 tables, preserve the rows, materialize the
+        // new defaults, and drop the retired is_enterprise column.
         let temp = TempDb::new();
-        let pool = connect_pool(&temp.path)
-            .await
-            .expect("connect to fresh db");
+        let path = &temp.path;
+        let pool = connect_pool(path).await.expect("connect to fresh db");
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -623,11 +643,17 @@ mod tests {
         .await
         .unwrap();
 
-        // Mark every migration up to and including 77 as applied.
+        // Everything the 0.1.5 release shipped, applied and recorded exactly
+        // as the previous migrator wrote it; only step 69 stays pending.
         for migration in migrations() {
-            if migration.version > 77 {
+            if migration.version >= 69 {
                 continue;
             }
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .expect("apply 0.1.5-era migration");
+            let checksum = migration_checksum(migration.sql);
             sqlx::query(
                 "INSERT INTO _sqlx_migrations
                  (version, description, success, checksum, execution_time)
@@ -635,37 +661,16 @@ mod tests {
             )
             .bind(migration.version)
             .bind(migration.description)
-            .bind(migration_checksum(migration.sql))
+            .bind(&checksum)
             .execute(&pool)
             .await
             .unwrap();
         }
 
-        // Legacy transcriptions table (no post_process_* columns).
+        // Era-typical rows that must survive the rebuild.
         sqlx::query(
-            "CREATE TABLE transcriptions (
-                id TEXT PRIMARY KEY,
-                transcript TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                audio_path TEXT,
-                audio_duration_ms INTEGER,
-                model_size TEXT,
-                inference_device TEXT,
-                raw_transcript TEXT,
-                sanitized_transcript TEXT,
-                transcription_prompt TEXT,
-                post_process_prompt TEXT,
-                transcription_api_key_id TEXT,
-                post_process_api_key_id TEXT,
-                transcription_mode TEXT,
-                post_process_mode TEXT,
-                post_process_device TEXT,
-                transcription_duration_ms INTEGER,
-                postprocess_duration_ms INTEGER,
-                warnings_json TEXT,
-                remote_status TEXT,
-                remote_device_id TEXT
-             )",
+            "INSERT INTO user_preferences (user_id, transcription_mode, is_enterprise)
+             VALUES ('legacy-user', char(99, 108, 111, 117, 100), 1)",
         )
         .execute(&pool)
         .await
@@ -677,20 +682,6 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Legacy user_profiles table (no interaction_feedback_volume
-        // column), with one pre-upgrade row so migration 79's DEFAULT
-        // materialization is observable.
-        sqlx::query(
-            "CREATE TABLE user_profiles (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                bio TEXT NOT NULL,
-                onboarded INTEGER NOT NULL DEFAULT 0 CHECK (onboarded IN (0, 1))
-             )",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
         sqlx::query(
             "INSERT INTO user_profiles (id, name, bio)
              VALUES ('legacy-user', 'Legacy', '')",
@@ -698,67 +689,72 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-
-        // Migrations 81 and 83-85 ADD COLUMN on `user_preferences`, and 82
-        // does the same on `api_keys`. A v77 database has both tables, so
-        // create them here too; without them the upgrade fails on a missing
-        // table rather than exercising the path under test.
         sqlx::query(
-            "CREATE TABLE user_preferences (
-                user_id TEXT PRIMARY KEY
-             )",
+            "INSERT INTO api_keys (id, name, provider, created_at, salt, key_hash, key_ciphertext)
+             VALUES ('k1', 'Key', 'openai', 1, 'salt', 'hash', 'cipher')",
         )
         .execute(&pool)
         .await
         .unwrap();
         sqlx::query(
-            "CREATE TABLE api_keys (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                key TEXT NOT NULL
-             )",
+            "INSERT INTO tones (id, name, prompt_template, created_at)
+             VALUES ('tone1', 'Casual', 'be casual', 1)",
         )
         .execute(&pool)
         .await
         .unwrap();
         pool.close().await;
 
-        // Reopen: migrations 78 and 79 run (ADD COLUMN on
-        // transcriptions and user_profiles respectively). A failing
-        // upgrade would fail the `try_open` call below.
-        let pool = try_open(&temp.path).await.expect("upgrade opens");
+        // Reopen: the consolidated step 69 runs. A failing upgrade would fail
+        // the try_open call below.
+        let pool = try_open(path).await.expect("upgrade opens");
 
-        // Migration 79 recorded and its constant default materialized on
-        // the pre-upgrade profile row.
-        let migrated_volume =
-            sqlx::query("SELECT interaction_feedback_volume FROM user_profiles WHERE id = 'legacy-user'")
-                .fetch_one(&pool)
-                .await
-                .expect("legacy profile row survives")
-                .try_get::<f64, _>("interaction_feedback_volume")
-                .expect("column exists after migration");
-        // The migration's SQL literal is an f64 0.35, while the runtime
-        // write path stores an f32-cast value (0.3499999940395355). Both
-        // round-trip through the sink clamp identically, so compare with
-        // an audio-scale epsilon rather than bit equality.
-        let expected =
-            f64::from(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME);
-        let diff = (migrated_volume - expected).abs();
-        assert!(
-            diff < 1e-6,
-            "migration 79 default {migrated_volume} != {expected} (diff {diff})"
-        );
-        let v79 = sqlx::query(
-            "SELECT COUNT(*) AS n FROM _sqlx_migrations WHERE version = 79 AND success = 1",
+        // Step 69 recorded exactly once; the recorded set matches the build.
+        let recorded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 69 AND success = 1",
         )
         .fetch_one(&pool)
         .await
-        .unwrap()
-        .get::<i64, _>("n");
-        assert_eq!(v79, 1);
+        .unwrap();
+        assert_eq!(recorded, 1);
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(total, migrations().len() as i64);
 
-        // Legacy row reads back NULL for the new columns.
+        // Cloud preference was rewritten and the row survived the rebuild;
+        // consolidated columns arrived at their defaults.
+        let prefs = sqlx::query(
+            "SELECT transcription_mode, update_channel, expansion_flags,
+                    pill_reset_monitor_strategy, spoken_commands_enabled
+             FROM user_preferences WHERE user_id = 'legacy-user'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("legacy preferences row survives");
+        assert_eq!(prefs.try_get::<String, _>("transcription_mode").unwrap(), "local");
+        assert_eq!(prefs.try_get::<String, _>("update_channel").unwrap(), "stable");
+        assert_eq!(prefs.try_get::<String, _>("expansion_flags").unwrap(), "{}");
+        assert_eq!(
+            prefs.try_get::<String, _>("pill_reset_monitor_strategy").unwrap(),
+            "current"
+        );
+        assert!(prefs.try_get::<i64, _>("spoken_commands_enabled").unwrap() == 1);
+
+        // is_enterprise is gone.
+        let enterprise: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('user_preferences')
+             WHERE name = 'is_enterprise'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(enterprise, 0);
+
+        // Legacy transcription row survives; new columns exist as NULLs and
+        // accept writes.
         let legacy = sqlx::query(
             "SELECT post_process_provider, post_process_failed, post_process_error
              FROM transcriptions WHERE id = 'legacy'",
@@ -766,46 +762,103 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let provider: Option<String> = legacy.try_get("post_process_provider").unwrap();
-        let failed: Option<bool> = legacy.try_get("post_process_failed").unwrap();
-        let error: Option<String> = legacy.try_get("post_process_error").unwrap();
-        assert_eq!(provider, None);
-        assert_eq!(failed, None);
-        assert_eq!(error, None);
-
-        // A new row populates all three and reads them back.
+        assert_eq!(
+            legacy.try_get::<Option<String>, _>("post_process_provider").unwrap(),
+            None
+        );
+        assert_eq!(
+            legacy.try_get::<Option<i64>, _>("post_process_failed").unwrap(),
+            None
+        );
         sqlx::query(
             "INSERT INTO transcriptions
                 (id, transcript, timestamp,
-                 post_process_provider, post_process_failed, post_process_error)
-             VALUES ('new', 'new', 2, 'cerebras', 1, '402 out of credit')",
+                 post_process_provider, post_process_failed, post_process_error, post_process_model)
+             VALUES ('new', 'new', 2, 'cerebras', 1, '402 out of credit', 'whisper-large')",
         )
         .execute(&pool)
         .await
         .unwrap();
-        let new_row = sqlx::query(
-            "SELECT post_process_provider, post_process_failed, post_process_error
-             FROM transcriptions WHERE id = 'new'",
+
+        // interaction_feedback_volume materialized on the pre-upgrade profile.
+        let volume = sqlx::query(
+            "SELECT interaction_feedback_volume FROM user_profiles WHERE id = 'legacy-user'",
         )
         .fetch_one(&pool)
         .await
+        .expect("legacy profile row survives")
+        .try_get::<f64, _>("interaction_feedback_volume")
         .unwrap();
-        let provider: String = new_row.try_get("post_process_provider").unwrap();
-        let failed: bool = new_row.try_get("post_process_failed").unwrap();
-        let error: String = new_row.try_get("post_process_error").unwrap();
-        assert_eq!(provider, "cerebras");
-        assert!(failed);
-        assert_eq!(error, "402 out of credit");
+        let expected = f64::from(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME);
+        assert!((volume - expected).abs() < 1e-6, "volume default {volume} != {expected}");
 
-        // Migration 78 is now recorded.
-        let applied: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 78")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(applied, 1);
+        // api_keys.transcription_path and tones structured fields exist.
+        let key_path_null: Option<String> = sqlx::query(
+            "SELECT transcription_path FROM api_keys WHERE id = 'k1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .try_get("transcription_path")
+        .unwrap();
+        assert_eq!(key_path_null, None);
+        let tone = sqlx::query("SELECT category, name FROM tones WHERE id = 'tone1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tone.try_get::<Option<String>, _>("category").unwrap(), None);
+        assert_eq!(tone.try_get::<String, _>("name").unwrap(), "Casual");
 
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn consolidated_intermediate_migration_rows_are_retired() {
+        // Databases written by intermediate builds recorded the individual
+        // migrations (71-87) that the 0.1.6 release folded into step 69.
+        // Those rows must retire silently on open — not surface as a
+        // downgrade and not quarantine the file.
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let pool = try_open(path).await.expect("initial migrate");
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+             (version, description, success, checksum, execution_time)
+             VALUES (75, 'add_tone_structured_fields', true, x'deadbeef', 0),
+                    (87, 'add_eleven_labs_keyterms_enabled', true, x'feedface', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let reopened = open_app_database(path)
+            .await
+            .expect("intermediate rows retire cleanly");
+        let total: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+                .fetch_one(&reopened)
+                .await
+                .unwrap();
+        assert_eq!(total, migrations().len() as i64, "retired rows are gone");
+        let ghosts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version IN (75, 87)",
+        )
+        .fetch_one(&reopened)
+        .await
+        .unwrap();
+        assert_eq!(ghosts, 0);
+        reopened.close().await;
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "retiring consolidation-era rows must never quarantine the database"
+        );
     }
 
     #[tokio::test]

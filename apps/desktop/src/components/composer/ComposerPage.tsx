@@ -1,5 +1,7 @@
-import MicIcon from "@mui/icons-material/Mic";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   CircularProgress,
@@ -9,6 +11,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { Mic } from "lucide-react";
+import { MetalChrome } from "../common/MetalChrome";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -26,6 +30,7 @@ import { transcribeAudio } from "../../actions/transcribe.actions";
 import { getTranscribeAudioRepo, getGenerateTextRepo } from "../../repos";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
+import { countWords } from "../../utils/string.utils";
 import { getMyPreferredMicrophone } from "../../utils/user.utils";
 import {
   VoiceInstructionRecorder,
@@ -48,7 +53,11 @@ export const ComposerPage = () => {
   const disabledReasonId = useId();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const requestId = params.get("requestId") ?? "";
+  // Session original for the original-vs-edited view. Falls back to the
+  // loaded text when the host opened the composer without one.
+  const sessionOriginal = params.get("original") ?? "";
   const [text, setText] = useState("");
+  const [undoText, setUndoText] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -220,11 +229,21 @@ export const ComposerPage = () => {
           accepted,
           text: accepted ? text : "",
         });
-      } finally {
         await closeComposerWindow();
+      } catch (error) {
+        getLogger().error("Failed to emit composer result", error);
+        if (mountedRef.current) {
+          setEditError(
+            error instanceof Error
+              ? error.message
+              : intl.formatMessage({
+                  defaultMessage: "Unable to send composer result.",
+                }),
+          );
+        }
       }
     },
-    [requestId, text],
+    [intl, requestId, text],
   );
 
   // Esc cancels the composer, matching the window close-request path which is
@@ -248,7 +267,10 @@ export const ComposerPage = () => {
     setEditError(null);
     try {
       const edited = await applyVoiceEditInstruction({ text, instruction });
-      if (mountedRef.current && edited !== undefined) setText(edited);
+      if (mountedRef.current && edited !== undefined) {
+        setUndoText(text);
+        setText(edited);
+      }
       setInstruction("");
     } catch (error) {
       if (mountedRef.current) {
@@ -310,6 +332,54 @@ export const ComposerPage = () => {
               {editError}
             </Typography>
           )}
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <Typography variant="caption" color="text.secondary">
+              <FormattedMessage
+                defaultMessage="{count, plural, one {# word} other {# words}}"
+                values={{ count: countWords(text) }}
+              />
+              {sessionOriginal !== "" && text !== sessionOriginal ? (
+                <>
+                  {" · "}
+                  <FormattedMessage defaultMessage="Unsaved Changes" />
+                </>
+              ) : null}
+            </Typography>
+            {undoText !== null && (
+              <Button
+                size="small"
+                variant="text"
+                disabled={isEditing}
+                onClick={() => {
+                  setText(undoText);
+                  setUndoText(null);
+                }}
+              >
+                <FormattedMessage defaultMessage="Undo edit" />
+              </Button>
+            )}
+          </Stack>
+          {sessionOriginal !== "" && (
+            <Accordion disableGutters>
+              <AccordionSummary>
+                <Typography variant="subtitle2">
+                  <FormattedMessage
+                    defaultMessage="Original transcript ({count, plural, one {# word} other {# words}})"
+                    values={{ count: countWords(sessionOriginal) }}
+                  />
+                </Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ whiteSpace: "pre-wrap" }}
+                >
+                  {sessionOriginal}
+                </Typography>
+              </AccordionDetails>
+            </Accordion>
+          )}
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
             <TextField
               fullWidth
@@ -337,7 +407,7 @@ export const ComposerPage = () => {
               title={disabledReason ?? undefined}
               aria-describedby={disabledReason ? disabledReasonId : undefined}
             >
-              <MicIcon />
+              <Mic size={20} strokeWidth={2} />
             </IconButton>
             <Button
               variant="outlined"
@@ -368,16 +438,25 @@ export const ComposerPage = () => {
             spacing={1}
             sx={{ justifyContent: "flex-end" }}
           >
-            <Button variant="text" onClick={() => void finish(false)}>
+            <Button
+              variant="text"
+              onClick={() => {
+                finish(false).catch(() => undefined);
+              }}
+            >
               <FormattedMessage defaultMessage="Cancel" />
             </Button>
-            <Button
-              variant="contained"
-              onClick={() => void finish(true)}
-              disabled={isEditing || !text.trim()}
-            >
-              <FormattedMessage defaultMessage="Insert" />
-            </Button>
+            <MetalChrome>
+              <Button
+                variant="contained"
+                onClick={() => {
+                  finish(true).catch(() => undefined);
+                }}
+                disabled={isEditing || !text.trim()}
+              >
+                <FormattedMessage defaultMessage="Insert" />
+              </Button>
+            </MetalChrome>
           </Stack>
         </Stack>
       </Paper>

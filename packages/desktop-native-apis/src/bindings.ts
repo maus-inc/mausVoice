@@ -131,6 +131,21 @@ async checkFocusedPasteTarget() : Promise<Result<PasteTargetState, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Check a non-default update channel at runtime. Stable keeps using the
+ * updater plugin's bundled endpoint; this builds an identical updater aimed
+ * at the channel manifest and registers the found update in the same
+ * resource table, so download, install, relaunch, and signature
+ * verification all run the stock plugin path untouched.
+ */
+async checkForChannelUpdate(channel: string) : Promise<Result<ChannelUpdateMetadata | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_channel_update", { channel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async checkMicrophonePermission() : Promise<Result<PermissionStatus, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_microphone_permission") };
@@ -212,9 +227,9 @@ async copyToClipboard(text: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Downloads a `.dmg` installer to a temp directory and opens it with
- * macOS Installer.app. This is used as a fallback when the normal in-place
- * updater cannot write to the app's install location.
+ * Downloads a `.dmg` installer to a temp directory and opens it through
+ * macOS's default handler. This is used as a fallback when the normal
+ * in-place updater cannot write to the app's install location.
  */
 async downloadAndOpenMacInstaller(url: string, signatureUrl: string) : Promise<Result<null, string>> {
     try {
@@ -1154,6 +1169,13 @@ export type AppProcessMatch = { pid: number; exePath: string | null; appName: st
 export type AppTarget = { id: string; name: string; createdAt: string; toneId: string | null; iconPath: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AppTargetUpsertArgs = { id: string; name: string; toneId?: string | null; iconPath?: string | null; pasteKeybind?: string | null; insertionMethod?: string | null; typingSpeedMs?: number | null }
 export type AudioClip = "start_recording_clip" | "stop_recording_clip" | "alert_macos_clip" | "alert_windows_10_clip" | "alert_windows_11_clip"
+/**
+ * Update metadata for a channel check. Mirrors the updater plugin's own
+ * metadata shape so the frontend reuses the stock install path; `rawJson`
+ * travels as text because specta cannot type an open JSON value, and the
+ * date travels as unix seconds for the same reason.
+ */
+export type ChannelUpdateMetadata = { rid: number; currentVersion: string; version: string; dateUnix: number | null; body: string | null; rawJson: string }
 export type ChatMessage = { id: string; conversationId: string; role: string; content: string; createdAt: number; metadata: string | null }
 export type CompositorBinding = { actionName: string; keys: string[] }
 export type Conversation = { id: string; title: string; createdAt: number; updatedAt: number }
@@ -1262,8 +1284,18 @@ export type PermissionKind = "microphone" | "accessibility"
 export type PermissionState = "authorized" | "denied" | "restricted" | "not-determined"
 export type PermissionStatus = { kind: PermissionKind; state: PermissionState; promptShown: boolean }
 export type PillWindowSize = "dictation" | "assistant_compact" | "assistant_expanded" | "assistant_typing"
-export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; body: number[] | null }
-export type PrivateHttpResponse = { status: number; headers: Partial<{ [key in string]: string }>; body: number[] }
+export type PrivateHttpRequest = { requestId: string; url: string; method: string; headers: Partial<{ [key in string]: string }>; 
+/**
+ * RFC 4648 standard Base64 body. A string is substantially smaller than
+ * the JSON number array Specta generates for `Vec<u8>` and keeps large
+ * local audio/model requests within the command's explicit limits.
+ */
+bodyBase64: string | null }
+export type PrivateHttpResponse = { status: number; headers: Partial<{ [key in string]: string }>; 
+/**
+ * RFC 4648 standard Base64 response body, decoded by secureFetch.
+ */
+bodyBase64: string }
 export type RemoteReceiverStatus = { enabled: boolean; deviceId: string; deviceName: string; listenAddress: string | null; port: number | null; pairingCode: string; lastSenderDeviceId: string | null; lastEventId: string | null; lastDeliveryStatus: string | null; lastDeliveryAt: string | null; lastError: string | null; lastTargetClassName: string | null; lastTargetTitle: string | null; lastTargetEditable: boolean | null; devicePlatform: string }
 export type RemoteSenderDeliverArgs = { targetDeviceId: string; text: string; mode: string }
 export type RemoteSenderPairArgs = { receiverDeviceId: string; receiverName: string; receiverPlatform: string; receiverAddress: string; pairingCode: string }
@@ -1306,8 +1338,9 @@ postProcessFailed?: boolean | null;
 postProcessError?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { 
 /**
- * Little-endian signed 16-bit mono PCM. Keeping the IPC payload binary
- * avoids expanding every sample into a JSON number.
+ * Little-endian signed 16-bit mono PCM. The IPC serializer still carries
+ * bytes as a JSON number array, but packed PCM is materially smaller than
+ * sending each sample as a floating-point JSON value.
  */
 pcm16Le: number[]; sampleRate: number }
 export type TranscriptionAudioSamplesData = { samples: number[]; sampleRate: number }
@@ -1325,6 +1358,11 @@ pillResetMonitorStrategy?: string;
  * default so existing behavior is unchanged.
  */
 alwaysRequestAdminOnStartup?: boolean; 
+/**
+ * JSON object of expansion feature-name -> boolean flag. Stored as a
+ * serialized string; defaults to an empty object so every flag is off.
+ */
+expansionFlags?: string; 
 /**
  * Where the dictation pill anchors on screen. Accepted values are
  * "top" or "bottom"; any other value is treated as the default
@@ -1355,7 +1393,11 @@ autoLearnFromEditsEnabled?: boolean;
  * Opt-in consent for sending dictionary terms as ElevenLabs keyterms,
  * which adds a 20% transcription surcharge. Off by default.
  */
-elevenLabsKeytermsEnabled?: boolean }
+elevenLabsKeytermsEnabled?: boolean; 
+/**
+ * Update channel this client is subscribed to: "stable" or "beta".
+ */
+updateChannel?: string }
 export type UserPreferencesGetArgs = { userId: string }
 
 /** tauri-specta globals **/

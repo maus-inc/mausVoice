@@ -213,6 +213,61 @@ describe("pillPlacement preference", () => {
   });
 });
 
+describe("updateChannel preference", () => {
+  it("defaults to stable when the local row omits the field", () => {
+    const loaded = fromLocalPreferences({
+      ...toLocalPreferences(createDefaultPreferences()),
+    });
+    expect(loaded.updateChannel).toBe("stable");
+  });
+
+  it("preserves a beta channel across a round-trip", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({ ...base, updateChannel: "beta" });
+    expect(loaded.updateChannel).toBe("beta");
+
+    const saved = toLocalPreferences(loaded);
+    expect(saved.updateChannel).toBe("beta");
+  });
+
+  it("normalises an unknown channel to stable", () => {
+    const base = toLocalPreferences(createDefaultPreferences());
+    const loaded = fromLocalPreferences({
+      ...base,
+      updateChannel: "nightly",
+    });
+    expect(loaded.updateChannel).toBe("stable");
+  });
+});
+
+describe("hallucination filter default and persistence", () => {
+  it("defaults hallucinationFilterEnabled to true for a fresh profile", () => {
+    const prefs = createDefaultPreferences();
+    expect(prefs.hallucinationFilterEnabled).toBe(true);
+  });
+
+  it("defaults an unset (null/missing) persisted value to true on load", () => {
+    const local = toLocalPreferences(createDefaultPreferences());
+    // Simulate a row from an older build that has no column value.
+    delete (local as Record<string, unknown>).hallucinationFilterEnabled;
+    const loaded = fromLocalPreferences(local);
+    expect(loaded.hallucinationFilterEnabled).toBe(true);
+  });
+
+  it("preserves an explicit false across save then load", () => {
+    // A user who turns the filter off must have it stay off after restart,
+    // otherwise silence gating would re-enable itself.
+    const prefs = {
+      ...createDefaultPreferences(),
+      hallucinationFilterEnabled: false,
+    };
+    const saved = toLocalPreferences(prefs);
+    expect(saved.hallucinationFilterEnabled).toBe(false);
+    const loaded = fromLocalPreferences(saved);
+    expect(loaded.hallucinationFilterEnabled).toBe(false);
+  });
+});
+
 describe("hallucination filter default and persistence", () => {
   it("defaults hallucinationFilterEnabled to true for a fresh profile", () => {
     const prefs = createDefaultPreferences();

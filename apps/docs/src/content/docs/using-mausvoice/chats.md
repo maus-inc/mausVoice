@@ -15,7 +15,9 @@ A conversation stays listed as **New conversation** until you send its first mes
 
 The response streams into the conversation. Tool activity appears alongside model output, and a tool that needs access pauses for a permission card. Review its parameters and reason, then choose **Deny**, **Allow**, or **Always allow**. Denial returns a failed tool result to the assistant; it does not undo an action that was already approved and completed.
 
-See [Assistant mode](../assistant-mode/) before approving screen reads, paste operations, or terminal commands.
+When an agent's **Paste** action is reviewed in the pill and you choose **Open**, the review text is saved here as a pending manual-paste card. Opening Chats changes the focused app, so the card copies the saved text instead of trying to insert it into the wrong window. Choose **Copy for manual paste**, focus the intended app, and paste there; **Cancel** leaves the saved text visible but marks the action dismissed.
+
+See [Assistant mode](./assistant-mode/) before approving screen reads, paste operations, or terminal commands.
 
 ## What is stored and sent
 

@@ -1,10 +1,10 @@
+import { ActivationController } from "@maus-inc/desktop-utils";
 import {
-  ActivationController,
   processFireCombo,
   type FireComboState,
   useHotkeyFire as useHotkeyFireGeneric,
   useHotkeyHoldMany as useHotkeyHoldManyGeneric,
-} from "@maus-inc/desktop-utils";
+} from "@maus-inc/desktop-utils/react";
 import { useEffect, useMemo, useRef } from "react";
 import type { AppState } from "../state/app.state";
 import { getAppState, useAppStore } from "../store";

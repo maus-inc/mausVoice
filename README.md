@@ -30,7 +30,7 @@
 [![Windows builds available](docs/assets/badges/windows.svg)](https://github.com/maus-inc/mausVoice/releases)
 [![Linux builds available](docs/assets/badges/linux.svg)](https://github.com/maus-inc/mausVoice/releases)
 
-<sub>**Voice typing for your own machine, dictate into any app and clean it up with AI, no account or subscription needed, and the Rust core keeps CPU and memory usage low.**</sub>
+<sub>**Voice typing for your own machine, with optional AI cleanup, no account or subscription needed, and a Rust core for native audio and input.**</sub>
 
 <br>
 
@@ -40,14 +40,14 @@
   <img src="docs/assets/home-page.png" alt="mausVoice home" width="750" />
 </p>
 
-**mausVoice** is a voice transcription desktop app turning your voice into text anywhere you can type. Hold your shortcut hotkeys, speak, and release. mausVoice transcribes locally or through your chosen cloud provider, with the option to apply an additional **LLM** cleanup and your selected writing style, and sends the result to the field in focus.
+**mausVoice** is a voice transcription desktop app that turns your voice into text. Hold your shortcut hotkeys, speak, and release. mausVoice transcribes locally or through your chosen provider, with the option to apply an additional **LLM** cleanup and selected writing style. It can paste or simulate typing into the focused field where the operating system allows it, with a clipboard fallback when it cannot.
 
 ## How it works
 
 1. Press your hotkey and speak. A small overlay shows you're recording.
-2. Audio is captured natively and transcribed as it happens, with streaming-capable Deepgram ([`nova-3`](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api)), or with fully local Whisper, ONYX or SenseVoice models if you'd rather keep every byte on-device.
-3. Optionally, An LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
-4. The finished text lands in whatever app you're focused on.
+2. Audio is captured natively. Streaming-capable Deepgram ([`nova-3`](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api)) can transcribe while you speak; fully local Whisper, ONNX, or SenseVoice models keep recognition on-device.
+3. Optionally, an LLM cleans up the transcript. It removes filler, fixes punctuation and formatting, and applies your chosen writing style.
+4. The finished text is delivered to the focused app by paste or simulated typing, or copied to the clipboard when direct insertion is unavailable.
 <br>
 
 <br>
@@ -65,7 +65,7 @@
 | **AI cleanup**           | Removes filler words and fixes punctuation. Choose a writing style and the result reads like you wrote it.                           |
 | **Your keys, encrypted** | Deepgram and Groq keys live on your machine, encrypted with XChaCha20-Poly1305. Rotate them any time in Settings without rebuilding. |
 | **Personal dictionary**  | Add your names, jargon, and shorthand once and mausVoice remembers them.                                                             |
-| **Works in every app**   | The overlay captures audio globally and pastes the result into whatever has focus.                                                   |
+| **Works across apps**    | The overlay captures audio globally and delivers the result to supported focused fields by paste or simulated typing.                |
 
 <br>
 <br>
@@ -122,7 +122,7 @@ pnpm dev:windows    # Windows
 pnpm dev:linux      # Linux
 ```
 
-> `pnpm dev` alone won't work. Native features need the platform-specific command above.
+> Prefer a platform-specific command for native work. Bare `pnpm dev` selects the host platform and runs the matching command, but an explicit command makes the platform under test clear.
 
 On first launch, the onboarding asks for your transcription and cleanup keys. There are no build-time secrets, and the same binary works for the local Whisper path.
 
@@ -130,7 +130,7 @@ On first launch, the onboarding asks for your transcription and cleanup keys. Th
 
 Two optional keys, both entered in Settings:
 
-- **Deepgram** (streaming transcription): [get one here](https://console.deepgram.com/). If you skip it, mausVoice falls back to local Whisper.
+- **Deepgram** (streaming transcription): [get one here](https://console.deepgram.com/). Without it, choose another configured transcription provider or a downloaded local model.
 - **Groq** (LLM text cleanup): [get one here](https://console.groq.com/keys).
 
 Keys are stored encrypted on your machine and can be changed or rotated any time without rebuilding. For a fully offline setup, leave both empty and point at a downloaded Whisper model.

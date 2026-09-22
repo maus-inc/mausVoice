@@ -9,7 +9,6 @@ import { theme } from "../../theme";
 
 vi.mock("../common/MenuPopover", () => ({
   MenuPopoverBuilder: () => null,
-  MenuPopoverItem: {} as never,
 }));
 
 vi.mock("react-intl", async (importOriginal) => {

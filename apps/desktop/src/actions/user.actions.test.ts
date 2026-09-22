@@ -4,6 +4,7 @@ import { getAppState, setAppState } from "../store";
 import {
   createDefaultPreferences,
   setAgentToolEnabled,
+  setPreserveAudioOnFailure,
   setPillPlacement,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
@@ -78,6 +79,26 @@ describe("setPillPlacement", () => {
     expect(loggerMock.warning).toHaveBeenCalledTimes(1);
     expect(loggerMock.warning.mock.calls[0][0]).toContain(
       "Failed to push pill placement to native pill",
+    );
+  });
+});
+
+describe("setPreserveAudioOnFailure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("persists a user's choice to discard audio from failed transcriptions", async () => {
+    await setPreserveAudioOnFailure(false);
+
+    expect(getAppState().userPrefs?.preserveAudioOnFailure).toBe(false);
+    expect(prefsRepoMock.setUserPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ preserveAudioOnFailure: false }),
     );
   });
 });

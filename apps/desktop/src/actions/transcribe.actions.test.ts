@@ -7,6 +7,7 @@ import {
   transcribeAudio,
   type StoreTranscriptionInput,
 } from "./transcribe.actions";
+import { createDefaultPreferences } from "./user.actions";
 
 // One second of a low-amplitude tone. The energy-based silence gate
 // short-circuits all-zero (digital silence) samples before reaching the
@@ -19,7 +20,7 @@ const makeToneSamples = (sampleRate = 16000): Float32Array => {
   return samples;
 };
 
-const { loggerMock, invokeMock } = vi.hoisted(() => ({
+const { loggerMock, invokeMock, addWordsMock } = vi.hoisted(() => ({
   loggerMock: {
     info: vi.fn(),
     warning: vi.fn(),
@@ -31,6 +32,7 @@ const { loggerMock, invokeMock } = vi.hoisted(() => ({
     }),
   },
   invokeMock: vi.fn(),
+  addWordsMock: vi.fn(),
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
@@ -63,10 +65,10 @@ vi.mock("../repos", async (importOriginal) => {
   };
 });
 
-vi.mock("./user.actions", () => ({
-  recordUsageWords: vi.fn(),
-  addWordsToCurrentUser: vi.fn(),
-}));
+vi.mock("./user.actions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./user.actions")>();
+  return { ...actual, addWordsToCurrentUser: addWordsMock };
+});
 
 const staleOllamaState = () => {
   const state = structuredClone(INITIAL_APP_STATE);
@@ -408,5 +410,86 @@ describe("storeTranscription post-process model persistence", () => {
 
     const stored = createTranscriptionMock.mock.calls[0][0];
     expect(stored.postProcessModel).toBeNull();
+  });
+});
+
+describe("storeTranscription persistence suppression", () => {
+  const storeInput = (): StoreTranscriptionInput => ({
+    audio: { samples: [0.1, 0.2, 0.3], sampleRate: 16000 },
+    rawTranscript: "one two three",
+    sanitizedTranscript: "one two three",
+    transcript: "one two three",
+    transcriptionMetadata: {},
+    postProcessMetadata: {},
+    warnings: [],
+  });
+
+  const applyState = (
+    prefs: Partial<UserPreferences>,
+    ephemeralSessionActive = false,
+  ) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.userPrefs = { ...createDefaultPreferences(), ...prefs };
+    state.local.ephemeralSessionActive = ephemeralSessionActive;
+    setAppState(state, true);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("skips storage and counts words when incognito opts into stats", async () => {
+    applyState({
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: true,
+    });
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).toHaveBeenCalledWith(3);
+  });
+
+  it("skips storage without counting words when incognito excludes stats", async () => {
+    applyState({
+      incognitoModeEnabled: true,
+      incognitoModeIncludeInStats: false,
+    });
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).not.toHaveBeenCalled();
+  });
+
+  it("skips storage during an ephemeral session and never counts words", async () => {
+    // Stats opt-in is on, but it belongs to incognito mode, not to a session.
+    applyState({ incognitoModeIncludeInStats: true }, true);
+
+    const result = await storeTranscription(storeInput());
+
+    expect(result.transcription).toBeNull();
+    expect(result.wordCount).toBe(3);
+    expect(addWordsMock).not.toHaveBeenCalled();
+  });
+
+  it("logs why storage was suppressed without logging transcript content", async () => {
+    applyState({}, true);
+
+    await storeTranscription(storeInput());
+
+    const calls = loggerMock.verbose.mock.calls.map((call) => String(call[0]));
+    const suppressed = calls.find((line) =>
+      line.includes("Persistence suppressed: skipping storage"),
+    );
+
+    expect(suppressed).toBeDefined();
+    expect(suppressed).not.toContain("one two three");
   });
 });
