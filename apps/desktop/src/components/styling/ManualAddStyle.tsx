@@ -18,6 +18,29 @@ import {
   type MenuPopoverItem,
 } from "../common/MenuPopover";
 
+const StyleSelectionIcon = ({
+  active,
+  lastActive,
+}: {
+  active: boolean;
+  lastActive: boolean;
+}) => {
+  if (lastActive) {
+    return (
+      <Tooltip
+        disableInteractive
+        title={
+          <FormattedMessage defaultMessage="At least one style must be selected." />
+        }
+      >
+        <CheckBoxIcon fontSize="small" sx={{ color: "text.disabled" }} />
+      </Tooltip>
+    );
+  }
+  if (active) return <CheckBoxIcon fontSize="small" color="primary" />;
+  return <CheckBoxOutlineBlankIcon fontSize="small" />;
+};
+
 export function ManualAddStyle() {
   const toneById = useAppStore((state) => state.toneById);
   const sortedToneIds = useAppStore((state) => getSortedToneIds(state));
@@ -53,6 +76,7 @@ export function ManualAddStyle() {
     const items: MenuPopoverItem[] = [];
 
     items.push({
+      id: "create-style",
       kind: "listItem",
       leading: <Add fontSize="small" />,
       title: <FormattedMessage defaultMessage="New style" />,
@@ -61,9 +85,8 @@ export function ManualAddStyle() {
         openToneEditorDialog({ mode: "create" });
       },
     });
-    items.push({ kind: "divider" });
-
     items.push(
+      { id: "available-styles", kind: "divider" },
       ...allTones.map((tone): MenuPopoverItem => {
         const isActive = activeSet.has(tone.id);
         const isGlobal = tone.isGlobal === true;
@@ -73,20 +96,10 @@ export function ManualAddStyle() {
         const isLastActive = isActive && !canDeselect;
 
         return {
+          id: `style-${tone.id}`,
           kind: "listItem",
-          leading: isLastActive ? (
-            <Tooltip
-              disableInteractive
-              title={
-                <FormattedMessage defaultMessage="At least one style must be selected." />
-              }
-            >
-              <CheckBoxIcon fontSize="small" sx={{ color: "text.disabled" }} />
-            </Tooltip>
-          ) : isActive ? (
-            <CheckBoxIcon fontSize="small" color="primary" />
-          ) : (
-            <CheckBoxOutlineBlankIcon fontSize="small" />
+          leading: (
+            <StyleSelectionIcon active={isActive} lastActive={isLastActive} />
           ),
           title: (
             <Typography variant="body2" noWrap>

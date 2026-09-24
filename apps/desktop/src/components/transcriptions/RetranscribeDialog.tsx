@@ -10,24 +10,31 @@ import {
   Select,
   Stack,
 } from "@mui/material";
+import { Check } from "lucide-react";
 import type { Tone } from "@maus-inc/types";
 import { getRec } from "@maus-inc/utilities";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { showErrorSnackbar } from "../../actions/app.actions";
 import {
   closeRetranscribeDialog,
   retranscribeTranscription,
 } from "../../actions/transcriptions.actions";
-import { produceAppState, useAppStore } from "../../store";
+import { useAppStore } from "../../store";
 import {
   AUTO_LANGUAGE,
   DICTATION_LANGUAGES,
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
 } from "../../utils/language.utils";
+import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
+import {
+  chromeDialogPaperSx,
+  chromeMenuItemSx,
+  chromeSelectMenuProps,
+  selectedOptionLabel,
+} from "../common/chromeMenu";
 
 const languageOptions = (
   [
@@ -39,8 +46,6 @@ const languageOptions = (
   label: DICTATION_LANGUAGES[code],
 }));
 
-const SUCCESS_VISIBLE_DELAY_MS = 900;
-
 export const RetranscribeDialog = () => {
   const intl = useIntl();
 
@@ -49,6 +54,11 @@ export const RetranscribeDialog = () => {
   );
   const transcriptionId = useAppStore(
     (state) => state.transcriptions.retranscribeDialogTranscriptionId,
+  );
+  const isRetranscribing = useAppStore((state) =>
+    transcriptionId
+      ? state.transcriptions.retranscribingIds.includes(transcriptionId)
+      : false,
   );
 
   const tones = useAppStore((state) => {
@@ -59,6 +69,7 @@ export const RetranscribeDialog = () => {
   });
 
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
+  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
 
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
@@ -75,89 +86,69 @@ export const RetranscribeDialog = () => {
     closeRetranscribeDialog();
   }, []);
 
-  const handleSubmit = useCallback(async () => {
-    if (!transcriptionId) return;
+  const handleSubmit = useCallback(() => {
+    if (!transcriptionId || isRetranscribing) return;
 
     closeRetranscribeDialog();
-    produceAppState((draft) => {
-      if (!draft.transcriptions.retranscribingIds.includes(transcriptionId)) {
-        draft.transcriptions.retranscribingIds.push(transcriptionId);
-      }
-      draft.transcriptions.retranscriptionSuccessIds =
-        draft.transcriptions.retranscriptionSuccessIds.filter(
-          (id) => id !== transcriptionId,
-        );
+    void retranscribeTranscription({
+      transcriptionId,
+      toneId: postProcessingEnabled ? selectedToneId : null,
+      languageCode: selectedLanguage,
     });
-
-    let didSucceed = false;
-    try {
-      await retranscribeTranscription({
-        transcriptionId,
-        toneId: selectedToneId,
-        languageCode: selectedLanguage,
-      });
-      didSucceed = true;
-    } catch (error) {
-      console.error("Failed to retranscribe audio", error);
-      const fallbackMessage = intl.formatMessage({
-        defaultMessage: "Unable to retranscribe audio snippet.",
-      });
-      const message = error instanceof Error ? error.message : fallbackMessage;
-      showErrorSnackbar(message || fallbackMessage);
-    } finally {
-      produceAppState((draft) => {
-        draft.transcriptions.retranscribingIds =
-          draft.transcriptions.retranscribingIds.filter(
-            (id) => id !== transcriptionId,
-          );
-        if (
-          didSucceed &&
-          !draft.transcriptions.retranscriptionSuccessIds.includes(
-            transcriptionId,
-          )
-        ) {
-          draft.transcriptions.retranscriptionSuccessIds.push(transcriptionId);
-        }
-      });
-      if (didSucceed) {
-        window.setTimeout(() => {
-          produceAppState((draft) => {
-            draft.transcriptions.retranscriptionSuccessIds =
-              draft.transcriptions.retranscriptionSuccessIds.filter(
-                (id) => id !== transcriptionId,
-              );
-          });
-        }, SUCCESS_VISIBLE_DELAY_MS);
-      }
-    }
-  }, [transcriptionId, selectedToneId, selectedLanguage, intl]);
+  }, [
+    transcriptionId,
+    selectedToneId,
+    selectedLanguage,
+    isRetranscribing,
+    postProcessingEnabled,
+  ]);
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="xs"
+      fullWidth
+      slotProps={{ paper: { sx: chromeDialogPaperSx } }}
+    >
       <DialogTitle>
         <FormattedMessage defaultMessage="Retranscribe" />
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          <FormControl fullWidth size="small">
-            <InputLabel>
-              <FormattedMessage defaultMessage="Style" />
-            </InputLabel>
-            <Select
-              label={intl.formatMessage({ defaultMessage: "Style" })}
-              value={selectedToneId ?? ""}
-              onChange={(e) => {
-                const value = e.target.value;
-                setSelectedToneId(value || null);
-              }}
-            >
-              {tones.map((tone) => (
-                <MenuItem key={tone.id} value={tone.id}>
-                  {tone.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {postProcessingEnabled && (
+            <FormControl fullWidth size="small">
+              <InputLabel>
+                <FormattedMessage defaultMessage="Style" />
+              </InputLabel>
+              <Select
+                label={intl.formatMessage({ defaultMessage: "Style" })}
+                value={selectedToneId ?? ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSelectedToneId(value || null);
+                }}
+                MenuProps={chromeSelectMenuProps}
+                renderValue={(value) =>
+                  selectedOptionLabel(
+                    value,
+                    tones,
+                    (tone) => tone.id,
+                    (tone) => tone.name,
+                  )
+                }
+              >
+                {tones.map((tone) => (
+                  <MenuItem key={tone.id} value={tone.id} sx={chromeMenuItemSx}>
+                    {tone.name}
+                    {tone.id === selectedToneId ? (
+                      <Check size={16} strokeWidth={2} />
+                    ) : null}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
           <FormControl fullWidth size="small">
             <InputLabel>
               <FormattedMessage defaultMessage="Language" />
@@ -168,11 +159,22 @@ export const RetranscribeDialog = () => {
               onChange={(e) =>
                 setSelectedLanguage(e.target.value as DictationLanguageCode)
               }
-              MenuProps={{ slotProps: { paper: { sx: { maxHeight: 300 } } } }}
+              MenuProps={chromeSelectMenuProps}
+              renderValue={(value) =>
+                selectedOptionLabel(
+                  value,
+                  languageOptions,
+                  (option) => option.code,
+                  (option) => option.label,
+                )
+              }
             >
               {languageOptions.map(({ code, label }) => (
-                <MenuItem key={code} value={code}>
+                <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
                   {label}
+                  {code === selectedLanguage ? (
+                    <Check size={16} strokeWidth={2} />
+                  ) : null}
                 </MenuItem>
               ))}
             </Select>
@@ -183,7 +185,11 @@ export const RetranscribeDialog = () => {
         <Button onClick={handleClose}>
           <FormattedMessage defaultMessage="Cancel" />
         </Button>
-        <Button variant="contained" onClick={handleSubmit}>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={!transcriptionId || isRetranscribing}
+        >
           <FormattedMessage defaultMessage="Transcribe" />
         </Button>
       </DialogActions>

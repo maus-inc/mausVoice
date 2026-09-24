@@ -3,6 +3,10 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // Tauri injects these, but clippy/`-D warnings` still flags them unless
+    // they are declared before rustc type-checks the crate.
+    println!("cargo:rustc-check-cfg=cfg(desktop)");
+    println!("cargo:rustc-check-cfg=cfg(mobile)");
     bake_flavor_env();
     tauri_build::build()
 }

@@ -1,5 +1,16 @@
 import OpenAI from "openai";
-import { retry, countWords } from "@maus-inc/utilities";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
+import { retry } from "@maus-inc/utilities";
+import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
+import {
+  buildJsonSchemaResponseFormat,
+  OPENAI_LEGACY_CHAT_MODELS,
+} from "./response-format.utils";
+import {
+  buildJsonObjectPrompt,
+  buildOpenAICompatibleMessages,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -24,10 +35,28 @@ export const OPENROUTER_FAVORITE_MODELS = [
   "openai/gpt-oss-20b",
 ] as const;
 
-/**
- * Default model for testing and fallback
- */
-export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
+/** Default generation model when no selection is saved. */
+export const OPENROUTER_DEFAULT_MODEL = "openai/gpt-oss-20b";
+
+// Legacy chat models (OpenAI id space, "openai/"-prefixed) that predate
+// Structured Outputs and reject `json_schema`. Every other model — including
+// ones discovered from the OpenRouter catalog — defaults to `json_schema`,
+// which the o-series and all gpt-4o-2024-08-06+ models require/accept and
+// which `json_object` callers would otherwise get 400s for (the o-series
+// rejects json_object outright).
+const JSON_OBJECT_ONLY_MODELS = new Set<string>(
+  OPENAI_LEGACY_CHAT_MODELS.map((model) => `openai/${model}`),
+);
+
+export const isOpenRouterJsonObjectOnlyModel = (model: string): boolean =>
+  JSON_OBJECT_ONLY_MODELS.has(model);
+
+const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
+  buildJsonSchemaResponseFormat(
+    model,
+    isOpenRouterJsonObjectOnlyModel,
+    jsonResponse,
+  );
 
 /**
  * Create OpenAI client configured for OpenRouter
@@ -135,6 +164,8 @@ export type OpenRouterGenerateTextArgs = {
   jsonResponse?: JsonResponse;
   providerRouting?: OpenRouterProviderRouting;
   customFetch?: CustomFetch;
+  maxTokens?: number;
+  signal?: AbortSignal;
 };
 
 export type OpenRouterGenerateTextOutput = {
@@ -154,61 +185,59 @@ export const openrouterGenerateTextResponse = async ({
   jsonResponse,
   providerRouting,
   customFetch,
+  maxTokens,
+  signal,
 }: OpenRouterGenerateTextArgs): Promise<OpenRouterGenerateTextOutput> => {
   return retry({
+    // An aborted request must not be retried; the abort is the caller's
+    // deadline decision, not a transient failure worth another attempt.
+    // A present-but-not-aborted signal is not an abort and must not disable
+    // retries for transient failures.
     retries: 3,
+    isRetryable: (error) => !signal?.aborted,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
-      const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
-      if (system) {
-        messages.push({ role: "system", content: system });
-      }
-      messages.push({ role: "user", content: prompt });
+      // The `json_object` shape (legacy models only) requires the word "JSON"
+      // somewhere in the context or the upstream API rejects the request;
+      // append the schema instruction only on that branch so json_schema
+      // calls are unchanged.
+      const finalPrompt =
+        jsonResponse && isOpenRouterJsonObjectOnlyModel(model)
+          ? buildJsonObjectPrompt({ prompt, jsonResponse })
+          : prompt;
 
-      // Build the request with optional provider routing
-      const requestParams: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
+      const messages = buildOpenAICompatibleMessages({
+        system,
+        prompt: finalPrompt,
+      });
+
+      const response_format = buildResponseFormat(model, jsonResponse);
+
+      const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
         model,
         temperature: 1,
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 1024,
         top_p: 1,
-        response_format: jsonResponse
-          ? {
-              type: "json_schema",
-              json_schema: {
-                name: jsonResponse.name,
-                description: jsonResponse.description,
-                schema: jsonResponse.schema,
-                strict: true,
-              },
-            }
-          : undefined,
+        ...(response_format ? { response_format } : {}),
       };
 
-      // Add provider routing if specified
       if (providerRouting) {
         requestParams.provider = providerRouting;
       }
 
-      const response = await client.chat.completions.create(requestParams);
+      const response = await client.chat.completions.create(requestParams, {
+        signal,
+      });
 
       console.log("openrouter llm usage:", response.usage);
-      if (!response.choices || response.choices.length === 0) {
-        throw new Error("No response from OpenRouter");
-      }
-
-      const result = response.choices[0].message.content;
-      if (!result) {
-        throw new Error("Content is empty");
-      }
-
-      return {
-        text: result,
-        tokensUsed: response.usage?.total_tokens ?? countWords(result),
-      };
+      return parseOpenAICompatibleGenerateTextResponse({
+        response,
+        providerLabel: "OpenRouter",
+      });
     },
   });
 };
@@ -222,33 +251,50 @@ export type OpenRouterTestIntegrationArgs = {
   customFetch?: CustomFetch;
 };
 
-/**
- * Test if an OpenRouter API key is valid by making a simple chat completion.
- */
+/** Test authentication without depending on a fixed inference model. */
 export const openrouterTestIntegration = async ({
   apiKey,
   customFetch,
 }: OpenRouterTestIntegrationArgs): Promise<boolean> => {
   const client = createClient(apiKey, customFetch);
+  await client.models.list();
+  return true;
+};
 
-  const response = await client.chat.completions.create({
-    messages: [
-      {
-        role: "user",
-        content: 'Reply with the single word "Hello."',
-      },
-    ],
-    model: OPENROUTER_DEFAULT_MODEL,
-    temperature: 0,
-    max_tokens: 32,
+// ============================================================================
+// Transcribe Audio
+// ============================================================================
+
+export type OpenRouterTranscriptionArgs = {
+  apiKey: string;
+  model: string;
+  blob: ArrayBuffer | Buffer;
+  ext: string;
+  prompt?: string;
+  language?: string;
+};
+
+export type OpenRouterTranscribeAudioOutput = {
+  text: string;
+  wordsUsed: number;
+};
+
+export const openrouterTranscribeAudio = async ({
+  apiKey,
+  model,
+  blob,
+  ext,
+  prompt,
+  language,
+}: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
+  return openaiCompatibleTranscribeAudio({
+    client: createClient(apiKey),
+    blob,
+    model,
+    ext,
+    prompt,
+    language,
   });
-
-  if (!response.choices || response.choices.length === 0) {
-    throw new Error("No response from OpenRouter");
-  }
-
-  const content = response.choices[0]?.message?.content ?? "";
-  return content.toLowerCase().includes("hello");
 };
 
 // ============================================================================

@@ -21,7 +21,7 @@ global key or pill event
   → Zustand state and pill/status updates
 ```
 
-`apps/desktop/src/actions/` performs stateful operations. `strategies/dictation.strategy.ts` handles dictation processing choices, while `components/root/DictationSideEffects.tsx` connects global events, the recorder, session lifecycle, timers, and output. `sessions/` separates dedicated AssemblyAI, Azure, Deepgram, ElevenLabs, and Local lifecycles from retained-audio batch transcription.
+`apps/desktop/src/actions/` performs stateful operations. `strategies/dictation.strategy.ts` handles dictation processing choices, while `components/root/DictationSideEffects.tsx` connects global events, the recorder, session lifecycle, timers, and output. `sessions/` separates dedicated AssemblyAI, Azure, Deepgram, ElevenLabs, Gladia, and Local lifecycles from retained-audio batch transcription.
 
 Repositories under `repos/` select storage, model-provider, transcription, and generation implementations. Provider HTTP/WebSocket details generally belong in `packages/voice-ai`; local sidecar process/lease management belongs under `sidecars/`. Zustand/Immer slices under `state/` are combined by `store/` and rendered by React components.
 

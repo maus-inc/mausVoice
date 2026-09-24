@@ -62,6 +62,13 @@ pub fn keep_webview_active(app_handle: &tauri::AppHandle, label: &str) {
     }
 }
 
+pub fn hide_main_window(window: &WebviewWindow) -> Result<(), String> {
+    window.hide().map_err(|err| err.to_string())?;
+    keep_webview_active(window.app_handle(), "main");
+    set_webview_keepalive(true);
+    Ok(())
+}
+
 pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
     let window_for_handle = window.clone();
     let (tx, rx) = mpsc::channel();
@@ -104,6 +111,13 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
                 }
                 if let Err(err) = window_for_handle.set_focus() {
                     log::error!("Failed to focus window: {err}");
+                }
+
+                // A12: Clear the WebView2 keepalive only after the window is
+                // confirmed visible. If show/unminimize failed the window may
+                // still be hidden — leave keepalive on so background JS runs.
+                if window_for_handle.is_visible().unwrap_or(false) {
+                    set_webview_keepalive(false);
                 }
 
                 Ok(())

@@ -7,6 +7,7 @@ import {
   getMyDictationLanguage,
   getTranscriptionPrefs,
   LOCAL_USER_ID,
+  setUserPreferences,
 } from "./user.utils";
 
 const additionalLanguageHotkey = (language: string): Hotkey => ({
@@ -238,5 +239,32 @@ describe("getTranscriptionPrefs stale-selection guard", () => {
       expect(prefs.provider).toBe("speaches");
       expect(prefs.apiKeyValue).toBe("");
     }
+  });
+});
+
+describe("setUserPreferences realtime/review exclusivity", () => {
+  it("normalizes a legacy dual-true pair loaded from disk (realtime wins)", () => {
+    const draft = structuredClone(INITIAL_APP_STATE);
+    const legacyBothOn = {
+      userId: LOCAL_USER_ID,
+      realtimeOutputEnabled: true,
+      reviewBeforeInsert: true,
+    } as unknown as UserPreferences;
+    setUserPreferences(draft, legacyBothOn);
+    expect(draft.userPrefs?.realtimeOutputEnabled).toBe(true);
+    expect(draft.userPrefs?.reviewBeforeInsert).toBe(false);
+    // The derived settings surface mirrors the same decision.
+    expect(draft.settings.reviewBeforeInsert).toBe(false);
+  });
+
+  it("leaves single-true and dual-false pairs alone", () => {
+    const draft = structuredClone(INITIAL_APP_STATE);
+    setUserPreferences(draft, {
+      userId: LOCAL_USER_ID,
+      realtimeOutputEnabled: false,
+      reviewBeforeInsert: true,
+    } as unknown as UserPreferences);
+    expect(draft.userPrefs?.reviewBeforeInsert).toBe(true);
+    expect(draft.settings.reviewBeforeInsert).toBe(true);
   });
 });

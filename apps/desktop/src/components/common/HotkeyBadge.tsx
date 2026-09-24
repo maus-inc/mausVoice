@@ -1,6 +1,7 @@
-import { Box } from "@mui/material";
+import { Stack } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
 import { getPrettyKeyName } from "../../utils/keyboard.utils";
+import { Keycap } from "./Keycap";
 
 type HotkeyBadgeProps = {
   keys: string[];
@@ -9,31 +10,49 @@ type HotkeyBadgeProps = {
 };
 
 export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
-  const label = keys.map(getPrettyKeyName).join(" + ");
+  const comboLabel = keys.map(getPrettyKeyName).join(" + ");
+  const occurrences = new Map<string, number>();
+  const keycaps = keys.map((key) => {
+    const occurrence = occurrences.get(key) ?? 0;
+    occurrences.set(key, occurrence + 1);
+    return { key, identity: `${key}:${occurrence}` };
+  });
 
   return (
-    <Box
+    <Stack
+      component={onClick ? "button" : "div"}
+      type={onClick ? "button" : undefined}
+      direction="row"
+      spacing={0.5}
+      aria-label={comboLabel}
+      role={onClick ? undefined : "group"}
       onClick={onClick}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 0.5,
-        px: 1,
-        py: 0.25,
-        fontWeight: 600,
-        bgcolor: (theme) => theme.vars?.palette.level1,
-        ...(onClick && {
-          cursor: "pointer",
-          "&:hover": {
-            bgcolor: "action.hover",
-          },
-        }),
-        ...sx,
-      }}
+      sx={[
+        {
+          display: "inline-flex",
+          alignItems: "center",
+          ...(onClick
+            ? {
+                border: "none",
+                background: "none",
+                padding: 0,
+                cursor: "pointer",
+              }
+            : {}),
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
     >
-      {label}
-    </Box>
+      {keycaps.map(({ key, identity }) => (
+        <Keycap
+          key={identity}
+          component={onClick ? "span" : undefined}
+          tabIndex={-1}
+          aria-hidden
+        >
+          {getPrettyKeyName(key)}
+        </Keycap>
+      ))}
+    </Stack>
   );
 };

@@ -95,8 +95,23 @@ export const text = {
   },
 } as const;
 
-/** The single accent. Kept verbatim from the previous palette. */
+/**
+ * Quiet silver/ink chrome accent — never hue-blue.
+ * Used for focus rings, selection wash, segmented chrome, sliders.
+ * Switches use ink/chalk (grey-black), not this metal.
+ */
 export const accent = {
-  light: { rgb: "27, 138, 248", main: "#1b8af8ff" },
-  dark: { rgb: "49, 152, 255", main: "#3198ffff" },
+  light: { rgb: "107, 103, 96", main: "#6B6760" },
+  dark: { rgb: "196, 192, 184", main: "#C4C0B8" },
+} as const;
+
+/** Close-button hover (title bar). Named so we never inline the red. */
+export const dangerHover = "rgba(232, 77, 77, 0.92)";
+
+/** Sanctioned overlay-on-screenshot alphas (pill overlay). */
+export const overlayOnDark = {
+  text: "rgba(242, 241, 238, 0.92)",
+  muted: "rgba(242, 241, 238, 0.5)",
+  hairline: "rgba(242, 241, 238, 0.2)",
+  wash: "rgba(242, 241, 238, 0.06)",
 } as const;

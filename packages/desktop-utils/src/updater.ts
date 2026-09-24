@@ -58,7 +58,7 @@ const relaunch = async (): Promise<void> => {
 };
 
 const GITHUB_RELEASE_DOWNLOAD_BASE =
-  "https://github.com/mausvoice/mausvoice/releases/download";
+  "https://github.com/maus-inc/mausVoice/releases/download";
 const RELEASE_TAG_REGEX = /\/releases\/download\/([^/]+)\//;
 
 export type AvailableUpdateInfo = {
@@ -67,6 +67,7 @@ export type AvailableUpdateInfo = {
   releaseDate: string | null;
   releaseNotes: string | null;
   manualInstallerUrl: string | null;
+  manualInstallerSignatureUrl: string | null;
   requiresManualInstall: boolean;
 };
 
@@ -135,8 +136,55 @@ export const buildManualMacInstallerUrl = (
     return null;
   }
 
-  const fileName = `mausVoice_${version}_universal.pkg`;
+  // Tauri v2 direct-sign produces a `.dmg` (and `.app.tar.gz`) for macOS, never
+  // a `.pkg`. Point the manual-install fallback at the universal `.dmg`.
+  const fileName = `mausVoice_${version}_universal.dmg`;
   return `${GITHUB_RELEASE_DOWNLOAD_BASE}/${encodeURIComponent(releaseTag)}/${encodeURIComponent(fileName)}`;
+};
+
+/**
+ * Resolves the detached-signature URL for the macOS manual installer. The
+ * Rust command verifies the downloaded `.dmg` against this `.sig` (minisign /
+ * ed25519, the same scheme the in-place updater uses) before opening it.
+ *
+ * Preferred source is a `dmgSignatureUrl` published alongside the installer in
+ * the updater manifest; otherwise we fall back to the natural artifact name
+ * (the `.dmg.sig` sitting next to the `.dmg` in the same release directory).
+ * Returns `null` when no signature can be located — the Rust command then
+ * refuses to open an unverified installer.
+ */
+export const buildManualMacInstallerSignatureUrl = (
+  rawJson: Record<string, unknown>,
+  dmgUrl: string | null,
+): string | null => {
+  if (!dmgUrl) {
+    return null;
+  }
+  // The detached signature must sit next to the installer under the same release
+  // directory. We only accept a URL that is exactly `${dmgUrl}.sig`, so a
+  // signature published for a different platform or asset cannot be used to
+  // verify this DMG. A `dmgSignatureUrl` published in the manifest is honored
+  // only when it names the expected artifact; otherwise we derive it from the
+  // DMG URL. The Rust command independently validates the URL against the
+  // trusted release host before downloading.
+  const expected = `${dmgUrl}.sig`;
+  const platforms = rawJson.platforms;
+  if (isRecord(platforms)) {
+    for (const platform of Object.values(platforms)) {
+      if (!isRecord(platform)) {
+        continue;
+      }
+      const sigUrl = platform.dmgSignatureUrl;
+      if (
+        typeof sigUrl === "string" &&
+        sigUrl.length > 0 &&
+        sigUrl === expected
+      ) {
+        return sigUrl;
+      }
+    }
+  }
+  return expected;
 };
 
 /**
@@ -175,6 +223,68 @@ export const checkForUpdate = async (
     return null;
   }
 
+  return retainUpdate(update, platform);
+};
+
+export type UpdateChannelName = "stable" | "beta";
+
+type ChannelUpdateMetadataWire = {
+  rid: number;
+  currentVersion: string;
+  version: string;
+  dateUnix: number | null;
+  body: string | null;
+  rawJson: string;
+};
+
+/**
+ * Checks a non-default update channel. Stable reuses the bundled plugin
+ * endpoint untouched; beta goes through the `check_for_channel_update`
+ * command, which builds an identical updater aimed at the beta manifest and
+ * registers the handle in the same resource table, so install, relaunch,
+ * and signature verification all run the stock path.
+ */
+export const checkForChannelUpdate = async (
+  platform: DesktopPlatform,
+  channel: UpdateChannelName,
+): Promise<AvailableUpdateInfo | null> => {
+  if (channel !== "beta") {
+    return checkForUpdate(platform);
+  }
+
+  const metadata = await invoke<ChannelUpdateMetadataWire | null>(
+    "check_for_channel_update",
+    { channel },
+  );
+
+  if (!metadata) {
+    await closeAvailableUpdate();
+    return null;
+  }
+
+  const update = new Update({
+    rid: metadata.rid,
+    currentVersion: metadata.currentVersion,
+    version: metadata.version,
+    date:
+      metadata.dateUnix == null
+        ? undefined
+        : new Date(metadata.dateUnix * 1000).toISOString(),
+    body: metadata.body ?? undefined,
+    rawJson: JSON.parse(metadata.rawJson) as Record<string, unknown>,
+  });
+  return retainUpdate(update, platform);
+};
+
+/**
+ * Retains an `Update` handle from any channel and resolves the install
+ * metadata the actions layer consumes. Shared by the bundled and channel
+ * check paths so both behave identically past this point.
+ */
+const retainUpdate = async (
+  update: Update,
+  platform: DesktopPlatform,
+): Promise<AvailableUpdateInfo> => {
   if (availableUpdate && availableUpdate !== update) {
     try {
       await availableUpdate.close();
@@ -187,30 +297,37 @@ export const checkForUpdate = async (
   const requiresManualInstall =
     platform === "darwin" ? !(await checkAppLocationWritable(platform)) : false;
 
+  const manualInstallerUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerUrl(update.version, update.rawJson)
+      : null;
+  const manualInstallerSignatureUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerSignatureUrl(update.rawJson, manualInstallerUrl)
+      : null;
+
   return {
     currentVersion: update.currentVersion,
     version: update.version,
     releaseDate: update.date ?? null,
     releaseNotes: update.body ?? null,
-    manualInstallerUrl:
-      platform === "darwin"
-        ? buildManualMacInstallerUrl(update.version, update.rawJson)
-        : null,
+    manualInstallerUrl,
+    manualInstallerSignatureUrl,
     requiresManualInstall,
   };
 };
 
 /** Releases the stored `Update` handle, if any. */
 export const closeAvailableUpdate = async (): Promise<void> => {
-  if (!availableUpdate) {
-    return;
-  }
+  const previous = availableUpdate;
+  if (!previous) return;
+  // Detach synchronously: neither an install nor a later close may reuse this
+  // retiring resource, and finishing its close must not erase a newer offer.
+  availableUpdate = null;
   try {
-    await availableUpdate.close();
+    await previous.close();
   } catch (error) {
     console.error("Failed to close update resource", error);
-  } finally {
-    availableUpdate = null;
   }
 };
 
@@ -257,14 +374,17 @@ export const installAvailableUpdate = async (
 };
 
 /**
- * Downloads a `.pkg` installer to a temp directory and opens it via macOS
+ * Downloads a `.dmg` installer to a temp directory and opens it via macOS
  * Installer.app. Used as a fallback when the in-place updater cannot write
- * to the app's install location.
+ * to the app's install location. The Rust command verifies the downloaded
+ * DMG against `signatureUrl` (minisign/ed25519) before opening it and refuses
+ * to open an unverified or missing-signature installer.
  */
 export const downloadAndOpenMacInstaller = async (
   url: string,
+  signatureUrl: string,
 ): Promise<void> => {
-  await invoke("download_and_open_mac_installer", { url });
+  await invoke("download_and_open_mac_installer", { url, signatureUrl });
 };
 
 /** Relaunches the app via Tauri's process plugin. */

@@ -207,6 +207,8 @@ fn query_source_native_rate(source_name: Option<&str>) -> u32 {
 }
 
 /// The actual blocking recording loop. Runs on a dedicated thread.
+#[allow(unknown_lints)]
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn record_loop(
     source_name: Option<&str>,
     sample_rate: u32,
@@ -235,7 +237,7 @@ fn record_loop(
         .map(|c| c.as_c_str().to_str().unwrap_or_default());
 
     let simple = match psimple::Simple::new(
-        None,      // server (default)
+        None,        // server (default)
         "mausVoice", // app name
         pulse::stream::Direction::Record,
         source_ref,  // source (None = default)

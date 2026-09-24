@@ -22,4 +22,6 @@ A snippet uses the same mechanism with a deliberate trigger:
 
 Choose an input phrase that is unlikely to appear accidentally. Test capitalization and punctuation around the match; not every variant is normalized. The post-processing model may reformat the expansion afterward; use Verbatim or turn post-processing off when the snippet must remain exact.
 
+Special characters in the input phrase are matched as literals, so a rule for `C++`, `a/b`, or `[bracket]` works the way you would expect. Surrounding punctuation is stripped during matching, so the rule `C++` still matches `"c++"` or `"c++,"`.
+
 Never store passwords, private keys, or API tokens in snippets. Dictionary entries live in the local database, so a copy of `mausvoice.db` contains them. The current diagnostic export does not include that database.

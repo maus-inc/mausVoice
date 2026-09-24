@@ -33,3 +33,6 @@ features = [
     "Win32_UI_Controls",
     "Win32_UI_WindowsAndMessaging",
 ]
+
+[lints.clippy]
+uninlined_format_args = "allow"

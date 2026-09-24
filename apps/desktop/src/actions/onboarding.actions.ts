@@ -9,6 +9,7 @@ import {
 import { getAppState, produceAppState } from "../store";
 import { CURRENT_COHORT } from "../utils/analytics.utils";
 import { DEFAULT_DICTATION_LIMIT_MINUTES } from "../utils/dictation-limit.utils";
+import { DEFAULT_HANDS_FREE_DELAY_MS } from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   EMAIL_TONE_ID,
@@ -30,6 +31,141 @@ import { showErrorSnackbar } from "./app.actions";
 import { clearLocalStorageValue } from "./local-storage.actions";
 import { refreshMember } from "./member.actions";
 import { setAutoLaunchEnabled } from "./settings.actions";
+import {
+  trackButtonClick,
+  trackOnboardingOutcome,
+  type OnboardingOutcome,
+} from "../utils/analytics.utils";
+import { isMacOS } from "../utils/env.utils";
+import { isPermissionAuthorized } from "../utils/permission.utils";
+
+export const CURRENT_ONBOARDING_FLOW_VERSION = 3;
+
+const postPermissionsPage = (): OnboardingPageKey =>
+  isMacOS() ? "micPerms" : "keybindings";
+
+const stepEnteredAt = new Map<OnboardingPageKey, number>();
+
+export const markOnboardingStepEntered = (page: OnboardingPageKey): void => {
+  stepEnteredAt.set(page, Date.now());
+};
+
+const recordStepOutcome = (
+  page: OnboardingPageKey,
+  outcome: OnboardingOutcome,
+): void => {
+  const startedAt = stepEnteredAt.get(page);
+  trackOnboardingOutcome(
+    page,
+    outcome,
+    startedAt !== undefined ? Date.now() - startedAt : undefined,
+  );
+  stepEnteredAt.delete(page);
+};
+
+/**
+ * Pages cut from the v3 first run. Anyone resuming onto one (persisted
+ * progress from an older flow) lands on the nearest kept page instead of
+ * a blank screen. Migrations never replay completed permission steps.
+ */
+const nearestKeptPage = (page: OnboardingPageKey): OnboardingPageKey => {
+  switch (page) {
+    case "chooseLlm":
+    case "referralSource":
+      return postPermissionsPage();
+    case "userDetails":
+      return "chooseTranscription";
+    case "unlockedPro":
+      return "tutorial";
+    default:
+      return page;
+  }
+};
+
+export const ensureOnboardingFlow = (): void => {
+  const state = getAppState();
+  if (state.local.onboardingFlowVersion >= CURRENT_ONBOARDING_FLOW_VERSION) {
+    return;
+  }
+  produceAppState((draft) => {
+    draft.onboarding.currentPage = nearestKeptPage(
+      draft.onboarding.currentPage,
+    );
+    draft.onboarding.history = draft.onboarding.history.map(nearestKeptPage);
+    if (draft.local.onboardingResumePage) {
+      draft.local.onboardingResumePage = nearestKeptPage(
+        draft.local.onboardingResumePage,
+      );
+    }
+    draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
+  });
+};
+
+export const markPrerequisite = (id: string): void => {
+  produceAppState((draft) => {
+    if (!draft.local.completedPrerequisites.includes(id)) {
+      draft.local.completedPrerequisites.push(id);
+    }
+  });
+};
+
+export const dismissTip = (id: string): void => {
+  trackButtonClick("tip_dismiss", { tipId: id });
+  produceAppState((draft) => {
+    if (!draft.local.dismissedTipIds.includes(id)) {
+      draft.local.dismissedTipIds.push(id);
+    }
+  });
+};
+
+export const resetTip = (id: string): void => {
+  trackButtonClick("tip_show_again", { tipId: id });
+  produceAppState((draft) => {
+    draft.local.dismissedTipIds = draft.local.dismissedTipIds.filter(
+      (tipId) => tipId !== id,
+    );
+  });
+};
+
+export const resumeOnboardingPage = (): void => {
+  const state = getAppState();
+  const resume = state.local.onboardingResumePage;
+  if (
+    resume &&
+    resume !== state.onboarding.currentPage &&
+    state.onboarding.history.length === 0
+  ) {
+    // Restoring persisted state is not completing the initial sign-in step.
+    // Keep the empty navigation stack rather than inventing a back target.
+    produceAppState((draft) => {
+      draft.onboarding.currentPage = nearestKeptPage(resume);
+      draft.onboarding.isResuming = true;
+      draft.local.onboardingResumePage = draft.onboarding.currentPage;
+    });
+  }
+};
+
+/** Skip already-granted permission pages only while restoring a saved flow. */
+export const advanceResumedPermissionPage = (
+  page: "micPerms" | "a11yPerms",
+): void => {
+  const state = getAppState();
+  const permission = page === "micPerms" ? "microphone" : "accessibility";
+  if (
+    !state.onboarding.isResuming ||
+    state.onboarding.currentPage !== page ||
+    !isPermissionAuthorized(state.permissions[permission]?.state)
+  )
+    return;
+  const next = page === "micPerms" && isMacOS() ? "a11yPerms" : "keybindings";
+  produceAppState((draft) => {
+    if (!draft.local.completedPrerequisites.includes(permission)) {
+      draft.local.completedPrerequisites.push(permission);
+    }
+    draft.onboarding.currentPage = next;
+    draft.local.onboardingResumePage = next;
+  });
+};
 
 const navigateToOnboardingPage = (
   onboarding: OnboardingState,
@@ -44,18 +180,33 @@ const navigateToOnboardingPage = (
 };
 
 export const goBackOnboardingPage = () => {
+  const leaving = getAppState().onboarding.currentPage;
   produceAppState((draft) => {
+    draft.onboarding.isResuming = false;
     const previousPage = draft.onboarding.history.pop();
     if (previousPage) {
       draft.onboarding.currentPage = previousPage;
+      draft.local.onboardingResumePage = previousPage;
     }
   });
+  if (leaving !== getAppState().onboarding.currentPage) {
+    recordStepOutcome(leaving, "back");
+  }
 };
 
-export const goToOnboardingPage = (nextPage: OnboardingPageKey) => {
+export const goToOnboardingPage = (
+  nextPage: OnboardingPageKey,
+  outcome: Extract<OnboardingOutcome, "complete" | "skip"> = "complete",
+) => {
+  const leaving = getAppState().onboarding.currentPage;
   produceAppState((draft) => {
+    draft.onboarding.isResuming = false;
     navigateToOnboardingPage(draft.onboarding, nextPage);
+    draft.local.onboardingResumePage = draft.onboarding.currentPage;
   });
+  if (leaving !== nextPage) {
+    recordStepOutcome(leaving, outcome);
+  }
 };
 
 export const resetOnboarding = () => {
@@ -142,6 +293,7 @@ export const submitOnboarding = async () => {
     };
 
     const preferences: UserPreferences = {
+      updateChannel: "stable",
       gpuEnumerationEnabled:
         transcriptionPreference.mode === "local"
           ? transcriptionPreference.gpuEnumerationEnabled
@@ -188,6 +340,7 @@ export const submitOnboarding = async () => {
       ignoreUpdateDialog: false,
       incognitoModeEnabled: false,
       incognitoModeIncludeInStats: false,
+      preserveAudioOnFailure: true,
       dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
       dictationPillVisibility: "persistent",
       realtimeOutputEnabled: false,
@@ -201,7 +354,20 @@ export const submitOnboarding = async () => {
       insertionMethod: null,
       typingSpeedMs: null,
       pillResetMonitorStrategy: "current",
+      pillPlacement: "bottom",
       alwaysRequestAdminOnStartup: false,
+      handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+      inDictationStyleSwitchingEnabled: false,
+      hallucinationFilterEnabled: true,
+      reviewBeforeInsert: null,
+      agentEnabledTools: null,
+      agentMaxIterations: 20,
+      agentPermissionTimeoutMs: 60_000,
+      spokenCommandsEnabled: true,
+      autoLearnDictionaryEnabled: true,
+      autoLearnFromEditsEnabled: false,
+      elevenLabsKeytermsEnabled: false,
+      expansionFlags: "{}",
     };
 
     const [savedUser, savedPreferences] = await Promise.all([
@@ -252,6 +418,8 @@ export const finishOnboarding = async () => {
     const savedUser = await repo.setMyUser(updatedUser);
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
+      draft.local.onboardingResumePage = null;
+      draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
     });
 
     await setAutoLaunchEnabled(true);

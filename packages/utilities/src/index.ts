@@ -4,3 +4,5 @@ export * from "./equality";
 export * from "./math";
 export * from "./string";
 export * from "./member";
+export * from "./error";
+export * from "./json";

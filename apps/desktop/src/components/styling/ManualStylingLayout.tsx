@@ -64,7 +64,7 @@ function StylingSubtitle() {
   if (backwardHotkey && forwardHotkey) {
     return (
       <FormattedMessage
-        defaultMessage="Choose different writing styles to change how you sound. While dictating, press {backwardHotkey} or {forwardHotkey} to cycle between them."
+        defaultMessage="Use {backwardHotkey} or {forwardHotkey} while dictating to switch writing styles and change how you sound."
         values={{ backwardHotkey, forwardHotkey }}
       />
     );

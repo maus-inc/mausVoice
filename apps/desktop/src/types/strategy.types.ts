@@ -6,11 +6,19 @@ import type {
 import type { TextFieldInfo } from "./accessibility.types";
 import type { ToastAction } from "./toast.types";
 import type { StopRecordingResponse } from "./transcription-session.types";
+import type { PipelineTrace } from "../utils/pipeline-trace";
 
 export type StrategyValidationError = {
   title: string;
   body: string;
   action: Nullable<ToastAction>;
+};
+
+export type ReviewedTranscriptPersistenceInput = {
+  transcript: string;
+  sanitizedTranscript: string | null;
+  postProcessMetadata: PostProcessMetadata;
+  postProcessWarnings: string[];
 };
 
 export type HandleTranscriptParams = {
@@ -24,6 +32,14 @@ export type HandleTranscriptParams = {
   audio: StopRecordingResponse;
   transcriptionMetadata: TranscribeAudioMetadata;
   transcriptionWarnings: string[];
+  trace?: PipelineTrace | null;
+  /**
+   * Persists a reviewed Open edit and navigates to History. It returns false
+   * when persistence is unavailable so the pill keeps the review intact.
+   */
+  persistReviewedTranscript?: (
+    input: ReviewedTranscriptPersistenceInput,
+  ) => Promise<boolean>;
 };
 
 export type HandleTranscriptResult = {
@@ -34,4 +50,6 @@ export type HandleTranscriptResult = {
   postProcessWarnings: string[];
   remoteStatus?: "sent" | "received" | null;
   remoteDeviceId?: string | null;
+  /** True when the review Open callback already persisted the History row. */
+  historyPersisted?: boolean;
 };

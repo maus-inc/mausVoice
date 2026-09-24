@@ -1,6 +1,5 @@
 import { expect } from "vitest";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   BaseGenerateTextRepo,
   GroqGenerateTextRepo,
@@ -27,8 +26,9 @@ const EVAL_RESULT_SCHEMA = z.object({
   reason: z.string(),
 });
 
-const EVAL_RESULT_JSON_SCHEMA =
-  zodToJsonSchema(EVAL_RESULT_SCHEMA, "Schema").definitions?.Schema ?? {};
+const EVAL_RESULT_JSON_SCHEMA = z.toJSONSchema(EVAL_RESULT_SCHEMA, {
+  target: "draft-7",
+});
 
 export function getOpenAIGentextRepo(model = "gpt-5.4"): BaseGenerateTextRepo {
   const apiKey = getOpenAIApiKey();
@@ -97,18 +97,21 @@ export const postProcess = async ({
   language = "en",
   userName = "Thomas Gundan",
   repo,
+  signal,
 }: {
   tone: ToneConfig;
   transcription: string;
   language?: string;
   userName?: string;
   repo?: BaseGenerateTextRepo;
+  signal?: AbortSignal;
 }): Promise<string> => {
   const promptInput: PostProcessingPromptInput = {
     transcript: transcription,
     dictationLanguage: language,
     tone,
     userName,
+    glossary: { sources: [], replacements: [] },
   };
   const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
   const ppPrompt = buildPostProcessingPrompt(promptInput);
@@ -116,6 +119,7 @@ export const postProcess = async ({
   const output = await (repo ?? getGroqGentextRepo()).generateText({
     system: ppSystem,
     prompt: ppPrompt,
+    signal,
     jsonResponse: {
       name: "transcription_cleaning",
       description: "JSON response with the processed transcription",

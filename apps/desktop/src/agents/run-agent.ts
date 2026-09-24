@@ -1,7 +1,20 @@
 import { AgentLoop } from "@repo/agent";
-import type { AgentLlmProvider, AgentTool } from "@repo/agent";
-import type { LlmMessage, LlmToolCall, ToolInfo } from "@maus-inc/types";
-import { delayed } from "@maus-inc/utilities";
+import type {
+  AgentFinishReason,
+  AgentLlmProvider,
+  AgentTool,
+} from "@repo/agent";
+import type {
+  ChatToolStatus,
+  LlmMessage,
+  LlmToolCall,
+  ToolInfo,
+} from "@maus-inc/types";
+import {
+  delayed,
+  isLogBreakingControl,
+  unknownToMessage,
+} from "@maus-inc/utilities";
 import { createChatMessage } from "../actions/chat.actions";
 import {
   executeTool,
@@ -14,11 +27,99 @@ import { getAppState, produceAppState } from "../store";
 import { createTool } from "../tools";
 import { modifyAgentState } from "../utils/agent.utils";
 import { getLogger } from "../utils/log.utils";
+import { humanizeScrub } from "../utils/humanize.utils";
+import type { PersistedRunOutcome } from "../utils/chat-parts.utils";
 import type { AgentTypeConfig } from "./agent-configs";
 
 const POLL_INTERVAL_MS = 500;
+const MAX_CONTEXT_MESSAGES = 80;
 const activeLoops = new Map<string, AgentLoop>();
 
+/** Permission approval is not proof of execution; use the actual result. */
+const completedToolStatus = (
+  conversationId: string,
+  toolCallId: string,
+  isError: boolean,
+): Extract<ChatToolStatus, "complete" | "failed" | "denied"> => {
+  if (!isError) return "complete";
+  const state = getAppState();
+  const call = state.agentStateByConversationId[conversationId]?.toolCalls.find(
+    (entry) => entry.toolCallId === toolCallId,
+  );
+  const permission = call?.permissionId
+    ? state.toolPermissionById?.[call.permissionId]
+    : undefined;
+  return permission?.status === "denied" ? "denied" : "failed";
+};
+
+/**
+ * Run a non-critical side effect inside the agent's `for await` loop and
+ * isolate any rejection. A failing chat-message persistence, streaming-state
+ * write, or tool-UI update must NEVER terminate the agent run: the
+ * in-memory `AgentLoop` already has the tool result and the next LLM
+ * request must be issued. The "resource id is invalid" log the user saw
+ * in the diagnostics zip was an unhandled rejection from this exact
+ * surface; wrapping the call keeps the loop alive.
+ *
+ * `label` is included in the log so post-mortem inspection can map a
+ * failure back to a specific event handler. Context values are collapsed
+ * to a single line, truncated, and JSON-quoted so ids stay parseable
+ * without breaking the log line.
+ */
+const MAX_CONTEXT_VALUE_LENGTH = 64;
+
+const collapseLogBreakingControls = (value: string): string =>
+  Array.from(value, (ch) => (isLogBreakingControl(ch) ? " " : ch))
+    .join("")
+    .replace(/ {2,}/g, " ")
+    .trim();
+
+/** Collapse C0 and C1 control characters so a multi-line or binary-ish value cannot break the log line. */
+const sanitizeContextValue = (value: string): string => {
+  const singleLine = collapseLogBreakingControls(value);
+  return singleLine.length > MAX_CONTEXT_VALUE_LENGTH
+    ? `${singleLine.slice(0, MAX_CONTEXT_VALUE_LENGTH)}…`
+    : singleLine;
+};
+
+/** Log parsers must treat each value as a JSON string, not a comma-split field. */
+const quoteValueForLog = (value: string): string =>
+  JSON.stringify(sanitizeContextValue(value));
+
+const summarizeContext = (context: Record<string, string>): string =>
+  Object.entries(context)
+    .map(([k, v]) => `${k}=${quoteValueForLog(v)}`)
+    .join(", ");
+
+export const safeSideEffect = async <T>(
+  label: string,
+  context: Record<string, string>,
+  fn: () => Promise<T>,
+): Promise<T | null> => {
+  try {
+    return await fn();
+  } catch (error) {
+    const message = collapseLogBreakingControls(unknownToMessage(error));
+    getLogger().error(
+      `Agent non-critical side effect failed (${label}, ${summarizeContext(
+        context,
+      )}): ${message}`,
+    );
+    return null;
+  }
+};
+
+const persistedFailureOutcome = (
+  reason: AgentFinishReason,
+): PersistedRunOutcome | undefined =>
+  reason === "error" || reason === "aborted" ? reason : undefined;
+
+/**
+ * Drive one agent conversation to completion on the desktop adapter.
+ * Emits every AgentLoop event into app state; non-critical persistence
+ * failures are logged via safeSideEffect so they do not terminate loop
+ * processing.
+ */
 export async function runAgent(
   conversationId: string,
   config: AgentTypeConfig,
@@ -27,15 +128,52 @@ export async function runAgent(
     config.agentType,
     config.maxIterations,
   );
-  produceAppState((draft) => {
-    draft.agentStateByConversationId[conversationId] = agentState;
-  });
-
   const provider = createLlmProvider();
-  const tools = createAgentTools(conversationId, config);
+  const tools = createAgentTools(conversationId, config, () => {
+    const state = getAppState().agentStateByConversationId[conversationId];
+    return (
+      activeLoops.get(conversationId) === loop && !!state && !state.aborted
+    );
+  });
+  // A second run for the same conversation supersedes the first: a send can
+  // arrive from the pill while a dashboard send's agent is still running.
+  // Aborting the previous loop keeps at most one live loop per conversation
+  // and keeps the Stop button (abortAgentLoop) pointed at the run that is
+  // actually executing.
+  //
+  // Abort and retire the previous run BEFORE snapshotting conversation messages,
+  // removing any unfinished streaming messages so the second send never captures
+  // or persists a partial response from the run it replaces.
+  const superseded = activeLoops.get(conversationId);
+  if (superseded) {
+    superseded.abort();
+    activeLoops.delete(conversationId);
+    produceAppState((draft) => {
+      const ids = draft.chatMessageIdsByConversationId[conversationId] ?? [];
+      const streamingIds = new Set(
+        Object.keys(draft.streamingMessageById).filter((id) => {
+          const msg = draft.chatMessageById[id];
+          return (
+            msg?.conversationId === conversationId &&
+            draft.streamingMessageById[id]?.isStreaming
+          );
+        }),
+      );
+      if (streamingIds.size > 0) {
+        draft.chatMessageIdsByConversationId[conversationId] = ids.filter(
+          (id) => !streamingIds.has(id),
+        );
+        for (const id of streamingIds) {
+          delete draft.chatMessageById[id];
+          delete draft.streamingMessageById[id];
+        }
+      }
+    });
+  }
+
   const messages = buildConversationMessages(conversationId);
 
-  const loop = new AgentLoop({
+  const loop: AgentLoop = new AgentLoop({
     provider,
     tools,
     systemPrompt: config.systemPrompt,
@@ -43,31 +181,57 @@ export async function runAgent(
   });
 
   activeLoops.set(conversationId, loop);
+  // Setup may throw (for example, when no provider is configured). Publish
+  // the run only after setup succeeds, leaving any previous run intact.
+  produceAppState((draft) => {
+    draft.agentStateByConversationId[conversationId] = agentState;
+  });
+
+  const updateRunState: typeof produceAppState = (recipe) => {
+    if (activeLoops.get(conversationId) === loop) produceAppState(recipe);
+  };
 
   let currentMessageId: string | null = null;
   let iterationText = "";
   let iterationToolCalls: LlmToolCall[] = [];
+  const iterationToolStatuses = new Map<string, ChatToolStatus>();
   let toolCallIndex = 0;
   const toolCallReasons = new Map<string, string>();
 
+  const persistCurrentMessage = async (
+    label: string,
+    runOutcome?: PersistedRunOutcome,
+  ) => {
+    const messageId = currentMessageId;
+    if (!messageId) return;
+    if (activeLoops.get(conversationId) !== loop) return;
+    await safeSideEffect(label, { conversationId, messageId }, () =>
+      finalizeAssistantMessage(
+        messageId,
+        iterationText,
+        iterationToolCalls,
+        Object.fromEntries(iterationToolStatuses),
+        runOutcome,
+        () => activeLoops.get(conversationId) === loop,
+      ),
+    );
+  };
+
   try {
     for await (const event of loop.run(messages)) {
+      if (activeLoops.get(conversationId) !== loop) break;
       switch (event.type) {
         case "iteration-start": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
-            );
-          }
+          await persistCurrentMessage("iteration-start.finalizePrevious");
 
-          currentMessageId = crypto.randomUUID();
+          const newMessageId = crypto.randomUUID();
+          currentMessageId = newMessageId;
           iterationText = "";
           iterationToolCalls = [];
+          iterationToolStatuses.clear();
           toolCallIndex = 0;
 
-          produceAppState((draft) => {
+          updateRunState((draft) => {
             modifyAgentState({
               draft,
               conversationId,
@@ -79,8 +243,8 @@ export async function runAgent(
               },
             });
 
-            draft.chatMessageById[currentMessageId!] = {
-              id: currentMessageId!,
+            draft.chatMessageById[newMessageId] = {
+              id: newMessageId,
               conversationId,
               role: "assistant",
               content: "",
@@ -89,10 +253,10 @@ export async function runAgent(
             };
             const ids =
               draft.chatMessageIdsByConversationId[conversationId] ?? [];
-            ids.push(currentMessageId!);
+            ids.push(newMessageId);
             draft.chatMessageIdsByConversationId[conversationId] = ids;
 
-            draft.streamingMessageById[currentMessageId!] = {
+            draft.streamingMessageById[newMessageId] = {
               toolCalls: [],
               reasoning: "",
               isStreaming: true,
@@ -103,7 +267,7 @@ export async function runAgent(
 
         case "text-delta": {
           iterationText += event.text;
-          produceAppState((draft) => {
+          updateRunState((draft) => {
             if (currentMessageId) {
               const msg = draft.chatMessageById[currentMessageId];
               if (msg) msg.content += event.text;
@@ -113,6 +277,7 @@ export async function runAgent(
         }
 
         case "tool-call-start": {
+          iterationToolStatuses.set(event.toolCallId, "pending");
           iterationToolCalls.push({
             id: event.toolCallId,
             name: event.toolName,
@@ -121,7 +286,7 @@ export async function runAgent(
           if (event.args.reason) {
             toolCallReasons.set(event.toolCallId, event.args.reason as string);
           }
-          produceAppState((draft) => {
+          updateRunState((draft) => {
             if (currentMessageId) {
               const streaming = draft.streamingMessageById[currentMessageId];
               if (streaming) {
@@ -153,21 +318,48 @@ export async function runAgent(
 
         case "tool-call-result": {
           toolCallIndex++;
-          const reason = toolCallReasons.get(event.toolCallId);
-          await createChatMessage({
-            id: crypto.randomUUID(),
+          const status = completedToolStatus(
             conversationId,
-            role: "system",
-            content: event.result,
-            createdAt: new Date().toISOString(),
-            metadata: {
-              type: "tool-result",
+            event.toolCallId,
+            event.isError,
+          );
+          iterationToolStatuses.set(event.toolCallId, status);
+          const reason = toolCallReasons.get(event.toolCallId);
+          // Persist the tool result as a "system" ChatMessageRole (the
+          // persistence layer has no "tool" role) and tag it with
+          // metadata.type so the load path can rehydrate it as an
+          // LlmMessage `tool` correlated to event.toolCallId.
+          //
+          // The persist call is wrapped in `safeSideEffect` because a
+          // rejected write (for example, the "resource id is invalid"
+          // error captured in the user's diagnostics zip) would otherwise
+          // escape the `for await` loop and prevent the next model
+          // iteration. The in-memory `AgentLoop` has already appended
+          // the tool result to its history; failing to persist it must
+          // not stop the agent.
+          await safeSideEffect(
+            "tool-call-result.persist",
+            {
+              conversationId,
               toolCallId: event.toolCallId,
-              toolName: event.toolName,
-              ...(reason && { reason }),
             },
-          });
-          produceAppState((draft) => {
+            () =>
+              createChatMessage({
+                id: crypto.randomUUID(),
+                conversationId,
+                role: "system",
+                content: event.result,
+                createdAt: new Date().toISOString(),
+                metadata: {
+                  type: "tool-result",
+                  status,
+                  toolCallId: event.toolCallId,
+                  toolName: event.toolName,
+                  ...(reason && { reason }),
+                },
+              }),
+          );
+          updateRunState((draft) => {
             if (currentMessageId) {
               const streaming = draft.streamingMessageById[currentMessageId];
               if (streaming) {
@@ -185,7 +377,7 @@ export async function runAgent(
                   (t) => t.toolCallId === event.toolCallId,
                 );
                 if (tc) {
-                  tc.status = event.isError ? "denied" : "done";
+                  tc.status = status === "complete" ? "done" : status;
                   tc.result = { text: event.result };
                 }
               },
@@ -199,14 +391,9 @@ export async function runAgent(
         }
 
         case "finish": {
-          if (currentMessageId) {
-            await finalizeAssistantMessage(
-              currentMessageId,
-              iterationText,
-              iterationToolCalls,
-            );
-          }
-          produceAppState((draft) => {
+          const outcome = persistedFailureOutcome(event.reason);
+          await persistCurrentMessage("finish.finalize", outcome);
+          updateRunState((draft) => {
             modifyAgentState({
               draft,
               conversationId,
@@ -221,27 +408,47 @@ export async function runAgent(
       }
     }
   } catch (error) {
-    getLogger().error("Agent error", error);
-    produceAppState((draft) => {
-      modifyAgentState({
-        draft,
-        conversationId,
-        modify: (s) => {
-          s.status = "error";
-          s.error = String(error);
-        },
-      });
-    });
-  } finally {
-    if (currentMessageId) {
-      produceAppState((draft) => {
-        delete draft.streamingMessageById[currentMessageId!];
+    if (activeLoops.get(conversationId) === loop) {
+      getLogger().error("Agent error");
+      await persistCurrentMessage("error.finalize", "error");
+      updateRunState((draft) => {
+        modifyAgentState({
+          draft,
+          conversationId,
+          modify: (s) => {
+            s.status = "error";
+            s.error = String(error);
+          },
+        });
       });
     }
-    activeLoops.delete(conversationId);
+  } finally {
+    const finishedMessageId = currentMessageId;
+    if (finishedMessageId) {
+      produceAppState((draft) => {
+        delete draft.streamingMessageById[finishedMessageId];
+      });
+    }
+    // Only deregister if we are still the current run for this
+    // conversation. A superseded (aborted) run can finish after a newer
+    // run has replaced it; an unconditional delete here would remove the
+    // NEWER run's registration and leave it un-abortable (Stop button
+    // stops working) and would wipe the newer run's status UI.
+    if (activeLoops.get(conversationId) === loop) {
+      activeLoops.delete(conversationId);
+      // The loop is the stable identity. Immer replaces run-state objects
+      // whenever status or tool progress changes.
+      produceAppState((draft) => {
+        delete draft.agentStateByConversationId[conversationId];
+      });
+    }
   }
 }
 
+/**
+ * Abort the live agent loop for a conversation and mark its state
+ * aborted so any in-flight permission polling resolves as denied.
+ */
 export function abortAgentLoop(conversationId: string): void {
   const loop = activeLoops.get(conversationId);
   if (loop) loop.abort();
@@ -257,31 +464,68 @@ export function abortAgentLoop(conversationId: string): void {
   });
 }
 
+/**
+ * Persist the finished assistant message with scrubbed content and
+ * retire its streaming entry, regardless of persistence outcome.
+ */
 async function finalizeAssistantMessage(
   messageId: string,
   text: string,
   toolCalls: LlmToolCall[],
+  toolStatuses: Record<string, ChatToolStatus>,
+  runOutcome?: PersistedRunOutcome,
+  isActive?: () => boolean,
 ): Promise<void> {
+  if (isActive && !isActive()) return;
   const message = getAppState().chatMessageById[messageId];
   if (!message) return;
+  if (isActive && !isActive()) return;
 
+  // A19: Apply the humanize scrubber to remove AI-slop markers from the
+  // final assistant output before persisting and displaying it.
+  const cleaned = text ? humanizeScrub(text) : "";
+  const metadata =
+    toolCalls.length > 0
+      ? { type: "reasoning", toolCalls, toolStatuses }
+      : null;
   const final = {
     ...message,
-    content: text || "",
-    metadata:
-      toolCalls.length > 0
-        ? ({ type: "reasoning", toolCalls } as Record<string, unknown>)
-        : null,
+    content: cleaned,
+    // Terminal flags survive run-state cleanup/reload without saving raw
+    // provider diagnostics or freezing a translated label into history.
+    metadata: runOutcome ? { ...metadata, runOutcome } : metadata,
   };
 
-  await getChatMessageRepo().createChatMessage(final);
-
-  produceAppState((draft) => {
-    draft.chatMessageById[messageId] = final;
-    delete draft.streamingMessageById[messageId];
-  });
+  // Retire the streaming entry regardless of the persistence outcome.
+  // safeSideEffect swallows rejections from this function so the agent
+  // loop survives (the whole point of the wrapper); without the finally,
+  // a failed createChatMessage would leave the message stuck in
+  // streamingMessageById forever as an indefinitely-streaming bubble.
+  // On failure the in-memory copy still gets the scrubbed final text so
+  // the conversation view stays coherent for the session; only the
+  // durable history row is missing, and that is what the log records.
+  try {
+    if (!isActive || isActive()) {
+      await getChatMessageRepo().createChatMessage(final);
+      if (isActive && !isActive()) {
+        await getChatMessageRepo()
+          .deleteChatMessages([final.id])
+          .catch(() => undefined);
+      }
+    }
+  } finally {
+    produceAppState((draft) => {
+      // A deleted conversation/message must not be resurrected by a late write.
+      if (!isActive || isActive()) {
+        if (draft.chatMessageById[messageId])
+          draft.chatMessageById[messageId] = final;
+      }
+      delete draft.streamingMessageById[messageId];
+    });
+  }
 }
 
+/** Build the AgentLlmProvider that proxies streaming through the repo. */
 function createLlmProvider(): AgentLlmProvider {
   const { repo } = getAgentRepo();
   if (!repo) throw new Error("No LLM provider configured");
@@ -295,6 +539,7 @@ function createLlmProvider(): AgentLlmProvider {
 function createAgentTools(
   conversationId: string,
   config: AgentTypeConfig,
+  isActive: () => boolean,
 ): AgentTool[] {
   const state = getAppState();
   const toolFilter = config.getToolFilter(conversationId);
@@ -304,8 +549,15 @@ function createAgentTools(
     name: info.id,
     description: `${info.description}. ${info.instructions}`,
     parameters: info.schema,
-    async execute({ params, reason }) {
-      return executeWithPermission(info, params, reason, conversationId);
+    async execute({ params, reason, toolCallId }) {
+      return executeWithPermission(
+        info,
+        params,
+        reason,
+        conversationId,
+        toolCallId,
+        isActive,
+      );
     },
   }));
 }
@@ -315,12 +567,17 @@ async function executeWithPermission(
   params: Record<string, unknown>,
   reason: string,
   conversationId: string,
+  toolCallId: string,
+  isActive: () => boolean,
 ) {
+  if (!isActive())
+    return { success: false, failureReason: "Agent run stopped" };
   const tool = createTool(info);
+  const permissionScope = `conversation:${conversationId}`;
 
-  if (tool.getAlwaysAllow(params)) {
+  if (tool.getAlwaysAllow(params, permissionScope)) {
     try {
-      const result = await executeTool(info.id, params);
+      const result = await executeTool(info.id, params, { conversationId });
       return { success: true, result };
     } catch (err) {
       return {
@@ -335,6 +592,7 @@ async function executeWithPermission(
     info.id,
     permissionParams,
     conversationId,
+    toolCallId,
   );
 
   produceAppState((draft) => {
@@ -351,11 +609,15 @@ async function executeWithPermission(
     });
   });
 
-  const resolution = await pollForPermission(conversationId, permissionId);
+  const resolution = await pollForPermission(
+    conversationId,
+    permissionId,
+    isActive,
+  );
 
-  if (resolution === "allowed") {
+  if (resolution === "allowed" && isActive()) {
     try {
-      const result = await executeTool(info.id, params);
+      const result = await executeTool(info.id, params, { conversationId });
       return { success: true, result };
     } catch (err) {
       return {
@@ -368,13 +630,19 @@ async function executeWithPermission(
   return { success: false, failureReason: "Tool call was denied by user" };
 }
 
-async function pollForPermission(
+/**
+ * Poll app state until the user resolves a tool permission request or the
+ * conversation is aborted. `getToolPermissionStatus` owns timeout expiry so
+ * that it can record the expired request as denied before this loop settles.
+ */
+export async function pollForPermission(
   conversationId: string,
   permissionId: string,
+  isActive: () => boolean = () => true,
 ): Promise<"allowed" | "denied"> {
   while (true) {
     const state = getAppState().agentStateByConversationId[conversationId];
-    if (state?.aborted) return "denied";
+    if (!isActive() || state?.aborted) return "denied";
 
     const result = getToolPermissionStatus(permissionId);
     if (result?.status === "allowed") return "allowed";
@@ -383,25 +651,204 @@ async function pollForPermission(
   }
 }
 
+type ConversationMessageBlock = {
+  startIndex: number;
+  messages: LlmMessage[];
+};
+
+type ResolvedConversationBlock = ConversationMessageBlock & {
+  nextIndex: number;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object";
+
+const isValidPersistedToolCall = (value: unknown): value is LlmToolCall => {
+  if (!isRecord(value)) return false;
+  const call = value;
+  return (
+    typeof call.id === "string" &&
+    call.id.length > 0 &&
+    typeof call.name === "string" &&
+    call.name.length > 0 &&
+    typeof call.arguments === "string"
+  );
+};
+
+const textOnlyAssistantMessage = (
+  message: Extract<LlmMessage, { role: "assistant" }>,
+): LlmMessage => ({
+  role: "assistant",
+  content: message.content || undefined,
+});
+
+/**
+ * Resolve one assistant message and its following tool results as one block.
+ * Providers require each tool call to have a matching result in the same
+ * request; a positional slice can otherwise start with an orphaned result or
+ * end after the assistant tool-call message.
+ */
+const resolveConversationBlock = (
+  messages: LlmMessage[],
+  startIndex: number,
+): ResolvedConversationBlock => {
+  const message = messages[startIndex];
+  if (message.role !== "assistant" || !Array.isArray(message.toolCalls)) {
+    return { startIndex, messages: [message], nextIndex: startIndex + 1 };
+  }
+
+  const hasValidToolCalls =
+    message.toolCalls.length > 0 &&
+    message.toolCalls.every(isValidPersistedToolCall);
+  if (!hasValidToolCalls) {
+    return {
+      startIndex,
+      messages: [textOnlyAssistantMessage(message)],
+      nextIndex: startIndex + 1,
+    };
+  }
+
+  const callIds = message.toolCalls.map((call) => call.id);
+  if (new Set(callIds).size !== callIds.length) {
+    return {
+      startIndex,
+      messages: [textOnlyAssistantMessage(message)],
+      nextIndex: startIndex + 1,
+    };
+  }
+
+  const expected = new Set(callIds);
+  const toolResults: LlmMessage[] = [];
+  const seen = new Set<string>();
+  let nextIndex = startIndex + 1;
+  while (nextIndex < messages.length) {
+    const next = messages[nextIndex];
+    if (next.role !== "tool" || !expected.has(next.toolCallId)) break;
+    if (seen.has(next.toolCallId)) break;
+    seen.add(next.toolCallId);
+    toolResults.push(next);
+    nextIndex += 1;
+  }
+
+  if (seen.size === expected.size) {
+    return {
+      startIndex,
+      messages: [message, ...toolResults],
+      nextIndex,
+    };
+  }
+
+  // A persisted conversation can be interrupted between the assistant
+  // response and a tool result. Keep its text, but strip incomplete tool
+  // calls rather than sending an invalid partial exchange.
+  return {
+    startIndex,
+    messages: [textOnlyAssistantMessage(message)],
+    nextIndex: startIndex + 1,
+  };
+};
+
+const groupConversationMessages = (
+  messages: LlmMessage[],
+): ConversationMessageBlock[] => {
+  const blocks: ConversationMessageBlock[] = [];
+  let index = 0;
+
+  while (index < messages.length) {
+    if (messages[index].role === "tool") {
+      index += 1;
+      continue;
+    }
+
+    const block = resolveConversationBlock(messages, index);
+    blocks.push({ startIndex: block.startIndex, messages: block.messages });
+    index = block.nextIndex;
+  }
+
+  return blocks;
+};
+
+const trimConversationBlocks = (
+  blocks: ConversationMessageBlock[],
+): LlmMessage[] => {
+  const totalMessages = blocks.reduce(
+    (total, block) => total + block.messages.length,
+    0,
+  );
+  if (totalMessages <= MAX_CONTEXT_MESSAGES) {
+    return blocks.flatMap((block) => block.messages);
+  }
+
+  const selected = new Set<number>();
+  let remaining = MAX_CONTEXT_MESSAGES;
+  const firstUserIndex = blocks.findIndex((block) =>
+    block.messages.some((message) => message.role === "user"),
+  );
+
+  if (firstUserIndex >= 0) {
+    const firstUserBlock = blocks[firstUserIndex];
+    selected.add(firstUserIndex);
+    remaining -= firstUserBlock.messages.length;
+  }
+
+  let selectedRecentBlock = false;
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    if (selected.has(index)) continue;
+    const blockSize = blocks[index].messages.length;
+    if (blockSize > remaining) continue;
+    selected.add(index);
+    selectedRecentBlock = true;
+    remaining -= blockSize;
+    if (remaining === 0) break;
+  }
+
+  // Keep at least the newest complete block when a future block is larger
+  // than the nominal budget or none of the recent blocks fit. This preserves
+  // protocol validity over a strict message count.
+  const newestIndex = blocks.length - 1;
+  if (!selectedRecentBlock && newestIndex >= 0 && !selected.has(newestIndex)) {
+    selected.add(newestIndex);
+  }
+
+  return blocks
+    .filter((_, index) => selected.has(index))
+    .sort((left, right) => left.startIndex - right.startIndex)
+    .flatMap((block) => block.messages);
+};
+
 function buildConversationMessages(conversationId: string): LlmMessage[] {
   const state = getAppState();
   const messageIds = state.chatMessageIdsByConversationId[conversationId] ?? [];
   const messages: LlmMessage[] = [];
 
   for (const id of messageIds) {
+    if (state.streamingMessageById[id]?.isStreaming) {
+      continue;
+    }
     const msg = state.chatMessageById[id];
     if (!msg) continue;
 
-    const metadata = msg.metadata as Record<string, unknown> | null;
+    const metadata = msg.metadata;
 
-    if (metadata?.type === "tool-result") {
+    // Tool results are persisted with role "system" plus metadata.type
+    // (see the tool-call-result persist branch above). Rehydrate them
+    // here as LlmMessage `tool` messages by matching the saved id.
+    if (
+      metadata?.type === "tool-result" &&
+      typeof metadata.toolCallId === "string"
+    ) {
       messages.push({
         role: "tool",
-        toolCallId: metadata.toolCallId as string,
+        toolCallId: metadata.toolCallId,
         content: msg.content,
       });
     } else if (msg.role === "assistant") {
-      const toolCalls = metadata?.toolCalls as LlmToolCall[] | undefined;
+      const persistedToolCalls = metadata?.toolCalls;
+      const toolCalls =
+        Array.isArray(persistedToolCalls) &&
+        persistedToolCalls.every(isValidPersistedToolCall)
+          ? persistedToolCalls
+          : undefined;
       messages.push({
         role: "assistant",
         content: msg.content || undefined,
@@ -412,5 +859,5 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
     }
   }
 
-  return messages;
+  return trimConversationBlocks(groupConversationMessages(messages));
 }

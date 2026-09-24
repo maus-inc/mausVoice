@@ -39,6 +39,7 @@ export const TranscriptionToneMenu = ({
 
   const items = useMemo<MenuPopoverItem[]>(() => {
     const menuItems: MenuPopoverItem[] = tones.map<MenuPopoverItem>((tone) => ({
+      id: tone.id,
       kind: "listItem",
       title: tone.name,
       onClick: ({ close }) => {

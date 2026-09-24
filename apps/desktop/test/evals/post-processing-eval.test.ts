@@ -44,6 +44,7 @@ const postProcess = async ({
     dictationLanguage: language,
     tone,
     userName,
+    glossary: { sources: [], replacements: [] },
   };
   const ppSystem = buildSystemPostProcessingTonePrompt(promptInput);
   const ppPrompt = buildPostProcessingPrompt(promptInput);

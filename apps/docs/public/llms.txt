@@ -14,10 +14,12 @@ Use the most specific page below. Local describes the speech-recognition stage o
 
 ## Core facts
 
+- Architecture: Rust is the API; TypeScript (Zustand) is the Brain. The Agent package is `@repo/agent` (TypeScript workspace, not a Cargo crate).
+- Node for development is `.nvmrc` v24 (`engines.node` >= 20), not “18 only”.
 - Settings offers Local or API transcription and API or Off post-processing.
 - Assistant and Chats are separate workflows; neither is merely another name for dictation.
 - Incognito suppresses new local history and audio snapshots, not provider transmission.
-- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB), plus ONNX Parakeet 0.6B (613–670 MB) and Canary 1B (1.03 GB).
+- Local model downloads range from Whisper Tiny (77 MB) to Large v3 (3.1 GB), plus ONNX Parakeet 0.6B (613–670 MB), Canary 1B (1.03 GB), and sherpa-onnx SenseVoice (~226 MB).
 - API keys are encrypted at rest with XChaCha20-Poly1305 and per-record nonces.
 
 ## Documentation pages
@@ -62,7 +64,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 
 - [Settings map](https://maus-inc.github.io/mausVoice/docs/configuration/settings-map/): Locate every top-level configuration area in the current desktop app.
 - [Transcription modes](https://maus-inc.github.io/mausVoice/docs/configuration/transcription-modes/): Choose local sidecar recognition or an API endpoint without confusing transcription and rewriting.
-- [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/): Download, validate, select, and remove the whisper.cpp GGML and ONNX Parakeet/Canary models used by the local sidecar.
+- [Local model management](https://maus-inc.github.io/mausVoice/docs/configuration/local-models/): Download, validate, select, and remove the whisper.cpp GGML, ONNX Parakeet/Canary, and sherpa-onnx SenseVoice models used by the local sidecar.
 - [Choose a local model and device](https://maus-inc.github.io/mausVoice/docs/configuration/model-and-device-selection/): Evaluate local accuracy, latency, memory, language behavior, and the app's advisory hardware ratings.
 - [AI post-processing](https://maus-inc.github.io/mausVoice/docs/configuration/post-processing/): Configure the optional rewrite stage without conflating it with speech recognition.
 - [API key management](https://maus-inc.github.io/mausVoice/docs/configuration/api-keys/): Add, test, select, rotate, and remove task-specific provider credentials.
@@ -78,6 +80,7 @@ Use the most specific page below. Local describes the speech-recognition stage o
 - [Provider overview](https://maus-inc.github.io/mausVoice/docs/providers/overview/): Match the current provider forms and dispatch routes to transcription, post-processing, and Assistant tasks.
 - [Groq](https://maus-inc.github.io/mausVoice/docs/providers/groq/): Use Groq for batch speech recognition, post-processing, or the API-backed Assistant.
 - [Deepgram](https://maus-inc.github.io/mausVoice/docs/providers/deepgram/): Configure Nova-3 streaming dictation, language handling, and the Personal Deepgram shortcut.
+- [Gladia](https://maus-inc.github.io/mausVoice/docs/providers/gladia/): Configure Solaria live and pre-recorded transcription, dictionary hints, limits, and remote cleanup behavior.
 - [OpenAI](https://maus-inc.github.io/mausVoice/docs/providers/openai/): Use an OpenAI key for batch transcription, transcript cleanup, and Assistant conversations.
 - [OpenRouter](https://maus-inc.github.io/mausVoice/docs/providers/openrouter/): Choose OpenRouter models, favorites, and per-key upstream routing for rewriting and Assistant requests.
 - [Gemini](https://maus-inc.github.io/mausVoice/docs/providers/gemini/): Configure Gemini audio transcription, post-processing, and Assistant generation.

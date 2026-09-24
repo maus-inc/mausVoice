@@ -1,0 +1,24 @@
+diff --git a/dist/v2/live/session.cjs b/dist/v2/live/session.cjs
+index 75e3cf54c975ecb22d3f5a098cd4b696ae9a09f4..f8cd0a739bfcd859ac4280ce44f76888f31029cb 100644
+--- a/dist/v2/live/session.cjs
++++ b/dist/v2/live/session.cjs
+@@ -29 +29 @@ var LiveV2Session = class {
+-		this.startSession();
++		this.startSession().catch(() => {});
+diff --git a/dist/v2/live/session.js b/dist/v2/live/session.js
+index ee99b11e69d3360934e5a9c86e8a22dc33089cca..137b25d192a09b9d1d3a997270023d8da2ef4d5d 100644
+--- a/dist/v2/live/session.js
++++ b/dist/v2/live/session.js
+@@ -27 +27 @@ var LiveV2Session = class {
+-		this.startSession();
++		this.startSession().catch(() => {});
+diff --git a/src/v2/live/session.ts b/src/v2/live/session.ts
+index 05968d79f8e492ae302f3a2ddce33b51aeb321f7..a1d21f3118929450f4454b53cc4ac37c76dbf2f6 100644
+--- a/src/v2/live/session.ts
++++ b/src/v2/live/session.ts
+@@ -66 +66,4 @@ export class LiveV2Session {
+-    this.startSession()
++    // startSession reports initialization failures through the session's
++    // `error` / `ended` events. Consume its rejected promise as well so the
++    // same failure is not emitted globally as an unhandled rejection.
++    this.startSession().catch(() => {})

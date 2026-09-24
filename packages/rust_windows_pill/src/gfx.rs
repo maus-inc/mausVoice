@@ -60,6 +60,10 @@ pub(crate) struct ShadedSegment {
     pub(crate) width: f64,
 }
 
+fn centered_scale(current: Matrix3x2, cx: f64, cy: f64, sx: f64, sy: f64) -> Matrix3x2 {
+    Matrix3x2::scale_around(sx as f32, sy as f32, vec2(cx, cy)) * current
+}
+
 fn vec2(x: f64, y: f64) -> Vector2 {
     Vector2 { X: x as f32, Y: y as f32 }
 }
@@ -174,6 +178,11 @@ impl Gfx {
 
     pub(crate) fn scale(&mut self, sx: f64, sy: f64) {
         self.current_transform = Matrix3x2::scale(sx as f32, sy as f32) * self.current_transform;
+        unsafe { self.rt.SetTransform(&self.current_transform); }
+    }
+
+    pub(crate) fn scale_around(&mut self, cx: f64, cy: f64, sx: f64, sy: f64) {
+        self.current_transform = centered_scale(self.current_transform, cx, cy, sx, sy);
         unsafe { self.rt.SetTransform(&self.current_transform); }
     }
 
@@ -360,6 +369,46 @@ impl Gfx {
                     style.as_ref(),
                 );
             }
+        }
+    }
+
+    /// Stroke an open polyline as a single path, in one colour and width.
+    ///
+    /// Accepts the `(x, y, dist)` triples produced by `resample_perimeter` so
+    /// callers can pass a sub-range without reallocating. Used by the
+    /// long-press ring shadow, where each of the layered passes shares one
+    /// colour and width: a single `DrawGeometry` per pass is far cheaper than
+    /// per-segment `DrawLine` calls.
+    ///
+    /// Degenerate input is a no-op: fewer than two points has no line to
+    /// stroke, and a non-positive width is backend-defined in D2D rather than
+    /// reliably invisible, so it is rejected here instead of being handed to
+    /// `DrawGeometry`.
+    pub(crate) fn stroke_polyline(&self, points: &[(f64, f64, f64)], rgba: [f64; 4], width: f64) {
+        if points.len() < 2 || width <= 0.0 {
+            return;
+        }
+        unsafe {
+            // Geometry creation talks to the D2D factory and the sink must be
+            // closed before the geometry can be drawn. Both can fail for real
+            // reasons (device loss, resource exhaustion) on a path that runs
+            // every frame while the ring is held, so failures skip this pass
+            // instead of panicking: one missing shadow layer is invisible,
+            // a panic would take the whole overlay down.
+            let Ok(geom) = self.factory.CreatePathGeometry() else { return };
+            let Ok(sink) = geom.Open() else { return };
+            sink.BeginFigure(vec2(points[0].0, points[0].1), D2D1_FIGURE_BEGIN_HOLLOW);
+            for &(x, y, _) in &points[1..] {
+                sink.AddLine(vec2(x, y));
+            }
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+            if sink.Close().is_err() {
+                // An unclosed sink leaves the geometry unusable — drawing it
+                // would be a no-op at best.
+                return;
+            }
+            let brush = self.brush(rgba);
+            self.rt.DrawGeometry(&geom, &brush, width as f32, self.round_stroke_style().as_ref());
         }
     }
 
@@ -558,4 +607,29 @@ unsafe fn create_dib(hdc: HDC, width: i32, height: i32) -> Result<HBITMAP> {
 
 pub fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transformed_point(matrix: &Matrix3x2, x: f32, y: f32) -> (f32, f32) {
+        (x * matrix.M11 + y * matrix.M21 + matrix.M31,
+         x * matrix.M12 + y * matrix.M22 + matrix.M32)
+    }
+
+    #[test]
+    fn centered_scale_keeps_the_pivot_and_parent_translation() {
+        for (sx, sy) in [(0.92, 1.04), (1.0, 1.0), (0.5, 0.5)] {
+            let parent = Matrix3x2::translation(40.0, 80.0);
+            let matrix = centered_scale(parent, 120.0, 180.0, sx, sy);
+            let pivot = transformed_point(&matrix, 120.0, 180.0);
+            assert!((pivot.0 - 160.0).abs() < 0.001);
+            assert!((pivot.1 - 260.0).abs() < 0.001);
+            let point = transformed_point(&matrix, 130.0, 170.0);
+            assert!((point.0 - (160.0 + 10.0 * sx as f32)).abs() < 0.001);
+            assert!((point.1 - (260.0 - 10.0 * sy as f32)).abs() < 0.001);
+        }
+    }
 }

@@ -4,11 +4,23 @@ import type {
   LlmMessage,
   LlmToolCall,
 } from "@maus-inc/types";
-import type { AgentConfig, AgentEvent } from "./types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentFinishReason,
+  AgentTool,
+  AgentToolOutput,
+} from "./types";
+import { parseJsonObject, unknownToMessage } from "@maus-inc/utilities";
+
+/** Render a tool's successful result to a string. */
+const stringifyToolResult = (result: unknown): string =>
+  typeof result === "string" ? result : JSON.stringify(result ?? {});
 
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
+  private readonly abortController = new AbortController();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -16,6 +28,7 @@ export class AgentLoop {
 
   abort(): void {
     this.aborted = true;
+    this.abortController.abort();
   }
 
   async *run(messages: LlmMessage[]): AsyncGenerator<AgentEvent> {
@@ -24,99 +37,96 @@ export class AgentLoop {
 
     for (let i = 0; i < maxIterations; i++) {
       if (this.aborted) {
-        yield {
-          type: "finish",
-          reason: "aborted",
-          text: "",
-          messages: history,
-        };
+        yield this.finishEvent(history, "aborted");
         return;
       }
-
       yield { type: "iteration-start", iteration: i };
+      const turn = yield* this.streamTurn(history);
+      if (!turn) return;
 
-      const input = this.buildInput(history);
-      let content = "";
-      const toolCalls: LlmToolCall[] = [];
-
-      try {
-        for await (const event of this.config.provider.streamChat(input)) {
-          if (this.aborted) break;
-
-          if (event.type === "text-delta") {
-            content += event.text;
-            yield { type: "text-delta", text: event.text };
-          }
-
-          if (event.type === "tool-call") {
-            toolCalls.push({
-              id: event.id,
-              name: event.name,
-              arguments: event.arguments,
-            });
-          }
-
-          if (event.type === "error") {
-            yield {
-              type: "finish",
-              reason: "error",
-              text: "",
-              messages: history,
-              error: event.error,
-            };
-            return;
-          }
-        }
-      } catch (err) {
-        yield {
-          type: "finish",
-          reason: "error",
-          text: "",
-          messages: history,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        return;
-      }
-
-      if (this.aborted) {
-        yield {
-          type: "finish",
-          reason: "aborted",
-          text: "",
-          messages: history,
-        };
-        return;
-      }
-
+      const { content, toolCalls } = turn;
       history.push({
         role: "assistant",
         content: content || undefined,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       });
-
       if (toolCalls.length === 0) {
-        yield {
-          type: "finish",
-          reason: "stop",
-          text: content,
-          messages: history,
-        };
+        yield this.finishEvent(history, "stop", content);
         return;
       }
-
       yield* this.processToolCalls(history, toolCalls);
     }
+    yield this.finishEvent(
+      history,
+      this.aborted ? "aborted" : "max-iterations",
+    );
+  }
 
-    yield {
+  private finishEvent(
+    history: LlmMessage[],
+    reason: AgentFinishReason,
+    text = "",
+    error?: string,
+  ): AgentEvent {
+    return {
       type: "finish",
-      reason: "max-iterations",
-      text: "",
+      reason,
+      text,
       messages: history,
+      ...(error === undefined ? {} : { error }),
     };
+  }
+
+  private async *streamTurn(
+    history: LlmMessage[],
+  ): AsyncGenerator<
+    AgentEvent,
+    { content: string; toolCalls: LlmToolCall[] } | null
+  > {
+    let content = "";
+    const toolCalls: LlmToolCall[] = [];
+    try {
+      for await (const event of this.config.provider.streamChat(
+        this.buildInput(history),
+      )) {
+        if (this.aborted) break;
+        switch (event.type) {
+          case "text-delta":
+            content += event.text;
+            yield { type: "text-delta", text: event.text };
+            break;
+          case "tool-call":
+            toolCalls.push({
+              id: event.id,
+              name: event.name,
+              arguments: event.arguments,
+            });
+            break;
+          case "error":
+            yield this.finishEvent(history, "error", "", event.error);
+            return null;
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      yield this.finishEvent(
+        history,
+        this.aborted ? "aborted" : "error",
+        "",
+        this.aborted ? undefined : message,
+      );
+      return null;
+    }
+    if (this.aborted) {
+      yield this.finishEvent(history, "aborted");
+      return null;
+    }
+    return { content, toolCalls };
   }
 
   private buildInput(history: LlmMessage[]): LlmChatInput {
     return {
+      signal: this.abortController.signal,
       messages: [
         { role: "system", content: this.config.systemPrompt },
         ...history,
@@ -145,62 +155,91 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  private async executeTool(
+    tool: AgentTool,
+    toolCallId: string,
+    toolParams: Record<string, unknown>,
+    reason: unknown,
+  ): Promise<AgentToolOutput> {
+    try {
+      return await tool.execute({
+        params: toolParams,
+        reason: typeof reason === "string" ? reason : "",
+        toolCallId,
+      });
+    } catch (err) {
+      // A tool must never abort the whole agent loop. Surface the failure
+      // as a tool-result message so the model can recover or end cleanly.
+      return {
+        success: false,
+        failureReason: unknownToMessage(err),
+      };
+    }
+  }
+
   private async *processToolCalls(
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
   ): AsyncGenerator<AgentEvent> {
     for (const tc of toolCalls) {
-      if (this.aborted) return;
-
-      let params: Record<string, unknown>;
-      try {
-        params = JSON.parse(tc.arguments);
-      } catch {
-        params = {};
+      if (this.aborted) {
+        // Once an assistant message emits tool calls, every tool call must be paired
+        // with a tool result message in history to keep provider conversational context valid.
+        yield this.toolResult(tc, "Tool execution aborted", history, true);
+        continue;
       }
+
+      const params = parseJsonObject(tc.arguments);
 
       yield {
         type: "tool-call-start",
         toolCallId: tc.id,
         toolName: tc.name,
-        args: params,
+        args: params ?? {},
       };
 
+      // Once tool-call-start is emitted, always pair it with a tool-call-result
+      // (and history entry) even if abort wins mid-flight. Skipping the result
+      // leaves the assistant tool-call without a matching tool message.
+      if (!params) {
+        yield this.toolResult(
+          tc,
+          "Tool arguments must be a JSON object",
+          history,
+          true,
+        );
+        continue;
+      }
       const { reason, ...toolParams } = params;
       const tool = this.config.tools.find((t) => t.name === tc.name);
 
       if (!tool) {
-        const error = `Unknown tool: ${tc.name}`;
-        history.push({ role: "tool", toolCallId: tc.id, content: error });
-        yield {
-          type: "tool-call-result",
-          toolCallId: tc.id,
-          toolName: tc.name,
-          result: error,
-          isError: true,
-        };
+        yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
         continue;
       }
 
-      const output = await tool.execute({
-        params: toolParams,
-        reason: (reason as string) ?? "",
-      });
-
+      const output = await this.executeTool(tool, tc.id, toolParams, reason);
       const resultStr = output.success
-        ? typeof output.result === "string"
-          ? output.result
-          : JSON.stringify(output.result ?? {})
+        ? stringifyToolResult(output.result)
         : (output.failureReason ?? "Tool execution failed");
 
-      history.push({ role: "tool", toolCallId: tc.id, content: resultStr });
-      yield {
-        type: "tool-call-result",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        result: resultStr,
-        isError: !output.success,
-      };
+      yield this.toolResult(tc, resultStr, history, !output.success);
     }
+  }
+
+  private toolResult(
+    tc: LlmToolCall,
+    result: string,
+    history: LlmMessage[],
+    isError: boolean,
+  ): AgentEvent {
+    history.push({ role: "tool", toolCallId: tc.id, content: result });
+    return {
+      type: "tool-call-result",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      result,
+      isError,
+    };
   }
 }

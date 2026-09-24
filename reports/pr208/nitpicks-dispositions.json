@@ -1,0 +1,57 @@
+[
+  {
+    "index": 1,
+    "file": "agent-prompt.md",
+    "issue": "Duplicates prompt in .prompts/PR137-145-142-rebuild.md",
+    "status": "resolved",
+    "resolution": "Removed redundant agent-prompt.md; canonical version remains in .prompts/PR137-145-142-rebuild.md."
+  },
+  {
+    "index": 2,
+    "file": "apps/desktop/src/actions/transcribe.actions.ts",
+    "line": 210,
+    "issue": "rawTranscript is trimmed before filtering, altering leading/trailing whitespace when hallucination filter is disabled",
+    "status": "resolved",
+    "resolution": "Gated trimming on hallucinationFilterEnabled: raw provider transcript is preserved verbatim when filter is disabled."
+  },
+  {
+    "index": 3,
+    "file": "apps/desktop/src/components/common/ContextMenu.tsx",
+    "lines": "233-236",
+    "issue": "Disabled items included in keyboard navigation",
+    "status": "resolved",
+    "resolution": "Filtered out disabled items (item.disabled) from actionableIndices in handleKeyDown."
+  },
+  {
+    "index": 4,
+    "file": "apps/desktop/src/components/composer/ComposerPage.tsx",
+    "line": 274,
+    "issue": "setInstruction(\"\") executes after unmount if user cancels during edit",
+    "status": "resolved",
+    "resolution": "Guarded setInstruction(\"\") with mountedRef.current."
+  },
+  {
+    "index": 5,
+    "file": "apps/desktop/src/components/root/AppSideEffects.tsx",
+    "lines": "800-810",
+    "issue": "Background update poll runs in all windows including popouts",
+    "status": "resolved",
+    "resolution": "Added if (!isMainWindow) return; guard to useIntervalAsync check for updater."
+  },
+  {
+    "index": 6,
+    "file": "apps/desktop/src/repos/transcribe-audio.repo.ts",
+    "lines": "199-203",
+    "issue": "Silence early return hardcodes transcriptionMode: \"api\" instead of using instance mode",
+    "status": "resolved",
+    "resolution": "Added transcriptionMode property to BaseTranscribeAudioRepo and LocalTranscribeAudioRepo, and returned this.transcriptionMode in silence gate."
+  },
+  {
+    "index": 7,
+    "file": "apps/desktop/src/repos/transcribe-audio.repo.ts",
+    "lines": "234-239",
+    "issue": "Silent leading chunks return null metadata, losing provider metadata on multi-chunk audio",
+    "status": "resolved",
+    "resolution": "Extracted metadata from first non-null chunk result via results.find(r => r.metadata !== null)?.metadata."
+  }
+]

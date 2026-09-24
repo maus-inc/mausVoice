@@ -1,0 +1,226 @@
+[
+  {
+    "id": "4088709865",
+    "path": ".github/workflows/release.yml",
+    "title": "Protect production updater key with trusted release environment",
+    "disposition": "RESOLVED",
+    "resolution": "Added environment: release, ref guard requiring refs/heads/main, and pinned ref checkout to release.yml with contract tests in release-shell-contracts.test.mjs."
+  },
+  {
+    "id": "4088710001",
+    "path": "packages/rust_transcription/Cargo.toml",
+    "title": "Verify Sherpa native archive before extraction",
+    "disposition": "RESOLVED",
+    "resolution": "Vendored sherpa-onnx-sys 1.13.5 into patches/sherpa-onnx-sys-1.13.5 with SHA-256 verification table and tests in scripts/ci/verify-sherpa-archives.test.mjs."
+  },
+  {
+    "id": "4088710065",
+    "path": ".github/workflows/secret-scan.yml",
+    "title": "Run secret scanner with trusted policy",
+    "disposition": "RESOLVED",
+    "resolution": "Configured pull_request_target to check out trusted gitleaks config from base ref with persist-credentials: false."
+  },
+  {
+    "id": "4088710176",
+    "path": "apps/desktop/src-tauri/src/commands.rs",
+    "title": "Canonicalize encoded path separators before enforcing base directory",
+    "disposition": "RESOLVED",
+    "resolution": "Added canonical decoded URL segment validation in commands.rs to guard against encoded traversal (%2e%2e, %2f, %5c) with unit tests."
+  },
+  {
+    "id": "4088710275",
+    "path": "apps/desktop/src-tauri/src/commands.rs",
+    "title": "Hold authorized audio-root capability through file open",
+    "disposition": "RESOLVED",
+    "resolution": "Added AuthorizedAudioRoot capability wrapper and open_audio_import_file to prevent TOCTOU replacement races."
+  },
+  {
+    "id": "4088710382",
+    "path": "apps/desktop/src-tauri/src/db/open.rs",
+    "title": "Preserve readable database when migration checksum changes",
+    "disposition": "RESOLVED",
+    "resolution": "Preserves database path and reports clear integrity error when migration checksum changes, with regression tests."
+  },
+  {
+    "id": "4088712718",
+    "path": "gitleaks.toml",
+    "title": "Replace path-wide secret exemptions",
+    "disposition": "RESOLVED",
+    "resolution": "Removed broad path exemptions and pinned strict rules with check-gitleaks-config tests."
+  },
+  {
+    "id": "4088712789",
+    "path": "rust-toolchain.toml",
+    "title": "Trigger Cargo checks when root toolchain pin changes",
+    "disposition": "RESOLVED",
+    "resolution": "Added rust-toolchain.toml to trigger paths in build-desktop, lint-desktop, test-desktop-unit, and test-package-rust-transcription."
+  },
+  {
+    "id": "4088712874",
+    "path": "apps/desktop/src-tauri/src/commands.rs",
+    "title": "Do not report local-data cleanup success when audio cleanup fails",
+    "disposition": "RESOLVED",
+    "resolution": "Propagated managed audio directory cleanup errors so cleanup reports failure if audio files fail deletion."
+  },
+  {
+    "id": "4088712977",
+    "path": "apps/desktop/src-tauri/src/commands.rs",
+    "title": "Bound and cancel detached updater signature download",
+    "disposition": "RESOLVED",
+    "resolution": "Bound download_installer_signature with 30s timeout and 10s connect timeout with error propagation."
+  },
+  {
+    "id": "4088713066",
+    "path": "apps/desktop/src-tauri/src/db/open.rs",
+    "title": "Include quarantined database copies in Clear local data",
+    "disposition": "RESOLVED",
+    "resolution": "Implemented delete_quarantined_databases in open.rs and called it during clear_local_data with test coverage."
+  },
+  {
+    "id": "4088713161",
+    "path": "apps/desktop/src/actions/pill-review.actions.ts",
+    "title": "Accept or remove native Open review action",
+    "disposition": "RESOLVED",
+    "resolution": "Implemented open review action in pill-review.actions.ts with unit tests."
+  },
+  {
+    "id": "4088713234",
+    "path": "packages/utilities/src/error.ts",
+    "title": "Extend redaction to common credential labels",
+    "disposition": "RESOLVED",
+    "resolution": "Broadened regex labels to include client_secret, private_key, session_token, password, credential with table-driven tests."
+  },
+  {
+    "id": "4088713344",
+    "path": "packages/voice-ai/src/gemini.utils.ts",
+    "title": "Stop Gemini retries after shared signal is aborted",
+    "disposition": "RESOLVED",
+    "resolution": "Added abort signal check to retry loop and preserved deadline cancellation behavior."
+  },
+  {
+    "id": "4088713423",
+    "path": "packages/rust_macos_pill/src/draw.rs",
+    "title": "Bound review text before every native draw",
+    "disposition": "RESOLVED",
+    "resolution": "Added bound_review_preview_text (MAX_REVIEW_PREVIEW_CHARS = 3000) across macOS, GTK, and Windows pill crates."
+  },
+  {
+    "id": "4088713498",
+    "path": "reports/pr207/evidence/current-gates.json",
+    "title": "Regenerate committed review evidence for this head",
+    "disposition": "RESOLVED",
+    "resolution": "Pruned obsolete pr207 directory and established pr208 evidence directory."
+  },
+  {
+    "id": "4088714311",
+    "path": "fully read this.txt.txt",
+    "title": "Remove captured session transcript",
+    "disposition": "RESOLVED",
+    "resolution": "Removed fully read this.txt.txt from tracking and added workspace hygiene contract in check-workspace-hygiene.test.mjs."
+  },
+  {
+    "id": "4088829067",
+    "path": "apps/desktop/src-tauri/src/pill_process.rs",
+    "title": "Parse pill event once and dispatch by type",
+    "disposition": "RESOLVED",
+    "resolution": "Replaced substring matching with parse_pill_event JSON parsing and added unit tests."
+  },
+  {
+    "id": "4088832366",
+    "path": "apps/desktop/src-tauri/src/db/api_key_queries.rs",
+    "title": "Distinguish omitted field from explicit clear",
+    "disposition": "RESOLVED",
+    "resolution": "Implemented clear_transcription_path flag and transcriptionPath: null support across backend and frontend repositories with unit tests."
+  },
+  {
+    "id": "4088837660",
+    "path": "apps/desktop/vitest.config.ts",
+    "title": "Keep Node-native tests out of default Vitest run",
+    "disposition": "RESOLVED",
+    "resolution": "Excluded run-tauri-dev.test.mjs and run-tauri-with-sidecars.test.mjs in vitest.config.ts, running them via node --test."
+  },
+  {
+    "id": "4088838118",
+    "path": "packages/rust_windows_pill/src/pill.rs",
+    "title": "Correct top-anchored Windows pill origin geometry",
+    "disposition": "RESOLVED",
+    "resolution": "Adjusted default_pill_y to subtract (WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT) with visible-footprint geometry tests."
+  },
+  {
+    "id": "4093370273",
+    "path": "apps/desktop/src-tauri/src/app.rs",
+    "title": "Remove preloaded SQL plugin to prevent recovery file-lock collisions",
+    "disposition": "RESOLVED",
+    "resolution": "Removed unused tauri_plugin_sql plugin registration from app.rs and removed sqlite preload from tauri.conf.json."
+  },
+  {
+    "id": "4093370450",
+    "path": "apps/desktop/src-tauri/src/commands.rs",
+    "title": "Clear-local-data removes quarantined recovery archives",
+    "disposition": "RESOLVED",
+    "resolution": "Integrated delete_quarantined_databases into clear_local_data and added delete_quarantined_databases_removes_all_broken_archives test in open.rs."
+  },
+  {
+    "id": "4093370590",
+    "path": "apps/desktop/src/actions/transcribe.actions.ts",
+    "title": "Redact transcript text from provider errors and persist fixed failure categories",
+    "disposition": "RESOLVED",
+    "resolution": "Added classifyPostProcessErrorCategory and redactTranscriptContent in transcribe.actions.ts and added sentinel transcript regression test in post-processing-failure.test.ts."
+  },
+  {
+    "id": "4093370728",
+    "path": "apps/desktop/src-tauri/src/db/migrations/069_consolidated_v0_1_6_schema.sql",
+    "title": "Restore onboarded CHECK (onboarded IN (0, 1)) constraint",
+    "disposition": "RESOLVED",
+    "resolution": "Restored CHECK constraint in user_profiles schema, normalized copy via CASE WHEN onboarded = 1 THEN 1 ELSE 0 END, and added rejection test in open.rs."
+  },
+  {
+    "id": "4093372834",
+    "path": "apps/desktop/src-tauri/src/db/open.rs",
+    "title": "Canonicalize migration checksum line endings across LF and CRLF",
+    "disposition": "RESOLVED",
+    "resolution": "Added CRLF-to-LF normalization before hashing in migration_checksum, enforced *.sql text eol=lf in .gitattributes, and added stability unit test."
+  },
+  {
+    "id": "4093372992",
+    "path": "apps/desktop/src/agents/run-agent.ts",
+    "title": "Retire superseded agent run before message snapshotting",
+    "disposition": "RESOLVED",
+    "resolution": "Aborts superseded run and cleans streaming state before buildConversationMessages, and excludes active streaming messages with integration test."
+  },
+  {
+    "id": "4093373128",
+    "path": "apps/desktop/src/strategies/dictation.strategy.ts",
+    "title": "Prevent queued interim work and target probes from crossing sessions",
+    "disposition": "RESOLVED",
+    "resolution": "Added sessionGeneration counter to DictationStrategy and validated generation before target probe and native delivery with regression test."
+  },
+  {
+    "id": "4093373248",
+    "path": "apps/desktop/src/utils/composer.utils.ts",
+    "title": "Arm setup deadline before window creation in composer review",
+    "disposition": "RESOLVED",
+    "resolution": "Armed setup deadline at start of open() to destroy window and show recovery if window creation hangs, with unit test in composer.utils.test.ts."
+  },
+  {
+    "id": "4093375100",
+    "path": "scripts/ci/build-updater-manifest.mjs",
+    "title": "Match .msi.zip and .AppImage.tar.gz archives emitted by pinned Tauri CLI",
+    "disposition": "RESOLVED",
+    "resolution": "Updated INSTALLER_TYPES matchers for win-msi and lin-appimage, updated release.yml upload/verify globs, and added tests in updater-manifest.test.mjs."
+  },
+  {
+    "id": "4093375220",
+    "path": "rust-toolchain.toml",
+    "title": "Include rust-toolchain.toml in workflow path filters",
+    "disposition": "RESOLVED",
+    "resolution": "Added rust-toolchain.toml to trigger paths in build-desktop.yml, lint-desktop.yml, test-desktop-unit.yml, and test-package-rust-transcription.yml."
+  },
+  {
+    "id": "4093375983",
+    "path": "gitleaks.toml",
+    "title": "Remove broad allowlist exemptions from secret scanning",
+    "disposition": "RESOLVED",
+    "resolution": "Removed docs/**, reports/**, and session dump exemptions so all working-tree files are scanned."
+  }
+]

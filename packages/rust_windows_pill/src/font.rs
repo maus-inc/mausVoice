@@ -53,7 +53,7 @@ pub fn create_text_format(
     let weight = if bold {
         DWRITE_FONT_WEIGHT_BOLD
     } else {
-        DWRITE_FONT_WEIGHT(500) // Medium
+        DWRITE_FONT_WEIGHT(500) // Medium — never synthesize
     };
     let style = if italic {
         DWRITE_FONT_STYLE_ITALIC
@@ -71,6 +71,9 @@ pub fn create_text_format(
                 size,
                 w!("en-us"),
             )
-            .unwrap_or_else(|e| panic!("embedded Satoshi unavailable to DirectWrite: {e}"))
+            .unwrap_or_else(|e| {
+                rust_pill_shared::log_font_error(&format!("embedded Satoshi unavailable to DirectWrite: {e}"));
+                panic!("embedded Satoshi unavailable to DirectWrite: {e}")
+            })
     }
 }
