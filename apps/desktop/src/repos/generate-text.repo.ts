@@ -20,6 +20,7 @@ import {
   deepseekStreamChat,
   DEEPSEEK_MODELS,
   DeepseekModel,
+  GEMINI_GENERATE_TEXT_MODELS,
   GeminiGenerateTextModel,
   geminiGenerateTextResponse,
   geminiStreamChat,
@@ -404,7 +405,8 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as GeminiGenerateTextModel) ?? "gemini-2.5-flash";
+    this.model =
+      (model as GeminiGenerateTextModel) ?? GEMINI_GENERATE_TEXT_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
