@@ -309,6 +309,86 @@ const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
   onboarding.referralSource.trim() !== "" ||
   onboarding.preferredMicrophone !== null;
 
+const createOnboardingPreferences = (
+  userId: string,
+  preferredMicrophone: string | null,
+  transcriptionPreference: TranscriptionPrefs,
+  postProcessingPreference: GenerativePrefs,
+  agentModePreference: ReturnType<typeof getAgentModePrefs>,
+): UserPreferences => ({
+  updateChannel: "stable",
+  gpuEnumerationEnabled:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.gpuEnumerationEnabled
+      : false,
+  userId,
+  transcriptionMode: transcriptionPreference.mode,
+  transcriptionApiKeyId:
+    transcriptionPreference.mode === "api"
+      ? transcriptionPreference.apiKeyId
+      : null,
+  transcriptionDevice:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.transcriptionDevice
+      : null,
+  transcriptionModelSize:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.transcriptionModelSize
+      : null,
+  postProcessingMode: postProcessingPreference.mode,
+  postProcessingApiKeyId:
+    postProcessingPreference.mode === "api"
+      ? postProcessingPreference.apiKeyId
+      : null,
+  postProcessingOllamaUrl: null,
+  postProcessingOllamaModel: null,
+  activeToneId: null,
+  gotStartedAt: null,
+  agentMode: agentModePreference.mode,
+  agentModeApiKeyId:
+    agentModePreference.mode === "api" ? agentModePreference.apiKeyId : null,
+  openclawGatewayUrl:
+    agentModePreference.mode === "openclaw"
+      ? agentModePreference.gatewayUrl
+      : null,
+  openclawToken:
+    agentModePreference.mode === "openclaw" ? agentModePreference.token : null,
+  lastSeenFeature: null,
+  activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
+  preferredMicrophone,
+  ignoreUpdateDialog: false,
+  incognitoModeEnabled: false,
+  incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
+  dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
+  dictationPillVisibility: "persistent",
+  realtimeOutputEnabled: false,
+  remoteOutputEnabled: false,
+  remoteTargetDeviceId: null,
+  remoteReceiverPort: null,
+  remoteReceiverAutoStart: false,
+  dictationAudioDim: 1.0,
+  pasteKeybind: null,
+  menuBarIconHidden: false,
+  insertionMethod: null,
+  typingSpeedMs: null,
+  pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
+  alwaysRequestAdminOnStartup: false,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  reviewBeforeInsert: null,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
+  spokenCommandsEnabled: true,
+  autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
+  elevenLabsKeytermsEnabled: false,
+  expansionFlags: "{}",
+});
+
 export const submitOnboarding = async () => {
   const state = getAppState();
   if (state.auth && !state.initialized) return null;
@@ -384,83 +464,13 @@ export const submitOnboarding = async () => {
       referralSource: state.onboarding.referralSource || null,
     };
 
-    const preferences: UserPreferences = {
-      updateChannel: "stable",
-      gpuEnumerationEnabled:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.gpuEnumerationEnabled
-          : false,
+    const preferences = createOnboardingPreferences(
       userId,
-      transcriptionMode: transcriptionPreference.mode,
-      transcriptionApiKeyId:
-        transcriptionPreference.mode === "api"
-          ? transcriptionPreference.apiKeyId
-          : null,
-      transcriptionDevice:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.transcriptionDevice
-          : null,
-      transcriptionModelSize:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.transcriptionModelSize
-          : null,
-      postProcessingMode: postProcessingPreference.mode,
-      postProcessingApiKeyId:
-        postProcessingPreference.mode === "api"
-          ? postProcessingPreference.apiKeyId
-          : null,
-      postProcessingOllamaUrl: null,
-      postProcessingOllamaModel: null,
-      activeToneId: null,
-      gotStartedAt: null,
-      agentMode: agentModePreference.mode,
-      agentModeApiKeyId:
-        agentModePreference.mode === "api"
-          ? agentModePreference.apiKeyId
-          : null,
-      openclawGatewayUrl:
-        agentModePreference.mode === "openclaw"
-          ? agentModePreference.gatewayUrl
-          : null,
-      openclawToken:
-        agentModePreference.mode === "openclaw"
-          ? agentModePreference.token
-          : null,
-      lastSeenFeature: null,
-      activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
       preferredMicrophone,
-      ignoreUpdateDialog: false,
-      incognitoModeEnabled: false,
-      incognitoModeIncludeInStats: false,
-      preserveAudioOnFailure: true,
-      dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
-      dictationPillVisibility: "persistent",
-      realtimeOutputEnabled: false,
-      remoteOutputEnabled: false,
-      remoteTargetDeviceId: null,
-      remoteReceiverPort: null,
-      remoteReceiverAutoStart: false,
-      dictationAudioDim: 1.0,
-      pasteKeybind: null,
-      menuBarIconHidden: false,
-      insertionMethod: null,
-      typingSpeedMs: null,
-      pillResetMonitorStrategy: "current",
-      pillPlacement: "bottom",
-      alwaysRequestAdminOnStartup: false,
-      handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
-      inDictationStyleSwitchingEnabled: false,
-      hallucinationFilterEnabled: true,
-      reviewBeforeInsert: null,
-      agentEnabledTools: null,
-      agentMaxIterations: 20,
-      agentPermissionTimeoutMs: 60_000,
-      spokenCommandsEnabled: true,
-      autoLearnDictionaryEnabled: true,
-      autoLearnFromEditsEnabled: false,
-      elevenLabsKeytermsEnabled: false,
-      expansionFlags: "{}",
-    };
+      transcriptionPreference,
+      postProcessingPreference,
+      agentModePreference,
+    );
 
     const savedUser = await repo.setMyUser(user);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
