@@ -11,7 +11,7 @@ describe("buildReasoningEffortParams", () => {
     },
   );
 
-  it.each(["qwen/qwen3.6-27b", "gemma-4-31b", "gpt-4o-mini", "my-gpt-oss-x"])(
+  it.each(["qwen/qwen3.8-27b", "gemma-4-31b", "gpt-4o-mini", "my-gpt-oss-x"])(
     "sends no effort field for %s, which rejects low/medium/high",
     (model) => {
       expect(buildReasoningEffortParams(model, "low")).toEqual({});

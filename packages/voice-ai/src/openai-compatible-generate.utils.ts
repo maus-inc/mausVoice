@@ -11,8 +11,8 @@ const GPT_OSS_MODEL = /(^|\/)gpt-oss-/;
 
 /**
  * Request fields that set the reasoning effort. Only the gpt-oss family
- * accepts low, medium, and high. Other models, including Groq's Qwen
- * fallback, reject those values with a 400, so they get no field.
+ * accepts low, medium, and high. Other models reject those values or take
+ * different ones (Groq's Qwen models, for example), so they get no field.
  */
 export const buildReasoningEffortParams = (
   model: string,

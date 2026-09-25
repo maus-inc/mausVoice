@@ -75,7 +75,7 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  private fallbackModel: GenerateTextModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -88,6 +88,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
         : "openai/gpt-oss-20b";
+    // Fall back to the other production model. Groq retires preview models
+    // at short notice (qwen/qwen3.6-27b shut down on 2026-09-14), and a
+    // retired fallback turns every transient primary failure into a 404.
+    this.fallbackModel =
+      this.model === "openai/gpt-oss-120b"
+        ? "openai/gpt-oss-20b"
+        : "openai/gpt-oss-120b";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

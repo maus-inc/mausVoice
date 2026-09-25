@@ -289,7 +289,33 @@ describe("generateText metadata reports the resolved model", () => {
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("Groq falls back to the smaller model when the larger one fails", async () => {
+    vi.mocked(groqGenerateTextResponse)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
+  });
+
+  it("Groq falls back only to production models", async () => {
+    for (const model of GENERATE_TEXT_MODELS) {
+      vi.mocked(groqGenerateTextResponse)
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo("k", model).generateText({
+        prompt: "p",
+      });
+
+      expect(GENERATE_TEXT_MODELS).toContain(output.metadata?.model);
+      expect(output.metadata?.model).not.toBe(model);
+    }
   });
 
   it("OpenAI reports the configured model", async () => {

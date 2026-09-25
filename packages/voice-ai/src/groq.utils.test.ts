@@ -41,10 +41,10 @@ describe("groqGenerateTextResponse request body", () => {
     );
   });
 
-  it("omits the effort for the Qwen fallback model", async () => {
+  it("omits the effort for a non-gpt-oss Groq model", async () => {
     await groqGenerateTextResponse({
       apiKey: "gsk_test",
-      model: "qwen/qwen3.6-27b",
+      model: "qwen/qwen3.8-27b",
       prompt: "p",
       reasoningEffort: "low",
     });
