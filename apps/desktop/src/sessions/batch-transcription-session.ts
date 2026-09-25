@@ -11,6 +11,7 @@ import {
 } from "../types/transcription-session.types";
 import { getLogger } from "../utils/log.utils";
 import { listenToAudioChunks } from "./audio-chunk-events";
+import { SessionAbortScope } from "./session-abort-scope";
 import {
   PauseChunkedPretranscriber,
   type PauseChunkingConfig,
@@ -100,9 +101,13 @@ const emptyResult = (): TranscriptionSessionResult => ({
 export class BatchTranscriptionSession implements TranscriptionSession {
   private pretranscriber: PauseChunkedPretranscriber | null = null;
   private unlisten: UnlistenFn | null = null;
+  /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
+  private abortScope = new SessionAbortScope();
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     this.cleanup();
+    // A previous recording may have aborted the scope; this one needs a live signal.
+    this.abortScope = new SessionAbortScope();
     const pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
       selectText: (result) => result.rawTranscript,
@@ -127,7 +132,9 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       const pretranscribed = await this.finishPretranscription(audio);
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
-      if (pretranscriber?.isDisposed) return emptyResult();
+      if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
+        return emptyResult();
+      }
       return await this.transcribeWholeRecording(audio);
     } finally {
       this.cleanup();
@@ -135,6 +142,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   }
 
   cleanup(): void {
+    this.abortScope.abort();
     this.unlisten?.();
     this.unlisten = null;
     this.pretranscriber?.dispose();
@@ -192,6 +200,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       const result = await transcribeAudio({
         samples: payloadSamples,
         sampleRate: rate,
+        signal: this.abortScope.signal,
       });
 
       getLogger().info(
@@ -203,6 +212,14 @@ export class BatchTranscriptionSession implements TranscriptionSession {
         warnings: [...warnings, ...result.warnings],
       };
     } catch (error) {
+      // A discard aborts the request on purpose. That is not a failure, so it
+      // must not reach the user as "Transcription failed".
+      if (this.abortScope.isAborted) {
+        getLogger().info(
+          "Batch transcription cancelled: the dictation was discarded",
+        );
+        return emptyResult();
+      }
       getLogger().error(`Failed to transcribe audio: ${error}`);
       const message = String(error);
       if (message) {
