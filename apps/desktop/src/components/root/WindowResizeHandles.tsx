@@ -45,7 +45,7 @@ const GRIPS: readonly Grip[] = [
   {
     direction: "East",
     cursor: "ew-resize",
-    position: { right: 0, top: CORNER, bottom: CORNER, width: EDGE },
+    position: { right: 0, top: EDGE, bottom: CORNER, width: EDGE },
   },
   {
     direction: "NorthWest",
@@ -55,7 +55,9 @@ const GRIPS: readonly Grip[] = [
   {
     direction: "NorthEast",
     cursor: "nesw-resize",
-    position: { top: 0, right: 0, width: CORNER, height: CORNER },
+    // Only an edge-thin strip: the close caption button sits flush in this
+    // corner and must stay clickable.
+    position: { top: 0, right: 0, width: CORNER, height: EDGE },
   },
   {
     direction: "SouthWest",

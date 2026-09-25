@@ -135,14 +135,14 @@ describe("TitleBar on Windows and Linux", () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
   it.each(["windows", "linux"])(
-    "keeps %s captions outside the 12px resize corner",
+    "puts %s captions flush against the right window edge",
     async (platform) => {
       platformState.value = platform;
       await renderBar();
       const bar = document.querySelector("[data-focused]")!;
       expect(
         Number.parseFloat(getComputedStyle(bar).paddingRight),
-      ).toBeGreaterThanOrEqual(12);
+      ).toBe(0);
     },
   );
   it("renders safely without the native OS or window plugins", async () => {
