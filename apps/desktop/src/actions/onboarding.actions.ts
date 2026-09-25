@@ -495,7 +495,6 @@ export const submitOnboarding = async () => {
     produceAppState((draft) => {
       draft.onboarding.submitting = false;
     });
-    showErrorSnackbar(err);
     throw err;
   }
 };
