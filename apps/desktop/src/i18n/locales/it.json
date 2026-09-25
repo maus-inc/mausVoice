@@ -581,6 +581,7 @@
   "polishing": "Rifinitura",
   "post_processing": "Post-elaborazione",
   "post_processing_duration": "Durata post-elaborazione",
+  "post_processing_model": "Modello di post-elaborazione",
   "post_processing_must_be_enabled_to_use_writing_styles": "La post-elaborazione deve essere abilitata per usare gli stili di scrittura.",
   "post_processing_step": "Fase di post-elaborazione",
   "power_mode": "Modalità di alimentazione",

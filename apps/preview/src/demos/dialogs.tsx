@@ -293,8 +293,8 @@ export const TooltipDemo = () => {
         </Matrix>
       </DemoSection>
       <DemoSection
-        title="BouncyTooltip"
-        hint="Absolute attention bubble: 1s bounce (dropped under reduced motion) + 0.2s fade-in; exit fades down 0.2s. Arrow 8px, primary.main fill."
+        title="BouncyTooltip (real component)"
+        hint="Real: absolute attention bubble on the surface ladder (level1 + hairline + soft lift, text.primary) — no more inverted slab. Motion settles: 0.25s rise entrance, then two 3px nudges (1.6s × 2), never infinite; nothing but the entrance under reduced motion. Exit fades down 0.2s."
       >
         <Matrix>
           <State label="visible toggle" wide>

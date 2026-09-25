@@ -215,9 +215,9 @@ const TutorialTooltips = ({
         <HotkeyBadge
           keys={primaryHotkey}
           sx={{
-            bgcolor: "rgba(255,255,255,0.2)",
-            borderColor: "rgba(255,255,255,0.3)",
-            color: "primary.contrastText",
+            bgcolor: "level2",
+            borderColor: "divider",
+            color: "text.primary",
           }}
         />
         <Typography

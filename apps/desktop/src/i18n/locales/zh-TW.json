@@ -581,6 +581,7 @@
   "polishing": "正在潤飾",
   "post_processing": "後處理",
   "post_processing_duration": "後處理持續時間",
+  "post_processing_model": "後處理模型",
   "post_processing_must_be_enabled_to_use_writing_styles": "必須啟用後處理才能使用寫作樣式。",
   "post_processing_step": "後處理步驟",
   "power_mode": "進階模式",

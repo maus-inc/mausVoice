@@ -581,6 +581,7 @@
   "polishing": "正在润色",
   "post_processing": "后处理",
   "post_processing_duration": "后处理持续时间",
+  "post_processing_model": "后处理模型",
   "post_processing_must_be_enabled_to_use_writing_styles": "必须启用后处理才能使用语言风格。",
   "post_processing_step": "后处理步骤",
   "power_mode": "高级模式",

@@ -1,21 +1,33 @@
 import { Box, keyframes, useMediaQuery } from "@mui/material";
 import { ReactNode, useEffect, useRef } from "react";
+import { darkInk, ink } from "../../styles/palette";
 
-const fadeIn = keyframes`
+const fadeInUp = keyframes`
   from {
     opacity: 0;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
 `;
 
-const bounce = keyframes`
+/**
+ * Attention nudge: two gentle hops (3px, springy) played once after the
+ * entrance, then the tip rests. Research on coach marks is blunt — hints
+ * should draw the eye once, then get out of the way; a perpetual bounce
+ * keeps competing with the task the hint points at.
+ */
+const nudge = keyframes`
   0%, 100% {
     transform: translateY(0);
   }
-  50% {
-    transform: translateY(-8px);
+  35% {
+    transform: translateY(-3px);
+  }
+  70% {
+    transform: translateY(0.5px);
   }
 `;
 
@@ -29,6 +41,8 @@ const fadeOutDown = keyframes`
     transform: translateY(10px);
   }
 `;
+
+const NUDGE_ITERATIONS = 2;
 
 type BouncyTooltipProps = {
   visible: boolean;
@@ -44,7 +58,7 @@ export const BouncyTooltip = ({
   delay = 0,
 }: BouncyTooltipProps) => {
   const hasBeenVisible = useRef(false);
-  // DESIGN.md: reduced motion is honored everywhere; the attention bounce is
+  // DESIGN.md: reduced motion is honored everywhere; the attention nudge is
   // the first thing to drop.
   const prefersReducedMotion = useMediaQuery(
     "(prefers-reduced-motion: reduce)",
@@ -58,10 +72,13 @@ export const BouncyTooltip = ({
 
   const getAnimation = () => {
     if (visible) {
-      const bouncePart = prefersReducedMotion
-        ? ""
-        : `${bounce} 1s ease-in-out ${delay}s infinite, `;
-      return `${bouncePart}${fadeIn} 0.2s ease-out ${delay}s both`;
+      const entrance = `${fadeInUp} 0.25s ease-out ${delay}s both`;
+      if (prefersReducedMotion) {
+        return entrance;
+      }
+      return `${entrance}, ${nudge} 1.6s cubic-bezier(0.34, 1.4, 0.64, 1) ${
+        delay + 0.4
+      }s ${NUDGE_ITERATIONS}`;
     }
     if (hasBeenVisible.current) {
       return `${fadeOutDown} 0.2s ease-in forwards`;
@@ -89,34 +106,51 @@ export const BouncyTooltip = ({
       }}
     >
       <Box
-        sx={{
+        sx={(theme) => ({
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          filter: "drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2))",
-        }}
+          color: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
+        })}
       >
+        {/* Coach marks are part of the product, not the OS: neutral paper on
+            the surface ladder with the app's hairline + soft lift, instead of
+            a harsh inverted slab with a stock drop shadow. The arrow takes
+            the same face color so the two parts read as one shape. */}
         <Box
-          sx={{
+          sx={(theme) => ({
             width: 0,
             height: 0,
             borderLeft: "8px solid transparent",
             borderRight: "8px solid transparent",
-            borderBottom: "8px solid",
-            borderBottomColor: "primary.main",
-          }}
+            borderBottom: `8px solid ${
+              theme.vars?.palette.level1 ?? theme.palette.background.paper
+            }`,
+            filter: `drop-shadow(0 -1px 1px ${ink(0.06)})`,
+            ...theme.applyStyles("dark", {
+              filter: `drop-shadow(0 -1px 1px ${darkInk(0.35)})`,
+            }),
+          })}
         />
         <Box
-          sx={{
+          sx={(theme) => ({
             display: "flex",
             alignItems: "center",
             gap: 1,
-            bgcolor: "primary.main",
-            color: "primary.contrastText",
+            bgcolor:
+              theme.vars?.palette.level1 ?? theme.palette.background.paper,
             px: 2,
             py: 1,
-            borderRadius: 1,
-          }}
+            borderRadius: 3,
+            boxShadow: `inset 0 0 0 1px ${ink(0.08)}, 0 1px 2px ${ink(
+              0.08,
+            )}, 0 8px 20px ${ink(0.1)}`,
+            ...theme.applyStyles("dark", {
+              boxShadow: `inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 1px 2px ${darkInk(
+                0.35,
+              )}, 0 8px 20px ${darkInk(0.3)}`,
+            }),
+          })}
         >
           {children}
         </Box>
