@@ -68,12 +68,42 @@ export const attachSessionAudioIntake = async (
     return { buffer, unlisten: null, current: isCurrent() };
   }
 
+  let receivedChunkCount = 0;
+  let receivedSampleCount = 0;
+  let lastForwardedOffset: number | null = null;
+  let hasLoggedTrim = false;
+
   const unlisten = await listenToAudioChunks((samples, offset) => {
-    if (!isCurrent() || offset === null) return;
+    if (!isCurrent()) return;
+    if (offset === null) {
+      getLogger().warning(
+        "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
+      );
+      return;
+    }
     const chunk = ensureFloat32Array(samples);
     if (chunk.length === 0) return;
+    receivedChunkCount += 1;
+    receivedSampleCount += chunk.length;
+    if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
+      getLogger().verbose(
+        `[Dictation] Received chunk #${receivedChunkCount} (total ${receivedSampleCount} samples)`,
+      );
+    }
+    if (lastForwardedOffset !== null && offset !== lastForwardedOffset + 1) {
+      getLogger().warning(
+        `[Dictation] Audio offset gap: expected ${lastForwardedOffset + 1}, got ${offset}`,
+      );
+    }
+    lastForwardedOffset = offset + chunk.length - 1;
     if (!shouldForwardLive()) {
       buffer.push(chunk, offset);
+      if (buffer.overflowed() && !hasLoggedTrim) {
+        hasLoggedTrim = true;
+        getLogger().warning(
+          "[Dictation] Startup audio buffer overflowed; later chunks will be dropped until the session is ready",
+        );
+      }
     } else {
       forwardAudioChunk(session, chunk, offset);
     }

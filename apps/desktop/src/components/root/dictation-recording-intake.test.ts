@@ -167,6 +167,43 @@ describe("audio intake ownership", () => {
     expect(writeAudioChunk).not.toHaveBeenCalled();
   });
 
+  it("logs a warning when a chunk omits the sample index", async () => {
+    const writeAudioChunk = vi.fn();
+    await attachSessionAudioIntake(
+      sessionWith(writeAudioChunk),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+
+    mocks.warningMock.mockClear();
+    emitChunk(samples(4), null);
+
+    expect(writeAudioChunk).not.toHaveBeenCalled();
+    expect(mocks.warningMock).toHaveBeenCalledWith(
+      expect.stringContaining("no sample offset"),
+    );
+  });
+
+  it("logs a warning when consecutive chunk offsets are not contiguous", async () => {
+    const writeAudioChunk = vi.fn();
+    await attachSessionAudioIntake(
+      sessionWith(writeAudioChunk),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+
+    mocks.warningMock.mockClear();
+    emitChunk(samples(2, 0.1), 0);
+    emitChunk(samples(2, 0.2), 10);
+
+    expect(writeAudioChunk).toHaveBeenCalledTimes(2);
+    expect(mocks.warningMock).toHaveBeenCalledWith(
+      expect.stringContaining("Audio offset gap"),
+    );
+  });
+
   it("buffers pre-ready chunks and replays them in order with their indexes", async () => {
     const writeAudioChunk = vi.fn();
     let ready = false;

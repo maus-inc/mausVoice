@@ -179,7 +179,18 @@ const startElevenLabsStreaming = async (
       }
 
       if (force && pendingSampleCountRef.value === 0) {
-        ws.send(JSON.stringify({ message_type: "commit" }));
+        // Guard the terminal commit send the same way sendAudioChunk guards a
+        // normal send. A socket that closes between the readyState check and
+        // this send would otherwise reject finalize() instead of degrading to
+        // a transcript.
+        try {
+          ws.send(JSON.stringify({ message_type: "commit" }));
+        } catch (error) {
+          getLogger().error(
+            "[ElevenLabs WebSocket] Error sending terminal commit:",
+            error,
+          );
+        }
         return;
       }
 
@@ -212,11 +223,13 @@ const startElevenLabsStreaming = async (
     };
 
     const writeAudioChunk = (rawChunk: Float32Array) => {
-      if (isFinalized || ws?.readyState !== WebSocket.OPEN) return;
+      if (isFinalized) return;
       try {
         const typedChunk = needsResample
           ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
           : rawChunk;
+        // Queue even while the socket is reconnecting; flushPendingSamples is a
+        // no-op until it is OPEN, so speech is not dropped on a transient close.
         pendingChunks.push(typedChunk);
         pendingSampleCountRef.value += typedChunk.length;
         flushPendingSamples(false);

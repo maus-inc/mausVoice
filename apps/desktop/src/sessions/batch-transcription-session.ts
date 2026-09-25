@@ -52,12 +52,11 @@ export const createActionPretranscriber = (
 ): PauseChunkedPretranscriber =>
   new PauseChunkedPretranscriber(
     sampleRate,
-    async (samples, rate, signal) => {
+    async (samples, rate) => {
       const result = await transcribeAudio({
         samples,
         sampleRate: rate,
         hallucinationFilterEnabled,
-        signal,
       });
       return {
         text: selectText(result),

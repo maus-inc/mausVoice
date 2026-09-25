@@ -561,6 +561,10 @@ export const DictationSideEffects = () => {
 
   useEffect(() => {
     return () => {
+      // Invalidate the operation token first so an in-flight start tail cannot
+      // arm timers or dim the volume after teardown.
+      recordingOperationRef.current += 1;
+      restoreSystemVolume();
       releaseRecordingResources({
         audioChunkUnlistenRef,
         sessionRef,
@@ -669,9 +673,29 @@ export const DictationSideEffects = () => {
     return () => clearInterval(interval);
   }, [isMainWindow, isActiveSession]);
 
+  // Single owner for the shared audio_chunk subscription. Every terminal path
+  // that ends a recording must call this, otherwise the Tauri listener outlives
+  // the session it was created for and keeps forwarding into a stale closure.
+  const releaseAudioIntake = useCallback((owned?: UnlistenFn | null) => {
+    if (owned === undefined) {
+      audioChunkUnlistenRef.current?.();
+      audioChunkUnlistenRef.current = null;
+      return;
+    }
+    if (audioChunkUnlistenRef.current === owned) {
+      owned?.();
+      audioChunkUnlistenRef.current = null;
+    }
+  }, []);
+
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
+      // Capture and release the native-start claim. A newer start that claims
+      // ownership after this point owns the stream, so this abort must not
+      // stop it; a still-pending abort only stops the stream it was tearing down.
+      const abortedNativeOwner = nativeStartOwnerRef.current;
+      nativeStartOwnerRef.current = null;
       recordingOperationRef.current += 1;
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
@@ -680,14 +704,19 @@ export const DictationSideEffects = () => {
       clearCancelPromptTimer();
       hardResetHotkeyState();
       restoreSystemVolume();
-      if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
-        ownedAudioChunkUnlisten?.();
-        audioChunkUnlistenRef.current = null;
-      }
+      releaseAudioIntake(ownedAudioChunkUnlisten);
       await sendPhaseToPill("idle");
-      invoke("stop_recording").catch((e) =>
-        getLogger().verbose(`stop_recording failed during abort: ${e}`),
-      );
+      // Only stop native capture when no newer start has claimed ownership
+      // since this abort began. Otherwise this abort would kill the stream a
+      // rapid restart just opened.
+      const newerStartOwnsNative =
+        nativeStartOwnerRef.current !== null &&
+        nativeStartOwnerRef.current !== abortedNativeOwner;
+      if (!newerStartOwnsNative) {
+        invoke("stop_recording").catch((e) =>
+          getLogger().verbose(`stop_recording failed during abort: ${e}`),
+        );
+      }
 
       // Deterministic cleanup: clear the refs first so no other path can
       // reach the session mid-cleanup, then guard each cleanup call.
@@ -725,6 +754,7 @@ export const DictationSideEffects = () => {
       clearRecordingTimers,
       clearUtteranceToneSnapshots,
       hardResetHotkeyState,
+      releaseAudioIntake,
       restoreSystemVolume,
       sendPhaseToPill,
       intl,
@@ -1040,6 +1070,9 @@ export const DictationSideEffects = () => {
         );
       }
     } finally {
+      // Invalidate the operation token so an in-flight start tail can never arm
+      // timers or dim the volume after this recording has already ended.
+      recordingOperationRef.current += 1;
       // Timers must be cleared even when the transcribe chain fails or the
       // watchdog fires, so no stale auto-stop can fire into the next session.
       clearRecordingTimers();
@@ -1578,8 +1611,11 @@ export const DictationSideEffects = () => {
     getLogger().info("Switching to type mode");
 
     // Stop the microphone/transcription without tearing down the assistant panel
+    recordingOperationRef.current += 1;
     clearRecordingTimers();
     hardResetHotkeyState();
+    restoreSystemVolume();
+    releaseAudioIntake();
     invoke<void>("set_phase", { phase: "idle" }).catch(console.error);
     invoke("stop_recording").catch((e) =>
       getLogger().verbose(

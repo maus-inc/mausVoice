@@ -48,11 +48,19 @@ export const startAssemblyAIStreaming = async (
     const getText = () => transcriptState.text();
 
     const writeAudioChunk = (chunk: Float32Array) => {
-      if (isFinalized || ws?.readyState !== WebSocket.OPEN) {
-        return;
+      if (isFinalized) return;
+      try {
+        // Always queue the chunk, even while the socket is still connecting.
+        // flush() is a no-op until the socket is OPEN and onopen drains the
+        // backlog, so speech captured during connect is not lost.
+        buffer.push(chunk);
+        buffer.flush(false);
+      } catch (error) {
+        getLogger().error(
+          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
+          error,
+        );
       }
-      buffer.push(chunk);
-      buffer.flush(false);
     };
 
     const cleanup = () => {

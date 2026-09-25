@@ -1130,12 +1130,16 @@ mod cpal_impl {
                         level_emitter.emit(&mono_samples);
                     }
 
-                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
-                        chunk_emitter.emit(&mono_samples);
-                    }
-
+                    // Append to the retained buffer before emitting the live
+                    // chunk. stop_recording clones this buffer after flushing
+                    // the emitter, so emitting first could deliver audio that
+                    // the returned RecordingResult does not contain.
                     if let Ok(mut shared_buffer) = callback_buffer.lock() {
                         shared_buffer.extend_from_slice(&mono_samples);
+                    }
+
+                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
+                        chunk_emitter.emit(&mono_samples);
                     }
                 },
                 |err| log::error!("stream error: {err}"),
