@@ -356,18 +356,18 @@ const CaptionButtons = ({
     </IconButton>
   </Stack>
 );
-const titleBarSx = (dark: boolean, isMac: boolean) =>
+const titleBarSx = (dark: boolean, trafficLights: boolean) =>
   ({
     height: TITLE_BAR_HEIGHT,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
-    px: isMac ? 1.5 : 0,
-    pl: isMac ? 1.5 : 1,
+    px: trafficLights ? 1.5 : 0,
+    pl: trafficLights ? 1.5 : 1,
     // Caption buttons sit flush against the right window edge (like native
     // Windows chrome); the NorthEast resize grip overlaps the close button's
     // outer corner.
-    pr: isMac ? 1.5 : 0,
+    pr: trafficLights ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
     backgroundColor: dark
@@ -385,7 +385,9 @@ export const TitleBar = () => {
   const dark = resolved === "dark";
   const intl = useIntl();
   const platform = isTauriRuntime() ? getPlatform() : "unknown";
-  const isMac = !hasRightCaptionButtons(platform);
+  // Same predicate the resize grips use, so the chrome and the grips can never
+  // disagree. Browser preview ("unknown") gets right-side caption buttons.
+  const trafficLights = !hasRightCaptionButtons(platform);
   const [maximized, setMaximized] = useMaximized();
   const focused = useWindowFocused();
   const { minimize, toggleMax, close } = useWindowControls(setMaximized);
@@ -399,7 +401,7 @@ export const TitleBar = () => {
   return (
     <>
       <WindowResizeHandles />
-      <Box data-focused={focused} sx={titleBarSx(dark, isMac)}>
+      <Box data-focused={focused} sx={titleBarSx(dark, trafficLights)}>
         {/*
           Full-bleed drag region. Double-click to maximise is handled explicitly:
           with `decorations: false` the webview does not reliably synthesise the
@@ -415,7 +417,7 @@ export const TitleBar = () => {
           }}
         />
 
-        {isMac ? (
+        {trafficLights ? (
           <MacTrafficLights
             focused={focused}
             dark={dark}
@@ -435,7 +437,7 @@ export const TitleBar = () => {
             alignItems: "center",
             position: "relative",
             zIndex: 1,
-            pl: isMac ? 1 : 0.5,
+            pl: trafficLights ? 1 : 0.5,
             color: "text.primary",
             opacity: focused ? 1 : 0.6,
           }}
@@ -450,7 +452,7 @@ export const TitleBar = () => {
           onDoubleClick={toggleMax}
         />
 
-        {isMac ? null : (
+        {trafficLights ? null : (
           <CaptionButtons
             focused={focused}
             minimizeLabel={minimizeLabel}
