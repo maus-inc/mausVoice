@@ -2716,8 +2716,11 @@ pub async fn start_recording(
     });
 
     let chunk_emit_handle = app.clone();
+    let emitted_samples = std::sync::atomic::AtomicU64::new(0);
     let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>| {
-        let payload = AudioChunkPayload { samples };
+        let offset = emitted_samples
+            .fetch_add(samples.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let payload = AudioChunkPayload { samples, offset };
         if let Err(err) = chunk_emit_handle.emit_to(EventTarget::any(), EVT_AUDIO_CHUNK, payload) {
             log::error!("Failed to emit audio_chunk event: {err}");
         }

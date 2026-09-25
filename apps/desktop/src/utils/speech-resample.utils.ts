@@ -52,7 +52,8 @@ const buildTable = (
       const distance = k - fraction;
       if (Math.abs(distance) > halfWidth) continue;
       const x = 2 * cutoff * distance;
-      const sinc = x === 0 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
+      const sinc =
+        Math.abs(x) < 1e-12 ? 1 : Math.sin(Math.PI * x) / (Math.PI * x);
       const weight = sinc * blackman(distance, halfWidth);
       taps[k + radius] = weight;
       sum += weight;
@@ -74,6 +75,33 @@ const getTable = (
     tableCache.set(key, buildTable(inputRate, outputRate));
   }
   return tableCache.get(key) ?? null;
+};
+
+/**
+ * One filter tap set applied at `start`. Near the clip edges the missing
+ * taps are dropped and the rest renormalized, so DC is preserved.
+ */
+const convolveAt = (
+  samples: Float32Array,
+  start: number,
+  taps: Float32Array,
+): number => {
+  if (start >= 0 && start + taps.length <= samples.length) {
+    let acc = 0;
+    for (let tap = 0; tap < taps.length; tap += 1) {
+      acc += samples[start + tap] * taps[tap];
+    }
+    return acc;
+  }
+  const first = Math.max(0, -start);
+  const end = Math.min(taps.length, samples.length - start);
+  let acc = 0;
+  let weight = 0;
+  for (let tap = first; tap < end; tap += 1) {
+    acc += samples[start + tap] * taps[tap];
+    weight += taps[tap];
+  }
+  return Math.abs(weight) > 1e-12 ? acc / weight : 0;
 };
 
 /**
@@ -100,28 +128,10 @@ export const downsampleForSpeech = (
   const { up, down, radius, phases } = table;
   const outputLength = Math.floor((samples.length * up) / down);
   const output = new Float32Array(outputLength);
-  const lastIndex = samples.length - 1;
   for (let outIndex = 0; outIndex < outputLength; outIndex += 1) {
     const position = outIndex * down;
-    const center = Math.floor(position / up);
-    const taps = phases[position % up];
-    const start = center - radius;
-    let acc = 0;
-    if (start >= 0 && center + radius <= lastIndex) {
-      for (let tap = 0; tap < taps.length; tap += 1) {
-        acc += samples[start + tap] * taps[tap];
-      }
-    } else {
-      let weight = 0;
-      for (let tap = 0; tap < taps.length; tap += 1) {
-        const source = start + tap;
-        if (source < 0 || source > lastIndex) continue;
-        acc += samples[source] * taps[tap];
-        weight += taps[tap];
-      }
-      acc = weight !== 0 ? acc / weight : 0;
-    }
-    output[outIndex] = acc;
+    const start = Math.floor(position / up) - radius;
+    output[outIndex] = convolveAt(samples, start, phases[position % up]);
   }
   return output;
 };

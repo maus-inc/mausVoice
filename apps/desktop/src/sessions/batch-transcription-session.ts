@@ -79,6 +79,12 @@ export const logPretranscription = (
   );
 };
 
+const EMPTY_RESULT: TranscriptionSessionResult = {
+  rawTranscript: null,
+  metadata: {},
+  warnings: [],
+};
+
 /**
  * Batch transcription session. Audio is transcribed with one request after
  * recording stops, except that long recordings are pretranscribed at natural
@@ -97,8 +103,8 @@ export class BatchTranscriptionSession implements TranscriptionSession {
     });
     this.pretranscriber = pretranscriber;
     try {
-      this.unlisten = await listenToAudioChunks((samples) =>
-        pretranscriber.push(samples),
+      this.unlisten = await listenToAudioChunks((samples, offset) =>
+        pretranscriber.push(samples, offset),
       );
     } catch (error) {
       getLogger().verbose(
@@ -111,8 +117,11 @@ export class BatchTranscriptionSession implements TranscriptionSession {
     audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     try {
+      const pretranscriber = this.pretranscriber;
       const pretranscribed = await this.finishPretranscription(audio);
       if (pretranscribed) return pretranscribed;
+      // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
+      if (pretranscriber?.isDisposed) return EMPTY_RESULT;
       return await this.transcribeWholeRecording(audio);
     } finally {
       this.cleanup();
@@ -165,11 +174,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `Batch session: skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
       );
-      return {
-        rawTranscript: null,
-        metadata: {},
-        warnings: [],
-      };
+      return EMPTY_RESULT;
     }
 
     const warnings: string[] = [];

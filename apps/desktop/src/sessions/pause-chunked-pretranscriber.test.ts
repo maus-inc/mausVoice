@@ -30,9 +30,14 @@ const concat = (...parts: Float32Array[]) => {
   return output;
 };
 
-const feed = (target: PauseChunkedPretranscriber, audio: Float32Array) => {
-  for (let offset = 0; offset < audio.length; offset += 100) {
-    target.push(audio.subarray(offset, offset + 100));
+/** Feeds `audio` from index `from` on, as a listener that attached late would see it. */
+const feed = (
+  target: PauseChunkedPretranscriber,
+  audio: Float32Array,
+  from = 0,
+) => {
+  for (let offset = from; offset < audio.length; offset += 100) {
+    target.push(audio.subarray(offset, offset + 100), offset);
   }
 };
 
@@ -42,7 +47,7 @@ const recordingTranscriber = () => {
     spans.push(samples);
     return {
       text: `span${spans.length}`,
-      metadata: { transcriptionMode: "api" },
+      metadata: { transcriptionMode: "api", transcriptionDurationMs: 100 },
       warnings: [`w${spans.length % 2}`],
     };
   });
@@ -79,7 +84,7 @@ describe("PauseChunkedPretranscriber", () => {
     expect(transcribe).toHaveBeenCalledTimes(3);
     expect(result).toEqual({
       text: "span1 span2 span3",
-      metadata: { transcriptionMode: "api" },
+      metadata: { transcriptionMode: "api", transcriptionDurationMs: 300 },
       warnings: ["w1", "w0"],
       chunkCount: 3,
     });
@@ -175,6 +180,47 @@ describe("PauseChunkedPretranscriber", () => {
     expect(disposed.chunkCount).toBe(0);
   });
 
+  it("aligns a stream whose listener attached after capture started", async () => {
+    const { transcribe, spans } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording, 700);
+    expect(target.chunkCount).toBe(2);
+
+    const result = await target.finish({
+      samples: recording,
+      sampleRate: RATE,
+    });
+    const covered = spans.reduce((sum, span) => sum + span.length, 0);
+    expect(covered).toBe(recording.length - 700);
+    expect(spans.at(-1)?.at(-1)).toBe(recording.at(-1));
+    expect(result?.chunkCount).toBe(3);
+    expect(result?.metadata.transcriptionDurationMs).toBe(300);
+  });
+
+  it("disables itself on a gap or a chunk without an offset", async () => {
+    const gapped = new PauseChunkedPretranscriber(
+      RATE,
+      recordingTranscriber().transcribe,
+      CONFIG,
+    );
+    gapped.push(recording.subarray(0, 100), 0);
+    gapped.push(recording.subarray(200, 300), 200);
+    feed(gapped, recording, 300);
+    expect(gapped.chunkCount).toBe(0);
+    expect(
+      await gapped.finish({ samples: recording, sampleRate: RATE }),
+    ).toBeNull();
+
+    const unaligned = new PauseChunkedPretranscriber(
+      RATE,
+      recordingTranscriber().transcribe,
+      CONFIG,
+    );
+    unaligned.push(recording.subarray(0, 100), null);
+    feed(unaligned, recording, 100);
+    expect(unaligned.chunkCount).toBe(0);
+  });
+
   it("adapts to a noisy floor instead of treating the whole room as speech", () => {
     const { transcribe } = recordingTranscriber();
     const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
@@ -203,5 +249,6 @@ describe("joinTranscriptSpans", () => {
     );
     expect(joinTranscriptSpans(["สวัสดี", "ครับ"])).toBe("สวัสดีครับ");
     expect(joinTranscriptSpans(["我们用 API", "处理"])).toBe("我们用 API处理");
+    expect(joinTranscriptSpans(["𠀀", "𠀁"])).toBe("𠀀𠀁");
   });
 });
