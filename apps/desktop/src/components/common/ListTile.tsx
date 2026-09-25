@@ -88,6 +88,8 @@ export type ListTileProps = {
   onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
   selected?: boolean;
   ariaCurrent?: React.AriaAttributes["aria-current"];
+  /** Render as a list item when this tile is a child of a List. */
+  component?: "div" | "li";
   sx?: SxProps;
   href?: string;
   disabled?: boolean;
@@ -110,6 +112,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
       onClick,
       selected = false,
       ariaCurrent,
+      component = "div",
       sx,
       href,
       disabled,
@@ -163,12 +166,12 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
     return (
       <ListItem
         ref={ref}
-        component="div"
+        component={component}
         disablePadding
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         onFocusCapture={() => setHovered(true)}
-        onBlurCapture={(event) => {
+        onBlurCapture={(event: React.FocusEvent<HTMLElement>) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node)) {
             setHovered(false);
           }
