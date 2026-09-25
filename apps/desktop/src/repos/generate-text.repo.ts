@@ -20,6 +20,7 @@ import {
   deepseekStreamChat,
   DEEPSEEK_MODELS,
   DeepseekModel,
+  GEMINI_GENERATE_TEXT_MODELS,
   GeminiGenerateTextModel,
   geminiGenerateTextResponse,
   geminiStreamChat,
@@ -404,7 +405,12 @@ export class GeminiGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as GeminiGenerateTextModel) ?? "gemini-2.5-flash";
+    // Default model is GEMINI_GENERATE_TEXT_MODELS[0] (currently gemini-3.8-flash).
+    // Previously defaulted to gemini-2.5-flash; bump to 3.8-flash in v3.8
+    // release for better latency. Intentional silent upgrade for users without
+    // explicit model selection – not a bug.
+    this.model =
+      (model as GeminiGenerateTextModel) ?? GEMINI_GENERATE_TEXT_MODELS[0];
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

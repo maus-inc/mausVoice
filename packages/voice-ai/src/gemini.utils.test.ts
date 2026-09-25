@@ -42,7 +42,7 @@ describe("Gemini native transport", () => {
     };
     await geminiGenerateTextResponse({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       prompt: "sample",
       jsonResponse: { name: "transcription_cleaning", schema },
       customFetch,
@@ -64,7 +64,7 @@ describe("Gemini native transport", () => {
     await expect(
       geminiGenerateTextResponse({
         apiKey: " gemini-key ",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         system: "Be concise.",
         prompt: "Hello",
         customFetch,
@@ -73,7 +73,7 @@ describe("Gemini native transport", () => {
 
     const [url, init] = customFetch.mock.calls[0]!;
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     );
     expect(init).toMatchObject({
       method: "POST",
@@ -92,7 +92,7 @@ describe("Gemini native transport", () => {
     });
   });
 
-  it("uses the injected fetch for audio transcription", async () => {
+  it("uses the injected fetch for audio transcription with general model", async () => {
     const customFetch = vi.fn().mockResolvedValue(
       jsonResponse({
         candidates: [{ content: { parts: [{ text: "transcript" }] } }],
@@ -102,7 +102,7 @@ describe("Gemini native transport", () => {
     await expect(
       geminiTranscribeAudio({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         blob: new Uint8Array([1, 2, 3]).buffer,
         mimeType: "audio/wav",
         language: "en",
@@ -120,6 +120,147 @@ describe("Gemini native transport", () => {
     });
   });
 
+  it("uses Files API and audioTranscriptionConfig for dedicated transcribe model", async () => {
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+          return Promise.resolve(
+            jsonResponse({
+              state: "ACTIVE",
+            }),
+          );
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [
+              { content: { parts: [{ text: "transcript via transcribe" }] } },
+            ],
+          }),
+        );
+      });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        language: "en-US",
+        customVocabulary: ["Kubernetes", "BigQuery"],
+        transcriptionMode: "smart",
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "transcript via transcribe", wordsUsed: 3 });
+
+    const generateCalls = customFetch.mock.calls.filter(([u]) =>
+      (u as string).includes(":generateContent"),
+    );
+    expect(generateCalls).toHaveLength(1);
+    const [url, init] = generateCalls[0]!;
+    expect(url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
+    );
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.contents[0].parts[0]).toEqual({
+      fileData: {
+        mimeType: "audio/wav",
+        fileUri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+      },
+    });
+    expect(body.generationConfig.audioTranscriptionConfig).toMatchObject({
+      languageCodes: ["en-US"],
+      customVocabulary: ["Kubernetes", "BigQuery"],
+      mode: "SMART",
+    });
+    // Verify cleanup
+    const deleteCalls = customFetch.mock.calls.filter(
+      ([u, i]) =>
+        (u as string).includes("/v1beta/files/abc") &&
+        (i as RequestInit)?.method === "DELETE",
+    );
+    expect(deleteCalls.length).toBe(1);
+  });
+
+  it("falls back to inlineData when Files API upload fails for transcribe model", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(new Response("upload failed", { status: 500 }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [
+            { content: { parts: [{ text: "fallback transcript" }] } },
+          ],
+        }),
+      );
+    });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        mimeType: "audio/wav",
+        language: "auto",
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback transcript", wordsUsed: 2 });
+
+    // Should have attempted upload start, then fell back to generateContent
+    expect(customFetch.mock.calls.length).toBe(2);
+    const lastCall = customFetch.mock.calls[customFetch.mock.calls.length - 1]!;
+    const body = JSON.parse((lastCall[1] as RequestInit).body as string);
+    expect(body.contents[0].parts[0].inlineData).toEqual({
+      mimeType: "audio/wav",
+      data: "AQID",
+    });
+    expect(body.generationConfig.audioTranscriptionConfig).toBeDefined();
+  });
+
+  it("does not fallback to inlineData on abort during upload", async () => {
+    const controller = new AbortController();
+    const customFetch = vi.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.resolve(new Response("upload failed", { status: 500 }));
+    });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "gemini-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        signal: controller.signal,
+        customFetch,
+      }),
+    ).rejects.toThrow();
+
+    expect(customFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("buffers split SSE chunks from the injected fetch", async () => {
     const customFetch = vi
       .fn()
@@ -134,7 +275,7 @@ describe("Gemini native transport", () => {
     const events = [];
     for await (const event of geminiStreamChat({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       input: {
         messages: [{ role: "user", content: "Hello" }],
         tools: [
@@ -170,7 +311,7 @@ describe("Gemini native transport", () => {
 
     const [url, init] = customFetch.mock.calls[0]!;
     expect(url).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
     );
     const body = JSON.parse(init?.body as string);
     expect(body.tools[0].functionDeclarations[0].parameters).toEqual({
@@ -193,7 +334,7 @@ describe("Gemini native transport", () => {
 
     for await (const _event of geminiStreamChat({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       input: {
         messages: [
           { role: "user", content: "Paste it" },
@@ -234,7 +375,7 @@ describe("Gemini native transport", () => {
     await expect(
       geminiTranscribeAudio({
         apiKey: "bad-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         blob: new Uint8Array([1]).buffer,
         customFetch,
       }),
@@ -250,7 +391,7 @@ describe("Gemini native transport", () => {
     await expect(
       geminiGenerateTextResponse({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         prompt: "Hi",
         customFetch,
       }),
@@ -271,7 +412,7 @@ describe("Gemini native transport", () => {
     await expect(
       geminiGenerateTextResponse({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         prompt: "Hi",
         customFetch,
       }),
@@ -291,7 +432,7 @@ describe("Gemini native transport", () => {
     await expect(async () => {
       for await (const event of geminiStreamChat({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         input: { messages: [{ role: "user", content: "Hi" }] },
         customFetch,
       })) {
@@ -311,7 +452,7 @@ describe("Gemini native transport", () => {
     await expect(async () => {
       for await (const _event of geminiStreamChat({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         input: { messages: [{ role: "user", content: "Hi" }] },
         customFetch,
       })) {
@@ -325,8 +466,6 @@ describe("Gemini native transport", () => {
     const encoder = new TextEncoder();
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        // One valid chunk is enough to reach the generator's cancellation
-        // path; keeping the stream open makes reader cancellation observable.
         controller.enqueue(
           encoder.encode(
             'data: {"candidates":[{"content":{"parts":[{"text":"x"}]}}]}\r\n\r\n',
@@ -343,7 +482,7 @@ describe("Gemini native transport", () => {
 
     const generator = geminiStreamChat({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       input: { messages: [{ role: "user", content: "Hi" }] },
       customFetch,
     });
@@ -363,16 +502,13 @@ describe("Gemini native transport", () => {
 
     await geminiGenerateTextResponse({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       prompt: "Hi",
       signal: controller.signal,
       customFetch,
     });
     const generateSignal = customFetch.mock.calls[0]?.[1]?.signal;
     expect(generateSignal).toBeTruthy();
-    // The forwarded signal must observe the caller's abort (it may be a
-    // composite signal combining the caller's signal with the request
-    // deadline).
     controller.abort();
     expect(generateSignal?.aborted).toBe(true);
 
@@ -381,7 +517,7 @@ describe("Gemini native transport", () => {
     );
     await geminiTranscribeAudio({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       blob: new Uint8Array([1]).buffer,
       signal: controller.signal,
       customFetch,
@@ -413,19 +549,17 @@ describe("Gemini model path sanitization", () => {
       );
     await geminiGenerateTextResponse({
       apiKey: "k",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       prompt: "p",
       customFetch,
     });
     const url = String(customFetch.mock.calls[0]?.[0]);
-    expect(url).toContain("/models/gemini-3.7-flash:generateContent");
+    expect(url).toContain("/models/gemini-3.8-flash:generateContent");
   });
 
   it.each(["../x", "a/../b", "a%2Fb", "models/../../admin:foo"])(
     "rejects hostile model id %j before any HTTP call",
     async (model) => {
-      // A well-formed Response stands in so pre-guard behavior reaches the
-      // network layer; the guard must reject before the fetch is attempted.
       const customFetch = vi.fn().mockResolvedValue(
         jsonResponse({
           candidates: [{ content: { parts: [{ text: "x" }] } }],
@@ -463,13 +597,11 @@ describe("Gemini retry policy edge cases", () => {
 
     await geminiGenerateTextResponse({
       apiKey: "gemini-key",
-      model: "gemini-3.7-flash",
+      model: "gemini-3.8-flash",
       prompt: "Hi",
       customFetch,
     });
     expect(signals).toHaveLength(2);
-    // The deadline must cover the whole operation: one signal instance,
-    // minted before the first attempt, not a fresh timer per attempt.
     expect(signals[0]).toBe(signals[1]);
   });
 
@@ -490,12 +622,285 @@ describe("Gemini retry policy edge cases", () => {
     await expect(
       geminiTranscribeAudio({
         apiKey: "gemini-key",
-        model: "gemini-3.7-flash",
+        model: "gemini-3.8-flash",
         blob: new Uint8Array([1]).buffer,
         signal: controller.signal,
         customFetch,
       }),
     ).rejects.toThrow();
     expect(customFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Gemini Files API edge cases", () => {
+  it("throws when upload URL header is missing", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), { status: 200, headers: {} }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "fallback" }] } }],
+        }),
+      );
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  });
+
+  it("throws on FAILED file state", async () => {
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+          return Promise.resolve(jsonResponse({ state: "FAILED" }));
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "ok" }] } }],
+          }),
+        );
+      });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("throws when file never becomes ACTIVE after polling", async () => {
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "fallback" }] } }],
+          }),
+        );
+      });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  }, 10000);
+
+  it("aborts during polling when signal is aborted", async () => {
+    const controller = new AbortController();
+    let pollCount = 0;
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        if (
+          url.includes("/v1beta/files/abc") &&
+          (init?.method === "GET" || !init?.method)
+        ) {
+          pollCount++;
+          if (pollCount === 1) {
+            controller.abort();
+          }
+          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "ok" }] } }],
+          }),
+        );
+      });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        signal: controller.signal,
+        customFetch,
+      }),
+    ).rejects.toThrow();
+  }, 10000);
+
+  it("validates upload URL is https", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "http://evil.com/upload" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "fallback" }] } }],
+        }),
+      );
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  });
+
+  it("uses correct extension for mp3 mimeType", async () => {
+    let displayName = "";
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          const body = JSON.parse((init?.body as string) ?? "{}");
+          displayName = body.file?.display_name ?? "";
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/mp3",
+              },
+            }),
+          );
+        }
+        if (
+          url.includes("/v1beta/files/abc") &&
+          (init?.method === "GET" || !init?.method)
+        ) {
+          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "ok" }] } }],
+          }),
+        );
+      });
+    await geminiTranscribeAudio({
+      apiKey: "k",
+      model: "gemini-3.5-transcribe",
+      blob: new Uint8Array([1, 2, 3]).buffer,
+      mimeType: "audio/mp3",
+      customFetch,
+    });
+    expect(displayName).toContain(".mp3");
+  }, 10000);
+
+  it("handles Buffer offset correctly without copying whole buffer", async () => {
+    const base = Buffer.from([0, 0, 1, 2, 3, 0, 0]);
+    const sliced = base.subarray(2, 5);
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "hi" }] } }],
+        }),
+      );
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.8-flash",
+        blob: sliced,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "hi", wordsUsed: 1 });
+    const body = JSON.parse(customFetch.mock.calls[0]?.[1]?.body as string);
+    expect(body.contents[0].parts[0].inlineData.data).toBe("AQID");
   });
 });
