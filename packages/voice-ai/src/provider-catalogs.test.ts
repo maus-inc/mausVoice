@@ -17,8 +17,10 @@ describe("provider fallback catalogs", () => {
       "claude-fable-5",
     ]);
     expect(DEEPSEEK_MODELS).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
-    expect(GEMINI_GENERATE_TEXT_MODELS).toContain("gemini-3.7-flash");
-    expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.7-flash");
+    expect(GEMINI_GENERATE_TEXT_MODELS).toContain("gemini-3.8-flash");
+    expect(GEMINI_GENERATE_TEXT_MODELS).toContain("gemini-3.5-flash");
+    expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.5-transcribe");
+    expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.8-flash");
   });
 });
 

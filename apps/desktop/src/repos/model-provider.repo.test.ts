@@ -98,6 +98,39 @@ describe("provider model discovery", () => {
     );
   });
 
+  it("includes dedicated transcribe model for transcription but not for generation", async () => {
+    pluginFetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: "models/gemini-3.5-transcribe",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-3.5-transcribe-live",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-3.8-flash",
+                supportedGenerationMethods: ["generateContent"],
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const repo = new GeminiModelProviderRepo();
+
+    await expect(
+      repo.getGenerativeTextModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-3.8-flash"]);
+    await expect(
+      repo.getTranscriptionModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-3.5-transcribe", "gemini-3.8-flash"]);
+  });
+
   it("separates OpenAI chat and file-transcription models", async () => {
     pluginFetchMock.mockImplementation(() =>
       Promise.resolve(

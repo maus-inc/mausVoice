@@ -137,29 +137,40 @@ function isOpenAIGenerativeModel(modelId: string): boolean {
   ].some((marker) => modelId.includes(marker));
 }
 
+const GEMINI_EXCLUDED_MODALITY_MARKERS = [
+  "-audio",
+  "-computer-use",
+  "-embedding",
+  "-image",
+  "-live",
+  "-native-audio",
+  "-omni-",
+  "-robotics",
+  "-tts",
+] as const;
+
+const GEMINI_REASONING_MARKERS = ["-thinking", "-search"] as const;
+
 function isGeneralGeminiModel(modelId: string): boolean {
   if (!modelId.startsWith("gemini-")) return false;
-  return ![
-    "-audio",
-    "-computer-use",
-    "-embedding",
-    "-image",
-    "-live",
-    "-native-audio",
-    "-omni-",
-    "-robotics",
-    "-tts",
-  ].some((marker) => modelId.includes(marker));
+  return ![...GEMINI_EXCLUDED_MODALITY_MARKERS, "-transcribe"].some((marker) =>
+    modelId.includes(marker),
+  );
 }
 
 function isGeminiTranscriptionModel(modelId: string): boolean {
-  // Gemini transcription is done via generateContent with audio input, so
-  // the same general-model filter applies. A few variants are then dropped
-  // because they do not support the audio-input transcription path.
-  if (!isGeneralGeminiModel(modelId)) return false;
+  if (!modelId.startsWith("gemini-")) return false;
+  if (
+    GEMINI_EXCLUDED_MODALITY_MARKERS.some((marker) => modelId.includes(marker))
+  ) {
+    return false;
+  }
+  if (modelId.includes("-transcribe")) {
+    return true;
+  }
   // Exclude reasoning/search-augmented Gemini variants, which are not served
   // through the audio-input generateContent transcription path.
-  return !["-thinking", "-search"].some((marker) => modelId.includes(marker));
+  return !GEMINI_REASONING_MARKERS.some((marker) => modelId.includes(marker));
 }
 
 export class GroqModelProviderRepo extends BaseModelProviderRepo {
@@ -342,7 +353,9 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
   async getGenerativeTextModels(
     options: FetchModelsOptions,
   ): Promise<string[]> {
-    const fetched = await this.fetchModels(options);
+    const fetched = (await this.fetchModels(options)).filter(
+      isGeneralGeminiModel,
+    );
     return fetched.length > 0 ? fetched : [...GEMINI_GENERATE_TEXT_MODELS];
   }
 
@@ -370,7 +383,9 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
           (m.supportedGenerationMethods ?? []).includes("generateContent"),
         )
         .map((m) => (m.name ?? "").replace(/^models\//, "").trim())
-        .filter(isGeneralGeminiModel)
+        .filter(
+          (id) => isGeneralGeminiModel(id) || isGeminiTranscriptionModel(id),
+        )
         .sort((a, b) => a.localeCompare(b));
     } catch {
       logModelDiscoveryFailure("Gemini", "request or response parsing failed");

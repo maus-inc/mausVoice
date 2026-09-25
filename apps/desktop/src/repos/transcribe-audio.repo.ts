@@ -697,11 +697,17 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private geminiApiKey: string;
   private model: GeminiTranscriptionModel;
+  private readonly customVocabulary: string[];
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customVocabulary: string[] = [],
+  ) {
     super();
     this.geminiApiKey = apiKey;
     this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
+    this.customVocabulary = customVocabulary;
   }
 
   protected async transcribeSegment(
@@ -709,22 +715,55 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
-    const { text: transcript } = await geminiTranscribeAudio({
-      apiKey: this.geminiApiKey,
-      model: this.model,
-      blob: wavBuffer,
-      mimeType: "audio/wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-      customFetch: secureFetch,
-    });
+    const tryTranscribe = async (model: GeminiTranscriptionModel) => {
+      const { text } = await geminiTranscribeAudio({
+        apiKey: this.geminiApiKey,
+        model,
+        blob: wavBuffer,
+        mimeType: "audio/wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+        // Pass explicit array (even empty) to prevent prompt fallback that
+        // would treat localized instructions as vocabulary terms.
+        customVocabulary: this.customVocabulary,
+        transcriptionMode: "verbatim",
+        customFetch: secureFetch,
+      });
+      return text;
+    };
+
+    let transcript: string;
+    let usedModel = this.model;
+    try {
+      transcript = await tryTranscribe(this.model);
+    } catch (error) {
+      const isTranscribeModel = this.model.includes("-transcribe");
+      const status =
+        error instanceof Error && "status" in error
+          ? (error as { status?: number }).status
+          : undefined;
+      const isModelAccessError = status === 403 || status === 404;
+      if (isTranscribeModel && isModelAccessError) {
+        const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
+          (m) => !m.includes("-transcribe"),
+        ) as GeminiTranscriptionModel | undefined;
+        if (fallbackModel) {
+          transcript = await tryTranscribe(fallbackModel);
+          usedModel = fallbackModel;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Gemini",
-        modelSize: this.model,
-        transcriptionMode: "api",
+        modelSize: usedModel,
+        transcriptionMode: "api" as TranscriptionMode,
       },
     };
   }

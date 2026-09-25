@@ -684,6 +684,14 @@ export const AZURE_PHRASE_LIST_BUDGET: VocabularyBudget = {
   maxCharacters: 10_000,
 };
 
+// Gemini 3.5 Transcribe custom vocabulary: up to 1,000 terms, best results
+// with up to 100. Incompatible with diarization and word timestamps.
+export const GEMINI_CUSTOM_VOCABULARY_BUDGET: VocabularyBudget = {
+  maxEntries: 1000,
+  maxCharacters: 10_000,
+  maxTermLength: 100,
+};
+
 export const buildLocalizedTranscriptionPrompt = (args: {
   entries: DictionaryEntries;
   dictationLanguage: DictationLanguageCode;

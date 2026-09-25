@@ -17,6 +17,7 @@ import {
   collectDictionaryEntries,
   DEEPGRAM_KEYTERM_BUDGET,
   ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+  GEMINI_CUSTOM_VOCABULARY_BUDGET,
   VocabularyBudget,
 } from "../utils/prompt.utils";
 import {
@@ -486,12 +487,23 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
       );
       break;
     }
-    case "gemini":
+    case "gemini": {
+      const isTranscribeModel =
+        !prefs.transcriptionModel ||
+        prefs.transcriptionModel.includes("-transcribe");
       repo = new GeminiTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
+        isTranscribeModel
+          ? providerVocabulary(
+              GEMINI_CUSTOM_VOCABULARY_BUDGET,
+              "Gemini",
+              prefs.warnings,
+            )
+          : [],
       );
       break;
+    }
     case "openai-compatible":
       repo = buildOpenAICompatibleTranscribeRepo(prefs);
       break;
