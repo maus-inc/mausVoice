@@ -11,6 +11,11 @@ import { getPlatform } from "../../utils/platform.utils";
 import { LogoWithText } from "../common/LogoWithText";
 import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
+import {
+  CAPTION_BUTTON_WIDTH,
+  hasRightCaptionButtons,
+  TITLE_BAR_HEIGHT,
+} from "./titleBarGeometry";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
 /** Window-control glyphs are 16px so they stay optically level with the 18px
@@ -151,8 +156,8 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
 };
 
 const captionButtonSx = {
-  width: 46,
-  height: 40,
+  width: CAPTION_BUTTON_WIDTH,
+  height: TITLE_BAR_HEIGHT,
   borderRadius: 0,
   color: "text.secondary",
   transition:
@@ -353,7 +358,7 @@ const CaptionButtons = ({
 );
 const titleBarSx = (dark: boolean, isMac: boolean) =>
   ({
-    height: 40,
+    height: TITLE_BAR_HEIGHT,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
@@ -380,7 +385,7 @@ export const TitleBar = () => {
   const dark = resolved === "dark";
   const intl = useIntl();
   const platform = isTauriRuntime() ? getPlatform() : "unknown";
-  const isMac = platform === "macos";
+  const isMac = !hasRightCaptionButtons(platform);
   const [maximized, setMaximized] = useMaximized();
   const focused = useWindowFocused();
   const { minimize, toggleMax, close } = useWindowControls(setMaximized);

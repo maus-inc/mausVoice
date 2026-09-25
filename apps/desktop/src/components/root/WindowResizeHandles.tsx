@@ -5,6 +5,8 @@ import {
 } from "@tauri-apps/api/window";
 import { useCallback } from "react";
 import { isTauriRuntime } from "../../utils/env.utils";
+import { getPlatform } from "../../utils/platform.utils";
+import { hasRightCaptionButtons, TITLE_BAR_HEIGHT } from "./titleBarGeometry";
 
 /**
  * `@tauri-apps/api` declares the direction union but does not re-export it, so
@@ -19,63 +21,72 @@ type ResizeDirection = Parameters<TauriWindow["startResizeDragging"]>[0];
 const EDGE = 4;
 /** Corner grips are square and larger so diagonal resize stays reachable. */
 const CORNER = 12;
-/**
- * Height of the custom title bar. On Windows/Linux the caption buttons sit
- * flush against the right window edge across this whole row, so the right-edge
- * grips must stay out of it or they would swallow clicks on the close button.
- */
-const CAPTION_ROW = 40;
-
 type Grip = {
   direction: ResizeDirection;
   cursor: string;
   position: Record<string, number>;
 };
 
-export const GRIPS: readonly Grip[] = [
-  {
-    direction: "North",
-    cursor: "ns-resize",
-    position: { top: 0, left: CORNER, right: CORNER, height: EDGE },
-  },
-  {
-    direction: "South",
-    cursor: "ns-resize",
-    position: { bottom: 0, left: CORNER, right: CORNER, height: EDGE },
-  },
-  {
-    direction: "West",
-    cursor: "ew-resize",
-    position: { left: 0, top: CORNER, bottom: CORNER, width: EDGE },
-  },
-  {
-    direction: "East",
-    cursor: "ew-resize",
-    position: { right: 0, top: CAPTION_ROW, bottom: CORNER, width: EDGE },
-  },
-  {
-    direction: "NorthWest",
-    cursor: "nwse-resize",
-    position: { top: 0, left: 0, width: CORNER, height: CORNER },
-  },
-  {
-    direction: "NorthEast",
-    cursor: "nesw-resize",
-    // Just the 4px frame corner: the close caption button sits flush in this
-    // corner and must stay clickable everywhere but the outermost pixels.
-    position: { top: 0, right: 0, width: EDGE, height: EDGE },
-  },
-  {
-    direction: "SouthWest",
-    cursor: "nesw-resize",
-    position: { bottom: 0, left: 0, width: CORNER, height: CORNER },
-  },
-  {
-    direction: "SouthEast",
-    cursor: "nwse-resize",
-    position: { bottom: 0, right: 0, width: CORNER, height: CORNER },
-  },
-];
+/**
+ * Grip layout for the frameless window.
+ *
+ * With right-side caption buttons (Windows/Linux) the close button sits flush
+ * in the top-right corner across the whole title bar row, so the East grip
+ * starts below that row and the NorthEast grip shrinks to the 4px frame
+ * corner. Without them (macOS, traffic lights on the left) the right edge keeps
+ * the full-height East grip and the regular 12px corner.
+ */
+export const getGrips = (rightCaptionButtons: boolean): readonly Grip[] => {
+  const eastTop = rightCaptionButtons ? TITLE_BAR_HEIGHT : CORNER;
+  const northEastSize = rightCaptionButtons ? EDGE : CORNER;
+  return [
+    {
+      direction: "North",
+      cursor: "ns-resize",
+      position: { top: 0, left: CORNER, right: CORNER, height: EDGE },
+    },
+    {
+      direction: "South",
+      cursor: "ns-resize",
+      position: { bottom: 0, left: CORNER, right: CORNER, height: EDGE },
+    },
+    {
+      direction: "West",
+      cursor: "ew-resize",
+      position: { left: 0, top: CORNER, bottom: CORNER, width: EDGE },
+    },
+    {
+      direction: "East",
+      cursor: "ew-resize",
+      position: { right: 0, top: eastTop, bottom: CORNER, width: EDGE },
+    },
+    {
+      direction: "NorthWest",
+      cursor: "nwse-resize",
+      position: { top: 0, left: 0, width: CORNER, height: CORNER },
+    },
+    {
+      direction: "NorthEast",
+      cursor: "nesw-resize",
+      position: {
+        top: 0,
+        right: 0,
+        width: northEastSize,
+        height: northEastSize,
+      },
+    },
+    {
+      direction: "SouthWest",
+      cursor: "nesw-resize",
+      position: { bottom: 0, left: 0, width: CORNER, height: CORNER },
+    },
+    {
+      direction: "SouthEast",
+      cursor: "nwse-resize",
+      position: { bottom: 0, right: 0, width: CORNER, height: CORNER },
+    },
+  ];
+};
 
 /**
  * Invisible resize grips for the frameless window.
@@ -101,9 +112,11 @@ export const WindowResizeHandles = () => {
 
   if (!isTauriRuntime()) return null;
 
+  const grips = getGrips(hasRightCaptionButtons(getPlatform()));
+
   return (
     <>
-      {GRIPS.map((grip) => (
+      {grips.map((grip) => (
         <Box
           key={grip.direction}
           role="presentation"
