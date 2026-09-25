@@ -359,8 +359,10 @@ const titleBarSx = (dark: boolean, isMac: boolean) =>
     alignItems: "center",
     px: isMac ? 1.5 : 0,
     pl: isMac ? 1.5 : 1,
-    // Reserve the 12px NorthEast resize grip outside the caption stack.
-    pr: isMac ? 1.5 : "12px",
+    // Caption buttons sit flush against the right window edge (like native
+    // Windows chrome); the NorthEast resize grip overlaps the close button's
+    // outer corner.
+    pr: isMac ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
     backgroundColor: dark
