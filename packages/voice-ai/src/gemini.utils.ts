@@ -453,8 +453,8 @@ const waitForGeminiFileActive = async (
         signal,
       );
       if (state === "ACTIVE") return;
-    } catch (error) {
-      if (signal?.aborted) throw error;
+    } catch {
+      // Transient errors ignored; proceed to delay.
     }
     await delay(1000);
   }
