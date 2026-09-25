@@ -29,6 +29,7 @@ import {
   sessionMissingResult,
 } from "../utils/streaming-session.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { type AudioChunkPayload } from "./audio-chunk-events";
 
 const GLADIA_SAFE_LIVE_LIMIT_MS = 179 * 60 * 1000;
 const STARTUP_BUFFER_SECONDS = 30;
@@ -117,28 +118,25 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       },
     });
 
-    const unlisten = await listen<{ samples: number[] }>(
-      "audio_chunk",
-      (event) => {
-        if (generation !== this.generation || this.finalized) {
-          return;
+    const unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) => {
+      if (generation !== this.generation || this.finalized) {
+        return;
+      }
+      try {
+        const input = ensureFloat32Array(event.payload.samples);
+        const output = this.resampler?.process(input) ?? input;
+        if (output.length > 0) {
+          this.pump?.pushSamples(output);
+          this.pump?.flushPendingSamples();
         }
-        try {
-          const input = ensureFloat32Array(event.payload.samples);
-          const output = this.resampler?.process(input) ?? input;
-          if (output.length > 0) {
-            this.pump?.pushSamples(output);
-            this.pump?.flushPendingSamples();
-          }
-        } catch (error) {
-          this.addWarning(
-            `Gladia audio buffering failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      },
-    );
+      } catch (error) {
+        this.addWarning(
+          `Gladia audio buffering failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    });
     if (generation !== this.generation || this.finalized) {
       unlisten();
       return;

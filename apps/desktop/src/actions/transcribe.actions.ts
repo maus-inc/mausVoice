@@ -71,6 +71,8 @@ export type TranscribeAudioInput = {
   /** Preserve the recording's filter snapshot when retrying streamed audio. */
   hallucinationFilterEnabled?: boolean;
   trace?: PipelineTrace | null;
+  /** Cancels the provider request(s), e.g. when the dictation is cancelled. */
+  signal?: AbortSignal;
 };
 
 export type TranscribeAudioMetadata = {
@@ -136,6 +138,7 @@ export const transcribeAudio = async ({
   dictationLanguage: dictationLanguageOverride,
   hallucinationFilterEnabled: filterOverride,
   trace,
+  signal,
 }: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
   const state = getAppState();
   const hallucinationFilterEnabled =
@@ -188,6 +191,7 @@ export const transcribeAudio = async ({
       prompt: transcriptionPrompt,
       language: whisperLanguage,
       hallucinationFilterEnabled,
+      signal,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
