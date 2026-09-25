@@ -219,16 +219,18 @@ const previewTranscriptions: Transcription[] = [
     id: "transcription-brief",
     createdAt: "2026-09-09T08:46:00.000Z",
     createdByUserId: LOCAL_USER_ID,
+    // Long enough to exceed the 3-line clamp so the Show more/Show less
+    // disclosure control is exercisable in the browser preview.
     transcript:
-      "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation.",
+      "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation. Walk them through picking a hotkey first, then show the floating pill and explain what each state means — idle, recording, thinking, and pasting. End with a short practice prompt they can repeat out loud, and only then mention the history page where every transcription lands with its audio attached.",
     isDeleted: false,
     audio: { filePath: "preview://audio/brief", durationMs: 12_500 },
     modelSize: "small",
     inferenceDevice: "CPU",
     rawTranscript:
-      "the new onboarding flow should make the microphone check feel optional until people are ready to try dictation",
+      "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation. Walk them through picking a hotkey first, then show the floating pill and explain what each state means — idle, recording, thinking, and pasting. End with a short practice prompt they can repeat out loud, and only then mention the history page where every transcription lands with its audio attached.",
     sanitizedTranscript:
-      "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation.",
+      "The new onboarding flow should make the microphone check feel optional until people are ready to try dictation. Walk them through picking a hotkey first, then show the floating pill and explain what each state means — idle, recording, thinking, and pasting. End with a short practice prompt they can repeat out loud, and only then mention the history page where every transcription lands with its audio attached.",
     transcriptionMode: "local",
     transcriptionDurationMs: 960,
   },
