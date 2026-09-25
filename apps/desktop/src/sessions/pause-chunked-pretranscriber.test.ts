@@ -180,6 +180,33 @@ describe("PauseChunkedPretranscriber", () => {
     expect(disposed.chunkCount).toBe(0);
   });
 
+  it("aborts the in-flight span and never starts queued spans on dispose", async () => {
+    const signals: AbortSignal[] = [];
+    const transcribe = vi.fn<ChunkTranscriber>(
+      (_samples, _rate, signal) =>
+        new Promise((_resolve, reject) => {
+          signals.push(signal);
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    expect(target.chunkCount).toBe(2);
+    await Promise.resolve();
+    expect(transcribe).toHaveBeenCalledTimes(1);
+
+    target.dispose();
+    expect(signals[0].aborted).toBe(true);
+    expect(target.isDisposed).toBe(true);
+    expect(
+      await target.finish({ samples: recording, sampleRate: RATE }),
+    ).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transcribe).toHaveBeenCalledTimes(1);
+  });
+
   it("aligns a stream whose listener attached after capture started", async () => {
     const { transcribe, spans } = recordingTranscriber();
     const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);

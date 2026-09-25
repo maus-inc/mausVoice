@@ -24,6 +24,7 @@ import {
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
+import { withAbortSignal } from "../utils/abort-signal.utils";
 import { buildSpeechUploadWav } from "../utils/audio.utils";
 import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
@@ -73,6 +74,8 @@ export type TranscribeAudioInput = {
    * multi-chunk audio. Defaults to true when omitted.
    */
   hallucinationFilterEnabled?: boolean;
+  /** Cancels in-flight and not-yet-started provider requests. */
+  signal?: AbortSignal;
 };
 
 export type TranscribeAudioOutput = {
@@ -89,6 +92,7 @@ export type TranscribeSegmentInput = {
   prompt?: Nullable<string>;
   language?: string;
   hallucinationFilterEnabled?: boolean;
+  signal?: AbortSignal;
 };
 
 export type LocalTranscriptionSegment = {
@@ -221,6 +225,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
         prompt: input.prompt,
         language: input.language,
         hallucinationFilterEnabled: filterEnabled,
+        signal: input.signal,
       });
     }
 
@@ -236,6 +241,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // near-silent so their glossary-prompt bias cannot produce a dictionary
     // hallucination (and so we don't pay to transcribe room noise).
     const transcriptionTasks = segments.map((segmentSamples) => () => {
+      input.signal?.throwIfAborted();
       if (
         filterEnabled &&
         this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
@@ -248,6 +254,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
         prompt: input.prompt,
         language: input.language,
         hallucinationFilterEnabled: filterEnabled,
+        signal: input.signal,
       });
     });
 
@@ -321,6 +328,7 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       language: input.language,
       deviceId: options.deviceId,
       hallucinationFilterEnabled: input.hallucinationFilterEnabled !== false,
+      signal: input.signal,
     });
 
     return {
@@ -363,7 +371,10 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: this.customFetch,
+      customFetch: withAbortSignal(
+        this.customFetch ?? globalThis.fetch,
+        input.signal,
+      ),
     });
 
     return {
@@ -403,7 +414,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: secureFetch,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
@@ -439,6 +450,7 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      signal: input.signal,
     });
 
     return {
@@ -482,7 +494,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       language: input.language,
       wordBoost: this.wordBoost,
-      customFetch: this.customFetch,
+      customFetch: withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
@@ -517,7 +529,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: secureFetch,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
@@ -562,7 +574,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: this.customFetch,
+      customFetch: withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
@@ -644,7 +656,7 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
-      customFetch: secureFetch,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
@@ -716,7 +728,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       mimeType: "audio/wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: secureFetch,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
@@ -752,6 +764,7 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      signal: input.signal,
     });
 
     return {
@@ -802,7 +815,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         prompt: input.prompt ?? undefined,
         language: input.language,
         transcriptionPath: this.transcriptionPath,
-        customFetch: this.customFetch,
+        customFetch: withAbortSignal(this.customFetch, input.signal),
       });
 
     return {
@@ -841,6 +854,7 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: withAbortSignal(globalThis.fetch, input.signal),
     });
 
     return {
