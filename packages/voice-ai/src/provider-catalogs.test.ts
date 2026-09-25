@@ -21,6 +21,11 @@ describe("provider fallback catalogs", () => {
     expect(GEMINI_GENERATE_TEXT_MODELS).toContain("gemini-3.5-flash");
     expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.5-transcribe");
     expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.8-flash");
+    // Pin fallback precondition: at least one non-transcribe model must exist
+    // so GeminiTranscribeAudioRepo can fallback on 403/404.
+    const nonTranscribe = GEMINI_TRANSCRIPTION_MODELS.filter((m) => !m.includes("-transcribe"));
+    expect(nonTranscribe.length).toBeGreaterThan(0);
+    expect(GEMINI_TRANSCRIPTION_MODELS).toContain("gemini-3.7-flash");
   });
 });
 

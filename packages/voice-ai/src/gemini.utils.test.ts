@@ -631,3 +631,208 @@ describe("Gemini retry policy edge cases", () => {
     expect(customFetch).toHaveBeenCalledTimes(1);
   });
 });
+
+
+describe("Gemini Files API edge cases", () => {
+  it("throws when upload URL header is missing", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), { status: 200, headers: {} }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({ candidates: [{ content: { parts: [{ text: "fallback" }] } }] }),
+      );
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1,2,3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  });
+
+  it("throws on FAILED file state", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "https://upload.example.com/resumable" },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({ file: { uri: "https://generativelanguage.googleapis.com/v1beta/files/abc", mimeType: "audio/wav" } }),
+        );
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+        return Promise.resolve(jsonResponse({ state: "FAILED" }));
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(jsonResponse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1,2,3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("throws when file never becomes ACTIVE after polling", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "https://upload.example.com/resumable" },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({ file: { uri: "https://generativelanguage.googleapis.com/v1beta/files/abc", mimeType: "audio/wav" } }),
+        );
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+        return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(jsonResponse({ candidates: [{ content: { parts: [{ text: "fallback" }] } }] }));
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1,2,3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  }, 10000);
+
+  it("aborts during polling when signal is aborted", async () => {
+    const controller = new AbortController();
+    let pollCount = 0;
+    const customFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "https://upload.example.com/resumable" },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({ file: { uri: "https://generativelanguage.googleapis.com/v1beta/files/abc", mimeType: "audio/wav" } }),
+        );
+      }
+      if (url.includes("/v1beta/files/abc") && (init?.method === "GET" || !init?.method)) {
+        pollCount++;
+        if (pollCount === 1) {
+          controller.abort();
+        }
+        return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(jsonResponse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1,2,3]).buffer,
+        signal: controller.signal,
+        customFetch,
+      }),
+    ).rejects.toThrow();
+  }, 10000);
+
+  it("validates upload URL is https", async () => {
+    const customFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/upload/v1beta/files")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "http://evil.com/upload" },
+          }),
+        );
+      }
+      return Promise.resolve(jsonResponse({ candidates: [{ content: { parts: [{ text: "fallback" }] } }] }));
+    });
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1,2,3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  });
+
+  it("uses correct extension for mp3 mimeType", async () => {
+    let displayName = "";
+    const customFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        const body = JSON.parse((init?.body as string) ?? "{}");
+        displayName = body.file?.display_name ?? "";
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "x-goog-upload-url": "https://upload.example.com/resumable" },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(jsonResponse({ file: { uri: "https://generativelanguage.googleapis.com/v1beta/files/abc", mimeType: "audio/mp3" } }));
+      }
+      if (url.includes("/v1beta/files/abc") && (init?.method === "GET" || !init?.method)) {
+        return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(jsonResponse({ candidates: [{ content: { parts: [{ text: "ok" }] } }] }));
+    });
+    await geminiTranscribeAudio({
+      apiKey: "k",
+      model: "gemini-3.5-transcribe",
+      blob: new Uint8Array([1,2,3]).buffer,
+      mimeType: "audio/mp3",
+      customFetch,
+    });
+    expect(displayName).toContain(".mp3");
+  }, 10000);
+
+  it("handles Buffer offset correctly without copying whole buffer", async () => {
+    const base = Buffer.from([0,0,1,2,3,0,0]);
+    const sliced = base.subarray(2,5);
+    const customFetch = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: "hi" }] } }] }),
+    );
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.8-flash",
+        blob: sliced,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "hi", wordsUsed: 1 });
+    const body = JSON.parse(customFetch.mock.calls[0]?.[1]?.body as string);
+    expect(body.contents[0].parts[0].inlineData.data).toBe("AQID");
+  });
+});
+

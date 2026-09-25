@@ -1038,3 +1038,114 @@ describe("ElevenLabs keyterms gating", () => {
     expect(keytermsOf(repo)).toContain("Soniya");
   });
 });
+
+describe("GeminiTranscribeAudioRepo fallback", () => {
+  it("falls back to first non-transcribe model on 403/404", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    // First call: transcribe model fails with 403
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("forbidden") as Error & { status?: number };
+      (err as any).status = 403;
+      return Promise.reject(err);
+    });
+    // Second call: fallback succeeds
+    geminiMock.mockImplementationOnce(() =>
+      Promise.resolve({ text: "fallback ok", wordsUsed: 2 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(result.text).toBe("fallback ok");
+    expect(result.metadata?.modelSize).not.toBe("gemini-3.5-transcribe");
+    expect(geminiMock).toHaveBeenCalledTimes(2);
+    // Second call should use non-transcribe model
+    const secondModel = (geminiMock.mock.calls[1]?.[0] as any)?.model;
+    expect(secondModel).not.toContain("-transcribe");
+  });
+
+  it("caches fallback model and does not re-probe on next segment", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("not found") as Error & { status?: number };
+      (err as any).status = 404;
+      return Promise.reject(err);
+    });
+    geminiMock.mockImplementation(() =>
+      Promise.resolve({ text: "ok", wordsUsed: 1 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    // First call triggers fallback and caches
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(geminiMock).toHaveBeenCalledTimes(2);
+    geminiMock.mockClear();
+    // Second call should directly use cached fallback, not try transcribe model again
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+    const model = (geminiMock.mock.calls[0]?.[0] as any)?.model;
+    expect(model).not.toContain("-transcribe");
+  });
+
+  it("does not fallback for non-transcribe model 404", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => {
+        const err = new Error("not found") as Error & { status?: number };
+        (err as any).status = 404;
+        return Promise.reject(err);
+      });
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.8-flash", []);
+    await expect(
+      repo.transcribeAudio({
+        samples: createSamples(1, 16000),
+        sampleRate: 16000,
+      }),
+    ).rejects.toThrow();
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fallback for status-less error (network failure)", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => {
+        return Promise.reject(new Error("network down"));
+      });
+    const repo = new GeminiTranscribeAudioRepo(
+      "key",
+      "gemini-3.5-transcribe",
+      [],
+    );
+    await expect(
+      repo.transcribeAudio({
+        samples: createSamples(1, 16000),
+        sampleRate: 16000,
+      }),
+    ).rejects.toThrow("network down");
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+  });
+});

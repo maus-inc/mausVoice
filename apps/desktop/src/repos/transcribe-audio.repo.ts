@@ -708,6 +708,10 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ) {
     super();
     this.geminiApiKey = apiKey;
+    // Default model is GEMINI_TRANSCRIPTION_MODELS[0] (currently
+    // gemini-3.5-transcribe dedicated STT). Previously defaulted to
+    // gemini-2.5-flash general model; bump to dedicated transcribe for
+    // better accuracy and lower cost. Intentional upgrade.
     this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
     this.customVocabulary = customVocabulary;
   }
