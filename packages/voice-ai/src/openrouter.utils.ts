@@ -272,7 +272,7 @@ export type OpenRouterTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
-  customFetch?: CustomFetch;
+  signal?: AbortSignal;
 };
 
 export type OpenRouterTranscribeAudioOutput = {
@@ -287,15 +287,16 @@ export const openrouterTranscribeAudio = async ({
   ext,
   prompt,
   language,
-  customFetch,
+  signal,
 }: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
   return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey, customFetch),
+    client: createClient(apiKey),
     blob,
     model,
     ext,
     prompt,
     language,
+    signal,
   });
 };
 

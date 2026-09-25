@@ -371,10 +371,9 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: withAbortSignal(
-        this.customFetch ?? globalThis.fetch,
-        input.signal,
-      ),
+      // Without an injected fetch the SDK keeps its own transport.
+      customFetch:
+        this.customFetch && withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
@@ -854,7 +853,7 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: withAbortSignal(globalThis.fetch, input.signal),
+      signal: input.signal,
     });
 
     return {
