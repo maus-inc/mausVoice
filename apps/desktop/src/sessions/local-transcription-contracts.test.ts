@@ -12,14 +12,10 @@ const mocks = vi.hoisted(() => ({
   createStreamingSession: vi.fn(),
   finalize: vi.fn(),
   cleanup: vi.fn(),
-  unlisten: vi.fn(),
 }));
 vi.mock("../sidecars", () => ({
   getLocalTranscriptionSidecarManager: () => mocks,
   isSessionNotFoundError: () => false,
-}));
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => mocks.unlisten),
 }));
 vi.mock("../actions/transcribe.actions", () => ({
   transcribeAudio: mocks.transcribeAudio,
@@ -119,7 +115,6 @@ describe("local streaming filter ownership", () => {
       const output = await session.finalize({ samples, sampleRate: 16000 });
       expect(output.rawTranscript).toBe("thank you");
       expect(mocks.cleanup).toHaveBeenCalledTimes(1);
-      expect(mocks.unlisten).toHaveBeenCalledTimes(1);
     },
   );
   it("keeps enabled silence filtering even when every segment is dropped", async () => {

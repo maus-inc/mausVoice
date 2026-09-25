@@ -2,9 +2,7 @@ import {
   appendQueryParamValues,
   convertFloat32ToBase64PCM16,
 } from "@maus-inc/voice-ai";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import { ensureFloat32Array } from "../utils/audio.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { getLogger, redactQueryParamValues } from "../utils/log.utils";
 import {
@@ -20,6 +18,7 @@ import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 type ElevenLabsStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
+  writeAudioChunk: (chunk: Float32Array) => void;
 };
 
 const ELEVENLABS_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
@@ -132,9 +131,7 @@ const startElevenLabsStreaming = async (
 
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
-    let unlisten: UnlistenFn | null = null;
     let isFinalized = false;
-    let receivedChunkCount = 0;
     let sentChunkCount = 0;
     let pendingChunks: Float32Array[] = [];
     const pendingSampleCountRef = { value: 0 };
@@ -181,6 +178,11 @@ const startElevenLabsStreaming = async (
         return;
       }
 
+      if (force && pendingSampleCountRef.value === 0) {
+        sendAudioChunk(new Float32Array(0), true);
+        return;
+      }
+
       while (
         pendingSampleCountRef.value >= minSamplesPerChunk ||
         (force && pendingSampleCountRef.value > 0)
@@ -209,11 +211,24 @@ const startElevenLabsStreaming = async (
       }
     };
 
-    const cleanup = () => {
-      if (unlisten) {
-        unlisten();
-        unlisten = null;
+    const writeAudioChunk = (rawChunk: Float32Array) => {
+      if (isFinalized || !ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        const typedChunk = needsResample
+          ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
+          : rawChunk;
+        pendingChunks.push(typedChunk);
+        pendingSampleCountRef.value += typedChunk.length;
+        flushPendingSamples(false);
+      } catch (error) {
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error sending audio chunk:",
+          error,
+        );
       }
+    };
+
+    const cleanup = () => {
       if (ws && ws.readyState !== WebSocket.CLOSED) {
         ws.close();
         ws = null;
@@ -305,52 +320,9 @@ const startElevenLabsStreaming = async (
 
     ws.onopen = async () => {
       getLogger().verbose("[ElevenLabs WebSocket] Connected");
-
-      try {
-        getLogger().verbose(
-          "[ElevenLabs WebSocket] Setting up audio_chunk listener...",
-        );
-        unlisten = await listen<{ samples: number[] }>(
-          "audio_chunk",
-          (event) => {
-            receivedChunkCount++;
-            if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-              getLogger().verbose(
-                `[ElevenLabs WebSocket] Received chunk #${receivedChunkCount}, samples:`,
-                event.payload.samples.length,
-              );
-            }
-            if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
-              try {
-                const rawChunk = ensureFloat32Array(event.payload.samples);
-                const typedChunk = needsResample
-                  ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
-                  : rawChunk;
-                pendingChunks.push(typedChunk);
-                pendingSampleCountRef.value += typedChunk.length;
-                flushPendingSamples(false);
-              } catch (error) {
-                getLogger().error(
-                  "[ElevenLabs WebSocket] Error sending audio chunk:",
-                  error,
-                );
-              }
-            }
-          },
-        );
-
-        getLogger().verbose(
-          "[ElevenLabs WebSocket] Session ready, listener attached",
-        );
-        resolve({ finalize, cleanup });
-      } catch (error) {
-        getLogger().error(
-          "[ElevenLabs WebSocket] Error setting up listener:",
-          error,
-        );
-        cleanup();
-        reject(error);
-      }
+      flushPendingSamples(false);
+      getLogger().verbose("[ElevenLabs WebSocket] Session ready");
+      resolve({ finalize, cleanup, writeAudioChunk });
     };
 
     ws.onmessage = (event) => {

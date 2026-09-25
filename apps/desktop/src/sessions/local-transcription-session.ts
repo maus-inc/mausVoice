@@ -1,4 +1,3 @@
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
 import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
@@ -25,17 +24,12 @@ import {
 import { mapDictationLanguageToWhisperLanguage } from "../utils/language.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 
-type AudioChunkPayload = {
-  samples: number[];
-};
-
 type LocalSessionContext = {
   prompt: string;
   hallucinationFilterEnabled: boolean;
 };
 
 export class LocalTranscriptionSession implements TranscriptionSession {
-  private unlisten: UnlistenFn | null = null;
   private session: LocalSidecarStreamingSession | null = null;
   private context: LocalSessionContext | null = null;
   private startupWarnings: string[] = [];
@@ -71,15 +65,6 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
-      this.unlisten = await listen<AudioChunkPayload>(
-        "audio_chunk",
-        (event) => {
-          if (!this.session || !event.payload.samples.length) {
-            return;
-          }
-          this.session.writeAudioChunk(event.payload.samples);
-        },
-      );
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
@@ -90,6 +75,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       );
       this.cleanup();
     }
+  }
+
+  writeAudioChunk(chunk: Float32Array): void {
+    this.session?.writeAudioChunk(chunk);
   }
 
   async finalize(
@@ -150,10 +139,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   cleanup(): void {
     getLogger().info(
-      `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
+      `[local-stream-session] cleanup (hasSession=${!!this.session})`,
     );
-    this.unlisten?.();
-    this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
     this.context = null;

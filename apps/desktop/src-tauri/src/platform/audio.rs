@@ -153,13 +153,29 @@ mod cpal_impl {
             };
 
             if should_emit {
-                if let Ok(mut buffer) = self.buffer.lock() {
-                    if !buffer.is_empty() {
-                        let chunk = buffer.clone();
-                        buffer.clear();
-                        (self.callback)(chunk);
+                let chunk = self.buffer.lock().ok().and_then(|mut buffer| {
+                    if buffer.is_empty() {
+                        None
+                    } else {
+                        Some(std::mem::take(&mut *buffer))
                     }
+                });
+                if let Some(chunk) = chunk {
+                    (self.callback)(chunk);
                 }
+            }
+        }
+
+        fn flush(&self) {
+            let chunk = self.buffer.lock().ok().and_then(|mut buffer| {
+                if buffer.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut *buffer))
+                }
+            });
+            if let Some(chunk) = chunk {
+                (self.callback)(chunk);
             }
         }
     }
@@ -397,6 +413,13 @@ mod cpal_impl {
                 .lock()
                 .map_err(|_| RecordingError::NotRecording)?;
             let recording = guard.take().ok_or(RecordingError::NotRecording)?;
+
+            if let Err(err) = recording._stream.pause() {
+                log::error!("failed to pause input stream before final flush: {err}");
+            }
+            if let Some(chunk_emitter) = recording._chunk_emitter.as_ref() {
+                chunk_emitter.flush();
+            }
 
             let samples = recording
                 .buffer
@@ -1125,7 +1148,29 @@ mod cpal_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::{device_matches_preferred, disambiguated_label, is_preferred_input_device_name};
+        use super::{
+            device_matches_preferred, disambiguated_label, is_preferred_input_device_name,
+            ChunkEmitter,
+        };
+        use std::sync::{Arc, Mutex};
+
+        #[test]
+        fn chunk_emitter_flushes_the_final_partial_chunk() {
+            let chunks = Arc::new(Mutex::new(Vec::<Vec<f32>>::new()));
+            let callback_chunks = chunks.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk| {
+                callback_chunks.lock().unwrap().push(chunk);
+            }));
+
+            emitter.emit(&[0.1f32, 0.2f32]);
+            emitter.emit(&[0.3f32]);
+            emitter.flush();
+
+            assert_eq!(
+                *chunks.lock().unwrap(),
+                vec![vec![0.1f32, 0.2f32], vec![0.3f32]]
+            );
+        }
 
         #[test]
         fn first_device_keeps_its_bare_name() {

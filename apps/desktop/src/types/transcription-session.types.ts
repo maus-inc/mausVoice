@@ -31,6 +31,7 @@ export interface TranscriptionSession {
   ): Promise<TranscriptionSessionResult>;
   cleanup(): void;
   supportsStreaming(): boolean;
+  writeAudioChunk?: (chunk: Float32Array) => void;
   /** Provider-owned hard limit, measured as wall-clock time from recording start. */
   getMaximumRecordingDurationMs?(): number;
   setInterimResultCallback(callback: InterimResultCallback): void;
