@@ -65,7 +65,10 @@ import {
   playAlertSound,
   tryPlayAudioChime,
 } from "../../utils/audio.utils";
-import { createAudioChunkStartupBuffer } from "../../utils/audio-chunk-startup-buffer";
+import {
+  createAudioChunkStartupBuffer,
+  type AudioChunkStartupBuffer,
+} from "../../utils/audio-chunk-startup-buffer";
 import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
@@ -129,6 +132,66 @@ type StartRecordingResponse = {
 type AbortMessage = {
   title?: string;
   body: unknown;
+};
+
+type SessionAudioIntake = {
+  buffer: AudioChunkStartupBuffer;
+  unlisten: UnlistenFn | null;
+  current: boolean;
+};
+
+const forwardAudioChunk = (
+  session: TranscriptionSession,
+  chunk: Float32Array,
+): void => {
+  try {
+    session.writeAudioChunk?.(chunk);
+  } catch (error) {
+    getLogger().error(`[Dictation] Failed to forward audio chunk: ${error}`);
+  }
+};
+
+const attachSessionAudioIntake = async (
+  session: TranscriptionSession,
+  isCurrent: () => boolean,
+  shouldForwardLive: () => boolean,
+  onOverflow: (droppedSamples: number) => void,
+): Promise<SessionAudioIntake> => {
+  const buffer = createAudioChunkStartupBuffer(onOverflow);
+  if (typeof session.writeAudioChunk !== "function") {
+    return { buffer, unlisten: null, current: true };
+  }
+
+  const unlisten = await listen<{ samples: number[] }>(
+    "audio_chunk",
+    (event) => {
+      if (!isCurrent()) return;
+      const chunk = ensureFloat32Array(event.payload.samples);
+      if (chunk.length === 0) return;
+      if (!shouldForwardLive()) {
+        buffer.push(chunk);
+      } else {
+        forwardAudioChunk(session, chunk);
+      }
+    },
+  );
+
+  if (!isCurrent()) {
+    unlisten();
+    return { buffer, unlisten: null, current: false };
+  }
+  return { buffer, unlisten, current: true };
+};
+
+const stopOwnedNativeStart = async (
+  ownerRef: { current: number | null },
+  operationId: number,
+): Promise<void> => {
+  if (ownerRef.current !== operationId) return;
+  ownerRef.current = null;
+  await invoke("stop_recording").catch((error) => {
+    getLogger().verbose(`stop_recording failed after stale start: ${error}`);
+  });
 };
 
 type RawStopResp = {
@@ -1186,45 +1249,31 @@ export const DictationSideEffects = () => {
           `Created transcription session: ${session.constructor.name}`,
         );
 
-        const startupAudioBuffer = createAudioChunkStartupBuffer(
+        let audioForwardingReady = false;
+        const isCurrentStart = () =>
+          operationId === recordingOperationRef.current &&
+          sessionRef.current === session &&
+          strategyRef.current === strategy;
+        sessionRef.current = session;
+        strategyRef.current = strategy;
+
+        const intake = await attachSessionAudioIntake(
+          session,
+          isCurrentStart,
+          () => audioForwardingReady,
           (droppedSamples) => {
             getLogger().warning(
               `[Dictation] Startup audio buffer overflowed; dropped ${droppedSamples} samples`,
             );
           },
         );
-        let audioForwardingReady = false;
-        const audioChunkUnlisten =
-          typeof session.writeAudioChunk === "function"
-            ? await listen<{ samples: number[] }>("audio_chunk", (event) => {
-                if (
-                  operationId !== recordingOperationRef.current ||
-                  sessionRef.current !== session
-                ) {
-                  return;
-                }
-                const chunk = ensureFloat32Array(event.payload.samples);
-                if (chunk.length === 0) return;
-                if (audioForwardingReady) {
-                  try {
-                    session.writeAudioChunk?.(chunk);
-                  } catch (error) {
-                    getLogger().error(
-                      `[Dictation] Failed to forward live audio chunk: ${error}`,
-                    );
-                  }
-                } else {
-                  startupAudioBuffer.push(chunk);
-                }
-              })
-            : null;
-        if (operationId !== recordingOperationRef.current) {
-          audioChunkUnlisten?.();
+        const startupAudioBuffer = intake.buffer;
+        if (!intake.current) {
           session.cleanup();
           return;
         }
         audioChunkUnlistenRef.current?.();
-        audioChunkUnlistenRef.current = audioChunkUnlisten;
+        audioChunkUnlistenRef.current = intake.unlisten;
 
         tryPlayAudioChime("start_recording_clip");
         if (session.supportsStreaming()) {
@@ -1235,16 +1284,8 @@ export const DictationSideEffects = () => {
           });
         }
 
-        sessionRef.current = session;
-        strategyRef.current = strategy;
-        if (operationId !== recordingOperationRef.current) {
-          audioChunkUnlisten?.();
-          session.cleanup();
-          return;
-        }
         await strategy.onBeforeStart();
-        if (operationId !== recordingOperationRef.current) {
-          audioChunkUnlisten?.();
+        if (!isCurrentStart()) {
           session.cleanup();
           return;
         }
@@ -1291,14 +1332,7 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             "Recording start raced an abort or replacement; stopping the stale native stream",
           );
-          if (nativeStartOwnerRef.current === operationId) {
-            nativeStartOwnerRef.current = null;
-            await invoke("stop_recording").catch((error) => {
-              getLogger().verbose(
-                `stop_recording failed after stale start: ${error}`,
-              );
-            });
-          }
+          await stopOwnedNativeStart(nativeStartOwnerRef, operationId);
           return;
         }
         nativeStartOwnerRef.current = null;
@@ -1315,24 +1349,14 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             "Session was aborted while starting; skipping timers and stopping stale capture",
           );
-          if (nativeStartOwnerRef.current === operationId) {
-            nativeStartOwnerRef.current = null;
-            await invoke("stop_recording").catch(() => undefined);
-          }
+          await stopOwnedNativeStart(nativeStartOwnerRef, operationId);
           startedSession.cleanup();
           return;
         }
 
-        const forwardChunk = (chunk: Float32Array) => {
-          try {
-            startedSession.writeAudioChunk?.(chunk);
-          } catch (error) {
-            getLogger().error(
-              `[Dictation] Failed to forward audio chunk: ${error}`,
-            );
-          }
-        };
-        startupAudioBuffer.setSink(forwardChunk);
+        startupAudioBuffer.setSink((chunk) => {
+          forwardAudioChunk(startedSession, chunk);
+        });
         startupAudioBuffer.replay();
         startupAudioBuffer.reset();
         audioForwardingReady = true;
