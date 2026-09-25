@@ -222,6 +222,11 @@ pub(crate) struct PillState {
     /// and the release settle spring. The frame loop advances it while a drag
     /// is held or settling; see rust_pill_shared::drag.
     pub(crate) drag_motion: RefCell<rust_pill_shared::drag::DragController>,
+    /// Last complete Win32 monitor snapshot for the active drag. A failed or
+    /// partial enumeration must not look like a monitor hot-unplug to the seam
+    /// tracker and clear its hysteresis latch.
+    pub(crate) last_monitor_topology:
+        RefCell<Option<Vec<rust_pill_shared::edge::MonitorRect>>>,
     /// Hover-intent state machine: dwells before arming hover and lingers
     /// through a grace before exiting, so fast pass-throughs never flicker
     /// the pill. See rust_pill_shared::hover.
