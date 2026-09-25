@@ -25,6 +25,7 @@ import {
   geminiStreamChat,
   GENERATE_TEXT_MODELS,
   GenerateTextModel,
+  GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   groqStreamChat,
   OpenAIGenerateTextModel,
@@ -69,15 +70,45 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
 
+const describeCause = (error: unknown): string =>
+  error instanceof Error && error.message ? error.message : String(error);
+
+/**
+ * Every model in the chain failed. Reported as one error naming both models
+ * and both causes, because a fallback model that Groq has since retired looks
+ * exactly like the configured model failing on its own if only the second
+ * cause is reported. Kept provider-neutral because `generateText` serves
+ * post-processing, composer edits, and tone previews alike.
+ */
+export class GenerateTextFallbackError extends Error {
+  readonly model: string;
+  readonly fallbackModel: string;
+
+  constructor(args: {
+    model: string;
+    fallbackModel: string;
+    primaryError: unknown;
+    fallbackError: unknown;
+  }) {
+    const { model, fallbackModel, primaryError, fallbackError } = args;
+    super(
+      `Text generation failed on ${model} (${describeCause(primaryError)}), and the fallback model ${fallbackModel} failed too (${describeCause(fallbackError)}).`,
+      { cause: primaryError },
+    );
+    this.name = "GenerateTextFallbackError";
+    this.model = model;
+    this.fallbackModel = fallbackModel;
+  }
+}
+
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  // Must stay inside `GENERATE_TEXT_MODELS`. The smaller gpt-oss tier is the
-  // documented Groq default and is what the constructor falls back to, so a
-  // post-processing failure on the 120b model still lands on a live model
-  // instead of a retired id. When the configured model already is this one,
+  // The same constant the constructor falls back to, so a post-processing
+  // failure on the other catalog model still lands on a live one instead of a
+  // retired id. When the configured model already is this one,
   // `generateWithFallback` rethrows rather than retrying the same model.
-  private fallbackModel: GenerateTextModel = "openai/gpt-oss-20b";
+  private fallbackModel: GenerateTextModel = GROQ_DEFAULT_GENERATE_TEXT_MODEL;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -89,7 +120,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     this.model =
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
-        : "openai/gpt-oss-20b";
+        : GROQ_DEFAULT_GENERATE_TEXT_MODEL;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -117,23 +148,34 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         signal: input.signal,
       });
       return { response, model: this.model };
-    } catch (error) {
+    } catch (primaryError) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
       if (input.signal?.aborted || this.model === this.fallbackModel) {
-        throw error;
+        throw primaryError;
       }
 
-      const response = await groqGenerateTextResponse({
-        apiKey: this.groqApiKey,
-        model: this.fallbackModel,
-        prompt: input.prompt,
-        system: input.system ?? undefined,
-        jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
-        signal: input.signal,
-      });
-      return { response, model: this.fallbackModel };
+      try {
+        const response = await groqGenerateTextResponse({
+          apiKey: this.groqApiKey,
+          model: this.fallbackModel,
+          prompt: input.prompt,
+          system: input.system ?? undefined,
+          jsonResponse: input.jsonResponse,
+          maxTokens: input.maxTokens,
+          signal: input.signal,
+        });
+        return { response, model: this.fallbackModel };
+      } catch (fallbackError) {
+        // Dropping the primary error here is what let a retired fallback model
+        // read as an unexplained failure of the configured model. Report both.
+        throw new GenerateTextFallbackError({
+          model: this.model,
+          fallbackModel: this.fallbackModel,
+          primaryError,
+          fallbackError,
+        });
+      }
     }
   }
 
