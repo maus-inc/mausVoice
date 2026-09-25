@@ -316,6 +316,21 @@ const parsePromptToCustomVocabulary = (
   return parts.slice(0, 1000);
 };
 
+const ensureOk = async (response: Response): Promise<void> => {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new GeminiHttpError(response.status, detail);
+  }
+};
+
+const getUploadUrl = (response: Response): string => {
+  const url =
+    response.headers.get("x-goog-upload-url") ??
+    response.headers.get("X-Goog-Upload-URL");
+  if (!url) throw new Error("Gemini Files API did not return an upload URL");
+  return url;
+};
+
 const uploadGeminiFile = async (
   apiKey: string,
   blob: ArrayBuffer | Buffer,
@@ -327,7 +342,6 @@ const uploadGeminiFile = async (
     blob instanceof Uint8Array
       ? blob
       : new Uint8Array(blob as ArrayBuffer | Buffer as ArrayBuffer);
-  const byteLength = bytes.byteLength;
 
   const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
     method: "POST",
@@ -336,7 +350,7 @@ const uploadGeminiFile = async (
       "x-goog-api-key": apiKey.trim(),
       "X-Goog-Upload-Protocol": "resumable",
       "X-Goog-Upload-Command": "start",
-      "X-Goog-Upload-Header-Content-Length": String(byteLength),
+      "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
       "X-Goog-Upload-Header-Content-Type": mimeType,
     },
     body: JSON.stringify({
@@ -344,19 +358,8 @@ const uploadGeminiFile = async (
     }),
     signal,
   });
-
-  if (!startResponse.ok) {
-    const detail = await startResponse.text().catch(() => "");
-    throw new GeminiHttpError(startResponse.status, detail);
-  }
-
-  const uploadUrl =
-    startResponse.headers.get("x-goog-upload-url") ??
-    startResponse.headers.get("X-Goog-Upload-URL");
-
-  if (!uploadUrl) {
-    throw new Error("Gemini Files API did not return an upload URL");
-  }
+  await ensureOk(startResponse);
+  const uploadUrl = getUploadUrl(startResponse);
 
   const uploadResponse = await customFetch(uploadUrl, {
     method: "POST",
@@ -367,30 +370,16 @@ const uploadGeminiFile = async (
     body: bytes as unknown as BodyInit,
     signal,
   });
-
-  if (!uploadResponse.ok) {
-    const detail = await uploadResponse.text().catch(() => "");
-    throw new GeminiHttpError(uploadResponse.status, detail);
-  }
+  await ensureOk(uploadResponse);
 
   const payload = (await uploadResponse.json()) as {
-    file?: {
-      uri?: string;
-      mimeType?: string;
-      mime_type?: string;
-      state?: string;
-      name?: string;
-    };
-    state?: string;
+    file?: { uri?: string; mimeType?: string; mime_type?: string };
   };
-
   const uri = payload.file?.uri;
-  if (!uri) {
+  if (!uri)
     throw new Error(
       "Gemini Files API upload succeeded but returned no file URI",
     );
-  }
-
   return {
     uri,
     mimeType: payload.file?.mimeType ?? payload.file?.mime_type ?? mimeType,
@@ -424,10 +413,7 @@ const fetchGeminiFileState = async (
     headers: { "x-goog-api-key": apiKey.trim() },
     signal,
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new GeminiHttpError(response.status, detail);
-  }
+  await ensureOk(response);
   const data = (await response.json()) as {
     state?: string;
     file?: { state?: string };
