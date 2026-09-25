@@ -113,7 +113,6 @@
   "beta_builds_arrive_earlier_but_may_carry_rough_edges_returni": "测试版构建更早可用，但可能不够稳定。返回稳定版可以等到有更新的稳定版超过你的测试版。",
   "beyond_dictation_the_assistant_answers_questions_edits_text": "除了听写，助手还能在此聊天中回答问题、编辑文本并运行工具。您听写的任何内容都可以变成问题。",
   "bottom": "底部",
-  "breadcrumb": "路径",
   "browse_styles": "浏览风格",
   "browser_preview": "浏览器预览",
   "bullets": "要点",

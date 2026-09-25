@@ -113,7 +113,6 @@
   "beta_builds_arrive_earlier_but_may_carry_rough_edges_returni": "Beta builds arrive earlier but may carry rough edges. Returning to stable can wait until a newer stable release passes your beta version.",
   "beyond_dictation_the_assistant_answers_questions_edits_text": "Beyond dictation, the assistant answers questions, edits text, and runs tools in this chat. Anything you dictate can become a question.",
   "bottom": "Bottom",
-  "breadcrumb": "Breadcrumb",
   "browse_styles": "Browse styles",
   "browser_preview": "Browser preview",
   "bullets": "Bullets",
