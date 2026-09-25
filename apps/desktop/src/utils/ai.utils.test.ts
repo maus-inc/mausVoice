@@ -459,6 +459,9 @@ describe("isLikelyTruncatedJson", () => {
     '{"result":"We agreed to push the beta to',
     '```json\n{"result":"We agreed to push',
     '  {"result":"Done."  ',
+    '{"result":"He said }',
+    '{"result":"Use {braces} and \\"quotes\\" like }',
+    '{"result":{"text":"Done."}',
   ])("flags an object that never closes: %s", (raw) => {
     expect(isLikelyTruncatedJson(raw)).toBe(true);
   });
@@ -467,6 +470,8 @@ describe("isLikelyTruncatedJson", () => {
     '{"result":"Done."}',
     '```json\n{"result":"Done."}\n```',
     "Sure, here is the cleaned text.",
+    '{"result":"He said }"}',
+    '{"result":"Done."} trailing words',
     "",
   ])("does not flag complete JSON or prose: %s", (raw) => {
     expect(isLikelyTruncatedJson(raw)).toBe(false);

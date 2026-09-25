@@ -55,10 +55,10 @@ export const parsePostProcessingJson = (raw: string): unknown =>
   JSON.parse(extractJsonFromMarkdown(raw));
 
 /**
- * True when a reply that failed to parse opens a JSON object but never closes
- * it, the shape of output cut off at the model's token limit. Checked on the
- * text itself rather than the parser's message, and tolerant of a code fence
- * that was cut off before it closed.
+ * True when a reply that failed to parse opens a JSON object but ends inside
+ * a string or with brackets still open, the shape of output cut off at the
+ * model's token limit. Braces inside string values are ignored, and a code
+ * fence cut off before it closed is tolerated.
  */
 export const isLikelyTruncatedJson = (raw: string): boolean => {
   const body = raw
@@ -66,7 +66,30 @@ export const isLikelyTruncatedJson = (raw: string): boolean => {
     .replace(/^```(?:json)?/i, "")
     .replace(/```$/, "")
     .trim();
-  return body.startsWith("{") && !body.endsWith("}");
+  if (!body.startsWith("{")) {
+    return false;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of body) {
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth -= 1;
+    }
+  }
+  return inString || depth > 0;
 };
 
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>
