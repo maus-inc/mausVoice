@@ -31,7 +31,6 @@ const NOISE_FLOOR_MULTIPLIER = 3;
 const SPEECH_LEVEL_RATIO = 0.1;
 const FLOOR_RISE = 0.0005;
 const PEAK_DECAY = 0.9995;
-const PROBE_LENGTH = 32;
 
 const NO_SPACE_SCRIPT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\u3000-\u303f\uff00-\uffef]/u;
@@ -77,7 +76,26 @@ const mergeSpanMetadata = (
 
 type CommittedChunk = {
   endOffset: number;
-  probe: Float32Array;
+  length: number;
+  checksum: number;
+};
+
+/**
+ * FNV-1a over the raw sample bytes. A committed span must match the final
+ * recording exactly, so the whole span is digested: checking only a suffix
+ * would accept a stream that diverges in the interior of a span.
+ */
+const checksumSamples = (samples: Float32Array): number => {
+  const bytes = new Uint8Array(
+    samples.buffer,
+    samples.byteOffset,
+    samples.byteLength,
+  );
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < bytes.length; index += 1) {
+    hash = Math.imul(hash ^ bytes[index], 0x01000193);
+  }
+  return hash >>> 0;
 };
 
 /**
@@ -90,9 +108,11 @@ type CommittedChunk = {
  * recording.
  *
  * `finish` returns `null` whenever the result could differ from a single
- * whole-recording request (no cut happened, a span failed, or the live
- * stream does not match the final recording). The caller then transcribes
- * the full recording exactly as before.
+ * whole-recording request (no cut happened, a span failed, the live stream does
+ * not match the final recording, or the unobserved prefix is too long to be
+ * worth its own request). The caller then transcribes the full recording
+ * exactly as before. When it does return a result, that result always covers
+ * the entire recording.
  */
 export class PauseChunkedPretranscriber {
   private buffer = new Float32Array(0);
@@ -168,13 +188,23 @@ export class PauseChunkedPretranscriber {
     const start = this.streamStart ?? 0;
     if (!this.matchesCommittedAudio(samples, start)) return null;
 
+    // The listener attaches after capture starts, so the samples before
+    // `streamStart` never arrived on the live stream. They are still in the
+    // final recording, so transcribe them as a leading span instead of
+    // returning a transcript that silently starts mid-sentence.
+    const prefix = start > 0 ? samples.subarray(0, start) : null;
+    if (prefix && prefix.length > this.minChunkSamples) return null;
+    const prefixResult = prefix ? this.enqueue(prefix.slice()) : null;
+
     const tail = samples.subarray(start + this.committedOffset);
     const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
     let chunks: PretranscribedChunk[];
     try {
-      chunks = await Promise.all(
-        tailResult ? [...this.results, tailResult] : this.results,
-      );
+      chunks = await Promise.all([
+        ...(prefixResult ? [prefixResult] : []),
+        ...this.results,
+        ...(tailResult ? [tailResult] : []),
+      ]);
     } catch {
       return null;
     }
@@ -266,7 +296,8 @@ export class PauseChunkedPretranscriber {
     this.committedOffset += cut;
     this.committed.push({
       endOffset: this.committedOffset,
-      probe: span.slice(Math.max(0, span.length - PROBE_LENGTH)),
+      length: span.length,
+      checksum: checksumSamples(span),
     });
     this.results.push(this.enqueue(span));
 
@@ -290,21 +321,22 @@ export class PauseChunkedPretranscriber {
 
   /**
    * The live `audio_chunk` stream and the recorder buffer are fed from the
-   * same capture callback, so committed spans must be an exact prefix of the
-   * final recording. Verify the end of every committed span before trusting
-   * the incremental transcripts.
+   * same capture callback, so every committed span must be an exact prefix of
+   * the final recording. Each span is digested in full and compared against
+   * the corresponding range of the final recording before its transcript is
+   * trusted.
    */
   private matchesCommittedAudio(
     samples: Float32Array,
     streamStart: number,
   ): boolean {
     if (samples.length < streamStart + this.committedOffset) return false;
-    return this.committed.every(({ endOffset, probe }) => {
-      const start = streamStart + endOffset - probe.length;
-      for (let index = 0; index < probe.length; index += 1) {
-        if (samples[start + index] !== probe[index]) return false;
-      }
-      return true;
+    return this.committed.every(({ endOffset, length, checksum }) => {
+      const start = streamStart + endOffset - length;
+      if (start < 0) return false;
+      return (
+        checksumSamples(samples.subarray(start, start + length)) === checksum
+      );
     });
   }
 }

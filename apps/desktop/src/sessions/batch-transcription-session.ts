@@ -80,11 +80,16 @@ export const logPretranscription = (
   );
 };
 
-const EMPTY_RESULT: TranscriptionSessionResult = {
+/**
+ * Returned instead of a transcript when there is nothing to send or the run
+ * was cancelled. Built fresh per call so a caller mutating the result cannot
+ * reach another caller's object.
+ */
+const emptyResult = (): TranscriptionSessionResult => ({
   rawTranscript: null,
   metadata: {},
   warnings: [],
-};
+});
 
 /**
  * Batch transcription session. Audio is transcribed with one request after
@@ -122,7 +127,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       const pretranscribed = await this.finishPretranscription(audio);
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
-      if (pretranscriber?.isDisposed) return EMPTY_RESULT;
+      if (pretranscriber?.isDisposed) return emptyResult();
       return await this.transcribeWholeRecording(audio);
     } finally {
       this.cleanup();
@@ -175,7 +180,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `Batch session: skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
       );
-      return EMPTY_RESULT;
+      return emptyResult();
     }
 
     const warnings: string[] = [];
