@@ -1,12 +1,29 @@
 /*
+ * Safety net for metal-fx's first-frame reveal.
+ *
  * metal-fx keeps its wrapper at `opacity: 0; visibility: hidden` (inline
- * style) until the shared WebGL renderer copies its first frame. If that never
- * happens (context lost, GPU reset, shader init failure in the webview), the
- * wrapped control stays invisible and unclickable. The control must never
- * depend on a decorative shader, so force the wrapper visible; the metal ring
- * simply appears once the canvas has painted.
+ * style) until the shared WebGL renderer copies its first frame, then fades it
+ * in. If that never happens (context lost, GPU reset, shader init failure in
+ * the webview), the wrapped control stays invisible and unclickable.
+ *
+ * The normal reveal is left alone: before the delay this rule has no effect,
+ * so there is no pre-paint flash of the wrapper surface and the library fade
+ * still plays. Once the delay has elapsed, the `forwards` fill of this
+ * animation outranks the library's normal inline declarations in the cascade
+ * (no important-flag override needed) and pins the control visible whether
+ * or not the shader ever painted. On the happy path it restates the values metal-fx has
+ * already set, so nothing changes visually.
  */
 .mv-metal-chrome {
-  opacity: 1 !important;
-  visibility: visible !important;
+  animation: mv-metal-chrome-reveal 150ms ease-out 600ms forwards;
+}
+
+@keyframes mv-metal-chrome-reveal {
+  from {
+    visibility: visible;
+  }
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
 }
