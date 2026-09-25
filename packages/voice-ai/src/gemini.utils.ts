@@ -240,7 +240,7 @@ const convertJsonSchemaToGeminiSchema = (
   return converted;
 };
 
-const isGeminiTranscribeModel = (model: string): boolean =>
+export const isGeminiTranscribeModel = (model: string): boolean =>
   model.includes("-transcribe") && !model.includes("-live");
 
 const arrayBufferToBase64 = (
@@ -303,6 +303,7 @@ const parsePromptToCustomVocabulary = (
   if (
     trimmed.length > 500 &&
     !trimmed.includes(",") &&
+    !trimmed.includes(";") &&
     !trimmed.includes("\n")
   ) {
     return undefined;
@@ -390,13 +391,11 @@ const deleteGeminiFile = async (
   fileUri: string,
   apiKey: string,
   customFetch: CustomFetch,
-  signal?: AbortSignal,
 ): Promise<void> => {
   try {
     await customFetch(fileUri, {
       method: "DELETE",
       headers: { "x-goog-api-key": apiKey.trim() },
-      signal,
     });
   } catch {
     // Best-effort cleanup: storage quota leak is not fatal to transcription.
@@ -418,11 +417,26 @@ const fetchGeminiFileState = async (
     state?: string;
     file?: { state?: string };
   };
-  return data.state ?? data.file?.state ?? "ACTIVE";
+  const state = data.state ?? data.file?.state ?? "ACTIVE";
+  if (state === "FAILED") throw new Error("Gemini file processing failed");
+  return state;
 };
 
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      const abort = () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new DOMException("aborted", "AbortError"));
+      };
+      if (signal.aborted) {
+        abort();
+      } else {
+        signal.addEventListener("abort", abort, { once: true });
+      }
+    }
+  });
 
 const waitForGeminiFileActive = async (
   fileUri: string,
@@ -630,12 +644,7 @@ const transcribeWithDedicatedModel = async (args: {
     return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
-      await deleteGeminiFile(
-        uploaded.uri,
-        args.apiKey,
-        args.customFetch,
-        args.signal,
-      );
+      await deleteGeminiFile(uploaded.uri, args.apiKey, args.customFetch);
     }
   }
 };
