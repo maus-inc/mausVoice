@@ -19,6 +19,7 @@ import {
   savePersonalGroqApiKey,
 } from "../../actions/personal-use.actions";
 import { trackButtonClick } from "../../utils/analytics.utils";
+import { ConfirmDialog } from "../common/ConfirmDialog";
 import {
   BackButton,
   DualPaneLayout,
@@ -57,6 +58,7 @@ export const PersonalCredentialsForm = () => {
   const [deepgramKey, setDeepgramKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skipConfirmationOpen, setSkipConfirmationOpen] = useState(false);
 
   const trimmedGroq = groqKey.trim();
   const trimmedDeepgram = deepgramKey.trim();
@@ -94,6 +96,17 @@ export const PersonalCredentialsForm = () => {
 
   const handleSkip = () => {
     trackButtonClick("onboarding_personal_credentials_skip");
+    setSkipConfirmationOpen(true);
+  };
+
+  const handleCancelSkip = () => {
+    trackButtonClick("onboarding_cancel_personal_credentials_skip");
+    setSkipConfirmationOpen(false);
+  };
+
+  const handleConfirmSkip = () => {
+    trackButtonClick("onboarding_confirm_personal_credentials_skip");
+    setSkipConfirmationOpen(false);
     goToOnboardingPage("userDetails");
   };
 
@@ -158,7 +171,7 @@ export const PersonalCredentialsForm = () => {
             }}
           />
           <ConsoleLink url="https://console.deepgram.com/">
-            <FormattedMessage defaultMessage="Open Deepgram API keys" />
+            <FormattedMessage defaultMessage="Grab your Deepgram API key" />
           </ConsoleLink>
 
           <TextField
@@ -178,7 +191,7 @@ export const PersonalCredentialsForm = () => {
             }}
           />
           <ConsoleLink url="https://console.groq.com/keys">
-            <FormattedMessage defaultMessage="Open Groq API keys" />
+            <FormattedMessage defaultMessage="Grab your Groq API key" />
           </ConsoleLink>
         </Stack>
       </Stack>
@@ -194,5 +207,22 @@ export const PersonalCredentialsForm = () => {
     />
   );
 
-  return <DualPaneLayout left={form} right={rightContent} />;
+  return (
+    <>
+      <ConfirmDialog
+        isOpen={skipConfirmationOpen}
+        title={<FormattedMessage defaultMessage="Skip API key setup?" />}
+        content={
+          <FormattedMessage defaultMessage="Local models use more system resources and run slower than API-based models. You can add your keys later in Settings." />
+        }
+        onCancel={handleCancelSkip}
+        onConfirm={handleConfirmSkip}
+        cancelLabel={<FormattedMessage defaultMessage="Go back" />}
+        confirmLabel={<FormattedMessage defaultMessage="Skip for now" />}
+        cancelButtonProps={{ autoFocus: true }}
+        confirmButtonProps={{ color: "warning" }}
+      />
+      <DualPaneLayout left={form} right={rightContent} />
+    </>
+  );
 };
