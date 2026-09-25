@@ -14,10 +14,11 @@
 //! Easing runs on the window origin against bounds already adjusted for the
 //! visible pill footprint; an origin on a bound places the pill edge at the
 //! work-area edge without footprint math here. During a drag, adjacent-monitor
-//! seams replace the exposed-edge bound with a center-crossing plane. Shared
-//! seams also retain the full monitor span along their tangent so docks and
-//! menu bars cannot block reachable crossings. Releasing ends that exception:
-//! settling uses the work-area bounds and returns the pill fully on-screen.
+//! seams replace only the connected edge's work-area bound with a center-
+//! crossing plane. Other exposed edges keep their work-area limits, so a
+//! side-by-side crossing cannot escape past a top or bottom panel. Releasing
+//! ends the seam exception: settling uses work-area bounds and returns the
+//! pill fully on-screen.
 
 /// Band depth as a fraction of the work-area dimension on that axis.
 pub const EDGE_BAND_FRACTION: f64 = 0.05;
@@ -87,8 +88,8 @@ impl MonitorRect {
 
 /// Per-frame drag area. Shared sides use the full monitor edge and disable
 /// edge resistance; adapters shift those bounds to the pill-center crossing
-/// plane. A seam also keeps the full monitor span along its tangent axis so a
-/// perpendicular work-area inset cannot close a traversable crossing.
+/// plane. Exposed sides retain their work-area bounds even when a
+/// perpendicular shared seam is open.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DragRegion {
     pub bounds: MonitorRect,
@@ -137,31 +138,13 @@ fn region_for_edges(
         return DragRegion { bounds, edge_mask: EdgeMask::ALL };
     }
 
-    let vertical_seam = !exposed.left || !exposed.right;
-    let horizontal_seam = !exposed.top || !exposed.bottom;
-    // Keep the full monitor span along a seam's tangent axis. Applying a
-    // perpendicular work-area inset there would close traversable portions
-    // of the physical seam beneath a dock or panel.
-    let left = if horizontal_seam || !exposed.left {
-        monitor.x
-    } else {
-        work_area.x
-    };
-    let right = if horizontal_seam || !exposed.right {
-        monitor.right()
-    } else {
-        work_area.right()
-    };
-    let top = if vertical_seam || !exposed.top {
-        monitor.y
-    } else {
-        work_area.y
-    };
-    let bottom = if vertical_seam || !exposed.bottom {
-        monitor.bottom()
-    } else {
-        work_area.bottom()
-    };
+    // Expand only the connected edge to the monitor boundary. Keeping every
+    // exposed edge on the work area preserves panel/taskbar clearance even
+    // when a perpendicular shared seam is open.
+    let left = if exposed.left { work_area.x } else { monitor.x };
+    let right = if exposed.right { work_area.right() } else { monitor.right() };
+    let top = if exposed.top { work_area.y } else { monitor.y };
+    let bottom = if exposed.bottom { work_area.bottom() } else { monitor.bottom() };
     DragRegion {
         bounds: MonitorRect {
             x: left,
@@ -539,33 +522,46 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_vertical_seam_keeps_the_full_tangent_span_past_a_dock_inset() {
+    fn a_shared_vertical_seam_preserves_exposed_top_and_bottom_workarea_bounds() {
         let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
-        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
+        let work = MonitorRect { x: 0.0, y: 40.0, width: 1180.0, height: 900.0 };
         let neighbor = MonitorRect { x: 1200.0, y: 0.0, width: 1000.0, height: 1000.0 };
 
-        let region = drag_region(monitor, work, &[neighbor], (1190.0, 950.0));
+        let region = drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
 
         assert!(!region.edge_mask.right);
+        assert!(region.edge_mask.top);
         assert!(region.edge_mask.bottom);
-        assert_eq!(region.bounds.x, work.x);
         assert_eq!(region.bounds.right(), monitor.right());
-        assert_eq!(region.bounds.y, monitor.y);
-        assert_eq!(region.bounds.bottom(), monitor.bottom());
+        assert_eq!(region.bounds.y, work.y);
+        assert_eq!(region.bounds.bottom(), work.bottom());
+
+        let seam_x = region.bounds.right() - 1.0;
+        let (eased_x, eased_y) = ease_point(
+            seam_x,
+            region.bounds.y,
+            0.0,
+            0.0,
+            (region.bounds.x, region.bounds.y, region.bounds.right(), region.bounds.bottom()),
+            Some(EdgeWork { width: work.width, height: work.height, edges: region.edge_mask }),
+        );
+        assert_eq!(eased_x, seam_x, "the shared side must not repel the crossing");
+        assert!(eased_y > work.y, "the exposed top edge must retain its safe gap");
     }
 
     #[test]
-    fn a_shared_horizontal_seam_keeps_the_full_tangent_span_past_a_dock_inset() {
+    fn a_shared_horizontal_seam_preserves_exposed_left_and_right_workarea_bounds() {
         let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
-        let work = MonitorRect { x: 40.0, y: 0.0, width: 1160.0, height: 960.0 };
+        let work = MonitorRect { x: 40.0, y: 20.0, width: 1120.0, height: 960.0 };
         let neighbor = MonitorRect { x: 0.0, y: -800.0, width: 1200.0, height: 800.0 };
 
         let region = drag_region(monitor, work, &[neighbor], (600.0, 10.0));
 
         assert!(!region.edge_mask.top);
         assert!(region.edge_mask.left);
-        assert_eq!(region.bounds.x, monitor.x);
-        assert_eq!(region.bounds.right(), monitor.right());
+        assert!(region.edge_mask.right);
+        assert_eq!(region.bounds.x, work.x);
+        assert_eq!(region.bounds.right(), work.right());
         assert_eq!(region.bounds.y, monitor.y);
     }
 
