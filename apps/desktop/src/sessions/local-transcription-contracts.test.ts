@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { listen } from "@tauri-apps/api/event";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { createDefaultPreferences } from "../actions/user.actions";
@@ -155,5 +156,111 @@ describe("local streaming filter ownership", () => {
     expect(
       (await session.finalize({ samples, sampleRate: 16000 })).rawTranscript,
     ).toBe("thank you");
+  });
+});
+
+describe("local streaming start capture", () => {
+  const emitChunk = (samples: number[]) => {
+    const handler = vi.mocked(listen).mock.calls.at(-1)?.[1];
+    handler?.({ event: "audio_chunk", id: 0, payload: { samples } });
+  };
+
+  it("delivers audio captured before the sidecar session exists, in order", async () => {
+    const writeAudioChunk = vi.fn();
+    let resolveSession: (value: unknown) => void = () => {};
+    mocks.createStreamingSession.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSession = resolve;
+      }),
+    );
+    const session = new LocalTranscriptionSession();
+
+    await session.onBeforeRecordingStart();
+    emitChunk([0.1, 0.2]);
+    const starting = session.onRecordingStart(16000);
+    emitChunk([0.3]);
+    await vi.waitFor(() => expect(mocks.createStreamingSession).toBeCalled());
+    resolveSession({
+      finalize: mocks.finalize,
+      cleanup: mocks.cleanup,
+      writeAudioChunk,
+    });
+    await starting;
+    emitChunk([0.4]);
+
+    expect(listen).toHaveBeenCalledTimes(1);
+    expect(writeAudioChunk.mock.calls).toEqual([
+      [[0.1, 0.2]],
+      [[0.3]],
+      [[0.4]],
+    ]);
+  });
+
+  it("still subscribes when recording starts without the early hook", async () => {
+    const session = new LocalTranscriptionSession();
+    await session.onRecordingStart(16000);
+    expect(listen).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries the subscription at start when the early hook could not subscribe", async () => {
+    vi.mocked(listen).mockRejectedValueOnce(new Error("ipc unavailable"));
+    const session = new LocalTranscriptionSession();
+
+    await expect(session.onBeforeRecordingStart()).resolves.toBeUndefined();
+    await session.onRecordingStart(16000);
+
+    expect(listen).toHaveBeenCalledTimes(2);
+    expect(mocks.createStreamingSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to batch when startup audio outgrows the buffer", async () => {
+    const writeAudioChunk = vi.fn();
+    const sidecarCleanup = vi.fn();
+    mocks.createStreamingSession.mockResolvedValueOnce({
+      finalize: mocks.finalize,
+      cleanup: sidecarCleanup,
+      writeAudioChunk,
+    });
+    mocks.transcribeAudio.mockResolvedValueOnce({
+      rawTranscript: "the whole recording",
+      metadata: {},
+      warnings: [],
+    });
+    const session = new LocalTranscriptionSession();
+
+    await session.onBeforeRecordingStart();
+    const second = Array.from({ length: 48_000 }, () => 0.1);
+    for (let index = 0; index < 31; index += 1) {
+      emitChunk(second);
+    }
+    await session.onRecordingStart(48_000);
+
+    expect(writeAudioChunk).not.toHaveBeenCalled();
+    expect(sidecarCleanup).toHaveBeenCalledTimes(1);
+    const output = await session.finalize({ samples, sampleRate: 16000 });
+    expect(output.rawTranscript).toBe("the whole recording");
+    expect(mocks.finalize).not.toHaveBeenCalled();
+    expect(output.warnings.join(" ")).toContain("falling back to batch mode");
+  });
+
+  it("drops buffered audio and unsubscribes when the sidecar session cannot start", async () => {
+    mocks.createStreamingSession.mockRejectedValueOnce(new Error("no model"));
+    mocks.transcribeAudio.mockResolvedValueOnce({
+      rawTranscript: "hello",
+      metadata: {},
+      warnings: [],
+    });
+    const session = new LocalTranscriptionSession();
+
+    await session.onBeforeRecordingStart();
+    emitChunk([0.1]);
+    await session.onRecordingStart(16000);
+
+    expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+    const output = await session.finalize({ samples, sampleRate: 16000 });
+    expect(output.rawTranscript).toBe("hello");
+    expect(mocks.transcribeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ samples: Array.from(samples) }),
+    );
   });
 });

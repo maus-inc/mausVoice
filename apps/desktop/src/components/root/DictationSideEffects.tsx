@@ -1169,6 +1169,7 @@ export const DictationSideEffects = () => {
         sessionRef.current = session;
         strategyRef.current = strategy;
         await strategy.onBeforeStart();
+        await session.onBeforeRecordingStart?.();
 
         getLogger().info(
           `Starting recording (mic=${preferredMicrophone ?? "default"})`,

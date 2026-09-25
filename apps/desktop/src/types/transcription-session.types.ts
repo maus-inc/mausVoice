@@ -24,6 +24,8 @@ export type TranscriptionSessionFinalizeOptions = {
 export type InterimResultCallback = (segment: string) => void;
 
 export interface TranscriptionSession {
+  /** Runs before the microphone opens, so audio from the first instant is observable. */
+  onBeforeRecordingStart?(): Promise<void>;
   onRecordingStart(sampleRate: number): Promise<void>;
   finalize(
     audio: StopRecordingResponse,

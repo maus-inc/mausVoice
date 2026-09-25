@@ -29,6 +29,11 @@ type AudioChunkPayload = {
   samples: number[];
 };
 
+// About 30 seconds at a typical 48 kHz capture rate. Past this the sidecar is
+// far from ready, so stop buffering and let finalize batch-transcribe the full
+// recording instead of holding it twice in memory.
+const MAX_STARTUP_BUFFER_SAMPLES = 48_000 * 30;
+
 type LocalSessionContext = {
   prompt: string;
   hallucinationFilterEnabled: boolean;
@@ -39,12 +44,30 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private session: LocalSidecarStreamingSession | null = null;
   private context: LocalSessionContext | null = null;
   private startupWarnings: string[] = [];
+  private pendingChunks: number[][] = [];
+  private pendingSampleCount = 0;
+  private startupBufferOverflowed = false;
+
+  // Capture emits chunks as soon as the microphone opens and Tauri does not
+  // replay events, so subscribe before recording starts and buffer until the
+  // sidecar session exists. Otherwise the opening words never reach it.
+  async onBeforeRecordingStart(): Promise<void> {
+    try {
+      await this.subscribeToAudioChunks();
+    } catch (error) {
+      getLogger().warning(
+        `[local-stream-session] early audio subscription failed (${this.toErrorMessage(error)})`,
+      );
+    }
+  }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    this.cleanup();
     this.startupWarnings = [];
 
     try {
+      if (!this.unlisten) {
+        await this.subscribeToAudioChunks();
+      }
       const state = getAppState();
       const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
       const whisperLanguage =
@@ -69,17 +92,19 @@ export class LocalTranscriptionSession implements TranscriptionSession {
           hallucinationFilterEnabled,
         });
 
+      if (this.startupBufferOverflowed) {
+        sidecarSession.cleanup();
+        throw new Error(
+          "startup audio outgrew the buffer before the sidecar was ready",
+        );
+      }
+
       this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
-      this.unlisten = await listen<AudioChunkPayload>(
-        "audio_chunk",
-        (event) => {
-          if (!this.session || !event.payload.samples.length) {
-            return;
-          }
-          this.session.writeAudioChunk(event.payload.samples);
-        },
-      );
+      for (const chunk of this.pendingChunks) {
+        sidecarSession.writeAudioChunk(chunk);
+      }
+      this.clearStartupBuffer();
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
@@ -157,6 +182,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     this.session?.cleanup();
     this.session = null;
     this.context = null;
+    this.clearStartupBuffer();
+    this.startupBufferOverflowed = false;
   }
 
   supportsStreaming(): boolean {
@@ -164,6 +191,38 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   }
 
   setInterimResultCallback(): void {}
+
+  private async subscribeToAudioChunks(): Promise<void> {
+    this.cleanup();
+    this.unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) =>
+      this.handleAudioChunk(event.payload.samples),
+    );
+  }
+
+  private handleAudioChunk(samples: number[]): void {
+    if (!samples.length) {
+      return;
+    }
+    if (this.session) {
+      this.session.writeAudioChunk(samples);
+      return;
+    }
+    if (this.startupBufferOverflowed) {
+      return;
+    }
+    if (this.pendingSampleCount + samples.length > MAX_STARTUP_BUFFER_SAMPLES) {
+      this.startupBufferOverflowed = true;
+      this.clearStartupBuffer();
+      return;
+    }
+    this.pendingChunks.push(samples);
+    this.pendingSampleCount += samples.length;
+  }
+
+  private clearStartupBuffer(): void {
+    this.pendingChunks = [];
+    this.pendingSampleCount = 0;
+  }
 
   private async finalizeWithBatchFallback(
     audio: StopRecordingResponse,
