@@ -140,6 +140,18 @@ type SessionAudioIntake = {
   current: boolean;
 };
 
+const isRecordingStartCurrent = (
+  operationId: number,
+  currentOperationId: number,
+  session: TranscriptionSession,
+  currentSession: TranscriptionSession | null,
+  strategy: BaseStrategy,
+  currentStrategy: BaseStrategy | null,
+): boolean =>
+  operationId === currentOperationId &&
+  currentSession === session &&
+  currentStrategy === strategy;
+
 const forwardAudioChunk = (
   session: TranscriptionSession,
   chunk: Float32Array,
@@ -1260,9 +1272,14 @@ export const DictationSideEffects = () => {
 
         let audioForwardingReady = false;
         const isCurrentStart = () =>
-          operationId === recordingOperationRef.current &&
-          sessionRef.current === session &&
-          strategyRef.current === strategy;
+          isRecordingStartCurrent(
+            operationId,
+            recordingOperationRef.current,
+            session,
+            sessionRef.current,
+            strategy,
+            strategyRef.current,
+          );
         sessionRef.current = session;
         strategyRef.current = strategy;
 
