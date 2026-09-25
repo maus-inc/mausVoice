@@ -28,6 +28,7 @@ import {
   checkForAppUpdates,
   installAvailableUpdate,
 } from "../../actions/updater.actions";
+import { INITIAL_ONBOARDING_STATE } from "../../state/onboarding.state";
 import {
   refreshCurrentUser,
   setActiveDictationLanguage,
@@ -371,11 +372,26 @@ export const AppSideEffects = () => {
     getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
     authReadyRef.current = true;
     setAuthReady(true);
+    const uidChanged = authUidRef.current !== nextAuthUid;
     produceAppState((draft) => {
       draft.auth = user;
-      if (authUidRef.current !== nextAuthUid) {
+      if (uidChanged) {
         authUidRef.current = nextAuthUid;
         draft.authSessionNonce += 1;
+        // When the authenticated UID changes (sign-in as a different account
+        // or sign-out → sign-in), reset the account-scoped onboarding slice
+        // so the incoming user never inherits a previous user's current page,
+        // history, title, company, mic choice, referral source, or name
+        // draft. resumeOnboardingPage also guards this on mount, but the
+        // guard only fires once; resetting here covers the case where
+        // OnboardingPage stays mounted across an auth transition.
+        Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingSessionUserId = nextAuthUid;
+        // The existing user record will be rehydrated from the repo by the
+        // normal post-auth init path, so we do NOT seed a name here.
       }
       draft.initialized = false;
     });

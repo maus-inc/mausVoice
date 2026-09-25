@@ -87,24 +87,39 @@ export const SignInForm = () => {
     if (prefilledNameSource.current === prefillSource) return;
     prefilledNameSource.current = prefillSource;
     produceAppState((draft) => {
+      // Always (re)scope the session to the currently authenticated UID. If
+      // the persisted draft belongs to a different user it must be rejected
+      // and the editable name fields cleared together with it so the
+      // previous user's name cannot survive as an ownerless draft.
+      draft.local.onboardingSessionUserId = auth.uid;
       if (onboardingNameDraft && !draftBelongsToUser) {
         draft.local.onboardingNameDraft = "";
         draft.local.onboardingNameDraftUserId = null;
-        draft.local.onboardingSessionUserId = auth.uid;
-        if (!prefillName) {
-          applyOnboardingNameDraft(
-            draft.onboarding,
-            createOnboardingNameDraft(""),
-          );
-          return;
-        }
       }
-      if (!prefillName) return;
+      if (!prefillName) {
+        applyOnboardingNameDraft(
+          draft.onboarding,
+          createOnboardingNameDraft(""),
+        );
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        return;
+      }
+      if (draftBelongsToUser && onboardingNameDraft) {
+        // Draft is valid for this user: keep it (don't overwrite with a
+        // provider prefill that could be shorter/stale).
+        applyOnboardingNameDraft(
+          draft.onboarding,
+          createOnboardingNameDraft(onboardingNameDraft),
+        );
+        draft.local.onboardingNameDraft = onboardingNameDraft;
+        draft.local.onboardingNameDraftUserId = auth.uid;
+        return;
+      }
       const nameDraft = createOnboardingNameDraft(prefillName);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = auth.uid;
-      draft.local.onboardingSessionUserId = auth.uid;
     });
   }, [auth, isSignedIn, onboardingNameDraft, onboardingNameDraftUserId]);
 
@@ -244,7 +259,10 @@ export const SignInForm = () => {
             letterSpacing: "0.01em",
           }}
         >
-          <FormattedMessage defaultMessage="Welcome back" />
+          <FormattedMessage
+            defaultMessage="Welcome to Maus"
+            description="Welcome screen title after sign-in — greets the user"
+          />
         </Typography>
 
         <Typography
@@ -254,8 +272,8 @@ export const SignInForm = () => {
           }}
         >
           <FormattedMessage
-            defaultMessage="You are signed in as {email}"
-            values={{ email: auth?.email }}
+            defaultMessage="What should we call you?"
+            description="Welcome screen subtitle prompting for the user's name"
           />
         </Typography>
 
