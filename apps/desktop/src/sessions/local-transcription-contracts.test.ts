@@ -9,14 +9,12 @@ import { gateSilentSegments } from "../utils/hallucination.utils";
 const mocks = vi.hoisted(() => ({
   transcribe: vi.fn(),
   transcribeAudio: vi.fn(),
-  createStreamingSession: vi.fn(),
-  finalize: vi.fn(),
-  cleanup: vi.fn(),
+  getModelStatus: vi.fn(),
+  downloadModel: vi.fn(),
   unlisten: vi.fn(),
 }));
 vi.mock("../sidecars", () => ({
   getLocalTranscriptionSidecarManager: () => mocks,
-  isSessionNotFoundError: () => false,
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => mocks.unlisten),
@@ -57,11 +55,12 @@ beforeEach(() => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
   setFilter(true);
   mocks.transcribe.mockResolvedValue(response);
-  mocks.finalize.mockResolvedValue(response);
-  mocks.createStreamingSession.mockResolvedValue({
-    finalize: mocks.finalize,
-    cleanup: mocks.cleanup,
-    writeAudioChunk: vi.fn(),
+  mocks.getModelStatus.mockResolvedValue({ downloaded: true, valid: true });
+  mocks.transcribeAudio.mockResolvedValue({
+    rawTranscript: "thank you",
+    sanitizedTranscript: "thank you",
+    metadata: { transcriptionMode: "local" },
+    warnings: [],
   });
 });
 afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
@@ -105,55 +104,43 @@ describe("local batch transcription contracts", () => {
   });
 });
 
-describe("local streaming filter ownership", () => {
+describe("local filter ownership", () => {
   it.each([false, true])(
     "keeps a recording's disabled filter when the later preference is %s",
     async (later) => {
       setFilter(false);
       const session = new LocalTranscriptionSession();
       await session.onRecordingStart(16000);
-      expect(mocks.createStreamingSession).toHaveBeenCalledWith(
-        expect.objectContaining({ hallucinationFilterEnabled: false }),
-      );
       setFilter(later);
       const output = await session.finalize({ samples, sampleRate: 16000 });
       expect(output.rawTranscript).toBe("thank you");
-      expect(mocks.cleanup).toHaveBeenCalledTimes(1);
       expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+      expect(mocks.transcribeAudio).toHaveBeenCalledWith(
+        expect.objectContaining({ hallucinationFilterEnabled: false }),
+      );
     },
   );
-  it("keeps enabled silence filtering even when every segment is dropped", async () => {
+  it("transcribes nothing when the recording carries no audio", async () => {
     const session = new LocalTranscriptionSession();
     await session.onRecordingStart(16000);
-    setFilter(false);
-    expect(
-      (await session.finalize({ samples, sampleRate: 16000 })).rawTranscript,
-    ).toBeNull();
-  });
-  it("passes the recording opt-out to batch fallback after a streaming failure", async () => {
-    setFilter(false);
-    const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(16000);
-    setFilter(true);
-    mocks.finalize.mockRejectedValueOnce(new Error("stream interrupted"));
-    mocks.transcribeAudio.mockResolvedValueOnce({
-      rawTranscript: "thank you",
-      metadata: {},
-      warnings: [],
+    const output = await session.finalize({
+      samples: new Float32Array(0),
+      sampleRate: 16000,
     });
-    expect(
-      (await session.finalize({ samples, sampleRate: 16000 })).rawTranscript,
-    ).toBe("thank you");
-    expect(mocks.transcribeAudio).toHaveBeenCalledWith(
-      expect.objectContaining({ hallucinationFilterEnabled: false }),
-    );
+    expect(output.rawTranscript).toBeNull();
+    expect(mocks.transcribeAudio).not.toHaveBeenCalled();
   });
-  it("retains ONNX text when probability metadata is absent", async () => {
-    mocks.finalize.mockResolvedValue({ ...response, segments: [] });
+  it("transcribes the whole recording when the model cannot be prepared", async () => {
+    mocks.getModelStatus.mockRejectedValueOnce(
+      new Error("sidecar unreachable"),
+    );
     const session = new LocalTranscriptionSession();
     await session.onRecordingStart(16000);
-    expect(
-      (await session.finalize({ samples, sampleRate: 16000 })).rawTranscript,
-    ).toBe("thank you");
+    const output = await session.finalize({ samples, sampleRate: 16000 });
+    expect(output.rawTranscript).toBe("thank you");
+    expect(output.warnings).toEqual([
+      expect.stringContaining("Local pretranscription unavailable"),
+    ]);
+    expect(mocks.transcribeAudio).toHaveBeenCalledTimes(1);
   });
 });

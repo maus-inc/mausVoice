@@ -1,6 +1,6 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
-import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
+import type { SettingsTranscriptionState } from "../state/settings.state";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
@@ -8,21 +8,15 @@ import {
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
 import {
-  getTranscriptionSidecarDeviceId,
   isGpuPreferredTranscriptionDevice,
   normalizeLocalWhisperModel,
 } from "../utils/local-transcription.utils";
-import {
-  type LocalSidecarStreamingSession,
-  getLocalTranscriptionSidecarManager,
-  isSessionNotFoundError,
-} from "../sidecars";
+import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import { getLogger } from "../utils/log.utils";
 import {
   buildLocalizedTranscriptionPrompt,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { mapDictationLanguageToWhisperLanguage } from "../utils/language.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { listenToAudioChunks } from "./audio-chunk-events";
 import {
@@ -37,11 +31,21 @@ type LocalSessionContext = {
   hallucinationFilterEnabled: boolean;
 };
 
+/**
+ * Local transcription without a live streaming session.
+ *
+ * The sidecar's streaming endpoint only buffers appended samples; it decodes
+ * the whole buffer when the session is finalized, and it never reports interim
+ * text. Keeping one open for the recording therefore bought no overlap: it
+ * inferred the entire recording at stop, which is exactly what the span path
+ * already does incrementally, so the same audio was inferred twice whenever a
+ * span was cut. One owner per recording now: the pretranscriber, with a
+ * single whole-recording request when it has nothing usable.
+ */
 export class LocalTranscriptionSession implements TranscriptionSession {
   private unlisten: UnlistenFn | null = null;
-  private session: LocalSidecarStreamingSession | null = null;
-  private context: LocalSessionContext | null = null;
   private pretranscriber: PauseChunkedPretranscriber | null = null;
+  private context: LocalSessionContext | null = null;
   private startupWarnings: string[] = [];
 
   async onRecordingStart(sampleRate: number): Promise<void> {
@@ -51,8 +55,6 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       const state = getAppState();
       const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
-      const whisperLanguage =
-        mapDictationLanguageToWhisperLanguage(dictationLanguage);
       const prompt = buildLocalizedTranscriptionPrompt({
         entries: collectDictionaryEntries(state),
         dictationLanguage,
@@ -61,19 +63,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       const hallucinationFilterEnabled =
         state.userPrefs?.hallucinationFilterEnabled !== false;
-      const settings = state.settings.aiTranscription;
-      const sidecarSession =
-        await getLocalTranscriptionSidecarManager().createStreamingSession({
-          model: normalizeLocalWhisperModel(settings.modelSize),
-          preferGpu: isGpuPreferredTranscriptionDevice(settings.device),
-          sampleRate,
-          language: whisperLanguage,
-          initialPrompt: prompt || undefined,
-          deviceId: getTranscriptionSidecarDeviceId(settings.device),
-          hallucinationFilterEnabled,
-        });
+      // Load the model before the user speaks, so neither the first span nor
+      // the whole-recording request pays for a cold start or a download after
+      // they have already stopped.
+      await this.warmModel(state.settings.aiTranscription);
 
-      this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
       const pretranscriber = createActionPretranscriber(sampleRate, {
         config: LOCAL_PRETRANSCRIPTION,
@@ -82,16 +76,15 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       });
       this.pretranscriber = pretranscriber;
       this.unlisten = await listenToAudioChunks((samples, offset) => {
-        this.session?.writeAudioChunk(samples);
         pretranscriber.push(samples, offset);
       });
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
-        `Local streaming session unavailable, falling back to batch mode (${message})`,
+        `Local pretranscription unavailable, transcribing the whole recording (${message})`,
       );
       getLogger().warning(
-        `[local-stream-session] start failed, falling back (${message})`,
+        `[local-session] start failed, transcribing the whole recording (${message})`,
       );
       this.cleanup();
     }
@@ -101,64 +94,16 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     const warnings = [...this.startupWarnings];
-
     const pretranscriber = this.pretranscriber;
-    const pretranscribed = await this.finishPretranscription(audio, warnings);
-    if (pretranscribed) {
-      this.cleanup();
-      return pretranscribed;
-    }
-    // Cancelled mid-finalize: the session is already torn down.
-    if (pretranscriber?.isDisposed) {
-      return { rawTranscript: null, metadata: {}, warnings };
-    }
-
-    if (!this.session) {
-      getLogger().info(
-        `[local-stream-session] no streaming session, using batch fallback`,
-      );
-      return await this.finalizeWithBatchFallback(audio, warnings);
-    }
 
     try {
-      getLogger().info(`[local-stream-session] finalizing streaming session`);
-      const output = await this.session.finalize();
-      const segments = output.segments ?? [];
-      // Honor the same preference snapshot sent to the sidecar. ONNX has no
-      // probability metadata, so retain its text. With filtering enabled,
-      // keep an empty filtered result rather than reviving dropped segments.
-      const filteredText =
-        this.context?.hallucinationFilterEnabled === false ||
-        segments.length === 0
-          ? (output.text ?? "")
-          : filterLocalTranscriptionSegments(segments);
-      getLogger().info(
-        `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
-      );
-      return {
-        rawTranscript: filteredText.trim() || null,
-        metadata: {
-          modelSize: output.model,
-          inferenceDevice: output.inferenceDevice,
-          transcriptionMode: "local",
-          transcriptionPrompt: this.context?.prompt ?? null,
-          transcriptionDurationMs: Math.round(output.durationMs),
-        },
-        warnings,
-      };
-    } catch (error) {
-      const message = this.toErrorMessage(error);
-      const errorName = error instanceof Error ? error.name : typeof error;
-      const lostSession = isSessionNotFoundError(error)
-        ? " (streaming session lost on the sidecar; batch fallback will transcribe from the retained audio)"
-        : "";
-      warnings.push(
-        `Local streaming transcription failed, falling back to batch mode (${message})${lostSession}`,
-      );
-      getLogger().warning(
-        `[local-stream-session] finalize failed [${errorName}], falling back to batch (${message})${lostSession}`,
-      );
-      return await this.finalizeWithBatchFallback(audio, warnings);
+      const pretranscribed = await this.finishPretranscription(audio, warnings);
+      if (pretranscribed) return pretranscribed;
+      // Cancelled mid-finalize: the session is already torn down.
+      if (pretranscriber?.isDisposed) {
+        return { rawTranscript: null, metadata: {}, warnings };
+      }
+      return await this.transcribeWholeRecording(audio, warnings);
     } finally {
       this.cleanup();
     }
@@ -166,12 +111,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   cleanup(): void {
     getLogger().info(
-      `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
+      `[local-session] cleanup (hasUnlisten=${!!this.unlisten}, hasPretranscriber=${!!this.pretranscriber})`,
     );
     this.unlisten?.();
     this.unlisten = null;
-    this.session?.cleanup();
-    this.session = null;
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
     this.context = null;
@@ -186,7 +129,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   /**
    * Long recordings are transcribed span by span at natural pauses while the
    * user speaks; only the tail after the last pause is left at stop. Returns
-   * null (keep the streaming/batch path) when no span was cut or the spans
+   * null (transcribe the whole recording) when no span was cut or the spans
    * cannot be trusted.
    */
   private async finishPretranscription(
@@ -199,15 +142,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     const result = await pretranscriber.finish(audio);
     if (!result) {
       getLogger().warning(
-        "[local-stream-session] pretranscription unusable, finalizing the full recording",
+        "[local-session] pretranscription unusable, transcribing the whole recording",
       );
       return null;
     }
-    logPretranscription(
-      "local-stream-session",
-      result,
-      performance.now() - started,
-    );
+    logPretranscription("local-session", result, performance.now() - started);
     return {
       rawTranscript: result.text.trim() || null,
       metadata: {
@@ -219,7 +158,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     };
   }
 
-  private async finalizeWithBatchFallback(
+  private async transcribeWholeRecording(
     audio: StopRecordingResponse,
     warnings: string[],
   ): Promise<TranscriptionSessionResult> {
@@ -228,7 +167,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
     if (rate == null || rate <= 0 || payloadSamples.length === 0) {
       getLogger().warning(
-        `[local-stream-session] batch fallback: skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
+        `[local-session] skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
       );
       return {
         rawTranscript: null,
@@ -241,7 +180,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     }
 
     getLogger().info(
-      `[local-stream-session] batch fallback: transcribing ${payloadSamples.length} samples at ${rate}Hz`,
+      `[local-session] transcribing the whole recording (${payloadSamples.length} samples at ${rate}Hz)`,
     );
     const result = await transcribeAudio({
       samples: payloadSamples,
@@ -249,7 +188,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
     });
     getLogger().info(
-      `[local-stream-session] batch fallback: transcription complete (${result.rawTranscript.length} chars)`,
+      `[local-session] transcription complete (${result.rawTranscript.length} chars)`,
     );
 
     return {
@@ -257,6 +196,20 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       metadata: result.metadata,
       warnings: [...warnings, ...result.warnings],
     };
+  }
+
+  /**
+   * Mirrors the readiness check the sidecar performs before any request, so a
+   * missing model is downloaded while the user is still speaking.
+   */
+  private async warmModel(settings: SettingsTranscriptionState): Promise<void> {
+    const manager = getLocalTranscriptionSidecarManager();
+    const model = normalizeLocalWhisperModel(settings.modelSize);
+    const preferGpu = isGpuPreferredTranscriptionDevice(settings.device);
+    const status = await manager.getModelStatus({ model, preferGpu });
+    if (!status.downloaded || !status.valid) {
+      await manager.downloadModel({ model, preferGpu });
+    }
   }
 
   private toErrorMessage(error: unknown): string {
