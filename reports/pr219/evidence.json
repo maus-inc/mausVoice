@@ -1,0 +1,684 @@
+{
+  "base": "d1f06ec",
+  "spokenCommands": {
+    "rows": [
+      {
+        "kind": "literal",
+        "input": "The billing period ends on Friday.",
+        "expected": "The billing period ends on Friday.",
+        "before": "The billing. ends on Friday.",
+        "after": "The billing period ends on Friday.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "The sprint period ends Friday.",
+        "expected": "The sprint period ends Friday.",
+        "before": "The sprint. ends Friday.",
+        "after": "The sprint period ends Friday.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "The observation period lasted six weeks.",
+        "expected": "The observation period lasted six weeks.",
+        "before": "The observation. lasted six weeks.",
+        "after": "The observation period lasted six weeks.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "During the period we saw strong growth.",
+        "expected": "During the period we saw strong growth.",
+        "before": "During the. we saw strong growth.",
+        "after": "During the period we saw strong growth.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "My period was late.",
+        "expected": "My period was late.",
+        "before": "My. was late.",
+        "after": "My period was late.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "A time period of rest.",
+        "expected": "A time period of rest.",
+        "before": "A time period of rest.",
+        "after": "A time period of rest.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Each period has its own budget.",
+        "expected": "Each period has its own budget.",
+        "before": "Each. has its own budget.",
+        "after": "Each period has its own budget.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "The waiting period is thirty days.",
+        "expected": "The waiting period is thirty days.",
+        "before": "The waiting. is thirty days.",
+        "after": "The waiting period is thirty days.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "We're launching a new line today.",
+        "expected": "We're launching a new line today.",
+        "before": "We're launching a\ntoday.",
+        "after": "We're launching a new line today.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Can you read the next line for me?",
+        "expected": "Can you read the next line for me?",
+        "before": "Can you read the\nfor me?",
+        "after": "Can you read the next line for me?",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Write a new paragraph about pricing.",
+        "expected": "Write a new paragraph about pricing.",
+        "before": "Write a\n\nabout pricing.",
+        "after": "Write a new paragraph about pricing.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Put a comma after the name.",
+        "expected": "Put a comma after the name.",
+        "before": "Put a, after the name.",
+        "after": "Put a comma after the name.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Remove that comma.",
+        "expected": "Remove that comma.",
+        "before": "Remove that,",
+        "after": "Remove that comma.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "I always use the Oxford comma.",
+        "expected": "I always use the Oxford comma.",
+        "before": "I always use the Oxford comma.",
+        "after": "I always use the Oxford comma.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Where does the question mark go?",
+        "expected": "Where does the question mark go?",
+        "before": "Where does the? go?",
+        "after": "Where does the question mark go?",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Add a semicolon there.",
+        "expected": "Add a semicolon there.",
+        "before": "Add a; there.",
+        "after": "Add a semicolon there.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "The colon is part of the large intestine.",
+        "expected": "The colon is part of the large intestine.",
+        "before": "The: is part of the large intestine.",
+        "after": "The colon is part of the large intestine.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "He was diagnosed with colon cancer.",
+        "expected": "He was diagnosed with colon cancer.",
+        "before": "He was diagnosed with colon cancer.",
+        "after": "He was diagnosed with colon cancer.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "We need a new line of credit.",
+        "expected": "We need a new line of credit.",
+        "before": "We need a new line of credit.",
+        "after": "We need a new line of credit.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "That was a full stop for the project.",
+        "expected": "That was a full stop for the project.",
+        "before": "That was a. for the project.",
+        "after": "That was a full stop for the project.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "Let's scratch that idea and start over.",
+        "expected": "Let's scratch that idea and start over.",
+        "before": "idea and start over.",
+        "after": "Let's scratch that idea and start over.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "I'll scratch that off my list.",
+        "expected": "I'll scratch that off my list.",
+        "before": "off my list.",
+        "after": "I'll scratch that off my list.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
+        "input": "We should scratch that from the agenda.",
+        "expected": "We should scratch that from the agenda.",
+        "before": "from the agenda.",
+        "after": "We should scratch that from the agenda.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "first item new line second item",
+        "expected": "first item\nsecond item",
+        "before": "first item\nsecond item",
+        "after": "first item\nsecond item",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Hello comma world",
+        "expected": "Hello, world",
+        "before": "Hello, world",
+        "after": "Hello, world",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "That is final period",
+        "expected": "That is final.",
+        "before": "That is final.",
+        "after": "That is final.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "I'm done period See you",
+        "expected": "I'm done. See you",
+        "before": "I'm done. See you",
+        "after": "I'm done. See you",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Send it today period",
+        "expected": "Send it today.",
+        "before": "Send it today.",
+        "after": "Send it today.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "call me tomorrow full stop",
+        "expected": "call me tomorrow.",
+        "before": "call me tomorrow.",
+        "after": "call me tomorrow.",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Stop period next line Go",
+        "expected": "Stop.\nGo",
+        "before": "Stop.\nGo",
+        "after": "Stop.\nGo",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Is it ready question mark",
+        "expected": "Is it ready?",
+        "before": "Is it ready?",
+        "after": "Is it ready?",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Note colon bring snacks",
+        "expected": "Note: bring snacks",
+        "before": "Note: bring snacks",
+        "after": "Note: bring snacks",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Hello world scratch that new paragraph Goodbye",
+        "expected": "\n\nGoodbye",
+        "before": "\n\nGoodbye",
+        "after": "\n\nGoodbye",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "Hello world scratch that period",
+        "expected": ".",
+        "before": ".",
+        "after": ".",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
+        "input": "hello period how are you",
+        "expected": "hello. how are you",
+        "note": "Command spoken mid-sentence with no pause. Ambiguous with the noun; the new rule reads it as the noun.",
+        "before": "hello. how are you",
+        "after": "hello period how are you",
+        "beforeOk": true,
+        "afterOk": false
+      }
+    ],
+    "summary": {
+      "literal": {
+        "total": 23,
+        "before": 4,
+        "after": 23
+      },
+      "command": {
+        "total": 12,
+        "before": 12,
+        "after": 11
+      }
+    }
+  },
+  "silenceGate": {
+    "rows": [
+      {
+        "label": "Quiet opening after a pause, decoded confidently",
+        "truth": "speech",
+        "segments": [
+          {
+            "text": "Can you send the report by Friday?",
+            "noSpeechProb": 0.93,
+            "avgLogprob": -0.25
+          }
+        ],
+        "raw": "Can you send the report by Friday?",
+        "before": "",
+        "after": "Can you send the report by Friday?",
+        "gateOnlyAfter": "Can you send the report by Friday?"
+      },
+      {
+        "label": "Short reply at the end of a long pause",
+        "truth": "speech",
+        "segments": [
+          {
+            "text": "Yes, that works.",
+            "noSpeechProb": 0.91,
+            "avgLogprob": -0.4
+          }
+        ],
+        "raw": "Yes, that works.",
+        "before": "",
+        "after": "Yes, that works.",
+        "gateOnlyAfter": "Yes, that works."
+      },
+      {
+        "label": "Soft-spoken name in a mostly silent window",
+        "truth": "speech",
+        "segments": [
+          {
+            "text": "Meeting with Adaeze at noon.",
+            "noSpeechProb": 0.95,
+            "avgLogprob": -0.6
+          }
+        ],
+        "raw": "Meeting with Adaeze at noon.",
+        "before": "",
+        "after": "Meeting with Adaeze at noon.",
+        "gateOnlyAfter": "Meeting with Adaeze at noon."
+      },
+      {
+        "label": "Ordinary speech, low no-speech probability",
+        "truth": "speech",
+        "segments": [
+          {
+            "text": "Let's ship it on Monday.",
+            "noSpeechProb": 0.05,
+            "avgLogprob": -0.2
+          }
+        ],
+        "raw": "Let's ship it on Monday.",
+        "before": "Let's ship it on Monday.",
+        "after": "Let's ship it on Monday.",
+        "gateOnlyAfter": "Let's ship it on Monday."
+      },
+      {
+        "label": "Unsure decode of silence",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "Thank you.",
+            "noSpeechProb": 0.97,
+            "avgLogprob": -1.3
+          }
+        ],
+        "raw": "Thank you.",
+        "before": "",
+        "after": "",
+        "gateOnlyAfter": ""
+      },
+      {
+        "label": "Canonical hallucination, decoded confidently",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "Thank you for watching!",
+            "noSpeechProb": 0.96,
+            "avgLogprob": -0.2
+          }
+        ],
+        "raw": "Thank you for watching!",
+        "before": "",
+        "after": "",
+        "gateOnlyAfter": "Thank you for watching!"
+      },
+      {
+        "label": "Subtitle credit, decoded confidently",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "Subtitles by the Amara.org community",
+            "noSpeechProb": 0.98,
+            "avgLogprob": -0.15
+          }
+        ],
+        "raw": "Subtitles by the Amara.org community",
+        "before": "",
+        "after": "",
+        "gateOnlyAfter": "Subtitles by the Amara.org community"
+      },
+      {
+        "label": "Confident hallucination not on the known-phrase list",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "I'll see you in the next video.",
+            "noSpeechProb": 0.95,
+            "avgLogprob": -0.35
+          }
+        ],
+        "raw": "I'll see you in the next video.",
+        "before": "",
+        "after": "I'll see you in the next video.",
+        "gateOnlyAfter": "I'll see you in the next video."
+      },
+      {
+        "label": "Confident 'Thanks.' on silence (not on the list)",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "Thanks.",
+            "noSpeechProb": 0.92,
+            "avgLogprob": -0.5
+          }
+        ],
+        "raw": "Thanks.",
+        "before": "",
+        "after": "Thanks.",
+        "gateOnlyAfter": "Thanks."
+      },
+      {
+        "label": "Provider without avg_logprob, silent window",
+        "truth": "hallucination",
+        "segments": [
+          {
+            "text": "Bye.",
+            "noSpeechProb": 0.95
+          }
+        ],
+        "raw": "Bye.",
+        "before": "",
+        "after": "",
+        "gateOnlyAfter": ""
+      },
+      {
+        "label": "Speech then trailing silence hallucination",
+        "truth": "speech",
+        "segments": [
+          {
+            "text": "Please call me back.",
+            "noSpeechProb": 0.1,
+            "avgLogprob": -0.3
+          },
+          {
+            "text": " Thank you for watching!",
+            "noSpeechProb": 0.94,
+            "avgLogprob": -0.25
+          }
+        ],
+        "raw": "Please call me back. Thank you for watching!",
+        "before": "Please call me back.",
+        "after": "Please call me back.",
+        "gateOnlyAfter": "Please call me back. Thank you for watching!"
+      }
+    ],
+    "summary": {
+      "speechCases": 5,
+      "speechKeptBefore": 2,
+      "speechKeptAfter": 5,
+      "hallucinationCases": 6,
+      "hallucinationsShownBefore": 0,
+      "hallucinationsShownAfter": 2,
+      "passedGateButCaughtByPhraseFilter": 2
+    }
+  },
+  "postProcessingReplies": [
+    {
+      "label": "Complete JSON",
+      "rawChars": 264,
+      "before": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new landing page live first. Then we do a soft launch to the waitlist, and only after that, the public announcement.",
+        "warning": null,
+        "words": 46
+      },
+      "after": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new landing page live first. Then we do a soft launch to the waitlist, and only after that, the public announcement.",
+        "warning": null,
+        "words": 46
+      },
+      "spokenWords": 46
+    },
+    {
+      "label": "Complete JSON in a code fence",
+      "rawChars": 276,
+      "before": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new landing page live first. Then we do a soft launch to the waitlist, and only after that, the public announcement.",
+        "warning": null,
+        "words": 46
+      },
+      "after": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new landing page live first. Then we do a soft launch to the waitlist, and only after that, the public announcement.",
+        "warning": null,
+        "words": 46
+      },
+      "spokenWords": 46
+    },
+    {
+      "label": "Cut off at 60%",
+      "rawChars": 158,
+      "before": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new",
+        "warning": null,
+        "words": 26
+      },
+      "after": {
+        "text": "okay so for the launch we agreed to push the beta to october because the payments team needs two more weeks and marketing wants the new landing page live first then we do a soft launch to the waitlist and only after that the public announcement",
+        "warning": "parse failed; truncation hint shown",
+        "words": 46
+      },
+      "spokenWords": 46
+    },
+    {
+      "label": "Cut off at 90%",
+      "rawChars": 237,
+      "before": {
+        "text": "Okay, so for the launch, we agreed to push the beta to October because the payments team needs two more weeks, and marketing wants the new landing page live first. Then we do a soft launch to the waitlist, and only after that",
+        "warning": null,
+        "words": 43
+      },
+      "after": {
+        "text": "okay so for the launch we agreed to push the beta to october because the payments team needs two more weeks and marketing wants the new landing page live first then we do a soft launch to the waitlist and only after that the public announcement",
+        "warning": "parse failed; truncation hint shown",
+        "words": 46
+      },
+      "spokenWords": 46
+    },
+    {
+      "label": "Fenced, cut off before the closing fence",
+      "rawChars": 193,
+      "before": {
+        "text": "okay so for the launch we agreed to push the beta to october because the payments team needs two more weeks and marketing wants the new landing page live first then we do a soft launch to the waitlist and only after that the public announcement",
+        "warning": "parse failed; truncation hint shown",
+        "words": 46
+      },
+      "after": {
+        "text": "okay so for the launch we agreed to push the beta to october because the payments team needs two more weeks and marketing wants the new landing page live first then we do a soft launch to the waitlist and only after that the public announcement",
+        "warning": "parse failed; truncation hint shown",
+        "words": 46
+      },
+      "spokenWords": 46
+    }
+  ],
+  "outputTokenBudget": [
+    {
+      "words": 20,
+      "chars": 90,
+      "estimatedTokens": 23,
+      "before": 600,
+      "after": 2048
+    },
+    {
+      "words": 100,
+      "chars": 449,
+      "estimatedTokens": 112,
+      "before": 600,
+      "after": 2048
+    },
+    {
+      "words": 250,
+      "chars": 1124,
+      "estimatedTokens": 281,
+      "before": 600,
+      "after": 2048
+    },
+    {
+      "words": 500,
+      "chars": 2250,
+      "estimatedTokens": 563,
+      "before": 600,
+      "after": 2712
+    },
+    {
+      "words": 1000,
+      "chars": 4499,
+      "estimatedTokens": 1125,
+      "before": 600,
+      "after": 4399
+    },
+    {
+      "words": 1500,
+      "chars": 6749,
+      "estimatedTokens": 1687,
+      "before": 600,
+      "after": 6086
+    },
+    {
+      "words": 2000,
+      "chars": 9000,
+      "estimatedTokens": 2250,
+      "before": 600,
+      "after": 7774
+    },
+    {
+      "words": 3000,
+      "chars": 13499,
+      "estimatedTokens": 3375,
+      "before": 600,
+      "after": 8192
+    }
+  ],
+  "localRmsGate": [
+    {
+      "label": "Room tone only, 5 s",
+      "truth": "silence",
+      "beforeGated": true,
+      "afterGated": true
+    },
+    {
+      "label": "Normal speech 2 s in 5 s",
+      "truth": "speech",
+      "beforeGated": false,
+      "afterGated": false
+    },
+    {
+      "label": "Quiet 'yes' 0.5 s at the end of 20 s",
+      "truth": "speech",
+      "beforeGated": true,
+      "afterGated": false
+    },
+    {
+      "label": "Soft speech 1 s inside 30 s of hold",
+      "truth": "speech",
+      "beforeGated": true,
+      "afterGated": false
+    },
+    {
+      "label": "Single click 10 ms in 5 s of room tone",
+      "truth": "silence",
+      "beforeGated": true,
+      "afterGated": false
+    }
+  ]
+}
