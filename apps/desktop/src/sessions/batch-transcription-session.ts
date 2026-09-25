@@ -18,6 +18,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
 
   async finalize(
     audio: StopRecordingResponse,
+    options?: { toneId?: string | null },
   ): Promise<TranscriptionSessionResult> {
     const payloadSamples = Array.isArray(audio.samples)
       ? audio.samples
@@ -44,6 +45,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       const result = await transcribeAudio({
         samples: payloadSamples,
         sampleRate: rate,
+        toneId: options?.toneId ?? null,
       });
 
       getLogger().info(

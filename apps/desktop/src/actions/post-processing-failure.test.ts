@@ -33,10 +33,16 @@ vi.mock("../repos", () => ({
   getTranscribeAudioRepo: () => ({ repo: null, apiKeyId: null, warnings: [] }),
   getTranscriptionRepo: () => ({}),
 }));
-vi.mock("../utils/tone.utils", () => ({
-  getToneById: () => null,
-  getToneConfig: () => ({ name: "Default", prompt: "" }),
-}));
+vi.mock("../utils/tone.utils", async () => {
+  const actual = await vi.importActual<typeof import("../utils/tone.utils")>(
+    "../utils/tone.utils",
+  );
+  return {
+    ...actual,
+    getToneById: () => null,
+    getToneConfig: () => ({ name: "Default", prompt: "" }),
+  };
+});
 vi.mock("../utils/user.utils", async () => {
   const actual = await vi.importActual<typeof import("../utils/user.utils")>(
     "../utils/user.utils",
