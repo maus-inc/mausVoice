@@ -688,10 +688,19 @@ export const buildLocalizedTranscriptionPrompt = (args: {
   entries: DictionaryEntries;
   dictationLanguage: DictationLanguageCode;
   state: AppState;
+  /** Optional style id — reserved for future use, currently NOT injected into prompt (see best practices). */
+  toneId?: string | null;
 }): string => {
-  const prompt =
+  const basePrompt =
     getRec(transcriptionPromptByCode, args.dictationLanguage) ??
     transcriptionPromptByCode.en;
+
+  // Best practice (2026): initial_prompt is a token bias for glossary/domain terms,
+  // NOT a style instruction. Using it for "Format as email" is unreliable and can
+  // degrade accuracy. Style is handled deterministically in fast-style.utils.ts
+  // as a universal post-transcription step (works with ALL providers).
+  // We keep toneId param for API compatibility but do not inject formatting hints.
+  const prompt = basePrompt;
   // The localized instruction sentence (the "<glossary/>" token is the
   // dictionary slot) sits on top of the term budget, so subtract its length
   // before capping the terms. That keeps the rendered initial_prompt within

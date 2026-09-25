@@ -26,7 +26,7 @@ import {
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
 } from "../../utils/language.utils";
-import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
+import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
 import { getMyDictationLanguage } from "../../utils/user.utils";
 import {
@@ -69,7 +69,7 @@ export const RetranscribeDialog = () => {
   });
 
   const defaultLanguage = useAppStore((state) => getMyDictationLanguage(state));
-  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
+  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
 
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
@@ -92,7 +92,7 @@ export const RetranscribeDialog = () => {
     closeRetranscribeDialog();
     void retranscribeTranscription({
       transcriptionId,
-      toneId: postProcessingEnabled ? selectedToneId : null,
+      toneId: styleSelectionAvailable ? selectedToneId : null,
       languageCode: selectedLanguage,
     });
   }, [
@@ -100,7 +100,7 @@ export const RetranscribeDialog = () => {
     selectedToneId,
     selectedLanguage,
     isRetranscribing,
-    postProcessingEnabled,
+    styleSelectionAvailable,
   ]);
 
   return (
@@ -116,7 +116,7 @@ export const RetranscribeDialog = () => {
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 1 }}>
-          {postProcessingEnabled && (
+          {styleSelectionAvailable && (
             <FormControl fullWidth size="small">
               <InputLabel>
                 <FormattedMessage defaultMessage="Style" />

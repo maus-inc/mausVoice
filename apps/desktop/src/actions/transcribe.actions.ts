@@ -61,6 +61,11 @@ import {
   getMyUserName,
   loadMyEffectiveDictationLanguage,
 } from "../utils/user.utils";
+import {
+  FAST_STYLE_MAX_INPUT_CHARS,
+  applyFastStyle,
+  canApplyFastStyle,
+} from "../utils/fast-style.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { addWordsToCurrentUser } from "./user.actions";
 
@@ -71,6 +76,8 @@ export type TranscribeAudioInput = {
   /** Preserve the recording's filter snapshot when retrying streamed audio. */
   hallucinationFilterEnabled?: boolean;
   trace?: PipelineTrace | null;
+  /** Optional style id for fast transcription-time styling (no LLM). */
+  toneId?: string | null;
 };
 
 export type TranscribeAudioMetadata = {
@@ -136,6 +143,7 @@ export const transcribeAudio = async ({
   dictationLanguage: dictationLanguageOverride,
   hallucinationFilterEnabled: filterOverride,
   trace,
+  toneId,
 }: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
   const state = getAppState();
   const hallucinationFilterEnabled =
@@ -165,10 +173,13 @@ export const transcribeAudio = async ({
     mapDictationLanguageToWhisperLanguage(dictationLanguage);
 
   getLogger().verbose(
-    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}`,
+    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
   );
 
   const dictionaryEntries = collectDictionaryEntries(state);
+  // Best practice: transcription prompt is ONLY for glossary/domain bias (<50 tokens),
+  // NOT for style formatting. Style is applied deterministically in fast-style.utils.ts
+  // after transcription (universal across ALL providers).
   const transcriptionPrompt = buildLocalizedTranscriptionPrompt({
     entries: dictionaryEntries,
     dictationLanguage,
@@ -571,11 +582,45 @@ const runPostProcessingRequest = async ({
       postprocessStart,
     );
   } catch (error) {
-    // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
-    // the raw transcript and the selected-provider attribution; do not
-    // throw into the dictation pipeline or wait for the unrelated 60s
-    // timeout. The sanitized message never includes the key, auth header,
-    // or transcript.
+    // Terminal provider failure (e.g. Cerebras 402) or network error.
+    // Graceful degradation: try deterministic fast fallback BEFORE recording
+    // failure, so user still gets styled output even when LLM quota hits.
+    // Only record failure if fast fallback also fails or is not applicable.
+    if (toneId && canApplyFastStyle(toneId)) {
+      try {
+        const fastStyled = applyFastStyle(rawTranscript, toneId);
+        const category = classifyPostProcessErrorCategory(
+          unknownToMessage(error),
+        );
+        getLogger().info(
+          `LLM post-processing failed (${category}), fast fallback applied for tone=${toneId}`,
+        );
+        metadata.postProcessMode = "fast";
+        metadata.postProcessModel = "fast-fallback";
+        metadata.postProcessProvider = "local-fast";
+        metadata.postProcessFailed = false;
+        metadata.postProcessError = null;
+        metadata.postprocessDurationMs = Math.round(
+          performance.now() - postprocessStart,
+        );
+        if (rawTranscript.length > FAST_STYLE_MAX_INPUT_CHARS) {
+          warnings.push(
+            `Transcript truncated to ${FAST_STYLE_MAX_INPUT_CHARS} chars for fast local fallback (was ${rawTranscript.length})`,
+          );
+        }
+        warnings.push(`${category} — fast local fallback applied`);
+        getLogger().verbose(
+          `Original LLM error (fallback succeeded): ${unknownToMessage(error)}`,
+        );
+        return fastStyled;
+      } catch (fallbackError) {
+        getLogger().warning(
+          `Fast fallback also failed for tone=${toneId}: ${fallbackError}`,
+        );
+      }
+    }
+
+    // No fast fallback: return raw with failure metadata (dead-letter path)
     recordPostProcessFailure(
       error,
       metadata,
@@ -607,6 +652,34 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
   if (!gen.repo) {
+    if (toneId && canApplyFastStyle(toneId)) {
+      try {
+        const fastStart = performance.now();
+        const fastStyled = applyFastStyle(rawTranscript, toneId);
+        const fastDuration = performance.now() - fastStart;
+
+        if (rawTranscript.length > FAST_STYLE_MAX_INPUT_CHARS) {
+          warnings.push(
+            `Transcript truncated to ${FAST_STYLE_MAX_INPUT_CHARS} chars for fast local styling (was ${rawTranscript.length})`,
+          );
+        }
+
+        getLogger().info(
+          `Fast style applied for tone=${toneId} in ${Math.round(fastDuration)}ms (no LLM)`,
+        );
+        metadata.postProcessMode = "fast";
+        metadata.postprocessDurationMs = Math.round(fastDuration);
+        metadata.postProcessModel = "fast";
+        metadata.postProcessProvider = "local-fast";
+        metadata.postProcessFailed = false;
+        metadata.postProcessError = null;
+        return fastStyled;
+      } catch (error) {
+        getLogger().warning(
+          `Fast style transform failed for tone=${toneId}: ${error}`,
+        );
+      }
+    }
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
     return rawTranscript;
