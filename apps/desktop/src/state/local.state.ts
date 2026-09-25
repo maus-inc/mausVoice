@@ -22,6 +22,7 @@ export type LocalState = {
   onboardingResumePage: OnboardingPageKey | null;
   onboardingNameDraft: string;
   onboardingNameDraftUserId: string | null;
+  onboardingSessionUserId: string | null;
   /** Per-provider pipeline timing medians, keyed by transcription mode. */
   providerTiming: Record<string, TimingAggregate>;
 };
@@ -43,5 +44,6 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   onboardingResumePage: null,
   onboardingNameDraft: "",
   onboardingNameDraftUserId: null,
+  onboardingSessionUserId: null,
   providerTiming: {},
 };

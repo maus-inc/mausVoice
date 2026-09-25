@@ -195,7 +195,30 @@ describe("onboarding flow migration", () => {
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
-  it("returns a signed-in resume without an owned name draft to sign-in", () => {
+  it("rejects an ownerless persisted session on a signed-in resume", () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "user-id",
+      email: "user@example.com",
+      displayName: null,
+      providers: ["password"],
+    };
+    next.local.onboardingResumePage = "tutorial";
+    next.local.onboardingNameDraft = "Mary Jane Watson";
+    next.local.onboardingNameDraftUserId = null;
+    next.local.onboardingSessionUserId = null;
+    setAppState(next, true);
+
+    resumeOnboardingPage();
+
+    expect(getAppState().onboarding.currentPage).toBe("signIn");
+    expect(getAppState().onboarding.name).toBe("");
+    expect(getAppState().local.onboardingNameDraft).toBe("");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
+  });
+
+  it("rejects a signed-in resume without an owned name draft to sign-in", () => {
     const state = getAppState();
     const next = structuredClone(state);
     next.auth = {
@@ -292,9 +315,11 @@ describe("onboarding flow migration", () => {
     });
     switched.local.onboardingNameDraft = "Bob Jones";
     switched.local.onboardingNameDraftUserId = "second-user-id";
+    switched.authSessionNonce += 1;
     setAppState(switched, true);
     resolveUser(pendingUser);
-    await submission;
+    const result = await submission;
+    expect(result).toBeNull();
 
     expect(getAppState().onboarding).toMatchObject({
       name: "Bob Jones",
@@ -304,6 +329,71 @@ describe("onboarding flow migration", () => {
     expect(getAppState().local.onboardingNameDraftUserId).toBe(
       "second-user-id",
     );
+  });
+
+  it("rejects a stale completion after an A-to-B-to-A auth cycle", async () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    Object.assign(next.onboarding, {
+      name: "Maria Garcia",
+      firstName: "Maria",
+      lastName: "Garcia",
+      lastNameEnabled: true,
+    });
+    next.local.onboardingNameDraft = "Maria Garcia";
+    next.local.onboardingNameDraftUserId = "first-user-id";
+    setAppState(next, true);
+
+    let resolveUser: (value: unknown) => void = () => undefined;
+    actionMocks.setMyUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const submission = submitOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0]?.[0];
+
+    const secondUser = structuredClone(getAppState());
+    secondUser.auth = {
+      uid: "second-user-id",
+      email: "second@example.com",
+      displayName: "Bob Jones",
+      providers: ["password"],
+    };
+    secondUser.authSessionNonce += 1;
+    setAppState(secondUser, true);
+    const firstUserAgain = structuredClone(getAppState());
+    firstUserAgain.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    Object.assign(firstUserAgain.onboarding, {
+      name: "Maria New",
+      firstName: "Maria",
+      lastName: "New",
+      lastNameEnabled: true,
+      submitting: false,
+    });
+    firstUserAgain.local.onboardingNameDraft = "Maria New";
+    firstUserAgain.local.onboardingNameDraftUserId = "first-user-id";
+    firstUserAgain.authSessionNonce += 1;
+    setAppState(firstUserAgain, true);
+    resolveUser(pendingUser);
+    const result = await submission;
+    expect(result).toBeNull();
+
+    expect(getAppState().onboarding.name).toBe("Maria New");
+    expect(getAppState().onboarding.submitting).toBe(false);
+    expect(getAppState().local.onboardingNameDraft).toBe("Maria New");
   });
 
   it("does not finish shared onboarding state for a different auth user", async () => {
@@ -351,15 +441,133 @@ describe("onboarding flow migration", () => {
     switched.local.onboardingResumePage = "micCheck";
     switched.local.onboardingNameDraft = "Bob Jones";
     switched.local.onboardingNameDraftUserId = "second-user-id";
+    switched.authSessionNonce += 1;
     setAppState(switched, true);
     resolveUser(pendingUser);
-    await completion;
+    const result = await completion;
+    expect(result).toBeNull();
 
     expect(getAppState().local.onboardingResumePage).toBe("micCheck");
     expect(getAppState().local.onboardingNameDraft).toBe("Bob Jones");
     expect(getAppState().local.onboardingNameDraftUserId).toBe(
       "second-user-id",
     );
+    expect(actionMocks.setAutoLaunchEnabled).not.toHaveBeenCalled();
+  });
+
+  it("resets the full onboarding session when the authenticated user changes", () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "new-user-id",
+      email: "new@example.com",
+      displayName: "Bob Jones",
+      providers: ["password"],
+    };
+    next.userById["new-user-id"] = {
+      id: "new-user-id",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      name: "Bob Jones",
+      onboarded: false,
+      playInteractionChime: true,
+      hasFinishedTutorial: false,
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+    };
+    Object.assign(next.onboarding, {
+      currentPage: "tutorial",
+      title: "Old title",
+      company: "Old company",
+      referralSource: "old-referral",
+      preferredMicrophone: "old-microphone",
+    });
+    next.local.onboardingResumePage = "tutorial";
+    next.local.onboardingNameDraft = "Mary Jane Watson";
+    next.local.onboardingNameDraftUserId = "old-user-id";
+    setAppState(next, true);
+
+    resumeOnboardingPage();
+
+    expect(getAppState().onboarding).toMatchObject({
+      currentPage: "signIn",
+      isResuming: false,
+      history: [],
+      name: "Bob Jones",
+      firstName: "Bob",
+      lastName: "Jones",
+      title: "",
+      company: "",
+      referralSource: "",
+      preferredMicrophone: null,
+    });
+    expect(getAppState().local.onboardingResumePage).toBeNull();
+    expect(getAppState().local.onboardingNameDraft).toBe("Bob Jones");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("new-user-id");
+  });
+
+  it("rejects a stale finish after an A-to-B-to-A auth cycle", async () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    next.userById["first-user-id"] = {
+      id: "first-user-id",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      name: "Maria Garcia",
+      onboarded: false,
+      playInteractionChime: true,
+      hasFinishedTutorial: false,
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+    };
+    next.local.onboardingResumePage = "tutorial";
+    next.local.onboardingNameDraft = "Maria Garcia";
+    next.local.onboardingNameDraftUserId = "first-user-id";
+    setAppState(next, true);
+
+    let resolveUser: (value: unknown) => void = () => undefined;
+    actionMocks.setMyUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const completion = finishOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0]?.[0];
+
+    const secondUser = structuredClone(getAppState());
+    secondUser.auth = {
+      uid: "second-user-id",
+      email: "second@example.com",
+      displayName: "Bob Jones",
+      providers: ["password"],
+    };
+    secondUser.authSessionNonce += 1;
+    setAppState(secondUser, true);
+    const firstUserAgain = structuredClone(getAppState());
+    firstUserAgain.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    firstUserAgain.local.onboardingResumePage = "micCheck";
+    firstUserAgain.local.onboardingNameDraft = "Maria New";
+    firstUserAgain.local.onboardingNameDraftUserId = "first-user-id";
+    firstUserAgain.authSessionNonce += 1;
+    setAppState(firstUserAgain, true);
+    resolveUser(pendingUser);
+    const result = await completion;
+    expect(result).toBeNull();
+
+    expect(getAppState().local.onboardingResumePage).toBe("micCheck");
+    expect(getAppState().local.onboardingNameDraft).toBe("Maria New");
     expect(actionMocks.setAutoLaunchEnabled).not.toHaveBeenCalled();
   });
 

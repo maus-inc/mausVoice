@@ -202,6 +202,35 @@ describe("SignInForm name editing", () => {
     expect(getAppState().local.onboardingNameDraftUserId).toBe("new-user-id");
   });
 
+  it("clears every editable field when a foreign draft has no replacement", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = {
+      uid: "new-user-id",
+      email: "new@example.com",
+      displayName: null,
+      providers: ["personal"],
+    };
+    Object.assign(state.onboarding, {
+      name: "Mary Jane Watson",
+      firstName: "Mary",
+      lastName: "Watson",
+      lastNameEnabled: true,
+    });
+    state.local.onboardingNameDraft = "Mary Jane Watson";
+    state.local.onboardingNameDraftUserId = "old-user-id";
+    setAppState(state, true);
+
+    await renderForm();
+
+    expect(getAppState().onboarding).toMatchObject({
+      name: "",
+      firstName: "",
+      lastName: "",
+      lastNameEnabled: false,
+    });
+    expect(getAppState().local.onboardingNameDraft).toBe("");
+  });
+
   it("re-prefills when the authenticated UID changes to the same provider name", async () => {
     const state = structuredClone(getAppState());
     state.auth = {
@@ -220,6 +249,7 @@ describe("SignInForm name editing", () => {
       displayName: "Alex Morgan",
       providers: ["password"],
     };
+    nextUser.authSessionNonce += 1;
     act(() => setAppState(nextUser, true));
 
     expect(getAppState().local.onboardingNameDraftUserId).toBe(

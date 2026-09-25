@@ -89,12 +89,21 @@ export const SignInForm = () => {
       if (onboardingNameDraft && !draftBelongsToUser) {
         draft.local.onboardingNameDraft = "";
         draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingSessionUserId = auth.uid;
+        if (!prefillName) {
+          applyOnboardingNameDraft(
+            draft.onboarding,
+            createOnboardingNameDraft(""),
+          );
+          return;
+        }
       }
       if (!prefillName) return;
       const nameDraft = createOnboardingNameDraft(prefillName);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = auth.uid;
+      draft.local.onboardingSessionUserId = auth.uid;
     });
   }, [auth, isSignedIn, onboardingNameDraft, onboardingNameDraftUserId]);
 
@@ -105,6 +114,7 @@ export const SignInForm = () => {
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = auth?.uid ?? null;
+      if (auth?.uid) draft.local.onboardingSessionUserId = auth.uid;
     });
     if (onboardingResumePage && onboardingResumePage !== "signIn") return;
     setEmailDialogOpen(false);
@@ -154,6 +164,7 @@ export const SignInForm = () => {
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
+      if (draft.auth?.uid) draft.local.onboardingSessionUserId = draft.auth.uid;
     });
   };
 
@@ -163,6 +174,7 @@ export const SignInForm = () => {
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
+      if (draft.auth?.uid) draft.local.onboardingSessionUserId = draft.auth.uid;
     });
   };
 

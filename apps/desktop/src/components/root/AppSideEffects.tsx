@@ -183,6 +183,7 @@ export const AppSideEffects = () => {
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
   const authReadyRef = useRef(false);
+  const authUidRef = useRef<string | null>(null);
   const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
@@ -366,11 +367,16 @@ export const AppSideEffects = () => {
   }, []);
 
   const onAuthStateChanged = (user: AuthUser | null) => {
-    getLogger().info(`Auth state changed (uid=${user?.uid ?? "none"})`);
+    const nextAuthUid = user?.uid ?? null;
+    getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
     authReadyRef.current = true;
     setAuthReady(true);
     produceAppState((draft) => {
       draft.auth = user;
+      if (authUidRef.current !== nextAuthUid) {
+        authUidRef.current = nextAuthUid;
+        draft.authSessionNonce += 1;
+      }
       draft.initialized = false;
     });
   };

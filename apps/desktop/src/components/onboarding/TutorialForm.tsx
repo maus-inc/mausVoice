@@ -499,7 +499,8 @@ const useTutorialSubmission = ({
       try {
         if (!submittedRef.current) {
           submittedRef.current = true;
-          await submitOnboarding();
+          const savedUser = await submitOnboarding();
+          if (!savedUser) return;
           submissionCompleteRef.current = true;
         }
 
@@ -677,7 +678,8 @@ export const TutorialForm = () => {
   const handleFinish = async () => {
     setSubmitting(true);
     try {
-      await finishOnboarding();
+      const savedUser = await finishOnboarding();
+      if (!savedUser) return;
       showConfetti();
     } catch (err) {
       showErrorSnackbar(err);
