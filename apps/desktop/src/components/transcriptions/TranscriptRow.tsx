@@ -253,17 +253,16 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
         ctxMenu.handleContextMenu(e.nativeEvent, contextMenuItems);
       }}
     >
-      <Stack
-        direction="row"
-        spacing={1}
+      {/* One hit area per item: the hover wash covers the date row, the
+          transcript, and the audio pill together — never the date column
+          alone. The divider stays outside so rows keep a clean seam. */}
+      <Box
         sx={{
-          justifyContent: "space-between",
-          alignItems: "center",
           mt: 1.5,
           mx: -1,
           px: 1,
           py: 0.5,
-          borderRadius: 2,
+          borderRadius: 1,
           transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
           "&:hover": { bgcolor: "action.hover" },
           "@media (prefers-reduced-motion: reduce)": {
@@ -275,158 +274,169 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           direction="row"
           spacing={1}
           sx={{
+            justifyContent: "space-between",
             alignItems: "center",
-            flexWrap: "wrap",
           }}
         >
-          <Typography
-            variant="subtitle2"
+          <Stack
+            direction="row"
+            spacing={1}
             sx={{
-              color: "text.secondary",
+              alignItems: "center",
+              flexWrap: "wrap",
             }}
           >
-            {transcription?.createdAt
-              ? new Intl.DateTimeFormat(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(transcription.createdAt))
-              : ""}
-          </Typography>
-          {isRemoteTranscript && (
-            <Chip
-              size="small"
-              variant="outlined"
-              label={intl.formatMessage({ defaultMessage: "Remote" })}
-            />
-          )}
-          {isSentToRemote && (
-            <Chip
-              size="small"
-              variant="outlined"
-              label={intl.formatMessage({ defaultMessage: "Sent" })}
-            />
-          )}
-        </Stack>
-        <Stack direction="row" spacing={1}>
-          <Tooltip
-            title={intl.formatMessage({
-              defaultMessage: "View transcription details",
-            })}
-            placement="top"
-          >
-            <IconButton
-              aria-label={intl.formatMessage({
+            <Typography
+              variant="subtitle2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
+              {transcription?.createdAt
+                ? new Intl.DateTimeFormat(undefined, {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(new Date(transcription.createdAt))
+                : ""}
+            </Typography>
+            {isRemoteTranscript && (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={intl.formatMessage({ defaultMessage: "Remote" })}
+              />
+            )}
+            {isSentToRemote && (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={intl.formatMessage({ defaultMessage: "Sent" })}
+              />
+            )}
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <Tooltip
+              title={intl.formatMessage({
                 defaultMessage: "View transcription details",
               })}
-              onClick={handleDetailsOpen}
-              size="small"
-              color={hasMetadata ? "primary" : "default"}
-            >
-              <Info size={16} strokeWidth={1.9} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip
-            title={intl.formatMessage({ defaultMessage: "Copy transcript" })}
-            placement="top"
-          >
-            <IconButton
-              aria-label={intl.formatMessage({
-                defaultMessage: "Copy transcript",
-              })}
-              onClick={() =>
-                handleCopyTranscript(transcription?.transcript || "")
-              }
-              size="small"
-            >
-              <Copy size={16} strokeWidth={1.9} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip
-            title={intl.formatMessage({ defaultMessage: "Delete transcript" })}
-            placement="top"
-          >
-            <IconButton
-              aria-label={intl.formatMessage({
-                defaultMessage: "Delete transcript",
-              })}
-              onClick={() => handleDeleteTranscript(id)}
-              size="small"
-            >
-              <Trash2 size={16} strokeWidth={1.9} />
-            </IconButton>
-          </Tooltip>
-          {!isRemoteTranscript && activeRemoteTarget && (
-            <Tooltip
-              title={intl.formatMessage(
-                { defaultMessage: "Send to {name}" },
-                { name: activeRemoteTarget.name },
-              )}
               placement="top"
             >
               <IconButton
-                aria-label={intl.formatMessage(
+                aria-label={intl.formatMessage({
+                  defaultMessage: "View transcription details",
+                })}
+                onClick={handleDetailsOpen}
+                size="small"
+                color={hasMetadata ? "primary" : "default"}
+              >
+                <Info size={16} strokeWidth={1.9} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip
+              title={intl.formatMessage({ defaultMessage: "Copy transcript" })}
+              placement="top"
+            >
+              <IconButton
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Copy transcript",
+                })}
+                onClick={() =>
+                  handleCopyTranscript(transcription?.transcript || "")
+                }
+                size="small"
+              >
+                <Copy size={16} strokeWidth={1.9} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip
+              title={intl.formatMessage({
+                defaultMessage: "Delete transcript",
+              })}
+              placement="top"
+            >
+              <IconButton
+                aria-label={intl.formatMessage({
+                  defaultMessage: "Delete transcript",
+                })}
+                onClick={() => handleDeleteTranscript(id)}
+                size="small"
+              >
+                <Trash2 size={16} strokeWidth={1.9} />
+              </IconButton>
+            </Tooltip>
+            {!isRemoteTranscript && activeRemoteTarget && (
+              <Tooltip
+                title={intl.formatMessage(
                   { defaultMessage: "Send to {name}" },
                   { name: activeRemoteTarget.name },
                 )}
-                onClick={handleSendToReceiver}
-                size="small"
-              >
-                <Send size={16} strokeWidth={1.9} />
-              </IconButton>
-            </Tooltip>
-          )}
-        </Stack>
-      </Stack>
-      <TypographyWithMore
-        variant="body2"
-        color="text.primary"
-        maxLines={3}
-        sx={{ my: 1 }}
-      >
-        {transcription?.transcript}
-      </TypographyWithMore>
-      {audioSnapshot && (
-        <AudioPlayerPill
-          transcriptionId={id}
-          durationMs={audioSnapshot.durationMs}
-          disabled={isRetranscribing}
-          actions={
-            <>
-              <Tooltip title={retranscribeTooltip} placement="top">
-                <span>
-                  <IconButton
-                    aria-label={retranscribeTooltip}
-                    aria-busy={isRetranscribing}
-                    size="small"
-                    onClick={() => openRetranscribeDialog(id)}
-                    disabled={isRetranscribing}
-                    sx={{ p: 0.5 }}
-                  >
-                    {retranscribeIcon}
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip
-                title={intl.formatMessage({
-                  defaultMessage: "Export transcription",
-                })}
                 placement="top"
               >
                 <IconButton
-                  aria-label={intl.formatMessage({
-                    defaultMessage: "Export transcription",
-                  })}
+                  aria-label={intl.formatMessage(
+                    { defaultMessage: "Send to {name}" },
+                    { name: activeRemoteTarget.name },
+                  )}
+                  onClick={handleSendToReceiver}
                   size="small"
-                  onClick={handleExport}
-                  sx={{ p: 0.5 }}
                 >
-                  <Download size={16} strokeWidth={1.9} />
+                  <Send size={16} strokeWidth={1.9} />
                 </IconButton>
               </Tooltip>
-            </>
-          }
-        />
-      )}
+            )}
+          </Stack>
+        </Stack>
+        <TypographyWithMore
+          variant="body2"
+          color="text.primary"
+          maxLines={3}
+          sx={{ my: 1 }}
+        >
+          {transcription?.transcript}
+        </TypographyWithMore>
+        {audioSnapshot && (
+          <AudioPlayerPill
+            transcriptionId={id}
+            durationMs={audioSnapshot.durationMs}
+            disabled={isRetranscribing}
+            actions={
+              <>
+                <Tooltip title={retranscribeTooltip} placement="top">
+                  <span>
+                    <IconButton
+                      aria-label={retranscribeTooltip}
+                      aria-busy={isRetranscribing}
+                      size="small"
+                      onClick={() => openRetranscribeDialog(id)}
+                      disabled={isRetranscribing}
+                      sx={{ p: 0.5 }}
+                    >
+                      {retranscribeIcon}
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip
+                  title={intl.formatMessage({
+                    defaultMessage: "Export transcription",
+                  })}
+                  placement="top"
+                >
+                  <IconButton
+                    aria-label={intl.formatMessage({
+                      defaultMessage: "Export transcription",
+                    })}
+                    size="small"
+                    onClick={handleExport}
+                    sx={{ p: 0.5 }}
+                  >
+                    <Download size={16} strokeWidth={1.9} />
+                  </IconButton>
+                </Tooltip>
+              </>
+            }
+          />
+        )}
+      </Box>
       <Divider sx={{ mt: 2 }} />
       {ctxMenu.renderMenu()}
     </Box>

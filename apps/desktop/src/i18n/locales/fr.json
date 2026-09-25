@@ -581,6 +581,7 @@
   "polishing": "Peaufinage",
   "post_processing": "Post-traitement",
   "post_processing_duration": "Durée du post-traitement",
+  "post_processing_model": "Modèle de post-traitement",
   "post_processing_must_be_enabled_to_use_writing_styles": "Le post-traitement doit être activé pour utiliser les styles d'écriture.",
   "post_processing_step": "Étape de post-traitement",
   "power_mode": "Mode d'alimentation",

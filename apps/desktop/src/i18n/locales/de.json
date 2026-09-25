@@ -581,6 +581,7 @@
   "polishing": "Polieren",
   "post_processing": "Nachbearbeitung",
   "post_processing_duration": "Nachbearbeitungsdauer",
+  "post_processing_model": "Nachbearbeitungsmodell",
   "post_processing_must_be_enabled_to_use_writing_styles": "Die Nachbearbeitung muss aktiviert sein, um Schreibstile zu verwenden.",
   "post_processing_step": "Nachbearbeitungsschritt",
   "power_mode": "Leistungsmodus",

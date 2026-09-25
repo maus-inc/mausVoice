@@ -581,6 +581,7 @@
   "polishing": "다듬는 중",
   "post_processing": "후처리",
   "post_processing_duration": "후처리 시간",
+  "post_processing_model": "후처리 모델",
   "post_processing_must_be_enabled_to_use_writing_styles": "글쓰기 스타일을 사용하려면 후처리를 활성화해야 합니다.",
   "post_processing_step": "후처리 단계",
   "power_mode": "전원 모드",
