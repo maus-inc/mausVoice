@@ -28,9 +28,13 @@ const findWrapper = (id: string): HTMLElement | null => {
  * metal-fx keeps its wrapper at inline `visibility: hidden` until the WebGL
  * renderer copies a first frame. If that never happens (context lost, GPU
  * reset, shader init failure in the webview), the wrapped control stays
- * invisible and unclickable. Rescue it only in that failure state: the normal
- * path, including the reduced-motion `paused` path, is left entirely to the
- * library.
+ * invisible and unclickable. Rescue it only in that failure state.
+ *
+ * The check is purely state-based and deliberately independent of `paused`
+ * (reduced motion): it reacts to the library's own hidden state in every mode.
+ * Whenever metal-fx reveals the wrapper itself, the rescue never applies (or is
+ * lifted); if it never does, even while paused, the control is rescued, since
+ * an unusable control is worse than an unpainted ring.
  */
 const useFirstFrameRescue = (id: string): boolean => {
   const [rescued, setRescued] = useState(false);

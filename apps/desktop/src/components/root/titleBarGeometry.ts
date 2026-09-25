@@ -6,6 +6,15 @@ import type { Platform } from "../../utils/platform.utils";
  * caption buttons change size the grips move with them.
  */
 
+/**
+ * Resize grip edge thickness in px. Matches the hit area a native frame would
+ * expose, intentionally thin so it never steals clicks from real content.
+ */
+export const EDGE = 4;
+
+/** Corner grip size in px, larger so diagonal resize stays reachable. */
+export const CORNER = 12;
+
 /** Height of the custom title bar (and of each caption button). */
 export const TITLE_BAR_HEIGHT = 40;
 
