@@ -90,6 +90,8 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
   ["api-docs.deepseek.com", "doc comment URL"],
+  ["inference-docs.cerebras.ai", "doc comment URL"],
+  ["ai.google.dev", "doc comment URL"],
 ]);
 
 /**

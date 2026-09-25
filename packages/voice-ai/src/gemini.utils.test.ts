@@ -89,6 +89,7 @@ describe("Gemini native transport", () => {
           parts: [{ text: "Be concise.\n\nHello" }],
         },
       ],
+      generationConfig: { thinkingConfig: { thinkingLevel: "low" } },
     });
   });
 
@@ -497,5 +498,44 @@ describe("Gemini retry policy edge cases", () => {
       }),
     ).rejects.toThrow();
     expect(customFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Gemini thinking controls", () => {
+  const generate = async (model: string) => {
+    const customFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: "hello" }] } }],
+      }),
+    );
+    await geminiGenerateTextResponse({
+      apiKey: "gemini-key",
+      model,
+      prompt: "Clean this up.",
+      maxTokens: 600,
+      customFetch,
+    });
+    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    return body.generationConfig as Record<string, unknown>;
+  };
+
+  it("lowers Gemini 3 thinking so the reply fits the completion budget", async () => {
+    const config = await generate("gemini-3.7-flash");
+
+    expect(config.thinkingConfig).toEqual({ thinkingLevel: "low" });
+  });
+
+  it("turns thinking off for Gemini 2.5 Flash", async () => {
+    const config = await generate("gemini-2.5-flash");
+
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: 0 });
+  });
+
+  it("leaves models without a known low setting untouched", async () => {
+    // Flash-Lite already defaults to minimal thinking, and an unsupported
+    // thinking field would fail the whole request.
+    const config = await generate("gemini-3.5-flash-lite");
+
+    expect(config).not.toHaveProperty("thinkingConfig");
   });
 });

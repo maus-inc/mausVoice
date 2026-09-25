@@ -1,6 +1,6 @@
 import { getGenerateTextRepo } from "../repos";
 import { getAppState } from "../store";
-import { parsePostProcessingJson } from "../utils/ai.utils";
+import { resolveProcessedTranscription } from "../utils/ai.utils";
 import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
@@ -8,7 +8,6 @@ import {
   type PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   POST_PROCESS_MAX_TOKENS,
-  PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
 import {
   getMyUserName,
@@ -41,16 +40,19 @@ export class TonePreviewNoProviderError extends Error {
   }
 }
 
-const unwrapResultJson = (raw: string): string => {
-  try {
-    const parsed = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(
-      parsePostProcessingJson(raw),
-    );
-    if (parsed.success) return parsed.data.result.trim();
-  } catch {
-    // Not JSON: fall through to raw text below.
+/**
+ * The preview shows the cleaned text when the model produced a usable reply
+ * and the model's own words otherwise, so a style that answers in plain text
+ * still shows up in the dialog instead of the unedited sample.
+ */
+const unwrapResultJson = (raw: string, sample: string): string => {
+  const resolution = resolveProcessedTranscription(raw, sample);
+  if (resolution.status === "cleaned") {
+    return resolution.transcript;
   }
-  return raw.trim();
+  // A reply that never parsed is shown verbatim: a style that answers in prose
+  // is still worth previewing. A parsed reply with no text previews as empty.
+  return resolution.reason === "unparseable" ? raw.trim() : "";
 };
 
 /**
@@ -92,5 +94,5 @@ export const previewToneStyle = async (
     jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
     maxTokens: POST_PROCESS_MAX_TOKENS,
   });
-  return unwrapResultJson(output.text);
+  return unwrapResultJson(output.text, input.transcript);
 };

@@ -458,7 +458,6 @@ export const buildSystemPostProcessingTonePrompt = (
   const fullPrompt = `
 ${stylePrompt}
 The result must be in the ${languageName} language.
-Respond with JSON only: { "result": "<processed-transcript>" }
 ${buildGlossaryGuidance(input.glossary)}
 `;
 
@@ -721,20 +720,16 @@ export const buildPostProcessingPrompt = (
   input: PostProcessingPromptInput,
 ): string => {
   const { transcript, tone } = input;
-  // A19: append the shared humanize skill to every post-processing prompt so
+  // A19: the shared humanize skill ships with every post-processing prompt so
   // styled dictation output is de-slopped at generation time (the scrubber in
   // run-agent.ts is the post-hoc safety net).
-  if (tone.kind === "template") {
-    return appendHumanizeSkill(
-      applyTemplateVars(
-        tone.promptTemplate,
-        buildPostProcessingTemplateVars(input),
-      ),
-    );
-  }
-
-  return appendHumanizeSkill(
-    `
+  const body =
+    tone.kind === "template"
+      ? applyTemplateVars(
+          tone.promptTemplate,
+          buildPostProcessingTemplateVars(input),
+        )
+      : `
 Here is the transcript:
 
 <transcript>
@@ -742,15 +737,66 @@ ${transcript}
 </transcript>
 
 Process the transcript according to the instructions.
-`,
-  );
+`;
+
+  // The rules that do not depend on the dictation come first, so the longest
+  // possible prefix of the request is byte-identical across dictations and can
+  // be served from the provider's prompt cache: Groq caches GPT-OSS prefixes
+  // automatically and exempts cached tokens from its rate limits. The
+  // transcript stays the last variable input of the style prompt; a tone
+  // template decides on its own where its `<transcript/>` token sits.
+  return `${HUMANIZE_SKILL_TEXT}\n\n${POST_PROCESS_OUTPUT_FORMAT_GUIDANCE}\n\n${body.trim()}`;
 };
 
 // Shared output budget for production transforms and style previews.
 export const POST_PROCESS_MAX_TOKENS = 600;
 
+/**
+ * The reply contract for post-processing. Cleanup is normally a small,
+ * local change, so the model returns the changes as edits instead of
+ * retyping the transcript. Retyping costs output tokens (roughly one per
+ * word of the dictation) and gives the model a chance to alter text it was
+ * not asked to touch; an edit list is both cheaper to generate and
+ * verifiable before it is applied (see `applyTranscriptionEdits`).
+ *
+ * `result` stays in the schema so a heavy restyle, where nearly every word
+ * changes, can still return a full rewrite. Both keys are required, which is
+ * also what Groq's strict structured outputs need to decode the reply with
+ * constraints: the unused key is an empty string or an empty array. Providers
+ * that only offer JSON object mode ignore the schema, so the reader in
+ * ai.utils treats either key as optional and falls back to the raw transcript
+ * when neither is usable.
+ */
+const POST_PROCESS_OUTPUT_FORMAT_GUIDANCE = `Return JSON with both keys.
+"edits": the smallest ordered list of { "find", "replace" } pairs that turns the transcript into the cleaned text. Copy each "find" from the transcript exactly, including spaces and punctuation, and make sure it appears only once. Extend the copied text when a word repeats so each "find" is unique. Use an empty "replace" to delete text, and include the surrounding space in "find" when deleting a word so the sentence keeps single spacing.
+"result": leave this as an empty string when you return edits.
+Reply with only that JSON object, for example { "edits": [ { "find": "...", "replace": "..." } ], "result": "" }.
+If the style requires a full rewrite, or you cannot copy the changed text exactly, return "edits" as an empty array and put the full cleaned text in "result" instead.`;
+
+const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
+  .array(
+    z.object({
+      find: z
+        .string()
+        .describe(
+          "Text copied exactly from the raw transcript, appearing exactly once in it",
+        ),
+      replace: z
+        .string()
+        .describe("Replacement text, or an empty string to delete the match"),
+    }),
+  )
+  .describe(
+    "Ordered edits that turn the raw transcript into the cleaned text. Use the fewest edits that express the required changes.",
+  );
+
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
-  result: z.string().describe("The processed transcription"),
+  edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
+  result: z
+    .string()
+    .describe(
+      "Full cleaned transcript, used only when edits are impractical, otherwise an empty string",
+    ),
 });
 
 export const PROCESSED_TRANSCRIPTION_JSON_SCHEMA = z.toJSONSchema(
@@ -760,7 +806,8 @@ export const PROCESSED_TRANSCRIPTION_JSON_SCHEMA = z.toJSONSchema(
 
 export const PROCESSED_TRANSCRIPTION_JSON_RESPONSE = {
   name: "transcription_cleaning",
-  description: "JSON response with the processed transcription",
+  description:
+    "JSON response with the edits that clean the transcription, or a full cleaned transcription in result",
   schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
 };
 

@@ -64,7 +64,11 @@ export function createGeminiGenerateTests({
         prompt: "hello",
       });
 
-      expect(callParams?.generationConfig).toBeUndefined();
+      // The config may still carry entries the adapter always decides on
+      // (thinking controls), so assert on the caller-owned field only.
+      expect(callParams?.generationConfig).not.toHaveProperty(
+        "maxOutputTokens",
+      );
     });
 
     it("forwards caller-owned maxTokens to config.maxOutputTokens when provided", async () => {
