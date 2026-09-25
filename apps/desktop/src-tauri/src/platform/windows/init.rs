@@ -4,7 +4,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, STARTF_USESHOWWINDOW};
 
 use crate::platform::permissions;
 
@@ -139,7 +139,7 @@ pub fn request_elevation_relaunch(app: tauri::AppHandle) -> crate::platform::Nat
             PCWSTR(exe_wide.as_ptr()),
             PCWSTR(args_wide.as_ptr()),
             PCWSTR::null(),
-            SW_SHOWNORMAL,
+            SW_HIDE,
         )
     };
 
@@ -290,6 +290,8 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE as u16;
 
     let result = unsafe {
         CreateProcessW(

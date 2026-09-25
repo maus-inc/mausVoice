@@ -25,6 +25,8 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
           fontSize: "0.75rem",
           fontWeight: 650,
           lineHeight: 1,
+          whiteSpace: "nowrap",
+          overflow: "visible",
           color: "text.primary",
           "&.Mui-focusVisible": {
             outline: "2px solid",

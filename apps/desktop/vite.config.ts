@@ -87,11 +87,11 @@ export default defineConfig(async ({ mode }) => {
     fileURLToPath(new URL(`./src/preview/tauri/${name}.ts`, import.meta.url));
 
   return {
-    // Relative base so the built index.html references ./assets/* instead of
-    // /assets/*. Tauri serves the release frontend over the asset: protocol,
-    // where absolute paths + the crossorigin module attribute can fail to
-    // load — leaving a blank white window with no script execution.
-    base: isBrowserPreview ? "/" : "./",
+    // Use absolute base so asset URLs resolve correctly regardless of the
+    // current route path (e.g. after clearing local data and reloading at
+    // /dashboard/). The crossorigin attribute is stripped by the plugin
+    // below, preventing CORS-mode failures.
+    base: "/",
     // The preview keeps production page modules but substitutes the narrow
     // native boundary. Aliases are enabled only in the explicit preview mode;
     // desktop and native test builds continue to import Tauri normally.

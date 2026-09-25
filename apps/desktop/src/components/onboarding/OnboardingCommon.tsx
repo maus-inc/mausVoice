@@ -111,7 +111,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::after": {
-            content: '""',
+            content: '',
             position: "absolute",
             left: 0,
             right: 0,
@@ -146,7 +146,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::before": {
-            content: '""',
+            content: '',
             position: "absolute",
             left: 0,
             right: 0,

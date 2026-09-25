@@ -70,6 +70,8 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
               sx={{
                 fontWeight: "bold",
                 textTransform: "capitalize",
+                whiteSpace: "nowrap",
+                overflow: "visible",
               }}
             >
               {displayKey}
