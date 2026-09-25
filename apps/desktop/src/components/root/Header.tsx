@@ -9,7 +9,7 @@ import { useIsOnboarded } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectivePlan, planToDisplayName } from "../../utils/member.utils";
 import { getInitials } from "../../utils/string.utils";
-import { getMyUser } from "../../utils/user.utils";
+import { getMyUser, getMyUserFirstName } from "../../utils/user.utils";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -61,12 +61,13 @@ export const AppHeader = () => {
     planToDisplayName(getEffectivePlan(state)),
   );
 
-  const myName = useAppStore((state) => {
+  const myFullName = useAppStore((state) => {
     const user = getMyUser(state);
     return user?.name ?? "Unknown";
   });
+  const myName = useAppStore(getMyUserFirstName);
 
-  const myInitials = useMemo(() => getInitials(myName), [myName]);
+  const myInitials = useMemo(() => getInitials(myFullName), [myFullName]);
   const identifierData = useAsyncData(getIdentifier, []);
   const isGpuBuild =
     identifierData.state === "success" &&

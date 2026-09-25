@@ -17,6 +17,9 @@ export type OnboardingPageKey =
 
 export type OnboardingState = {
   name: string;
+  firstName: string;
+  lastName: string;
+  lastNameEnabled: boolean;
   title: string;
   currentPage: OnboardingPageKey;
   /** Ephemeral resume intent; ordinary navigation clears automatic permission skips. */
@@ -36,6 +39,9 @@ export type OnboardingState = {
 
 export const INITIAL_ONBOARDING_STATE: OnboardingState = {
   name: "",
+  firstName: "",
+  lastName: "",
+  lastNameEnabled: false,
   title: "",
   currentPage: "signIn",
   isResuming: false,
@@ -54,4 +60,7 @@ export const INITIAL_ONBOARDING_STATE: OnboardingState = {
 
 if (getIsDevMode()) {
   INITIAL_ONBOARDING_STATE.name = "Emulator User";
+  INITIAL_ONBOARDING_STATE.firstName = "Emulator";
+  INITIAL_ONBOARDING_STATE.lastName = "User";
+  INITIAL_ONBOARDING_STATE.lastNameEnabled = true;
 }

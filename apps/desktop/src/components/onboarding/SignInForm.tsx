@@ -4,23 +4,24 @@ import {
   Button,
   Dialog,
   DialogContent,
-  Link,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import { useEffect, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import walkingImage from "../../assets/1-walking.png";
-import { signOut } from "../../actions/login.actions";
 import {
   goToOnboardingPage,
   setAwaitingSignInNavigation,
   setDidSignUpWithAccount,
 } from "../../actions/onboarding.actions";
-import { useAppStore } from "../../store";
+import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { getShouldShowEmailForm } from "../../utils/login.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
+import { getFirstAndLastName } from "../../utils/string.utils";
+import { getMyUser } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { LoginForm } from "../login/LoginForm";
 import { TermsNotice } from "../login/TermsNotice";
@@ -31,6 +32,7 @@ import {
 } from "./OnboardingCommon";
 
 export const SignInForm = () => {
+  const intl = useIntl();
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
 
@@ -43,8 +45,57 @@ export const SignInForm = () => {
   const isSignedIn = Boolean(auth);
   const showEmailButton = useAppStore((state) => getShouldShowEmailForm(state));
 
+  const existingUser = useAppStore((state) => getMyUser(state));
+  const existingName = existingUser?.name?.trim() ?? "";
+
+  const firstName = useAppStore((state) => state.onboarding.firstName);
+  const lastName = useAppStore((state) => state.onboarding.lastName);
+  const lastNameEnabled = useAppStore((state) => state.onboarding.lastNameEnabled);
+
+  // Prefill name fields from the auth provider's displayName on first sign-in
+  // if nothing has been entered yet.
   useEffect(() => {
-    if (isSignedIn && awaitingSignInNavigation) {
+    if (!isSignedIn) return;
+    if (firstName.trim() !== "") return;
+    const dn = auth?.displayName;
+    if (!dn) return;
+    const { firstName: fn, lastName: ln } = getFirstAndLastName(dn);
+    if (fn) {
+      produceAppState((draft) => {
+        draft.onboarding.firstName = fn;
+        if (ln) {
+          draft.onboarding.lastName = ln;
+          draft.onboarding.lastNameEnabled = true;
+        }
+        draft.onboarding.name = [fn, ln].filter(Boolean).join(" ");
+      });
+    }
+  }, [auth, isSignedIn, firstName]);
+
+  useEffect(() => {
+    // Returning user (already onboarded or has a name persisted): skip the
+    // name-collection step entirely.
+    if (isSignedIn && existingName !== "") {
+      const { firstName: efn, lastName: eln } = getFirstAndLastName(existingName);
+      produceAppState((draft) => {
+        if (efn) draft.onboarding.firstName = efn;
+        if (eln) {
+          draft.onboarding.lastName = eln;
+          draft.onboarding.lastNameEnabled = true;
+        }
+        draft.onboarding.name = existingName;
+      });
+      setAwaitingSignInNavigation(false);
+      setEmailDialogOpen(false);
+      setDidSignUpWithAccount(!isPersonalUse);
+      goToOnboardingPage(
+        isPersonalUse ? "personalCredentials" : "chooseTranscription",
+      );
+      return;
+    }
+    // Only auto-navigate once the user has supplied their first name so the
+    // name-collection step can't be skipped.
+    if (isSignedIn && awaitingSignInNavigation && firstName.trim() !== "") {
       setAwaitingSignInNavigation(false);
       setEmailDialogOpen(false);
       setDidSignUpWithAccount(!isPersonalUse);
@@ -52,7 +103,7 @@ export const SignInForm = () => {
         isPersonalUse ? "personalCredentials" : "chooseTranscription",
       );
     }
-  }, [isSignedIn, awaitingSignInNavigation, isPersonalUse]);
+  }, [isSignedIn, awaitingSignInNavigation, isPersonalUse, firstName, existingName]);
 
   const handleClickLocalSetup = () => {
     trackButtonClick("onboarding_local_setup");
@@ -84,7 +135,46 @@ export const SignInForm = () => {
     setEmailDialogOpen(false);
   };
 
+  const syncName = (fn: string, ln: string, lnEnabled: boolean) =>
+    [fn.trim(), lnEnabled ? ln.trim() : ""].filter(Boolean).join(" ");
+
+  const handleFirstNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    produceAppState((draft) => {
+      draft.onboarding.firstName = value;
+      draft.onboarding.name = syncName(value, draft.onboarding.lastName, draft.onboarding.lastNameEnabled);
+    });
+  };
+
+  const handleFirstNameBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    produceAppState((draft) => {
+      draft.onboarding.firstName = e.target.value.trim();
+    });
+  };
+
+  const handleLastNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    produceAppState((draft) => {
+      draft.onboarding.lastName = value;
+      draft.onboarding.lastNameEnabled = true;
+      draft.onboarding.name = syncName(draft.onboarding.firstName, value, true);
+    });
+  };
+
+  const handleLastNameBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    produceAppState((draft) => {
+      draft.onboarding.lastName = e.target.value.trim();
+    });
+  };
+
+  const handleLastNameActivate = () => {
+    produceAppState((draft) => {
+      draft.onboarding.lastNameEnabled = true;
+    });
+  };
+
   const handleContinue = () => {
+    if (firstName.trim() === "") return;
     trackButtonClick("onboarding_continue_signed_in");
     setDidSignUpWithAccount(!isPersonalUse);
     goToOnboardingPage(
@@ -92,10 +182,7 @@ export const SignInForm = () => {
     );
   };
 
-  const handleSignOut = async () => {
-    trackButtonClick("onboarding_sign_out");
-    await signOut();
-  };
+  const canContinue = firstName.trim() !== "";
 
   const rightContent = (
     <Box
@@ -113,22 +200,23 @@ export const SignInForm = () => {
           variant="contained"
           endIcon={<ArrowForward />}
           onClick={handleContinue}
+          disabled={!canContinue}
         >
           <FormattedMessage defaultMessage="Continue" />
         </Button>
       }
     >
-      <Stack spacing={2}>
+      <Stack spacing={2.5}>
         <Typography
           variant="h4"
           sx={{
             fontWeight: 500,
-            pb: 1,
+            pb: 0.5,
             fontFamily: "var(--font-display)",
             letterSpacing: "0.01em",
           }}
         >
-          <FormattedMessage defaultMessage="Welcome back" />
+          <FormattedMessage defaultMessage="Welcome" />
         </Typography>
 
         <Typography
@@ -138,19 +226,71 @@ export const SignInForm = () => {
           }}
         >
           <FormattedMessage
-            defaultMessage="You are signed in as {email}"
+            defaultMessage="Signed in as {email}"
             values={{ email: auth?.email }}
           />
         </Typography>
 
-        <Link
-          component="button"
-          variant="body2"
-          onClick={handleSignOut}
-          sx={{ alignSelf: "flex-start" }}
-        >
-          <FormattedMessage defaultMessage="Sign out" />
-        </Link>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+          <TextField
+            variant="outlined"
+            size="small"
+            label={<FormattedMessage defaultMessage="First name" />}
+            placeholder={intl.formatMessage({ defaultMessage: "John" })}
+            value={firstName}
+            onChange={handleFirstNameChange}
+            onBlur={handleFirstNameBlur}
+            autoFocus
+            autoComplete="given-name"
+            fullWidth
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                "data-mausvoice-ignore": "true",
+              },
+            }}
+          />
+          <TextField
+            variant="outlined"
+            size="small"
+            label={<FormattedMessage defaultMessage="Last name" />}
+            placeholder={intl.formatMessage({ defaultMessage: "Doe" })}
+            value={lastName}
+            onChange={handleLastNameChange}
+            onBlur={handleLastNameBlur}
+            onFocus={handleLastNameActivate}
+            onClick={handleLastNameActivate}
+            disabled={!lastNameEnabled}
+            autoComplete="family-name"
+            fullWidth
+            sx={
+              !lastNameEnabled
+                ? {
+                    "& .MuiInputBase-input.Mui-disabled": {
+                      color: "text.disabled",
+                      WebkitTextFillColor: "unset",
+                      opacity: 0.6,
+                    },
+                    "& .MuiInputLabel-root": {
+                      color: "text.disabled",
+                    },
+                    "& .MuiOutlinedInput-notchedOutline": {
+                      borderColor: "divider",
+                    },
+                    "&:hover .MuiOutlinedInput-notchedOutline": {
+                      borderColor: "text.secondary",
+                    },
+                  }
+                : undefined
+            }
+            slotProps={{
+              inputLabel: { shrink: true },
+              htmlInput: {
+                "data-mausvoice-ignore": "true",
+              },
+            }}
+          />
+        </Stack>
       </Stack>
     </OnboardingFormLayout>
   );

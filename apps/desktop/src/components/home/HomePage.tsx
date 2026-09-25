@@ -16,6 +16,7 @@ import {
   getDictationSpeed,
   getEffectiveStreak,
   getMyUser,
+  getMyUserFirstName,
   getMyUserName,
 } from "../../utils/user.utils";
 import { DictationInstruction } from "../common/DictationInstruction";
@@ -77,6 +78,7 @@ function StatCard({
 export default function HomePage() {
   const user = useAppStore(getMyUser);
   const userName = useAppStore(getMyUserName);
+  const userFirstName = useAppStore(getMyUserFirstName);
   const streak = useAppStore(getEffectiveStreak);
   const intl = useIntl();
 
@@ -112,7 +114,7 @@ export default function HomePage() {
                       fontSize: "0.92em",
                     }}
                   >
-                    {userName}
+                    {userFirstName}
                   </span>
                 ),
               }}

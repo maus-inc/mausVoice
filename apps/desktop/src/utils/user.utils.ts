@@ -7,6 +7,7 @@ import {
   UserPreferences,
 } from "@maus-inc/types";
 import { countWords, getRec } from "@maus-inc/utilities";
+import { getFirstAndLastName } from "./string.utils";
 import type {
   AgentMode,
   PostProcessingMode,
@@ -201,6 +202,13 @@ export const getShouldGoToOnboarding = (state: AppState): boolean => {
 export const getMyUserName = (state: AppState): string => {
   const user = getMyUser(state);
   return user?.name || "Guest";
+};
+
+export const getMyUserFirstName = (state: AppState): string => {
+  const user = getMyUser(state);
+  const fullName = user?.name || "";
+  const { firstName } = getFirstAndLastName(fullName);
+  return firstName || fullName || "Guest";
 };
 
 export const getIsSignedIn = (state: AppState): boolean => {

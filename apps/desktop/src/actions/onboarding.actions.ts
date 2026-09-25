@@ -241,7 +241,13 @@ export const setOnboardingPreferredMicrophone = (microphone: string | null) => {
 
 export const submitOnboarding = async () => {
   const state = getAppState();
-  const trimmedName = state.onboarding.name.trim();
+  const trimmedFirstName = state.onboarding.firstName.trim();
+  const trimmedLastName = state.onboarding.lastNameEnabled
+    ? state.onboarding.lastName.trim()
+    : "";
+  const trimmedName =
+    [trimmedFirstName, trimmedLastName].filter(Boolean).join(" ").trim() ||
+    state.onboarding.name.trim();
   const preferredMicrophone =
     state.onboarding.preferredMicrophone?.trim() ?? null;
   const normalizedMicrophone =

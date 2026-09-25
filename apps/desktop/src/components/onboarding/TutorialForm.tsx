@@ -616,7 +616,9 @@ export const TutorialForm = () => {
   );
   const primaryHotkey = hotkeyCombos[0] ?? [];
   const keysHeld = useAppStore((state) => state.keysHeld);
-  const userName = useAppStore((state) => state.onboarding.name) || "Alex";
+  const onboardingFullName =
+    useAppStore((state) => state.onboarding.name) || "Alex";
+  const userName = onboardingFullName;
 
   const setChatTone = async (toneId: string, force = false): Promise<void> => {
     if (!userExists && !force) {
