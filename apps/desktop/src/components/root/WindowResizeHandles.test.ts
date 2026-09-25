@@ -33,7 +33,8 @@ describe("hasRightCaptionButtons", () => {
     ["windows", true],
     ["linux", true],
     ["macos", false],
-  ])("%s -> %s", (platform, expected) => {
+    ["unknown", true],
+  ] as const)("%s -> %s", (platform, expected) => {
     expect(hasRightCaptionButtons(platform)).toBe(expected);
   });
 });

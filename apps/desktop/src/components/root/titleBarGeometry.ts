@@ -1,3 +1,5 @@
+import type { Platform } from "../../utils/platform.utils";
+
 /**
  * Single source of truth for the custom title bar geometry. The resize grips
  * in `WindowResizeHandles` and their tests read these values, so if the
@@ -14,5 +16,5 @@ export const CAPTION_BUTTON_WIDTH = 46;
  * Windows and Linux render caption buttons flush against the right window
  * edge; macOS renders traffic lights on the left instead.
  */
-export const hasRightCaptionButtons = (platform: string): boolean =>
+export const hasRightCaptionButtons = (platform: Platform): boolean =>
   platform !== "macos";
