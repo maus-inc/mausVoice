@@ -306,16 +306,12 @@ const uploadAudio = async (
   return uploadUrl;
 };
 
-type TranscriptRequestOptions = {
-  uploadUrl: string;
-  language: string | undefined;
-  speechModels: AssemblyAITranscriptionModel[] | undefined;
-  wordBoost: string[] | undefined;
-};
-
 const createTranscriptRequest = async (
   apiKey: string,
-  { uploadUrl, language, speechModels, wordBoost }: TranscriptRequestOptions,
+  uploadUrl: string,
+  language: string | undefined,
+  speechModels: AssemblyAITranscriptionModel[] | undefined,
+  wordBoost: string[] | undefined,
   signal: AbortSignal,
   deadline: number,
   customFetch: CustomFetch,
@@ -452,12 +448,10 @@ export const assemblyaiTranscribeAudio = async ({
     );
     const transcriptId = await createTranscriptRequest(
       apiKey,
-      {
-        uploadUrl,
-        language,
-        speechModels,
-        wordBoost: wordBoost?.map((term) => term.trim()).filter(Boolean),
-      },
+      uploadUrl,
+      language,
+      speechModels,
+      wordBoost?.map((term) => term.trim()).filter(Boolean),
       controller.signal,
       deadline,
       customFetch,

@@ -886,6 +886,14 @@ async stopKeyListener() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async stopRecording() : Promise<Result<StopRecordingResponse, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async storageGetDownloadUrl(path: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("storage_get_download_url", { path }) };
@@ -1317,6 +1325,7 @@ export type ScreenVisibleArea = { topInset: number; bottomInset: number; leftIns
 export type StartRecordingArgs = { preferredMicrophone: string | null }
 export type StartRecordingResponse = { sampleRate: number }
 export type StartRemoteReceiverArgs = { port?: number | null }
+export type StopRecordingResponse = { samples: number[]; sampleRate: number }
 export type StorageUploadArgs = { path: string; data: number[] }
 /**
  * Static machine capabilities used to recommend (or discourage) local
