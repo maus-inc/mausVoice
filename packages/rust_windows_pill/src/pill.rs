@@ -1600,7 +1600,7 @@ fn other_monitor_rects(current: MonitorRect, topology: &[MonitorRect]) -> Vec<Mo
 fn drag_monitor_neighbors(state: &PillState, current: MonitorRect) -> Vec<MonitorRect> {
     let enumerated = enumerate_monitor_topology(current);
     let topology = retain_monitor_topology(
-        &mut *state.last_monitor_topology.borrow_mut(),
+        &mut state.last_monitor_topology.borrow_mut(),
         current,
         enumerated,
     );
