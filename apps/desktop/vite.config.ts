@@ -172,11 +172,14 @@ export default defineConfig(async ({ mode }) => {
         },
       }),
       svgr(),
-      // Tauri serves the release frontend over the asset: protocol. The
-      // `crossorigin` attribute Vite adds to module/preload tags forces a
-      // CORS-mode fetch that the asset server can reject, leaving a blank
-      // white window. Same-origin module loading does not need it. Strip it
-      // only from <script>/<link> tags so we never touch inline strings.
+      // Tauri v2 serves the release frontend from its own custom protocol
+      // origin (`tauri://localhost`, or `http://tauri.localhost` on Windows).
+      // The `asset:` protocol is separate and only covers scoped local files
+      // such as recorded audio. The `crossorigin` attribute Vite adds to
+      // module/preload tags forces a CORS-mode fetch that the custom protocol
+      // handler can reject, leaving a blank white window. Same-origin module
+      // loading does not need it. Strip it only from <script>/<link> tags so we
+      // never touch inline strings.
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {

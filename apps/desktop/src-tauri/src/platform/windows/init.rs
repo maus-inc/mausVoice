@@ -240,8 +240,8 @@ fn decide_parent_exit(
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        CreateProcessW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS,
-        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTF_USESHOWWINDOW, STARTUPINFOW,
+        CreateProcessW, OpenProcess, WaitForSingleObject, CREATE_NO_WINDOW, INFINITE,
+        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
     };
 
     let mut open =
@@ -290,8 +290,6 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE.0 as u16;
 
     let result = unsafe {
         CreateProcessW(
@@ -300,7 +298,13 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
             None,
             None,
             false,
-            PROCESS_CREATION_FLAGS(0),
+            // Suppresses the console window a console-subsystem build would
+            // flash here. CREATE_NO_WINDOW is documented as ignored for a
+            // non-console application, so it cannot touch the main window
+            // this process is about to create. STARTF_USESHOWWINDOW is the
+            // wrong tool: it governs the launched app's first window, and this
+            // process *is* the app, so SW_HIDE could suppress the dashboard.
+            CREATE_NO_WINDOW,
             None,
             None,
             &si,
