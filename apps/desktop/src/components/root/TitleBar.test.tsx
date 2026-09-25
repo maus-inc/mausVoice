@@ -140,9 +140,7 @@ describe("TitleBar on Windows and Linux", () => {
       platformState.value = platform;
       await renderBar();
       const bar = document.querySelector("[data-focused]")!;
-      expect(
-        Number.parseFloat(getComputedStyle(bar).paddingRight),
-      ).toBe(0);
+      expect(Number.parseFloat(getComputedStyle(bar).paddingRight)).toBe(0);
     },
   );
   it("renders safely without the native OS or window plugins", async () => {

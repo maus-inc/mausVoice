@@ -19,6 +19,12 @@ type ResizeDirection = Parameters<TauriWindow["startResizeDragging"]>[0];
 const EDGE = 4;
 /** Corner grips are square and larger so diagonal resize stays reachable. */
 const CORNER = 12;
+/**
+ * Height of the custom title bar. On Windows/Linux the caption buttons sit
+ * flush against the right window edge across this whole row, so the right-edge
+ * grips must stay out of it or they would swallow clicks on the close button.
+ */
+const CAPTION_ROW = 40;
 
 type Grip = {
   direction: ResizeDirection;
@@ -26,7 +32,7 @@ type Grip = {
   position: Record<string, number>;
 };
 
-const GRIPS: readonly Grip[] = [
+export const GRIPS: readonly Grip[] = [
   {
     direction: "North",
     cursor: "ns-resize",
@@ -45,7 +51,7 @@ const GRIPS: readonly Grip[] = [
   {
     direction: "East",
     cursor: "ew-resize",
-    position: { right: 0, top: EDGE, bottom: CORNER, width: EDGE },
+    position: { right: 0, top: CAPTION_ROW, bottom: CORNER, width: EDGE },
   },
   {
     direction: "NorthWest",
@@ -55,9 +61,9 @@ const GRIPS: readonly Grip[] = [
   {
     direction: "NorthEast",
     cursor: "nesw-resize",
-    // Only an edge-thin strip: the close caption button sits flush in this
-    // corner and must stay clickable.
-    position: { top: 0, right: 0, width: CORNER, height: EDGE },
+    // Just the 4px frame corner: the close caption button sits flush in this
+    // corner and must stay clickable everywhere but the outermost pixels.
+    position: { top: 0, right: 0, width: EDGE, height: EDGE },
   },
   {
     direction: "SouthWest",
