@@ -1,14 +1,28 @@
 // @vitest-environment jsdom
 import { act, useEffect, useState } from "react";
+import type { Transcription } from "@maus-inc/types";
 import { createRoot, type Root } from "react-dom/client";
-import { Link, RouterProvider, createMemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUiHarness,
   setMatchMedia,
 } from "../../../test/helpers/jsdom-ui-harness";
 
+const historyEntry: Transcription = {
+  id: "history-1",
+  createdAt: "2026-09-25T12:00:00.000Z",
+  createdByUserId: "user-1",
+  transcript: "History entry",
+  isDeleted: false,
+};
+
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: async () => "1.0.0" }));
+vi.mock("../../repos", () => ({
+  getTranscriptionRepo: () => ({
+    listTranscriptions: async () => [historyEntry],
+  }),
+}));
 vi.mock("./DashboardMenu", () => ({
   DashboardMenu: () => (
     <nav>
@@ -25,6 +39,9 @@ vi.mock("../transcriptions/TranscriptionDetailsDialog", () => ({
 
 import DashboardPage from "./DashboardPage";
 import { ScrollListPage } from "../common/ScrollListPage";
+import { TranscriptionsSideEffects } from "../transcriptions/TranscriptionsSideEffects";
+import { INITIAL_APP_STATE } from "../../state/app.state";
+import { getAppState, setAppState, useAppStore } from "../../store";
 
 ensureUiHarness();
 setMatchMedia(false);
@@ -32,15 +49,19 @@ setMatchMedia(false);
 let container: HTMLDivElement;
 let root: Root;
 
-// Both real pages initially render an empty list and replace it when their
-// asynchronous repository load resolves. Exercise that transition in the
-// actual dashboard shell, not just a static route with a text node.
-function LoadedList({ title }: { title: string }) {
+// Mimic the dictionary's async list load without relying on a native repo.
+function DictionaryList() {
+  const title = "Dictionary";
   const [items, setItems] = useState<string[]>([]);
   useEffect(() => {
-    const id = setTimeout(() => setItems([`${title} entry`]), 0);
-    return () => clearTimeout(id);
-  }, [title]);
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) setItems(["Dictionary entry"]);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   return (
     <section data-page={title}>
       <ScrollListPage
@@ -52,7 +73,25 @@ function LoadedList({ title }: { title: string }) {
   );
 }
 
+function HistoryList() {
+  const ids = useAppStore((state) => state.transcriptions.transcriptionIds);
+  return (
+    <section data-page="History">
+      <TranscriptionsSideEffects />
+      <ScrollListPage
+        title="History"
+        items={ids}
+        renderItem={(id) => (
+          <p>{getAppState().transcriptionById[id]?.transcript}</p>
+        )}
+      />
+      <Link to="?filter=today">Today</Link>
+    </section>
+  );
+}
+
 beforeEach(() => {
+  setAppState(structuredClone(INITIAL_APP_STATE), true);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -60,8 +99,19 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  vi.useRealTimers();
   container.remove();
 });
+
+const clickTab = async (tab: "dictionary" | "transcriptions") => {
+  const link = container.querySelector<HTMLAnchorElement>(
+    `a[href="/dashboard/${tab}"]`,
+  );
+  if (!link) throw new Error(`Missing ${tab} link`);
+  await act(async () => {
+    link.click();
+  });
+};
 
 const visiblePages = () =>
   Array.from(container.querySelectorAll("[data-page]"), (node) =>
@@ -70,90 +120,76 @@ const visiblePages = () =>
 
 describe("dashboard routing", () => {
   it("keeps exactly one live list through loads and navigation in both directions", async () => {
-    const router = createMemoryRouter(
-      [
-        {
-          path: "/dashboard",
-          element: <DashboardPage />,
-          children: [
-            { path: "dictionary", element: <LoadedList title="Dictionary" /> },
-            {
-              path: "transcriptions",
-              element: <LoadedList title="History" />,
-            },
-          ],
-        },
-      ],
-      { initialEntries: ["/dashboard/dictionary"] },
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/dictionary"]}>
+          <Routes>
+            <Route path="/dashboard" element={<DashboardPage />}>
+              <Route path="dictionary" element={<DictionaryList />} />
+              <Route path="transcriptions" element={<HistoryList />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      ),
     );
-    try {
-      await act(async () => root.render(<RouterProvider router={router} />));
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      });
-      expect(visiblePages()).toEqual(["Dictionary"]);
-      expect(container.textContent).toContain("Dictionary entry");
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("Dictionary entry"),
+    );
+    expect(visiblePages()).toEqual(["Dictionary"]);
 
-      await act(async () => router.navigate("/dashboard/transcriptions"));
-      expect(visiblePages()).toEqual(["History"]);
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      });
-      expect(visiblePages()).toEqual(["History"]);
-      expect(container.textContent).toContain("History entry");
-      expect(container.textContent).not.toContain("Dictionary entry");
+    await clickTab("transcriptions");
+    expect(visiblePages()).toEqual(["History"]);
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("History entry"),
+    );
+    expect(visiblePages()).toEqual(["History"]);
+    expect(container.textContent).not.toContain("Dictionary entry");
 
-      await act(async () => router.navigate("/dashboard/dictionary"));
-      expect(visiblePages()).toEqual(["Dictionary"]);
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      });
-      expect(visiblePages()).toEqual(["Dictionary"]);
-      expect(container.textContent).toContain("Dictionary entry");
-      expect(container.textContent).not.toContain("History entry");
-    } finally {
-      router.dispose();
-    }
+    await clickTab("dictionary");
+    expect(visiblePages()).toEqual(["Dictionary"]);
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("Dictionary entry"),
+    );
+    expect(visiblePages()).toEqual(["Dictionary"]);
+    expect(container.textContent).not.toContain("History entry");
   });
 
-  it("does not remount the active page for a query-only navigation", async () => {
-    let mounts = 0;
-    let cleanups = 0;
-    function Page() {
-      useEffect(() => {
-        mounts++;
-        return () => {
-          cleanups++;
-        };
-      }, []);
-      return <div data-page="History">History entry</div>;
-    }
-    const router = createMemoryRouter(
-      [
-        {
-          path: "/dashboard",
-          element: <DashboardPage />,
-          children: [{ path: "transcriptions", element: <Page /> }],
-        },
-      ],
-      { initialEntries: ["/dashboard/transcriptions"] },
+  it("does not let an outgoing History page clear the incoming list", async () => {
+    await act(async () =>
+      root.render(
+        <MemoryRouter initialEntries={["/dashboard/transcriptions"]}>
+          <Routes>
+            <Route path="/dashboard" element={<DashboardPage />}>
+              <Route path="transcriptions" element={<HistoryList />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      ),
     );
-    try {
-      await act(async () => root.render(<RouterProvider router={router} />));
-      await act(async () =>
-        router.navigate("/dashboard/transcriptions?filter=today"),
-      );
-      expect(mounts).toBe(1);
-      expect(visiblePages()).toEqual(["History"]);
-      // History resets its shared list on unmount. An outgoing animated
-      // Outlet used to run that cleanup after the incoming page had loaded.
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      });
-      expect(cleanups).toBe(0);
-      expect(visiblePages()).toEqual(["History"]);
-    } finally {
-      router.dispose();
-    }
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("History entry"),
+    );
+    expect(getAppState().transcriptions.transcriptionIds).toEqual([
+      "history-1",
+    ]);
+
+    // React Router's old keyed exit animation mounted a second History page
+    // for query-only navigation, then called the old instance's useOnExit
+    // cleanup after the new instance had loaded. Advance that exit window
+    // without a wall-clock sleep so the shared-store reset is observable.
+    vi.useFakeTimers();
+    const filterLink = container.querySelector<HTMLAnchorElement>(
+      "a[href$='?filter=today']",
+    );
+    if (!filterLink) throw new Error("Missing filter link");
+    act(() => filterLink.click());
+    expect(visiblePages()).toEqual(["History"]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(getAppState().transcriptions.transcriptionIds).toEqual([
+      "history-1",
+    ]);
+    expect(container.textContent).toContain("History entry");
   });
 });
