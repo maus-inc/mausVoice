@@ -1329,11 +1329,7 @@ export const DictationSideEffects = () => {
         // this invocation's session before continuing. Reading and invoking a
         // nullable current ref here previously crashed when the user stopped
         // mid-initialization.
-        if (
-          operationId !== recordingOperationRef.current ||
-          sessionRef.current !== session ||
-          strategyRef.current !== strategy
-        ) {
+        if (!isCurrentStart()) {
           getLogger().warning(
             "Recording start raced an abort or replacement; stopping the stale native stream",
           );
@@ -1342,15 +1338,10 @@ export const DictationSideEffects = () => {
         }
         nativeStartOwnerRef.current = null;
         const startedSession = session;
-        const startedStrategy = strategy;
 
         await startedSession.onRecordingStart(sampleRate);
 
-        if (
-          operationId !== recordingOperationRef.current ||
-          sessionRef.current !== startedSession ||
-          strategyRef.current !== startedStrategy
-        ) {
+        if (!isCurrentStart()) {
           getLogger().warning(
             "Session was aborted while starting; skipping timers and stopping stale capture",
           );
