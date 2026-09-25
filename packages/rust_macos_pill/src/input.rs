@@ -291,6 +291,14 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
 /// (80 px = 48 px pill + 2 × 16 px) and the exit pad prevents flicker;
 /// both axes share the same pads. See `PILL_EXPAND_STIFFNESS` and
 /// `hover::ARM_DWELL` for companion timing.
+///
+/// Clicks are not affected: `is_on_pill_at` checks the unpadded pill
+/// rect (and `click_regions`), so the 16/32 px pad only influences
+/// hover intent via `is_in_hover_zone`/`HoverIntent` — widening hover
+/// never swallows a click. The three platforms keep this separation
+/// identically (Windows `check_hover` vs `WM_LBUTTONDOWN`, macOS
+/// `update_hover` vs `mouse_down` gated on `is_on_pill_at`, GTK
+/// `is_over_pill_area` vs `is_on_pill_at`).
 pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let s = state.ui_scale;
     let (ox, oy) = state.content_offset();

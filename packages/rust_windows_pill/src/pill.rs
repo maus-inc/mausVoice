@@ -224,12 +224,14 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     unsafe {
         windows::Win32::Media::timeBeginPeriod(1);
-        // 60 ms cursor timer is for monitor repositioning only; hover is
-        // now polled every animation frame (~16.7 ms) in on_anim_tick, so
-        // worst-case latency remains one frame (16 ms) + 50 ms dwell ≈
-        // 66 ms to first visual feedback. Keeping the timer at 60 ms avoids
-        // the extra 2 GetCursorPos/GetWindowRect pairs per tick that the
-        // former 20 ms timer added.
+        // Hover intent is sampled every animation frame (~16.7 ms at
+        // 60 Hz) in `on_anim_tick` so the 50 ms `ARM_DWELL` is measured
+        // at display rate. This raises `GetCursorPos` / `GetWindowRect`
+        // + hit-test work from 16.7 Hz (the previous 60 ms `TIMER_CURSOR`
+        // poll) to 60 Hz — about 3.75× more polls — which is the cost
+        // of making dwell accurate within one frame (≈16.7 ms + 50 ms
+        // ≈ 67 ms to first visual feedback). The 60 ms timer remains
+        // only for the infrequent monitor-reposition check.
         SetTimer(Some(hwnd), TIMER_CURSOR, 60, None);
     }
 
@@ -828,16 +830,22 @@ fn tick(state: &PillState, dt: f64) {
                 .target_level
                 .set((target * (1.0 - mix) + boosted * mix).min(1.0));
         }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
-        state.target_level.set(0.0);
-        state
-            .current_level
-            .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
+        // Levels queued while not recording are stale — drop them so the
+        // next recording starts from fresh input instead of a burst of
+        // old audio that was captured while the pill was idle/loading.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state
+                .current_level
+                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
         }
     }
 

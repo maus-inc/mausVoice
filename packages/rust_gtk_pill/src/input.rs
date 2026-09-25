@@ -27,6 +27,8 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     // on edge dither. See rust_pill_shared::{PILL_EXPAND_STIFFNESS,
     // hover::{HOVER_ENTRY_PAD, HOVER_EXIT_PAD, ARM_DWELL}} — pads live
     // in the shared crate so all three renderers cannot drift.
+    // Clicks are separate: `is_on_pill_at` checks the unpadded rect, so
+    // the 16/32 px pad only affects hover intent.
     let pad = if state.hovered.get() {
         rust_pill_shared::hover::HOVER_EXIT_PAD
     } else {
@@ -331,11 +333,18 @@ fn build_input_region(
     tooltip_t: f64, tooltip_w: f64, blend: f64,
     include_side_controls: bool,
 ) -> cairo::Region {
+    // Input shape must include the shared hover pad (16 px entry / 32 px
+    // exit) so motion events outside the visual pill still reach the
+    // window and `is_over_pill_area` can arm hover. Without this the
+    // anticipatory 16 px zone in `rust_pill_shared::hover` is unreachable
+    // on GTK — the pointer is outside the shaped window and no motion
+    // event is delivered. Use the larger exit pad to cover both states.
+    let pad = rust_pill_shared::hover::HOVER_EXIT_PAD;
     let pill_rect = cairo::RectangleInt::new(
-        (ox + pill_x).floor() as i32,
-        (oy + pill_y).floor() as i32,
-        pill_w.ceil() as i32,
-        pill_h.ceil() as i32,
+        (ox + pill_x - pad).floor() as i32,
+        (oy + pill_y - pad).floor() as i32,
+        (pill_w + 2.0 * pad).ceil() as i32,
+        (pill_h + 2.0 * pad).ceil() as i32,
     );
 
     let region = if rust_pill_shared::placement::tooltip_opacity(tooltip_t, blend) >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
@@ -468,12 +477,15 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
         let dh = state.draw_height.get();
         let (ox, oy) = state.content_offset();
         let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-        let pill_rx = (ox + pill_x) as i32;
-        let pill_ry = (oy + pill_y) as i32;
+        // Idle input shape must already include the anticipatory entry pad
+        // so the 16 px zone can be probed before the cursor touches the
+        // visual pill — otherwise GTK never delivers the motion event.
+        let pad = rust_pill_shared::hover::HOVER_ENTRY_PAD;
         let rect = cairo::RectangleInt::new(
-            pill_rx, pill_ry,
-            pill_w.ceil() as i32,
-            pill_h.ceil() as i32,
+            (ox + pill_x - pad).floor() as i32,
+            (oy + pill_y - pad).floor() as i32,
+            (pill_w + 2.0 * pad).ceil() as i32,
+            (pill_h + 2.0 * pad).ceil() as i32,
         );
         let region = cairo::Region::create_rectangle(&rect);
         union_flash_action(&region, state, ox, oy);
