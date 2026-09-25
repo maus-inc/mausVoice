@@ -11,7 +11,7 @@ import {
   type IconNode,
 } from "lucide";
 import { useMemo } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppStore } from "../../store";
 import { springSnappy } from "../../styles/motion";
@@ -36,6 +36,7 @@ export type DashboardMenuProps = {
 
 export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   const location = useLocation();
+  const intl = useIntl();
   const nav = useNavigate();
   const reduceMotion = useReducedMotion();
   const { mode, systemMode } = useColorScheme();
@@ -141,14 +142,19 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   };
 
   const list = (
-    <List sx={{ px: 1.5, pb: 2, pt: 0.5 }}>
+    <List
+      aria-label={intl.formatMessage({ defaultMessage: "Pages" })}
+      sx={{ px: 1.5, pb: 2, pt: 0.5 }}
+    >
       {navItems.map(({ label, path, icon }) => {
         const selected = isSelected(path);
         return (
           <ListTile
             key={path}
+            component="li"
             onClick={() => onChooseHandler(path)}
             selected={selected}
+            ariaCurrent={selected ? "page" : undefined}
             leading={<MorphNavIcon icon={icon} />}
             title={label}
             disableRipple
@@ -175,6 +181,10 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
 
   return (
     <Stack
+      component="nav"
+      aria-label={intl.formatMessage({
+        defaultMessage: "Dashboard navigation",
+      })}
       sx={{
         alignItems: "stretch",
         height: "100%",
@@ -192,26 +202,33 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>
       <Box sx={{ mt: 1, p: 1.5, pt: 0 }}>
         {isUpdateAvailable && <UpdateListTile />}
-        <ListTile
-          key={settingsPath}
-          onClick={() => onChooseHandler(settingsPath)}
-          selected={settingsSelected}
-          leading={<MorphNavIcon icon={Settings} />}
-          title={<FormattedMessage defaultMessage="Settings" />}
-          disableRipple
-          indicator={activeIndicator(settingsSelected)}
-          sx={{
-            "& .MuiListItemButton-root": {
-              "&.Mui-selected": {
-                backgroundColor: "transparent",
-                boxShadow: "none",
+        <List
+          aria-label={intl.formatMessage({ defaultMessage: "Settings" })}
+          disablePadding
+        >
+          <ListTile
+            key={settingsPath}
+            component="li"
+            onClick={() => onChooseHandler(settingsPath)}
+            selected={settingsSelected}
+            ariaCurrent={settingsSelected ? "page" : undefined}
+            leading={<MorphNavIcon icon={Settings} />}
+            title={<FormattedMessage defaultMessage="Settings" />}
+            disableRipple
+            indicator={activeIndicator(settingsSelected)}
+            sx={{
+              "& .MuiListItemButton-root": {
+                "&.Mui-selected": {
+                  backgroundColor: "transparent",
+                  boxShadow: "none",
+                },
+                "&.Mui-selected:hover": {
+                  backgroundColor: "transparent",
+                },
               },
-              "&.Mui-selected:hover": {
-                backgroundColor: "transparent",
-              },
-            },
-          }}
-        />
+            }}
+          />
+        </List>
       </Box>
     </Stack>
   );

@@ -15,7 +15,6 @@ import { getRec } from "@maus-inc/utilities";
 import { Check, FileUp } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { useDashboardBreadcrumb } from "../../hooks/dashboard-breadcrumb.hooks";
 import { showErrorSnackbar } from "../../actions/app.actions";
 import { importAudioFile } from "../../actions/transcriptions.actions";
 import { useAppStore } from "../../store";
@@ -50,7 +49,6 @@ const languageOptions = (
 
 export default function TranscriptionsPage() {
   const intl = useIntl();
-  useDashboardBreadcrumb(intl.formatMessage({ defaultMessage: "History" }));
   const transcriptionIds = useAppStore(
     (state) => state.transcriptions.transcriptionIds,
   );

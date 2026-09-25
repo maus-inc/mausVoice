@@ -58,7 +58,7 @@ export const CATEGORIES: { id: CategoryId; label: string; blurb: string }[] = [
   {
     id: "navigation",
     label: "Navigation",
-    blurb: "Sidebar rail, morphing icons, breadcrumbs.",
+    blurb: "Sidebar rail and morphing icons.",
   },
   {
     id: "layout",
@@ -1135,31 +1135,6 @@ export const REGISTRY: RegistryEntry[] = [
         },
         mapsTo: `${D}components/common/AppStepper.tsx → active StepLabel pill radius 64, primary.main, label 18/600; hover scale 1.05; transitions 180ms short — patch-only`,
         patch: `borderRadius: "64px", backgroundColor: "primary.main",`,
-      },
-    ],
-  },
-  {
-    id: "breadcrumb",
-    name: "Breadcrumb",
-    category: "navigation",
-    status: "reused",
-    sources: [`${D}components/common/Breadcrumb.tsx`],
-    usedIn: [
-      "No call sites found under components/ — reserved primitive (verify before deleting).",
-    ],
-    demo: "breadcrumb",
-    spec: [
-      {
-        key: "layout",
-        label: "Layout (docs)",
-        type: "text",
-        default: "body2 · / sep",
-        target: {
-          kind: "source",
-          file: `${D}components/common/Breadcrumb.tsx`,
-        },
-        mapsTo: `${D}components/common/Breadcrumb.tsx → body2 links (secondary, underline on hover), current page primary/500, separator default "/" — patch-only`,
-        patch: `separator = "/" // gap 0.5, px 2`,
       },
     ],
   },

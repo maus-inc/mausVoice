@@ -1,5 +1,4 @@
 import { RouterProvider } from "react-router-dom";
-import { HeaderPortalProvider } from "../components/root/HeaderPortalContext";
 import { createAppRouter } from "../router";
 import { PreviewRoot } from "./PreviewRoot";
 
@@ -7,8 +6,4 @@ import { PreviewRoot } from "./PreviewRoot";
 // changes, so visual work stays meaningful for the desktop application.
 const previewRouter = createAppRouter(<PreviewRoot />);
 
-export const PreviewApp = () => (
-  <HeaderPortalProvider>
-    <RouterProvider router={previewRouter} />
-  </HeaderPortalProvider>
-);
+export const PreviewApp = () => <RouterProvider router={previewRouter} />;

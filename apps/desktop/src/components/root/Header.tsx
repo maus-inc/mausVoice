@@ -4,7 +4,6 @@ import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
 import { useMemo, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { useAsyncData } from "../../hooks/async.hooks";
-import { useHeaderPortal } from "../../hooks/header.hooks";
 import { useIsOnboarded } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectivePlan, planToDisplayName } from "../../utils/member.utils";
@@ -55,7 +54,6 @@ export const BaseHeader = ({
 };
 
 export const AppHeader = () => {
-  const { leftContent } = useHeaderPortal();
   const isOnboarded = useIsOnboarded();
   const planName = useAppStore((state) =>
     planToDisplayName(getEffectivePlan(state)),
@@ -181,7 +179,6 @@ export const AppHeader = () => {
       }}
     >
       <SenderReceiverChip />
-      {leftContent}
     </Stack>
   );
 

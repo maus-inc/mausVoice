@@ -136,6 +136,20 @@ describe("i18n catalogs", () => {
     },
   );
 
+  it("localizes the dashboard navigation landmark and page list", () => {
+    const locales = loadLocales();
+    for (const locale of manifest.supportedLocales.filter(
+      (value) => value !== "en",
+    )) {
+      expect(locales[locale].dashboard_navigation?.trim()).toBeTruthy();
+      expect(locales[locale].dashboard_navigation).not.toBe(
+        locales.en.dashboard_navigation,
+      );
+      // "Pages" is also the correct French translation.
+      expect(locales[locale].pages?.trim()).toBeTruthy();
+    }
+  });
+
   it("localizes the monitor selector and its accessible name in every translated catalog", () => {
     const locales = loadLocales();
     for (const locale of Object.keys(locales).filter(
