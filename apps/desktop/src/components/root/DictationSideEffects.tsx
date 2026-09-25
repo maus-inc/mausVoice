@@ -140,6 +140,14 @@ type SessionAudioIntake = {
   current: boolean;
 };
 
+const resolveRecordingStrategy = (
+  mode: RecordingMode,
+  currentStrategy: BaseStrategy | null,
+): BaseStrategy => {
+  if (currentStrategy) return currentStrategy;
+  return mode === "agent" ? new AgentStrategy() : new DictationStrategy();
+};
+
 const isRecordingStartCurrent = (
   operationId: number,
   currentOperationId: number,
@@ -1223,14 +1231,7 @@ export const DictationSideEffects = () => {
         draft.dictationLanguageOverride = language;
       });
 
-      let strategy: BaseStrategy | null = strategyRef.current ?? null;
-      if (!strategy) {
-        if (mode === "agent") {
-          strategy = new AgentStrategy();
-        } else {
-          strategy = new DictationStrategy();
-        }
-      }
+      const strategy = resolveRecordingStrategy(mode, strategyRef.current);
 
       const validationError = strategy.validateAvailability();
       if (validationError) {
