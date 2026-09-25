@@ -28,6 +28,7 @@ import {
   GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   groqStreamChat,
+  isGroqAccountScopedError,
   OpenAIGenerateTextModel,
   openaiGenerateTextResponse,
   openaiStreamChat,
@@ -129,6 +130,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
       if (input.signal?.aborted) {
+        throw error;
+      }
+
+      // An account-scoped rejection (bad key, no credits, permission denied)
+      // fails identically on every model, so a second request chain only
+      // delays surfacing it.
+      if (isGroqAccountScopedError(error)) {
         throw error;
       }
 
