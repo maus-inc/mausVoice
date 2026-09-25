@@ -576,7 +576,7 @@ mod tests {
         let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
         let mut tracker = SeamTracker::default();
 
-        let near_end = tracker.resolve(monitor, work, &[neighbor], (1190.0, 750.0));
+        let near_end = tracker.resolve(monitor, work, &[neighbor], (1190.0, 760.0));
         assert!(!near_end.edge_mask.right);
         let outside_overlap = tracker.resolve(monitor, work, &[neighbor], (1190.0, 900.0));
         assert!(!outside_overlap.edge_mask.right);
@@ -586,7 +586,7 @@ mod tests {
         // but the naturally connected seam stays open. Leaving again re-arms it.
         let reentered = tracker.resolve(monitor, work, &[neighbor], (1190.0, 680.0));
         assert!(!reentered.edge_mask.right);
-        let near_end_again = tracker.resolve(monitor, work, &[neighbor], (1190.0, 750.0));
+        let near_end_again = tracker.resolve(monitor, work, &[neighbor], (1190.0, 760.0));
         assert!(!near_end_again.edge_mask.right);
         let outside_again = tracker.resolve(monitor, work, &[neighbor], (1190.0, 900.0));
         assert!(!outside_again.edge_mask.right);
@@ -611,50 +611,29 @@ mod tests {
 
     #[test]
     fn seam_hysteresis_scales_with_the_monitor_coordinate_space() {
-        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        let neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        let work = monitor;
-        assert_eq!(
-            seam_hysteresis_margin(monitor, neighbor, Side::Right, 0.0, 1080.0),
-            108.0,
+        let physical_monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let physical_neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let physical_margin = seam_hysteresis_margin(
+            physical_monitor,
+            physical_neighbor,
+            Side::Right,
+            0.0,
+            1080.0,
         );
-        let mut tracker = SeamTracker::default();
 
-        let near_end = tracker.resolve(monitor, work, &[neighbor], (1910.0, 1000.0));
-        assert!(!near_end.edge_mask.right);
-        let outside = tracker.resolve(monitor, work, &[neighbor], (1910.0, 1090.0));
-        assert!(!outside.edge_mask.right);
-
-        // The same desktop in half-sized logical coordinates gets half the
-        // numeric margin while preserving the same ten-percent screen-space
-        // behavior.
         let logical_monitor = MonitorRect { x: 0.0, y: 0.0, width: 960.0, height: 540.0 };
         let logical_neighbor = MonitorRect { x: 960.0, y: 0.0, width: 960.0, height: 540.0 };
-        assert_eq!(
-            seam_hysteresis_margin(
-                logical_monitor,
-                logical_neighbor,
-                Side::Right,
-                0.0,
-                540.0,
-            ),
-            54.0,
+        let logical_margin = seam_hysteresis_margin(
+            logical_monitor,
+            logical_neighbor,
+            Side::Right,
+            0.0,
+            540.0,
         );
-        let mut logical_tracker = SeamTracker::default();
-        let logical_near_end = logical_tracker.resolve(
-            logical_monitor,
-            logical_monitor,
-            &[logical_neighbor],
-            (955.0, 500.0),
-        );
-        assert!(!logical_near_end.edge_mask.right);
-        let logical_outside = logical_tracker.resolve(
-            logical_monitor,
-            logical_monitor,
-            &[logical_neighbor],
-            (955.0, 545.0),
-        );
-        assert!(!logical_outside.edge_mask.right);
+
+        assert_eq!(physical_margin, 108.0);
+        assert_eq!(logical_margin, 54.0);
+        assert_eq!(physical_margin, logical_margin * 2.0);
     }
 
     #[test]

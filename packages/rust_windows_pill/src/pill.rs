@@ -2573,11 +2573,11 @@ mod tests {
     #[test]
     fn default_horizontal_center_preserves_half_pixel_until_nearest_rounding() {
         let center = default_pill_x(0, 1921, 800);
-        assert_eq!(center, 560.5);
+        assert!((center - 560.5).abs() < f64::EPSILON);
         assert_eq!(center.round() as i32, 561);
 
         let negative_origin = default_pill_x(-1920, 1921, 800);
-        assert_eq!(negative_origin, -1359.5);
+        assert!((negative_origin + 1359.5).abs() < f64::EPSILON);
         assert_eq!(negative_origin.round() as i32, -1360);
     }
 
