@@ -7,12 +7,8 @@ import type { MutableRefObject } from "react";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
 import { buildWaveFile, ensureFloat32Array } from "../../utils/audio.utils";
+import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 import { AudioWaveform } from "../common/AudioWaveform";
-
-type StopRecordingResponse = {
-  samples: number[] | Float32Array;
-  sampleRate?: number;
-};
 
 const createPreviewUrl = (
   rawSamples: number[] | Float32Array,
@@ -284,15 +280,11 @@ export const MicrophoneTester = ({
       setTestState("stopping");
 
       try {
-        const response = await invoke<StopRecordingResponse>("stop_recording");
+        const response = await invokeStopRecording();
         const rate = response.sampleRate ?? 0;
-        const samplesArray =
-          response.samples instanceof Float32Array
-            ? Array.from(response.samples)
-            : response.samples;
 
         if (!opts?.silent) {
-          const url = createPreviewUrl(samplesArray ?? [], rate);
+          const url = createPreviewUrl(response.samples, rate);
           if (url) {
             updatePreviewUrl(url);
           } else {

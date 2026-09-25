@@ -37,6 +37,7 @@ export type SpeachesTranscriptionArgs = {
   ext: string;
   prompt?: string;
   language?: string;
+  signal?: AbortSignal;
 };
 
 export type SpeachesTranscribeAudioOutput = {
@@ -50,6 +51,7 @@ export const speachesTranscribeAudio = async ({
   ext,
   prompt,
   language,
+  signal,
 }: SpeachesTranscriptionArgs): Promise<SpeachesTranscribeAudioOutput> => {
   const url = baseUrl.replace(/\/$/, "");
 
@@ -67,6 +69,7 @@ export const speachesTranscribeAudio = async ({
   const response = await fetch(`${url}/v1/audio/transcriptions`, {
     method: "POST",
     body: formData,
+    signal,
   });
 
   if (!response.ok) {
