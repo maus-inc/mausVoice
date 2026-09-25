@@ -7,7 +7,11 @@ import {
 import { getGrips } from "./WindowResizeHandles";
 
 const WINDOW = { width: 1000, height: 700 };
-/** Outermost frame pixels that may legitimately stay a resize target. */
+/**
+ * Height of the top frame band. On Windows/Linux this band is intentionally a
+ * resize target across the caption buttons (like a native Windows frame's top
+ * border); everything below it must belong to the buttons. See getGrips.
+ */
 const FRAME = 4;
 
 type Rect = { left: number; top: number; right: number; bottom: number };
@@ -58,10 +62,26 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
     }
   });
 
-  it("keeps the NorthEast grip within the frame corner", () => {
+  it("keeps every grip over the caption row inside the top frame band", () => {
+    const captionRow: Rect = {
+      left: WINDOW.width - 3 * CAPTION_BUTTON_WIDTH,
+      top: 0,
+      right: WINDOW.width,
+      bottom: TITLE_BAR_HEIGHT,
+    };
+    for (const grip of grips) {
+      const r = toRect(grip.position);
+      if (!overlaps(r, captionRow)) continue;
+      expect(r.bottom, grip.direction).toBeLessThanOrEqual(FRAME);
+    }
+  });
+
+  it("keeps top-right diagonal resize acquirable along the top edge", () => {
     const r = gripRect(grips, "NorthEast");
-    expect(r.right - r.left).toBeLessThanOrEqual(FRAME);
-    expect(r.bottom - r.top).toBeLessThanOrEqual(FRAME);
+    // A 4x4 square is too small to hit reliably; the strip is corner-wide.
+    expect(r.right - r.left).toBe(12);
+    expect(r.right).toBe(WINDOW.width);
+    expect(r.top).toBe(0);
   });
 
   it("starts the East grip directly below the caption row", () => {

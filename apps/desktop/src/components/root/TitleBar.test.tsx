@@ -152,6 +152,14 @@ describe("TitleBar on Windows and Linux", () => {
     await act(async () => buttonByLabel("Minimize")!.click());
     expect(windowMocks.minimize).not.toHaveBeenCalled();
   });
+  it("shows caption buttons, not traffic lights, in the browser preview", async () => {
+    platformState.native = false;
+    await renderBar();
+    expect(buttonByLabel("Close")?.classList.contains("traffic-btn")).toBe(
+      false,
+    );
+    expect(document.querySelector(".traffic-btn")).toBeNull();
+  });
   it("uses the shared reduced-motion-aware timing for both caption colors", async () => {
     await renderBar();
     expect(

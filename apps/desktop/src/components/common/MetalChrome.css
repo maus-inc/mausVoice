@@ -1,29 +1,14 @@
 /*
- * Safety net for metal-fx's first-frame reveal.
+ * Failure-state rescue for metal-fx (see useFirstFrameRescue in
+ * MetalChrome.tsx).
  *
- * metal-fx keeps its wrapper at `opacity: 0; visibility: hidden` (inline
- * style) until the shared WebGL renderer copies its first frame, then fades it
- * in. If that never happens (context lost, GPU reset, shader init failure in
- * the webview), the wrapped control stays invisible and unclickable.
- *
- * The normal reveal is left alone: before the delay this rule has no effect,
- * so there is no pre-paint flash of the wrapper surface and the library fade
- * still plays. Once the delay has elapsed, the `forwards` fill of this
- * animation outranks the library's normal inline declarations in the cascade
- * (no important-flag override needed) and pins the control visible whether
- * or not the shader ever painted. On the happy path it restates the values metal-fx has
- * already set, so nothing changes visually.
+ * This class is only present when the library still has the wrapper hidden
+ * well after mount, i.e. the shader never painted a first frame. It is removed
+ * again as soon as the library reveals the wrapper itself. The important flag
+ * is required to beat the library's inline style, and is deliberately scoped
+ * to this explicit, inspectable failure state; the normal path is untouched.
  */
-.mv-metal-chrome {
-  animation: mv-metal-chrome-reveal 150ms ease-out 600ms forwards;
-}
-
-@keyframes mv-metal-chrome-reveal {
-  from {
-    visibility: visible;
-  }
-  to {
-    opacity: 1;
-    visibility: visible;
-  }
+.mv-metal-chrome--rescued {
+  opacity: 1 !important;
+  visibility: visible !important;
 }

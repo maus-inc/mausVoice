@@ -31,14 +31,20 @@ type Grip = {
  * Grip layout for the frameless window.
  *
  * With right-side caption buttons (Windows/Linux) the close button sits flush
- * in the top-right corner across the whole title bar row, so the East grip
- * starts below that row and the NorthEast grip shrinks to the 4px frame
- * corner. Without them (macOS, traffic lights on the left) the right edge keeps
- * the full-height East grip and the regular 12px corner.
+ * in the top-right corner across the whole title bar row. Deliberate
+ * trade-off, matching how a native Windows frame treats its top border:
+ * - Everything below the top EDGE px of the caption row belongs to the
+ *   caption buttons, so the East grip starts below the row.
+ * - The top EDGE px frame band stays a resize target across the caption
+ *   buttons (North, as before) and the NorthEast grip lives inside that same
+ *   band as a CORNER-wide strip, so top-right diagonal resize stays reachable
+ *   without reaching into the button body.
+ * Without right-side caption buttons (macOS, traffic lights on the left) the
+ * right edge keeps the full-height East grip and the regular square corner.
  */
 export const getGrips = (rightCaptionButtons: boolean): readonly Grip[] => {
   const eastTop = rightCaptionButtons ? TITLE_BAR_HEIGHT : CORNER;
-  const northEastSize = rightCaptionButtons ? EDGE : CORNER;
+  const northEastHeight = rightCaptionButtons ? EDGE : CORNER;
   return [
     {
       direction: "North",
@@ -71,8 +77,8 @@ export const getGrips = (rightCaptionButtons: boolean): readonly Grip[] => {
       position: {
         top: 0,
         right: 0,
-        width: northEastSize,
-        height: northEastSize,
+        width: CORNER,
+        height: northEastHeight,
       },
     },
     {
