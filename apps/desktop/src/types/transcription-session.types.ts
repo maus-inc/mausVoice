@@ -16,19 +16,11 @@ export type TranscriptionSessionResult = {
   warnings: string[];
 };
 
-export type TranscriptionSessionFinalizeOptions = {
-  toneId?: string | null;
-  a11yInfo?: unknown;
-};
-
 export type InterimResultCallback = (segment: string) => void;
 
 export interface TranscriptionSession {
   onRecordingStart(sampleRate: number): Promise<void>;
-  finalize(
-    audio: StopRecordingResponse,
-    options?: TranscriptionSessionFinalizeOptions,
-  ): Promise<TranscriptionSessionResult>;
+  finalize(audio: StopRecordingResponse): Promise<TranscriptionSessionResult>;
   cleanup(): void;
   supportsStreaming(): boolean;
   /** Provider-owned hard limit, measured as wall-clock time from recording start. */

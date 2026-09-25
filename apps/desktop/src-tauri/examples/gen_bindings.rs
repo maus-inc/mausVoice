@@ -107,7 +107,6 @@ fn main() {
         start_key_listener,
         start_recording,
         stop_key_listener,
-        stop_recording,
         storage_get_download_url,
         storage_upload_data,
         store_transcription_audio,
