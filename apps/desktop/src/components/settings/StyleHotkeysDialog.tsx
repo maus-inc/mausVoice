@@ -19,7 +19,7 @@ import { getHotkeyRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 import { applyReplacedStyleHotkeys } from "../../utils/style-hotkey";
 import { createId } from "../../utils/id.utils";
-import { isPostProcessingEnabled } from "../../utils/post-processing.utils";
+import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import {
   getHotkeyCombosForAction,
   getPrettyKeyName,
@@ -48,7 +48,7 @@ export const StyleHotkeysDialog = () => {
         .sort((a, b) => a.sortOrder - b.sortOrder),
     [toneById],
   );
-  const postProcessingEnabled = useAppStore(isPostProcessingEnabled);
+  const styleSelectionAvailable = useAppStore(isStyleSelectionAvailable);
   const intl = useIntl();
   const [rows, setRows] = useState<StyleHotkeyRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -74,12 +74,12 @@ export const StyleHotkeysDialog = () => {
   }, [open, tones]);
 
   useEffect(() => {
-    if (open && !postProcessingEnabled) {
+    if (open && !styleSelectionAvailable) {
       produceAppState((draft) => {
         draft.isRecordingHotkey = false;
       });
     }
-  }, [open, postProcessingEnabled]);
+  }, [open, styleSelectionAvailable]);
 
   const hasConflict = useMemo(() => {
     const filled = rows.filter((row) => row.keys.length > 0);
@@ -105,7 +105,7 @@ export const StyleHotkeysDialog = () => {
   };
 
   const save = async () => {
-    if (isSaving || !postProcessingEnabled) return;
+    if (isSaving || !styleSelectionAvailable) return;
     setIsSaving(true);
     try {
       const state = useAppStore.getState();
@@ -175,7 +175,7 @@ export const StyleHotkeysDialog = () => {
       </DialogTitle>
       <DialogContent dividers>
         <Stack spacing={1.25}>
-          {postProcessingEnabled && hasConflict && (
+          {styleSelectionAvailable && hasConflict && (
             <Alert severity="warning" variant="outlined">
               <FormattedMessage defaultMessage="Some style shortcuts overlap and may be difficult to trigger." />
             </Alert>
@@ -187,7 +187,7 @@ export const StyleHotkeysDialog = () => {
               spacing={1.5}
               sx={{ alignItems: "center" }}
             >
-              {postProcessingEnabled ? (
+              {styleSelectionAvailable ? (
                 <HotKey
                   value={row.keys}
                   onChange={(keys) =>
@@ -218,7 +218,7 @@ export const StyleHotkeysDialog = () => {
               <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography variant="body2">{row.toneName}</Typography>
               </Box>
-              {postProcessingEnabled && row.keys.length > 0 && (
+              {styleSelectionAvailable && row.keys.length > 0 && (
                 <IconButton
                   size="small"
                   aria-label={intl.formatMessage({
@@ -248,7 +248,7 @@ export const StyleHotkeysDialog = () => {
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={isSaving || !postProcessingEnabled}
+          disabled={isSaving || !styleSelectionAvailable}
         >
           <FormattedMessage defaultMessage="Save" />
         </Button>

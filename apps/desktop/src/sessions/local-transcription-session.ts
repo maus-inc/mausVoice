@@ -49,6 +49,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
       const whisperLanguage =
         mapDictationLanguageToWhisperLanguage(dictationLanguage);
+      // Best practice: transcription prompt is ONLY for glossary/domain bias,
+      // NOT for style formatting. Style is applied deterministically after
+      // transcription via fast-style.utils.ts (universal across all providers).
+      // This avoids degrading WER and keeps initial_prompt focused (<50 tokens).
       const prompt = buildLocalizedTranscriptionPrompt({
         entries: collectDictionaryEntries(state),
         dictationLanguage,
@@ -94,6 +98,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   async finalize(
     audio: StopRecordingResponse,
+    options?: { toneId?: string | null },
   ): Promise<TranscriptionSessionResult> {
     const warnings = [...this.startupWarnings];
 
@@ -101,7 +106,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().info(
         `[local-stream-session] no streaming session, using batch fallback`,
       );
-      return await this.finalizeWithBatchFallback(audio, warnings);
+      return await this.finalizeWithBatchFallback(
+        audio,
+        warnings,
+        options?.toneId ?? null,
+      );
     }
 
     try {
@@ -142,7 +151,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `[local-stream-session] finalize failed [${errorName}], falling back to batch (${message})${lostSession}`,
       );
-      return await this.finalizeWithBatchFallback(audio, warnings);
+      return await this.finalizeWithBatchFallback(
+        audio,
+        warnings,
+        options?.toneId ?? null,
+      );
     } finally {
       this.cleanup();
     }
@@ -168,6 +181,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private async finalizeWithBatchFallback(
     audio: StopRecordingResponse,
     warnings: string[],
+    toneId?: string | null,
   ): Promise<TranscriptionSessionResult> {
     const payloadSamples = Array.isArray(audio.samples)
       ? audio.samples
@@ -195,6 +209,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       samples: payloadSamples,
       sampleRate: rate,
       hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
+      toneId: toneId ?? null,
     });
     getLogger().info(
       `[local-stream-session] batch fallback: transcription complete (${result.rawTranscript.length} chars)`,

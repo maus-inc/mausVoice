@@ -345,7 +345,7 @@ export type NoneGenerativePrefs = BaseGenerativePrefs & {
 export type GenerativePrefs = ApiGenerativePrefs | NoneGenerativePrefs;
 
 type GenerativeConfigInput = {
-  mode: "none" | "api" | null;
+  mode: "none" | "api" | "fast" | null;
   selectedApiKeyId: string | null;
 };
 
@@ -358,7 +358,10 @@ const getGenPrefsInternal = ({
   config: GenerativeConfigInput;
   context: string;
 }): GenerativePrefs => {
-  const mode = resolveMode(config.mode, "none");
+  // "fast" is metadata only (postProcessMode), not a persisted preference.
+  // If it appears from old DB, treat as "none" (fast local formatting).
+  const normalizedMode = config.mode === "fast" ? "none" : config.mode;
+  const mode = resolveMode(normalizedMode, "none");
   const apiKey = getRec(state.apiKeyById, config.selectedApiKeyId)?.keyFull;
   const warnings: string[] = [];
 
@@ -404,9 +407,21 @@ export type AgentModePrefs = GenerativePrefs | OpenClawGenerativePrefs;
 export const getAgentModePrefs = (state: AppState): AgentModePrefs => {
   const agentMode = state.settings.agentMode;
 
+  if (agentMode.mode === "openclaw") {
+    return {
+      mode: "openclaw",
+      gatewayUrl: agentMode.openclawGatewayUrl ?? "",
+      token: agentMode.openclawToken ?? "",
+      warnings: [],
+    };
+  }
+
   return getGenPrefsInternal({
     state,
-    config: agentMode as GenerativeConfigInput,
+    config: {
+      mode: agentMode.mode as "none" | "api" | "fast" | null,
+      selectedApiKeyId: agentMode.selectedApiKeyId,
+    },
     context: "agent mode",
   });
 };

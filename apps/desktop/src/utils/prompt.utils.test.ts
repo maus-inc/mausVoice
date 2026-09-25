@@ -487,7 +487,7 @@ describe("provider budgets match documented API limits", () => {
 });
 
 describe("buildLocalizedTranscriptionPrompt", () => {
-  const state = {} as Parameters<
+  const baseState = {} as Parameters<
     typeof buildLocalizedTranscriptionPrompt
   >[0]["state"];
 
@@ -495,7 +495,7 @@ describe("buildLocalizedTranscriptionPrompt", () => {
     const result = buildLocalizedTranscriptionPrompt({
       entries: { sources: ["Soniya", "Ralf"], replacements: [] },
       dictationLanguage: "en",
-      state,
+      state: baseState,
     });
     expect(result).toContain("Soniya, Ralf");
     expect(result).toContain("Consider this glossary");
@@ -509,12 +509,53 @@ describe("buildLocalizedTranscriptionPrompt", () => {
     const result = buildLocalizedTranscriptionPrompt({
       entries: { sources: manyTerms, replacements: [] },
       dictationLanguage: "en",
-      state,
+      state: baseState,
     });
     // 650 characters of terms + separators + the fixed instruction text,
     // keeping the whole prompt under whisper's ~224-token prompt ceiling.
     expect(result.length).toBeLessThan(900);
     expect(result).not.toContain("dictionaryterm150");
+  });
+
+  it("does NOT inject style hints into transcription prompt (best practice: prompt is for glossary bias, not formatting)", () => {
+    const result = buildLocalizedTranscriptionPrompt({
+      entries: { sources: [], replacements: [] },
+      dictationLanguage: "en",
+      state: baseState,
+      toneId: "email",
+    });
+    // Style is handled by deterministic fast-style post-processing, not by Whisper prompt
+    expect(result).not.toContain("Style:");
+    expect(result).not.toContain("email");
+  });
+
+  it("does NOT inject style hint for verbatim (contract)", () => {
+    const result = buildLocalizedTranscriptionPrompt({
+      entries: { sources: [], replacements: [] },
+      dictationLanguage: "en",
+      state: baseState,
+      toneId: "verbatim",
+    });
+    expect(result).not.toContain("Style:");
+  });
+
+  it("ignores toneId and keeps prompt focused on glossary (no hallucination)", () => {
+    const resultWithTone = buildLocalizedTranscriptionPrompt({
+      entries: { sources: ["MyCompany"], replacements: [] },
+      dictationLanguage: "en",
+      state: baseState,
+      toneId: "bullets",
+    });
+    const resultWithoutTone = buildLocalizedTranscriptionPrompt({
+      entries: { sources: ["MyCompany"], replacements: [] },
+      dictationLanguage: "en",
+      state: baseState,
+    });
+    // Contract: toneId must be ignored — prompt must be identical with or without tone
+    expect(resultWithTone).toBe(resultWithoutTone);
+    expect(resultWithTone).toContain("MyCompany");
+    expect(resultWithTone).not.toContain("bulleted");
+    expect(resultWithTone).not.toContain("Style:");
   });
 });
 

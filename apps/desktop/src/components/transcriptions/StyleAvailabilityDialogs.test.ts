@@ -162,11 +162,11 @@ describe("Import audio style availability", () => {
     });
   };
 
-  it("hides styles while post-processing is disabled", async () => {
+  it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderPage();
     await openImportDialog();
 
-    expect(hasStyleField()).toBe(false);
+    expect(hasStyleField()).toBe(true);
   });
 
   it("shows styles when post-processing has a usable provider", async () => {
@@ -177,14 +177,15 @@ describe("Import audio style availability", () => {
     expect(hasStyleField()).toBe(true);
   });
 
-  it("removes the style live and imports without one when post-processing is turned off", async () => {
+  it("keeps styles and imports with style when post-processing is turned off (fast path)", async () => {
     enablePostProcessing();
     await renderPage();
     await openImportDialog();
     expect(hasStyleField()).toBe(true);
 
     act(() => disablePostProcessing());
-    expect(hasStyleField()).toBe(false);
+    // Fast local styling keeps the selector visible
+    expect(hasStyleField()).toBe(true);
 
     const chooseFile = findButton("Choose file");
     expect(chooseFile).toBeDefined();
@@ -195,7 +196,7 @@ describe("Import audio style availability", () => {
     await settle();
 
     expect(mocks.importAudioFile).toHaveBeenCalledWith(
-      expect.objectContaining({ toneId: null }),
+      expect.objectContaining({ toneId: expect.any(String) }),
     );
   });
 });
@@ -232,19 +233,19 @@ describe("Retranscribe style availability", () => {
     });
   };
 
-  it("hides styles while post-processing is disabled", async () => {
+  it("shows styles even while post-processing is disabled via fast path", async () => {
     await renderDialog();
 
-    expect(hasStyleField()).toBe(false);
+    expect(hasStyleField()).toBe(true);
   });
 
-  it("shows styles with a usable provider and removes them live when disabled", async () => {
+  it("keeps styles visible when post-processing is disabled (fast path)", async () => {
     enablePostProcessing();
     await renderDialog();
     expect(hasStyleField()).toBe(true);
 
     act(() => disablePostProcessing());
-    expect(hasStyleField()).toBe(false);
+    expect(hasStyleField()).toBe(true);
 
     const transcribe = findButton("Transcribe");
     expect(transcribe).toBeDefined();
@@ -255,7 +256,7 @@ describe("Retranscribe style availability", () => {
     expect(mocks.retranscribeTranscription).toHaveBeenCalledWith(
       expect.objectContaining({
         transcriptionId: "transcription-1",
-        toneId: null,
+        toneId: expect.any(String),
       }),
     );
   });

@@ -153,8 +153,10 @@ const normalizePostProcessingMode = (
   mode: Nullable<string>,
 ): Nullable<PostProcessingMode> => {
   if (!mode) return null;
+  // Prefs contract: only "api" or "none". "fast" is metadata only
+  // (postProcessMode in generation event), not a persisted preference.
   if (mode === "api" || mode === "none") {
-    return mode;
+    return mode as PostProcessingMode;
   }
   return "none";
 };

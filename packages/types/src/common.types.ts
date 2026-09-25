@@ -24,7 +24,7 @@ export type JsonResponse = {
 
 export type TranscriptionMode = "local" | "api";
 
-export type PostProcessingMode = "none" | "api";
+export type PostProcessingMode = "none" | "api" | "fast";
 
 export type AgentMode = PostProcessingMode | "openclaw";
 

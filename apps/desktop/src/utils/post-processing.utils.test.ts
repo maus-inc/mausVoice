@@ -1,7 +1,10 @@
 import type { ApiKey, ApiKeyProvider } from "@maus-inc/types";
 import { beforeEach, describe, expect, it } from "vitest";
 import { INITIAL_APP_STATE, type AppState } from "../state/app.state";
-import { isPostProcessingEnabled } from "./post-processing.utils";
+import {
+  isPostProcessingEnabled,
+  isStyleSelectionAvailable,
+} from "./post-processing.utils";
 
 const makeApiKey = (
   provider: ApiKeyProvider = "groq",
@@ -64,4 +67,29 @@ describe("isPostProcessingEnabled", () => {
       expect(isPostProcessingEnabled(state)).toBe(true);
     },
   );
+});
+
+describe("isStyleSelectionAvailable", () => {
+  let state: AppState;
+
+  beforeEach(() => {
+    state = structuredClone(INITIAL_APP_STATE);
+  });
+
+  it("is available even when post-processing is disabled (fast path)", () => {
+    state.settings.aiPostProcessing.mode = "none";
+    expect(isStyleSelectionAvailable(state)).toBe(true);
+  });
+
+  it("is available when tones exist", () => {
+    state.toneById["default"] = {
+      id: "default",
+      name: "Polished",
+      promptTemplate: "test",
+      isSystem: true,
+      createdAt: 0,
+      sortOrder: 0,
+    };
+    expect(isStyleSelectionAvailable(state)).toBe(true);
+  });
 });
