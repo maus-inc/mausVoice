@@ -48,7 +48,7 @@ export const startAssemblyAIStreaming = async (
     const getText = () => transcriptState.text();
 
     const writeAudioChunk = (chunk: Float32Array) => {
-      if (isFinalized || !ws || ws.readyState !== WebSocket.OPEN) {
+      if (isFinalized || ws?.readyState !== WebSocket.OPEN) {
         return;
       }
       buffer.push(chunk);

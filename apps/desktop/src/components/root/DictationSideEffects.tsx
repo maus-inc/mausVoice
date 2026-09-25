@@ -1312,11 +1312,7 @@ export const DictationSideEffects = () => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
             // than waiting for the other Promise.all branch.
-            if (
-              operationId === recordingOperationRef.current &&
-              sessionRef.current === session &&
-              strategyRef.current === strategy
-            ) {
+            if (isCurrentStart()) {
               startProviderRecordingTimers();
             }
             return result;

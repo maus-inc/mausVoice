@@ -120,7 +120,7 @@ const startDeepgramStreaming = async (
   };
 
   const writeAudioChunk = (chunk: Float32Array) => {
-    if (isFinalized || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (isFinalized || ws?.readyState !== WebSocket.OPEN) return;
     try {
       buffer.push(chunk);
       buffer.flush(false);

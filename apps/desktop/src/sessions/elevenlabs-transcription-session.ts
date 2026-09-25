@@ -212,7 +212,7 @@ const startElevenLabsStreaming = async (
     };
 
     const writeAudioChunk = (rawChunk: Float32Array) => {
-      if (isFinalized || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (isFinalized || ws?.readyState !== WebSocket.OPEN) return;
       try {
         const typedChunk = needsResample
           ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
