@@ -28,6 +28,8 @@ type InsertCommand = {
   value: string;
   attachLeft?: boolean;
   structural?: boolean;
+  // Also an ordinary noun, so it only applies where it closes a clause.
+  clauseFinal?: boolean;
   blockedFollowers?: string[][];
   blockedPredecessors?: string[][];
 };
@@ -80,7 +82,10 @@ const COMMANDS: SpokenCommand[] = [
   }),
   insert(["period"], ".", {
     attachLeft: true,
-    blockedFollowers: [["of"], ["in"], ["piece"]],
+    clauseFinal: true,
+    // Mid-sentence uses ("the sprint period ends") fail `clauseFinal`. These
+    // cover a compound noun that ends the sentence ("until the notice
+    // period."), where position cannot tell it apart. Not exhaustive.
     blockedPredecessors: [
       ["time"],
       ["trial"],
@@ -100,8 +105,6 @@ const COMMANDS: SpokenCommand[] = [
       ["warranty"],
       ["vesting"],
       ["blackout"],
-      ["review"],
-      ["rest"],
     ],
   }),
   insert(["colon"], ":", { attachLeft: true, blockedFollowers: [["cancer"]] }),
@@ -295,7 +298,13 @@ const predecessorBlocked = (
   previous: string[],
   blockedPredecessors: string[][] | undefined,
 ): boolean => {
-  if (!blockedPredecessors || previous.length === 0) {
+  // Punctuation after the previous word ("The rest. Period.") ends the
+  // phrase, so the two words are not a compound.
+  if (
+    !blockedPredecessors ||
+    previous.length === 0 ||
+    endsWithClausePunctuation(previous[previous.length - 1])
+  ) {
     return false;
   }
   return blockedPredecessors.some((predecessor) => {
@@ -455,24 +464,43 @@ const previousWordIn = (
   !endsWithClausePunctuation(previous) &&
   words.has(normalizedWord(previous));
 
-// "scratch that" undoes speech only as its own clause: at the end of the
-// utterance, closed by punctuation, or followed by a new sentence or command.
-const scratchStandsAlone = (
+// Whether the words of some command start at `index`, ignoring context.
+const startsCommandAt = (tokens: string[], index: number): boolean =>
+  COMMANDS_BY_LENGTH.some(
+    (command) =>
+      index + command.words.length <= tokens.length &&
+      wordsMatch(
+        tokens.slice(index, index + command.words.length),
+        command.words,
+      ),
+  );
+
+// A command closes its clause when nothing follows it, punctuation ends it,
+// or the next token is capitalized or starts another command. Capitalization
+// stands in for a sentence start, so a proper noun also counts.
+const closesClause = (
   tokens: string[],
   index: number,
   span: number,
 ): boolean => {
-  if (previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS)) {
-    return false;
-  }
   const next = tokens[index + span];
   return (
     next === undefined ||
     endsWithClausePunctuation(tokens[index + span - 1] ?? "") ||
     startsWithUppercase(next) ||
-    matchCommandAt(tokens, index + span, false) !== null
+    startsCommandAt(tokens, index + span)
   );
 };
+
+// "scratch that" undoes speech only as its own clause, never after a subject
+// ("I'll scratch that off").
+const scratchStandsAlone = (
+  tokens: string[],
+  index: number,
+  span: number,
+): boolean =>
+  !previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS) &&
+  closesClause(tokens, index, span);
 
 const commandApplies = (
   command: SpokenCommand,
@@ -485,6 +513,9 @@ const commandApplies = (
     return !skipStructural && scratchStandsAlone(tokens, index, span);
   }
   if (skipStructural && command.structural) {
+    return false;
+  }
+  if (command.clauseFinal && !closesClause(tokens, index, span)) {
     return false;
   }
   // The "that" closing a "scratch that" is not a determiner.

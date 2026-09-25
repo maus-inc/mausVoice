@@ -151,6 +151,9 @@ describe("applySpokenCommands", () => {
     "The billing period ends on Friday.",
     "During the period we saw strong growth.",
     "My period was late.",
+    "The sprint period ends Friday.",
+    "The observation period lasted six weeks.",
+    "We extended the notice period.",
     "We're launching a new line today.",
     "Can you read the next line for me?",
     "Put a comma after the name.",
@@ -167,9 +170,34 @@ describe("applySpokenCommands", () => {
     ["Hello world scratch that new paragraph Goodbye", "\n\nGoodbye"],
     ["Hello world scratch that period", "."],
     ["Stop period next line Go", "Stop.\nGo"],
+    ["That is final period", "That is final."],
+    ["I'm done period See you", "I'm done. See you"],
     ["hello comma world", "hello, world"],
   ])("still applies genuine commands: %s", (input, expected) => {
     expect(applySpokenCommands(input)).toBe(expected);
+  });
+
+  it("leaves a mid-sentence period alone even when meant as a command", () => {
+    // A lowercase word straight after "period" reads as the noun. Speakers
+    // who pause get a comma or capital from the model, which does apply.
+    expect(applySpokenCommands("hello period how are you")).toBe(
+      "hello period how are you",
+    );
+    expect(applySpokenCommands("hello period, how are you")).toBe(
+      "hello. how are you",
+    );
+  });
+
+  it("does not let a listed noun block across punctuation", () => {
+    expect(applySpokenCommands("Show some grace. Period.")).toBe(
+      applySpokenCommands("Show some care. Period.").replace("care", "grace"),
+    );
+    expect(applySpokenCommands("Pay the notice. Period.")).toBe(
+      applySpokenCommands("Pay the invoice. Period.").replace(
+        "invoice",
+        "notice",
+      ),
+    );
   });
 
   it("treats a word closed off by punctuation as outside the command", () => {
