@@ -175,6 +175,20 @@ describe("GenerateTextInput.signal forwarding", () => {
     // to a second model) would burn quota after the deadline already fired.
     expect(mocked).toHaveBeenCalledTimes(1);
   });
+
+  // Regression: the Groq fallback used to point at a retired id, so a primary
+  // failure turned into a hard 404 instead of a working second attempt.
+  it("Groq retries the fallback request on a model Groq still serves", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockRejectedValueOnce(new Error("primary down"));
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    await repo.generateText({ prompt: "p" });
+
+    expect(mocked).toHaveBeenCalledTimes(2);
+    expect(GENERATE_TEXT_MODELS).toContain(mocked.mock.calls[1]![0]!.model);
+  });
 });
 
 describe("default model fallback when no model is stored", () => {
@@ -253,10 +267,11 @@ describe("generateText metadata reports the resolved model", () => {
       .mockRejectedValueOnce(new Error("boom"))
       .mockResolvedValueOnce(mockResponse("hi"));
 
-    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
+    expect(GENERATE_TEXT_MODELS).toContain(output.metadata?.model);
   });
 
   it("OpenAI reports the configured model", async () => {

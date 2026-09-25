@@ -156,10 +156,10 @@ describe("groqGenerateTextResponse", () => {
   });
 
   it("falls back to json_object for Groq models without structured-output support", async () => {
-    const { call } = await runGroqJsonResponseCase("qwen/qwen3.6-27b");
+    const { call } = await runGroqJsonResponseCase("qwen/qwen3-32b");
 
     expect(call).toMatchObject({
-      model: "qwen/qwen3.6-27b",
+      model: "qwen/qwen3-32b",
       response_format: { type: "json_object" },
     });
   });

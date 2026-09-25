@@ -72,7 +72,12 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  // Must stay inside `GENERATE_TEXT_MODELS`. The smaller gpt-oss tier is the
+  // documented Groq default and is what the constructor falls back to, so a
+  // post-processing failure on the 120b model still lands on a live model
+  // instead of a retired id. When the configured model already is this one,
+  // `generateWithFallback` rethrows rather than retrying the same model.
+  private fallbackModel: GenerateTextModel = "openai/gpt-oss-20b";
 
   constructor(apiKey: string, model: string | null) {
     super();
