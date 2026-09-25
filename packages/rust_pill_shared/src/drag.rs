@@ -44,8 +44,6 @@ impl DragBounds {
         (x.clamp(self.min_x, max_x), y.clamp(self.min_y, max_y))
     }
 
-    /// Collapse an impossible range to the side that preserves a shared-seam
-    /// crossing plane. `prefer_min` selects the minimum side per axis.
     /// Place the pill center on each connected side's monitor-edge plane.
     /// `center_offset` is measured from the window origin.
     pub fn apply_shared_seam_bounds(

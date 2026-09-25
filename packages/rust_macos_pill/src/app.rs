@@ -1518,7 +1518,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         // The OS window is a fixed transparent canvas; clamp the visible pill
         // footprint in dictation mode so transparent canvas margins do not
         // box the pill away from the actual screen edge.
-        let (mut min_x, mut min_y, mut max_x, mut max_y) =
+        let (min_x, min_y, max_x, max_y) =
             if state.effective_window_mode() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {

@@ -1444,28 +1444,19 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let wa_h = wa.bottom - wa.top;
 
         let bounds = window_clamp_bounds(state, wa, win_w, win_h);
-        let (min_x, min_y, max_x, max_y) = (
-            bounds.min_x as i32,
-            bounds.min_y as i32,
-            bounds.max_x as i32,
-            bounds.max_y as i32,
-        );
-
         let (x, y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
             // of the monitor that position belongs to.
-            let mut sx = state.saved_x.get();
-            let mut sy = state.saved_y.get();
-            sx = sx.max(min_x).min(max_x);
-            sy = sy.max(min_y).min(max_y);
-            (sx, sy)
+            bounds.clamp_point(
+                state.saved_x.get() as f64,
+                state.saved_y.get() as f64,
+            )
         } else {
-            let mut x = wa.left + (wa_w - win_w) / 2;
-            let mut y = default_pill_y(wa.top, wa_h, win_h);
-            x = x.max(min_x).min(max_x);
-            y = y.max(min_y).min(max_y);
-            (x, y)
+            let x = wa.left + (wa_w - win_w) / 2;
+            let y = default_pill_y(wa.top, wa_h, win_h);
+            bounds.clamp_point(x as f64, y as f64)
         };
+        let (x, y) = (x.round() as i32, y.round() as i32);
 
         if current.left != x || current.top != y {
             let _ = SetWindowPos(

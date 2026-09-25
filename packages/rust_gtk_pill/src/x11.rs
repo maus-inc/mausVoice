@@ -187,18 +187,17 @@ pub(crate) fn tick_drag_frame(
     let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
         (cx as f64, cy as f64), dragging,
     );
-    let seam_point = current_pill_center(window, state, anchor_x, anchor_y);
     let placement = placement_on_monitor(
-        anchor_x, anchor_y, seam_point, dragging, &display, window, state,
+        anchor_x, anchor_y, dragging, &display, window, state,
     )
     .or_else(|| {
         let monitor = window.window().and_then(|surface| display.monitor_at_window(&surface))?;
         let (x, y) = monitor_bottom_centre(&monitor);
-        placement_on_monitor(x, y, seam_point, dragging, &display, window, state)
+        placement_on_monitor(x, y, dragging, &display, window, state)
     })
     .or_else(|| {
         let (x, y) = primary_monitor_bottom_centre(&display)?;
-        placement_on_monitor(x, y, seam_point, dragging, &display, window, state)
+        placement_on_monitor(x, y, dragging, &display, window, state)
     });
     let Some(p) = placement else { return };
     let mut motion = state.drag_motion.borrow_mut();
@@ -472,39 +471,12 @@ pub(crate) fn monitor_at_physical_point(display: &gdk::Display, x: f64, y: f64) 
     })
 }
 
-/// Returns the currently rendered pill center in X11 root pixels.
-fn current_pill_center(
-    window: &gtk::Window,
-    state: &PillState,
-    fallback: (f64, f64),
-) -> (f64, f64) {
-    let (origin_x, origin_y) = state.x11_drag_applied.get();
-    if origin_x == i32::MIN || origin_y == i32::MIN {
-        return fallback;
-    }
-    let scale = window
-        .window()
-        .map(|surface| surface.scale_factor() as f64)
-        .unwrap_or(1.0);
-    let (px, py, pw, ph) = crate::draw::pill_position(
-        state,
-        state.draw_width.get(),
-        state.draw_height.get(),
-    );
-    let (content_x, content_y) = state.content_offset();
-    (
-        origin_x as f64 + (content_x + px + pw / 2.0) * scale,
-        origin_y as f64 + (content_y + py + ph / 2.0) * scale,
-    )
-}
-
 /// Finds the monitor an anchor point belongs to and resolves its work area,
 /// scale, and clamp bounds. Shared by the slow-timer parking and the
 /// frame-tick drag so the two can never disagree about the work area.
 fn placement_on_monitor(
     anchor_x: f64,
     anchor_y: f64,
-    seam_point: (f64, f64),
     seams_open: bool,
     display: &gdk::Display,
     window: &gtk::Window,
@@ -512,6 +484,12 @@ fn placement_on_monitor(
 ) -> Option<MonitorPlacement> {
     let monitor = monitor_at_physical_point(display, anchor_x, anchor_y)?;
     let scale = monitor.scale_factor() as f64;
+    let seam_point = if seams_open {
+        crate::pill::x11_pill_center(state, scale)
+            .unwrap_or((anchor_x, anchor_y))
+    } else {
+        (anchor_x, anchor_y)
+    };
     let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
     let monitor_geometry = monitor.geometry();
     let full = crate::pill::logical_rect_to_physical(&monitor_geometry, scale);
@@ -569,7 +547,7 @@ fn placement_on_monitor(
     //
     // Normalize impossible ranges before clamping. On a shared axis this
     // preserves the seam side; otherwise it safely collapses to the minimum.
-    let (mut min_x, mut min_y, mut max_x, mut max_y) =
+    let (min_x, min_y, max_x, max_y) =
         if state.effective_window_mode() == WindowMode::Dictation
             && !state.assistant_active.get()
         {
@@ -627,15 +605,9 @@ fn pill_pos_on_monitor(
     window: &gtk::Window,
     state: &PillState,
 ) -> Option<(c_int, c_int)> {
-    let seam_point = if dragging {
-        current_pill_center(window, state, (anchor_x, anchor_y))
-    } else {
-        (anchor_x, anchor_y)
-    };
     let p = placement_on_monitor(
         anchor_x,
         anchor_y,
-        seam_point,
         dragging,
         display,
         window,

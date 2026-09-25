@@ -1165,31 +1165,36 @@ fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
     );
 }
 
-/// Live monitor and visible center shared by placement and crossing. X11
-/// reads the applied origin even before a saved drop; Wayland has no portable
-/// absolute origin and therefore uses the caller's fallback.
-fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
-    if state.backend.get() != Backend::X11 {
+/// Return the rendered pill center in X11 root pixels, scaling the local
+/// offset with the supplied scale. The toplevel origin is already physical.
+pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<(f64, f64)> {
+    if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
         return None;
     }
     let (window_x, window_y) = state.x11_drag_applied.get();
     if window_x == i32::MIN || window_y == i32::MIN {
         return None;
     }
-    let display = window.display();
+    let (ox, oy) = state.content_offset();
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    Some((
+        window_x as f64 + (ox + px + pw / 2.0) * scale,
+        window_y as f64 + (oy + py + ph / 2.0) * scale,
+    ))
+}
+
+/// Resolve the monitor and rendered pill center from the applied X11 origin.
+fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
+    if state.backend.get() != Backend::X11 {
+        return None;
+    }
     let scale = window
         .window()
         .map(|gdk_win| gdk_win.scale_factor() as f64)
         .unwrap_or(1.0);
-    if !scale.is_finite() || scale <= 0.0 {
-        return None;
-    }
-    let (ox, oy) = state.content_offset();
-    let (px, py, pw, ph) =
-        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    let cx = window_x as f64 + (ox + px + pw / 2.0) * scale;
-    let cy = window_y as f64 + (oy + py + ph / 2.0) * scale;
-    let monitor = x11::monitor_at_physical_point(&display, cx, cy)?;
+    let (cx, cy) = x11_pill_center(state, scale)?;
+    let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy)?;
     Some((monitor, cx, cy))
 }
 
