@@ -298,12 +298,10 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
             None,
             None,
             false,
-            // Suppresses the console window a console-subsystem build would
-            // flash here. CREATE_NO_WINDOW is documented as ignored for a
-            // non-console application, so it cannot touch the main window
-            // this process is about to create. STARTF_USESHOWWINDOW is the
-            // wrong tool: it governs the launched app's first window, and this
-            // process *is* the app, so SW_HIDE could suppress the dashboard.
+            // Hides the console a console-subsystem build would flash here, and
+            // is ignored for a non-console app, so it cannot touch the main
+            // window. STARTF_USESHOWWINDOW would: it sets the launched
+            // process's first window state, and that process is mausVoice.
             CREATE_NO_WINDOW,
             None,
             None,
