@@ -1535,7 +1535,6 @@ fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
     }
 }
 
-#[derive(Default)]
 struct MonitorEnumeration {
     monitors: Vec<MonitorRect>,
     failed: bool,
@@ -2618,5 +2617,8 @@ mod monitor_query_tests {
     #[test]
     fn null_monitor_is_not_a_zero_sized_work_area() {
         assert!(query_monitor_info(HMONITOR::default()).is_none());
+    }
+}
+fo(HMONITOR::default()).is_none());
     }
 }

@@ -614,6 +614,10 @@ mod tests {
         let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
         let neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1920.0, height: 1080.0 };
         let work = monitor;
+        assert_eq!(
+            seam_hysteresis_margin(monitor, neighbor, Side::Right, 0.0, 1080.0),
+            108.0,
+        );
         let mut tracker = SeamTracker::default();
 
         let near_end = tracker.resolve(monitor, work, &[neighbor], (1910.0, 1000.0));
@@ -626,6 +630,16 @@ mod tests {
         // behavior.
         let logical_monitor = MonitorRect { x: 0.0, y: 0.0, width: 960.0, height: 540.0 };
         let logical_neighbor = MonitorRect { x: 960.0, y: 0.0, width: 960.0, height: 540.0 };
+        assert_eq!(
+            seam_hysteresis_margin(
+                logical_monitor,
+                logical_neighbor,
+                Side::Right,
+                0.0,
+                540.0,
+            ),
+            54.0,
+        );
         let mut logical_tracker = SeamTracker::default();
         let logical_near_end = logical_tracker.resolve(
             logical_monitor,
