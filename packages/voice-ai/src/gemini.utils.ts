@@ -546,6 +546,51 @@ export type GeminiTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
+const tryUploadWithFallback = async (args: {
+  apiKey: string;
+  blob: ArrayBuffer | Buffer;
+  mimeType: string;
+  customFetch: CustomFetch;
+  signal?: AbortSignal;
+}): Promise<{ uri?: string; mimeType: string }> => {
+  try {
+    const uploaded = await uploadGeminiFile(
+      args.apiKey,
+      args.blob,
+      args.mimeType,
+      args.customFetch,
+      args.signal,
+    );
+    await waitForGeminiFileActive(
+      uploaded.uri,
+      args.apiKey,
+      args.customFetch,
+      args.signal,
+    );
+    return { uri: uploaded.uri, mimeType: uploaded.mimeType };
+  } catch (error) {
+    if (args.signal?.aborted) throw error;
+    if (!isGeminiFailureRetryable(error, args.signal)) throw error;
+    console.warn(
+      `Gemini Files API upload failed, falling back to inlineData: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { uri: undefined, mimeType: args.mimeType };
+  }
+};
+
+const buildAudioPart = (
+  fileUri: string | undefined,
+  mimeType: string,
+  blob: ArrayBuffer | Buffer,
+): GeminiPart => {
+  if (fileUri) {
+    return { fileData: { mimeType, fileUri } };
+  }
+  return {
+    inlineData: { mimeType, data: arrayBufferToBase64(blob) },
+  };
+};
+
 const transcribeWithDedicatedModel = async (args: {
   apiKey: string;
   model: string;
@@ -560,45 +605,15 @@ const transcribeWithDedicatedModel = async (args: {
   customFetch: CustomFetch;
   signal?: AbortSignal;
 }): Promise<GeminiTranscribeAudioOutput> => {
-  let fileUri: string | undefined;
-  let fileMimeType = args.mimeType;
+  const uploaded = await tryUploadWithFallback({
+    apiKey: args.apiKey,
+    blob: args.blob,
+    mimeType: args.mimeType,
+    customFetch: args.customFetch,
+    signal: args.signal,
+  });
 
-  try {
-    const uploaded = await uploadGeminiFile(
-      args.apiKey,
-      args.blob,
-      args.mimeType,
-      args.customFetch,
-      args.signal,
-    );
-    fileUri = uploaded.uri;
-    fileMimeType = uploaded.mimeType;
-    await waitForGeminiFileActive(
-      fileUri,
-      args.apiKey,
-      args.customFetch,
-      args.signal,
-    );
-  } catch (error) {
-    if (args.signal?.aborted) throw error;
-    if (!isGeminiFailureRetryable(error, args.signal)) {
-      throw error;
-    }
-    console.warn(
-      `Gemini Files API upload failed, falling back to inlineData: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    fileUri = undefined;
-  }
-
-  const audioPart = fileUri
-    ? { fileData: { mimeType: fileMimeType, fileUri } }
-    : {
-        inlineData: {
-          mimeType: args.mimeType,
-          data: arrayBufferToBase64(args.blob),
-        },
-      };
-
+  const audioPart = buildAudioPart(uploaded.uri, uploaded.mimeType, args.blob);
   const rawVocab = resolveVocabulary(args.customVocabulary, args.prompt);
   const generationConfig = {
     audioTranscriptionConfig: buildAudioTranscriptionConfig({
@@ -616,7 +631,7 @@ const transcribeWithDedicatedModel = async (args: {
       args.model,
       "generateContent",
       {
-        contents: [{ role: "user", parts: [audioPart as GeminiPart] }],
+        contents: [{ role: "user", parts: [audioPart] }],
         generationConfig,
       },
       args.customFetch,
@@ -628,9 +643,9 @@ const transcribeWithDedicatedModel = async (args: {
     if (!text) throw new Error("Transcription failed - empty response");
     return { text, wordsUsed: countWords(text) };
   } finally {
-    if (fileUri) {
+    if (uploaded.uri) {
       await deleteGeminiFile(
-        fileUri,
+        uploaded.uri,
         args.apiKey,
         args.customFetch,
         args.signal,
