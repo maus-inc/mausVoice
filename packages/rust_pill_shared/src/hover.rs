@@ -479,9 +479,13 @@ mod tests {
 
     #[test]
     fn hover_pad_constants_are_sane() {
-        // Guards the shared hit zone from drifting per platform.
-        assert!(HOVER_ENTRY_PAD > 0.0 && HOVER_ENTRY_PAD < 30.0);
-        assert!(HOVER_EXIT_PAD > HOVER_ENTRY_PAD);
-        assert!(HOVER_EXIT_PAD < 60.0);
+        // Exact values are the contract: 16 px anticipatory entry,
+        // 32 px hysteretic exit. Centralising in `hover.rs` is the
+        // drift protection — the behavioural pin is
+        // `realistic_pass_at_900_px_s_still_counts_as_intent`, not
+        // a range check. Pin the literals so a stray `+ 8.0` in a
+        // consumer would be caught as a contract break.
+        assert_eq!(HOVER_ENTRY_PAD, 16.0);
+        assert_eq!(HOVER_EXIT_PAD, 32.0);
     }
 }

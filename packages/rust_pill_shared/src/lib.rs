@@ -196,13 +196,17 @@ pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
 /// Spring stiffness for the pill expand/collapse (idle <-> active).
 ///
 /// 320 is critically damped with ~220 ms settle (4/sqrt(320) ≈ 0.22 s),
-/// matching microinteraction guidance that hover state changes should be
-/// 100–150 ms to first paint and <300 ms to settle [1](https://artofstyleframe.com/blog/micro-interactions-ui-when-to-animate/)[2](https://socialanimal.dev/blog/micro-interactions-web-design/).
-/// The previous 200 (≈283 ms) felt sluggish on rapid passes; 320 keeps the
-/// same ease-out shape (critically damped, no overshoot) but arrives
-/// ~25 % faster, so the dwell reduction and wider hit zone are not
-/// wasted waiting for the spring. Label and inflate already use 280,
-/// so 320 is a deliberate step snappier for the primary affordance.
+/// inside the 100–150 ms to first paint budget (NN/g [1]) and the
+/// <300 ms microinteraction ceiling. The behavioural pin is
+/// `hover::realistic_pass_at_900_px_s_still_counts_as_intent` (900 px/s
+/// arms, 1500 px/s does not) — not an external blog. The previous
+/// 200 (≈283 ms) felt sluggish on rapid passes; 320 keeps the same
+/// ease-out shape (critically damped, no overshoot) but arrives ~25 %
+/// faster, so the dwell reduction and wider hit zone are not wasted
+/// waiting for the spring. Label and inflate already use 280, so 320
+/// is a deliberate step snappier for the primary affordance.
+///
+/// [1]: https://www.nngroup.com/articles/timing-exposing-content/
 pub const PILL_EXPAND_STIFFNESS: f64 = 320.0;
 
 // ── Idle/drag label crossfade (shared by all pill renderers) ──────────────
