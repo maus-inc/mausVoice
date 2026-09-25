@@ -224,7 +224,14 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     unsafe {
         windows::Win32::Media::timeBeginPeriod(1);
-        SetTimer(Some(hwnd), TIMER_CURSOR, 60, None);
+        // 20 ms ≈ 50 Hz cursor polling: fast enough that a 50 ms ARM_DWELL
+        // is not hidden behind a stale sample, but not so fast that it
+        // wakes the CPU every frame. The animation tick (16.7 ms) now also
+        // polls hover every frame, so worst-case hover latency is one frame
+        // (16 ms) plus the 50 ms dwell — ~66 ms to first visual feedback,
+        // well within the 100 ms "instant" perception threshold
+        // [1](https://www.nngroup.com/articles/timing-exposing-content/).
+        SetTimer(Some(hwnd), TIMER_CURSOR, 20, None);
     }
 
     eprintln!("[pill] ready after {:?}", t0.elapsed());
@@ -477,6 +484,11 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
+            // Poll hover every frame (not just the 20 ms cursor timer) so the
+            // 50 ms ARM_DWELL is measured at display rate (~16 ms). Previously
+            // hover lived only on the 60 ms WM_TIMER, adding up to 60 ms of
+            // stale-sample latency on top of the dwell.
+            check_hover(hwnd, state);
             tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
             tick_selector_placement(hwnd, state, dt);
@@ -862,11 +874,14 @@ fn tick(state: &PillState, dt: f64) {
         } else {
             0.0
         };
+    // PILL_EXPAND_STIFFNESS (320, ~220 ms settle) is deliberately snappier
+    // than the generic 200 used for tooltip/panel, so the primary pill
+    // affordance feels instant. See rust_pill_shared::PILL_EXPAND_STIFFNESS.
     rust_pill_shared::spring::spring_01(
         &state.expand_t,
         &state.expand_velocity,
         expand_target,
-        SPRING_STIFFNESS,
+        rust_pill_shared::PILL_EXPAND_STIFFNESS,
         dt,
     );
 
@@ -1251,7 +1266,10 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     let screen_pill_x = win_rect.left as f64 + ox + pill_x;
     let screen_pill_y = win_rect.top as f64 + oy + pill_y;
 
-    let pad = if state.hovered.get() { 24.0 } else { 8.0 };
+    // Anticipatory hysteresis: entry 16 px lets the 50 ms dwell + 220 ms
+    // spring hide in the approach; exit 32 px keeps the pill expanded on
+    // edge dither. See PILL_EXPAND_STIFFNESS and hover::ARM_DWELL.
+    let pad = if state.hovered.get() { 32.0 } else { 16.0 };
     let cx = cursor.x as f64;
     let cy = cursor.y as f64;
 

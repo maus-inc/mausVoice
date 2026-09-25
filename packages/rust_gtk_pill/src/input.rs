@@ -21,8 +21,11 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
-    // Pill area (with padding)
-    let pad = if state.hovered.get() { 24.0 } else { 8.0 };
+    // Pill area with hysteresis and anticipatory padding: entry is 16 px so
+    // the dwell+spring start before the cursor touches the pill edge, exit is
+    // 32 px so the pill does not collapse on edge dither. See
+    // rust_pill_shared::PILL_EXPAND_STIFFNESS and hover::ARM_DWELL.
+    let pad = if state.hovered.get() { 32.0 } else { 16.0 };
     let (px, py, pw, ph) = pill_position(state, dw, dh);
     if x >= px - pad && x <= px + pw + pad && y >= py - pad && y <= py + ph + pad {
         return true;

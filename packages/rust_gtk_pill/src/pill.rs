@@ -1300,9 +1300,11 @@ fn tick(state: &PillState, dt: f64) {
 
     tick_audio_levels(state, phase);
 
-    // Pill expand/collapse (spring)
+    // Pill expand/collapse — PILL_EXPAND_STIFFNESS is snappier than the
+    // generic 200 so the primary affordance feels instant. The spring
+    // still settles without overshoot (critically damped).
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, rust_pill_shared::PILL_EXPAND_STIFFNESS, dt);
 
     // Loading offset
     if is_loading {

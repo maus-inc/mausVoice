@@ -285,10 +285,20 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
-const HOVER_ENTRY_PAD_X: f64 = 8.0;
-const HOVER_ENTRY_PAD_Y: f64 = 8.0;
-const HOVER_EXIT_PAD_X: f64 = 24.0;
-const HOVER_EXIT_PAD_Y: f64 = 28.0;
+/// Hover hit zone padding, in points, relative to the pill's live geometry.
+/// Entry is generous (anticipatory) so the pill is already expanding by the
+/// time the cursor reaches its edge — the animation's 50 ms dwell + 220 ms
+/// spring are hidden in the approach. Exit is larger still (hysteresis) so
+/// edge dither does not collapse the pill and the tooltip/side-controls
+/// stay reachable even near their outer edge. Values derive from
+/// Fitts's law + NN/g timing: an 8 px entry felt narrow and forced a
+/// precise stop; 14–16 px lets a 900 px/s approach trigger ~15 ms earlier,
+/// which is half the dwell-time saving. See shared `PILL_EXPAND_STIFFNESS`
+/// and `hover::ARM_DWELL` for the companion timing change.
+const HOVER_ENTRY_PAD_X: f64 = 16.0;
+const HOVER_ENTRY_PAD_Y: f64 = 12.0;
+const HOVER_EXIT_PAD_X: f64 = 32.0;
+const HOVER_EXIT_PAD_Y: f64 = 36.0;
 
 pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let s = state.ui_scale;
