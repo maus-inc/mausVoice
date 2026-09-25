@@ -188,6 +188,12 @@ export class PauseChunkedPretranscriber {
     const start = this.streamStart ?? 0;
     if (!this.matchesCommittedAudio(samples, start)) return null;
 
+    // A span that already failed, or a gap seen in a later chunk, dooms the
+    // incremental result. Returning null here sends the caller to the
+    // whole-recording request, so spending another billed request on the
+    // prefix or the tail would only delay that fallback.
+    if (this.failed) return null;
+
     // The listener attaches after capture starts, so the samples before
     // `streamStart` never arrived on the live stream. They are still in the
     // final recording, so transcribe them as a leading span instead of

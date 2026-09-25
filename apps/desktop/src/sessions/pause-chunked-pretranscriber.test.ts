@@ -35,9 +35,10 @@ const feed = (
   target: PauseChunkedPretranscriber,
   audio: Float32Array,
   from = 0,
+  step = 100,
 ) => {
-  for (let offset = from; offset < audio.length; offset += 100) {
-    target.push(audio.subarray(offset, offset + 100), offset);
+  for (let offset = from; offset < audio.length; offset += step) {
+    target.push(audio.subarray(offset, offset + step), offset);
   }
 };
 
@@ -304,6 +305,43 @@ describe("PauseChunkedPretranscriber", () => {
       target.finish({ samples: recording, sampleRate: RATE }),
     ).resolves.not.toBeNull();
     expect(spans.length).toBeGreaterThan(0);
+  });
+
+  it("spends no request on the tail once a committed span has already failed", async () => {
+    const transcribe = vi
+      .fn<ChunkTranscriber>()
+      .mockRejectedValueOnce(new Error("429"))
+      .mockResolvedValue({ text: "ok", metadata: {}, warnings: [] });
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Let the committed spans run and the first one fail before the user stops.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transcribe).toHaveBeenCalled();
+
+    // The result is already doomed, so the whole-recording request the caller
+    // makes next is the only one left worth paying for. Only the spans that
+    // were already committed before the stop may run, never the tail.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+    expect(transcribe).toHaveBeenCalledTimes(target.chunkCount);
+  });
+
+  it("spends no request once a later chunk reveals a gap", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording, 0, 1_000);
+    // Overlaps the previous chunk, so the stream is unusable even though every
+    // span committed so far succeeded.
+    target.push(recording.subarray(2_100, 2_200), 2_100);
+    expect(target.chunkCount).toBeGreaterThan(0);
+
+    // Only the committed spans run. No tail, because a result that gets
+    // discarded is not worth a billed request.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+    expect(transcribe).toHaveBeenCalledTimes(target.chunkCount);
   });
 
   it("disables itself on a gap or a chunk without an offset", async () => {
