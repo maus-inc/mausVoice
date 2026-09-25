@@ -3,32 +3,9 @@ import { Settings } from "@mui/icons-material";
 import { Box, Button, Typography } from "@mui/material";
 import { House, Mic, Settings as SettingsLucide } from "lucide";
 import { useState } from "react";
-import { Breadcrumb } from "@desktop/components/common/Breadcrumb";
 import { MorphNavIcon } from "@desktop/components/common/MorphNavIcon";
 import { DashboardMenuPreview } from "../recreated/dashboard-menu";
 import { DemoSection, Matrix, State, TryIt } from "../components/demo-ui";
-
-export const BreadcrumbDemo = () => (
-  <DemoSection
-    title="Breadcrumb"
-    hint="body2 trail; ancestors are secondary links (underline on hover), current page is primary/500. onClick wins over href navigation."
-  >
-    <Matrix>
-      <State label="default" wide>
-        <Breadcrumb
-          items={[
-            { label: "Settings" },
-            { label: "Transcription" },
-            { label: "Providers" },
-          ]}
-        />
-      </State>
-      <State label="custom separator">
-        <Breadcrumb items={[{ label: "Home" }, { label: "Library" }]} />
-      </State>
-    </Matrix>
-  </DemoSection>
-);
 
 export const DashboardMenuDemo = () => (
   <DemoSection

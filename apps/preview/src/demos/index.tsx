@@ -36,7 +36,7 @@ import {
 } from "./forms";
 import { ButtonDemo, FabDemo, IconButtonDemo } from "./buttons";
 import { LayoutDemo, TitlebarDemo } from "./layout";
-import { BreadcrumbDemo, DashboardMenuDemo, MorphIconDemo } from "./navigation";
+import { DashboardMenuDemo, MorphIconDemo } from "./navigation";
 import {
   AssistantPanelDemo,
   AudioPlayerPillDemo,
@@ -73,7 +73,6 @@ export const DEMOS: Record<string, ComponentType> = {
   table: TableDemo,
   accordion: AccordionDemo,
   stepper: StepperDemo,
-  breadcrumb: BreadcrumbDemo,
   "typography-helpers": TypographyHelpersDemo,
   waveform: WaveformDemo,
   logo: LogoDemo,

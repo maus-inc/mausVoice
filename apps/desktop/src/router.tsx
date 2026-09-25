@@ -135,8 +135,9 @@ const appRoutes = (root: ReactNode) => [
 export const createAppRouter = (root: ReactNode = <Root />) =>
   createBrowserRouter(appRoutes(root));
 
-// The browser preview imports this route factory too, but must not create a
-// second, unused router (and its history listener) for the native app.
+// Shared deliberately with native Tauri navigation handlers, even if they
+// fire before Router mounts. Do not make this eager: the browser preview also
+// imports this route factory and must not create an unused history listener.
 let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
 export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 
