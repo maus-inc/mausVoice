@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   CAPTION_BUTTON_WIDTH,
+  CORNER,
+  EDGE,
   hasRightCaptionButtons,
   TITLE_BAR_HEIGHT,
 } from "./titleBarGeometry";
-import { CORNER, EDGE, getGrips } from "./WindowResizeHandles";
+import { getGrips } from "./WindowResizeHandles";
 
 const WINDOW = { width: 1000, height: 700 };
 /**
@@ -78,8 +80,9 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
 
   it("keeps top-right diagonal resize acquirable along the top edge", () => {
     const r = gripRect(grips, "NorthEast");
-    // A 4x4 square is too small to hit reliably; the strip is corner-wide.
-    expect(r.right - r.left).toBe(CORNER);
+    // A frame-sized square is too small to hit reliably; the strip must be
+    // wider than the frame band it lives in.
+    expect(r.right - r.left).toBeGreaterThan(FRAME);
     expect(r.right).toBe(WINDOW.width);
     expect(r.top).toBe(0);
   });

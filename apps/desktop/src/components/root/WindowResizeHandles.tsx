@@ -6,7 +6,12 @@ import {
 import { useCallback } from "react";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
-import { hasRightCaptionButtons, TITLE_BAR_HEIGHT } from "./titleBarGeometry";
+import {
+  CORNER,
+  EDGE,
+  hasRightCaptionButtons,
+  TITLE_BAR_HEIGHT,
+} from "./titleBarGeometry";
 
 /**
  * `@tauri-apps/api` declares the direction union but does not re-export it, so
@@ -14,13 +19,6 @@ import { hasRightCaptionButtons, TITLE_BAR_HEIGHT } from "./titleBarGeometry";
  */
 type ResizeDirection = Parameters<TauriWindow["startResizeDragging"]>[0];
 
-/**
- * Edge grip thickness in px. Matches the hit area a native frame would expose,
- * which is intentionally thin so it never steals clicks from real content.
- */
-export const EDGE = 4;
-/** Corner grips are square and larger so diagonal resize stays reachable. */
-export const CORNER = 12;
 type Grip = {
   direction: ResizeDirection;
   cursor: string;

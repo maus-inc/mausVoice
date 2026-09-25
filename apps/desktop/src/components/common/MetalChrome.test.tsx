@@ -159,19 +159,31 @@ describe("MetalChrome over the real metal-fx", () => {
     expect(wrapper.classList).not.toContain(METAL_CHROME_RESCUED_CLASS);
   });
 
-  it("leaves the reduced-motion (paused) reveal to metal-fx too", async () => {
-    // MetalChrome passes paused={reduceMotion}; metal-fx still copies one
-    // first frame while paused, so the library reveals and no rescue fires.
+  it("under reduced motion, leaves a successful reveal to metal-fx", async () => {
+    // The rescue is state-based: whatever path metal-fx takes, if it reveals
+    // the wrapper itself, the rescue never applies. Assert outcomes only.
     motion.reduced = true;
     const wrapper = await renderPlayButton();
     const { METAL_CHROME_RESCUE_DELAY_MS, METAL_CHROME_RESCUED_CLASS } =
       await import("./MetalChrome");
-    expect(wrapper.dataset.paused).toBe("true");
 
     act(() => flushFrames(3));
     expect(wrapper.style.visibility).toBe("visible");
 
     act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
     expect(wrapper.classList).not.toContain(METAL_CHROME_RESCUED_CLASS);
+  });
+
+  it("under reduced motion, still rescues a control that never paints", async () => {
+    motion.reduced = true;
+    const wrapper = await renderPlayButton();
+    const { METAL_CHROME_RESCUE_DELAY_MS, METAL_CHROME_RESCUED_CLASS } =
+      await import("./MetalChrome");
+
+    // No frames are ever flushed: nothing is copied while paused either.
+    act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
+    expect(wrapper.classList).toContain(METAL_CHROME_RESCUED_CLASS);
+    expect(getComputedStyle(wrapper).visibility).toBe("visible");
+    expect(getComputedStyle(wrapper).opacity).toBe("1");
   });
 });
