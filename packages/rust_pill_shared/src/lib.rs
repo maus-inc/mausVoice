@@ -193,6 +193,17 @@ pub enum RoundedRectArcSteps {
 pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
+/// Spring stiffness for the pill expand/collapse (idle <-> active).
+///
+/// 320 is critically damped with ~220 ms settle (4/sqrt(320) ≈ 0.22 s),
+/// matching microinteraction guidance that hover state changes should be
+/// 100–150 ms to first paint and <300 ms to settle [1](https://artofstyleframe.com/blog/micro-interactions-ui-when-to-animate/)[2](https://socialanimal.dev/blog/micro-interactions-web-design/).
+/// The previous 200 (≈283 ms) felt sluggish on rapid passes; 320 keeps the
+/// same ease-out shape (critically damped, no overshoot) but arrives
+/// ~25 % faster, so the dwell reduction and wider hit zone are not
+/// wasted waiting for the spring. Label and inflate already use 280,
+/// so 320 is a deliberate step snappier for the primary affordance.
+pub const PILL_EXPAND_STIFFNESS: f64 = 320.0;
 
 // ── Idle/drag label crossfade (shared by all pill renderers) ──────────────
 /// Base alpha multiplier for the idle label (before expand_t and drag_t).
