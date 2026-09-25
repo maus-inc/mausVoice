@@ -135,8 +135,11 @@ const appRoutes = (root: ReactNode) => [
 export const createAppRouter = (root: ReactNode = <Root />) =>
   createBrowserRouter(appRoutes(root));
 
-export const browserRouter = createAppRouter();
+// The browser preview imports this route factory too, but must not create a
+// second, unused router (and its history listener) for the native app.
+let desktopRouter: ReturnType<typeof createAppRouter> | undefined;
+export const getBrowserRouter = () => (desktopRouter ??= createAppRouter());
 
 export default function Router() {
-  return <RouterProvider router={browserRouter} />;
+  return <RouterProvider router={getBrowserRouter()} />;
 }

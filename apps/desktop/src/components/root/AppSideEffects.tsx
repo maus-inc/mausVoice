@@ -75,7 +75,7 @@ import {
   ensurePillGeometry,
   setPillGeometry,
 } from "../../utils/composer.utils";
-import { browserRouter } from "../../router";
+import { getBrowserRouter } from "../../router";
 import { getIsDevMode, isWindows } from "../../utils/env.utils";
 import {
   ADD_TO_DICTIONARY_HOTKEY,
@@ -824,7 +824,7 @@ export const AppSideEffects = () => {
     } else if (payload.action === "open_transcriptions") {
       surfaceMainWindow();
       try {
-        browserRouter.navigate("/dashboard/transcriptions");
+        getBrowserRouter().navigate("/dashboard/transcriptions");
       } catch (error) {
         getLogger().warning(
           `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,

@@ -31,7 +31,7 @@ import {
 } from "../../hooks/hotkey.hooks";
 import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
-import { browserRouter } from "../../router";
+import { getBrowserRouter } from "../../router";
 import { createTranscriptionSession } from "../../sessions";
 import { RecordingMode } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
@@ -201,7 +201,7 @@ export const surfacePersistedReviewInHistory = async (): Promise<void> => {
     );
   }
   try {
-    await browserRouter.navigate("/dashboard/transcriptions");
+    await getBrowserRouter().navigate("/dashboard/transcriptions");
   } catch (error) {
     getLogger().warning(
       `Could not navigate to the saved transcript: ${error instanceof Error ? error.message : String(error)}`,
@@ -1478,7 +1478,9 @@ export const DictationSideEffects = () => {
       const id = conversationId ?? getAppState().pillConversationId;
       if (id) {
         void loadChatMessages(id);
-        browserRouter.navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`);
+        getBrowserRouter().navigate(
+          `/dashboard/chats?id=${encodeURIComponent(id)}`,
+        );
       }
       await surfaceMainWindow();
       await abortRecording();
