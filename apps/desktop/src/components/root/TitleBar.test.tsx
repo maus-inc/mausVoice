@@ -135,14 +135,12 @@ describe("TitleBar on Windows and Linux", () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
   it.each(["windows", "linux"])(
-    "keeps %s captions outside the 12px resize corner",
+    "puts %s captions flush against the right window edge",
     async (platform) => {
       platformState.value = platform;
       await renderBar();
       const bar = document.querySelector("[data-focused]")!;
-      expect(
-        Number.parseFloat(getComputedStyle(bar).paddingRight),
-      ).toBeGreaterThanOrEqual(12);
+      expect(Number.parseFloat(getComputedStyle(bar).paddingRight)).toBe(0);
     },
   );
   it("renders safely without the native OS or window plugins", async () => {
@@ -153,6 +151,14 @@ describe("TitleBar on Windows and Linux", () => {
     expect(windowMocks.isFocused).not.toHaveBeenCalled();
     await act(async () => buttonByLabel("Minimize")!.click());
     expect(windowMocks.minimize).not.toHaveBeenCalled();
+  });
+  it("shows caption buttons, not traffic lights, in the browser preview", async () => {
+    platformState.native = false;
+    await renderBar();
+    expect(buttonByLabel("Close")?.classList.contains("traffic-btn")).toBe(
+      false,
+    );
+    expect(document.querySelector(".traffic-btn")).toBeNull();
   });
   it("uses the shared reduced-motion-aware timing for both caption colors", async () => {
     await renderBar();
