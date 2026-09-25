@@ -80,9 +80,9 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
 
   it("keeps top-right diagonal resize acquirable along the top edge", () => {
     const r = gripRect(grips, "NorthEast");
-    // A frame-sized square is too small to hit reliably; the strip must be
-    // wider than the frame band it lives in.
-    expect(r.right - r.left).toBeGreaterThan(FRAME);
+    // A frame-sized square is too small to hit reliably; the strip spans the
+    // full corner width (derived from the shared constant, not a literal).
+    expect(r.right - r.left).toBe(CORNER);
     expect(r.right).toBe(WINDOW.width);
     expect(r.top).toBe(0);
   });

@@ -69,15 +69,36 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
 
+/**
+ * Retry target when the primary Groq model fails: the first supported model
+ * that is not the primary. Derived from the supported list (never a hardcoded
+ * id) so a model retired by Groq and removed from that list cannot linger as a
+ * dead fallback. `null` when no distinct supported model exists.
+ */
+export const pickGroqFallbackModel = (
+  primary: GenerateTextModel,
+  supported: readonly GenerateTextModel[] = GENERATE_TEXT_MODELS,
+): GenerateTextModel | null =>
+  supported.find((candidate) => candidate !== primary) ?? null;
+
+/**
+ * Failures a different model cannot fix: the same API key is rejected
+ * identically (401 unauthenticated, 403 forbidden). Retrying on another model
+ * would only add a round trip and bury the real error. Model availability
+ * failures (404, 429, 5xx) are left to the fallback.
+ */
+export const isGroqAuthError = (error: unknown): boolean => {
+  const status =
+    typeof error === "object" && error !== null
+      ? (error as { status?: unknown }).status
+      : undefined;
+  return status === 401 || status === 403;
+};
+
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  /**
-   * Retry target when the primary model fails. Derived from the supported
-   * `GENERATE_TEXT_MODELS` list (never a hardcoded id) so a model retired by
-   * Groq and removed from that list cannot linger here as a dead fallback.
-   * `null` when no distinct supported model exists.
-   */
+  /** See pickGroqFallbackModel. */
   private fallbackModel: GenerateTextModel | null;
 
   constructor(apiKey: string, model: string | null) {
@@ -91,9 +112,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
         : "openai/gpt-oss-20b";
-    this.fallbackModel =
-      GENERATE_TEXT_MODELS.find((candidate) => candidate !== this.model) ??
-      null;
+    this.fallbackModel = pickGroqFallbackModel(this.model);
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -124,8 +143,14 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     } catch (error) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
+      // Auth failures never fall back either: another model cannot fix a
+      // rejected key.
       const fallbackModel = this.fallbackModel;
-      if (input.signal?.aborted || fallbackModel === null) {
+      if (
+        input.signal?.aborted ||
+        fallbackModel === null ||
+        isGroqAuthError(error)
+      ) {
         throw error;
       }
 

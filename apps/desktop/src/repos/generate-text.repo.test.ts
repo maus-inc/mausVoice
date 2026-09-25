@@ -22,9 +22,11 @@ import {
   DeepseekGenerateTextRepo,
   GeminiGenerateTextRepo,
   GroqGenerateTextRepo,
+  isGroqAuthError,
   OpenAIGenerateTextRepo,
   OpenAICompatibleGenerateTextRepo,
   OpenRouterGenerateTextRepo,
+  pickGroqFallbackModel,
 } from "./generate-text.repo";
 
 vi.mock("@maus-inc/voice-ai", async (importOriginal) => {
@@ -273,9 +275,9 @@ describe("generateText metadata reports the resolved model", () => {
     expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
   });
 
-  it("Groq only ever falls back to a supported model", async () => {
-    const allowed: readonly string[] = GENERATE_TEXT_MODELS;
-    for (const primary of [null, ...GENERATE_TEXT_MODELS]) {
+  it.each([null, ...GENERATE_TEXT_MODELS])(
+    "Groq with primary %s falls back to a different supported model",
+    async (primary) => {
       vi.mocked(groqGenerateTextResponse)
         .mockReset()
         .mockRejectedValueOnce(new Error("boom"))
@@ -285,12 +287,47 @@ describe("generateText metadata reports the resolved model", () => {
         prompt: "p",
       });
 
+      const calls = vi.mocked(groqGenerateTextResponse).mock.calls;
+      const allowed: readonly string[] = GENERATE_TEXT_MODELS;
       expect(allowed).toContain(output.metadata?.model);
-      expect(output.metadata?.model).not.toBe(
-        vi.mocked(groqGenerateTextResponse).mock.calls[0]![0]!.model,
-      );
-    }
-  });
+      expect(output.metadata?.model).not.toBe(calls[0]![0]!.model);
+    },
+  );
+
+  it.each([401, 403])(
+    "Groq rethrows a %s without trying the fallback model",
+    async (status) => {
+      const authError = Object.assign(new Error("auth"), { status });
+      vi.mocked(groqGenerateTextResponse)
+        .mockReset()
+        .mockRejectedValueOnce(authError);
+
+      await expect(
+        new GroqGenerateTextRepo("k", "openai/gpt-oss-20b").generateText({
+          prompt: "p",
+        }),
+      ).rejects.toBe(authError);
+      expect(groqGenerateTextResponse).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([404, 429, 500, 503])(
+    "Groq still falls back on a %s model availability failure",
+    async (status) => {
+      vi.mocked(groqGenerateTextResponse)
+        .mockReset()
+        .mockRejectedValueOnce(Object.assign(new Error("x"), { status }))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo(
+        "k",
+        "openai/gpt-oss-20b",
+      ).generateText({ prompt: "p" });
+
+      expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+      expect(groqGenerateTextResponse).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("OpenAI reports the configured model", async () => {
     vi.mocked(openaiGenerateTextResponse).mockResolvedValue(mockResponse("hi"));
@@ -364,4 +401,44 @@ describe("OpenAICompatibleBaseGenerateTextRepo customFetch egress protection", (
       }),
     );
   });
+});
+
+describe("pickGroqFallbackModel", () => {
+  it("picks the first supported model that is not the primary", () => {
+    expect(pickGroqFallbackModel("openai/gpt-oss-20b")).toBe(
+      "openai/gpt-oss-120b",
+    );
+    expect(pickGroqFallbackModel("openai/gpt-oss-120b")).toBe(
+      "openai/gpt-oss-20b",
+    );
+  });
+
+  it("returns null when the supported list has no distinct model", () => {
+    expect(
+      pickGroqFallbackModel("openai/gpt-oss-20b", ["openai/gpt-oss-20b"]),
+    ).toBeNull();
+    expect(pickGroqFallbackModel("openai/gpt-oss-20b", [])).toBeNull();
+  });
+});
+
+describe("isGroqAuthError", () => {
+  it.each([
+    [401, true],
+    [403, true],
+    [400, false],
+    [404, false],
+    [429, false],
+    [500, false],
+  ])("status %s -> %s", (status, expected) => {
+    expect(isGroqAuthError(Object.assign(new Error("x"), { status }))).toBe(
+      expected,
+    );
+  });
+
+  it.each([null, undefined, "401", new Error("no status")])(
+    "treats %s as not an auth error",
+    (value) => {
+      expect(isGroqAuthError(value)).toBe(false);
+    },
+  );
 });
