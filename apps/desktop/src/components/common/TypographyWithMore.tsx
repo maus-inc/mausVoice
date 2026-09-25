@@ -154,6 +154,10 @@ export function TypographyWithMore({
           lineHeight !== undefined
             ? lineHeight
             : (variantStyles.lineHeight ?? 1.35);
+        const textPrimary =
+          theme.vars?.palette.text.primary ?? theme.palette.text.primary;
+        const textSecondary =
+          theme.vars?.palette.text.secondary ?? theme.palette.text.secondary;
 
         return {
           px: 0,
@@ -161,7 +165,14 @@ export function TypographyWithMore({
           fontSize: fontSizeResolved,
           lineHeight: lineHeightResolved,
           textTransform: "none",
-          color: theme.vars?.palette.text.primary ?? theme.palette.text.primary,
+          // De-emphasized at rest so the disclosure control never competes
+          // with the content; it strengthens on hover instead.
+          fontWeight: theme.typography.fontWeightMedium,
+          color: textSecondary,
+          textDecoration: "underline",
+          textDecorationColor: "transparent",
+          textUnderlineOffset: 3,
+          transition: `color 150ms ${theme.transitions.easing.easeOut}, background-color 150ms ${theme.transitions.easing.easeOut}, text-decoration-color 150ms ${theme.transitions.easing.easeOut}, transform 120ms ${theme.transitions.easing.easeOut}`,
           ...(inline
             ? {
                 position: "absolute" as const,
@@ -170,16 +181,42 @@ export function TypographyWithMore({
                 mt: 0,
                 py: 0,
                 borderRadius: 999,
+                // This background doubles as the truncation fade. Keep it
+                // painted on hover (a repaint would double-tone the mask)
+                // and signal interactivity with color + underline instead —
+                // the link affordance for in-flow text toggles.
                 backgroundColor:
                   theme.vars?.palette.level0 ?? theme.palette.background.paper,
                 boxShadow: `-12px 0 12px ${
                   theme.vars?.palette.level0 ?? theme.palette.background.paper
                 }`,
+                "&:hover": {
+                  color: textPrimary,
+                  textDecorationColor: "currentColor",
+                  backgroundColor:
+                    theme.vars?.palette.level0 ??
+                    theme.palette.background.paper,
+                },
               }
             : {
+                // Ghost chip for the out-of-flow toggle: comfortable padding
+                // and the surface ladder's hover tier, same language as the
+                // theme's other quiet buttons.
                 mt: 0.5,
                 display: "block",
                 ml: "auto",
+                px: 1,
+                py: 0.25,
+                borderRadius: 2,
+                "&:hover": {
+                  color: textPrimary,
+                  backgroundColor:
+                    theme.vars?.palette.level2 ?? theme.palette.action.hover,
+                },
+                "&:active": {
+                  backgroundColor:
+                    theme.vars?.palette.level3 ?? theme.palette.action.selected,
+                },
               }),
         };
       }}

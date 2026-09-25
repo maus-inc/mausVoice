@@ -330,11 +330,11 @@ export const SnackbarDemo = () => {
   const [n, setN] = useState(0);
   return (
     <DemoSection
-      title="Snackbar (recreated emitter visual)"
-      hint="bottom-center, #fff message, close button, clickaway ignored, 3000ms default. Fills: primary / error / success."
+      title="Toast (recreated sonner visual)"
+      hint="bottom-right · neutral level1 card (hairline + premium shadow) · status carried by the icon · close disc · 4000ms default. One quiet surface for every type — no saturated fills."
     >
       <TryIt>
-        fire each mode — the snackbar anchors bottom-center like production.
+        fire each mode — the toast anchors bottom-right like production.
       </TryIt>
       <Matrix>
         <State label="modes" wide>

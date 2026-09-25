@@ -11,6 +11,8 @@ import { createRoot } from "react-dom/client";
 import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
+import { ThemeProvider } from "@mui/material/styles";
+import { theme } from "../../theme";
 
 const h = vi.hoisted(() => ({
   deleteTranscription: vi.fn(),
@@ -180,6 +182,74 @@ describe("TranscriptionRow retranscribe button states", () => {
     expect(
       button?.querySelector('[data-testid="retranscribe-replay"]'),
     ).not.toBeNull();
+  });
+});
+
+describe("TranscriptionRow unified hover region", () => {
+  /** CSS blocks whose selector carries one of the element's classes at :hover. */
+  const hoverRulesFor = (el: Element): string => {
+    const text = Array.from(document.querySelectorAll("style"))
+      .map((node) => node.textContent ?? "")
+      .join("\n");
+    const rules: string[] = [];
+    for (const cls of el.classList) {
+      for (const match of text.matchAll(
+        new RegExp(`\\.${cls}[^{}]*:hover\\{[^}]*\\}`, "g"),
+      )) {
+        rules.push(match[0]);
+      }
+    }
+    return rules.join("\n");
+  };
+
+  it("covers the whole item — date row, transcript, audio pill — never the date column alone", async () => {
+    // Themed render so the hover wash serializes through the css-var tokens.
+    const themeRoot = createRoot(container);
+    root = themeRoot;
+    await act(async () => {
+      themeRoot.render(
+        createElement(
+          ThemeProvider,
+          { theme },
+          createElement(TranscriptionRow, { id: "row-1" }),
+        ),
+      );
+    });
+
+    const dateEl = container.querySelector(".MuiTypography-subtitle2");
+    expect(dateEl).not.toBeNull();
+    // Visible transcript copy; the hidden measuring copy is aria-hidden.
+    const transcriptEl = Array.from(
+      container.querySelectorAll<HTMLElement>(".MuiTypography-body2"),
+    ).find((el) => el.closest("[aria-hidden]") === null);
+    expect(transcriptEl).not.toBeUndefined();
+
+    // The hover owner is the ancestor whose :hover rule paints the theme's
+    // action.hover wash.
+    let hoverOwner: HTMLElement | null = null;
+    for (
+      let node: HTMLElement | null = transcriptEl!;
+      node && node !== container;
+      node = node.parentElement
+    ) {
+      if (hoverRulesFor(node).includes("action-hover")) {
+        hoverOwner = node;
+        break;
+      }
+    }
+
+    expect(hoverOwner).not.toBeNull();
+    expect(hoverOwner!.contains(dateEl)).toBe(true);
+    expect(hoverOwner!.contains(transcriptEl!)).toBe(true);
+    // Audio pill actions (retranscribe/export) sit inside the wash too.
+    expect(hoverOwner!.contains(retranscribeButton(container))).toBe(true);
+    // The divider stays outside the wash so rows keep a clean seam.
+    const divider = container.querySelector("hr");
+    expect(divider).not.toBeNull();
+    expect(hoverOwner!.contains(divider)).toBe(false);
+    // Regression pin: the date/actions row itself must not own the hover.
+    const dateStack = dateEl!.closest(".MuiStack-root") as HTMLElement;
+    expect(hoverRulesFor(dateStack)).not.toContain("action-hover");
   });
 });
 
