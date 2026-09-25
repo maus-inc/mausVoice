@@ -458,25 +458,39 @@ mod tests {
     }
 
     #[test]
-    fn invalid_stiffness_uses_the_same_safe_spring_for_impulse_and_return() {
-        for stiffness in [0.0, -10.0, f64::NAN, f64::INFINITY, f64::MAX] {
+    fn invalid_stiffness_matches_its_sanitized_value_during_return() {
+        for (stiffness, sanitized) in [
+            (0.0, 1.0),
+            (-10.0, 1.0),
+            (f64::NAN, 170.0),
+            (f64::INFINITY, 170.0),
+            (f64::NEG_INFINITY, 170.0),
+            (f64::MAX, 1000.0),
+        ] {
             let mut deform = CrossingDeform::new();
-            deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
-            let mut crossing = frame(1920.0, 0.0, 2000.0, 1.0 / 60.0);
-            crossing.stiffness = stiffness;
-            let out = deform.advance(&crossing);
-            assert!(out.triggered && out.active);
+            let mut reference = CrossingDeform::new();
+            let seed = frame(0.0, 0.0, 1900.0, 0.0);
+            deform.advance(&seed);
+            reference.advance(&seed);
 
-            for i in 2..=240 {
-                crossing.now = i as f64 / 60.0;
-                let out = deform.advance(&crossing);
-                assert!(!out.triggered);
-                if !out.active {
-                    break;
-                }
+            let mut crossing = frame(1920.0, 0.0, 2000.0, 1.0 / 60.0);
+            let mut expected = crossing;
+            crossing.stiffness = stiffness;
+            expected.stiffness = sanitized;
+
+            for i in 1..=240 {
+                let now = i as f64 / 60.0;
+                crossing.now = now;
+                expected.now = now;
+                let actual = deform.advance(&crossing);
+                let expected_output = reference.advance(&expected);
+                assert_eq!(actual.triggered, expected_output.triggered);
+                assert_eq!(actual.active, expected_output.active);
+                assert_eq!(actual.pulse, expected_output.pulse);
+                assert_eq!(actual.scale_x, expected_output.scale_x);
+                assert_eq!(actual.scale_y, expected_output.scale_y);
+                assert!(actual.scale_x.is_finite() && actual.scale_y.is_finite());
             }
-            assert_eq!(deform.scales(), (1.0, 1.0));
-            assert!(!deform.animating());
         }
     }
 

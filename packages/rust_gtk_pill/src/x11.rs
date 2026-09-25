@@ -484,12 +484,14 @@ fn placement_on_monitor(
 ) -> Option<MonitorPlacement> {
     let monitor = monitor_at_physical_point(display, anchor_x, anchor_y)?;
     let scale = monitor.scale_factor() as f64;
-    let seam_point = if seams_open {
+    let pill_center = if seams_open {
         crate::pill::x11_pill_center(state, scale)
-            .unwrap_or((anchor_x, anchor_y))
     } else {
-        (anchor_x, anchor_y)
+        None
     };
+    let seam_point = pill_center
+        .and_then(|center| center.root)
+        .unwrap_or((anchor_x, anchor_y));
     let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
     let monitor_geometry = monitor.geometry();
     let full = crate::pill::logical_rect_to_physical(&monitor_geometry, scale);
@@ -570,15 +572,9 @@ fn placement_on_monitor(
         } else {
             (area.x, area.y, area.right() - win_w, area.bottom() - content_h)
         };
-    let (px, py, pw, ph) = crate::draw::pill_position(
-        state, state.draw_width.get(), state.draw_height.get(),
-    );
-    let (content_x, content_y) = state.content_offset();
-    let center_x = (content_x + px + pw / 2.0) * scale;
-    let center_y = (content_y + py + ph / 2.0) * scale;
     let mut bounds = DragBounds { min_x, min_y, max_x, max_y };
-    if seams_open {
-        bounds.apply_shared_seam_bounds(area, (center_x, center_y), region.edge_mask);
+    if let Some(center) = pill_center {
+        bounds.apply_shared_seam_bounds(area, center.offset, region.edge_mask);
     }
     bounds.collapse_inverted(region.edge_mask.preferred_minimum());
 

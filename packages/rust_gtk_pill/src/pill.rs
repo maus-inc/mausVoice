@@ -1165,23 +1165,36 @@ fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
     );
 }
 
-/// Return the rendered pill center in X11 root pixels, scaling the local
-/// offset with the supplied scale. The toplevel origin is already physical.
-pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<(f64, f64)> {
+/// Center coordinates in the supplied X11 scale space.
+#[derive(Clone, Copy)]
+pub(crate) struct X11PillCenter {
+    /// Absolute center in root pixels when the window origin is available.
+    pub(crate) root: Option<(f64, f64)>,
+    /// Center offset from the toplevel origin, in physical pixels.
+    pub(crate) offset: (f64, f64),
+}
+
+/// Compute the rendered pill center once for all X11 seam calculations.
+///
+/// `scale` defines the coordinate space of both returned points. Use the
+/// window surface scale when locating the live pill, and the anchor monitor's
+/// scale when comparing the center with monitor rectangles. The toplevel
+/// origin is already in root pixels; only the local offset is scaled.
+pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCenter> {
     if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
-        return None;
-    }
-    let (window_x, window_y) = state.x11_drag_applied.get();
-    if window_x == i32::MIN || window_y == i32::MIN {
         return None;
     }
     let (ox, oy) = state.content_offset();
     let (px, py, pw, ph) =
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    Some((
-        window_x as f64 + (ox + px + pw / 2.0) * scale,
-        window_y as f64 + (oy + py + ph / 2.0) * scale,
-    ))
+    let offset = ((ox + px + pw / 2.0) * scale, (oy + py + ph / 2.0) * scale);
+    let (window_x, window_y) = state.x11_drag_applied.get();
+    let root = if window_x == i32::MIN || window_y == i32::MIN {
+        None
+    } else {
+        Some((window_x as f64 + offset.0, window_y as f64 + offset.1))
+    };
+    Some(X11PillCenter { root, offset })
 }
 
 /// Resolve the monitor and rendered pill center from the applied X11 origin.
@@ -1193,7 +1206,8 @@ fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Mon
         .window()
         .map(|gdk_win| gdk_win.scale_factor() as f64)
         .unwrap_or(1.0);
-    let (cx, cy) = x11_pill_center(state, scale)?;
+    let center = x11_pill_center(state, scale)?;
+    let (cx, cy) = center.root?;
     let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy)?;
     Some((monitor, cx, cy))
 }
