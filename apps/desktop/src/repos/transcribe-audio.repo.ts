@@ -10,6 +10,7 @@ import {
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
   GEMINI_TRANSCRIPTION_MODELS,
+  isGeminiTranscribeModel,
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
@@ -698,6 +699,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private geminiApiKey: string;
   private model: GeminiTranscriptionModel;
   private readonly customVocabulary: string[];
+  private resolvedModel: GeminiTranscriptionModel | null = null;
 
   constructor(
     apiKey: string,
@@ -732,12 +734,15 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       return text;
     };
 
+    // Cache resolved model after first fallback to avoid 403 per segment.
+    const effectiveModel = this.resolvedModel ?? this.model;
     let transcript: string;
-    let usedModel = this.model;
+    let usedModel = effectiveModel;
     try {
-      transcript = await tryTranscribe(this.model);
+      transcript = await tryTranscribe(effectiveModel);
+      if (!this.resolvedModel) this.resolvedModel = effectiveModel;
     } catch (error) {
-      const isTranscribeModel = this.model.includes("-transcribe");
+      const isTranscribeModel = isGeminiTranscribeModel(effectiveModel);
       const status =
         error instanceof Error && "status" in error
           ? (error as { status?: number }).status
@@ -745,11 +750,12 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       const isModelAccessError = status === 403 || status === 404;
       if (isTranscribeModel && isModelAccessError) {
         const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
-          (m) => !m.includes("-transcribe"),
+          (m) => !isGeminiTranscribeModel(m),
         ) as GeminiTranscriptionModel | undefined;
         if (fallbackModel) {
           transcript = await tryTranscribe(fallbackModel);
           usedModel = fallbackModel;
+          this.resolvedModel = fallbackModel;
         } else {
           throw error;
         }

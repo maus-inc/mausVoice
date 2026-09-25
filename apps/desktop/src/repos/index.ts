@@ -20,6 +20,7 @@ import {
   GEMINI_CUSTOM_VOCABULARY_BUDGET,
   VocabularyBudget,
 } from "../utils/prompt.utils";
+import { isGeminiTranscribeModel } from "@maus-inc/voice-ai";
 import {
   ApiGenerativePrefs,
   ApiTranscriptionPrefs,
@@ -490,7 +491,7 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
     case "gemini": {
       const isTranscribeModel =
         !prefs.transcriptionModel ||
-        prefs.transcriptionModel.includes("-transcribe");
+        isGeminiTranscribeModel(prefs.transcriptionModel);
       repo = new GeminiTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
