@@ -41,9 +41,10 @@ const ARM_DWELL: f64 = 0.05;
 /// hysteresis is asymmetric — exits are meant to be stickier than
 /// entrances for hover affordance.
 const EXIT_GRACE: f64 = 0.14;
-/// Pointer speeds above this restart the dwell timer, in px/s. A 200 px
-/// entry zone crossed at ~1100 px/s (~180 ms) still dwells; faster
-/// traversals are treated as passes and reset the dwell.
+/// Pointer speeds above this restart the dwell timer, in px/s. The 80 px
+/// entry zone (48 px pill + 2 × 16 px pad) crossed at ~1100 px/s
+/// (~73 ms) still dwells; faster traversals are treated as passes and
+/// reset the dwell.
 ///
 /// Raised to 1100 px/s: the previous 800 px/s was below a typical
 /// comfortable mouse approach (~900–1000 px/s), so even intentional

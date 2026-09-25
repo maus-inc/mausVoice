@@ -483,10 +483,11 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
-            // Poll hover every frame (not just the 20 ms cursor timer) so the
-            // 50 ms ARM_DWELL is measured at display rate (~16 ms). Previously
-            // hover lived only on the 60 ms WM_TIMER, adding up to 60 ms of
-            // stale-sample latency on top of the dwell.
+            // Hover intent is sampled every animation frame (~16.7 ms at
+            // 60 Hz) so the 50 ms ARM_DWELL is measured at display rate.
+            // The 60 ms WM_TIMER remains only for monitor repositioning;
+            // sampling hover on every tick keeps worst-case latency to one
+            // frame (16.7 ms) + dwell ≈ 67 ms to first visual feedback.
             check_hover(hwnd, state);
             tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
