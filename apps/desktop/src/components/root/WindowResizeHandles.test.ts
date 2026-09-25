@@ -4,7 +4,7 @@ import {
   hasRightCaptionButtons,
   TITLE_BAR_HEIGHT,
 } from "./titleBarGeometry";
-import { getGrips } from "./WindowResizeHandles";
+import { CORNER, EDGE, getGrips } from "./WindowResizeHandles";
 
 const WINDOW = { width: 1000, height: 700 };
 /**
@@ -12,7 +12,7 @@ const WINDOW = { width: 1000, height: 700 };
  * resize target across the caption buttons (like a native Windows frame's top
  * border); everything below it must belong to the buttons. See getGrips.
  */
-const FRAME = 4;
+const FRAME = EDGE;
 
 type Rect = { left: number; top: number; right: number; bottom: number };
 
@@ -79,7 +79,7 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
   it("keeps top-right diagonal resize acquirable along the top edge", () => {
     const r = gripRect(grips, "NorthEast");
     // A 4x4 square is too small to hit reliably; the strip is corner-wide.
-    expect(r.right - r.left).toBe(12);
+    expect(r.right - r.left).toBe(CORNER);
     expect(r.right).toBe(WINDOW.width);
     expect(r.top).toBe(0);
   });
@@ -100,10 +100,10 @@ describe("getGrips without right-side caption buttons (macOS)", () => {
     expect(east.top).toBeLessThan(TITLE_BAR_HEIGHT);
   });
 
-  it("keeps the regular 12px NorthEast corner", () => {
+  it("keeps the regular square NorthEast corner", () => {
     const r = gripRect(grips, "NorthEast");
-    expect(r.right - r.left).toBe(12);
-    expect(r.bottom - r.top).toBe(12);
+    expect(r.right - r.left).toBe(CORNER);
+    expect(r.bottom - r.top).toBe(CORNER);
   });
 });
 

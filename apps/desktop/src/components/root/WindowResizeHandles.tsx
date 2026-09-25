@@ -18,9 +18,9 @@ type ResizeDirection = Parameters<TauriWindow["startResizeDragging"]>[0];
  * Edge grip thickness in px. Matches the hit area a native frame would expose,
  * which is intentionally thin so it never steals clicks from real content.
  */
-const EDGE = 4;
+export const EDGE = 4;
 /** Corner grips are square and larger so diagonal resize stays reachable. */
-const CORNER = 12;
+export const CORNER = 12;
 type Grip = {
   direction: ResizeDirection;
   cursor: string;

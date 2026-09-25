@@ -22,7 +22,8 @@ vi.mock("@mui/material", () => ({
   useColorScheme: () => ({ mode: "dark", systemMode: "dark" }),
   useTheme: () => ({ palette: { mode: "dark" } }),
 }));
-vi.mock("framer-motion", () => ({ useReducedMotion: () => false }));
+const motion = vi.hoisted(() => ({ reduced: false }));
+vi.mock("framer-motion", () => ({ useReducedMotion: () => motion.reduced }));
 
 /** Proxy whose every property is a no-op function returning a truthy value. */
 const inert = (): unknown =>
@@ -54,6 +55,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  motion.reduced = false;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   frames = [];
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
@@ -154,6 +156,22 @@ describe("MetalChrome over the real metal-fx", () => {
       await Promise.resolve(); // let the MutationObserver deliver
     });
     expect(wrapper.style.visibility).toBe("visible");
+    expect(wrapper.classList).not.toContain(METAL_CHROME_RESCUED_CLASS);
+  });
+
+  it("leaves the reduced-motion (paused) reveal to metal-fx too", async () => {
+    // MetalChrome passes paused={reduceMotion}; metal-fx still copies one
+    // first frame while paused, so the library reveals and no rescue fires.
+    motion.reduced = true;
+    const wrapper = await renderPlayButton();
+    const { METAL_CHROME_RESCUE_DELAY_MS, METAL_CHROME_RESCUED_CLASS } =
+      await import("./MetalChrome");
+    expect(wrapper.dataset.paused).toBe("true");
+
+    act(() => flushFrames(3));
+    expect(wrapper.style.visibility).toBe("visible");
+
+    act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));
     expect(wrapper.classList).not.toContain(METAL_CHROME_RESCUED_CLASS);
   });
 });
