@@ -8,7 +8,7 @@ import {
   DialogContentText,
   DialogTitle,
 } from "@mui/material";
-import { ReactNode } from "react";
+import { ReactNode, useId } from "react";
 import { FormattedMessage } from "react-intl";
 
 export type ConfirmDialogProps = {
@@ -45,16 +45,21 @@ export const ConfirmDialog = ({
     <FormattedMessage defaultMessage="Cancel" />
   );
 
+  const titleId = useId();
+  const contentId = useId();
+
   return (
     <Dialog
       open={isOpen}
       onClose={busy ? undefined : onCancel}
       maxWidth="xs"
       fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={contentId}
     >
-      <DialogTitle>{title}</DialogTitle>
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent dividers>
-        <DialogContentText>{content}</DialogContentText>
+        <DialogContentText id={contentId}>{content}</DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button
