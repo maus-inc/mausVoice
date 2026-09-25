@@ -18,6 +18,11 @@ vi.mock("../utils/env.utils", async (importOriginal) => {
   return { ...actual, isMacOS: () => false };
 });
 
+vi.mock("./app.actions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./app.actions")>();
+  return { ...actual, showErrorSnackbar: vi.fn() };
+});
+
 import {
   CURRENT_ONBOARDING_FLOW_VERSION,
   dismissTip,
@@ -27,11 +32,13 @@ import {
   markPrerequisite,
   resetTip,
   resumeOnboardingPage,
+  submitOnboarding,
 } from "./onboarding.actions";
 import {
   trackOnboardingOutcome,
   trackOnboardingStep,
 } from "../utils/analytics.utils";
+import { showErrorSnackbar } from "./app.actions";
 
 const seed = () => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
@@ -150,17 +157,73 @@ describe("onboarding flow migration", () => {
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
-  it("resumes persisted progress only with an empty nav stack", () => {
+  it("returns a signed-in resume without a name draft to sign-in", () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "user-id",
+      email: "user@example.com",
+      displayName: null,
+      providers: ["password"],
+    };
+    next.local.onboardingResumePage = "tutorial";
+    next.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
+    next.local.onboardingNameDraft = "";
+    setAppState(next, true);
+
+    resumeOnboardingPage();
+
+    expect(getAppState().onboarding.currentPage).toBe("signIn");
+    expect(getAppState().onboarding.isResuming).toBe(false);
+    expect(getAppState().local.onboardingResumePage).toBeNull();
+    expect(trackOnboardingOutcome).not.toHaveBeenCalled();
+  });
+
+  it("rejects a signed-in submission without a name", async () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "user-id",
+      email: "user@example.com",
+      displayName: null,
+      providers: ["password"],
+    };
+    Object.assign(next.onboarding, {
+      name: "",
+      firstName: "",
+      lastName: "",
+      lastNameEnabled: false,
+    });
+    next.local.onboardingNameDraft = "";
+    setAppState(next, true);
+
+    await expect(submitOnboarding()).resolves.toBeNull();
+
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      new Error("Enter your name before continuing."),
+    );
+    expect(getAppState().onboarding.submitting).toBe(false);
+  });
+
+  it("resumes persisted progress and the canonical name draft", () => {
     const state = getAppState();
     const next = structuredClone(state);
     next.local.onboardingResumePage = "micCheck";
     next.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
+    next.local.onboardingNameDraft = "Mary Jane Watson";
     setAppState(next, true);
 
     resumeOnboardingPage();
 
     expect(getAppState().onboarding.currentPage).toBe("micCheck");
     expect(getAppState().local.onboardingResumePage).toBe("micCheck");
+    expect(getAppState().local.onboardingNameDraft).toBe("Mary Jane Watson");
+    expect(getAppState().onboarding).toMatchObject({
+      name: "Mary Jane Watson",
+      firstName: "Mary",
+      lastName: "Watson",
+      lastNameEnabled: true,
+    });
     expect(getAppState().onboarding.history).toEqual([]);
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });

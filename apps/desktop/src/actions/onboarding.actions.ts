@@ -2,9 +2,12 @@ import { User, UserPreferences } from "@maus-inc/types";
 import { detectLocale } from "../i18n/intl";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import {
+  applyOnboardingNameDraft,
+  createOnboardingNameDraft,
   INITIAL_ONBOARDING_STATE,
   OnboardingPageKey,
   OnboardingState,
+  resolveOnboardingName,
 } from "../state/onboarding.state";
 import { getAppState, produceAppState } from "../store";
 import { CURRENT_COHORT } from "../utils/analytics.utils";
@@ -135,9 +138,23 @@ export const resumeOnboardingPage = (): void => {
     resume !== state.onboarding.currentPage &&
     state.onboarding.history.length === 0
   ) {
+    const resumeName =
+      state.local.onboardingNameDraft || getMyUser(state)?.name || "";
+    if (state.auth && resume !== "signIn" && !resumeName) {
+      produceAppState((draft) => {
+        draft.onboarding.currentPage = "signIn";
+        draft.onboarding.isResuming = false;
+        draft.local.onboardingResumePage = null;
+      });
+      return;
+    }
     // Restoring persisted state is not completing the initial sign-in step.
     // Keep the empty navigation stack rather than inventing a back target.
     produceAppState((draft) => {
+      applyOnboardingNameDraft(
+        draft.onboarding,
+        createOnboardingNameDraft(resumeName),
+      );
       draft.onboarding.currentPage = nearestKeptPage(resume);
       draft.onboarding.isResuming = true;
       draft.local.onboardingResumePage = draft.onboarding.currentPage;
@@ -212,6 +229,7 @@ export const goToOnboardingPage = (
 export const resetOnboarding = () => {
   produceAppState((draft) => {
     Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+    draft.local.onboardingNameDraft = "";
   });
 };
 
@@ -227,51 +245,28 @@ export const setDidSignUpWithAccount = (didSignUp: boolean) => {
   });
 };
 
-export const setAwaitingSignInNavigation = (awaiting: boolean) => {
-  produceAppState((draft) => {
-    draft.onboarding.awaitingSignInNavigation = awaiting;
-  });
-};
-
 export const setOnboardingPreferredMicrophone = (microphone: string | null) => {
   produceAppState((draft) => {
     draft.onboarding.preferredMicrophone = microphone;
   });
 };
 
+const getOptionalText = (value: string | null | undefined): string | null =>
+  value?.trim() || null;
+
 export const submitOnboarding = async () => {
   const state = getAppState();
-  const trimmedFirstName = state.onboarding.firstName.trim();
-  const trimmedLastName = state.onboarding.lastNameEnabled
-    ? state.onboarding.lastName.trim()
-    : "";
-  // When the user only typed into the text fields (name was blank before), join
-  // first + last. If there was already a full name on state (auto-filled from
-  // the auth provider or from an existing User record), build from the fields
-  // only when the user edited them; otherwise keep the existing full name so
-  // middle names and multi-token surnames are preserved instead of being
-  // collapsed to "first + last-token" by getFirstAndLastName.
-  const existingName = state.onboarding.name.trim();
-  const joinedFromParts = [trimmedFirstName, trimmedLastName]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-  const nameWasAutoFilled =
-    existingName.length > 0 && existingName !== joinedFromParts;
-  const lastNameEditedManually =
-    state.onboarding.lastNameEnabled &&
-    trimmedLastName.length > 0 &&
-    !existingName.endsWith(trimmedLastName);
-  const trimmedName =
-    nameWasAutoFilled && !lastNameEditedManually
-      ? existingName
-      : joinedFromParts || existingName;
-  const preferredMicrophone =
-    state.onboarding.preferredMicrophone?.trim() ?? null;
-  const normalizedMicrophone =
-    preferredMicrophone && preferredMicrophone.length > 0
-      ? preferredMicrophone
-      : null;
+  const trimmedName = resolveOnboardingName(
+    state.onboarding,
+    state.local.onboardingNameDraft,
+  );
+  if (!trimmedName && state.auth) {
+    showErrorSnackbar(new Error("Enter your name before continuing."));
+    return null;
+  }
+  const preferredMicrophone = getOptionalText(
+    state.onboarding.preferredMicrophone,
+  );
 
   const transcriptionPreference: TranscriptionPrefs =
     getTranscriptionPrefs(state);
@@ -282,6 +277,7 @@ export const submitOnboarding = async () => {
   produceAppState((draft) => {
     draft.onboarding.submitting = true;
     draft.onboarding.name = trimmedName;
+    draft.local.onboardingNameDraft = trimmedName;
   });
 
   try {
@@ -295,8 +291,8 @@ export const submitOnboarding = async () => {
       createdAt: now,
       updatedAt: now,
       name: trimmedName,
-      title: state.onboarding.title.trim() || null,
-      company: state.onboarding.company.trim() || null,
+      title: getOptionalText(state.onboarding.title),
+      company: getOptionalText(state.onboarding.company),
       bio: null,
       onboarded: false,
       onboardedAt: null,
@@ -360,7 +356,7 @@ export const submitOnboarding = async () => {
           : null,
       lastSeenFeature: null,
       activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
-      preferredMicrophone: normalizedMicrophone,
+      preferredMicrophone,
       ignoreUpdateDialog: false,
       incognitoModeEnabled: false,
       incognitoModeIncludeInStats: false,
@@ -404,6 +400,7 @@ export const submitOnboarding = async () => {
       setUserPreferences(draft, savedPreferences);
       draft.onboarding.submitting = false;
       draft.onboarding.name = savedUser.name;
+      draft.local.onboardingNameDraft = savedUser.name;
     });
 
     await refreshMember();
@@ -443,6 +440,7 @@ export const finishOnboarding = async () => {
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
       draft.local.onboardingResumePage = null;
+      draft.local.onboardingNameDraft = "";
       draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
     });
 

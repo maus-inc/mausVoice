@@ -1,5 +1,6 @@
 import { Nullable } from "@maus-inc/types";
 import { getIsDevMode } from "../utils/env.utils";
+import { getFirstAndLastName } from "../utils/string.utils";
 
 export type OnboardingPageKey =
   | "signIn"
@@ -34,7 +35,93 @@ export type OnboardingState = {
   didSignUpWithAccount: boolean;
   referralSource: string;
   dictationOverrideEnabled: boolean;
-  awaitingSignInNavigation: boolean;
+};
+
+export type OnboardingNameDraft = Pick<
+  OnboardingState,
+  "name" | "firstName" | "lastName" | "lastNameEnabled"
+>;
+
+export const createOnboardingNameDraft = (
+  fullName: string,
+): OnboardingNameDraft => {
+  const name = fullName.trim();
+  const { firstName, lastName } = getFirstAndLastName(name);
+  return {
+    name,
+    firstName: firstName ?? "",
+    lastName: lastName ?? "",
+    lastNameEnabled: lastName !== null,
+  };
+};
+
+export const applyOnboardingNameDraft = (
+  target: OnboardingNameDraft,
+  source: OnboardingNameDraft,
+): void => {
+  target.name = source.name;
+  target.firstName = source.firstName;
+  target.lastName = source.lastName;
+  target.lastNameEnabled = source.lastNameEnabled;
+};
+
+export const updateOnboardingFirstName = (
+  draft: OnboardingNameDraft,
+  firstName: string,
+): OnboardingNameDraft => {
+  const trimmedFirstName = firstName.trim();
+  if (!trimmedFirstName) {
+    return { ...draft, firstName };
+  }
+
+  const existing = draft.name.trim();
+  const { firstName: existingFirstName } = getFirstAndLastName(existing);
+  const lastName = draft.lastNameEnabled ? draft.lastName.trim() : "";
+  let remainingName = "";
+  if (!draft.firstName.trim() && existing === lastName) {
+    remainingName = lastName;
+  } else if (existingFirstName) {
+    remainingName = existing.slice(existingFirstName.length).trim();
+  }
+  return {
+    ...draft,
+    name: [trimmedFirstName, remainingName].filter(Boolean).join(" "),
+    firstName,
+  };
+};
+
+export const updateOnboardingLastName = (
+  draft: OnboardingNameDraft,
+  lastName: string,
+): OnboardingNameDraft => {
+  const trimmedLastName = lastName.trim();
+  const parts = draft.name.trim().split(/\s+/).filter(Boolean);
+  const name =
+    parts.length > 1
+      ? [...parts.slice(0, -1), trimmedLastName].join(" ").trim()
+      : [draft.firstName.trim(), trimmedLastName].filter(Boolean).join(" ");
+  return {
+    ...draft,
+    name,
+    lastName,
+    lastNameEnabled: true,
+  };
+};
+
+export const resolveOnboardingName = (
+  draft: OnboardingNameDraft,
+  persistedName: string,
+): string => {
+  const canonicalName = draft.name.trim();
+  if (canonicalName) return canonicalName;
+  const persistedDraft = persistedName.trim();
+  if (persistedDraft) return persistedDraft;
+  return [
+    draft.firstName.trim(),
+    draft.lastNameEnabled ? draft.lastName.trim() : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 };
 
 export const INITIAL_ONBOARDING_STATE: OnboardingState = {
@@ -55,7 +142,6 @@ export const INITIAL_ONBOARDING_STATE: OnboardingState = {
   didSignUpWithAccount: false,
   referralSource: "",
   dictationOverrideEnabled: false,
-  awaitingSignInNavigation: false,
 };
 
 if (getIsDevMode()) {

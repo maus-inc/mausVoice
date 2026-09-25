@@ -8,19 +8,23 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import walkingImage from "../../assets/1-walking.png";
 import {
   goToOnboardingPage,
-  setAwaitingSignInNavigation,
   setDidSignUpWithAccount,
 } from "../../actions/onboarding.actions";
+import {
+  applyOnboardingNameDraft,
+  createOnboardingNameDraft,
+  updateOnboardingFirstName,
+  updateOnboardingLastName,
+} from "../../state/onboarding.state";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
 import { getShouldShowEmailForm } from "../../utils/login.utils";
 import { isPersonalUseEnabled } from "../../utils/personal-use.utils";
-import { getFirstAndLastName } from "../../utils/string.utils";
 import { getMyUser } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { LoginForm } from "../login/LoginForm";
@@ -35,12 +39,16 @@ export const SignInForm = () => {
   const intl = useIntl();
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
+  const prefilledAuthUid = useRef<string | null>(null);
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();
   const loginStatus = useAppStore((state) => state.login.status);
-  const awaitingSignInNavigation = useAppStore(
-    (state) => state.onboarding.awaitingSignInNavigation,
+  const onboardingNameDraft = useAppStore(
+    (state) => state.local.onboardingNameDraft,
+  );
+  const onboardingResumePage = useAppStore(
+    (state) => state.local.onboardingResumePage,
   );
   const isSignedIn = Boolean(auth);
   const showEmailButton = useAppStore((state) => getShouldShowEmailForm(state));
@@ -54,67 +62,39 @@ export const SignInForm = () => {
     (state) => state.onboarding.lastNameEnabled,
   );
 
-  // Prefill name fields from the auth provider's displayName on first sign-in
-  // if nothing has been entered yet. We keep the full displayName as the
-  // canonical `name` so middle names / multi-token surnames survive — the
-  // split into first/last only seeds the two input boxes.
   useEffect(() => {
-    if (!isSignedIn) return;
-    if (firstName.trim() !== "") return;
-    const dn = auth?.displayName;
-    if (!dn) return;
-    const { firstName: fn, lastName: ln } = getFirstAndLastName(dn);
-    if (fn) {
-      produceAppState((draft) => {
-        draft.onboarding.firstName = fn;
-        if (ln) {
-          draft.onboarding.lastName = ln;
-          draft.onboarding.lastNameEnabled = true;
-        }
-        draft.onboarding.name = dn.trim();
-      });
-    }
-  }, [auth, isSignedIn, firstName]);
-
-  useEffect(() => {
-    // Returning user (already onboarded or has a name persisted): skip the
-    // name-collection step entirely.
-    if (isSignedIn && existingName !== "") {
-      const { firstName: efn, lastName: eln } =
-        getFirstAndLastName(existingName);
-      produceAppState((draft) => {
-        if (efn) draft.onboarding.firstName = efn;
-        if (eln) {
-          draft.onboarding.lastName = eln;
-          draft.onboarding.lastNameEnabled = true;
-        }
-        draft.onboarding.name = existingName;
-      });
-      setAwaitingSignInNavigation(false);
-      setEmailDialogOpen(false);
-      setDidSignUpWithAccount(!isPersonalUse);
-      goToOnboardingPage(
-        isPersonalUse ? "personalCredentials" : "chooseTranscription",
-      );
+    if (!isSignedIn || !auth) {
+      prefilledAuthUid.current = null;
       return;
     }
-    // Only auto-navigate once the user has supplied their first name so the
-    // name-collection step can't be skipped.
-    if (isSignedIn && awaitingSignInNavigation && firstName.trim() !== "") {
-      setAwaitingSignInNavigation(false);
-      setEmailDialogOpen(false);
-      setDidSignUpWithAccount(!isPersonalUse);
-      goToOnboardingPage(
-        isPersonalUse ? "personalCredentials" : "chooseTranscription",
-      );
-    }
-  }, [
-    isSignedIn,
-    awaitingSignInNavigation,
-    isPersonalUse,
-    firstName,
-    existingName,
-  ]);
+    if (prefilledAuthUid.current === auth.uid) return;
+    prefilledAuthUid.current = auth.uid;
+    const providerName = auth.providers.includes("personal")
+      ? ""
+      : (auth.displayName ?? "");
+    const prefillName = onboardingNameDraft || providerName;
+    if (!prefillName) return;
+    produceAppState((draft) => {
+      const nameDraft = createOnboardingNameDraft(prefillName);
+      applyOnboardingNameDraft(draft.onboarding, nameDraft);
+      draft.local.onboardingNameDraft = nameDraft.name;
+    });
+  }, [auth, isSignedIn, onboardingNameDraft]);
+
+  useEffect(() => {
+    if (!isSignedIn || existingName === "") return;
+    produceAppState((draft) => {
+      const nameDraft = createOnboardingNameDraft(existingName);
+      applyOnboardingNameDraft(draft.onboarding, nameDraft);
+      draft.local.onboardingNameDraft = nameDraft.name;
+    });
+    if (onboardingResumePage && onboardingResumePage !== "signIn") return;
+    setEmailDialogOpen(false);
+    setDidSignUpWithAccount(!isPersonalUse);
+    goToOnboardingPage(
+      isPersonalUse ? "personalCredentials" : "chooseTranscription",
+    );
+  }, [existingName, isPersonalUse, isSignedIn, onboardingResumePage]);
 
   const handleClickLocalSetup = () => {
     trackButtonClick("onboarding_local_setup");
@@ -137,67 +117,43 @@ export const SignInForm = () => {
 
   const handleOpenEmailDialog = () => {
     trackButtonClick("onboarding_sign_up_with_email");
-    setAwaitingSignInNavigation(true);
     setEmailDialogOpen(true);
   };
 
   const handleCloseEmailDialog = () => {
-    setAwaitingSignInNavigation(false);
     setEmailDialogOpen(false);
   };
 
-  const handleFirstNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
+  const updateFirstName = (value: string) => {
     produceAppState((draft) => {
-      draft.onboarding.firstName = value;
-      // If the user has already activated/edited the last-name field, treat the
-      // two fields as canonical; otherwise (last name still greyed) keep any
-      // pre-filled existing name (minus old first token) so multi-token
-      // surnames / middle names from an auth displayName aren't dropped while
-      // the user is still editing just the first-name box.
-      if (draft.onboarding.lastNameEnabled) {
-        draft.onboarding.name = [value.trim(), draft.onboarding.lastName.trim()]
-          .filter(Boolean)
-          .join(" ");
-      } else {
-        const existing = draft.onboarding.name.trim();
-        const { firstName: oldFn } = getFirstAndLastName(existing);
-        // Preserve everything after the first token when the user hasn't touched
-        // the last-name box yet.
-        const rest =
-          oldFn && existing.toLowerCase().startsWith(oldFn.toLowerCase())
-            ? existing.slice(oldFn.length).trim()
-            : "";
-        draft.onboarding.name = [value.trim(), rest].filter(Boolean).join(" ");
-      }
+      const nameDraft = updateOnboardingFirstName(draft.onboarding, value);
+      applyOnboardingNameDraft(draft.onboarding, nameDraft);
+      draft.local.onboardingNameDraft = nameDraft.name;
     });
+  };
+
+  const updateLastName = (value: string) => {
+    produceAppState((draft) => {
+      const nameDraft = updateOnboardingLastName(draft.onboarding, value);
+      applyOnboardingNameDraft(draft.onboarding, nameDraft);
+      draft.local.onboardingNameDraft = nameDraft.name;
+    });
+  };
+
+  const handleFirstNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateFirstName(e.target.value);
   };
 
   const handleFirstNameBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    produceAppState((draft) => {
-      draft.onboarding.firstName = e.target.value.trim();
-    });
+    updateFirstName(e.target.value.trim());
   };
 
   const handleLastNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    produceAppState((draft) => {
-      draft.onboarding.lastName = value;
-      draft.onboarding.lastNameEnabled = true;
-      // Rejoin from parts; once the user edits last name, treat the fields as
-      // the source of truth (middle names that were pre-filled from the auth
-      // provider displayName are intentionally lost at this point because the
-      // user has explicitly chosen a two-field name).
-      draft.onboarding.name = [draft.onboarding.firstName.trim(), value.trim()]
-        .filter(Boolean)
-        .join(" ");
-    });
+    updateLastName(e.target.value);
   };
 
   const handleLastNameBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    produceAppState((draft) => {
-      draft.onboarding.lastName = e.target.value.trim();
-    });
+    updateLastName(e.target.value.trim());
   };
 
   const handleLastNameActivate = () => {
@@ -249,7 +205,7 @@ export const SignInForm = () => {
             letterSpacing: "0.01em",
           }}
         >
-          <FormattedMessage defaultMessage="Welcome back" id="welcome_back" />
+          <FormattedMessage defaultMessage="Welcome back" />
         </Typography>
 
         <Typography
@@ -260,7 +216,6 @@ export const SignInForm = () => {
         >
           <FormattedMessage
             defaultMessage="You are signed in as {email}"
-            id="you_are_signed_in_as_email"
             values={{ email: auth?.email }}
           />
         </Typography>
@@ -274,6 +229,7 @@ export const SignInForm = () => {
             value={firstName}
             onChange={handleFirstNameChange}
             onBlur={handleFirstNameBlur}
+            required
             autoFocus
             autoComplete="given-name"
             fullWidth
@@ -294,13 +250,13 @@ export const SignInForm = () => {
             onBlur={handleLastNameBlur}
             onFocus={handleLastNameActivate}
             onClick={handleLastNameActivate}
-            disabled={!lastNameEnabled}
+            onMouseEnter={handleLastNameActivate}
             autoComplete="family-name"
             fullWidth
             sx={
               !lastNameEnabled
                 ? {
-                    "& .MuiInputBase-input.Mui-disabled": {
+                    "& .MuiInputBase-input": {
                       color: "text.disabled",
                       WebkitTextFillColor: "unset",
                       opacity: 0.6,
@@ -320,7 +276,9 @@ export const SignInForm = () => {
             slotProps={{
               inputLabel: { shrink: true },
               htmlInput: {
+                "aria-disabled": !lastNameEnabled,
                 "data-mausvoice-ignore": "true",
+                readOnly: !lastNameEnabled,
               },
             }}
           />
