@@ -165,6 +165,15 @@ pub(crate) fn physical_grab_offset(press: (f64, f64), surface_scale: i32) -> (f6
     (press.0 * scale, press.1 * scale)
 }
 
+/// GTK 3 X11 uses one screen-wide device scale for monitor geometry and the
+/// toplevel surface, so all root-space conversions must share this factor.
+pub(crate) fn x11_root_scale(window: &gtk::Window) -> f64 {
+    window
+        .window()
+        .map(|surface| surface.scale_factor() as f64)
+        .unwrap_or(1.0)
+}
+
 /// Advances one frame of X11 drag motion on the frame clock: samples the root
 /// pointer, runs it through the shared controller, and moves the toplevel.
 /// The first frame lazily arms the controller using the physical offset
@@ -183,21 +192,22 @@ pub(crate) fn tick_drag_frame(
         }
     }
     let display = window.display();
+    let scale = x11_root_scale(window);
     let (cx, cy) = root_pointer(window);
     let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
         (cx as f64, cy as f64), dragging,
     );
     let placement = placement_on_monitor(
-        anchor_x, anchor_y, dragging, &display, window, state,
+        anchor_x, anchor_y, dragging, scale, &display, window, state,
     )
     .or_else(|| {
         let monitor = window.window().and_then(|surface| display.monitor_at_window(&surface))?;
-        let (x, y) = monitor_bottom_centre(&monitor);
-        placement_on_monitor(x, y, dragging, &display, window, state)
+        let (x, y) = monitor_bottom_centre(&monitor, scale);
+        placement_on_monitor(x, y, dragging, scale, &display, window, state)
     })
     .or_else(|| {
-        let (x, y) = primary_monitor_bottom_centre(&display)?;
-        placement_on_monitor(x, y, dragging, &display, window, state)
+        let (x, y) = primary_monitor_bottom_centre(&display, scale)?;
+        placement_on_monitor(x, y, dragging, scale, &display, window, state)
     });
     let Some(p) = placement else { return };
     let mut motion = state.drag_motion.borrow_mut();
@@ -310,7 +320,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     // to (0, 0) would throw the pill into the top-left corner of the root
     // window; park it bottom-centre on the primary monitor instead — the same
     // anchor the idle placement logic uses for first paint.
-    .or_else(|| primary_monitor_bottom_centre(&display).and_then(|(bx, by)| {
+    .or_else(|| primary_monitor_bottom_centre(&display, x11_root_scale(window)).and_then(|(bx, by)| {
         pill_pos_on_monitor(
             bx,
             by,
@@ -427,16 +437,13 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
 /// Returns a bottom-centre anchor point (in physical pixels) for the primary
 /// monitor (or monitor 0 if there is no primary). Used as the initial-placement
 /// anchor when the cursor sits on a transiently-missing monitor at realize().
-fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
+fn primary_monitor_bottom_centre(display: &gdk::Display, scale: f64) -> Option<(f64, f64)> {
     let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
-    Some(monitor_bottom_centre(&primary))
+    Some(monitor_bottom_centre(&primary, scale))
 }
 
-fn monitor_bottom_centre(monitor: &gdk::Monitor) -> (f64, f64) {
-    let phys = crate::pill::logical_rect_to_physical(
-        &monitor.geometry(),
-        monitor.scale_factor() as f64,
-    );
+fn monitor_bottom_centre(monitor: &gdk::Monitor, scale: f64) -> (f64, f64) {
+    let phys = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
     let centre_x = phys.x + phys.width / 2.0;
     // Containment is exclusive on the lower edge (`anchor_y < phys.y + phys.height`),
     // so sit one physical pixel inside rather than on the boundary.
@@ -460,13 +467,17 @@ pub(crate) struct MonitorPlacement {
     pub edge_mask: rust_pill_shared::edge::EdgeMask,
 }
 
-/// Resolves physical root coordinates without passing them to GDK's logical
-/// point API. Missing handles during hot-unplug do not stop the search.
-pub(crate) fn monitor_at_physical_point(display: &gdk::Display, x: f64, y: f64) -> Option<gdk::Monitor> {
+/// Resolves a physical root point without passing it to GDK's logical point
+/// API. `scale` is the screen-wide X11 scale shared by all monitor rectangles.
+/// Missing handles during hot-unplug do not stop the search.
+pub(crate) fn monitor_at_physical_point(
+    display: &gdk::Display,
+    x: f64,
+    y: f64,
+    scale: f64,
+) -> Option<gdk::Monitor> {
     (0..display.n_monitors()).filter_map(|i| display.monitor(i)).find(|monitor| {
-        let rect = crate::pill::logical_rect_to_physical(
-            &monitor.geometry(), monitor.scale_factor() as f64,
-        );
+        let rect = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
         x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
     })
 }
@@ -478,12 +489,12 @@ fn placement_on_monitor(
     anchor_x: f64,
     anchor_y: f64,
     seams_open: bool,
+    scale: f64,
     display: &gdk::Display,
     window: &gtk::Window,
     state: &PillState,
 ) -> Option<MonitorPlacement> {
-    let monitor = monitor_at_physical_point(display, anchor_x, anchor_y)?;
-    let scale = monitor.scale_factor() as f64;
+    let monitor = monitor_at_physical_point(display, anchor_x, anchor_y, scale)?;
     let pill_center = if seams_open {
         crate::pill::x11_pill_center(state, scale)
     } else {
@@ -508,7 +519,7 @@ fn placement_on_monitor(
             .map(|candidate| {
                 let rect = crate::pill::logical_rect_to_physical(
                     &candidate.geometry(),
-                    candidate.scale_factor() as f64,
+                    scale,
                 );
                 rust_pill_shared::edge::MonitorRect {
                     x: rect.x, y: rect.y, width: rect.width, height: rect.height,
@@ -605,6 +616,7 @@ fn pill_pos_on_monitor(
         anchor_x,
         anchor_y,
         dragging,
+        x11_root_scale(window),
         display,
         window,
         state,

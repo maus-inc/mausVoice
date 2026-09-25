@@ -924,9 +924,9 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
         let workarea = m.workarea();
         let monitor_scale = m.scale_factor() as f64;
         if state.backend.get() == Backend::X11 {
-            // The pill rect uses X11 root pixels, so convert both the global
-            // origin and the extent into that coordinate space.
-            logical_rect_to_physical(&workarea, monitor_scale)
+            // GTK 3 X11 uses a screen-wide scale shared by the toplevel and
+            // every monitor rectangle, so all root-space conversions use it.
+            logical_rect_to_physical(&workarea, scale)
         } else {
             // Wayland has no queryable root position. Keep its existing
             // compositor-layout origin and scaled extent for the monitor-only
@@ -1112,6 +1112,7 @@ fn pill_monitor(window: &gtk::Window, state: &PillState) -> Option<gdk::Monitor>
             &display,
             state.saved_x.get() + (w as f64 / 2.0) * scale,
             state.saved_y.get() + (h as f64 / 2.0) * scale,
+            scale,
         )
         .or_else(|| display.primary_monitor())
         .or_else(|| display.monitor(0))
@@ -1132,7 +1133,11 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
         return local_top;
     }
     let Some(monitor) = pill_monitor(window, state) else { return local_top };
-    let scale = monitor.scale_factor() as f64;
+    let scale = if state.backend.get() == Backend::X11 {
+        x11::x11_root_scale(window)
+    } else {
+        monitor.scale_factor() as f64
+    };
     if !scale.is_finite() || scale <= 0.0 {
         return local_top;
     }
@@ -1176,10 +1181,9 @@ pub(crate) struct X11PillCenter {
 
 /// Compute the rendered pill center once for all X11 seam calculations.
 ///
-/// `scale` defines the coordinate space of both returned points. Use the
-/// window surface scale when locating the live pill, and the anchor monitor's
-/// scale when comparing the center with monitor rectangles. The toplevel
-/// origin is already in root pixels; only the local offset is scaled.
+/// `scale` must be the window surface scale: GTK 3 X11 uses that same
+/// screen-wide factor for every monitor rectangle. The toplevel origin is
+/// already in root pixels; the local offset is scaled into that same space.
 pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCenter> {
     if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
         return None;
@@ -1202,24 +1206,21 @@ fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Mon
     if state.backend.get() != Backend::X11 {
         return None;
     }
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
+    let scale = x11::x11_root_scale(window);
     let center = x11_pill_center(state, scale)?;
     let (cx, cy) = center.root?;
-    let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy)?;
+    let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy, scale)?;
     Some((monitor, cx, cy))
 }
 
 fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, f64, f64, f64) {
     let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
     let Some((monitor, cx, cy)) = x11_pill_monitor(window, state) else { return unknown };
-    let ms = monitor.scale_factor() as f64;
-    if !ms.is_finite() || ms <= 0.0 {
+    let scale = x11::x11_root_scale(window);
+    if !scale.is_finite() || scale <= 0.0 {
         return unknown;
     }
-    let g = logical_rect_to_physical(&monitor.geometry(), ms);
+    let g = logical_rect_to_physical(&monitor.geometry(), scale);
     (g.x, g.y, g.width, g.height, cx, cy)
 }
 

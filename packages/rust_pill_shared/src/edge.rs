@@ -78,7 +78,8 @@ impl MonitorRect {
 
 /// Per-frame drag area. Shared sides use the full monitor edge and disable
 /// edge resistance; adapters shift those bounds to the pill-center crossing
-/// plane. Exposed sides retain their work-area edge.
+/// plane. A seam also keeps the full monitor span along its tangent axis so a
+/// perpendicular work-area inset cannot close a traversable crossing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DragRegion {
     pub bounds: MonitorRect,
@@ -111,10 +112,15 @@ pub fn drag_region(
         return DragRegion { bounds, edge_mask: EdgeMask::ALL };
     }
 
-    let left = if exposed.left { work_area.x } else { monitor.x };
-    let right = if exposed.right { work_area.right() } else { monitor.right() };
-    let top = if exposed.top { work_area.y } else { monitor.y };
-    let bottom = if exposed.bottom { work_area.bottom() } else { monitor.bottom() };
+    let vertical_seam = !exposed.left || !exposed.right;
+    let horizontal_seam = !exposed.top || !exposed.bottom;
+    // Keep the full monitor span along a seam's tangent axis. Applying a
+    // perpendicular work-area inset there would close traversable portions
+    // of the physical seam beneath a dock or panel.
+    let left = if horizontal_seam || !exposed.left { monitor.x } else { work_area.x };
+    let right = if horizontal_seam || !exposed.right { monitor.right() } else { work_area.right() };
+    let top = if vertical_seam || !exposed.top { monitor.y } else { work_area.y };
+    let bottom = if vertical_seam || !exposed.bottom { monitor.bottom() } else { work_area.bottom() };
     DragRegion {
         bounds: MonitorRect {
             x: left,
@@ -333,6 +339,22 @@ mod tests {
         let corner_only = MonitorRect { x: 1200.0, y: 1000.0, ..neighbor };
         let corner = drag_region(current, work, &[corner_only], (1199.5, 1000.0));
         assert!(corner.edge_mask.right, "corner contact is not a traversable seam");
+    }
+
+    #[test]
+    fn a_shared_vertical_seam_keeps_the_full_tangent_span_past_a_dock_inset() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
+        let neighbor = MonitorRect { x: 1200.0, y: 0.0, width: 1000.0, height: 1000.0 };
+
+        let region = drag_region(monitor, work, &[neighbor], (1190.0, 950.0));
+
+        assert!(!region.edge_mask.right);
+        assert!(region.edge_mask.bottom);
+        assert_eq!(region.bounds.x, work.x);
+        assert_eq!(region.bounds.right(), monitor.right());
+        assert_eq!(region.bounds.y, monitor.y);
+        assert_eq!(region.bounds.bottom(), monitor.bottom());
     }
 
     #[test]
