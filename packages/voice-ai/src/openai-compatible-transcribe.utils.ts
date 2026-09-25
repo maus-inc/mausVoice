@@ -46,6 +46,7 @@ export const openaiCompatibleTranscribeAudio = async ({
     retries: 3,
     isRetryable: () => !signal?.aborted,
     fn: async () => {
+      signal?.throwIfAborted();
       const file = await toFile(blob, `audio.${ext}`);
       const response = await client.audio.transcriptions.create(
         {

@@ -42,6 +42,7 @@ export const aldeaTranscribeAudio = async ({
     retries: 3,
     isRetryable: () => !signal?.aborted,
     fn: async () => {
+      signal?.throwIfAborted();
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const url = new URL(ALDEA_API_URL);

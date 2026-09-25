@@ -74,7 +74,11 @@ export type TranscribeAudioInput = {
    * multi-chunk audio. Defaults to true when omitted.
    */
   hallucinationFilterEnabled?: boolean;
-  /** Cancels in-flight and not-yet-started provider requests. */
+  /**
+   * Cancels in-flight and not-yet-started provider requests. Honored by every
+   * provider that runs batch dictation (where pretranscription happens); the
+   * Gladia and Azure SDK uploads, used only for retranscription, ignore it.
+   */
   signal?: AbortSignal;
 };
 
@@ -240,13 +244,15 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // Create promise factories for batched execution. Skip chunks that are
     // near-silent so their glossary-prompt bias cannot produce a dictionary
     // hallucination (and so we don't pay to transcribe room noise).
-    const transcriptionTasks = segments.map((segmentSamples) => () => {
+    // Factories are async so an abort rejects inside the batch's Promise.all
+    // instead of throwing past sibling requests that are already in flight.
+    const transcriptionTasks = segments.map((segmentSamples) => async () => {
       input.signal?.throwIfAborted();
       if (
         filterEnabled &&
         this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
       ) {
-        return Promise.resolve({ text: "", metadata: null });
+        return { text: "", metadata: null };
       }
       return this.transcribeSegment({
         samples: segmentSamples,

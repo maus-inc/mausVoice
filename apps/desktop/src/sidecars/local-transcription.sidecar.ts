@@ -337,6 +337,8 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async createStreamingSession(
     input: LocalSidecarStreamingSessionInput,
+    /** Stops pending chunk uploads; finalize takes its own signal. */
+    signal?: AbortSignal,
   ): Promise<LocalSidecarStreamingSession> {
     await this.ensureModelReady(input.model);
 
@@ -382,7 +384,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     };
 
     const queueChunkUpload = (samples: Float32Array): void => {
-      if (released || queuedError || samples.length === 0) {
+      if (released || queuedError || signal?.aborted || samples.length === 0) {
         return;
       }
 
@@ -396,6 +398,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           if (released || queuedError) {
             return;
           }
+          signal?.throwIfAborted();
 
           await this.requestJson<SidecarAppendTranscriptionChunkResponse>(
             `${sessionPath}/chunks`,
@@ -403,12 +406,14 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
               method: "POST",
               headers: { "Content-Type": "application/octet-stream" },
               body,
+              signal,
             },
             { retries: 1 },
           );
         })
         .catch((error) => {
           queuedError = error;
+          if (signal?.aborted) return;
           getLogger().warning(
             `[${this.config.logPrefix}] failed to stream audio chunk (${toErrorMessage(error)})`,
           );
@@ -488,7 +493,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     input: LocalSidecarTranscribeInput,
   ): Promise<LocalSidecarTranscribeOutput> {
     input.signal?.throwIfAborted();
-    const session = await this.createStreamingSession(input);
+    const session = await this.createStreamingSession(input, input.signal);
     const floatSamples = this.toFloat32Array(input.samples);
 
     try {

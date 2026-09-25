@@ -365,7 +365,10 @@ describe("BaseTranscribeAudioRepo", () => {
 
     it("passes the abort signal to every segment and skips segments after an abort", async () => {
       const controller = new AbortController();
-      const repo = new MockTranscribeAudioRepo(10, 2, 1, (_input, index) => {
+      // Batch size 2 over 3 segments: the abort lands while the first batch
+      // is in flight, so the second batch must never start and nothing may
+      // reject unobserved.
+      const repo = new MockTranscribeAudioRepo(10, 2, 2, (_input, index) => {
         if (index === 0) controller.abort();
         return `segment ${index}`;
       });
@@ -379,8 +382,10 @@ describe("BaseTranscribeAudioRepo", () => {
         }),
       ).rejects.toThrow();
 
-      expect(repo.segmentCalls).toHaveLength(1);
-      expect(repo.segmentCalls[0].signal).toBe(controller.signal);
+      expect(repo.segmentCalls).toHaveLength(2);
+      for (const call of repo.segmentCalls) {
+        expect(call.signal).toBe(controller.signal);
+      }
     });
 
     it("should return metadata from first segment", async () => {
