@@ -33,8 +33,10 @@ vi.mock("../../hooks/toast.hooks", () => ({
 }));
 
 // Keep the probe observation-only: decide no corrections so the poll exits
-// before toasts/localStorage are touched.
+// before toasts/localStorage are touched. The mock must cover the whole module
+// surface the watcher imports, or a second poll would call into undefined.
 vi.mock("../../utils/edit-watch.utils", () => ({
+  baselineHoldsDictation: () => true,
   findEditCorrections: () => [],
 }));
 

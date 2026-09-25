@@ -16,3 +16,5 @@ After adding a term, make three normal-speed test recordings with it in differen
 mausVoice can also add terms for you. Turn on **More settings → Auto-learn dictionary**, then correct a transcription in History. The corrected names become glossary terms automatically. The heuristic adds proper nouns, skips common words, and never creates a replacement rule.
 
 With **More settings → Learn from corrections** you can also let mausVoice watch the target app after dictation. When you fix a name in place, the dictation pill offers to add the corrected spelling. You confirm each addition, so nothing enters the dictionary without your approval.
+
+The watcher waits until you stop editing before it offers anything, so it never prompts for a half-typed word. It compares the field against how it read right after mausVoice inserted the dictation, which means text that was already in that field is never offered as a correction. Letting the prompt time out counts as turning it down, so mausVoice does not ask about the same word again.
