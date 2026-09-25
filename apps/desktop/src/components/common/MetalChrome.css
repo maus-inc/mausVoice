@@ -1,0 +1,12 @@
+/*
+ * metal-fx keeps its wrapper at `opacity: 0; visibility: hidden` (inline
+ * style) until the shared WebGL renderer copies its first frame. If that never
+ * happens (context lost, GPU reset, shader init failure in the webview), the
+ * wrapped control stays invisible and unclickable. The control must never
+ * depend on a decorative shader, so force the wrapper visible; the metal ring
+ * simply appears once the canvas has painted.
+ */
+.mv-metal-chrome {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
