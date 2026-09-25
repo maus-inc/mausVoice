@@ -149,6 +149,9 @@ describe("groqGenerateTextResponse", () => {
         json_schema: {
           name: jsonResponse.name,
           description: jsonResponse.description,
+          // Constrained decoding: Groq documents strict mode as the
+          // production setting for the models that support it.
+          strict: true,
           schema: jsonResponse.schema,
         },
       },
@@ -233,5 +236,64 @@ describe("groqGenerateTextResponse", () => {
     ).rejects.toThrow("aborted");
 
     expect(createCompletion).toHaveBeenCalledTimes(1);
+  });
+});
+
+const runGroqRequestCase = async (model: string) => {
+  const createCompletion = vi.fn().mockResolvedValue({
+    choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
+    usage: { total_tokens: 5 },
+  });
+
+  vi.resetModules();
+  vi.doMock("groq-sdk/index", () => ({
+    default: class MockGroq {
+      chat = {
+        completions: {
+          create: createCompletion,
+        },
+      };
+    },
+    toFile: vi.fn(),
+  }));
+
+  const { groqGenerateTextResponse } = await import("../src/groq.utils");
+
+  await groqGenerateTextResponse({
+    apiKey: "test-key",
+    model,
+    prompt: "hi",
+    jsonResponse: {
+      name: "schema",
+      description: "x",
+      schema: { type: "object" as const, properties: {} },
+    },
+  });
+
+  return createCompletion.mock.calls[0][0];
+};
+
+describe("groqGenerateTextResponse reasoning controls", () => {
+  afterEach(() => {
+    vi.doUnmock("groq-sdk/index");
+    vi.resetModules();
+  });
+
+  it("asks GPT-OSS models for low-effort reasoning with the channel hidden", async () => {
+    // GPT-OSS defaults to medium effort, and JSON mode rejects the raw
+    // reasoning format, so a structured cleanup call must pick both.
+    const call = await runGroqRequestCase("openai/gpt-oss-20b");
+
+    expect(call).toMatchObject({
+      reasoning_effort: "low",
+      reasoning_format: "hidden",
+    });
+  });
+
+  it("sends no reasoning params for models without a reasoning channel", async () => {
+    const call = await runGroqRequestCase("qwen/qwen3.6-27b");
+
+    expect(call).not.toHaveProperty("reasoning_effort");
+    expect(call).not.toHaveProperty("reasoning_format");
   });
 });

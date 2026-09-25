@@ -7,6 +7,7 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
+import { buildGeminiThinkingConfig } from "./reasoning.utils";
 
 export const GEMINI_GENERATE_TEXT_MODELS = [
   "gemini-3.7-flash",
@@ -357,6 +358,13 @@ export const geminiGenerateTextResponse = async ({
       const generationConfig: Record<string, unknown> = {};
       if (maxTokens !== undefined) {
         generationConfig.maxOutputTokens = maxTokens;
+      }
+      // Thinking tokens are charged against maxOutputTokens, so a default
+      // thinking pass can consume the whole post-processing budget before any
+      // JSON is written. See reasoning.utils.
+      const thinkingConfig = buildGeminiThinkingConfig(model);
+      if (thinkingConfig) {
+        generationConfig.thinkingConfig = thinkingConfig;
       }
       if (jsonResponse) {
         generationConfig.responseMimeType = "application/json";

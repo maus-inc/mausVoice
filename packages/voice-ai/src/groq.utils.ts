@@ -9,6 +9,7 @@ import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/complet
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
+import { buildGptOssReasoningParams } from "./reasoning.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import {
   runSdkTranscription,
@@ -143,6 +144,10 @@ export const groqGenerateTextResponse = async ({
         {
           messages,
           model,
+          // GPT-OSS defaults to medium reasoning effort and charges those
+          // tokens to the completion budget; reasoning.utils holds the
+          // model-gated controls.
+          ...buildGptOssReasoningParams(model),
           max_completion_tokens: maxTokens ?? 5000,
           response_format: jsonResponse
             ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
@@ -151,6 +156,11 @@ export const groqGenerateTextResponse = async ({
                   json_schema: {
                     name: jsonResponse.name,
                     description: jsonResponse.description,
+                    // Strict mode switches Groq to constrained decoding, so a
+                    // cleanup reply can never be syntactically valid JSON that
+                    // violates the schema. Groq documents it as the production
+                    // setting and supports it on these models.
+                    strict: true,
                     schema: jsonResponse.schema,
                   },
                 }

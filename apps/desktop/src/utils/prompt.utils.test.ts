@@ -556,7 +556,7 @@ describe("buildPostProcessingPrompt", () => {
     );
   });
 
-  it("appends the humanize skill to every post-processing prompt", () => {
+  it("includes the humanize skill in every post-processing prompt", () => {
     const template = buildPostProcessingPrompt(
       makeInput({
         kind: "template",
@@ -577,8 +577,112 @@ describe("buildPostProcessingPrompt", () => {
 it("exports an actual object response schema with the installed Zod version", () => {
   expect(PROCESSED_TRANSCRIPTION_JSON_SCHEMA).toMatchObject({
     type: "object",
-    properties: { result: { type: "string" } },
-    required: ["result"],
+    properties: {
+      edits: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            find: { type: "string" },
+            replace: { type: "string" },
+          },
+          required: ["find", "replace"],
+          additionalProperties: false,
+        },
+      },
+      result: { type: "string" },
+    },
+    required: ["edits", "result"],
     additionalProperties: false,
+  });
+});
+
+describe("reply schema strict-mode compatibility", () => {
+  it("marks every property required and closes every object", () => {
+    // The Groq adapter sends strict: true for the GPT-OSS models, and Groq
+    // rejects a strict schema whose objects carry optional properties or an
+    // open property set. A future field addition must keep this shape.
+    const objects: Record<string, unknown>[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (node === null || typeof node !== "object") {
+        return;
+      }
+      const record = node as Record<string, unknown>;
+      if (record.type === "object") {
+        objects.push(record);
+      }
+      Object.values(record).forEach(walk);
+    };
+    walk(PROCESSED_TRANSCRIPTION_JSON_SCHEMA);
+
+    expect(objects.length).toBeGreaterThan(0);
+    for (const object of objects) {
+      const properties = Object.keys(
+        (object.properties ?? {}) as Record<string, unknown>,
+      ).sort();
+      expect((object.required as string[] | undefined)?.slice().sort()).toEqual(
+        properties,
+      );
+      expect(object.additionalProperties).toBe(false);
+    }
+  });
+});
+
+describe("buildPostProcessingPrompt cache shape", () => {
+  const styleInput = (transcript: string) =>
+    makeInput({ kind: "style", stylePrompt: "Be formal" }, { transcript });
+
+  const cachedPrefix = (prompt: string): string =>
+    prompt.slice(0, prompt.indexOf("<transcript>"));
+
+  it("keeps the cacheable prefix byte-identical across dictations", () => {
+    const first = buildPostProcessingPrompt(styleInput("we are gonna ship it"));
+    const second = buildPostProcessingPrompt(
+      styleInput("remind me to call the dentist tomorrow"),
+    );
+
+    // Groq caches a request prefix, so anything that varies per dictation has
+    // to sit after the transcript; the transcript is the last variable input
+    // of the style prompt.
+    expect(cachedPrefix(first)).toBe(cachedPrefix(second));
+    expect(
+      first.endsWith("Process the transcript according to the instructions."),
+    ).toBe(true);
+  });
+
+  it("states the edit-list contract in the prompt", () => {
+    const prompt = buildPostProcessingPrompt(styleInput("clean me up"));
+
+    expect(prompt).toContain('"edits"');
+    expect(prompt).toContain('"find"');
+    expect(prompt).toContain('"replace"');
+    expect(prompt).toContain('"result"');
+    expect(prompt).not.toContain("Respond with JSON only");
+  });
+});
+
+describe("buildSystemPostProcessingTonePrompt cache shape", () => {
+  it("keeps the system prompt independent of the dictation", () => {
+    const first = buildSystemPostProcessingTonePrompt(
+      makeInput(
+        { kind: "style", stylePrompt: "Be formal" },
+        { transcript: "first transcript" },
+      ),
+    );
+    const second = buildSystemPostProcessingTonePrompt(
+      makeInput(
+        { kind: "style", stylePrompt: "Be formal" },
+        { transcript: "second transcript" },
+      ),
+    );
+
+    // The system message is the first half of the cached prefix, so it must
+    // not carry anything that changes from one dictation to the next.
+    expect(first).toBe(second);
+    expect(first).not.toContain("first transcript");
   });
 });

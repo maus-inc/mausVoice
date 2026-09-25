@@ -11,6 +11,7 @@ import {
   buildOpenAICompatibleMessages,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
+import { buildGptOssReasoningParams } from "./reasoning.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
@@ -196,6 +197,13 @@ export const cerebrasGenerateTextResponse = async ({
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
         top_p: 1,
+        // Same GPT-OSS reasoning policy as the Groq adapter, which keeps the
+        // medium-effort default from eating the JSON reply's token budget. Cerebras
+        // documents `reasoning_format` as an `extra_body` entry, which is a
+        // Python-SDK typing workaround: `extra_body` is merged into the
+        // top-level request body, and the JavaScript SDK forwards unknown
+        // top-level params the same way.
+        ...buildGptOssReasoningParams(model),
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       };
       const response = await client.chat.completions.create(
