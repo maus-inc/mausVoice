@@ -83,11 +83,18 @@ use rodio::Source;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
-#[derive(serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct StopRecordingResponse {
-    pub samples: Vec<f32>,
-    pub sample_rate: u32,
+/// Packs a finished recording as `[sample_rate: u32 LE][samples: f32 LE...]`.
+///
+/// `stop_recording` returns these bytes as a raw IPC body. Serializing the
+/// samples as a JSON number array costs ~36 MB of text and hundreds of
+/// milliseconds per minute of 48 kHz audio on the stop critical path.
+pub fn encode_recorded_audio(samples: &[f32], sample_rate: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(4 + samples.len() * 4);
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    for sample in samples {
+        bytes.extend_from_slice(&sample.to_le_bytes());
+    }
+    bytes
 }
 
 #[derive(serde::Serialize, specta::Type)]
@@ -2753,22 +2760,17 @@ pub async fn start_recording(
     }
 }
 
+/// Raw-body command, so it is registered in `app.rs` but kept out of the
+/// Specta bindings (Specta cannot describe `ipc::Response`). The frontend
+/// decodes it with `decodeStopRecordingPayload`.
 #[tauri::command]
-#[specta::specta]
 pub async fn stop_recording(
-    _app: AppHandle,
     recorder: State<'_, Arc<dyn crate::platform::Recorder>>,
-) -> Result<StopRecordingResponse, String> {
+) -> Result<tauri::ipc::Response, String> {
     let recorder = Arc::clone(&recorder);
 
-    tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
-        Ok(result) => {
-            let audio = result.audio;
-            Ok(StopRecordingResponse {
-                samples: audio.samples,
-                sample_rate: audio.sample_rate,
-            })
-        }
+    let bytes = tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
+        Ok(result) => Ok(encode_recorded_audio(&result.audio.samples, result.audio.sample_rate)),
         Err(err) => {
             let not_recording = (*err)
                 .downcast_ref::<crate::errors::RecordingError>()
@@ -2776,10 +2778,7 @@ pub async fn stop_recording(
                 .unwrap_or(false);
 
             if not_recording {
-                return Ok(StopRecordingResponse {
-                    samples: Vec::new(),
-                    sample_rate: 0,
-                });
+                return Ok(encode_recorded_audio(&[], 0));
             }
 
             let message = err.to_string();
@@ -2788,7 +2787,9 @@ pub async fn stop_recording(
         }
     })
     .await
-    .map_err(|err| err.to_string())?
+    .map_err(|err| err.to_string())??;
+
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 
@@ -5096,6 +5097,16 @@ mod tests {
 
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+
+    #[test]
+    fn recorded_audio_encoding_prefixes_rate_and_packs_f32_le() {
+        let bytes = encode_recorded_audio(&[0.5, -1.0], 48_000);
+        let mut expected = 48_000_u32.to_le_bytes().to_vec();
+        expected.extend_from_slice(&0.5_f32.to_le_bytes());
+        expected.extend_from_slice(&(-1.0_f32).to_le_bytes());
+        assert_eq!(bytes, expected);
+        assert_eq!(encode_recorded_audio(&[], 0), vec![0, 0, 0, 0]);
+    }
 
     #[test]
     fn private_http_base64_framing_preserves_bytes_and_rejects_invalid_data() {

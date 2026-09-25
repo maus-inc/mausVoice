@@ -1,4 +1,5 @@
 import type { StopRecordingResponse } from "../../types/transcription-session.types";
+import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 
 export type VoiceRecorderState = "idle" | "provider" | "browser";
 
@@ -23,7 +24,7 @@ export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 export type VoiceInstructionRecorderDeps = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transcribe: (audio: {
-    samples: number[];
+    samples: StopRecordingResponse["samples"];
     sampleRate: number;
   }) => Promise<string>;
   getPreferredMicrophone: () => string | null;
@@ -237,9 +238,9 @@ export class VoiceInstructionRecorder {
     this.stopInFlight = true;
     try {
       try {
-        const response = (await this.deps.invoke(
-          "stop_recording",
-        )) as StopRecordingResponse;
+        const response = await invokeStopRecording((command) =>
+          this.deps.invoke(command),
+        );
         if (gen !== this.opGen || this.disposed) return null;
         return await this.transcribeProviderResponse(gen, response);
       } catch {
@@ -263,10 +264,7 @@ export class VoiceInstructionRecorder {
     gen: number,
     response: StopRecordingResponse,
   ): Promise<string | null> {
-    const samples =
-      response.samples instanceof Float32Array
-        ? Array.from(response.samples)
-        : response.samples;
+    const samples = response.samples;
     const sampleRate = response.sampleRate ?? 0;
     if (!samples || samples.length === 0 || sampleRate <= 0) {
       return null;

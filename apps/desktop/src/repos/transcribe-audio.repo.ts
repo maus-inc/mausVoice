@@ -24,7 +24,7 @@ import {
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import { buildWaveFile } from "../utils/audio.utils";
+import { buildSpeechUploadWav } from "../utils/audio.utils";
 import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
@@ -354,7 +354,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
@@ -394,7 +394,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
@@ -432,7 +432,7 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await aldeaTranscribeAudio({
       apiKey: this.aldeaApiKey,
@@ -474,7 +474,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
@@ -509,7 +509,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await elevenlabsTranscribeAudio({
       apiKey: this.apiKey,
@@ -553,7 +553,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await deepgramTranscribeAudio({
       apiKey: this.apiKey,
@@ -603,7 +603,7 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
     const { text, warnings } = await gladiaTranscribeAudio({
       apiKey: this.apiKey,
       model: this.model,
@@ -637,7 +637,7 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await xaiTranscribeAudio({
       apiKey: this.apiKey,
@@ -673,7 +673,7 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await azureTranscribeAudio({
       subscriptionKey: this.azureSubscriptionKey,
@@ -707,7 +707,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await geminiTranscribeAudio({
       apiKey: this.geminiApiKey,
@@ -743,7 +743,7 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await speachesTranscribeAudio({
       baseUrl: this.baseUrl,
@@ -790,7 +790,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript, segments } =
       await openaiCompatibleTranscribeAudio({
@@ -833,7 +833,7 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
     const { text: transcript } = await openrouterTranscribeAudio({
       apiKey: this.apiKey,
       model: this.model,
