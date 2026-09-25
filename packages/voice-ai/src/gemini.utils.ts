@@ -414,6 +414,27 @@ const deleteGeminiFile = async (
   }
 };
 
+const fetchGeminiFileState = async (
+  fileUri: string,
+  apiKey: string,
+  customFetch: CustomFetch,
+  signal?: AbortSignal,
+): Promise<string> => {
+  const response = await customFetch(fileUri, {
+    headers: { "x-goog-api-key": apiKey.trim() },
+    signal,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new GeminiHttpError(response.status, detail);
+  }
+  const data = (await response.json()) as {
+    state?: string;
+    file?: { state?: string };
+  };
+  return data.state ?? data.file?.state ?? "ACTIVE";
+};
+
 const waitForGeminiFileActive = async (
   fileUri: string,
   apiKey: string,
@@ -423,33 +444,19 @@ const waitForGeminiFileActive = async (
   const maxAttempts = 10;
   const delayMs = 1000;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (signal?.aborted) {
-      throw new DOMException("aborted", "AbortError");
-    }
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
     try {
-      const response = await customFetch(fileUri, {
-        headers: { "x-goog-api-key": apiKey.trim() },
+      const state = await fetchGeminiFileState(
+        fileUri,
+        apiKey,
+        customFetch,
         signal,
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new GeminiHttpError(response.status, detail);
-      }
-      const data = (await response.json()) as {
-        state?: string;
-        file?: { state?: string };
-      };
-      const state = data.state ?? data.file?.state ?? "ACTIVE";
+      );
       if (state === "ACTIVE") return;
-      if (state === "FAILED") {
-        throw new Error("Gemini file processing failed");
-      }
+      if (state === "FAILED") throw new Error("Gemini file processing failed");
     } catch (error) {
       if (signal?.aborted) throw error;
-      if (error instanceof GeminiHttpError && error.status < 500) {
-        throw error;
-      }
-      // Transient polling failure: retry.
+      if (error instanceof GeminiHttpError && error.status < 500) throw error;
     }
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, delayMs);
@@ -458,8 +465,6 @@ const waitForGeminiFileActive = async (
       });
     });
   }
-  // If not ACTIVE after bounded polling, proceed anyway; generateContent
-  // may still succeed or will surface a clear error that retry can handle.
 };
 
 type AudioTranscriptionConfig = {
