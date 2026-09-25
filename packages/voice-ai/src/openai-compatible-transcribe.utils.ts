@@ -5,15 +5,12 @@ import { countWords, retry } from "@maus-inc/utilities";
 export type TranscribeAudioClientShape = {
   audio: {
     transcriptions: {
-      create: (
-        args: {
-          file: FileLike;
-          model: string;
-          prompt?: string;
-          language?: string;
-        },
-        options?: { signal?: AbortSignal },
-      ) => Promise<{ text?: string }>;
+      create: (args: {
+        file: FileLike;
+        model: string;
+        prompt?: string;
+        language?: string;
+      }) => Promise<{ text?: string }>;
     };
   };
 };
@@ -30,7 +27,6 @@ export type OpenAICompatibleTranscribeAudioArgs = {
   ext: string;
   prompt?: string;
   language?: string;
-  signal?: AbortSignal;
 };
 
 export const openaiCompatibleTranscribeAudio = async ({
@@ -40,23 +36,17 @@ export const openaiCompatibleTranscribeAudio = async ({
   ext,
   prompt,
   language,
-  signal,
 }: OpenAICompatibleTranscribeAudioArgs): Promise<OpenAICompatibleTranscribeAudioOutput> => {
   return retry({
     retries: 3,
-    isRetryable: () => !signal?.aborted,
     fn: async () => {
-      signal?.throwIfAborted();
       const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create(
-        {
-          file,
-          model,
-          prompt,
-          language: language && language !== "auto" ? language : undefined,
-        },
-        { signal },
-      );
+      const response = await client.audio.transcriptions.create({
+        file,
+        model,
+        prompt,
+        language: language && language !== "auto" ? language : undefined,
+      });
 
       if (!response.text) {
         throw new Error("Transcription failed");

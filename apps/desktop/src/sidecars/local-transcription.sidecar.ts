@@ -84,13 +84,11 @@ export type LocalSidecarTranscribeInput = {
   preferGpu: boolean;
   deviceId?: string;
   hallucinationFilterEnabled?: boolean;
-  /** Aborts the finalize request and releases the sidecar session. */
-  signal?: AbortSignal;
 };
 
 export type LocalSidecarStreamingSessionInput = Omit<
   LocalSidecarTranscribeInput,
-  "samples" | "signal"
+  "samples"
 >;
 
 export type LocalSidecarTranscribeOutput = {
@@ -104,7 +102,7 @@ export type LocalSidecarTranscribeOutput = {
 
 export type LocalSidecarStreamingSession = {
   writeAudioChunk: (samples: number[] | Float32Array) => void;
-  finalize: (signal?: AbortSignal) => Promise<LocalSidecarTranscribeOutput>;
+  finalize: () => Promise<LocalSidecarTranscribeOutput>;
   cleanup: () => void;
 };
 
@@ -337,8 +335,6 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
 
   async createStreamingSession(
     input: LocalSidecarStreamingSessionInput,
-    /** Stops pending chunk uploads; finalize takes its own signal. */
-    signal?: AbortSignal,
   ): Promise<LocalSidecarStreamingSession> {
     await this.ensureModelReady(input.model);
 
@@ -384,7 +380,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
     };
 
     const queueChunkUpload = (samples: Float32Array): void => {
-      if (released || queuedError || signal?.aborted || samples.length === 0) {
+      if (released || queuedError || samples.length === 0) {
         return;
       }
 
@@ -398,7 +394,6 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           if (released || queuedError) {
             return;
           }
-          signal?.throwIfAborted();
 
           await this.requestJson<SidecarAppendTranscriptionChunkResponse>(
             `${sessionPath}/chunks`,
@@ -406,14 +401,12 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
               method: "POST",
               headers: { "Content-Type": "application/octet-stream" },
               body,
-              signal,
             },
             { retries: 1 },
           );
         })
         .catch((error) => {
           queuedError = error;
-          if (signal?.aborted) return;
           getLogger().warning(
             `[${this.config.logPrefix}] failed to stream audio chunk (${toErrorMessage(error)})`,
           );
@@ -427,7 +420,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         }
         queueChunkUpload(this.toFloat32Array(samples));
       },
-      finalize: async (signal) => {
+      finalize: async () => {
         if (finalizePromise) {
           return await finalizePromise;
         }
@@ -446,7 +439,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           );
           const result = await this.requestJson<SidecarTranscriptionResponse>(
             `${sessionPath}/finalize`,
-            { method: "POST", signal },
+            { method: "POST" },
           );
           getLogger().info(
             `[${this.config.logPrefix}] finalize response received (${result.text.length} chars)`,
@@ -492,8 +485,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   private async transcribeInternal(
     input: LocalSidecarTranscribeInput,
   ): Promise<LocalSidecarTranscribeOutput> {
-    input.signal?.throwIfAborted();
-    const session = await this.createStreamingSession(input, input.signal);
+    const session = await this.createStreamingSession(input);
     const floatSamples = this.toFloat32Array(input.samples);
 
     try {
@@ -509,7 +501,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         session.writeAudioChunk(floatSamples.subarray(cursor, end));
       }
 
-      return await session.finalize(input.signal);
+      return await session.finalize();
     } catch (error) {
       session.cleanup();
       throw error;

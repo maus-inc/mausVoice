@@ -30,7 +30,4 @@ pub struct RecordingLevelPayload {
 #[derive(Clone, Serialize)]
 pub struct AudioChunkPayload {
     pub samples: Vec<f32>,
-    /// Index of the first sample in the recording, so listeners that attach
-    /// after capture starts can align chunks with the final recording.
-    pub offset: u64,
 }

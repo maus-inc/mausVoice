@@ -16,7 +16,6 @@ import {
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
-  GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
   OpenRouterTranscribeAudioRepo,
@@ -360,31 +359,6 @@ describe("BaseTranscribeAudioRepo", () => {
       for (const call of repo.segmentCalls) {
         expect(call.prompt).toBe("technical terms");
         expect(call.language).toBe("en");
-      }
-    });
-
-    it("passes the abort signal to every segment and skips segments after an abort", async () => {
-      const controller = new AbortController();
-      // Batch size 2 over 3 segments: the abort lands while the first batch
-      // is in flight, so the second batch must never start and nothing may
-      // reject unobserved.
-      const repo = new MockTranscribeAudioRepo(10, 2, 2, (_input, index) => {
-        if (index === 0) controller.abort();
-        return `segment ${index}`;
-      });
-      const sampleRate = 16000;
-
-      await expect(
-        repo.transcribeAudio({
-          samples: createSamples(25, sampleRate),
-          sampleRate,
-          signal: controller.signal,
-        }),
-      ).rejects.toThrow();
-
-      expect(repo.segmentCalls).toHaveLength(2);
-      for (const call of repo.segmentCalls) {
-        expect(call.signal).toBe(controller.signal);
       }
     });
 
@@ -1062,31 +1036,5 @@ describe("ElevenLabs keyterms gating", () => {
 
     expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
     expect(keytermsOf(repo)).toContain("Soniya");
-  });
-});
-
-describe("provider requests honor the abort signal", () => {
-  it("binds the caller's signal into every provider fetch", async () => {
-    const baseFetch = vi.fn<typeof fetch>(async () => new Response("{}"));
-    vi.spyOn(voiceAi, "groqTranscribeAudio").mockImplementation(
-      async ({ customFetch }) => {
-        await customFetch?.("https://api.groq.com/test", { method: "POST" });
-        return { text: "hello", wordsUsed: 1 };
-      },
-    );
-    const controller = new AbortController();
-    const repo = new GroqTranscribeAudioRepo("key", null, baseFetch);
-
-    await repo.transcribeAudio({
-      samples: createSamples(1, 16000),
-      sampleRate: 16000,
-      signal: controller.signal,
-    });
-
-    const init = baseFetch.mock.calls[0][1];
-    expect(init?.method).toBe("POST");
-    expect(init?.signal?.aborted).toBe(false);
-    controller.abort();
-    expect(init?.signal?.aborted).toBe(true);
   });
 });

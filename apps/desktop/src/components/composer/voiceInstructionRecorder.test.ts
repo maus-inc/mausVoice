@@ -329,10 +329,11 @@ describe("VoiceInstructionRecorder", () => {
     // Resolve stop_recording but do NOT dispose yet, so the recorder proceeds to
     // invoke transcribe() and attach its await handler.
     stopDeferred.resolve({ samples: [0, 1], sampleRate: 16000 });
-    // Wait until transcribe() is invoked (so its rejection is consumed by the
-    // recorder's await) before we dispose and reject. Disposing earlier would
-    // bail before transcribe, leaving the rejection unhandled.
-    await vi.waitFor(() => expect(deps.transcribe).toHaveBeenCalled());
+    // Allow the stop → transcribe continuation to run, so transcribe() is invoked
+    // (and its rejection will be consumed by the recorder's await) before we
+    // dispose and reject. Disposing earlier would bail before transcribe, leaving
+    // the rejection unhandled.
+    await Promise.resolve();
     recorder.dispose();
     transcribeDeferred.reject(new Error("transcribe failed"));
     await stopPromise;

@@ -7,7 +7,6 @@ export type AldeaTranscriptionArgs = {
   blob: ArrayBuffer | Buffer;
   ext?: string;
   language?: string;
-  signal?: AbortSignal;
 };
 
 export type AldeaTranscribeAudioOutput = {
@@ -36,13 +35,10 @@ export const aldeaTranscribeAudio = async ({
   apiKey,
   blob,
   language,
-  signal,
 }: AldeaTranscriptionArgs): Promise<AldeaTranscribeAudioOutput> => {
   return retry({
     retries: 3,
-    isRetryable: () => !signal?.aborted,
     fn: async () => {
-      signal?.throwIfAborted();
       const bodyData =
         blob instanceof ArrayBuffer ? blob : (blob.buffer as ArrayBuffer);
       const url = new URL(ALDEA_API_URL);
@@ -55,7 +51,6 @@ export const aldeaTranscribeAudio = async ({
           Authorization: `Bearer ${apiKey.trim()}`,
         },
         body: bodyData,
-        signal,
       });
 
       if (!response.ok) {

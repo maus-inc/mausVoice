@@ -105,7 +105,6 @@ import {
 } from "../../utils/pipeline-trace";
 import { resolvePillBodyClickIntent } from "../../utils/pill-click.utils";
 import { resolvePillWindowSize } from "../../utils/pill-window-size.utils";
-import { invokeStopRecording } from "../../utils/recorded-audio.utils";
 import {
   getActiveManualToneIds,
   getManuallySelectedToneId,
@@ -345,11 +344,6 @@ export const postProcessFinalizedTranscript = async (
   return {
     shouldContinue: result.shouldContinue,
   };
-};
-
-type StopContext = {
-  a11yInfo: TextFieldInfo | null;
-  appTarget: AppTarget | null;
 };
 
 type FinalizedRecording = {
@@ -739,48 +733,54 @@ export const DictationSideEffects = () => {
 
   const captureStopRecordingInfo = useCallback(async (): Promise<{
     audio: StopRecordingResponse | null;
-    context: Promise<StopContext>;
+    a11yInfo: TextFieldInfo | null;
+    appTarget: AppTarget | null;
   }> => {
-    tryPlayAudioChime("stop_recording_clip");
-    getLogger().verbose("Invoking stop_recording and fetching a11y info");
-    // Focus/app lookups (accessibility tree walk, icon extraction, app
-    // target upsert) only feed post-processing and history, so they resolve
-    // alongside transcription instead of gating the audio handoff.
-    const context = Promise.all([
-      invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
-        getLogger().verbose(`Failed to get text field info: ${error}`);
-        return null;
-      }),
-      tryRegisterCurrentAppTarget().catch((error) => {
-        getLogger().verbose(`Failed to get current app target: ${error}`);
-        return null;
-      }),
-    ]).then(([a11yInfo, appTarget]) => ({ a11yInfo, appTarget }));
+    const [audio, a11yInfo, appTarget] = await getLogger().stopwatch(
+      "stopRecording",
+      async () => {
+        let audio: StopRecordingResponse | null = null;
+        let a11yInfo: TextFieldInfo | null = null;
+        let appTarget: AppTarget | null = null;
+        try {
+          tryPlayAudioChime("stop_recording_clip");
 
-    const audio = await getLogger().stopwatch("stopRecording", async () => {
-      try {
-        const [, outAudio] = await Promise.all([
-          sendPhaseToPill("loading"),
-          invokeStopRecording(),
-        ]);
-        getLogger().verbose(
-          `Recording stopped (samples=${outAudio.samples.length})`,
-        );
-        return outAudio;
-      } catch (error) {
-        getLogger().error(`Failed to stop recording: ${error}`);
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Failed to stop recording",
-          }),
-          toastType: "error",
-          duration: 8_000,
-        });
-        return null;
-      }
-    });
+          getLogger().verbose("Invoking stop_recording and fetching a11y info");
+          const [, outAudio, outA11yInfo, outAppTarget] = await Promise.all([
+            sendPhaseToPill("loading"),
+            invoke<StopRecordingResponse>("stop_recording"),
+            invoke<TextFieldInfo>("get_text_field_info").catch((error) => {
+              getLogger().verbose(`Failed to get text field info: ${error}`);
+              return null;
+            }),
+            tryRegisterCurrentAppTarget().catch((error) => {
+              getLogger().verbose(`Failed to get current app target: ${error}`);
+              return null;
+            }),
+          ]);
 
-    return { audio, context };
+          audio = outAudio;
+          a11yInfo = outA11yInfo;
+          appTarget = outAppTarget;
+          getLogger().verbose(
+            `Recording stopped (hasSamples=${!!audio?.samples})`,
+          );
+        } catch (error) {
+          getLogger().error(`Failed to stop recording: ${error}`);
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            }),
+            toastType: "error",
+            duration: 8_000,
+          });
+        }
+
+        return [audio, a11yInfo, appTarget];
+      },
+    );
+
+    return { audio, a11yInfo, appTarget };
   }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
@@ -869,22 +869,14 @@ export const DictationSideEffects = () => {
   const finalizeAndPostProcess = useCallback(
     async ({
       audio,
-      context,
+      a11yInfo,
+      appTarget,
     }: {
       audio: StopRecordingResponse;
-      context: Promise<StopContext>;
+      a11yInfo: TextFieldInfo | null;
+      appTarget: AppTarget | null;
     }): Promise<RawStopResp> => {
       getLogger().info("Finalizing transcription session");
-      // Transcription needs only the audio, so it starts before the focus
-      // context and style persistence below instead of queueing behind them.
-      const transcription = withTimeout(
-        sessionRef.current?.finalize(audio) ?? Promise.resolve(undefined),
-        FINALIZE_TIMEOUT_MS,
-        "Transcription finalize",
-      );
-      transcription.catch(() => undefined);
-
-      const { a11yInfo, appTarget } = await context;
       trackAppUsed(appTarget?.name ?? "Unknown");
 
       if (appTarget) {
@@ -912,7 +904,14 @@ export const DictationSideEffects = () => {
         liveSelectedToneId: getManuallySelectedToneId(getAppState()),
         appTargetToneId: appTarget?.toneId ?? null,
       });
-      const transcribeResult = await transcription;
+      const transcribeResult = await withTimeout(
+        sessionRef.current?.finalize(audio, {
+          toneId,
+          a11yInfo,
+        }) ?? Promise.resolve(undefined),
+        FINALIZE_TIMEOUT_MS,
+        "Transcription finalize",
+      );
       markPipeline(pipelineTraceRef.current, "audioFinalized");
       if (!pipelineTraceRef.current?.marks.transcribed) {
         markPipeline(pipelineTraceRef.current, "transcribed");
@@ -957,7 +956,7 @@ export const DictationSideEffects = () => {
     restoreSystemVolume();
 
     try {
-      const { audio, context } = await captureStopRecordingInfo();
+      const { audio, a11yInfo, appTarget } = await captureStopRecordingInfo();
       if (!audio) {
         getLogger().warning("stopRecordingRaw: no audio data received");
         return {
@@ -966,7 +965,7 @@ export const DictationSideEffects = () => {
         };
       }
       sendPillStageText(intl.formatMessage({ defaultMessage: "Transcribing" }));
-      return await finalizeAndPostProcess({ audio, context });
+      return await finalizeAndPostProcess({ audio, a11yInfo, appTarget });
     } catch (error) {
       const errorName = error instanceof Error ? ` [name=${error.name}]` : "";
       getLogger().error(`Error during stopRecording: ${error}${errorName}`);

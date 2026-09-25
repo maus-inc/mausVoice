@@ -24,8 +24,7 @@ import {
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import { withAbortSignal } from "../utils/abort-signal.utils";
-import { buildSpeechUploadWav } from "../utils/audio.utils";
+import { buildWaveFile } from "../utils/audio.utils";
 import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
@@ -74,12 +73,6 @@ export type TranscribeAudioInput = {
    * multi-chunk audio. Defaults to true when omitted.
    */
   hallucinationFilterEnabled?: boolean;
-  /**
-   * Cancels in-flight and not-yet-started provider requests. Honored by every
-   * provider that runs batch dictation (where pretranscription happens); the
-   * Gladia and Azure SDK uploads, used only for retranscription, ignore it.
-   */
-  signal?: AbortSignal;
 };
 
 export type TranscribeAudioOutput = {
@@ -96,7 +89,6 @@ export type TranscribeSegmentInput = {
   prompt?: Nullable<string>;
   language?: string;
   hallucinationFilterEnabled?: boolean;
-  signal?: AbortSignal;
 };
 
 export type LocalTranscriptionSegment = {
@@ -229,7 +221,6 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
         prompt: input.prompt,
         language: input.language,
         hallucinationFilterEnabled: filterEnabled,
-        signal: input.signal,
       });
     }
 
@@ -244,15 +235,12 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
     // Create promise factories for batched execution. Skip chunks that are
     // near-silent so their glossary-prompt bias cannot produce a dictionary
     // hallucination (and so we don't pay to transcribe room noise).
-    // Factories are async so an abort rejects inside the batch's Promise.all
-    // instead of throwing past sibling requests that are already in flight.
-    const transcriptionTasks = segments.map((segmentSamples) => async () => {
-      input.signal?.throwIfAborted();
+    const transcriptionTasks = segments.map((segmentSamples) => () => {
       if (
         filterEnabled &&
         this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
       ) {
-        return { text: "", metadata: null };
+        return Promise.resolve({ text: "", metadata: null });
       }
       return this.transcribeSegment({
         samples: segmentSamples,
@@ -260,7 +248,6 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
         prompt: input.prompt,
         language: input.language,
         hallucinationFilterEnabled: filterEnabled,
-        signal: input.signal,
       });
     });
 
@@ -334,7 +321,6 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       language: input.language,
       deviceId: options.deviceId,
       hallucinationFilterEnabled: input.hallucinationFilterEnabled !== false,
-      signal: input.signal,
     });
 
     return {
@@ -368,7 +354,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
@@ -377,9 +363,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      // Without an injected fetch the SDK keeps its own transport.
-      customFetch:
-        this.customFetch && withAbortSignal(this.customFetch, input.signal),
+      customFetch: this.customFetch,
     });
 
     return {
@@ -410,7 +394,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
@@ -419,7 +403,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      customFetch: secureFetch,
     });
 
     return {
@@ -448,14 +432,13 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await aldeaTranscribeAudio({
       apiKey: this.aldeaApiKey,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
-      signal: input.signal,
     });
 
     return {
@@ -491,7 +474,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
@@ -499,7 +482,7 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       language: input.language,
       wordBoost: this.wordBoost,
-      customFetch: withAbortSignal(this.customFetch, input.signal),
+      customFetch: this.customFetch,
     });
 
     return {
@@ -526,7 +509,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await elevenlabsTranscribeAudio({
       apiKey: this.apiKey,
@@ -534,7 +517,7 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      customFetch: secureFetch,
     });
 
     return {
@@ -570,7 +553,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await deepgramTranscribeAudio({
       apiKey: this.apiKey,
@@ -579,7 +562,7 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       language: input.language,
       keyterms: this.keyterms,
-      customFetch: withAbortSignal(this.customFetch, input.signal),
+      customFetch: this.customFetch,
     });
 
     return {
@@ -620,7 +603,7 @@ export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
     const { text, warnings } = await gladiaTranscribeAudio({
       apiKey: this.apiKey,
       model: this.model,
@@ -654,14 +637,14 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await xaiTranscribeAudio({
       apiKey: this.apiKey,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      customFetch: secureFetch,
     });
 
     return {
@@ -690,7 +673,7 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await azureTranscribeAudio({
       subscriptionKey: this.azureSubscriptionKey,
@@ -724,7 +707,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await geminiTranscribeAudio({
       apiKey: this.geminiApiKey,
@@ -733,7 +716,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       mimeType: "audio/wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      customFetch: withAbortSignal(secureFetch, input.signal),
+      customFetch: secureFetch,
     });
 
     return {
@@ -760,7 +743,7 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript } = await speachesTranscribeAudio({
       baseUrl: this.baseUrl,
@@ -769,7 +752,6 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      signal: input.signal,
     });
 
     return {
@@ -808,7 +790,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
 
     const { text: transcript, segments } =
       await openaiCompatibleTranscribeAudio({
@@ -820,7 +802,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
         prompt: input.prompt ?? undefined,
         language: input.language,
         transcriptionPath: this.transcriptionPath,
-        customFetch: withAbortSignal(this.customFetch, input.signal),
+        customFetch: this.customFetch,
       });
 
     return {
@@ -851,7 +833,7 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
     const { text: transcript } = await openrouterTranscribeAudio({
       apiKey: this.apiKey,
       model: this.model,
@@ -859,7 +841,6 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
-      signal: input.signal,
     });
 
     return {
