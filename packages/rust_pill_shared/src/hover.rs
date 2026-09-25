@@ -478,6 +478,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn hover_pad_constants_are_sane() {
         // Exact values are the contract: 16 px anticipatory entry,
         // 32 px hysteretic exit. Centralising in `hover.rs` is the
