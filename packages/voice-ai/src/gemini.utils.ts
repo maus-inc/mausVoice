@@ -435,35 +435,29 @@ const fetchGeminiFileState = async (
   return data.state ?? data.file?.state ?? "ACTIVE";
 };
 
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 const waitForGeminiFileActive = async (
   fileUri: string,
   apiKey: string,
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<void> => {
-  const maxAttempts = 10;
-  const delayMs = 1000;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+    let state: string;
     try {
-      const state = await fetchGeminiFileState(
-        fileUri,
-        apiKey,
-        customFetch,
-        signal,
-      );
-      if (state === "ACTIVE") return;
-      if (state === "FAILED") throw new Error("Gemini file processing failed");
+      state = await fetchGeminiFileState(fileUri, apiKey, customFetch, signal);
     } catch (error) {
       if (signal?.aborted) throw error;
       if (error instanceof GeminiHttpError && error.status < 500) throw error;
+      await delay(1000);
+      continue;
     }
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, delayMs);
-      signal?.addEventListener("abort", () => clearTimeout(timer), {
-        once: true,
-      });
-    });
+    if (state === "ACTIVE") return;
+    if (state === "FAILED") throw new Error("Gemini file processing failed");
+    await delay(1000);
   }
 };
 
