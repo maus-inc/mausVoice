@@ -286,12 +286,11 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
 }
 
 /// Hover hit zone padding is shared (`rust_pill_shared::hover`) so the
-/// three renderers keep one anticipatory entry / hysteretic exit zone.
-/// macOS previously used per-axis 16/12 and 32/36; these are now the
-/// shared 16 / 32 for both axes — the Y difference was ~4 px, small
-/// against the pill height, and unifying removes a drift point. See
-/// `PILL_EXPAND_STIFFNESS` and `hover::ARM_DWELL` for companion timing.
-
+/// three renderers keep one anticipatory entry (16 px) / hysteretic exit
+/// (32 px) zone. The X pad doubles as the entry zone for hover-intent
+/// (80 px = 48 px pill + 2 × 16 px) and the exit pad prevents flicker;
+/// both axes share the same pads. See `PILL_EXPAND_STIFFNESS` and
+/// `hover::ARM_DWELL` for companion timing.
 pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let s = state.ui_scale;
     let (ox, oy) = state.content_offset();

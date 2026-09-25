@@ -306,16 +306,27 @@ const uploadAudio = async (
   return uploadUrl;
 };
 
-const createTranscriptRequest = async (
-  apiKey: string,
-  uploadUrl: string,
-  language: string | undefined,
-  speechModels: AssemblyAITranscriptionModel[] | undefined,
-  wordBoost: string[] | undefined,
-  signal: AbortSignal,
-  deadline: number,
-  customFetch: CustomFetch,
-): Promise<string> => {
+type CreateTranscriptRequestArgs = {
+  apiKey: string;
+  uploadUrl: string;
+  language: string | undefined;
+  speechModels: AssemblyAITranscriptionModel[] | undefined;
+  wordBoost: string[] | undefined;
+  signal: AbortSignal;
+  deadline: number;
+  customFetch: CustomFetch;
+};
+
+const createTranscriptRequest = async ({
+  apiKey,
+  uploadUrl,
+  language,
+  speechModels,
+  wordBoost,
+  signal,
+  deadline,
+  customFetch,
+}: CreateTranscriptRequestArgs): Promise<string> => {
   const transcriptPayload: Record<string, unknown> = { audio_url: uploadUrl };
   if (speechModels) {
     transcriptPayload.speech_models = speechModels;
@@ -446,16 +457,16 @@ export const assemblyaiTranscribeAudio = async ({
       deadline,
       customFetch,
     );
-    const transcriptId = await createTranscriptRequest(
+    const transcriptId = await createTranscriptRequest({
       apiKey,
       uploadUrl,
       language,
       speechModels,
-      wordBoost?.map((term) => term.trim()).filter(Boolean),
-      controller.signal,
+      wordBoost: wordBoost?.map((term) => term.trim()).filter(Boolean),
+      signal: controller.signal,
       deadline,
       customFetch,
-    );
+    });
     const text = await waitForTranscript(
       apiKey,
       transcriptId,
