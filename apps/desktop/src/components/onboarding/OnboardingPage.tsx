@@ -1,5 +1,5 @@
 import { Stack } from "@mui/material";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ensureOnboardingFlow,
   markOnboardingStepEntered,
@@ -24,16 +24,22 @@ export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
   const authUid = useAppStore((state) => state.auth?.uid);
   const authSessionNonce = useAppStore((state) => state.authSessionNonce);
+  const [resumeCheckedNonce, setResumeCheckedNonce] = useState<number | null>(
+    null,
+  );
 
   useEffect(() => {
     ensureOnboardingFlow();
     resumeOnboardingPage();
+    setResumeCheckedNonce(authSessionNonce);
   }, [authSessionNonce, authUid]);
 
   useEffect(() => {
     markOnboardingStepEntered(currentPage);
     trackOnboardingStep(`v3_${currentPage}`);
   }, [currentPage]);
+
+  if (resumeCheckedNonce !== authSessionNonce) return null;
 
   return (
     <Stack

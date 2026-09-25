@@ -140,10 +140,7 @@ export const resumeOnboardingPage = (): void => {
       state.local.onboardingNameDraftUserId,
       state.auth.uid,
     ) ||
-      state.local.onboardingSessionUserId !== state.auth.uid) &&
-    (state.local.onboardingSessionUserId !== null ||
-      state.local.onboardingResumePage !== null ||
-      state.local.onboardingNameDraft !== "")
+      state.local.onboardingSessionUserId !== state.auth.uid)
   ) {
     const existingName = getMyUser(state)?.name.trim() ?? "";
     produceAppState((draft) => {
