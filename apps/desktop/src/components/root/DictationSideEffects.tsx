@@ -661,7 +661,6 @@ export const DictationSideEffects = () => {
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       recordingOperationRef.current += 1;
-      nativeStartOwnerRef.current = null;
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
       );

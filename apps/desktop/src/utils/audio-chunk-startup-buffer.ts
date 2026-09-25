@@ -62,6 +62,29 @@ export const createAudioChunkStartupBuffer = (
         1,
         Math.ceil(maxStartupSeconds * Math.max(sampleRate, 1)),
       );
+      if (pendingSamples <= maxSamples) return;
+
+      let remaining = maxSamples;
+      let dropped = 0;
+      const trimmed: Float32Array[] = [];
+      for (const chunk of pendingChunks) {
+        if (remaining === 0) {
+          dropped += chunk.length;
+          continue;
+        }
+        if (chunk.length <= remaining) {
+          trimmed.push(chunk);
+          remaining -= chunk.length;
+        } else {
+          trimmed.push(chunk.slice(0, remaining));
+          dropped += chunk.length - remaining;
+          remaining = 0;
+        }
+      }
+      pendingChunks = trimmed;
+      pendingSamples = maxSamples - remaining;
+      droppedSamples += dropped;
+      onOverflow?.(dropped);
     },
     replay: () => {
       if (!sink) return;

@@ -33,4 +33,18 @@ describe("createAudioChunkStartupBuffer", () => {
       1, 2, 3,
     ]);
   });
+
+  it("trims buffered samples when the real capture rate lowers the budget", () => {
+    const onOverflow = vi.fn();
+    const buffer = createAudioChunkStartupBuffer(onOverflow, 0.0001, 48_000);
+    const sink = vi.fn();
+
+    buffer.push(new Float32Array([1, 2, 3, 4, 5]));
+    buffer.setSampleRate(16_000);
+    buffer.setSink(sink);
+    buffer.replay();
+
+    expect(onOverflow).toHaveBeenLastCalledWith(3);
+    expect(Array.from(sink.mock.calls[0][0] as Float32Array)).toEqual([1, 2]);
+  });
 });
