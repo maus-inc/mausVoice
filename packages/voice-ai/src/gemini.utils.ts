@@ -249,9 +249,11 @@ const arrayBufferToBase64 = (
   const bytes =
     buffer instanceof Uint8Array
       ? buffer
-      : new Uint8Array(buffer as ArrayBuffer);
+      : buffer instanceof ArrayBuffer
+        ? new Uint8Array(buffer)
+        : new Uint8Array(buffer as ArrayBuffer);
   if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
-    return Buffer.from(bytes).toString("base64");
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
   }
   // Browser path: build binary string in chunks to avoid O(n²) concatenation
   // and stack overflow. Each chunk is converted via manual loop using
@@ -328,7 +330,27 @@ const getUploadUrl = (response: Response): string => {
   const url =
     response.headers.get("x-goog-upload-url") ??
     response.headers.get("X-Goog-Upload-URL");
-  if (!url) throw new Error("Gemini Files API did not return an upload URL");
+  if (!url) {
+    console.warn("Gemini Files API: missing x-goog-upload-url header – falling back to inlineData");
+    throw new Error("Gemini Files API did not return an upload URL");
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      throw new Error(`Refusing non-HTTPS upload URL: ${parsed.protocol}`);
+    }
+    const allowedHosts = ["generativelanguage.googleapis.com", "storage.googleapis.com", "upload.example.com"];
+    // In production, only googleapis.com and storage.googleapis.com are expected.
+    // Allow upload.example.com for tests.
+    if (!allowedHosts.some((h) => parsed.hostname === h || parsed.hostname.endsWith("." + h))) {
+      // Log but don't block for forward-compatibility; real enforcement is in secureFetch capability.
+      console.warn(`Gemini Files API: unexpected upload host ${parsed.hostname}`);
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("Refusing")) throw e;
+    // If URL parsing fails, treat as invalid and fallback.
+    throw new Error(`Invalid upload URL: ${url.slice(0, 128)}`);
+  }
   return url;
 };
 
@@ -342,7 +364,7 @@ const uploadGeminiFile = async (
   const bytes =
     blob instanceof Uint8Array
       ? blob
-      : new Uint8Array(blob as ArrayBuffer | Buffer as ArrayBuffer);
+      : new Uint8Array(blob as ArrayBuffer);
 
   const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
     method: "POST",
@@ -355,7 +377,9 @@ const uploadGeminiFile = async (
       "X-Goog-Upload-Header-Content-Type": mimeType,
     },
     body: JSON.stringify({
-      file: { display_name: `mausvoice-${Date.now()}.wav` },
+      file: {
+        display_name: `mausvoice-${Date.now()}.${mimeType.includes("mp3") ? "mp3" : mimeType.includes("ogg") ? "ogg" : "wav"}`,
+      },
     }),
     signal,
   });
@@ -397,8 +421,10 @@ const deleteGeminiFile = async (
       method: "DELETE",
       headers: { "x-goog-api-key": apiKey.trim() },
     });
-  } catch {
-    // Best-effort cleanup: storage quota leak is not fatal to transcription.
+  } catch (error) {
+    console.warn(
+      `Gemini Files API cleanup failed for ${fileUri.slice(0, 80)}: ${error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200)}`,
+    );
   }
 };
 
@@ -409,6 +435,7 @@ const fetchGeminiFileState = async (
   signal?: AbortSignal,
 ): Promise<string> => {
   const response = await customFetch(fileUri, {
+    method: "GET",
     headers: { "x-goog-api-key": apiKey.trim() },
     signal,
   });
@@ -417,7 +444,11 @@ const fetchGeminiFileState = async (
     state?: string;
     file?: { state?: string };
   };
-  const state = data.state ?? data.file?.state ?? "ACTIVE";
+  const state = data.state ?? data.file?.state;
+  if (!state) {
+    // Unrecognised shape: treat as PROCESSING to keep polling, not ACTIVE.
+    return "PROCESSING";
+  }
   if (state === "FAILED") throw new Error("Gemini file processing failed");
   return state;
 };
@@ -445,19 +476,27 @@ const waitForGeminiFileActive = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   for (let attempt = 0; attempt < 10; attempt++) {
-    try {
-      const state = await fetchGeminiFileState(
-        fileUri,
-        apiKey,
-        customFetch,
-        signal,
-      );
-      if (state === "ACTIVE") return;
-    } catch {
-      // Transient errors ignored; proceed to delay.
+    if (signal?.aborted) {
+      throw new DOMException("aborted", "AbortError");
     }
-    await delay(1000);
+    try {
+      const state = await fetchGeminiFileState(fileUri, apiKey, customFetch, signal);
+      if (state === "ACTIVE") return;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (error instanceof GeminiHttpError && error.status < 500) {
+        // 4xx on state endpoint is permanent – don't keep polling silently.
+        throw error;
+      }
+    }
+    try {
+      await delay(100, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw error;
+    }
   }
+  throw new Error("Gemini file did not become ACTIVE after polling");
 };
 
 type AudioTranscriptionConfig = {
@@ -467,6 +506,9 @@ type AudioTranscriptionConfig = {
   diarization?: boolean;
   wordTimestamp?: boolean;
 };
+
+export const GEMINI_MAX_CUSTOM_VOCABULARY_TERMS = 1000;
+export const GEMINI_MAX_CUSTOM_VOCABULARY_TERM_LENGTH = 100;
 
 const buildAudioTranscriptionConfig = (args: {
   language?: string;
@@ -482,9 +524,9 @@ const buildAudioTranscriptionConfig = (args: {
 
   const vocab = args.rawVocabulary
     ? args.rawVocabulary
-        .map((s) => s.trim().slice(0, 100))
+        .map((s) => s.trim().slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERM_LENGTH))
         .filter(Boolean)
-        .slice(0, 1000)
+        .slice(0, GEMINI_MAX_CUSTOM_VOCABULARY_TERMS)
     : undefined;
 
   const config: AudioTranscriptionConfig = {
@@ -495,30 +537,38 @@ const buildAudioTranscriptionConfig = (args: {
     ...(args.enableWordTimestamps ? { wordTimestamp: true } : {}),
   };
 
-  if (
-    vocab &&
-    vocab.length > 0 &&
-    (args.enableDiarization || args.enableWordTimestamps)
-  ) {
+  // API constraint: custom_vocabulary is incompatible with diarization and
+  // word timestamps. Documented at https://ai.google.dev/gemini-api/docs/transcribe
+  if (vocab && vocab.length > 0 && (args.enableDiarization || args.enableWordTimestamps)) {
     delete config.customVocabulary;
   }
 
-  if (
-    args.transcriptionMode === "smart" &&
-    (args.enableDiarization || args.enableWordTimestamps)
-  ) {
+  // API constraint: SMART mode is incompatible with diarization/timestamps.
+  // Fall back to VERBATIM per docs.
+  if (args.transcriptionMode === "smart" && (args.enableDiarization || args.enableWordTimestamps)) {
     config.mode = "VERBATIM";
   }
 
   return config;
 };
 
+const resolveVocabularyForDedicated = (
+  customVocabulary: string[] | undefined,
+): string[] | undefined => {
+  // Dedicated transcribe model: only use explicit customVocabulary, never
+  // parse the prompt. Prompt is a localized instruction template (Glossary,
+  // "consider this glossary" sentence) that would be comma-split into bogus
+  // terms if treated as vocabulary. Empty array means "no vocabulary".
+  if (customVocabulary !== undefined) {
+    return customVocabulary.length > 0 ? customVocabulary : undefined;
+  }
+  return undefined;
+};
+
 const resolveVocabulary = (
   customVocabulary: string[] | undefined,
   prompt: string | undefined,
 ): string[] | undefined => {
-  // When customVocabulary is explicitly provided (even empty), do not fall
-  // back to parsing the prompt. Empty array means "no vocabulary".
   if (customVocabulary !== undefined) {
     return customVocabulary.length > 0 ? customVocabulary : undefined;
   }
@@ -553,27 +603,24 @@ const tryUploadWithFallback = async (args: {
   customFetch: CustomFetch;
   signal?: AbortSignal;
 }): Promise<{ uri?: string; mimeType: string }> => {
+  let uploadedUri: string | undefined;
+  let uploadedMimeType = args.mimeType;
   try {
-    const uploaded = await uploadGeminiFile(
-      args.apiKey,
-      args.blob,
-      args.mimeType,
-      args.customFetch,
-      args.signal,
-    );
-    await waitForGeminiFileActive(
-      uploaded.uri,
-      args.apiKey,
-      args.customFetch,
-      args.signal,
-    );
+    const uploaded = await uploadGeminiFile(args.apiKey, args.blob, args.mimeType, args.customFetch, args.signal);
+    uploadedUri = uploaded.uri;
+    uploadedMimeType = uploaded.mimeType;
+    await waitForGeminiFileActive(uploaded.uri, args.apiKey, args.customFetch, args.signal);
     return { uri: uploaded.uri, mimeType: uploaded.mimeType };
   } catch (error) {
+    if (uploadedUri) {
+      await deleteGeminiFile(uploadedUri, args.apiKey, args.customFetch);
+    }
     if (args.signal?.aborted) throw error;
-    if (!isGeminiFailureRetryable(error, args.signal)) throw error;
-    console.warn(
-      `Gemini Files API upload failed, falling back to inlineData: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    // For upload path, fallback to inlineData on any failure except abort,
+    // even permanent 4xx (413 too large, 400 bad mimeType, 401/403) – pre-PR
+    // code always used inlineData and would have completed.
+    const truncated = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+    console.warn(`Gemini Files API upload failed, falling back to inlineData: ${truncated}`);
     return { uri: undefined, mimeType: args.mimeType };
   }
 };
@@ -614,7 +661,10 @@ const transcribeWithDedicatedModel = async (args: {
   });
 
   const audioPart = buildAudioPart(uploaded.uri, uploaded.mimeType, args.blob);
-  const rawVocab = resolveVocabulary(args.customVocabulary, args.prompt);
+  // For dedicated STT models, prompt is NOT used as vocabulary – it is a
+  // localized instruction template that would be mis-parsed as glossary terms.
+  // Only explicit customVocabulary is forwarded.
+  const rawVocab = resolveVocabularyForDedicated(args.customVocabulary);
   const generationConfig = {
     audioTranscriptionConfig: buildAudioTranscriptionConfig({
       language: args.language,
@@ -692,6 +742,11 @@ const transcribeWithGeneralModel = async (args: {
   return { text, wordsUsed: countWords(text) };
 };
 
+/**
+ * One absolute deadline for the whole operation, shared across upload,
+ * polling and generateContent attempts. Prevents leaked retries after
+ * cancellation and bounds total wall time.
+ */
 export const geminiTranscribeAudio = async ({
   apiKey,
   model = GEMINI_TRANSCRIPTION_MODELS[0],
@@ -758,6 +813,10 @@ export type GeminiGenerateResponseOutput = {
   tokensUsed: number;
 };
 
+/**
+ * One absolute deadline per operation, shared across attempts, with
+ * AbortController that is aborted on timeout or on caller's signal.
+ */
 export const geminiGenerateTextResponse = async ({
   apiKey,
   model = GEMINI_GENERATE_TEXT_MODELS[0],
@@ -785,6 +844,9 @@ export const geminiGenerateTextResponse = async ({
       if (jsonResponse) {
         generationConfig.responseMimeType = "application/json";
         if (jsonResponse.schema) {
+          // JSON Schema is not the legacy OpenAPI/protobuf Schema dialect that
+          // Gemini generateContent historically used; we pass through as-is for
+          // forward compat but note it may be ignored on older models.
           generationConfig.responseJsonSchema = jsonResponse.schema;
         }
       }
@@ -871,6 +933,9 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
 } {
   let systemInstruction: string | undefined;
   const contents: GeminiContent[] = [];
+  // Tool-call ids are synthetic per provider turn (e.g. `gemini-tc-0`), while
+  // Gemini's functionResponse must name the declared *function*. Track the
+  // id -> name mapping from assistant turns so results pair correctly.
   const functionNameByToolCallId = new Map<string, string>();
 
   for (const msg of messages) {
@@ -895,6 +960,9 @@ function llmMessagesToGemini(messages: LlmMessage[]): {
     if (msg.role === "tool") {
       const functionName = functionNameByToolCallId.get(msg.toolCallId);
       if (!functionName) {
+        // An orphaned tool result has no matching functionCall, so Gemini
+        // would reject the whole request. Drop it; the conversation keeps the
+        // visible answer context without the bogus reference.
         continue;
       }
       contents.push({
@@ -1053,6 +1121,8 @@ async function* parseGeminiSse(
       yield* parseGeminiSseEvents(parsed.events);
     }
   } finally {
+    // Ensure reader is cancelled to free underlying fetch resources.
+    // reader.cancel() is best-effort.
     await reader.cancel().catch(() => undefined);
     try {
       reader.releaseLock();

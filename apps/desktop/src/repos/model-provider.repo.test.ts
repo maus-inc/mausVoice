@@ -223,6 +223,20 @@ describe("provider model discovery", () => {
     ).resolves.toEqual([]);
   });
 
+  it("uses shared isGeminiTranscribeModel predicate for dedicated detection", async () => {
+    // Table-driven: transcribe vs live-transcribe disagreement (finding 6)
+    const { isGeminiTranscribeModel } = await import("@maus-inc/voice-ai");
+    const cases: Array<[string, boolean]> = [
+      ["gemini-3.5-transcribe", true],
+      ["gemini-3.5-transcribe-live", false],
+      ["gemini-2.5-flash", false],
+      ["gemini-3.8-flash", false],
+    ];
+    for (const [model, expected] of cases) {
+      expect(isGeminiTranscribeModel(model)).toBe(expected);
+    }
+  });
+
   it("fetches a saved custom catalog while preserving its path prefix", async () => {
     invokeMock.mockResolvedValue({
       status: 200,
