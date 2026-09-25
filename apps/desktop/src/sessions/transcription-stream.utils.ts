@@ -113,25 +113,3 @@ export const createAudioChunkBuffer = (
     sentChunkCount: () => sentChunkCount,
   };
 };
-
-export type ReceivedChunkLogger = {
-  record: (sampleCount: number) => number;
-};
-
-export const createReceivedChunkLogger = (
-  loggerPrefix: string,
-): ReceivedChunkLogger => {
-  let count = 0;
-  return {
-    record: (sampleCount) => {
-      count++;
-      if (count <= 3 || count % 10 === 0) {
-        getLogger().verbose(
-          `[${loggerPrefix}] Received chunk #${count}, samples:`,
-          sampleCount,
-        );
-      }
-      return count;
-    },
-  };
-};

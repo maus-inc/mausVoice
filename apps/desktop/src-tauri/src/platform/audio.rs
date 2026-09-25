@@ -153,13 +153,27 @@ mod cpal_impl {
             };
 
             if should_emit {
-                if let Ok(mut buffer) = self.buffer.lock() {
-                    if !buffer.is_empty() {
-                        let chunk = buffer.clone();
-                        buffer.clear();
-                        (self.callback)(chunk);
-                    }
+                if let Some(chunk) = self.take_buffered_chunk() {
+                    (self.callback)(chunk);
                 }
+            }
+        }
+
+        fn take_buffered_chunk(&self) -> Option<Vec<f32>> {
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if buffer.is_empty() {
+                None
+            } else {
+                Some(std::mem::take(&mut *buffer))
+            }
+        }
+
+        fn flush(&self) {
+            if let Some(chunk) = self.take_buffered_chunk() {
+                (self.callback)(chunk);
             }
         }
     }
@@ -397,14 +411,23 @@ mod cpal_impl {
                 .lock()
                 .map_err(|_| RecordingError::NotRecording)?;
             let recording = guard.take().ok_or(RecordingError::NotRecording)?;
+            let sample_rate = recording.sample_rate;
+            let fallback_duration = recording.start.elapsed();
+            let buffer = Arc::clone(&recording.buffer);
+            let chunk_emitter = recording._chunk_emitter.clone();
 
-            let samples = recording
-                .buffer
+            if let Err(err) = recording._stream.pause() {
+                log::error!("failed to pause input stream before final flush: {err}");
+            }
+            drop(recording);
+            if let Some(chunk_emitter) = chunk_emitter {
+                chunk_emitter.flush();
+            }
+
+            let samples = buffer
                 .lock()
                 .map(|buffer| buffer.clone())
                 .unwrap_or_default();
-            let sample_rate = recording.sample_rate;
-            let fallback_duration = recording.start.elapsed();
             let duration = if !samples.is_empty() && sample_rate > 0 {
                 let duration_secs = samples.len() as f64 / f64::from(sample_rate);
                 std::time::Duration::from_secs_f64(duration_secs)
@@ -412,8 +435,6 @@ mod cpal_impl {
                 fallback_duration
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
-
-            drop(recording);
 
             Ok(RecordingResult {
                 metrics: RecordingMetrics {
@@ -1109,12 +1130,16 @@ mod cpal_impl {
                         level_emitter.emit(&mono_samples);
                     }
 
-                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
-                        chunk_emitter.emit(&mono_samples);
-                    }
-
+                    // Append to the retained buffer before emitting the live
+                    // chunk. stop_recording clones this buffer after flushing
+                    // the emitter, so emitting first could deliver audio that
+                    // the returned RecordingResult does not contain.
                     if let Ok(mut shared_buffer) = callback_buffer.lock() {
                         shared_buffer.extend_from_slice(&mono_samples);
+                    }
+
+                    if let Some(ref chunk_emitter) = chunk_emitter_ref {
+                        chunk_emitter.emit(&mono_samples);
                     }
                 },
                 |err| log::error!("stream error: {err}"),
@@ -1125,7 +1150,29 @@ mod cpal_impl {
 
     #[cfg(test)]
     mod tests {
-        use super::{device_matches_preferred, disambiguated_label, is_preferred_input_device_name};
+        use super::{
+            device_matches_preferred, disambiguated_label, is_preferred_input_device_name,
+            ChunkEmitter,
+        };
+        use std::sync::{Arc, Mutex};
+
+        #[test]
+        fn chunk_emitter_flushes_the_final_partial_chunk() {
+            let chunks = Arc::new(Mutex::new(Vec::<Vec<f32>>::new()));
+            let callback_chunks = chunks.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk| {
+                callback_chunks.lock().unwrap().push(chunk);
+            }));
+
+            emitter.emit(&[0.1f32, 0.2f32]);
+            emitter.emit(&[0.3f32]);
+            emitter.flush();
+
+            assert_eq!(
+                *chunks.lock().unwrap(),
+                vec![vec![0.1f32, 0.2f32], vec![0.3f32]]
+            );
+        }
 
         #[test]
         fn first_device_keeps_its_bare_name() {

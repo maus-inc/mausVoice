@@ -1,4 +1,3 @@
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
 import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
@@ -24,10 +23,12 @@ import {
 } from "../utils/prompt.utils";
 import { mapDictationLanguageToWhisperLanguage } from "../utils/language.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
-
-type AudioChunkPayload = {
-  samples: number[];
-};
+import {
+  createActionPretranscriber,
+  LOCAL_PRETRANSCRIPTION,
+  logPretranscription,
+} from "./batch-transcription-session";
+import type { PauseChunkedPretranscriber } from "./pause-chunked-pretranscriber";
 
 type LocalSessionContext = {
   prompt: string;
@@ -35,9 +36,9 @@ type LocalSessionContext = {
 };
 
 export class LocalTranscriptionSession implements TranscriptionSession {
-  private unlisten: UnlistenFn | null = null;
   private session: LocalSidecarStreamingSession | null = null;
   private context: LocalSessionContext | null = null;
+  private pretranscriber: PauseChunkedPretranscriber | null = null;
   private startupWarnings: string[] = [];
 
   async onRecordingStart(sampleRate: number): Promise<void> {
@@ -71,15 +72,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
-      this.unlisten = await listen<AudioChunkPayload>(
-        "audio_chunk",
-        (event) => {
-          if (!this.session || !event.payload.samples.length) {
-            return;
-          }
-          this.session.writeAudioChunk(event.payload.samples);
-        },
-      );
+      this.pretranscriber = createActionPretranscriber(sampleRate, {
+        config: LOCAL_PRETRANSCRIPTION,
+        hallucinationFilterEnabled,
+        selectText: (result) => result.sanitizedTranscript,
+      });
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
@@ -92,10 +89,32 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     }
   }
 
+  /**
+   * One live chunk, two consumers: the sidecar's streaming session and the
+   * pause-chunked pretranscriber. The component owns the `audio_chunk`
+   * registration and supplies the absolute sample index, which the
+   * pretranscriber needs to align the live stream with the final recording.
+   */
+  writeAudioChunk(chunk: Float32Array, offset: number): void {
+    this.session?.writeAudioChunk(chunk);
+    this.pretranscriber?.push(chunk, offset);
+  }
+
   async finalize(
     audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     const warnings = [...this.startupWarnings];
+
+    const pretranscriber = this.pretranscriber;
+    const pretranscribed = await this.finishPretranscription(audio, warnings);
+    if (pretranscribed) {
+      this.cleanup();
+      return pretranscribed;
+    }
+    // Cancelled mid-finalize: the session is already torn down.
+    if (pretranscriber?.isDisposed) {
+      return { rawTranscript: null, metadata: {}, warnings };
+    }
 
     if (!this.session) {
       getLogger().info(
@@ -150,12 +169,12 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   cleanup(): void {
     getLogger().info(
-      `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
+      `[local-stream-session] cleanup (hasSession=${!!this.session})`,
     );
-    this.unlisten?.();
-    this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
+    this.pretranscriber?.dispose();
+    this.pretranscriber = null;
     this.context = null;
   }
 
@@ -165,13 +184,47 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   setInterimResultCallback(): void {}
 
+  /**
+   * Long recordings are transcribed span by span at natural pauses while the
+   * user speaks; only the tail after the last pause is left at stop. Returns
+   * null (keep the streaming/batch path) when no span was cut or the spans
+   * cannot be trusted.
+   */
+  private async finishPretranscription(
+    audio: StopRecordingResponse,
+    warnings: string[],
+  ): Promise<TranscriptionSessionResult | null> {
+    const pretranscriber = this.pretranscriber;
+    if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
+    const started = performance.now();
+    const result = await pretranscriber.finish(audio);
+    if (!result) {
+      getLogger().warning(
+        "[local-stream-session] pretranscription unusable, finalizing the full recording",
+      );
+      return null;
+    }
+    logPretranscription(
+      "local-stream-session",
+      result,
+      performance.now() - started,
+    );
+    return {
+      rawTranscript: result.text.trim() || null,
+      metadata: {
+        ...result.metadata,
+        transcriptionMode: "local",
+        transcriptionPrompt: this.context?.prompt ?? null,
+      },
+      warnings: [...warnings, ...result.warnings],
+    };
+  }
+
   private async finalizeWithBatchFallback(
     audio: StopRecordingResponse,
     warnings: string[],
   ): Promise<TranscriptionSessionResult> {
-    const payloadSamples = Array.isArray(audio.samples)
-      ? audio.samples
-      : Array.from(audio.samples ?? []);
+    const payloadSamples = audio.samples ?? [];
     const rate = audio.sampleRate;
 
     if (rate == null || rate <= 0 || payloadSamples.length === 0) {
