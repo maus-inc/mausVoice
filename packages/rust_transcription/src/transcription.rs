@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 #[cfg(feature = "gpu")]
 use std::ffi::CStr;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -101,9 +102,8 @@ impl TranscriptionEngine {
         &self,
         input: TranscriptionInput,
     ) -> Result<TranscriptionOutput, String> {
-        if input.sample_rate == 0 {
-            return Err("sampleRate must be greater than 0".to_string());
-        }
+        let sample_rate = NonZeroU32::new(input.sample_rate)
+            .ok_or_else(|| "sampleRate must be greater than 0".to_string())?;
 
         // Header validity must not depend on audio energy or the filter toggle.
         crate::audio::validate_sample_rates(input.sample_rate, 16_000)
@@ -129,7 +129,7 @@ impl TranscriptionEngine {
         // deterministic and applies before any model-specific runtime is
         // loaded.
         if input.hallucination_filter_enabled
-            && is_near_silent(&filtered_samples, input.sample_rate, SILENCE_RMS_THRESHOLD)
+            && is_near_silent(&filtered_samples, sample_rate, SILENCE_RMS_THRESHOLD)
         {
             // Tolerate device-resolution failures here: this branch returns an
             // empty transcript without running inference, so a transient
@@ -448,8 +448,8 @@ fn collect_transcription(
 /// True only when every ~300 ms window is quieter than `threshold`. Judging
 /// the whole clip by its average RMS let long pauses hide a quiet but real
 /// utterance, which then came back as an empty transcript.
-fn is_near_silent(samples: &[f32], sample_rate: u32, threshold: f32) -> bool {
-    let window = ((f64::from(sample_rate) * SILENCE_WINDOW_SECONDS) as usize).max(1);
+fn is_near_silent(samples: &[f32], sample_rate: NonZeroU32, threshold: f32) -> bool {
+    let window = ((f64::from(sample_rate.get()) * SILENCE_WINDOW_SECONDS) as usize).max(1);
     let threshold_squared = f64::from(threshold) * f64::from(threshold);
     samples.chunks(window).all(|chunk| {
         let (sum_squares, count) = chunk
@@ -591,29 +591,38 @@ mod filter_contract_tests {
         }
     }
 
-    #[test]
-    fn quiet_speech_in_a_long_pause_is_not_silence_gated() {
-        // 0.5 s at 0.01 RMS inside 20 s of silence averages below the
-        // threshold over the whole clip, yet it is real speech.
-        let mut samples = vec![0.0_f32; 16_000 * 20];
-        for (index, sample) in samples.iter_mut().enumerate().take(8_000) {
-            *sample = if index % 2 == 0 { 0.01 } else { -0.01 };
-        }
-        let engine = TranscriptionEngine::new(ComputeMode::Cpu);
-        let mut input = quiet_input(WhisperModel::Tiny, true, 16_000);
-        input.samples = samples;
-        let error = engine.transcribe_blocking(input).unwrap_err();
-        assert!(error.contains("unsupported deviceId"), "{error}");
-    }
+    const RATE_16K: NonZeroU32 = NonZeroU32::new(16_000).unwrap();
 
     #[test]
     fn near_silent_requires_every_window_to_be_quiet() {
-        assert!(is_near_silent(&[], 16_000, SILENCE_RMS_THRESHOLD));
-        assert!(is_near_silent(&[0.001; 16_000], 16_000, SILENCE_RMS_THRESHOLD));
+        assert!(is_near_silent(&[], RATE_16K, SILENCE_RMS_THRESHOLD));
+        assert!(is_near_silent(&[0.001; 16_000], RATE_16K, SILENCE_RMS_THRESHOLD));
 
+        // 0.3 s at 0.01 RMS inside 10 s of silence averages below the
+        // threshold over the whole clip, yet it is real speech.
         let mut burst = vec![0.0_f32; 16_000 * 10];
         burst[..4_800].fill(0.01);
-        assert!(!is_near_silent(&burst, 16_000, SILENCE_RMS_THRESHOLD));
+        assert!(!is_near_silent(&burst, RATE_16K, SILENCE_RMS_THRESHOLD));
+    }
+
+    #[test]
+    fn near_silent_window_is_300_ms_at_any_sample_rate() {
+        // 4,800 samples at 0.003 RMS fill a 300 ms window at 16 kHz, but are
+        // only 100 ms of one at 48 kHz, where the window average is too quiet.
+        let mut samples = vec![0.0_f32; 48_000 * 5];
+        samples[..4_800].fill(0.003);
+        assert!(!is_near_silent(&samples, RATE_16K, SILENCE_RMS_THRESHOLD));
+        let rate_48k = NonZeroU32::new(48_000).unwrap();
+        assert!(is_near_silent(&samples, rate_48k, SILENCE_RMS_THRESHOLD));
+    }
+
+    #[test]
+    fn zero_sample_rate_is_rejected_before_the_silence_gate() {
+        let engine = TranscriptionEngine::new(ComputeMode::Cpu);
+        let error = engine
+            .transcribe_blocking(quiet_input(WhisperModel::Tiny, true, 0))
+            .unwrap_err();
+        assert!(error.contains("sampleRate must be greater than 0"), "{error}");
     }
 
     #[test]
