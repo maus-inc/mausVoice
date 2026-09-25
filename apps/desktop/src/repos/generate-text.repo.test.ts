@@ -256,7 +256,40 @@ describe("generateText metadata reports the resolved model", () => {
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+    expect(vi.mocked(groqGenerateTextResponse).mock.calls[1]![0]!.model).toBe(
+      "openai/gpt-oss-120b",
+    );
+  });
+
+  it("Groq falls back to a different supported model than the primary", async () => {
+    vi.mocked(groqGenerateTextResponse)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
+  });
+
+  it("Groq only ever falls back to a supported model", async () => {
+    const allowed: readonly string[] = GENERATE_TEXT_MODELS;
+    for (const primary of [null, ...GENERATE_TEXT_MODELS]) {
+      vi.mocked(groqGenerateTextResponse)
+        .mockReset()
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo("k", primary).generateText({
+        prompt: "p",
+      });
+
+      expect(allowed).toContain(output.metadata?.model);
+      expect(output.metadata?.model).not.toBe(
+        vi.mocked(groqGenerateTextResponse).mock.calls[0]![0]!.model,
+      );
+    }
   });
 
   it("OpenAI reports the configured model", async () => {

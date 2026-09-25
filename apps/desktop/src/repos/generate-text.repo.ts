@@ -72,7 +72,13 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  /**
+   * Retry target when the primary model fails. Derived from the supported
+   * `GENERATE_TEXT_MODELS` list (never a hardcoded id) so a model retired by
+   * Groq and removed from that list cannot linger here as a dead fallback.
+   * `null` when no distinct supported model exists.
+   */
+  private fallbackModel: GenerateTextModel | null;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -85,6 +91,9 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
         : "openai/gpt-oss-20b";
+    this.fallbackModel =
+      GENERATE_TEXT_MODELS.find((candidate) => candidate !== this.model) ??
+      null;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -115,20 +124,21 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     } catch (error) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
-      if (input.signal?.aborted || this.model === this.fallbackModel) {
+      const fallbackModel = this.fallbackModel;
+      if (input.signal?.aborted || fallbackModel === null) {
         throw error;
       }
 
       const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
-        model: this.fallbackModel,
+        model: fallbackModel,
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
         signal: input.signal,
       });
-      return { response, model: this.fallbackModel };
+      return { response, model: fallbackModel };
     }
   }
 
