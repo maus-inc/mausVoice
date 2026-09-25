@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +40,12 @@ vi.mock("framer-motion", () => ({ useReducedMotion: () => false }));
 
 import { MetalChrome } from "./MetalChrome";
 
-const css = readFileSync(join(__dirname, "MetalChrome.css"), "utf8");
+// Comments are stripped so the assertions below bind to declarations only,
+// never to prose that happens to quote a selector or keyword.
+const css = readFileSync(join(__dirname, "MetalChrome.css"), "utf8").replace(
+  /\/\*[\s\S]*?\*\//g,
+  "",
+);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -72,31 +77,42 @@ describe("MetalChrome", () => {
   });
 
   it("reveals via a delayed forwards animation instead of !important", () => {
-    const rule = /\.mv-metal-chrome\s*{([^}]*)}/.exec(css)?.[1] ?? "";
-    expect(rule).toMatch(
-      /animation:\s*mv-metal-chrome-reveal\s+\S+\s+\S+\s+(\d+)ms\s+forwards/,
-    );
-    const delay = Number(/(\d+)ms\s+forwards/.exec(rule)?.[1]);
+    const rule = /\.mv-metal-chrome\s*{([^}]*)}/.exec(css)?.[1];
+    expect(rule, "missing .mv-metal-chrome rule").toBeDefined();
+    const animation =
+      /animation:\s*mv-metal-chrome-reveal\s+\S+\s+\S+\s+(\d+)ms\s+forwards\s*;/.exec(
+        rule!,
+      );
+    expect(animation, `unexpected rule body: ${rule}`).not.toBeNull();
     // Long enough for the library's own first-frame fade to win normally.
-    expect(delay).toBeGreaterThanOrEqual(300);
-    expect(css).not.toContain("!important");
+    expect(Number(animation![1])).toBeGreaterThanOrEqual(300);
+    expect(rule).not.toContain("!important");
 
     const keyframes =
-      /@keyframes mv-metal-chrome-reveal\s*{([\s\S]*?)\n}/.exec(css)?.[1] ?? "";
-    const to = /to\s*{([^}]*)}/.exec(keyframes)?.[1] ?? "";
-    expect(to).toMatch(/opacity:\s*1/);
-    expect(to).toMatch(/visibility:\s*visible/);
+      /@keyframes mv-metal-chrome-reveal\s*{([\s\S]*?)}\s*}/.exec(css)?.[1];
+    expect(keyframes, "missing reveal keyframes").toBeDefined();
+    expect(keyframes).not.toContain("!important");
+    const to = /to\s*{([^}]*)/.exec(keyframes!)?.[1] ?? "";
+    expect(to).toMatch(/opacity:\s*1\s*;/);
+    expect(to).toMatch(/visibility:\s*visible\s*;/);
   });
 
   it("still matches how metal-fx hides the wrapper (library canary)", () => {
+    // Read whatever file the package entry resolves to (not a guessed dist
+    // path), so a rebuild or re-layout of metal-fx cannot break this check.
     const require = createRequire(import.meta.url);
-    // Resolves to <pkg>/dist/index.cjs.js; the ESM build sits beside it.
-    const distDir = dirname(
-      require.resolve("metal-fx", { paths: [join(__dirname, "../../..")] }),
+    const entry = require.resolve("metal-fx", {
+      paths: [join(__dirname, "../../..")],
+    });
+    const source = readFileSync(entry, "utf8");
+    const hint =
+      `metal-fx (${entry}) no longer hides its wrapper via inline ` +
+      "opacity/visibility gated on onFirstCopy. Re-check that " +
+      "MetalChrome.css still rescues controls when the shader never paints.";
+    expect(source, hint).toContain("onFirstCopy");
+    expect(source, hint).toMatch(/opacity:\s*\w+\s*\?\s*1\s*:\s*0/);
+    expect(source, hint).toMatch(
+      /visibility:\s*\w+\s*\?\s*"visible"\s*:\s*"hidden"/,
     );
-    const source = readFileSync(join(distDir, "index.es.js"), "utf8");
-    expect(source).toContain("onFirstCopy");
-    expect(source).toMatch(/opacity:\s*\w+\s*\?\s*1\s*:\s*0/);
-    expect(source).toMatch(/visibility:\s*\w+\s*\?\s*"visible"\s*:\s*"hidden"/);
   });
 });
