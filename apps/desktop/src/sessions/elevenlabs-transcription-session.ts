@@ -173,6 +173,23 @@ const startElevenLabsStreaming = async (
       }
     };
 
+    const sendTerminalCommit = () => {
+      try {
+        ws?.send(JSON.stringify({ message_type: "commit" }));
+      } catch (error) {
+        getLogger().error(
+          "[ElevenLabs WebSocket] Error sending terminal commit:",
+          error,
+        );
+      }
+    };
+
+    const resolveChunkSize = (available: number, force: boolean) => {
+      if (available >= maxSamplesPerChunk) return maxSamplesPerChunk;
+      if (available < minSamplesPerChunk && !force) return 0;
+      return available;
+    };
+
     const flushPendingSamples = (force = false) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         return;
@@ -183,14 +200,7 @@ const startElevenLabsStreaming = async (
         // normal send. A socket that closes between the readyState check and
         // this send would otherwise reject finalize() instead of degrading to
         // a transcript.
-        try {
-          ws.send(JSON.stringify({ message_type: "commit" }));
-        } catch (error) {
-          getLogger().error(
-            "[ElevenLabs WebSocket] Error sending terminal commit:",
-            error,
-          );
-        }
+        sendTerminalCommit();
         return;
       }
 
@@ -199,10 +209,8 @@ const startElevenLabsStreaming = async (
         (force && pendingSampleCountRef.value > 0)
       ) {
         const available = pendingSampleCountRef.value;
-        let chunkSize = available;
-        if (available >= maxSamplesPerChunk) {
-          chunkSize = maxSamplesPerChunk;
-        } else if (available < minSamplesPerChunk && !force) {
+        const chunkSize = resolveChunkSize(available, force);
+        if (chunkSize === 0) {
           break;
         }
 
