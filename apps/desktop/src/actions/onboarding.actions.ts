@@ -134,14 +134,24 @@ export const resetTip = (id: string): void => {
 export const resumeOnboardingPage = (): void => {
   const state = getAppState();
   const resume = state.local.onboardingResumePage;
-  if (
-    state.auth &&
-    (!isOnboardingNameDraftOwnedByAuth(
+  const hasForeignNameDraft =
+    state.auth !== null &&
+    state.local.onboardingNameDraftUserId !== null &&
+    !isOnboardingNameDraftOwnedByAuth(
       state.local.onboardingNameDraftUserId,
       state.auth.uid,
-    ) ||
-      state.local.onboardingSessionUserId !== state.auth.uid)
-  ) {
+    );
+  const hasForeignSession =
+    state.auth !== null &&
+    state.local.onboardingSessionUserId !== null &&
+    state.local.onboardingSessionUserId !== state.auth.uid;
+  const hasUnownedCompletedSession =
+    state.auth !== null &&
+    state.local.onboardingSessionUserId === null &&
+    state.local.onboardingResumePage === null &&
+    state.local.onboardingNameDraft === "" &&
+    hasStaleOnboardingAccountState(state.onboarding);
+  if (hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession) {
     const existingName = getMyUser(state)?.name.trim() ?? "";
     produceAppState((draft) => {
       Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
@@ -288,6 +298,15 @@ export const setOnboardingPreferredMicrophone = (microphone: string | null) => {
 
 const getOptionalText = (value: string | null | undefined): string | null =>
   value?.trim() || null;
+
+const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
+  onboarding.name.trim() !== "" ||
+  onboarding.firstName.trim() !== "" ||
+  onboarding.lastName.trim() !== "" ||
+  onboarding.title.trim() !== "" ||
+  onboarding.company.trim() !== "" ||
+  onboarding.referralSource.trim() !== "" ||
+  onboarding.preferredMicrophone !== null;
 
 export const submitOnboarding = async () => {
   const state = getAppState();
@@ -474,7 +493,7 @@ export const submitOnboarding = async () => {
       draft.onboarding.submitting = false;
     });
     showErrorSnackbar(err);
-    return null;
+    return undefined;
   }
 };
 

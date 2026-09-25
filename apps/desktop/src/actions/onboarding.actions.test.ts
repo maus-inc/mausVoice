@@ -195,7 +195,7 @@ describe("onboarding flow migration", () => {
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
-  it("rejects an ownerless persisted session on a signed-in resume", () => {
+  it("adopts an ownerless persisted session for the authenticated user", () => {
     const state = getAppState();
     const next = structuredClone(state);
     next.auth = {
@@ -212,10 +212,11 @@ describe("onboarding flow migration", () => {
 
     resumeOnboardingPage();
 
-    expect(getAppState().onboarding.currentPage).toBe("signIn");
-    expect(getAppState().onboarding.name).toBe("");
-    expect(getAppState().local.onboardingNameDraft).toBe("");
+    expect(getAppState().onboarding.currentPage).toBe("tutorial");
+    expect(getAppState().onboarding.name).toBe("Mary Jane Watson");
+    expect(getAppState().local.onboardingNameDraft).toBe("Mary Jane Watson");
     expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
+    expect(getAppState().local.onboardingSessionUserId).toBe("user-id");
   });
 
   it("rejects a signed-in resume without an owned name draft to sign-in", () => {

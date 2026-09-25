@@ -500,8 +500,8 @@ const useTutorialSubmission = ({
         if (!submittedRef.current) {
           submittedRef.current = true;
           const savedUser = await submitOnboarding();
-          if (!savedUser) return;
-          submissionCompleteRef.current = true;
+          if (savedUser === null) return;
+          submissionCompleteRef.current = Boolean(savedUser);
         }
 
         if (cancelled) {
@@ -679,7 +679,10 @@ export const TutorialForm = () => {
     setSubmitting(true);
     try {
       const savedUser = await finishOnboarding();
-      if (!savedUser) return;
+      if (!savedUser) {
+        setSubmitting(false);
+        return;
+      }
       showConfetti();
     } catch (err) {
       showErrorSnackbar(err);
