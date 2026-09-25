@@ -22,13 +22,46 @@
 
 /// Dwell time on the pill that arms hover, in seconds. The pointer must sit
 /// on the pill at low speed for this long before expansion and tooltips fire.
-const ARM_DWELL: f64 = 0.09;
+///
+/// Tuned to 50 ms: NN/g and microinteraction studies agree that hover
+/// affordance must fire within 100–150 ms to feel instant [1](https://www.nngroup.com/articles/timing-exposing-content/)[2](https://ux.stackexchange.com/questions/109288/how-long-in-milliseconds-is-long-enough-to-decide-a-user-is-actually-hovering);
+/// 50 ms filters accidental pass-throughs without adding perceived lag,
+/// while the spring itself absorbs another ~30 ms of the decision so the
+/// pill is already moving by the time the cursor reaches its edge. The old
+/// 90 ms value met the 300–500 ms menu guideline [3](https://baymard.com/blog/dropdown-menu-flickering-issue) but
+/// that guideline is for disruptive menu reflows — a pill expand is a
+/// non-disruptive microinteraction that should be 100–150 ms [4](https://socialanimal.dev/blog/micro-interactions-web-design/)[5](https://visualsoldiers.com/responsive-micro-interactions-guide-web-design/).
+const ARM_DWELL: f64 = 0.05;
 /// Grace after the pointer leaves before hover exits, in seconds. Re-entering
 /// inside the grace cancels the exit without any edge firing.
-const EXIT_GRACE: f64 = 0.10;
-/// Pointer speeds above this restart the dwell timer, in px/s. Crossing a
-/// ~200 px pill faster than a quarter second never arms hover.
-const MAX_ARM_SPEED: f64 = 800.0;
+///
+/// 140 ms gives a forgiving re-entry window for edge dither (the diagonal
+/// problem [1](https://www.nngroup.com/articles/timing-exposing-content/)) without letting a
+/// collapsed pill linger. Slightly longer than the entry dwell so the
+/// hysteresis is asymmetric — exits are meant to be stickier than
+/// entrances for hover affordance.
+const EXIT_GRACE: f64 = 0.14;
+/// Pointer speeds above this restart the dwell timer, in px/s. The 80 px
+/// entry zone (48 px pill + 2 × 16 px pad) crossed at ~1100 px/s
+/// (~73 ms) still dwells; faster traversals are treated as passes and
+/// reset the dwell.
+///
+/// Raised to 1100 px/s: the previous 800 px/s was below a typical
+/// comfortable mouse approach (~900–1000 px/s), so even intentional
+/// approaches kept resetting the dwell timer. 1100 still rejects fast
+/// pass-throughs (>12k px/s in the fast_pass test) but lets a deliberate
+/// slow drift arm.
+const MAX_ARM_SPEED: f64 = 1100.0;
+
+/// Hover hit-zone padding, in logical pixels, shared by the three
+/// renderers. Entry is anticipatory (the pill expands before the cursor
+/// reaches its edge); exit is larger (hysteresis) so edge dither does not
+/// collapse the pill while the tooltip/side controls are reachable.
+/// Centralised here so the three ports cannot drift and the next tuning
+/// pass touches one place. See `PILL_EXPAND_STIFFNESS` and `ARM_DWELL`
+/// for the companion timing.
+pub const HOVER_ENTRY_PAD: f64 = 16.0;
+pub const HOVER_EXIT_PAD: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -252,12 +285,13 @@ mod tests {
         let mut hover = HoverIntent::new();
         let out = hover.advance(&frame(true, 100.0, 0.0));
         assert!(!out.hovered && !out.entered);
-        let out = hover.advance(&frame(true, 100.0, 0.05));
+        // Half the dwell must not yet arm (perceived-lag regression if it did).
+        let out = hover.advance(&frame(true, 100.0, ARM_DWELL * 0.5));
         assert!(!out.hovered && !out.entered);
-        let out = hover.advance(&frame(true, 100.0, 0.10));
+        let out = hover.advance(&frame(true, 100.0, ARM_DWELL + 0.01));
         assert!(out.hovered && out.entered && !out.exited);
         // The entered edge fires on exactly one frame.
-        let out = hover.advance(&frame(true, 100.0, 0.15));
+        let out = hover.advance(&frame(true, 100.0, ARM_DWELL + 0.06));
         assert!(out.hovered && !out.entered && !out.exited);
     }
 
@@ -288,11 +322,11 @@ mod tests {
     fn leaving_before_dwell_cancels() {
         let mut hover = HoverIntent::new();
         hover.advance(&frame(true, 100.0, 0.0));
-        hover.advance(&frame(true, 100.0, 0.05));
-        let out = hover.advance(&frame(false, 100.0, 0.06));
+        hover.advance(&frame(true, 100.0, ARM_DWELL * 0.5));
+        let out = hover.advance(&frame(false, 100.0, ARM_DWELL * 0.6));
         assert!(!out.hovered && !out.entered && !out.exited);
         // And the cancelled arm does not predispose the next entry.
-        let out = hover.advance(&frame(true, 100.0, 0.07));
+        let out = hover.advance(&frame(true, 100.0, ARM_DWELL * 0.7));
         assert!(!out.hovered && !out.entered);
     }
 
@@ -300,16 +334,17 @@ mod tests {
     fn exit_waits_out_grace() {
         let mut hover = HoverIntent::new();
         hover.advance(&frame(true, 100.0, 0.0));
-        hover.advance(&frame(true, 100.0, 0.10));
+        hover.advance(&frame(true, 100.0, ARM_DWELL + 0.01));
         assert!(hover.hovered());
-        let out = hover.advance(&frame(false, 100.0, 0.11));
+        let leave_t = ARM_DWELL + 0.02;
+        let out = hover.advance(&frame(false, 100.0, leave_t));
         assert!(out.hovered && !out.exited);
-        let out = hover.advance(&frame(false, 100.0, 0.15));
+        let out = hover.advance(&frame(false, 100.0, leave_t + EXIT_GRACE * 0.5));
         assert!(out.hovered && !out.exited);
-        let out = hover.advance(&frame(false, 100.0, 0.22));
+        let out = hover.advance(&frame(false, 100.0, leave_t + EXIT_GRACE + 0.02));
         assert!(!out.hovered && out.exited);
         // The exited edge fires on exactly one frame.
-        let out = hover.advance(&frame(false, 100.0, 0.30));
+        let out = hover.advance(&frame(false, 100.0, leave_t + EXIT_GRACE + 0.10));
         assert!(!out.hovered && !out.exited);
     }
 
@@ -317,13 +352,15 @@ mod tests {
     fn reenter_during_grace_cancels_exit() {
         let mut hover = HoverIntent::new();
         hover.advance(&frame(true, 100.0, 0.0));
-        hover.advance(&frame(true, 100.0, 0.10));
-        hover.advance(&frame(false, 100.0, 0.11));
-        let out = hover.advance(&frame(true, 100.0, 0.15));
+        hover.advance(&frame(true, 100.0, ARM_DWELL + 0.01));
+        let leave_t = ARM_DWELL + 0.02;
+        hover.advance(&frame(false, 100.0, leave_t));
+        let out = hover.advance(&frame(true, 100.0, leave_t + EXIT_GRACE * 0.4));
         assert!(out.hovered && !out.entered && !out.exited);
         // Leaving again restarts the grace from zero.
-        hover.advance(&frame(false, 100.0, 0.16));
-        let out = hover.advance(&frame(false, 100.0, 0.20));
+        let re_leave = leave_t + EXIT_GRACE * 0.5;
+        hover.advance(&frame(false, 100.0, re_leave));
+        let out = hover.advance(&frame(false, 100.0, re_leave + EXIT_GRACE * 0.5));
         assert!(out.hovered && !out.exited);
     }
 
@@ -347,7 +384,9 @@ mod tests {
         hover.advance(&down_frame(false, 500.0, 0.0));
         let out = hover.advance(&frame(false, 500.0, 0.05));
         assert!(out.hovered && !out.exited);
-        let out = hover.advance(&frame(false, 500.0, 0.20));
+        let out = hover.advance(&frame(false, 500.0, 0.05 + EXIT_GRACE * 0.5));
+        assert!(out.hovered && !out.exited);
+        let out = hover.advance(&frame(false, 500.0, 0.05 + EXIT_GRACE + 0.02));
         assert!(!out.hovered && out.exited);
     }
 
@@ -363,11 +402,11 @@ mod tests {
     fn reset_forces_an_immediate_exit() {
         let mut hover = HoverIntent::new();
         hover.advance(&frame(true, 100.0, 0.0));
-        hover.advance(&frame(true, 100.0, 0.10));
+        hover.advance(&frame(true, 100.0, ARM_DWELL + 0.01));
         assert!(hover.reset());
         assert!(!hover.hovered());
         // Idle again: the next entry must dwell from scratch.
-        let out = hover.advance(&frame(true, 100.0, 0.11));
+        let out = hover.advance(&frame(true, 100.0, ARM_DWELL + 0.02));
         assert!(!out.hovered && !out.entered);
         assert!(!hover.reset());
     }
@@ -376,7 +415,7 @@ mod tests {
     fn non_finite_input_never_poison_the_state() {
         let mut hover = HoverIntent::new();
         hover.advance(&frame(true, 100.0, 0.0));
-        hover.advance(&frame(true, 100.0, 0.10));
+        hover.advance(&frame(true, 100.0, ARM_DWELL + 0.01));
         assert!(hover.hovered());
         let out = hover.advance(&HoverFrame {
             probed: true,
@@ -386,7 +425,7 @@ mod tests {
             pointer_down: false,
         });
         assert!(out.hovered && !out.entered && !out.exited);
-        let out = hover.advance(&frame(false, 100.0, 0.11));
+        let out = hover.advance(&frame(false, 100.0, ARM_DWELL + 0.02));
         assert!(out.hovered && !out.exited);
     }
 
@@ -410,5 +449,43 @@ mod tests {
         assert!(!out.hovered);
         let out = hover.advance(&frame(true, 100.0, 1.0 + ARM_DWELL + 0.01));
         assert!(out.hovered && out.entered);
+    }
+
+    #[test]
+    fn realistic_pass_at_900_px_s_still_counts_as_intent() {
+        // The widened entry zone (48 px pill + 2*HOVER_ENTRY_PAD = 80 px)
+        // crossed at 900 px/s spends ~89 ms inside, longer than the 50 ms
+        // dwell, so an intentional slow approach arms. A fast traverse at
+        // ~1500 px/s (well above MAX_ARM_SPEED) resets the dwell and never
+        // arms within the same time, documenting the trade: the wider zone
+        // favours instant feel over pass-through suppression, while the speed
+        // gate still catches very fast flings.
+        let mut hover_slow = HoverIntent::new();
+        let mut armed_slow = false;
+        for i in 0..10 {
+            let x = i as f64 * 15.0; // 15 px per 16.7 ms ≈ 900 px/s
+            let out = hover_slow.advance(&frame(true, x, i as f64 / 60.0));
+            armed_slow |= out.entered;
+        }
+        assert!(armed_slow, "900 px/s intentional approach should arm");
+
+        let mut hover_fast = HoverIntent::new();
+        for i in 0..10 {
+            let x = i as f64 * 25.0; // 25 px per 16.7 ms ≈ 1500 px/s > 1100
+            let out = hover_fast.advance(&frame(true, x, i as f64 / 60.0));
+            assert!(!out.hovered, "1500 px/s pass should not arm on frame {i}");
+        }
+    }
+
+    #[test]
+    fn hover_pad_constants_are_sane() {
+        // Exact values are the contract: 16 px anticipatory entry,
+        // 32 px hysteretic exit. Centralising in `hover.rs` is the
+        // drift protection — the behavioural pin is
+        // `realistic_pass_at_900_px_s_still_counts_as_intent`, not
+        // a range check. Pin the literals so a stray `+ 8.0` in a
+        // consumer would be caught as a contract break.
+        assert_eq!(HOVER_ENTRY_PAD, 16.0);
+        assert_eq!(HOVER_EXIT_PAD, 32.0);
     }
 }

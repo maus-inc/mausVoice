@@ -975,14 +975,15 @@ fn tick(state: &PillState, window: id, dt: f64) {
     let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
 
-    // Pill expand/collapse (spring)
+    // Pill expand/collapse (spring) — snappier than tooltip/panel so the
+    // primary affordance feels instant. See PILL_EXPAND_STIFFNESS.
     // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
     let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
         1.0
     } else {
         0.0
     };
-    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, rust_pill_shared::PILL_EXPAND_STIFFNESS, dt);
 
     // Loading offset
     if is_loading {

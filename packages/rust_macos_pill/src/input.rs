@@ -285,11 +285,20 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
-const HOVER_ENTRY_PAD_X: f64 = 8.0;
-const HOVER_ENTRY_PAD_Y: f64 = 8.0;
-const HOVER_EXIT_PAD_X: f64 = 24.0;
-const HOVER_EXIT_PAD_Y: f64 = 28.0;
-
+/// Hover hit zone padding is shared (`rust_pill_shared::hover`) so the
+/// three renderers keep one anticipatory entry (16 px) / hysteretic exit
+/// (32 px) zone. The X pad doubles as the entry zone for hover-intent
+/// (80 px = 48 px pill + 2 × 16 px) and the exit pad prevents flicker;
+/// both axes share the same pads. See `PILL_EXPAND_STIFFNESS` and
+/// `hover::ARM_DWELL` for companion timing.
+///
+/// Clicks are not affected: `is_on_pill_at` checks the unpadded pill
+/// rect (and `click_regions`), so the 16/32 px pad only influences
+/// hover intent via `is_in_hover_zone`/`HoverIntent` — widening hover
+/// never swallows a click. The three platforms keep this separation
+/// identically (Windows `check_hover` vs `WM_LBUTTONDOWN`, macOS
+/// `update_hover` vs `mouse_down` gated on `is_on_pill_at`, GTK
+/// `is_over_pill_area` vs `is_on_pill_at`).
 pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let s = state.ui_scale;
     let (ox, oy) = state.content_offset();
@@ -303,15 +312,15 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     let currently_hovered = state.hovered.get();
-    let (pad_x, pad_y) = if currently_hovered {
-        (HOVER_EXIT_PAD_X, HOVER_EXIT_PAD_Y)
+    let pad = if currently_hovered {
+        rust_pill_shared::hover::HOVER_EXIT_PAD
     } else {
-        (HOVER_ENTRY_PAD_X, HOVER_ENTRY_PAD_Y)
+        rust_pill_shared::hover::HOVER_ENTRY_PAD
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-    if x >= pill_x - pad_x && x <= pill_x + pill_w + pad_x
-        && y >= pill_y - pad_y && y <= pill_y + pill_h + pad_y
+    if x >= pill_x - pad && x <= pill_x + pill_w + pad
+        && y >= pill_y - pad && y <= pill_y + pill_h + pad
     {
         return true;
     }

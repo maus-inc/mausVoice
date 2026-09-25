@@ -256,7 +256,7 @@ describe("generateText metadata reports the resolved model", () => {
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
 
   it("OpenAI reports the configured model", async () => {

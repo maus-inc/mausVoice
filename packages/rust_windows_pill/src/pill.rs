@@ -224,6 +224,14 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     unsafe {
         windows::Win32::Media::timeBeginPeriod(1);
+        // Hover intent is sampled every animation frame (~16.7 ms at
+        // 60 Hz) in `on_anim_tick` so the 50 ms `ARM_DWELL` is measured
+        // at display rate. This raises `GetCursorPos` / `GetWindowRect`
+        // + hit-test work from 16.7 Hz (the previous 60 ms `TIMER_CURSOR`
+        // poll) to 60 Hz — about 3.75× more polls — which is the cost
+        // of making dwell accurate within one frame (≈16.7 ms + 50 ms
+        // ≈ 67 ms to first visual feedback). The 60 ms timer remains
+        // only for the infrequent monitor-reposition check.
         SetTimer(Some(hwnd), TIMER_CURSOR, 60, None);
     }
 
@@ -477,6 +485,12 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
+            // Hover intent is sampled every animation frame (~16.7 ms at
+            // 60 Hz) so the 50 ms ARM_DWELL is measured at display rate.
+            // The 60 ms WM_TIMER remains only for monitor repositioning;
+            // sampling hover on every tick keeps worst-case latency to one
+            // frame (16.7 ms) + dwell ≈ 67 ms to first visual feedback.
+            check_hover(hwnd, state);
             tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
             tick_selector_placement(hwnd, state, dt);
@@ -505,7 +519,9 @@ fn on_anim_tick(hwnd: HWND) {
 fn on_cursor_tick(hwnd: HWND) {
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
-            check_hover(hwnd, state);
+            // Hover is sampled every animation frame in on_anim_tick
+            // (16.7 ms); the cursor timer at 60 ms now only re-anchors the
+            // pill to the cursor monitor when it has not been dragged.
             reposition_to_cursor_monitor(hwnd, state);
         }
     });
@@ -814,16 +830,22 @@ fn tick(state: &PillState, dt: f64) {
                 .target_level
                 .set((target * (1.0 - mix) + boosted * mix).min(1.0));
         }
-    } else if is_loading {
-        let target = state.target_level.get();
-        state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
-        state.target_level.set(0.0);
-        state
-            .current_level
-            .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
-        if state.current_level.get() < 0.0002 {
-            state.current_level.set(0.0);
+        // Levels queued while not recording are stale — drop them so the
+        // next recording starts from fresh input instead of a burst of
+        // old audio that was captured while the pill was idle/loading.
+        state.pending_levels.borrow_mut().clear();
+        if is_loading {
+            let target = state.target_level.get();
+            state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
+        } else {
+            state.target_level.set(0.0);
+            state
+                .current_level
+                .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+            if state.current_level.get() < 0.0002 {
+                state.current_level.set(0.0);
+            }
         }
     }
 
@@ -862,11 +884,14 @@ fn tick(state: &PillState, dt: f64) {
         } else {
             0.0
         };
+    // PILL_EXPAND_STIFFNESS (320, ~220 ms settle) is deliberately snappier
+    // than the generic 200 used for tooltip/panel, so the primary pill
+    // affordance feels instant. See rust_pill_shared::PILL_EXPAND_STIFFNESS.
     rust_pill_shared::spring::spring_01(
         &state.expand_t,
         &state.expand_velocity,
         expand_target,
-        SPRING_STIFFNESS,
+        rust_pill_shared::PILL_EXPAND_STIFFNESS,
         dt,
     );
 
@@ -1251,7 +1276,15 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     let screen_pill_x = win_rect.left as f64 + ox + pill_x;
     let screen_pill_y = win_rect.top as f64 + oy + pill_y;
 
-    let pad = if state.hovered.get() { 24.0 } else { 8.0 };
+    // Anticipatory hysteresis is shared (hover::{HOVER_ENTRY_PAD,
+    // HOVER_EXIT_PAD}) so entry 16 px hides the 50 ms dwell + 220 ms
+    // spring in the approach; exit 32 px keeps the pill expanded on
+    // edge dither. See PILL_EXPAND_STIFFNESS and hover::ARM_DWELL.
+    let pad = if state.hovered.get() {
+        rust_pill_shared::hover::HOVER_EXIT_PAD
+    } else {
+        rust_pill_shared::hover::HOVER_ENTRY_PAD
+    };
     let cx = cursor.x as f64;
     let cy = cursor.y as f64;
 
