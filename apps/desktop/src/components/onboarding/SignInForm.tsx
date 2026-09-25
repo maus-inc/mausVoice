@@ -50,7 +50,9 @@ export const SignInForm = () => {
 
   const firstName = useAppStore((state) => state.onboarding.firstName);
   const lastName = useAppStore((state) => state.onboarding.lastName);
-  const lastNameEnabled = useAppStore((state) => state.onboarding.lastNameEnabled);
+  const lastNameEnabled = useAppStore(
+    (state) => state.onboarding.lastNameEnabled,
+  );
 
   // Prefill name fields from the auth provider's displayName on first sign-in
   // if nothing has been entered yet.
@@ -76,7 +78,8 @@ export const SignInForm = () => {
     // Returning user (already onboarded or has a name persisted): skip the
     // name-collection step entirely.
     if (isSignedIn && existingName !== "") {
-      const { firstName: efn, lastName: eln } = getFirstAndLastName(existingName);
+      const { firstName: efn, lastName: eln } =
+        getFirstAndLastName(existingName);
       produceAppState((draft) => {
         if (efn) draft.onboarding.firstName = efn;
         if (eln) {
@@ -103,7 +106,13 @@ export const SignInForm = () => {
         isPersonalUse ? "personalCredentials" : "chooseTranscription",
       );
     }
-  }, [isSignedIn, awaitingSignInNavigation, isPersonalUse, firstName, existingName]);
+  }, [
+    isSignedIn,
+    awaitingSignInNavigation,
+    isPersonalUse,
+    firstName,
+    existingName,
+  ]);
 
   const handleClickLocalSetup = () => {
     trackButtonClick("onboarding_local_setup");
@@ -142,7 +151,11 @@ export const SignInForm = () => {
     const value = e.target.value;
     produceAppState((draft) => {
       draft.onboarding.firstName = value;
-      draft.onboarding.name = syncName(value, draft.onboarding.lastName, draft.onboarding.lastNameEnabled);
+      draft.onboarding.name = syncName(
+        value,
+        draft.onboarding.lastName,
+        draft.onboarding.lastNameEnabled,
+      );
     });
   };
 
