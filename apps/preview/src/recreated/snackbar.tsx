@@ -109,7 +109,7 @@ export const SnackbarPreview = ({
           "&:hover": {
             backgroundColor:
               t.vars?.palette.level1 ?? t.palette.background.paper,
-            color: t.vars.palette.text.primary,
+            color: t.vars?.palette.text.primary ?? t.palette.text.primary,
           },
           "& .MuiSvgIcon-root": { fontSize: 12 },
         })}

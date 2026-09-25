@@ -85,9 +85,9 @@ describe("BouncyTooltip", () => {
     // legible on dark surfaces — both variants are emitted.
     expect(css).toContain("inset 0 0 0 1px rgba(26, 23, 18, 0.08)");
     expect(css).toContain("inset 0 0 0 1px rgba(255, 255, 255, 0.1)");
-    // Bubble radius lives on the app's rounding scale (3 × 4px base = 12px),
-    // not the old 4px chip-look.
-    expect(css).toContain("calc(3 * var(--app-shape-borderRadius))");
+    // Bubble radius rides the theme's shape scale (one step = 14px), the
+    // same rounding every Paper chip in the app gets.
+    expect(css).toContain("border-radius:var(--app-shape-borderRadius)");
   });
 
   it("settles after two nudges instead of bouncing forever", async () => {
