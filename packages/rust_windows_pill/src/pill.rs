@@ -2619,6 +2619,3 @@ mod monitor_query_tests {
         assert!(query_monitor_info(HMONITOR::default()).is_none());
     }
 }
-fo(HMONITOR::default()).is_none());
-    }
-}
