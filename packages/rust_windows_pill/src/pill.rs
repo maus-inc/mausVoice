@@ -1513,13 +1513,13 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
             (wa.left, wa.top, wa.right - win_w, wa.bottom - content_canvas_height(win_h))
         };
 
-    // A work area smaller than the clamp target inverts the bounds; keep
-    // max >= min so the clamp cannot push the origin off screen.
+    // Preserve inverted bounds here: drag placement may use them to collapse
+    // toward a shared seam, while parked placement normalizes in clamp_point.
     DragBounds {
         min_x: min_x as f64,
         min_y: min_y as f64,
-        max_x: max_x.max(min_x) as f64,
-        max_y: max_y.max(min_y) as f64,
+        max_x: max_x as f64,
+        max_y: max_y as f64,
     }
 }
 
@@ -1570,12 +1570,29 @@ fn drag_placement(
         let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
         let info = query_monitor_info(monitor)?;
         let work_rect = monitor_rect(info.rcWork);
-        let area = rust_pill_shared::edge::drag_region(
-            monitor_rect(info.rcMonitor),
-            work_rect,
-            &neighboring_monitor_rects(&info, anchor),
-            (anchor_x, anchor_y),
+        let (px, py, pw, ph) = draw::pill_position(
+            state, state.draw_width.get(), state.draw_height.get(),
         );
+        let (content_x, content_y) = state.content_offset();
+        let center_x = current.left as f64 + content_x + px + pw / 2.0;
+        let center_y = current.top as f64 + content_y + py + ph / 2.0;
+        let center = POINT {
+            x: center_x.round() as i32,
+            y: center_y.round() as i32,
+        };
+        let area = if state.dragging.get() {
+            rust_pill_shared::edge::drag_region(
+                monitor_rect(info.rcMonitor),
+                work_rect,
+                &neighboring_monitor_rects(&info, center),
+                (center_x, center_y),
+            )
+        } else {
+            rust_pill_shared::edge::DragRegion {
+                bounds: work_rect,
+                edge_mask: rust_pill_shared::edge::EdgeMask::ALL,
+            }
+        };
         let region = RECT {
             left: area.bounds.x.round() as i32,
             top: area.bounds.y.round() as i32,
@@ -1588,24 +1605,14 @@ fn drag_placement(
             current.right - current.left,
             current.bottom - current.top,
         );
-        let (px, py, pw, ph) = draw::pill_position(
-            state, state.draw_width.get(), state.draw_height.get(),
-        );
-        let (content_x, content_y) = state.content_offset();
-        let center_x = content_x + px + pw / 2.0;
-        let center_y = content_y + py + ph / 2.0;
-        if !area.edge_mask.left {
-            bounds.min_x = area.bounds.x - center_x;
+        if state.dragging.get() {
+            bounds.apply_shared_seam_bounds(
+                area.bounds,
+                (center_x - current.left as f64, center_y - current.top as f64),
+                area.edge_mask,
+            );
         }
-        if !area.edge_mask.right {
-            bounds.max_x = area.bounds.right() - center_x;
-        }
-        if !area.edge_mask.top {
-            bounds.min_y = area.bounds.y - center_y;
-        }
-        if !area.edge_mask.bottom {
-            bounds.max_y = area.bounds.bottom() - center_y;
-        }
+        bounds.collapse_inverted(area.edge_mask.preferred_minimum());
         let work = rust_pill_shared::edge::EdgeWork {
             width: work_rect.width,
             height: work_rect.height,

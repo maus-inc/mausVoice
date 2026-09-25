@@ -1477,7 +1477,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                     full,
                     ns_rect_to_monitor_rect(visible),
                     &monitor_frames,
-                    (anchor_x, anchor_y),
+                    footprint_center(win_frame.origin.x, win_frame.origin.y),
                 );
                 chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
@@ -1496,7 +1496,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                     ns_rect_to_monitor_rect(frame),
                     ns_rect_to_monitor_rect(visible),
                     &monitor_frames,
-                    (anchor_x, anchor_y),
+                    footprint_center(win_frame.origin.x, win_frame.origin.y),
                 );
                 (visible, region.bounds, region.edge_mask)
             }
@@ -1505,7 +1505,7 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
 
         // Keep the work-area clamp on exposed sides, but use the full display
         // edge on shared seams so the grab point can cross without resistance.
-        let clamp_frame = if dragging || settling {
+        let clamp_frame = if dragging {
             drag_region
         } else {
             rust_pill_shared::edge::MonitorRect {
@@ -1536,19 +1536,19 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                     clamp_frame.bottom() - win_h,
                 )
             };
-        if dragging || settling {
-            let pill_center_x = fx + pw / 2.0;
-            let pill_center_y = win_h - fy - ph / 2.0;
-            if !edge_mask.left { min_x = drag_region.x - pill_center_x; }
-            if !edge_mask.right { max_x = drag_region.right() - pill_center_x; }
-            if !edge_mask.top { min_y = drag_region.y - pill_center_y; }
-            if !edge_mask.bottom { max_y = drag_region.bottom() - pill_center_y; }
+        let mut bounds = DragBounds { min_x, min_y, max_x, max_y };
+        if dragging {
+            bounds.apply_shared_seam_bounds(
+                drag_region,
+                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                edge_mask,
+            );
         }
 
-        // A visible frame smaller than the clamp target inverts the bounds;
-        // keep max >= min so the clamp cannot push the origin off screen.
-        let max_x = max_x.max(min_x);
-        let max_y = max_y.max(min_y);
+        let edge_work_mask = if dragging { edge_mask } else {
+            rust_pill_shared::edge::EdgeMask::ALL
+        };
+        bounds.collapse_inverted(edge_work_mask.preferred_minimum());
 
         // Drag motion runs through the shared controller: direct 1:1 tracking
         // while held, a velocity-aware settle after release. Both apply every
@@ -1560,16 +1560,11 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 pointer_y: mouse_loc.y,
                 now,
                 dt,
-                bounds: DragBounds {
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                },
+                bounds,
                 edge_work: Some(rust_pill_shared::edge::EdgeWork {
                     width: visible.size.width,
                     height: visible.size.height,
-                    edges: edge_mask,
+                    edges: edge_work_mask,
                 }),
                 held: dragging,
                 reduced_motion: reduced_motion(),
@@ -1586,8 +1581,8 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             // frame of the screen that position belongs to.
             let mut tx = state.saved_x.get();
             let mut ty = state.saved_y.get();
-            tx = tx.max(min_x).min(max_x);
-            ty = ty.max(min_y).min(max_y);
+            tx = tx.max(bounds.min_x).min(bounds.max_x);
+            ty = ty.max(bounds.min_y).min(bounds.max_y);
             (tx, ty)
         } else {
             // Default: centre at bottom of the pill's own screen.

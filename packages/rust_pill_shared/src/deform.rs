@@ -177,6 +177,11 @@ impl CrossingDeform {
         } else {
             0.0
         };
+        let stiffness = if frame.stiffness.is_finite() {
+            frame.stiffness.clamp(1.0, 1000.0)
+        } else {
+            170.0
+        };
         self.pulse.set((self.pulse.get() - dt / CROSS_PULSE_TIME).max(0.0));
 
         let known = frame.monitor_x.is_finite()
@@ -189,7 +194,7 @@ impl CrossingDeform {
             && frame.pill_cy.is_finite()
             && frame.now.is_finite();
         if !known {
-            self.advance_return(frame, dt);
+            self.advance_return(frame, dt, stiffness);
             return self.output(false);
         }
 
@@ -213,11 +218,6 @@ impl CrossingDeform {
                     let speed_progress = ((speed - CROSS_MIN_SPEED)
                         / (CROSS_FULL_SPEED - CROSS_MIN_SPEED)).clamp(0.0, 1.0);
                     let peak = speed_progress.powf(CROSS_RESPONSE_EXPONENT);
-                    let stiffness = if frame.stiffness.is_finite() {
-                        frame.stiffness.max(1.0)
-                    } else {
-                        170.0
-                    };
                     let impulse = peak
                         * stiffness.sqrt()
                         * std::f64::consts::E
@@ -236,19 +236,19 @@ impl CrossingDeform {
         // Refresh dimensions even when a monitor resizes without moving.
         self.seed(frame);
 
-        self.advance_return(frame, dt);
+        self.advance_return(frame, dt, stiffness);
         self.output(triggered)
     }
 
-    fn advance_return(&self, frame: &CrossingFrame, dt: f64) {
+    fn advance_return(&self, frame: &CrossingFrame, dt: f64, stiffness: f64) {
         if frame.reduced_motion {
             self.squeeze_x.set(0.0);
             self.squeeze_x_vel.set(0.0);
             self.squeeze_y.set(0.0);
             self.squeeze_y_vel.set(0.0);
         } else {
-            spring_01(&self.squeeze_x, &self.squeeze_x_vel, 0.0, frame.stiffness, dt);
-            spring_01(&self.squeeze_y, &self.squeeze_y_vel, 0.0, frame.stiffness, dt);
+            spring_01(&self.squeeze_x, &self.squeeze_x_vel, 0.0, stiffness, dt);
+            spring_01(&self.squeeze_y, &self.squeeze_y_vel, 0.0, stiffness, dt);
         }
     }
 
@@ -391,8 +391,14 @@ mod tests {
         let over = peak_squeeze(7000.0);
         assert!(slow > 0.03, "a deliberate crossing should be visible: {slow}");
         assert!(ordinary > slow && full > ordinary, "faster crossings should deform more: {slow} {ordinary} {full}");
-        assert_eq!(full, over, "past full speed the magnitude clamps");
-        assert!((full - CROSS_SQUEEZE).abs() < 0.01, "full squeeze should reach the design cap, got {full}");
+        assert!(
+            (full - CROSS_SQUEEZE).abs() < 0.01,
+            "full squeeze should reach the design cap, got {full}"
+        );
+        assert!(
+            (over - full).abs() < 1e-12,
+            "crossings past full speed should clamp at {full}, got {over}"
+        );
     }
 
     #[test]
@@ -400,16 +406,23 @@ mod tests {
         let mut deform = CrossingDeform::new();
         deform.advance(&frame_at(0.0, 0.0, 1919.0, 1060.0, 0.0));
         let across = deform.advance(&frame_at(1920.0, 0.0, 1950.0, 1060.0, 1.0 / 60.0));
-        let before = across.scale_x;
+        assert!(across.triggered);
+        let expected_x = std::cell::Cell::new(deform.squeeze_x.get());
+        let expected_x_velocity = std::cell::Cell::new(deform.squeeze_x_vel.get());
+        spring_01(
+            &expected_x,
+            &expected_x_velocity,
+            0.0,
+            170.0,
+            1.0 / 60.0,
+        );
         let vertical = frame_at(1920.0, 1080.0, 1950.0, 1100.0, 2.0 / 60.0);
         let output = deform.advance(&vertical);
         assert!(output.triggered);
-        assert!(
-            output.scale_x < before + 0.02,
-            "axis change should not snap: {before} -> {}",
-            output.scale_x
-        );
+        assert!((deform.squeeze_x.get() - expected_x.get()).abs() < 1e-12);
         assert!(deform.squeeze_y.get() > 0.0);
+        assert!((1.0 - CROSS_SQUEEZE..=1.0 + CROSS_STRETCH).contains(&output.scale_x));
+        assert!((1.0 - CROSS_SQUEEZE..=1.0 + CROSS_STRETCH).contains(&output.scale_y));
     }
 
     #[test]
@@ -442,6 +455,29 @@ mod tests {
         assert!(done, "deform never settled");
         let out = deform.advance(&frame(1920.0, 0.0, 2000.0, 11.0));
         assert_eq!((out.scale_x, out.scale_y), (1.0, 1.0));
+    }
+
+    #[test]
+    fn invalid_stiffness_uses_the_same_safe_spring_for_impulse_and_return() {
+        for stiffness in [0.0, -10.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            let mut deform = CrossingDeform::new();
+            deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
+            let mut crossing = frame(1920.0, 0.0, 2000.0, 1.0 / 60.0);
+            crossing.stiffness = stiffness;
+            let out = deform.advance(&crossing);
+            assert!(out.triggered && out.active);
+
+            for i in 2..=240 {
+                crossing.now = i as f64 / 60.0;
+                let out = deform.advance(&crossing);
+                assert!(!out.triggered);
+                if !out.active {
+                    break;
+                }
+            }
+            assert_eq!(deform.scales(), (1.0, 1.0));
+            assert!(!deform.animating());
+        }
     }
 
     #[test]

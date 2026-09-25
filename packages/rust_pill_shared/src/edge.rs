@@ -47,6 +47,12 @@ pub struct EdgeMask {
 
 impl EdgeMask {
     pub const ALL: Self = Self { left: true, right: true, top: true, bottom: true };
+
+    /// Prefer a shared minimum seam when an axis has no feasible range.
+    /// Shared maximum seams win when the minimum side is exposed.
+    pub const fn preferred_minimum(self) -> (bool, bool) {
+        (!self.left || self.right, !self.top || self.bottom)
+    }
 }
 
 /// A monitor rectangle in the platform's absolute drag-coordinate space.
@@ -80,22 +86,29 @@ pub struct DragRegion {
 }
 
 /// Resolve which sides of a monitor connect to another monitor at the current
-/// pointer coordinate. This handles partial monitor overlap: a seam is open
-/// only where a neighboring display actually touches it.
+/// pill-center coordinate. This handles partial overlap: a seam is open only
+/// where the pill center meets a neighboring display.
 pub fn drag_region(
     monitor: MonitorRect,
     work_area: MonitorRect,
     neighbors: &[MonitorRect],
-    pointer: (f64, f64),
+    seam_point: (f64, f64),
 ) -> DragRegion {
     let exposed = EdgeMask {
-        left: !has_neighbor(monitor, neighbors, pointer, Side::Left),
-        right: !has_neighbor(monitor, neighbors, pointer, Side::Right),
-        top: !has_neighbor(monitor, neighbors, pointer, Side::Top),
-        bottom: !has_neighbor(monitor, neighbors, pointer, Side::Bottom),
+        left: !has_neighbor(monitor, neighbors, seam_point, Side::Left),
+        right: !has_neighbor(monitor, neighbors, seam_point, Side::Right),
+        top: !has_neighbor(monitor, neighbors, seam_point, Side::Top),
+        bottom: !has_neighbor(monitor, neighbors, seam_point, Side::Bottom),
     };
     if !monitor.valid() || !work_area.valid() {
-        return DragRegion { bounds: work_area, edge_mask: EdgeMask::ALL };
+        let bounds = if work_area.valid() {
+            work_area
+        } else if monitor.valid() {
+            monitor
+        } else {
+            MonitorRect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }
+        };
+        return DragRegion { bounds, edge_mask: EdgeMask::ALL };
     }
 
     let left = if exposed.left { work_area.x } else { monitor.x };
@@ -124,22 +137,46 @@ enum Side {
 fn has_neighbor(
     monitor: MonitorRect,
     neighbors: &[MonitorRect],
-    pointer: (f64, f64),
+    seam_point: (f64, f64),
     side: Side,
 ) -> bool {
-    if !monitor.valid() || !pointer.0.is_finite() || !pointer.1.is_finite() {
+    if !monitor.valid() || !seam_point.0.is_finite() || !seam_point.1.is_finite() {
         return false;
     }
     neighbors.iter().copied().filter(|neighbor| neighbor.valid()).any(|neighbor| {
         match side {
             Side::Left => touches(neighbor.right(), monitor.x)
-                && overlaps_at(pointer.1, monitor.y, monitor.bottom(), neighbor.y, neighbor.bottom()),
+                && overlaps_at(
+                    seam_point.1,
+                    monitor.y,
+                    monitor.bottom(),
+                    neighbor.y,
+                    neighbor.bottom(),
+                ),
             Side::Right => touches(neighbor.x, monitor.right())
-                && overlaps_at(pointer.1, monitor.y, monitor.bottom(), neighbor.y, neighbor.bottom()),
+                && overlaps_at(
+                    seam_point.1,
+                    monitor.y,
+                    monitor.bottom(),
+                    neighbor.y,
+                    neighbor.bottom(),
+                ),
             Side::Top => touches(neighbor.bottom(), monitor.y)
-                && overlaps_at(pointer.0, monitor.x, monitor.right(), neighbor.x, neighbor.right()),
+                && overlaps_at(
+                    seam_point.0,
+                    monitor.x,
+                    monitor.right(),
+                    neighbor.x,
+                    neighbor.right(),
+                ),
             Side::Bottom => touches(neighbor.y, monitor.bottom())
-                && overlaps_at(pointer.0, monitor.x, monitor.right(), neighbor.x, neighbor.right()),
+                && overlaps_at(
+                    seam_point.0,
+                    monitor.x,
+                    monitor.right(),
+                    neighbor.x,
+                    neighbor.right(),
+                ),
         }
     })
 }
@@ -149,7 +186,11 @@ fn touches(a: f64, b: f64) -> bool {
 }
 
 fn overlaps_at(point: f64, a0: f64, a1: f64, b0: f64, b1: f64) -> bool {
-    point >= a0.max(b0) && point < a1.min(b1)
+    let overlap_start = a0.max(b0);
+    let overlap_end = a1.min(b1);
+    overlap_end > overlap_start
+        && point >= overlap_start - MONITOR_SEAM_TOLERANCE
+        && point <= overlap_end + MONITOR_SEAM_TOLERANCE
 }
 
 /// Ease one axis toward its resting line. `pos` is the clamped window
@@ -250,7 +291,7 @@ mod tests {
         let x = ease_axis_with_edges(1.0, 0.0, 0.0, MAX, DIM, false, true);
         assert_eq!(x, 1.0);
         let right = ease_axis_with_edges(MAX - 1.0, 0.0, 0.0, MAX, DIM, false, true);
-        assert_eq!(right, MAX - EDGE_REST_GAP);
+        assert!(right <= MAX - EDGE_REST_GAP && right > MAX - BAND);
     }
 
     #[test]
@@ -277,12 +318,21 @@ mod tests {
     fn partial_monitor_seam_opens_only_where_the_neighbor_exists() {
         let current = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
         let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
-        let work = current;
+        let work = MonitorRect { width: 1180.0, ..current };
         let connected = drag_region(current, work, &[neighbor], (1190.0, 500.0));
+        let near_seam = drag_region(current, work, &[neighbor], (1190.0, 800.5));
+        let beyond_tolerance = drag_region(current, work, &[neighbor], (1190.0, 801.01));
         let exposed = drag_region(current, work, &[neighbor], (1190.0, 900.0));
         assert!(!connected.edge_mask.right);
+        assert!(!near_seam.edge_mask.right);
+        assert!(beyond_tolerance.edge_mask.right);
         assert!(exposed.edge_mask.right);
         assert_eq!(connected.bounds.right(), current.right());
+        assert_eq!(exposed.bounds.right(), work.right());
+
+        let corner_only = MonitorRect { x: 1200.0, y: 1000.0, ..neighbor };
+        let corner = drag_region(current, work, &[corner_only], (1199.5, 1000.0));
+        assert!(corner.edge_mask.right, "corner contact is not a traversable seam");
     }
 
     #[test]
@@ -292,6 +342,32 @@ mod tests {
         let region = drag_region(monitor, work, &[], (900.0, 100.0));
         assert_eq!(region.bounds, work);
         assert_eq!(region.edge_mask, EdgeMask::ALL);
+    }
+
+    #[test]
+    fn inverted_range_preference_follows_shared_seam_sides() {
+        let edges = EdgeMask { left: true, right: false, top: false, bottom: true };
+        assert_eq!(edges.preferred_minimum(), (false, true));
+    }
+
+    #[test]
+    fn invalid_drag_region_inputs_return_finite_fallback_bounds() {
+        let monitor = MonitorRect { x: -100.0, y: 20.0, width: 800.0, height: 600.0 };
+        let invalid_work = MonitorRect { width: f64::NAN, ..monitor };
+        let fallback = drag_region(monitor, invalid_work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds, monitor);
+        assert_eq!(fallback.edge_mask, EdgeMask::ALL);
+
+        let work = MonitorRect { x: 0.0, y: 0.0, width: 640.0, height: 480.0 };
+        let invalid_monitor = MonitorRect { width: 0.0, ..monitor };
+        let fallback = drag_region(invalid_monitor, work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds, work);
+
+        let fallback = drag_region(invalid_monitor, invalid_work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds.x, 0.0);
+        assert_eq!(fallback.bounds.y, 0.0);
+        assert_eq!(fallback.bounds.width, 0.0);
+        assert_eq!(fallback.bounds.height, 0.0);
     }
 
     #[test]

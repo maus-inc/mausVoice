@@ -13,7 +13,7 @@
 //! point; this module owns samples, release velocity, and settle physics, so
 //! all three pills feel identical and stay testable without a display.
 
-use crate::edge::{ease_point, EdgeWork};
+use crate::edge::{ease_point, EdgeMask, EdgeWork, MonitorRect};
 
 /// One pointer observation. `time` is seconds on a monotonic clock; platforms
 /// pass their own frame clock (it only ever compares samples with each other).
@@ -42,6 +42,37 @@ impl DragBounds {
         let max_x = self.max_x.max(self.min_x);
         let max_y = self.max_y.max(self.min_y);
         (x.clamp(self.min_x, max_x), y.clamp(self.min_y, max_y))
+    }
+
+    /// Collapse an impossible range to the side that preserves a shared-seam
+    /// crossing plane. `prefer_min` selects the minimum side per axis.
+    /// Place the pill center on each connected side's monitor-edge plane.
+    /// `center_offset` is measured from the window origin.
+    pub fn apply_shared_seam_bounds(
+        &mut self,
+        region: MonitorRect,
+        center_offset: (f64, f64),
+        edges: EdgeMask,
+    ) {
+        if !edges.left { self.min_x = region.x - center_offset.0; }
+        if !edges.right { self.max_x = region.right() - center_offset.0; }
+        if !edges.top { self.min_y = region.y - center_offset.1; }
+        if !edges.bottom { self.max_y = region.bottom() - center_offset.1; }
+    }
+
+    /// Collapse inverted ranges to the preferred bound on each axis.
+    /// `prefer_min` selects the minimum bound when true.
+    pub fn collapse_inverted(&mut self, prefer_min: (bool, bool)) {
+        if self.min_x > self.max_x {
+            let value = if prefer_min.0 { self.min_x } else { self.max_x };
+            self.min_x = value;
+            self.max_x = value;
+        }
+        if self.min_y > self.max_y {
+            let value = if prefer_min.1 { self.min_y } else { self.max_y };
+            self.min_y = value;
+            self.max_y = value;
+        }
     }
 }
 
@@ -777,6 +808,44 @@ mod tests {
         };
         let out = drag.advance(&frame);
         assert_eq!((out.x, out.y), (100.0, 0.0));
+    }
+
+    #[test]
+    fn shared_seam_bounds_adjust_only_connected_edges() {
+        let region = MonitorRect { x: 100.0, y: 200.0, width: 300.0, height: 400.0 };
+        let edges = EdgeMask { left: false, right: true, top: true, bottom: false };
+        let mut bounds = DragBounds { min_x: 10.0, min_y: 20.0, max_x: 190.0, max_y: 180.0 };
+        bounds.apply_shared_seam_bounds(region, (40.0, 50.0), edges);
+        assert_eq!(bounds.min_x, 60.0);
+        assert_eq!(bounds.min_y, 20.0);
+        assert_eq!(bounds.max_x, 190.0);
+        assert_eq!(bounds.max_y, 550.0);
+    }
+
+    #[test]
+    fn oversized_footprint_collapses_to_the_shared_seam_plane() {
+        let region = MonitorRect { x: 0.0, y: 0.0, width: 300.0, height: 200.0 };
+        let edges = EdgeMask { left: true, right: false, top: true, bottom: true };
+        let mut bounds = DragBounds { min_x: 250.0, min_y: 0.0, max_x: 100.0, max_y: 180.0 };
+        bounds.apply_shared_seam_bounds(region, (200.0, 50.0), edges);
+        bounds.collapse_inverted(edges.preferred_minimum());
+        assert_eq!(bounds.min_x, 100.0);
+        assert_eq!(bounds.max_x, 100.0);
+    }
+
+    #[test]
+    fn inverted_bounds_can_preserve_the_shared_seam_side() {
+        let mut bounds = DragBounds {
+            min_x: 900.0,
+            min_y: 700.0,
+            max_x: 800.0,
+            max_y: 600.0,
+        };
+        bounds.collapse_inverted((true, false));
+        assert_eq!(bounds.min_x, 900.0);
+        assert_eq!(bounds.max_x, 900.0);
+        assert_eq!(bounds.min_y, 600.0);
+        assert_eq!(bounds.max_y, 600.0);
     }
 
     #[test]
