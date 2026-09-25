@@ -53,9 +53,10 @@ describe("applySpokenCommands", () => {
   });
 
   it("scratches the previous sentence", () => {
-    expect(applySpokenCommands("Hello world scratch that goodbye")).toBe(
-      "goodbye",
+    expect(applySpokenCommands("Hello world. Scratch that. Goodbye.")).toBe(
+      "Goodbye.",
     );
+    expect(applySpokenCommands("Hello world scratch that")).toBe("");
     expect(applySpokenCommands("First sentence. Second scratch that")).toBe(
       "First sentence.",
     );
@@ -80,7 +81,7 @@ describe("applySpokenCommands", () => {
 
   it("keeps the space after a partial scratch", () => {
     expect(
-      applySpokenCommands("First sentence. Second scratch that more"),
+      applySpokenCommands("First sentence. Second, scratch that, more"),
     ).toBe("First sentence. more");
   });
 
@@ -140,6 +141,44 @@ describe("applySpokenCommands", () => {
 
   it("keeps original gaps around a matched command", () => {
     expect(applySpokenCommands("hello  comma  world")).toBe("hello,  world");
+  });
+
+  it.each([
+    "I finished the report. I'll scratch that off my to-do list.",
+    "Let's scratch that idea and start over.",
+    "We should scratch that from the agenda.",
+    "Hello world scratch that goodbye",
+    "The billing period ends on Friday.",
+    "During the period we saw strong growth.",
+    "My period was late.",
+    "We're launching a new line today.",
+    "Can you read the next line for me?",
+    "Put a comma after the name.",
+    "The colon is part of the large intestine.",
+    "Where does the question mark go?",
+    "Add a semicolon there.",
+    "That was a full stop for the project.",
+    "Remove that comma.",
+  ])("leaves ordinary speech unchanged: %s", (sentence) => {
+    expect(applySpokenCommands(sentence)).toBe(sentence);
+  });
+
+  it.each([
+    ["Hello world scratch that new paragraph Goodbye", "\n\nGoodbye"],
+    ["Hello world scratch that period", "."],
+    ["Stop period next line Go", "Stop.\nGo"],
+    ["hello comma world", "hello, world"],
+  ])("still applies genuine commands: %s", (input, expected) => {
+    expect(applySpokenCommands(input)).toBe(expected);
+  });
+
+  it("treats a word closed off by punctuation as outside the command", () => {
+    expect(applySpokenCommands("Keep this. We. Scratch that.")).toBe(
+      "Keep this.",
+    );
+    expect(applySpokenCommands("Keep this. We scratch that.")).toBe(
+      "Keep this. We scratch that.",
+    );
   });
 
   it("skips scratch and newlines on interim chunks", () => {

@@ -10,6 +10,10 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * a silent no-op for the first-class `auto` setting. Isolated "scratch that"
  * drops the previous sentence. Abbreviations such as "Dr." are not sentence
  * boundaries. Only "scratch that" undoes speech.
+ *
+ * Command words are also ordinary English nouns and verbs ("the billing
+ * period", "scratch that off my list"), so a match only applies where the
+ * words cannot be part of the surrounding sentence.
  */
 
 export const isEnglishSpokenCommandLanguage = (
@@ -77,7 +81,28 @@ const COMMANDS: SpokenCommand[] = [
   insert(["period"], ".", {
     attachLeft: true,
     blockedFollowers: [["of"], ["in"], ["piece"]],
-    blockedPredecessors: [["time"], ["trial"], ["grace"]],
+    blockedPredecessors: [
+      ["time"],
+      ["trial"],
+      ["grace"],
+      ["billing"],
+      ["reporting"],
+      ["waiting"],
+      ["cooling"],
+      ["notice"],
+      ["probation"],
+      ["probationary"],
+      ["transition"],
+      ["fiscal"],
+      ["accounting"],
+      ["payment"],
+      ["rental"],
+      ["warranty"],
+      ["vesting"],
+      ["blackout"],
+      ["review"],
+      ["rest"],
+    ],
   }),
   insert(["colon"], ":", { attachLeft: true, blockedFollowers: [["cancer"]] }),
   insert(["semicolon"], ";", { attachLeft: true }),
@@ -86,6 +111,77 @@ const COMMANDS: SpokenCommand[] = [
 const COMMANDS_BY_LENGTH = [...COMMANDS].sort(
   (left, right) => right.words.length - left.words.length,
 );
+
+const SCRATCH_COMMAND_WORDS = COMMANDS.filter(
+  (command) => command.kind === "scratch",
+).map((command) => command.words);
+
+// A command word right after one of these is a noun in the sentence
+// ("the period", "a comma", "read the next line"), not a dictated mark.
+const NOUN_DETERMINERS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "his",
+  "her",
+  "its",
+  "our",
+  "their",
+  "each",
+  "every",
+  "another",
+  "any",
+  "some",
+  "no",
+  "which",
+  "what",
+  "whose",
+  "per",
+  "same",
+  "last",
+  "next",
+]);
+
+// "scratch that" right after one of these is a verb phrase inside the
+// sentence ("I'll scratch that off", "let's scratch that idea").
+const SCRATCH_CLAUSE_SUBJECTS = new Set([
+  "i",
+  "i'll",
+  "i'd",
+  "we",
+  "we'll",
+  "we'd",
+  "you",
+  "you'll",
+  "they",
+  "they'll",
+  "he",
+  "she",
+  "let's",
+  "lets",
+  "to",
+  "can",
+  "could",
+  "should",
+  "will",
+  "would",
+  "must",
+  "might",
+  "may",
+  "can't",
+  "cannot",
+  "don't",
+  "didn't",
+  "won't",
+  "not",
+  "never",
+]);
 
 // ASCII-only by design: the spoken-command pipeline is English-gated
 // (isEnglishSanitizeLanguage), so command tokens are always ASCII and any
@@ -106,6 +202,11 @@ const isWhitespaceChar = (char: string): boolean =>
 
 const isSentenceStop = (char: string): boolean =>
   char === "." || char === "!" || char === "?";
+
+const endsWithClausePunctuation = (token: string): boolean =>
+  /[.!?,;:]$/.test(token);
+
+const startsWithUppercase = (token: string): boolean => /^[A-Z]/.test(token);
 
 type ParsedSpeech = {
   leading: string;
@@ -342,6 +443,37 @@ export type ApplySpokenCommandsOptions = {
   skipStructuralCommands?: boolean;
 };
 
+const normalizedWord = (token: string | undefined): string =>
+  stripEdgePunctuation((token ?? "").replaceAll("\u2019", "'"));
+
+// `previous` belongs to the sentence unless punctuation closes it off.
+const previousWordIn = (
+  previous: string | undefined,
+  words: ReadonlySet<string>,
+): boolean =>
+  previous !== undefined &&
+  !endsWithClausePunctuation(previous) &&
+  words.has(normalizedWord(previous));
+
+// "scratch that" undoes speech only as its own clause: at the end of the
+// utterance, closed by punctuation, or followed by a new sentence or command.
+const scratchStandsAlone = (
+  tokens: string[],
+  index: number,
+  span: number,
+): boolean => {
+  if (previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS)) {
+    return false;
+  }
+  const next = tokens[index + span];
+  return (
+    next === undefined ||
+    endsWithClausePunctuation(tokens[index + span - 1] ?? "") ||
+    startsWithUppercase(next) ||
+    matchCommandAt(tokens, index + span, false) !== null
+  );
+};
+
 const commandApplies = (
   command: SpokenCommand,
   tokens: string[],
@@ -350,9 +482,16 @@ const commandApplies = (
   skipStructural: boolean,
 ): boolean => {
   if (command.kind === "scratch") {
-    return !skipStructural;
+    return !skipStructural && scratchStandsAlone(tokens, index, span);
   }
   if (skipStructural && command.structural) {
+    return false;
+  }
+  // The "that" closing a "scratch that" is not a determiner.
+  if (
+    previousWordIn(tokens[index - 1], NOUN_DETERMINERS) &&
+    !predecessorBlocked(tokens.slice(0, index), SCRATCH_COMMAND_WORDS)
+  ) {
     return false;
   }
   if (predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)) {
