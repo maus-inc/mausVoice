@@ -224,14 +224,13 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     unsafe {
         windows::Win32::Media::timeBeginPeriod(1);
-        // 20 ms ≈ 50 Hz cursor polling: fast enough that a 50 ms ARM_DWELL
-        // is not hidden behind a stale sample, but not so fast that it
-        // wakes the CPU every frame. The animation tick (16.7 ms) now also
-        // polls hover every frame, so worst-case hover latency is one frame
-        // (16 ms) plus the 50 ms dwell — ~66 ms to first visual feedback,
-        // well within the 100 ms "instant" perception threshold
-        // [1](https://www.nngroup.com/articles/timing-exposing-content/).
-        SetTimer(Some(hwnd), TIMER_CURSOR, 20, None);
+        // 60 ms cursor timer is for monitor repositioning only; hover is
+        // now polled every animation frame (~16.7 ms) in on_anim_tick, so
+        // worst-case latency remains one frame (16 ms) + 50 ms dwell ≈
+        // 66 ms to first visual feedback. Keeping the timer at 60 ms avoids
+        // the extra 2 GetCursorPos/GetWindowRect pairs per tick that the
+        // former 20 ms timer added.
+        SetTimer(Some(hwnd), TIMER_CURSOR, 60, None);
     }
 
     eprintln!("[pill] ready after {:?}", t0.elapsed());
@@ -517,7 +516,9 @@ fn on_anim_tick(hwnd: HWND) {
 fn on_cursor_tick(hwnd: HWND) {
     STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
-            check_hover(hwnd, state);
+            // Hover is sampled every animation frame in on_anim_tick
+            // (16.7 ms); the cursor timer at 60 ms now only re-anchors the
+            // pill to the cursor monitor when it has not been dragged.
             reposition_to_cursor_monitor(hwnd, state);
         }
     });
@@ -1266,10 +1267,15 @@ fn check_hover(hwnd: HWND, state: &PillState) {
     let screen_pill_x = win_rect.left as f64 + ox + pill_x;
     let screen_pill_y = win_rect.top as f64 + oy + pill_y;
 
-    // Anticipatory hysteresis: entry 16 px lets the 50 ms dwell + 220 ms
-    // spring hide in the approach; exit 32 px keeps the pill expanded on
+    // Anticipatory hysteresis is shared (hover::{HOVER_ENTRY_PAD,
+    // HOVER_EXIT_PAD}) so entry 16 px hides the 50 ms dwell + 220 ms
+    // spring in the approach; exit 32 px keeps the pill expanded on
     // edge dither. See PILL_EXPAND_STIFFNESS and hover::ARM_DWELL.
-    let pad = if state.hovered.get() { 32.0 } else { 16.0 };
+    let pad = if state.hovered.get() {
+        rust_pill_shared::hover::HOVER_EXIT_PAD
+    } else {
+        rust_pill_shared::hover::HOVER_ENTRY_PAD
+    };
     let cx = cursor.x as f64;
     let cy = cursor.y as f64;
 

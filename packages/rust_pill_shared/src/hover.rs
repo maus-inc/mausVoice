@@ -41,8 +41,9 @@ const ARM_DWELL: f64 = 0.05;
 /// hysteresis is asymmetric — exits are meant to be stickier than
 /// entrances for hover affordance.
 const EXIT_GRACE: f64 = 0.14;
-/// Pointer speeds above this restart the dwell timer, in px/s. Crossing a
-/// ~200 px pill faster than a quarter second never arms hover.
+/// Pointer speeds above this restart the dwell timer, in px/s. A 200 px
+/// entry zone crossed at ~1100 px/s (~180 ms) still dwells; faster
+/// traversals are treated as passes and reset the dwell.
 ///
 /// Raised to 1100 px/s: the previous 800 px/s was below a typical
 /// comfortable mouse approach (~900–1000 px/s), so even intentional
@@ -50,6 +51,16 @@ const EXIT_GRACE: f64 = 0.14;
 /// pass-throughs (>12k px/s in the fast_pass test) but lets a deliberate
 /// slow drift arm.
 const MAX_ARM_SPEED: f64 = 1100.0;
+
+/// Hover hit-zone padding, in logical pixels, shared by the three
+/// renderers. Entry is anticipatory (the pill expands before the cursor
+/// reaches its edge); exit is larger (hysteresis) so edge dither does not
+/// collapse the pill while the tooltip/side controls are reachable.
+/// Centralised here so the three ports cannot drift and the next tuning
+/// pass touches one place. See `PILL_EXPAND_STIFFNESS` and `ARM_DWELL`
+/// for the companion timing.
+pub const HOVER_ENTRY_PAD: f64 = 16.0;
+pub const HOVER_EXIT_PAD: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -437,5 +448,39 @@ mod tests {
         assert!(!out.hovered);
         let out = hover.advance(&frame(true, 100.0, 1.0 + ARM_DWELL + 0.01));
         assert!(out.hovered && out.entered);
+    }
+
+    #[test]
+    fn realistic_pass_at_900_px_s_still_counts_as_intent() {
+        // The widened entry zone (48 px pill + 2*HOVER_ENTRY_PAD = 80 px)
+        // crossed at 900 px/s spends ~89 ms inside, longer than the 50 ms
+        // dwell, so an intentional slow approach arms. A fast traverse at
+        // ~1500 px/s (well above MAX_ARM_SPEED) resets the dwell and never
+        // arms within the same time, documenting the trade: the wider zone
+        // favours instant feel over pass-through suppression, while the speed
+        // gate still catches very fast flings.
+        let mut hover_slow = HoverIntent::new();
+        let mut armed_slow = false;
+        for i in 0..10 {
+            let x = i as f64 * 15.0; // 15 px per 16.7 ms ≈ 900 px/s
+            let out = hover_slow.advance(&frame(true, x, i as f64 / 60.0));
+            armed_slow |= out.entered;
+        }
+        assert!(armed_slow, "900 px/s intentional approach should arm");
+
+        let mut hover_fast = HoverIntent::new();
+        for i in 0..10 {
+            let x = i as f64 * 25.0; // 25 px per 16.7 ms ≈ 1500 px/s > 1100
+            let out = hover_fast.advance(&frame(true, x, i as f64 / 60.0));
+            assert!(!out.hovered, "1500 px/s pass should not arm on frame {i}");
+        }
+    }
+
+    #[test]
+    fn hover_pad_constants_are_sane() {
+        // Guards the shared hit zone from drifting per platform.
+        assert!(HOVER_ENTRY_PAD > 0.0 && HOVER_ENTRY_PAD < 30.0);
+        assert!(HOVER_EXIT_PAD > HOVER_ENTRY_PAD);
+        assert!(HOVER_EXIT_PAD < 60.0);
     }
 }
