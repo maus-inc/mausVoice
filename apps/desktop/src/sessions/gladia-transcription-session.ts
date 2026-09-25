@@ -161,7 +161,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   }
 
   writeAudioChunk(input: Float32Array): void {
-    if (this.finalized) return;
+    if (this.finalized || !this.resampler) return;
     try {
       const output = this.resampler?.process(input) ?? input;
       if (output.length > 0) {

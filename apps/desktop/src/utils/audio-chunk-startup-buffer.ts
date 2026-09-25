@@ -3,6 +3,7 @@ export type StartupAudioChunk = number[] | Float32Array;
 export type AudioChunkStartupBuffer = {
   push: (samples: StartupAudioChunk) => void;
   setSink: (sink: ((chunk: Float32Array) => void) | null) => void;
+  setSampleRate: (sampleRate: number) => void;
   replay: () => void;
   reset: () => void;
   pendingSampleCount: () => number;
@@ -17,7 +18,7 @@ export const createAudioChunkStartupBuffer = (
   maxStartupSeconds = DEFAULT_MAX_STARTUP_SECONDS,
   initialSampleRate = ASSUMED_STARTUP_SAMPLE_RATE,
 ): AudioChunkStartupBuffer => {
-  const maxSamples = Math.max(
+  let maxSamples = Math.max(
     1,
     Math.ceil(maxStartupSeconds * Math.max(initialSampleRate, 1)),
   );
@@ -55,6 +56,12 @@ export const createAudioChunkStartupBuffer = (
     },
     setSink: (nextSink) => {
       sink = nextSink;
+    },
+    setSampleRate: (sampleRate) => {
+      maxSamples = Math.max(
+        1,
+        Math.ceil(maxStartupSeconds * Math.max(sampleRate, 1)),
+      );
     },
     replay: () => {
       if (!sink) return;

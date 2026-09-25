@@ -179,7 +179,7 @@ const startElevenLabsStreaming = async (
       }
 
       if (force && pendingSampleCountRef.value === 0) {
-        sendAudioChunk(new Float32Array(0), true);
+        ws.send(JSON.stringify({ message_type: "commit" }));
         return;
       }
 

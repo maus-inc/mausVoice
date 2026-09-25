@@ -153,28 +153,26 @@ mod cpal_impl {
             };
 
             if should_emit {
-                let chunk = self.buffer.lock().ok().and_then(|mut buffer| {
-                    if buffer.is_empty() {
-                        None
-                    } else {
-                        Some(std::mem::take(&mut *buffer))
-                    }
-                });
-                if let Some(chunk) = chunk {
+                if let Some(chunk) = self.take_buffered_chunk() {
                     (self.callback)(chunk);
                 }
             }
         }
 
+        fn take_buffered_chunk(&self) -> Option<Vec<f32>> {
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if buffer.is_empty() {
+                None
+            } else {
+                Some(std::mem::take(&mut *buffer))
+            }
+        }
+
         fn flush(&self) {
-            let chunk = self.buffer.lock().ok().and_then(|mut buffer| {
-                if buffer.is_empty() {
-                    None
-                } else {
-                    Some(std::mem::take(&mut *buffer))
-                }
-            });
-            if let Some(chunk) = chunk {
+            if let Some(chunk) = self.take_buffered_chunk() {
                 (self.callback)(chunk);
             }
         }
@@ -413,21 +411,23 @@ mod cpal_impl {
                 .lock()
                 .map_err(|_| RecordingError::NotRecording)?;
             let recording = guard.take().ok_or(RecordingError::NotRecording)?;
+            let sample_rate = recording.sample_rate;
+            let fallback_duration = recording.start.elapsed();
+            let buffer = Arc::clone(&recording.buffer);
+            let chunk_emitter = recording._chunk_emitter.clone();
 
             if let Err(err) = recording._stream.pause() {
                 log::error!("failed to pause input stream before final flush: {err}");
             }
-            if let Some(chunk_emitter) = recording._chunk_emitter.as_ref() {
+            drop(recording);
+            if let Some(chunk_emitter) = chunk_emitter {
                 chunk_emitter.flush();
             }
 
-            let samples = recording
-                .buffer
+            let samples = buffer
                 .lock()
                 .map(|buffer| buffer.clone())
                 .unwrap_or_default();
-            let sample_rate = recording.sample_rate;
-            let fallback_duration = recording.start.elapsed();
             let duration = if !samples.is_empty() && sample_rate > 0 {
                 let duration_secs = samples.len() as f64 / f64::from(sample_rate);
                 std::time::Duration::from_secs_f64(duration_secs)
@@ -435,8 +435,6 @@ mod cpal_impl {
                 fallback_duration
             };
             let size_bytes = samples.len() as u64 * std::mem::size_of::<f32>() as u64;
-
-            drop(recording);
 
             Ok(RecordingResult {
                 metrics: RecordingMetrics {

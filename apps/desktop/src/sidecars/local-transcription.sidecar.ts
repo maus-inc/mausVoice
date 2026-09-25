@@ -101,7 +101,7 @@ export type LocalSidecarTranscribeOutput = {
 };
 
 export type LocalSidecarStreamingSession = {
-  writeAudioChunk: (samples: number[] | Float32Array) => void;
+  writeAudioChunk: (samples: Float32Array) => void;
   finalize: () => Promise<LocalSidecarTranscribeOutput>;
   cleanup: () => void;
 };

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   createStreamingSession: vi.fn(),
   finalize: vi.fn(),
   cleanup: vi.fn(),
+  writeAudioChunk: vi.fn(),
 }));
 vi.mock("../sidecars", () => ({
   getLocalTranscriptionSidecarManager: () => mocks,
@@ -57,7 +58,7 @@ beforeEach(() => {
   mocks.createStreamingSession.mockResolvedValue({
     finalize: mocks.finalize,
     cleanup: mocks.cleanup,
-    writeAudioChunk: vi.fn(),
+    writeAudioChunk: mocks.writeAudioChunk,
   });
 });
 afterEach(() => setAppState(structuredClone(INITIAL_APP_STATE), true));
@@ -108,6 +109,10 @@ describe("local streaming filter ownership", () => {
       setFilter(false);
       const session = new LocalTranscriptionSession();
       await session.onRecordingStart(16000);
+      session.writeAudioChunk(new Float32Array([0.1, 0.2]));
+      expect(mocks.writeAudioChunk).toHaveBeenCalledWith(
+        new Float32Array([0.1, 0.2]),
+      );
       expect(mocks.createStreamingSession).toHaveBeenCalledWith(
         expect.objectContaining({ hallucinationFilterEnabled: false }),
       );
