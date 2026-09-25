@@ -253,7 +253,11 @@ const arrayBufferToBase64 = (
         ? new Uint8Array(buffer)
         : new Uint8Array(buffer as ArrayBuffer);
   if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
-    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+    return Buffer.from(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    ).toString("base64");
   }
   // Browser path: build binary string in chunks to avoid O(n²) concatenation
   // and stack overflow. Each chunk is converted via manual loop using
@@ -331,7 +335,9 @@ const getUploadUrl = (response: Response): string => {
     response.headers.get("x-goog-upload-url") ??
     response.headers.get("X-Goog-Upload-URL");
   if (!url) {
-    console.warn("Gemini Files API: missing x-goog-upload-url header – falling back to inlineData");
+    console.warn(
+      "Gemini Files API: missing x-goog-upload-url header – falling back to inlineData",
+    );
     throw new Error("Gemini Files API did not return an upload URL");
   }
   try {
@@ -339,12 +345,22 @@ const getUploadUrl = (response: Response): string => {
     if (parsed.protocol !== "https:") {
       throw new Error(`Refusing non-HTTPS upload URL: ${parsed.protocol}`);
     }
-    const allowedHosts = ["generativelanguage.googleapis.com", "storage.googleapis.com", "upload.example.com"];
+    const allowedHosts = [
+      "generativelanguage.googleapis.com",
+      "storage.googleapis.com",
+      "upload.example.com",
+    ];
     // In production, only googleapis.com and storage.googleapis.com are expected.
     // Allow upload.example.com for tests.
-    if (!allowedHosts.some((h) => parsed.hostname === h || parsed.hostname.endsWith("." + h))) {
+    if (
+      !allowedHosts.some(
+        (h) => parsed.hostname === h || parsed.hostname.endsWith("." + h),
+      )
+    ) {
       // Log but don't block for forward-compatibility; real enforcement is in secureFetch capability.
-      console.warn(`Gemini Files API: unexpected upload host ${parsed.hostname}`);
+      console.warn(
+        `Gemini Files API: unexpected upload host ${parsed.hostname}`,
+      );
     }
   } catch (e) {
     if (e instanceof Error && e.message.includes("Refusing")) throw e;
@@ -362,9 +378,7 @@ const uploadGeminiFile = async (
   signal?: AbortSignal,
 ): Promise<{ uri: string; mimeType: string }> => {
   const bytes =
-    blob instanceof Uint8Array
-      ? blob
-      : new Uint8Array(blob as ArrayBuffer);
+    blob instanceof Uint8Array ? blob : new Uint8Array(blob as ArrayBuffer);
 
   const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
     method: "POST",
@@ -480,7 +494,12 @@ const waitForGeminiFileActive = async (
       throw new DOMException("aborted", "AbortError");
     }
     try {
-      const state = await fetchGeminiFileState(fileUri, apiKey, customFetch, signal);
+      const state = await fetchGeminiFileState(
+        fileUri,
+        apiKey,
+        customFetch,
+        signal,
+      );
       if (state === "ACTIVE") return;
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -539,13 +558,20 @@ const buildAudioTranscriptionConfig = (args: {
 
   // API constraint: custom_vocabulary is incompatible with diarization and
   // word timestamps. Documented at https://ai.google.dev/gemini-api/docs/transcribe
-  if (vocab && vocab.length > 0 && (args.enableDiarization || args.enableWordTimestamps)) {
+  if (
+    vocab &&
+    vocab.length > 0 &&
+    (args.enableDiarization || args.enableWordTimestamps)
+  ) {
     delete config.customVocabulary;
   }
 
   // API constraint: SMART mode is incompatible with diarization/timestamps.
   // Fall back to VERBATIM per docs.
-  if (args.transcriptionMode === "smart" && (args.enableDiarization || args.enableWordTimestamps)) {
+  if (
+    args.transcriptionMode === "smart" &&
+    (args.enableDiarization || args.enableWordTimestamps)
+  ) {
     config.mode = "VERBATIM";
   }
 
@@ -606,10 +632,21 @@ const tryUploadWithFallback = async (args: {
   let uploadedUri: string | undefined;
   let uploadedMimeType = args.mimeType;
   try {
-    const uploaded = await uploadGeminiFile(args.apiKey, args.blob, args.mimeType, args.customFetch, args.signal);
+    const uploaded = await uploadGeminiFile(
+      args.apiKey,
+      args.blob,
+      args.mimeType,
+      args.customFetch,
+      args.signal,
+    );
     uploadedUri = uploaded.uri;
     uploadedMimeType = uploaded.mimeType;
-    await waitForGeminiFileActive(uploaded.uri, args.apiKey, args.customFetch, args.signal);
+    await waitForGeminiFileActive(
+      uploaded.uri,
+      args.apiKey,
+      args.customFetch,
+      args.signal,
+    );
     return { uri: uploaded.uri, mimeType: uploaded.mimeType };
   } catch (error) {
     if (uploadedUri) {
@@ -619,8 +656,13 @@ const tryUploadWithFallback = async (args: {
     // For upload path, fallback to inlineData on any failure except abort,
     // even permanent 4xx (413 too large, 400 bad mimeType, 401/403) – pre-PR
     // code always used inlineData and would have completed.
-    const truncated = error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
-    console.warn(`Gemini Files API upload failed, falling back to inlineData: ${truncated}`);
+    const truncated =
+      error instanceof Error
+        ? error.message.slice(0, 200)
+        : String(error).slice(0, 200);
+    console.warn(
+      `Gemini Files API upload failed, falling back to inlineData: ${truncated}`,
+    );
     return { uri: undefined, mimeType: args.mimeType };
   }
 };
