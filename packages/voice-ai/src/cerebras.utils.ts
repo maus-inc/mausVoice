@@ -12,6 +12,13 @@ import {
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  isProviderTerminalError,
+  isProviderTerminalStatus,
+  ProviderError,
+  readProviderStatus,
+  redactProviderMessage,
+} from "./provider-error.utils";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
 export type CerebrasModel =
@@ -25,63 +32,19 @@ const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
  * message instead of a generic fallback. The API key, authorization header,
  * and raw transcript are never attached.
  */
-export class CerebrasProviderError extends Error {
-  readonly status?: number;
-
+export class CerebrasProviderError extends ProviderError {
   constructor(message: string, status?: number) {
-    super(message);
+    super(message, { status });
     this.name = "CerebrasProviderError";
-    this.status = status;
   }
 }
 
-/** True when a status must not be retried (billing, auth, bad request). */
-export const isCerebrasTerminalStatus = (status: number): boolean =>
-  status === 400 ||
-  status === 401 ||
-  status === 402 ||
-  status === 403 ||
-  status === 404 ||
-  status === 422;
+export const isCerebrasTerminalStatus = isProviderTerminalStatus;
 
-/**
- * Replace the literal API key and common authorization material anywhere in
- * a provider message. The OpenAI SDK's own error strings can embed the key
- * ("Incorrect API key provided: csk_..."), and some proxies echo the
- * Authorization header. Never reveals the key value itself (no length/first
- * characters), so a message like "key csk_ab" redacts the whole token.
- */
-const CEREBRAS_SECRET_PATTERNS: RegExp[] = [
-  /\bcsk_[a-z0-9_-]+/gi,
-  /\bsk-[a-z0-9_-]+/gi,
-  /\bsk_[a-z0-9_-]+/gi,
-  /bearer\s+[a-z0-9._~+/=-]+/gi,
-  /authorization:\s*[^\s;,]+/gi,
-  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
-];
-
-export const redactCerebrasMessage = (message: string): string =>
-  CEREBRAS_SECRET_PATTERNS.reduce(
-    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
-    message,
-  );
-
-const readStatus = (error: unknown): number | undefined => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return undefined;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-};
+export const redactCerebrasMessage = redactProviderMessage;
 
 /** True when a thrown value carries a non-retryable Cerebras HTTP status. */
-export const isCerebrasTerminalError = (error: unknown): boolean => {
-  if (error instanceof CerebrasProviderError && error.status !== undefined) {
-    return isCerebrasTerminalStatus(error.status);
-  }
-  const status = readStatus(error);
-  return status !== undefined && isCerebrasTerminalStatus(status);
-};
+export const isCerebrasTerminalError = isProviderTerminalError;
 
 /**
  * Normalize any value thrown by a Cerebras call into a throwable error.
@@ -97,11 +60,7 @@ export const normalizeCerebrasError = (error: unknown): Error => {
     return error;
   }
 
-  const status =
-    typeof error === "object" && error !== null && "status" in error
-      ? (error as { status?: unknown }).status
-      : undefined;
-  const numericStatus = typeof status === "number" ? status : undefined;
+  const numericStatus = readProviderStatus(error);
 
   if (numericStatus === 402) {
     return new CerebrasProviderError(

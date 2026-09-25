@@ -21,6 +21,7 @@ import {
   ClaudeGenerateTextRepo,
   DeepseekGenerateTextRepo,
   GeminiGenerateTextRepo,
+  GenerateTextFallbackError,
   GroqGenerateTextRepo,
   OpenAIGenerateTextRepo,
   OpenAICompatibleGenerateTextRepo,
@@ -250,6 +251,57 @@ describe("default model fallback when no model is stored", () => {
       expect(allowed).toContain(mocked.mock.calls[0]![0]!.model);
     },
   );
+});
+
+describe("Groq fallback chain when every model fails", () => {
+  it("names the configured model, the fallback, and both causes", async () => {
+    // Regression: the chain reported only the fallback's error, so a fallback
+    // model that the provider had since retired looked like the configured
+    // model failing on its own with no reason to act on.
+    vi.mocked(groqGenerateTextResponse)
+      .mockRejectedValueOnce(new Error("primary was rate limited"))
+      .mockRejectedValueOnce(new Error("fallback was retired"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    const thrown = await repo.generateText({ prompt: "p" }).catch((e) => e);
+
+    expect(thrown).toBeInstanceOf(GenerateTextFallbackError);
+    expect((thrown as GenerateTextFallbackError).model).toBe(
+      "openai/gpt-oss-120b",
+    );
+    expect((thrown as GenerateTextFallbackError).fallbackModel).toBe(
+      "openai/gpt-oss-20b",
+    );
+    expect((thrown as Error).message).toContain("primary was rate limited");
+    expect((thrown as Error).message).toContain("fallback was retired");
+  });
+
+  it("rethrows the provider error untouched when the configured model is the fallback", async () => {
+    // No second model to try, so wrapping would invent a fallback that never ran.
+    const providerError = new Error(
+      "Groq does not serve the model openai/gpt-oss-20b",
+    );
+    vi.mocked(groqGenerateTextResponse).mockRejectedValue(providerError);
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const thrown = await repo.generateText({ prompt: "p" }).catch((e) => e);
+
+    expect(thrown).toBe(providerError);
+    expect(vi.mocked(groqGenerateTextResponse)).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back after the caller aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.mocked(groqGenerateTextResponse).mockRejectedValue(new Error("aborted"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    await expect(
+      repo.generateText({ prompt: "p", signal: controller.signal }),
+    ).rejects.toThrow("aborted");
+
+    expect(vi.mocked(groqGenerateTextResponse)).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("generateText metadata reports the resolved model", () => {
