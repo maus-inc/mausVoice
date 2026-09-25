@@ -245,9 +245,27 @@ export const submitOnboarding = async () => {
   const trimmedLastName = state.onboarding.lastNameEnabled
     ? state.onboarding.lastName.trim()
     : "";
+  // When the user only typed into the text fields (name was blank before), join
+  // first + last. If there was already a full name on state (auto-filled from
+  // the auth provider or from an existing User record), build from the fields
+  // only when the user edited them; otherwise keep the existing full name so
+  // middle names and multi-token surnames are preserved instead of being
+  // collapsed to "first + last-token" by getFirstAndLastName.
+  const existingName = state.onboarding.name.trim();
+  const joinedFromParts = [trimmedFirstName, trimmedLastName]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const nameWasAutoFilled =
+    existingName.length > 0 && existingName !== joinedFromParts;
+  const lastNameEditedManually =
+    state.onboarding.lastNameEnabled &&
+    trimmedLastName.length > 0 &&
+    !existingName.endsWith(trimmedLastName);
   const trimmedName =
-    [trimmedFirstName, trimmedLastName].filter(Boolean).join(" ").trim() ||
-    state.onboarding.name.trim();
+    nameWasAutoFilled && !lastNameEditedManually
+      ? existingName
+      : joinedFromParts || existingName;
   const preferredMicrophone =
     state.onboarding.preferredMicrophone?.trim() ?? null;
   const normalizedMicrophone =

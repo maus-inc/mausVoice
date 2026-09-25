@@ -55,7 +55,9 @@ export const SignInForm = () => {
   );
 
   // Prefill name fields from the auth provider's displayName on first sign-in
-  // if nothing has been entered yet.
+  // if nothing has been entered yet. We keep the full displayName as the
+  // canonical `name` so middle names / multi-token surnames survive — the
+  // split into first/last only seeds the two input boxes.
   useEffect(() => {
     if (!isSignedIn) return;
     if (firstName.trim() !== "") return;
@@ -69,7 +71,7 @@ export const SignInForm = () => {
           draft.onboarding.lastName = ln;
           draft.onboarding.lastNameEnabled = true;
         }
-        draft.onboarding.name = [fn, ln].filter(Boolean).join(" ");
+        draft.onboarding.name = dn.trim();
       });
     }
   }, [auth, isSignedIn, firstName]);
@@ -144,18 +146,30 @@ export const SignInForm = () => {
     setEmailDialogOpen(false);
   };
 
-  const syncName = (fn: string, ln: string, lnEnabled: boolean) =>
-    [fn.trim(), lnEnabled ? ln.trim() : ""].filter(Boolean).join(" ");
-
   const handleFirstNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     produceAppState((draft) => {
       draft.onboarding.firstName = value;
-      draft.onboarding.name = syncName(
-        value,
-        draft.onboarding.lastName,
-        draft.onboarding.lastNameEnabled,
-      );
+      // If the user has already activated/edited the last-name field, treat the
+      // two fields as canonical; otherwise (last name still greyed) keep any
+      // pre-filled existing name (minus old first token) so multi-token
+      // surnames / middle names from an auth displayName aren't dropped while
+      // the user is still editing just the first-name box.
+      if (draft.onboarding.lastNameEnabled) {
+        draft.onboarding.name = [value.trim(), draft.onboarding.lastName.trim()]
+          .filter(Boolean)
+          .join(" ");
+      } else {
+        const existing = draft.onboarding.name.trim();
+        const { firstName: oldFn } = getFirstAndLastName(existing);
+        // Preserve everything after the first token when the user hasn't touched
+        // the last-name box yet.
+        const rest =
+          oldFn && existing.toLowerCase().startsWith(oldFn.toLowerCase())
+            ? existing.slice(oldFn.length).trim()
+            : "";
+        draft.onboarding.name = [value.trim(), rest].filter(Boolean).join(" ");
+      }
     });
   };
 
@@ -170,7 +184,13 @@ export const SignInForm = () => {
     produceAppState((draft) => {
       draft.onboarding.lastName = value;
       draft.onboarding.lastNameEnabled = true;
-      draft.onboarding.name = syncName(draft.onboarding.firstName, value, true);
+      // Rejoin from parts; once the user edits last name, treat the fields as
+      // the source of truth (middle names that were pre-filled from the auth
+      // provider displayName are intentionally lost at this point because the
+      // user has explicitly chosen a two-field name).
+      draft.onboarding.name = [draft.onboarding.firstName.trim(), value.trim()]
+        .filter(Boolean)
+        .join(" ");
     });
   };
 
