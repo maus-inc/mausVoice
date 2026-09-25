@@ -38,6 +38,33 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
   "openai/gpt-oss-120b",
 ]);
 
+/**
+ * HTTP statuses that describe the account or the request, not the model.
+ * Switching models cannot fix any of them, so neither another retry of the
+ * same model nor a second model is worth the extra request chain.
+ *
+ * 404 is deliberately absent. A 404 from Groq is `model_not_found`, which is
+ * exactly the case a different model can fix. 429 is absent because Groq
+ * enforces per-model rate limits, so another model can still succeed.
+ */
+const ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES = new Set([400, 401, 402, 403]);
+
+const readErrorStatus = (error: unknown): number | null => {
+  if (typeof error !== "object" || error === null) return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : null;
+};
+
+/**
+ * True when the failure is scoped to the account or the request rather than
+ * the model, so retrying the same model or falling back to a different one
+ * cannot succeed.
+ */
+export const isGroqAccountScopedError = (error: unknown): boolean => {
+  const status = readErrorStatus(error);
+  return status !== null && ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES.has(status);
+};
+
 export const TRANSCRIPTION_MODELS = [
   "whisper-large-v3-turbo",
   "whisper-large-v3",
@@ -127,9 +154,11 @@ export const groqGenerateTextResponse = async ({
   return retry({
     // A present-but-not-aborted signal is not an abort and must not disable
     // retries for transient failures. Only an actually aborted signal is
-    // terminal.
+    // terminal. An account-scoped rejection is terminal too: another attempt
+    // on the same key cannot succeed.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: (error) =>
+      !signal?.aborted && !isGroqAccountScopedError(error),
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

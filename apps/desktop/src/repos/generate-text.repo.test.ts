@@ -231,6 +231,38 @@ describe("Groq fallback model", () => {
     expect(mocked).toHaveBeenCalledTimes(2);
     expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
+
+  // An account-scoped rejection fails identically on every model, so a second
+  // request chain only delays surfacing the real problem.
+  it.each([400, 401, 402, 403])(
+    "does not try a second model after an account-scoped %i",
+    async (status) => {
+      const mocked = vi.mocked(groqGenerateTextResponse);
+      mocked.mockRejectedValue(Object.assign(new Error("nope"), { status }));
+
+      const repo = new GroqGenerateTextRepo("k", null);
+      await expect(repo.generateText({ prompt: "p" })).rejects.toThrow("nope");
+
+      expect(mocked).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([404, 429, 500, 503])(
+    "still tries a second model after a retryable-model %i",
+    async (status) => {
+      const mocked = vi.mocked(groqGenerateTextResponse);
+      mocked.mockRejectedValueOnce(
+        Object.assign(new Error("transient"), { status }),
+      );
+      mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+      const repo = new GroqGenerateTextRepo("k", null);
+      const output = await repo.generateText({ prompt: "p" });
+
+      expect(mocked).toHaveBeenCalledTimes(2);
+      expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+    },
+  );
 });
 
 describe("default model fallback when no model is stored", () => {
