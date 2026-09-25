@@ -151,6 +151,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         return (
           <ListTile
             key={path}
+            component="li"
             onClick={() => onChooseHandler(path)}
             selected={selected}
             ariaCurrent={selected ? "page" : undefined}
@@ -201,27 +202,33 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       <Box sx={{ flexGrow: 1, overflowY: "auto", pt: 0.5 }}>{list}</Box>
       <Box sx={{ mt: 1, p: 1.5, pt: 0 }}>
         {isUpdateAvailable && <UpdateListTile />}
-        <ListTile
-          key={settingsPath}
-          onClick={() => onChooseHandler(settingsPath)}
-          selected={settingsSelected}
-          ariaCurrent={settingsSelected ? "page" : undefined}
-          leading={<MorphNavIcon icon={Settings} />}
-          title={<FormattedMessage defaultMessage="Settings" />}
-          disableRipple
-          indicator={activeIndicator(settingsSelected)}
-          sx={{
-            "& .MuiListItemButton-root": {
-              "&.Mui-selected": {
-                backgroundColor: "transparent",
-                boxShadow: "none",
+        <List
+          aria-label={intl.formatMessage({ defaultMessage: "Settings" })}
+          disablePadding
+        >
+          <ListTile
+            key={settingsPath}
+            component="li"
+            onClick={() => onChooseHandler(settingsPath)}
+            selected={settingsSelected}
+            ariaCurrent={settingsSelected ? "page" : undefined}
+            leading={<MorphNavIcon icon={Settings} />}
+            title={<FormattedMessage defaultMessage="Settings" />}
+            disableRipple
+            indicator={activeIndicator(settingsSelected)}
+            sx={{
+              "& .MuiListItemButton-root": {
+                "&.Mui-selected": {
+                  backgroundColor: "transparent",
+                  boxShadow: "none",
+                },
+                "&.Mui-selected:hover": {
+                  backgroundColor: "transparent",
+                },
               },
-              "&.Mui-selected:hover": {
-                backgroundColor: "transparent",
-              },
-            },
-          }}
-        />
+            }}
+          />
+        </List>
       </Box>
     </Stack>
   );
