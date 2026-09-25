@@ -25,8 +25,10 @@ import {
   geminiStreamChat,
   GENERATE_TEXT_MODELS,
   GenerateTextModel,
+  GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   groqStreamChat,
+  isGroqAccountScopedError,
   OpenAIGenerateTextModel,
   openaiGenerateTextResponse,
   openaiStreamChat,
@@ -72,7 +74,10 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  // The default model the constructor falls back to when nothing is stored.
+  // It is a live Groq id, so a post-processing failure never becomes a hard
+  // 404 the way the retired `qwen/qwen3.6-27b` id did.
+  private defaultModel: GenerateTextModel = GROQ_DEFAULT_GENERATE_TEXT_MODEL;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -84,7 +89,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     this.model =
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
-        : "openai/gpt-oss-20b";
+        : this.defaultModel;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -98,6 +103,15 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         model,
       },
     };
+  }
+
+  private resolveFallbackModel(): GenerateTextModel {
+    // Pick the first supported Groq model that is not the one that just
+    // failed. A default-model failure must still reach a second live model, so
+    // the fallback is never the same id as the primary.
+    const supported: readonly string[] = GENERATE_TEXT_MODELS;
+    const alternative = supported.find((candidate) => candidate !== this.model);
+    return (alternative as GenerateTextModel) ?? this.defaultModel;
   }
 
   private async generateWithFallback(input: GenerateTextInput) {
@@ -115,20 +129,34 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     } catch (error) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
-      if (input.signal?.aborted || this.model === this.fallbackModel) {
+      if (input.signal?.aborted) {
+        throw error;
+      }
+
+      // An account-scoped rejection (bad key, no credits, permission denied)
+      // fails identically on every model, so a second request chain only
+      // delays surfacing it.
+      if (isGroqAccountScopedError(error)) {
+        throw error;
+      }
+
+      const fallbackModel = this.resolveFallbackModel();
+      if (fallbackModel === this.model) {
+        // No distinct alternative is available, so a second attempt would
+        // only repeat the same failure.
         throw error;
       }
 
       const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
-        model: this.fallbackModel,
+        model: fallbackModel,
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
         signal: input.signal,
       });
-      return { response, model: this.fallbackModel };
+      return { response, model: fallbackModel };
     }
   }
 
