@@ -4,6 +4,7 @@ use crate::constants::*;
 use crate::draw::{over_side_control, pill_position, tooltip_rendered_origin};
 use crate::gfx;
 use crate::state::{ClickAction, PillState};
+use rust_pill_shared::hover::{HOVER_ENTRY_PAD, HOVER_EXIT_PAD};
 
 fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
@@ -285,20 +286,12 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
-/// Hover hit zone padding, in points, relative to the pill's live geometry.
-/// Entry is generous (anticipatory) so the pill is already expanding by the
-/// time the cursor reaches its edge — the animation's 50 ms dwell + 220 ms
-/// spring are hidden in the approach. Exit is larger still (hysteresis) so
-/// edge dither does not collapse the pill and the tooltip/side-controls
-/// stay reachable even near their outer edge. Values derive from
-/// Fitts's law + NN/g timing: an 8 px entry felt narrow and forced a
-/// precise stop; 14–16 px lets a 900 px/s approach trigger ~15 ms earlier,
-/// which is half the dwell-time saving. See shared `PILL_EXPAND_STIFFNESS`
-/// and `hover::ARM_DWELL` for the companion timing change.
-const HOVER_ENTRY_PAD_X: f64 = 16.0;
-const HOVER_ENTRY_PAD_Y: f64 = 12.0;
-const HOVER_EXIT_PAD_X: f64 = 32.0;
-const HOVER_EXIT_PAD_Y: f64 = 36.0;
+/// Hover hit zone padding is shared (`rust_pill_shared::hover`) so the
+/// three renderers keep one anticipatory entry / hysteretic exit zone.
+/// macOS previously used per-axis 16/12 and 32/36; these are now the
+/// shared 16 / 32 for both axes — the Y difference was ~4 px, small
+/// against the pill height, and unifying removes a drift point. See
+/// `PILL_EXPAND_STIFFNESS` and `hover::ARM_DWELL` for companion timing.
 
 pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     let s = state.ui_scale;
@@ -313,11 +306,12 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     let currently_hovered = state.hovered.get();
-    let (pad_x, pad_y) = if currently_hovered {
-        (HOVER_EXIT_PAD_X, HOVER_EXIT_PAD_Y)
+    let pad = if currently_hovered {
+        HOVER_EXIT_PAD
     } else {
-        (HOVER_ENTRY_PAD_X, HOVER_ENTRY_PAD_Y)
+        HOVER_ENTRY_PAD
     };
+    let (pad_x, pad_y) = (pad, pad);
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
     if x >= pill_x - pad_x && x <= pill_x + pill_w + pad_x
