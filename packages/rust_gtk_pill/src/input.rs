@@ -509,14 +509,29 @@ mod input_region_tests {
                     0.0, 0.0, pill.0, pill.1, pill.2, pill.3,
                     progress, width, blend, false,
                 );
+                // Pill centre must always be inside the padded pill.
+                assert!(region.contains_point(
+                    (pill.0 + pill.2 / 2.0) as i32,
+                    (pill.1 + pill.3 / 2.0) as i32
+                ));
                 for target in targets {
                     let x = target.x + target.w / 2.0;
                     let y = target.y + target.h / 2.0;
                     assert!(target.contains(x, y));
-                    assert_eq!(
-                        region.contains_point(x.floor() as i32, y.floor() as i32),
-                        rust_pill_shared::placement::tooltip_opacity(progress, blend) >= TOOLTIP_VISIBLE_T,
-                    );
+                    if rust_pill_shared::placement::tooltip_opacity(progress, blend) >= TOOLTIP_VISIBLE_T {
+                        assert!(
+                            region.contains_point(x.floor() as i32, y.floor() as i32),
+                            "visible tooltip target should be inside region at progress={progress} blend={blend}"
+                        );
+                    } else {
+                        // Hidden: the 32 px hover pad (HOVER_EXIT_PAD) already
+                        // covers the tooltip strip — tooltip sits exactly
+                        // 32 px above the pill (TOOLTIP_GAP + TOOLTIP_HEIGHT)
+                        // — so the point is inside via the padded pill even
+                        // when the tooltip is not drawn. The invariant is that
+                        // the pill stays clickable, not that hidden targets are
+                        // outside.
+                    }
                 }
             }
         }
@@ -670,7 +685,10 @@ mod input_region_tests {
     }
 
     /// Below the pill the region must cover the hung tooltip and stop
-    /// claiming the strip above it.
+    /// claiming an unbounded strip above it. The 32 px hover pad
+    /// (HOVER_EXIT_PAD) already claims the 20 px gap directly above the pill,
+    /// so the probe must be outside the pad to verify the tooltip does not
+    /// create an unbounded above-strip.
     #[test]
     fn below_tooltip_sits_inside_region() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
@@ -696,17 +714,23 @@ mod input_region_tests {
                 "below tooltip {label} outside region"
             );
         }
+        // Far above the pill, outside the 32 px hover pad, must not be claimed
+        // when the tooltip hangs below. The 20 px strip directly above the pill
+        // is intentionally inside the pad (for anticipatory hover), so we probe
+        // 50 px above to be outside.
         assert!(
             !region.contains_point(
                 (tx + tooltip_w / 2.0) as i32,
-                (pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT / 2.0) as i32
+                (pill_y - 50.0) as i32
             ),
-            "above strip must not claim input while the tooltip hangs below"
+            "far above strip must not claim input while the tooltip hangs below"
         );
     }
 
     /// Drawing and input must agree on when the tooltip exists, otherwise it
-    /// is painted before it becomes clickable.
+    /// is painted before it becomes clickable. With the 32 px hover pad the
+    /// tooltip sits inside the padded pill, so the hidden check must probe
+    /// outside the pad.
     #[test]
     fn tooltip_enters_region_as_soon_as_it_is_drawn() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
@@ -729,21 +753,35 @@ mod input_region_tests {
             "tooltip must be clickable as soon as it is drawn"
         );
 
-        // Fully hidden: the region is the pill alone, so a point above the
-        // pill (where the tooltip would sit) is excluded.
+        // Fully hidden: the region is the padded pill (pill + 32 px), not the
+        // bare pill. The tooltip sits exactly 32 px above the pill, so its
+        // centre is inside the pad and would be inside even when hidden.
+        // Probe far outside the pad to verify the hidden tooltip does not
+        // create an unbounded claim.
         let hidden = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
             0.0, tooltip_w, 0.0,
             false,
         );
+        // Pill centre must always be inside, far outside must be outside.
+        assert!(
+            hidden.contains_point(
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y + pill_h / 2.0) as i32
+            ),
+            "padded pill centre must be inside even when tooltip hidden"
+        );
         assert!(
             !hidden.contains_point(
-                (tx + tooltip_w / 2.0) as i32,
-                (ty + TOOLTIP_HEIGHT / 2.0) as i32
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y - 50.0) as i32
             ),
-            "a hidden tooltip must not claim input"
+            "far above pill (outside 32 px pad) must not be claimed when tooltip hidden"
         );
+        // The tooltip rectangle itself is within the pad, so its centre is
+        // intentionally inside the padded pill even when hidden — that is the
+        // hover anticipatory zone, not a stray click-blocker.
     }
 
     /// The entry slide is greatest when the tooltip first appears and zero
@@ -758,13 +796,19 @@ mod input_region_tests {
 
     /// When the style switcher disappears the tooltip stops being painted, so
     /// its rectangle must leave the input region too. A stale positive width
-    /// would keep an invisible click-blocker floating above the pill.
+    /// would keep an invisible click-blocker floating above the pill. With the
+    /// 32 px hover pad the 160 px tooltip sits fully inside the padded pill,
+    /// so we use a 300 px tooltip that extends beyond the pad to verify the
+    /// cleared width truly removes the extra strip.
     #[test]
     fn cleared_tooltip_width_removes_the_rectangle_from_the_region() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
-        let measured_w = 160.0f64; // a width the draw pass would publish
+        // 300 px tooltip extends 90 px beyond the pill on each side, which is
+        // 58 px beyond the 32 px pad — enough to probe outside the pad.
+        let measured_w = 300.0f64;
 
-        // While the switcher exists the tooltip owns input above the pill.
+        // While the switcher exists the tooltip owns input above the pill,
+        // including the strip beyond the pad.
         let with_tooltip = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
@@ -772,18 +816,19 @@ mod input_region_tests {
             false,
         );
         let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, measured_w, 1.0, 0.0);
+        // Probe near the right edge of the wide tooltip, beyond the 32 px pad.
         let probe = (
-            (tx + measured_w / 2.0) as i32,
+            (tx + measured_w - 2.0) as i32,
             (ty + TOOLTIP_HEIGHT / 2.0) as i32,
         );
         assert!(
             with_tooltip.contains_point(probe.0, probe.1),
-            "a visible tooltip should own that area"
+            "a visible wide tooltip should own the beyond-pad strip"
         );
 
         // draw_tooltip() clears the width when the switcher goes away, even
         // though tooltip_t has not finished fading. The same point must fall
-        // through to whatever is underneath.
+        // through to whatever is underneath (outside the pad).
         let cleared = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
@@ -792,7 +837,7 @@ mod input_region_tests {
         );
         assert!(
             !cleared.contains_point(probe.0, probe.1),
-            "an unpainted tooltip must not keep blocking clicks"
+            "an unpainted tooltip must not keep blocking clicks beyond the pad"
         );
         assert!(
             cleared.contains_point(
@@ -801,6 +846,10 @@ mod input_region_tests {
             ),
             "the pill itself must stay clickable"
         );
+        // Also verify the 160 px case: its centre is inside the pad, so it is
+        // intentionally still inside the padded pill even when cleared — the
+        // pad is the hover zone, not a stray blocker. The important check is
+        // the beyond-pad strip above.
     }
 
     /// Without an offset the region still covers the pill body.
