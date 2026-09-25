@@ -84,11 +84,13 @@ export type LocalSidecarTranscribeInput = {
   preferGpu: boolean;
   deviceId?: string;
   hallucinationFilterEnabled?: boolean;
+  /** Aborts the finalize request and releases the sidecar session. */
+  signal?: AbortSignal;
 };
 
 export type LocalSidecarStreamingSessionInput = Omit<
   LocalSidecarTranscribeInput,
-  "samples"
+  "samples" | "signal"
 >;
 
 export type LocalSidecarTranscribeOutput = {
@@ -102,7 +104,7 @@ export type LocalSidecarTranscribeOutput = {
 
 export type LocalSidecarStreamingSession = {
   writeAudioChunk: (samples: number[] | Float32Array) => void;
-  finalize: () => Promise<LocalSidecarTranscribeOutput>;
+  finalize: (signal?: AbortSignal) => Promise<LocalSidecarTranscribeOutput>;
   cleanup: () => void;
 };
 
@@ -420,7 +422,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         }
         queueChunkUpload(this.toFloat32Array(samples));
       },
-      finalize: async () => {
+      finalize: async (signal) => {
         if (finalizePromise) {
           return await finalizePromise;
         }
@@ -439,7 +441,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
           );
           const result = await this.requestJson<SidecarTranscriptionResponse>(
             `${sessionPath}/finalize`,
-            { method: "POST" },
+            { method: "POST", signal },
           );
           getLogger().info(
             `[${this.config.logPrefix}] finalize response received (${result.text.length} chars)`,
@@ -485,6 +487,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   private async transcribeInternal(
     input: LocalSidecarTranscribeInput,
   ): Promise<LocalSidecarTranscribeOutput> {
+    input.signal?.throwIfAborted();
     const session = await this.createStreamingSession(input);
     const floatSamples = this.toFloat32Array(input.samples);
 
@@ -501,7 +504,7 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
         session.writeAudioChunk(floatSamples.subarray(cursor, end));
       }
 
-      return await session.finalize();
+      return await session.finalize(input.signal);
     } catch (error) {
       session.cleanup();
       throw error;

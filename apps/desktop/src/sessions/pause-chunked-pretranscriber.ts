@@ -10,6 +10,7 @@ export type PretranscribedChunk = {
 export type ChunkTranscriber = (
   samples: Float32Array,
   sampleRate: number,
+  signal: AbortSignal,
 ) => Promise<PretranscribedChunk>;
 
 export type PauseChunkingConfig = {
@@ -107,6 +108,7 @@ export class PauseChunkedPretranscriber {
   private readonly committed: CommittedChunk[] = [];
   private readonly results: Promise<PretranscribedChunk>[] = [];
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly abortController = new AbortController();
   private failed = false;
   private sealed = false;
   private disposed = false;
@@ -186,9 +188,11 @@ export class PauseChunkedPretranscriber {
     };
   }
 
+  /** Stops listening and cancels span requests that are queued or in flight. */
   dispose(): void {
     this.sealed = true;
     this.disposed = true;
+    this.abortController.abort();
     this.buffer = new Float32Array(0);
     this.bufferLength = 0;
   }
@@ -273,9 +277,11 @@ export class PauseChunkedPretranscriber {
   }
 
   private enqueue(span: Float32Array): Promise<PretranscribedChunk> {
-    const result = this.queue.then(() =>
-      this.transcribe(span, this.sampleRate),
-    );
+    const { signal } = this.abortController;
+    const result = this.queue.then(() => {
+      signal.throwIfAborted();
+      return this.transcribe(span, this.sampleRate, signal);
+    });
     this.queue = result.catch(() => {
       this.failed = true;
     });
