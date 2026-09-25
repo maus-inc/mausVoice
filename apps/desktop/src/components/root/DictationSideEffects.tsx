@@ -1209,6 +1209,9 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             "Recording start raced an abort or replacement; skipping stale session start",
           );
+          // A replacement leaves this session out of the refs, so the abort
+          // path cannot reach the listener `onBeforeRecordingStart` attached.
+          session.cleanup();
           return;
         }
         const startedSession = session;

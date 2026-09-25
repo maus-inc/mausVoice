@@ -29,9 +29,10 @@ type AudioChunkPayload = {
   samples: number[];
 };
 
-// About 30 seconds at a typical 48 kHz capture rate. Past this the sidecar is
-// far from ready, so stop buffering and let finalize batch-transcribe the full
-// recording instead of holding it twice in memory.
+// Bounds the startup buffer's memory. The capture rate is unknown when the
+// buffer starts, so the cap is in samples: 30 s at 48 kHz, longer at lower
+// rates (90 s at 16 kHz). Past it the sidecar is far from ready, so buffering
+// stops and finalize batch-transcribes the full recording instead.
 const MAX_STARTUP_BUFFER_SAMPLES = 48_000 * 30;
 
 type LocalSessionContext = {
@@ -39,6 +40,8 @@ type LocalSessionContext = {
   hallucinationFilterEnabled: boolean;
 };
 
+// One instance serves one recording: `createTranscriptionSession` builds a
+// fresh session per dictation.
 export class LocalTranscriptionSession implements TranscriptionSession {
   private unlisten: UnlistenFn | null = null;
   private session: LocalSidecarStreamingSession | null = null;
@@ -52,8 +55,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   // replay events, so subscribe before recording starts and buffer until the
   // sidecar session exists. Otherwise the opening words never reach it.
   async onBeforeRecordingStart(): Promise<void> {
+    this.cleanup();
     try {
-      await this.subscribeToAudioChunks();
+      await this.startListening();
     } catch (error) {
       getLogger().warning(
         `[local-stream-session] early audio subscription failed (${this.toErrorMessage(error)})`,
@@ -65,8 +69,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     this.startupWarnings = [];
 
     try {
+      // The early hook did not run or could not subscribe.
       if (!this.unlisten) {
-        await this.subscribeToAudioChunks();
+        await this.startListening();
       }
       const state = getAppState();
       const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
@@ -101,6 +106,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
+      if (this.pendingSampleCount > 0) {
+        getLogger().info(
+          `[local-stream-session] flushing ${this.pendingSampleCount} samples captured during startup`,
+        );
+      }
       for (const chunk of this.pendingChunks) {
         sidecarSession.writeAudioChunk(chunk);
       }
@@ -192,8 +202,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   setInterimResultCallback(): void {}
 
-  private async subscribeToAudioChunks(): Promise<void> {
-    this.cleanup();
+  private async startListening(): Promise<void> {
     this.unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) =>
       this.handleAudioChunk(event.payload.samples),
     );

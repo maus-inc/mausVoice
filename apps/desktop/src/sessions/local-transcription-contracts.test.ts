@@ -213,34 +213,71 @@ describe("local streaming start capture", () => {
     expect(mocks.createStreamingSession).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to batch when startup audio outgrows the buffer", async () => {
+  // The cap is 1.44M samples whatever the capture rate: 30 s at 48 kHz,
+  // 90 s at 16 kHz.
+  it.each([
+    [48_000, 31],
+    [16_000, 91],
+  ])(
+    "falls back to batch when startup audio outgrows the buffer at %i Hz",
+    async (rate, seconds) => {
+      const writeAudioChunk = vi.fn();
+      const sidecarCleanup = vi.fn();
+      mocks.createStreamingSession.mockResolvedValueOnce({
+        finalize: mocks.finalize,
+        cleanup: sidecarCleanup,
+        writeAudioChunk,
+      });
+      mocks.transcribeAudio.mockResolvedValueOnce({
+        rawTranscript: "the whole recording",
+        metadata: {},
+        warnings: [],
+      });
+      const session = new LocalTranscriptionSession();
+
+      await session.onBeforeRecordingStart();
+      const second = Array.from({ length: rate }, () => 0.1);
+      for (let index = 0; index < seconds; index += 1) {
+        emitChunk(second);
+      }
+      await session.onRecordingStart(rate);
+
+      expect(writeAudioChunk).not.toHaveBeenCalled();
+      expect(sidecarCleanup).toHaveBeenCalledTimes(1);
+      const output = await session.finalize({ samples, sampleRate: rate });
+      expect(output.rawTranscript).toBe("the whole recording");
+      expect(mocks.finalize).not.toHaveBeenCalled();
+      expect(output.warnings.join(" ")).toContain("falling back to batch mode");
+    },
+  );
+
+  it("keeps a minute of 16 kHz startup audio, which is under the sample cap", async () => {
     const writeAudioChunk = vi.fn();
-    const sidecarCleanup = vi.fn();
     mocks.createStreamingSession.mockResolvedValueOnce({
       finalize: mocks.finalize,
-      cleanup: sidecarCleanup,
+      cleanup: mocks.cleanup,
       writeAudioChunk,
-    });
-    mocks.transcribeAudio.mockResolvedValueOnce({
-      rawTranscript: "the whole recording",
-      metadata: {},
-      warnings: [],
     });
     const session = new LocalTranscriptionSession();
 
     await session.onBeforeRecordingStart();
-    const second = Array.from({ length: 48_000 }, () => 0.1);
-    for (let index = 0; index < 31; index += 1) {
+    const second = Array.from({ length: 16_000 }, () => 0.1);
+    for (let index = 0; index < 60; index += 1) {
       emitChunk(second);
     }
-    await session.onRecordingStart(48_000);
+    await session.onRecordingStart(16_000);
 
-    expect(writeAudioChunk).not.toHaveBeenCalled();
-    expect(sidecarCleanup).toHaveBeenCalledTimes(1);
-    const output = await session.finalize({ samples, sampleRate: 16000 });
-    expect(output.rawTranscript).toBe("the whole recording");
-    expect(mocks.finalize).not.toHaveBeenCalled();
-    expect(output.warnings.join(" ")).toContain("falling back to batch mode");
+    expect(writeAudioChunk).toHaveBeenCalledTimes(60);
+  });
+
+  it("releases the early listener on cleanup, before any sidecar session exists", async () => {
+    const session = new LocalTranscriptionSession();
+
+    await session.onBeforeRecordingStart();
+    session.cleanup();
+
+    expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+    expect(mocks.createStreamingSession).not.toHaveBeenCalled();
   });
 
   it("drops buffered audio and unsubscribes when the sidecar session cannot start", async () => {
