@@ -216,6 +216,7 @@ pub(crate) fn tick_drag_frame(
         edge_work: Some(rust_pill_shared::edge::EdgeWork {
             width: p.work_w,
             height: p.work_h,
+            edges: p.edge_mask,
         }),
         held: dragging,
         reduced_motion: crate::pill::reduced_motion(),
@@ -454,6 +455,7 @@ pub(crate) struct MonitorPlacement {
     pub win_w: f64,
     pub content_h: f64,
     pub margin: f64,
+    pub edge_mask: rust_pill_shared::edge::EdgeMask,
 }
 
 /// Resolves physical root coordinates without passing them to GDK's logical
@@ -480,6 +482,38 @@ fn placement_on_monitor(
     let monitor = monitor_at_physical_point(display, anchor_x, anchor_y)?;
     let scale = monitor.scale_factor() as f64;
     let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
+    let monitor_geometry = monitor.geometry();
+    let full = crate::pill::logical_rect_to_physical(&monitor_geometry, scale);
+    let neighbors: Vec<_> = (0..display.n_monitors())
+        .filter_map(|index| display.monitor(index))
+        .filter(|candidate| {
+            let geometry = candidate.geometry();
+            geometry.x() != monitor_geometry.x()
+                || geometry.y() != monitor_geometry.y()
+                || geometry.width() != monitor_geometry.width()
+                || geometry.height() != monitor_geometry.height()
+        })
+        .map(|candidate| {
+            let rect = crate::pill::logical_rect_to_physical(
+                &candidate.geometry(),
+                candidate.scale_factor() as f64,
+            );
+            rust_pill_shared::edge::MonitorRect {
+                x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+            }
+        })
+        .collect();
+    let region = rust_pill_shared::edge::drag_region(
+        rust_pill_shared::edge::MonitorRect {
+            x: full.x, y: full.y, width: full.width, height: full.height,
+        },
+        rust_pill_shared::edge::MonitorRect {
+            x: wa.x, y: wa.y, width: wa.width, height: wa.height,
+        },
+        &neighbors,
+        (anchor_x, anchor_y),
+    );
+    let area = region.bounds;
     let (alloc_w, alloc_h) = window.size();
     // window.size() returns logical pixels; XMoveWindow and the
     // workarea math above are in physical pixels, so scale here too.
@@ -502,7 +536,7 @@ fn placement_on_monitor(
     // the monitor) are fine to pass through: `clamp_point` normalizes
     // max to min, so the clamp resolves to the minimum boundary instead
     // of placing the window outside the work area.
-    let (min_x, min_y, max_x, max_y) =
+    let (mut min_x, mut min_y, mut max_x, mut max_y) =
         if state.effective_window_mode() == WindowMode::Dictation
             && !state.assistant_active.get()
         {
@@ -517,14 +551,24 @@ fn placement_on_monitor(
             let fw = pw * scale;
             let fh = ph * scale;
             (
-                wa.x - fx,
-                wa.y - fy,
-                wa.x + wa.width - fx - fw,
-                wa.y + wa.height - fy - fh,
+                area.x - fx,
+                area.y - fy,
+                area.right() - fx - fw,
+                area.bottom() - fy - fh,
             )
         } else {
-            (wa.x, wa.y, wa.x + wa.width - win_w, wa.y + wa.height - content_h)
+            (area.x, area.y, area.right() - win_w, area.bottom() - content_h)
         };
+    let (px, py, pw, ph) = crate::draw::pill_position(
+        state, state.draw_width.get(), state.draw_height.get(),
+    );
+    let (content_x, content_y) = state.content_offset();
+    let center_x = (content_x + px + pw / 2.0) * scale;
+    let center_y = (content_y + py + ph / 2.0) * scale;
+    if !region.edge_mask.left { min_x = area.x - center_x; }
+    if !region.edge_mask.right { max_x = area.right() - center_x; }
+    if !region.edge_mask.top { min_y = area.y - center_y; }
+    if !region.edge_mask.bottom { max_y = area.bottom() - center_y; }
 
     Some(MonitorPlacement {
         bounds: DragBounds {
@@ -540,6 +584,7 @@ fn placement_on_monitor(
         win_w,
         content_h,
         margin,
+        edge_mask: region.edge_mask,
     })
 }
 

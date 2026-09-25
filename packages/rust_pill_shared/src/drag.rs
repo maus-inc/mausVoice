@@ -692,7 +692,7 @@ mod tests {
                     drag.begin_drag(0.0, 0.0, 0.0, 500.0, 0.0);
                     let mut frame = held_frame(if moving { 24.0 } else { 0.0 }, 500.0, 0.0);
                     frame.bounds = DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1920.0, max_y: 1080.0 };
-                    frame.edge_work = Some(EdgeWork { width: 1920.0, height: 1080.0 });
+                    frame.edge_work = Some(EdgeWork::all(1920.0, 1080.0));
                     frame.reduced_motion = reduced_motion;
                     drag.advance(&frame);
                     frame.pointer_x = 0.0;
@@ -734,7 +734,7 @@ mod tests {
             bounds: DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1920.0, max_y: 1080.0 },
             held: true,
             reduced_motion: false,
-            edge_work: Some(EdgeWork { width: 1920.0, height: 1080.0 }),
+            edge_work: Some(EdgeWork::all(1920.0, 1080.0)),
         });
         assert!(out.x > 2.0 && out.x <= 12.5, "edge should ease, got {}", out.x);
         assert_eq!(out.y, 500.0);
@@ -1182,7 +1182,7 @@ mod tests {
         use crate::edge::{EdgeWork, EDGE_REST_GAP};
         // Wayland has no absolute work area; X11 supplies one. Both retain
         // their hard bounds, but only the latter applies the resting gap.
-        for edge_work in [None, Some(EdgeWork { width: 1000.0, height: 1000.0 })] {
+        for edge_work in [None, Some(EdgeWork::all(1000.0, 1000.0))] {
             let mut drag = DragController::new();
             drag.begin_drag(0.0, 0.0, 0.0, 0.0, 0.0);
             let mut frame = DragFrame {

@@ -1526,7 +1526,38 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
 /// Frame-loop drag input: the cursor position, the current window rect, and
 /// the clamp bounds on the active drag monitor. Settling retains the drop
 /// monitor instead of following later cursor movement.
-fn drag_placement(hwnd: HWND, state: &PillState) -> Option<(DragBounds, POINT, RECT, rust_pill_shared::edge::EdgeWork)> {
+fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
+    rust_pill_shared::edge::MonitorRect {
+        x: rect.left as f64,
+        y: rect.top as f64,
+        width: (rect.right - rect.left) as f64,
+        height: (rect.bottom - rect.top) as f64,
+    }
+}
+
+/// Find directly adjacent monitors by probing just across each physical edge.
+/// MonitorFromPoint uses virtual-screen coordinates, the same space as RECT.
+unsafe fn neighboring_monitor_rects(info: &MONITORINFO, anchor: POINT) -> Vec<rust_pill_shared::edge::MonitorRect> {
+    let rect = info.rcMonitor;
+    let probes = [
+        POINT { x: rect.left.saturating_sub(1), y: anchor.y },
+        POINT { x: rect.right, y: anchor.y },
+        POINT { x: anchor.x, y: rect.top.saturating_sub(1) },
+        POINT { x: anchor.x, y: rect.bottom },
+    ];
+    probes.into_iter().filter_map(|point| {
+        let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
+        let neighbor = query_monitor_info(handle)?;
+        let candidate = monitor_rect(neighbor.rcMonitor);
+        (neighbor.rcMonitor.left != rect.left || neighbor.rcMonitor.top != rect.top)
+            .then_some(candidate)
+    }).collect()
+}
+
+fn drag_placement(
+    hwnd: HWND,
+    state: &PillState,
+) -> Option<(DragBounds, POINT, RECT, rust_pill_shared::edge::EdgeWork)> {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -1535,20 +1566,50 @@ fn drag_placement(hwnd: HWND, state: &PillState) -> Option<(DragBounds, POINT, R
         let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
             (cursor.x as f64, cursor.y as f64), state.dragging.get(),
         );
-        let monitor = MonitorFromPoint(
-            POINT { x: anchor_x.round() as i32, y: anchor_y.round() as i32 },
-            MONITOR_DEFAULTTOPRIMARY,
-        );
+        let anchor = POINT { x: anchor_x.round() as i32, y: anchor_y.round() as i32 };
+        let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
         let info = query_monitor_info(monitor)?;
-        let bounds = window_clamp_bounds(
+        let work_rect = monitor_rect(info.rcWork);
+        let area = rust_pill_shared::edge::drag_region(
+            monitor_rect(info.rcMonitor),
+            work_rect,
+            &neighboring_monitor_rects(&info, anchor),
+            (anchor_x, anchor_y),
+        );
+        let region = RECT {
+            left: area.bounds.x.round() as i32,
+            top: area.bounds.y.round() as i32,
+            right: area.bounds.right().round() as i32,
+            bottom: area.bounds.bottom().round() as i32,
+        };
+        let mut bounds = window_clamp_bounds(
             state,
-            info.rcWork,
+            region,
             current.right - current.left,
             current.bottom - current.top,
         );
+        let (px, py, pw, ph) = draw::pill_position(
+            state, state.draw_width.get(), state.draw_height.get(),
+        );
+        let (content_x, content_y) = state.content_offset();
+        let center_x = content_x + px + pw / 2.0;
+        let center_y = content_y + py + ph / 2.0;
+        if !area.edge_mask.left {
+            bounds.min_x = area.bounds.x - center_x;
+        }
+        if !area.edge_mask.right {
+            bounds.max_x = area.bounds.right() - center_x;
+        }
+        if !area.edge_mask.top {
+            bounds.min_y = area.bounds.y - center_y;
+        }
+        if !area.edge_mask.bottom {
+            bounds.max_y = area.bounds.bottom() - center_y;
+        }
         let work = rust_pill_shared::edge::EdgeWork {
-            width: (info.rcWork.right - info.rcWork.left) as f64,
-            height: (info.rcWork.bottom - info.rcWork.top) as f64,
+            width: work_rect.width,
+            height: work_rect.height,
+            edges: area.edge_mask,
         };
         Some((bounds, cursor, current, work))
     }

@@ -944,17 +944,13 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
     (rect, monitor_rect)
 }
 
-/// Converts a GDK logical-pixel rectangle (a monitor's geometry or work area)
-/// into the physical root-pixel space used for X11 window positioning and
-/// `Rect` reporting. This is the single source of truth for the
-/// logical→physical conversion: `pill_geometry` here and the placement math
-/// in `pill_pos_on_monitor` both go through it, so any scaling tweak lands in
-/// exactly one place. `Rectangle` is plain data, so this stays unit-testable
-/// without a display connection.
+/// Converts a GDK monitor rectangle to the X11 root-coordinate space used
+/// for pointer and window placement. Monitor origins are already positions in
+/// the shared desktop layout; only the monitor-local extent uses its scale.
 pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
     Rect {
-        x: g.x() as f64 * scale,
-        y: g.y() as f64 * scale,
+        x: g.x() as f64,
+        y: g.y() as f64,
         width: g.width() as f64 * scale,
         height: g.height() as f64 * scale,
     }
@@ -1779,19 +1775,20 @@ mod geometry_tests {
     }
 
     #[test]
-    fn logical_rect_is_scaled_into_physical_pixels() {
-        // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
-        // must come out in the same physical space the pill rect uses.
+    fn logical_rect_scales_monitor_extent_but_preserves_global_origin() {
         let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
         assert_rect_close(
             &rect,
             &Rect {
-                x: 200.0,
-                y: 100.0,
+                x: 100.0,
+                y: 50.0,
                 width: 4000.0,
                 height: 2000.0,
             },
         );
+        let left_monitor = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 2.0);
+        assert_eq!(left_monitor.x, -1920.0);
+        assert_eq!(left_monitor.width, 3840.0);
     }
 
     #[test]

@@ -1,9 +1,9 @@
 //! Monitor-crossing deformation shared by the three pill renderers.
 //!
-//! When the pill crosses onto another monitor it squeezes briefly along the
-//! boundary normal (down to 92%) and stretches across it (up to 104%),
-//! scaled by the crossing speed, then springs back. The effect is paint
-//! only: hit regions, saved positions, and selection state never see it.
+//! When the pill crosses onto another monitor it receives a short, speed-scaled
+//! spring impulse along the boundary normal. It compresses and expands smoothly,
+//! then settles without bounce. The effect is paint only: hit regions, saved
+//! positions, and selection state never see it.
 //!
 //! The platform owns monitor identity and passes the full bounds of the monitor
 //! containing the pill CENTER (never the transparent host window, which can
@@ -21,16 +21,20 @@ use std::cell::Cell;
 
 use crate::spring::spring_01;
 
-/// Peak squeeze along the boundary normal: the pill draws at 92%.
-pub const CROSS_SQUEEZE: f64 = 0.08;
-/// Peak stretch on the perpendicular axis: the pill draws at 104%.
-pub const CROSS_STRETCH: f64 = 0.04;
+/// Peak squeeze along the boundary normal at a full-speed crossing.
+pub const CROSS_SQUEEZE: f64 = 0.14;
+/// Peak stretch on the perpendicular axis at a full-speed crossing.
+pub const CROSS_STRETCH: f64 = 0.08;
 /// Slowest crossing that still deforms, in px/s. Below this the move is a
 /// drift, not a crossing.
 pub const CROSS_MIN_SPEED: f64 = 50.0;
-/// Crossing speed that deforms fully, in px/s. Past this the magnitude
-/// clamps instead of growing.
-pub const CROSS_FULL_SPEED: f64 = 3000.0;
+/// Crossing speed that reaches full deformation, in px/s.
+pub const CROSS_FULL_SPEED: f64 = 2400.0;
+/// Response shaping makes ordinary deliberate drags visible before the
+/// high-speed cap, while keeping slow monitor-to-monitor movement restrained.
+pub const CROSS_RESPONSE_EXPONENT: f64 = 0.65;
+// The 120 Hz semi-implicit spring steps peak below the continuous response.
+const CROSS_IMPULSE_GAIN: f64 = 1.25;
 /// Faster than this is a teleport (re-home, hot-plug shuffle), not a
 /// gesture crossing, and never deforms.
 pub const CROSS_MAX_SPEED: f64 = 8000.0;
@@ -97,9 +101,10 @@ pub struct CrossingDeform {
     last_cx: f64,
     last_cy: f64,
     last_t: f64,
-    axis: CrossingAxis,
-    energy: Cell<f64>,
-    energy_vel: Cell<f64>,
+    squeeze_x: Cell<f64>,
+    squeeze_x_vel: Cell<f64>,
+    squeeze_y: Cell<f64>,
+    squeeze_y_vel: Cell<f64>,
     pulse: Cell<f64>,
 }
 
@@ -140,9 +145,10 @@ impl CrossingDeform {
             last_cx: 0.0,
             last_cy: 0.0,
             last_t: 0.0,
-            axis: CrossingAxis::X,
-            energy: Cell::new(0.0),
-            energy_vel: Cell::new(0.0),
+            squeeze_x: Cell::new(0.0),
+            squeeze_x_vel: Cell::new(0.0),
+            squeeze_y: Cell::new(0.0),
+            squeeze_y_vel: Cell::new(0.0),
             pulse: Cell::new(0.0),
         }
     }
@@ -150,14 +156,17 @@ impl CrossingDeform {
     /// True while the return spring is still moving. The redraw gate reads
     /// it to keep painting until the pill is round again.
     pub fn animating(&self) -> bool {
-        self.energy.get() != 0.0 || self.energy_vel.get() != 0.0
+        self.squeeze_x.get() != 0.0 || self.squeeze_x_vel.get() != 0.0
+            || self.squeeze_y.get() != 0.0 || self.squeeze_y_vel.get() != 0.0
     }
 
     /// Forget the monitor. Used when the platform re-homes the pill itself.
     pub fn reset(&mut self) {
         self.seeded = false;
-        self.energy.set(0.0);
-        self.energy_vel.set(0.0);
+        self.squeeze_x.set(0.0);
+        self.squeeze_x_vel.set(0.0);
+        self.squeeze_y.set(0.0);
+        self.squeeze_y_vel.set(0.0);
         self.pulse.set(0.0);
     }
 
@@ -200,11 +209,25 @@ impl CrossingDeform {
                 (frame.monitor_x, frame.monitor_y, frame.monitor_width, frame.monitor_height),
             );
             if let Some(axis) = normal.filter(|_| (CROSS_MIN_SPEED..=CROSS_MAX_SPEED).contains(&speed)) {
-                self.axis = axis;
                 if !frame.reduced_motion {
-                    let magnitude = ((speed - CROSS_MIN_SPEED) / (CROSS_FULL_SPEED - CROSS_MIN_SPEED)).clamp(0.0, 1.0);
-                    self.energy.set(magnitude);
-                    self.energy_vel.set(0.0);
+                    let speed_progress = ((speed - CROSS_MIN_SPEED)
+                        / (CROSS_FULL_SPEED - CROSS_MIN_SPEED)).clamp(0.0, 1.0);
+                    let peak = speed_progress.powf(CROSS_RESPONSE_EXPONENT);
+                    let stiffness = if frame.stiffness.is_finite() {
+                        frame.stiffness.max(1.0)
+                    } else {
+                        170.0
+                    };
+                    let impulse = peak
+                        * stiffness.sqrt()
+                        * std::f64::consts::E
+                        * CROSS_IMPULSE_GAIN;
+                    let velocity = match axis {
+                        CrossingAxis::X => &self.squeeze_x_vel,
+                        CrossingAxis::Y => &self.squeeze_y_vel,
+                    };
+                    let launch_cap = stiffness.sqrt() * std::f64::consts::E * CROSS_IMPULSE_GAIN;
+                    velocity.set((velocity.get().max(0.0) + impulse).min(launch_cap));
                 }
                 self.pulse.set(1.0);
                 triggered = true;
@@ -219,10 +242,13 @@ impl CrossingDeform {
 
     fn advance_return(&self, frame: &CrossingFrame, dt: f64) {
         if frame.reduced_motion {
-            self.energy.set(0.0);
-            self.energy_vel.set(0.0);
+            self.squeeze_x.set(0.0);
+            self.squeeze_x_vel.set(0.0);
+            self.squeeze_y.set(0.0);
+            self.squeeze_y_vel.set(0.0);
         } else {
-            spring_01(&self.energy, &self.energy_vel, 0.0, frame.stiffness, dt);
+            spring_01(&self.squeeze_x, &self.squeeze_x_vel, 0.0, frame.stiffness, dt);
+            spring_01(&self.squeeze_y, &self.squeeze_y_vel, 0.0, frame.stiffness, dt);
         }
     }
 
@@ -239,11 +265,12 @@ impl CrossingDeform {
 
     /// Current paint scale around the pill center. (1, 1) at rest.
     pub fn scales(&self) -> (f64, f64) {
-        let e = self.energy.get();
-        match self.axis {
-            CrossingAxis::X => (1.0 - CROSS_SQUEEZE * e, 1.0 + CROSS_STRETCH * e),
-            CrossingAxis::Y => (1.0 + CROSS_STRETCH * e, 1.0 - CROSS_SQUEEZE * e),
-        }
+        let x = self.squeeze_x.get();
+        let y = self.squeeze_y.get();
+        (
+            1.0 - CROSS_SQUEEZE * x + CROSS_STRETCH * y,
+            1.0 - CROSS_SQUEEZE * y + CROSS_STRETCH * x,
+        )
     }
 
     fn output(&self, triggered: bool) -> DeformOutput {
@@ -263,13 +290,17 @@ mod tests {
     use super::*;
 
     fn frame(mon_x: f64, mon_y: f64, cx: f64, now: f64) -> CrossingFrame {
+        frame_at(mon_x, mon_y, cx, 500.0, now)
+    }
+
+    fn frame_at(mon_x: f64, mon_y: f64, cx: f64, cy: f64, now: f64) -> CrossingFrame {
         CrossingFrame {
             monitor_x: mon_x,
             monitor_y: mon_y,
             monitor_width: 1920.0,
             monitor_height: 1080.0,
             pill_cx: cx,
-            pill_cy: 500.0,
+            pill_cy: cy,
             now,
             dt: 1.0 / 60.0,
             stiffness: 170.0,
@@ -298,9 +329,9 @@ mod tests {
     #[test]
     fn fast_crossing_squeezes_along_the_normal() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
+        deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
         // 100 px in one frame is a 6000 px/s fling: full squeeze on x.
-        let out = deform.advance(&frame(1920.0, 0.0, 200.0, 1.0 / 60.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 2000.0, 1.0 / 60.0));
         assert!(out.triggered);
         assert!(out.scale_x < 1.0 && out.scale_x >= 1.0 - CROSS_SQUEEZE);
         assert!(out.scale_y > 1.0 && out.scale_y <= 1.0 + CROSS_STRETCH);
@@ -309,8 +340,8 @@ mod tests {
     #[test]
     fn vertical_crossing_squeezes_y() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-        let out = deform.advance(&frame(0.0, 1080.0, 120.0, 1.0 / 60.0));
+        deform.advance(&frame_at(0.0, 0.0, 100.0, 1060.0, 0.0));
+        let out = deform.advance(&frame_at(0.0, 1080.0, 120.0, 1100.0, 1.0 / 60.0));
         assert!(out.triggered);
         assert!(out.scale_y < 1.0);
         assert!(out.scale_x > 1.0);
@@ -319,53 +350,77 @@ mod tests {
     #[test]
     fn slow_drift_across_reports_no_deform() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
+        deform.advance(&frame(0.0, 0.0, 1919.0, 0.0));
         // New monitor but barely moving: reseed, no trigger.
-        let out = deform.advance(&frame(1920.0, 0.0, 101.0, 1.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 1920.0, 1.0));
         assert!(!out.triggered);
         assert_eq!((out.scale_x, out.scale_y), (1.0, 1.0));
         // And it does not retrigger on the next frame either.
-        let out = deform.advance(&frame(1920.0, 0.0, 102.0, 1.0 + 1.0 / 60.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 1921.0, 1.0 + 1.0 / 60.0));
         assert!(!out.triggered);
     }
 
     #[test]
     fn teleport_reseeds_without_deforming() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-        let out = deform.advance(&frame(1920.0, 0.0, 1500.0, 1.0 / 60.0));
+        deform.advance(&frame(0.0, 0.0, 1919.0, 0.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 2100.0, 1.0 / 60.0));
         assert!(!out.triggered);
         assert_eq!((out.scale_x, out.scale_y), (1.0, 1.0));
     }
 
     #[test]
-    fn magnitude_grows_with_speed_then_clamps() {
-        fn energy_at(speed: f64) -> f64 {
+    fn ordinary_crossings_are_visible_and_faster_crossings_peak_more() {
+        fn peak_squeeze(speed: f64) -> f64 {
             let mut deform = CrossingDeform::new();
-            deform.advance(&frame(0.0, 0.0, 0.0, 0.0));
-            // One frame at `speed` px/s: dx = speed / 60.
-            let out = deform.advance(&frame(1920.0, 0.0, speed / 60.0, 1.0 / 60.0));
-            assert!(out.triggered);
-            out.scale_x
+            deform.advance(&frame(0.0, 0.0, 1919.0, 0.0));
+            let center = 1919.0 + speed / 60.0;
+            let first = deform.advance(&frame(1920.0, 0.0, center, 1.0 / 60.0));
+            assert!(first.triggered);
+            assert!(first.scale_x > 1.0 - CROSS_SQUEEZE, "the impulse should build instead of snapping");
+            let mut peak = 1.0 - first.scale_x;
+            for i in 2..=24 {
+                let output = deform.advance(&frame(1920.0, 0.0, center, i as f64 / 60.0));
+                peak = peak.max(1.0 - output.scale_x);
+            }
+            peak
         }
-        let slow = energy_at(500.0);
-        let mid = energy_at(1500.0);
-        let full = energy_at(3000.0);
-        let over = energy_at(7000.0);
-        assert!(slow > mid && mid > full, "faster must squeeze more: {slow} {mid} {full}");
+        let slow = peak_squeeze(500.0);
+        let ordinary = peak_squeeze(1000.0);
+        let full = peak_squeeze(CROSS_FULL_SPEED);
+        let over = peak_squeeze(7000.0);
+        assert!(slow > 0.03, "a deliberate crossing should be visible: {slow}");
+        assert!(ordinary > slow && full > ordinary, "faster crossings should deform more: {slow} {ordinary} {full}");
         assert_eq!(full, over, "past full speed the magnitude clamps");
-        assert!((full - (1.0 - CROSS_SQUEEZE)).abs() < 0.005, "full squeeze should bottom out, got {full}");
+        assert!((full - CROSS_SQUEEZE).abs() < 0.01, "full squeeze should reach the design cap, got {full}");
+    }
+
+    #[test]
+    fn successive_crossing_axes_keep_both_springs_continuous() {
+        let mut deform = CrossingDeform::new();
+        deform.advance(&frame_at(0.0, 0.0, 1919.0, 1060.0, 0.0));
+        let across = deform.advance(&frame_at(1920.0, 0.0, 1950.0, 1060.0, 1.0 / 60.0));
+        let before = across.scale_x;
+        let vertical = frame_at(1920.0, 1080.0, 1950.0, 1100.0, 2.0 / 60.0);
+        let output = deform.advance(&vertical);
+        assert!(output.triggered);
+        assert!(
+            output.scale_x < before + 0.02,
+            "axis change should not snap: {before} -> {}",
+            output.scale_x
+        );
+        assert!(deform.squeeze_y.get() > 0.0);
     }
 
     #[test]
     fn backtrack_retriggers_on_the_new_normal() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-        let out = deform.advance(&frame(1920.0, 0.0, 200.0, 1.0 / 60.0));
+        deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 2000.0, 1.0 / 60.0));
         assert!(out.triggered && out.scale_x < 1.0);
         // Jump back just as fast: triggers again (reseeded above, so this is
         // a genuine second crossing, not a repeat).
-        let out = deform.advance(&frame(0.0, 0.0, 100.0, 2.0 / 60.0));
+        let out = deform.advance(&frame(0.0, 0.0, 1900.0, 2.0 / 60.0));
         assert!(out.triggered);
         assert!(out.scale_x < 1.0);
     }
@@ -373,11 +428,11 @@ mod tests {
     #[test]
     fn spring_returns_to_round() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-        deform.advance(&frame(1920.0, 0.0, 200.0, 1.0 / 60.0));
+        deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
+        deform.advance(&frame(1920.0, 0.0, 2000.0, 1.0 / 60.0));
         let mut done = false;
         for i in 0..600 {
-            let out = deform.advance(&frame(1920.0, 0.0, 200.0, (2 + i) as f64 / 60.0));
+            let out = deform.advance(&frame(1920.0, 0.0, 2000.0, (2 + i) as f64 / 60.0));
             assert!(!out.triggered);
             if !out.active {
                 done = true;
@@ -385,15 +440,15 @@ mod tests {
             }
         }
         assert!(done, "deform never settled");
-        let out = deform.advance(&frame(1920.0, 0.0, 200.0, 11.0));
+        let out = deform.advance(&frame(1920.0, 0.0, 2000.0, 11.0));
         assert_eq!((out.scale_x, out.scale_y), (1.0, 1.0));
     }
 
     #[test]
     fn reduced_motion_pulses_without_deforming() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-        let mut f = frame(1920.0, 0.0, 200.0, 1.0 / 60.0);
+        deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
+        let mut f = frame(1920.0, 0.0, 2000.0, 1.0 / 60.0);
         f.reduced_motion = true;
         let out = deform.advance(&f);
         assert!(out.triggered);
@@ -427,8 +482,8 @@ mod tests {
     fn unknown_monitor_keeps_returning_to_rest_and_honors_reduced_motion() {
         for reduced_motion in [false, true] {
             let mut deform = CrossingDeform::new();
-            deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
-            let crossing = deform.advance(&frame(1920.0, 0.0, 200.0, 1.0 / 60.0));
+            deform.advance(&frame(0.0, 0.0, 1900.0, 0.0));
+            let crossing = deform.advance(&frame(1920.0, 0.0, 2000.0, 1.0 / 60.0));
             assert!(crossing.triggered && crossing.active);
             let mut unknown = frame(f64::NAN, f64::NAN, 200.0, 2.0 / 60.0);
             unknown.reduced_motion = reduced_motion;
@@ -452,9 +507,9 @@ mod tests {
     #[test]
     fn diagonal_crossing_picks_the_dominant_axis() {
         let mut deform = CrossingDeform::new();
-        deform.advance(&frame(0.0, 0.0, 100.0, 0.0));
+        deform.advance(&frame_at(0.0, 0.0, 100.0, 1060.0, 0.0));
         // Monitor moved mostly up, a little right: vertical normal.
-        let out = deform.advance(&frame(100.0, 1080.0, 200.0, 1.0 / 60.0));
+        let out = deform.advance(&frame_at(100.0, 1080.0, 200.0, 1100.0, 1.0 / 60.0));
         assert!(out.triggered);
         assert!(out.scale_y < 1.0 && out.scale_x > 1.0);
     }
