@@ -1,5 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 static MAUSVOICE_KEYBOARD_LISTENER: &str = "MAUSVOICE_KEYBOARD_LISTENER";
 static MAUSVOICE_GPU_ENUMERATOR: &str = "MAUSVOICE_GPU_ENUMERATOR";

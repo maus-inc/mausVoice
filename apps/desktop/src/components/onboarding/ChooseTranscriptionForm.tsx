@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Box, Stack } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { goToOnboardingPage } from "../../actions/onboarding.actions";
@@ -7,7 +6,6 @@ import { trackButtonClick } from "../../utils/analytics.utils";
 import { isMacOS } from "../../utils/env.utils";
 import remoteImage from "../../assets/2-remote.png";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
-import { configurePersonalDefaults } from "../../actions/personal-use.actions";
 import {
   BackButton,
   DualPaneLayout,
@@ -20,12 +18,6 @@ export const ChooseTranscriptionForm = () => {
   const { mode, selectedApiKeyId } = useAppStore(
     (state) => state.settings.aiTranscription,
   );
-
-  useEffect(() => {
-    void configurePersonalDefaults().catch((err) => {
-      console.error("Failed to configure personal defaults:", err);
-    });
-  }, []);
 
   const canContinue = mode === "api" ? Boolean(selectedApiKeyId) : true;
 

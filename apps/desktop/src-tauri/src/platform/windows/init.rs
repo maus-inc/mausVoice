@@ -4,7 +4,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, STARTF_USESHOWWINDOW};
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
 use crate::platform::permissions;
 
@@ -241,7 +241,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
         CreateProcessW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS,
-        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
+        PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTF_USESHOWWINDOW, STARTUPINFOW,
     };
 
     let mut open =
@@ -291,7 +291,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
     si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE as u16;
+    si.wShowWindow = SW_HIDE.0 as u16;
 
     let result = unsafe {
         CreateProcessW(
