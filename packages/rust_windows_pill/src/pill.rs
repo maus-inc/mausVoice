@@ -1456,6 +1456,8 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             let y = default_pill_y(wa.top, wa_h, win_h);
             bounds.clamp_point(x as f64, y as f64)
         };
+        // Round the clamped pixel origin to nearest; default centering can
+        // shift by one pixel versus truncation on negative-origin desktops.
         let (x, y) = (x.round() as i32, y.round() as i32);
 
         if current.left != x || current.top != y {
@@ -1526,23 +1528,37 @@ fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
     }
 }
 
-/// Find directly adjacent monitors by probing just across each physical edge.
-/// MonitorFromPoint uses virtual-screen coordinates, the same space as RECT.
-unsafe fn neighboring_monitor_rects(info: &MONITORINFO, anchor: POINT) -> Vec<rust_pill_shared::edge::MonitorRect> {
-    let rect = info.rcMonitor;
-    let probes = [
-        POINT { x: rect.left.saturating_sub(1), y: anchor.y },
-        POINT { x: rect.right, y: anchor.y },
-        POINT { x: anchor.x, y: rect.top.saturating_sub(1) },
-        POINT { x: anchor.x, y: rect.bottom },
-    ];
-    probes.into_iter().filter_map(|point| {
-        let handle = MonitorFromPoint(point, MONITOR_DEFAULTTONULL);
-        let neighbor = query_monitor_info(handle)?;
-        let candidate = monitor_rect(neighbor.rcMonitor);
-        (neighbor.rcMonitor.left != rect.left || neighbor.rcMonitor.top != rect.top)
-            .then_some(candidate)
-    }).collect()
+unsafe extern "system" fn collect_monitor_rect(
+    monitor: HMONITOR,
+    _hdc: HDC,
+    _rect: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
+    // SAFETY: EnumDisplayMonitors invokes this synchronously with the pointer
+    // to the live Vec passed in `dwData` below.
+    let monitors = unsafe { &mut *(data.0 as *mut Vec<rust_pill_shared::edge::MonitorRect>) };
+    if let Some(info) = query_monitor_info(monitor) {
+        let candidate = monitor_rect(info.rcMonitor);
+        if !monitors.contains(&candidate) {
+            monitors.push(candidate);
+        }
+    }
+    BOOL(1)
+}
+
+/// Enumerate the stable monitor topology in virtual-screen coordinates. The
+/// full list lets seam hysteresis retain a partially overlapping neighbor as
+/// the pill center briefly leaves its overlap interval.
+fn neighboring_monitor_rects(
+    info: &MONITORINFO,
+) -> Vec<rust_pill_shared::edge::MonitorRect> {
+    let mut monitors = Vec::new();
+    let data = LPARAM(&mut monitors as *mut _ as isize);
+    // SAFETY: EnumDisplayMonitors completes callbacks synchronously, so `data`
+    // remains a valid pointer to `monitors` for the entire enumeration.
+    let _ = unsafe { EnumDisplayMonitors(None, None, Some(collect_monitor_rect), data) };
+    let current = monitor_rect(info.rcMonitor);
+    monitors.into_iter().filter(|monitor| *monitor != current).collect()
 }
 
 fn drag_placement(
@@ -1567,15 +1583,12 @@ fn drag_placement(
         let (content_x, content_y) = state.content_offset();
         let center_x = current.left as f64 + content_x + px + pw / 2.0;
         let center_y = current.top as f64 + content_y + py + ph / 2.0;
-        let center = POINT {
-            x: center_x.round() as i32,
-            y: center_y.round() as i32,
-        };
         let area = if state.dragging.get() {
-            rust_pill_shared::edge::drag_region(
+            let neighbors = neighboring_monitor_rects(&info);
+            state.drag_motion.borrow_mut().resolve_drag_region(
                 monitor_rect(info.rcMonitor),
                 work_rect,
-                &neighboring_monitor_rects(&info, center),
+                &neighbors,
                 (center_x, center_y),
             )
         } else {
@@ -1603,7 +1616,10 @@ fn drag_placement(
                 area.edge_mask,
             );
         }
-        bounds.collapse_inverted(area.edge_mask.preferred_minimum());
+        bounds.collapse_inverted(
+            area.edge_mask,
+            (current.left as f64, current.top as f64),
+        );
         let work = rust_pill_shared::edge::EdgeWork {
             width: work_rect.width,
             height: work_rect.height,

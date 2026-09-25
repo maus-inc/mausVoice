@@ -13,7 +13,7 @@
 //! point; this module owns samples, release velocity, and settle physics, so
 //! all three pills feel identical and stay testable without a display.
 
-use crate::edge::{ease_point, EdgeMask, EdgeWork, MonitorRect};
+use crate::edge::{ease_point, DragRegion, EdgeMask, EdgeWork, MonitorRect, SeamTracker};
 
 /// One pointer observation. `time` is seconds on a monotonic clock; platforms
 /// pass their own frame clock (it only ever compares samples with each other).
@@ -58,19 +58,51 @@ impl DragBounds {
         if !edges.bottom { self.max_y = region.bottom() - center_offset.1; }
     }
 
-    /// Collapse inverted ranges to the preferred bound on each axis.
-    /// `prefer_min` selects the minimum bound when true.
-    pub fn collapse_inverted(&mut self, prefer_min: (bool, bool)) {
+    /// Collapse impossible ranges toward a shared seam when only one side is
+    /// connected. If both sides are shared, keep the current origin nearest;
+    /// if neither is shared, preserve the ordinary minimum-edge fallback.
+    pub fn collapse_inverted(&mut self, edges: EdgeMask, current_origin: (f64, f64)) {
         if self.min_x > self.max_x {
-            let value = if prefer_min.0 { self.min_x } else { self.max_x };
+            let value = collapsed_value(
+                self.min_x,
+                self.max_x,
+                edges.left,
+                edges.right,
+                current_origin.0,
+            );
             self.min_x = value;
             self.max_x = value;
         }
         if self.min_y > self.max_y {
-            let value = if prefer_min.1 { self.min_y } else { self.max_y };
+            let value = collapsed_value(
+                self.min_y,
+                self.max_y,
+                edges.top,
+                edges.bottom,
+                current_origin.1,
+            );
             self.min_y = value;
             self.max_y = value;
         }
+    }
+}
+
+fn collapsed_value(
+    min: f64,
+    max: f64,
+    min_exposed: bool,
+    max_exposed: bool,
+    current: f64,
+) -> f64 {
+    match (!min_exposed, !max_exposed) {
+        (true, false) => min,
+        (false, true) => max,
+        (true, true)
+            if current.is_finite() && (current - max).abs() < (current - min).abs() =>
+        {
+            max
+        }
+        _ => min,
     }
 }
 
@@ -179,6 +211,7 @@ pub struct DragController {
     settle_vy: f64,
     settle_target: Option<(f64, f64)>,
     settle_elapsed: f64,
+    seam_tracker: SeamTracker,
 }
 
 fn bounded_launch_velocity(velocity: f64, displacement: f64) -> f64 {
@@ -225,6 +258,7 @@ impl DragController {
             settle_vy: 0.0,
             settle_target: None,
             settle_elapsed: 0.0,
+            seam_tracker: SeamTracker::default(),
         }
     }
 
@@ -244,6 +278,17 @@ impl DragController {
         } else {
             pointer
         }
+    }
+
+    /// Resolve a held-drag monitor region with per-gesture seam hysteresis.
+    pub fn resolve_drag_region(
+        &mut self,
+        monitor: MonitorRect,
+        work_area: MonitorRect,
+        neighbors: &[MonitorRect],
+        seam_point: (f64, f64),
+    ) -> DragRegion {
+        self.seam_tracker.resolve(monitor, work_area, neighbors, seam_point)
     }
 
     /// Release velocity latched by the last [`DragController::end_drag`], in
@@ -276,6 +321,7 @@ impl DragController {
         self.release_vy = 0.0;
         self.settle_target = None;
         self.settle_elapsed = 0.0;
+        self.seam_tracker.reset();
     }
 
     /// Arm a drag. The grab offset is the pointer position minus the window
@@ -296,6 +342,7 @@ impl DragController {
         {
             return;
         }
+        self.seam_tracker.reset();
         self.phase = DragPhase::Held;
         self.grab_dx = grab_dx;
         self.grab_dy = grab_dy;
@@ -340,6 +387,7 @@ impl DragController {
         if self.phase != DragPhase::Held {
             return;
         }
+        self.seam_tracker.reset();
         let (vx, vy) = self.estimate_velocity(now);
         self.release_anchor = Some(if self.sample_len > 0 {
             let sample = self.samples[self.sample_len - 1];
@@ -384,6 +432,7 @@ impl DragController {
                     // A platform that feeds held frames without arming first
                     // still tracks; the grab offset stays whatever was latched
                     // (zero until the first begin_drag).
+                    self.seam_tracker.reset();
                     self.phase = DragPhase::Held;
                     return self.track_held(frame);
                 }
@@ -403,6 +452,7 @@ impl DragController {
                     // (which would already have set Held): the latched grab
                     // belongs to the previous drag, so re-latch it to hold the
                     // current position instead of jumping, then track 1:1.
+                    self.seam_tracker.reset();
                     self.grab_dx = frame.pointer_x - self.window_x;
                     self.grab_dy = frame.pointer_y - self.window_y;
                     self.phase = DragPhase::Held;
@@ -821,12 +871,30 @@ mod tests {
     }
 
     #[test]
+    fn ending_a_drag_clears_the_partial_seam_latch() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
+        let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
+        let mut drag = DragController::new();
+        drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
+
+        let near_end = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 700.0));
+        assert!(!near_end.edge_mask.right);
+        let outside = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
+        assert!(!outside.edge_mask.right);
+        drag.end_drag(0.1);
+
+        let released = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
+        assert!(released.edge_mask.right);
+    }
+
+    #[test]
     fn oversized_footprint_collapses_to_the_shared_seam_plane() {
         let region = MonitorRect { x: 0.0, y: 0.0, width: 300.0, height: 200.0 };
         let edges = EdgeMask { left: true, right: false, top: true, bottom: true };
         let mut bounds = DragBounds { min_x: 250.0, min_y: 0.0, max_x: 100.0, max_y: 180.0 };
         bounds.apply_shared_seam_bounds(region, (200.0, 50.0), edges);
-        bounds.collapse_inverted(edges.preferred_minimum());
+        bounds.collapse_inverted(edges, (200.0, 50.0));
         assert_eq!(bounds.min_x, 100.0);
         assert_eq!(bounds.max_x, 100.0);
     }
@@ -839,11 +907,33 @@ mod tests {
             max_x: 800.0,
             max_y: 600.0,
         };
-        bounds.collapse_inverted((true, false));
+        let edges = EdgeMask { left: false, right: true, top: true, bottom: false };
+        bounds.collapse_inverted(edges, (950.0, 650.0));
         assert_eq!(bounds.min_x, 900.0);
         assert_eq!(bounds.max_x, 900.0);
         assert_eq!(bounds.min_y, 600.0);
         assert_eq!(bounds.max_y, 600.0);
+    }
+
+    #[test]
+    fn oversized_footprint_between_two_seams_collapses_to_nearest_side() {
+        let both_sides_shared = EdgeMask {
+            left: false,
+            right: false,
+            top: true,
+            bottom: true,
+        };
+        let mut bounds = DragBounds {
+            min_x: 900.0,
+            min_y: 0.0,
+            max_x: 800.0,
+            max_y: 100.0,
+        };
+
+        bounds.collapse_inverted(both_sides_shared, (790.0, 50.0));
+
+        assert_eq!(bounds.min_x, 800.0);
+        assert_eq!(bounds.max_x, 800.0);
     }
 
     #[test]

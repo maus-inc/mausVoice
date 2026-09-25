@@ -537,13 +537,25 @@ mod tests {
             assert!(crossing.triggered && crossing.active);
             let mut unknown = frame(f64::NAN, f64::NAN, 200.0, 2.0 / 60.0);
             unknown.reduced_motion = reduced_motion;
+            let mut reference = deform.clone();
+            let mut known = frame(1920.0, 0.0, 200.0, 2.0 / 60.0);
+            known.reduced_motion = reduced_motion;
             let first = deform.advance(&unknown);
+            let expected = reference.advance(&known);
             assert!(!first.triggered);
+            assert_eq!(
+                (first.scale_x, first.scale_y),
+                (expected.scale_x, expected.scale_y),
+            );
+            assert_eq!(first.active, expected.active);
             if reduced_motion {
                 assert_eq!((first.scale_x, first.scale_y), (1.0, 1.0));
                 assert!(!first.active);
             } else {
-                assert!(first.scale_x > crossing.scale_x);
+                // The launch velocity can still compress for a few frames
+                // before the spring turns back toward rest, even when monitor
+                // geometry is temporarily unavailable.
+                assert!(first.active);
             }
             for _ in 0..240 {
                 unknown.now += unknown.dt;

@@ -1473,12 +1473,17 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             {
                 let visible = screen_visible_frame(screen);
                 let full = ns_rect_to_monitor_rect(frame);
-                let region = rust_pill_shared::edge::drag_region(
-                    full,
-                    ns_rect_to_monitor_rect(visible),
-                    &monitor_frames,
-                    footprint_center(win_frame.origin.x, win_frame.origin.y),
-                );
+                let work_area = ns_rect_to_monitor_rect(visible);
+                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+                let region = if dragging {
+                    state.drag_motion.borrow_mut().resolve_drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                } else {
+                    rust_pill_shared::edge::drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                };
                 chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
             }
@@ -1492,12 +1497,18 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 let primary: id = msg_send![screens, objectAtIndex:0usize];
                 let frame: NSRect = msg_send![primary, frame];
                 let visible = screen_visible_frame(primary);
-                let region = rust_pill_shared::edge::drag_region(
-                    ns_rect_to_monitor_rect(frame),
-                    ns_rect_to_monitor_rect(visible),
-                    &monitor_frames,
-                    footprint_center(win_frame.origin.x, win_frame.origin.y),
-                );
+                let full = ns_rect_to_monitor_rect(frame);
+                let work_area = ns_rect_to_monitor_rect(visible);
+                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+                let region = if dragging {
+                    state.drag_motion.borrow_mut().resolve_drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                } else {
+                    rust_pill_shared::edge::drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                };
                 (visible, region.bounds, region.edge_mask)
             }
             None => return,
@@ -1548,7 +1559,10 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
         let edge_work_mask = if dragging { edge_mask } else {
             rust_pill_shared::edge::EdgeMask::ALL
         };
-        bounds.collapse_inverted(edge_work_mask.preferred_minimum());
+        bounds.collapse_inverted(
+            edge_work_mask,
+            (win_frame.origin.x, win_frame.origin.y),
+        );
 
         // Drag motion runs through the shared controller: direct 1:1 tracking
         // while held, a velocity-aware settle after release. Both apply every

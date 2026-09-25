@@ -529,16 +529,22 @@ fn placement_on_monitor(
     } else {
         Vec::new()
     };
-    let region = rust_pill_shared::edge::drag_region(
-        rust_pill_shared::edge::MonitorRect {
-            x: full.x, y: full.y, width: full.width, height: full.height,
-        },
-        rust_pill_shared::edge::MonitorRect {
-            x: wa.x, y: wa.y, width: wa.width, height: wa.height,
-        },
-        &neighbors,
-        seam_point,
-    );
+    let monitor_rect = rust_pill_shared::edge::MonitorRect {
+        x: full.x, y: full.y, width: full.width, height: full.height,
+    };
+    let work_area = rust_pill_shared::edge::MonitorRect {
+        x: wa.x, y: wa.y, width: wa.width, height: wa.height,
+    };
+    let region = if seams_open {
+        state.drag_motion.borrow_mut().resolve_drag_region(
+            monitor_rect,
+            work_area,
+            &neighbors,
+            seam_point,
+        )
+    } else {
+        rust_pill_shared::edge::drag_region(monitor_rect, work_area, &neighbors, seam_point)
+    };
     let area = region.bounds;
     let (alloc_w, alloc_h) = window.size();
     // window.size() returns logical pixels; XMoveWindow and the
@@ -587,7 +593,8 @@ fn placement_on_monitor(
     if let Some(center) = pill_center {
         bounds.apply_shared_seam_bounds(area, center.offset, region.edge_mask);
     }
-    bounds.collapse_inverted(region.edge_mask.preferred_minimum());
+    let applied = state.x11_drag_applied.get();
+    bounds.collapse_inverted(region.edge_mask, (applied.0 as f64, applied.1 as f64));
 
     Some(MonitorPlacement {
         bounds,

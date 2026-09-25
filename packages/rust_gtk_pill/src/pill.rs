@@ -1181,9 +1181,11 @@ pub(crate) struct X11PillCenter {
 
 /// Compute the rendered pill center once for all X11 seam calculations.
 ///
-/// `scale` must be the window surface scale: GTK 3 X11 uses that same
-/// screen-wide factor for every monitor rectangle. The toplevel origin is
-/// already in root pixels; the local offset is scaled into that same space.
+/// The local `offset` is scaled into the supplied scale space; `root` is a
+/// true root-pixel point only when `scale` is the window surface scale. GTK 3
+/// X11 uses one screen-wide factor for every monitor rectangle, so all live
+/// callers must pass that same surface scale (never an anchor-monitor scale).
+/// The toplevel origin is already in root pixels.
 pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCenter> {
     if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
         return None;
