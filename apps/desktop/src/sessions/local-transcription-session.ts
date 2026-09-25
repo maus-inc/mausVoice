@@ -81,9 +81,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
         selectText: (result) => result.sanitizedTranscript,
       });
       this.pretranscriber = pretranscriber;
-      this.unlisten = await listenToAudioChunks((samples) => {
+      this.unlisten = await listenToAudioChunks((samples, offset) => {
         this.session?.writeAudioChunk(samples);
-        pretranscriber.push(samples);
+        pretranscriber.push(samples, offset);
       });
     } catch (error) {
       const message = this.toErrorMessage(error);
@@ -102,10 +102,15 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   ): Promise<TranscriptionSessionResult> {
     const warnings = [...this.startupWarnings];
 
+    const pretranscriber = this.pretranscriber;
     const pretranscribed = await this.finishPretranscription(audio, warnings);
     if (pretranscribed) {
       this.cleanup();
       return pretranscribed;
+    }
+    // Cancelled mid-finalize: the session is already torn down.
+    if (pretranscriber?.isDisposed) {
+      return { rawTranscript: null, metadata: {}, warnings };
     }
 
     if (!this.session) {

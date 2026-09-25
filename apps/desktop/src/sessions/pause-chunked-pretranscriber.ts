@@ -45,11 +45,34 @@ export const joinTranscriptSpans = (spans: string[]): string =>
     const next = span.trim();
     if (!next) return joined;
     if (!joined) return next;
+    // Compare whole code points so astral Han (CJK Ext. B+) is recognized.
+    const lastChar = Array.from(joined.slice(-2)).at(-1) ?? "";
+    const firstChar = Array.from(next.slice(0, 2))[0] ?? "";
     const needsSpace = !(
-      NO_SPACE_SCRIPT.test(joined.slice(-1)) || NO_SPACE_SCRIPT.test(next[0])
+      NO_SPACE_SCRIPT.test(lastChar) || NO_SPACE_SCRIPT.test(firstChar)
     );
     return needsSpace ? `${joined} ${next}` : `${joined}${next}`;
   }, "");
+
+/**
+ * Descriptive fields (model, device, mode) come from the last span; the
+ * provider time is the sum across spans so history shows the real total.
+ */
+const mergeSpanMetadata = (
+  chunks: PretranscribedChunk[],
+): TranscribeAudioMetadata => {
+  const durations = chunks
+    .map((chunk) => chunk.metadata.transcriptionDurationMs)
+    .filter((value): value is number => typeof value === "number");
+  const metadata = { ...chunks.at(-1)?.metadata };
+  if (durations.length > 0) {
+    metadata.transcriptionDurationMs = durations.reduce(
+      (total, value) => total + value,
+      0,
+    );
+  }
+  return metadata;
+};
 
 type CommittedChunk = {
   endOffset: number;
@@ -77,6 +100,9 @@ export class PauseChunkedPretranscriber {
   private silentRunStart: number | null = null;
   private noiseFloor: number | null = null;
   private speechLevel = 0;
+  /** Recording index of the first sample in `buffer`'s stream; null until the first chunk. */
+  private streamStart: number | null = null;
+  private receivedLength = 0;
   private committedOffset = 0;
   private readonly committed: CommittedChunk[] = [];
   private readonly results: Promise<PretranscribedChunk>[] = [];
@@ -102,8 +128,27 @@ export class PauseChunkedPretranscriber {
     return this.committed.length;
   }
 
-  push(samples: ArrayLike<number>): void {
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
+   * `offset` is the recording index of `samples[0]`. The listener can attach
+   * after capture has started, so the first offset anchors the stream; a gap
+   * or a missing offset disables pretranscription for this recording.
+   */
+  push(samples: ArrayLike<number>, offset: number | null): void {
     if (this.sealed || this.failed || samples.length === 0) return;
+    if (offset === null) {
+      this.failed = true;
+      return;
+    }
+    this.streamStart ??= offset;
+    if (offset !== this.streamStart + this.receivedLength) {
+      this.failed = true;
+      return;
+    }
+    this.receivedLength += samples.length;
     this.append(samples);
     this.analyzeFrames();
   }
@@ -118,9 +163,10 @@ export class PauseChunkedPretranscriber {
       audio.samples instanceof Float32Array
         ? audio.samples
         : Float32Array.from(audio.samples);
-    if (!this.matchesCommittedAudio(samples)) return null;
+    const start = this.streamStart ?? 0;
+    if (!this.matchesCommittedAudio(samples, start)) return null;
 
-    const tail = samples.subarray(this.committedOffset);
+    const tail = samples.subarray(start + this.committedOffset);
     const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
     let chunks: PretranscribedChunk[];
     try {
@@ -132,10 +178,9 @@ export class PauseChunkedPretranscriber {
     }
     if (this.failed || this.disposed) return null;
 
-    const last = chunks[chunks.length - 1];
     return {
       text: joinTranscriptSpans(chunks.map((chunk) => chunk.text)),
-      metadata: last.metadata,
+      metadata: mergeSpanMetadata(chunks),
       warnings: Array.from(new Set(chunks.flatMap((chunk) => chunk.warnings))),
       chunkCount: chunks.length,
     };
@@ -243,10 +288,13 @@ export class PauseChunkedPretranscriber {
    * final recording. Verify the end of every committed span before trusting
    * the incremental transcripts.
    */
-  private matchesCommittedAudio(samples: Float32Array): boolean {
-    if (samples.length < this.committedOffset) return false;
+  private matchesCommittedAudio(
+    samples: Float32Array,
+    streamStart: number,
+  ): boolean {
+    if (samples.length < streamStart + this.committedOffset) return false;
     return this.committed.every(({ endOffset, probe }) => {
-      const start = endOffset - probe.length;
+      const start = streamStart + endOffset - probe.length;
       for (let index = 0; index < probe.length; index += 1) {
         if (samples[start + index] !== probe[index]) return false;
       }
