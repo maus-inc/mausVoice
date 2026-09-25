@@ -11,10 +11,12 @@ import {
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
+import { getTranscriptionProviderName } from "../../utils/transcription-privacy.utils";
 import { AITranscriptionConfiguration } from "./AITranscriptionConfiguration";
 
 export const AITranscriptionDialog = () => {
   const open = useAppStore((state) => state.settings.aiTranscriptionDialogOpen);
+  const transcriptionProviderName = useAppStore(getTranscriptionProviderName);
 
   const closeDialog = () => {
     produceAppState((draft) => {
@@ -51,6 +53,19 @@ export const AITranscriptionDialog = () => {
             <FormattedMessage defaultMessage="Decide how mausVoice should transcribe your recordings, locally on your machine or through a connected provider." />
           </Typography>
           <AITranscriptionConfiguration />
+          {transcriptionProviderName && (
+            <Typography
+              variant="body2"
+              sx={{
+                color: "text.secondary",
+              }}
+            >
+              <FormattedMessage
+                defaultMessage="Audio is sent to {provider} while you dictate, so text can come back immediately."
+                values={{ provider: transcriptionProviderName }}
+              />
+            </Typography>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
