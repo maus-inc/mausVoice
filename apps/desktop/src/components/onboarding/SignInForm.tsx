@@ -229,7 +229,7 @@ export const SignInForm = () => {
             letterSpacing: "0.01em",
           }}
         >
-          <FormattedMessage defaultMessage="Welcome" />
+          <FormattedMessage defaultMessage="Welcome back" id="welcome_back" />
         </Typography>
 
         <Typography
@@ -239,7 +239,8 @@ export const SignInForm = () => {
           }}
         >
           <FormattedMessage
-            defaultMessage="Signed in as {email}"
+            defaultMessage="You are signed in as {email}"
+            id="you_are_signed_in_as_email"
             values={{ email: auth?.email }}
           />
         </Typography>
