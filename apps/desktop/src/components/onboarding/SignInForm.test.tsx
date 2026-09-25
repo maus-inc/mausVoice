@@ -28,6 +28,7 @@ let root: Root;
 
 beforeEach(() => {
   const state = structuredClone(INITIAL_APP_STATE);
+  state.initialized = true;
   Object.assign(state.onboarding, {
     name: "",
     firstName: "",

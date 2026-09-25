@@ -133,6 +133,7 @@ export const resetTip = (id: string): void => {
 
 export const resumeOnboardingPage = (): void => {
   const state = getAppState();
+  if (state.auth && !state.initialized) return;
   const resume = state.local.onboardingResumePage;
   const hasForeignNameDraft =
     state.auth !== null &&
@@ -310,6 +311,7 @@ const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
 
 export const submitOnboarding = async () => {
   const state = getAppState();
+  if (state.auth && !state.initialized) return null;
   const initiatingAuthSessionNonce = state.authSessionNonce;
   const trimmedName = resolveOnboardingName(
     state.onboarding,
@@ -460,11 +462,12 @@ export const submitOnboarding = async () => {
       expansionFlags: "{}",
     };
 
-    const [savedUser, savedPreferences] = await Promise.all([
-      repo.setMyUser(user),
-      preferencesRepo.setUserPreferences(preferences),
-    ]);
-
+    const savedUser = await repo.setMyUser(user);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
+    const savedPreferences =
+      await preferencesRepo.setUserPreferences(preferences);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
@@ -493,7 +496,7 @@ export const submitOnboarding = async () => {
       draft.onboarding.submitting = false;
     });
     showErrorSnackbar(err);
-    return undefined;
+    throw err;
   }
 };
 

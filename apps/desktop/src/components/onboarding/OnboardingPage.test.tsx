@@ -29,6 +29,7 @@ let root: Root;
 
 beforeEach(() => {
   const state = structuredClone(INITIAL_APP_STATE);
+  state.initialized = true;
   state.onboarding.currentPage = "signIn";
   state.onboarding.title = "Old title";
   state.onboarding.company = "Old company";

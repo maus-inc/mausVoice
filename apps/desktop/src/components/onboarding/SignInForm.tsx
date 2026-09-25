@@ -55,6 +55,7 @@ export const SignInForm = () => {
     (state) => state.local.onboardingResumePage,
   );
   const isSignedIn = Boolean(auth);
+  const initialized = useAppStore((state) => state.initialized);
   const showEmailButton = useAppStore((state) => getShouldShowEmailForm(state));
 
   const existingUser = useAppStore((state) => getMyUser(state));
@@ -108,7 +109,7 @@ export const SignInForm = () => {
   }, [auth, isSignedIn, onboardingNameDraft, onboardingNameDraftUserId]);
 
   useEffect(() => {
-    if (!isSignedIn || existingName === "") return;
+    if (!isSignedIn || !initialized || existingName === "") return;
     produceAppState((draft) => {
       const nameDraft = createOnboardingNameDraft(existingName);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);

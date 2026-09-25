@@ -23,6 +23,7 @@ import { UserDetailsForm } from "./UserDetailsForm";
 export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
   const authUid = useAppStore((state) => state.auth?.uid);
+  const initialized = useAppStore((state) => state.initialized);
   const authSessionNonce = useAppStore((state) => state.authSessionNonce);
   const [resumeCheckedNonce, setResumeCheckedNonce] = useState<number | null>(
     null,
@@ -32,14 +33,18 @@ export default function OnboardingPage() {
     ensureOnboardingFlow();
     resumeOnboardingPage();
     setResumeCheckedNonce(authSessionNonce);
-  }, [authSessionNonce, authUid]);
+  }, [authSessionNonce, authUid, initialized]);
 
   useEffect(() => {
     markOnboardingStepEntered(currentPage);
     trackOnboardingStep(`v3_${currentPage}`);
   }, [currentPage]);
 
-  if (resumeCheckedNonce !== authSessionNonce) return null;
+  if (
+    resumeCheckedNonce !== authSessionNonce ||
+    (authUid !== undefined && !initialized)
+  )
+    return null;
 
   return (
     <Stack

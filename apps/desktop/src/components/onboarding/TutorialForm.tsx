@@ -511,6 +511,12 @@ const useTutorialSubmission = ({
         produceAppState((draft) => {
           draft.onboarding.dictationOverrideEnabled = true;
         });
+      } catch (error) {
+        submittedRef.current = false;
+        produceAppState((draft) => {
+          draft.onboarding.dictationOverrideEnabled = true;
+        });
+        showErrorSnackbar(error);
       } finally {
         if (!cancelled) {
           setInitializing(false);

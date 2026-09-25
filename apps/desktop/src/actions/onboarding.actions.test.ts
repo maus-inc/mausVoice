@@ -67,7 +67,9 @@ import {
 import { showErrorSnackbar } from "./app.actions";
 
 const seed = () => {
-  setAppState(structuredClone(INITIAL_APP_STATE), true);
+  const state = structuredClone(INITIAL_APP_STATE);
+  state.initialized = true;
+  setAppState(state, true);
 };
 
 const resetActionMocks = () => {
