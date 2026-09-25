@@ -87,6 +87,7 @@ export type ListTileProps = {
   leadingOnClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
   onClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
   selected?: boolean;
+  ariaCurrent?: React.AriaAttributes["aria-current"];
   sx?: SxProps;
   href?: string;
   disabled?: boolean;
@@ -108,6 +109,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
       leadingOnClick,
       onClick,
       selected = false,
+      ariaCurrent,
       sx,
       href,
       disabled,
@@ -176,6 +178,7 @@ export const ListTile = forwardRef<HTMLDivElement, ListTileProps>(
         {indicator}
         <ListItemButton
           selected={selected}
+          aria-current={ariaCurrent}
           onClick={handleClick}
           disabled={disabled}
           disableRipple={disableRipple}

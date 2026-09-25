@@ -1,7 +1,9 @@
 import { Box, Stack, Typography } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
-import { Outlet } from "react-router-dom";
+import { motion, useReducedMotion } from "framer-motion";
+import { Outlet, useLocation } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
+import { easeOutQuint } from "../../styles/motion";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
@@ -14,6 +16,8 @@ import { PermissionsDialog } from "./PermissionsDialog";
  */
 export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
+  const { pathname } = useLocation();
+  const reduceMotion = useReducedMotion();
 
   return (
     <>
@@ -49,10 +53,20 @@ export default function DashboardPage() {
             pt: { xs: 0.5, sm: 1 },
           }}
         >
-          {/* A routed Outlet must have a single owner. Keeping an outgoing
-              Outlet alive during an exit animation lets it follow the new
-              route and run its effects/cleanup alongside the incoming page. */}
-          <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}>
+          {/* Enter only: retaining an outgoing Outlet during an exit animation
+              makes it follow the new route and run cleanup on the incoming page.
+              Key by pathname so query-only navigation keeps the page mounted. */}
+          <Box
+            component={motion.div}
+            key={pathname}
+            initial={reduceMotion ? false : { opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{
+              duration: reduceMotion ? 0 : 0.24,
+              ease: easeOutQuint,
+            }}
+            sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}
+          >
             <Outlet />
           </Box>
         </Box>
