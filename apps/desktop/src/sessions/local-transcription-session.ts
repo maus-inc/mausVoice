@@ -1,4 +1,3 @@
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
 import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
@@ -24,7 +23,6 @@ import {
 } from "../utils/prompt.utils";
 import { mapDictationLanguageToWhisperLanguage } from "../utils/language.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
-import { listenToAudioChunks } from "./audio-chunk-events";
 import {
   createActionPretranscriber,
   LOCAL_PRETRANSCRIPTION,
@@ -38,7 +36,6 @@ type LocalSessionContext = {
 };
 
 export class LocalTranscriptionSession implements TranscriptionSession {
-  private unlisten: UnlistenFn | null = null;
   private session: LocalSidecarStreamingSession | null = null;
   private context: LocalSessionContext | null = null;
   private pretranscriber: PauseChunkedPretranscriber | null = null;
@@ -75,15 +72,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       this.session = sidecarSession;
       this.context = { prompt, hallucinationFilterEnabled };
-      const pretranscriber = createActionPretranscriber(sampleRate, {
+      this.pretranscriber = createActionPretranscriber(sampleRate, {
         config: LOCAL_PRETRANSCRIPTION,
         hallucinationFilterEnabled,
         selectText: (result) => result.sanitizedTranscript,
-      });
-      this.pretranscriber = pretranscriber;
-      this.unlisten = await listenToAudioChunks((samples, offset) => {
-        this.session?.writeAudioChunk(samples);
-        pretranscriber.push(samples, offset);
       });
     } catch (error) {
       const message = this.toErrorMessage(error);
@@ -95,6 +87,17 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       );
       this.cleanup();
     }
+  }
+
+  /**
+   * One live chunk, two consumers: the sidecar's streaming session and the
+   * pause-chunked pretranscriber. The component owns the `audio_chunk`
+   * registration and supplies the absolute sample index, which the
+   * pretranscriber needs to align the live stream with the final recording.
+   */
+  writeAudioChunk(chunk: Float32Array, offset: number): void {
+    this.session?.writeAudioChunk(chunk);
+    this.pretranscriber?.push(chunk, offset);
   }
 
   async finalize(
@@ -166,10 +169,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   cleanup(): void {
     getLogger().info(
-      `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
+      `[local-stream-session] cleanup (hasSession=${!!this.session})`,
     );
-    this.unlisten?.();
-    this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
     this.pretranscriber?.dispose();

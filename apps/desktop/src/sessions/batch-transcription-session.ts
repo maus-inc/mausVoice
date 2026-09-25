@@ -1,4 +1,3 @@
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { showToast } from "../actions/toast.actions";
 import {
   type TranscribeAudioResult,
@@ -10,7 +9,6 @@ import {
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
 import { getLogger } from "../utils/log.utils";
-import { listenToAudioChunks } from "./audio-chunk-events";
 import {
   PauseChunkedPretranscriber,
   type PauseChunkingConfig,
@@ -94,24 +92,22 @@ const EMPTY_RESULT: TranscriptionSessionResult = {
  */
 export class BatchTranscriptionSession implements TranscriptionSession {
   private pretranscriber: PauseChunkedPretranscriber | null = null;
-  private unlisten: UnlistenFn | null = null;
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     this.cleanup();
-    const pretranscriber = createActionPretranscriber(sampleRate, {
+    this.pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
       selectText: (result) => result.rawTranscript,
     });
-    this.pretranscriber = pretranscriber;
-    try {
-      this.unlisten = await listenToAudioChunks((samples, offset) =>
-        pretranscriber.push(samples, offset),
-      );
-    } catch (error) {
-      getLogger().verbose(
-        `Batch session: pretranscription unavailable (${error})`,
-      );
-    }
+  }
+
+  /**
+   * The component owns the `audio_chunk` registration and supplies the
+   * absolute sample index, which the pretranscriber needs to align the live
+   * stream with the final recording.
+   */
+  writeAudioChunk(chunk: Float32Array, offset: number): void {
+    this.pretranscriber?.push(chunk, offset);
   }
 
   async finalize(
@@ -130,8 +126,6 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   }
 
   cleanup(): void {
-    this.unlisten?.();
-    this.unlisten = null;
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
   }
@@ -147,8 +141,8 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   ): Promise<TranscriptionSessionResult | null> {
     const pretranscriber = this.pretranscriber;
     if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
-    this.unlisten?.();
-    this.unlisten = null;
+    // `finish` seals the pretranscriber, so chunks that arrive while the tail
+    // transcribes are ignored without tearing the component's listener down.
     const started = performance.now();
     const result = await pretranscriber.finish(audio);
     if (!result) {

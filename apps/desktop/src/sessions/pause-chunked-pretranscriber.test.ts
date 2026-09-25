@@ -278,4 +278,15 @@ describe("joinTranscriptSpans", () => {
     expect(joinTranscriptSpans(["我们用 API", "处理"])).toBe("我们用 API处理");
     expect(joinTranscriptSpans(["𠀀", "𠀁"])).toBe("𠀀𠀁");
   });
+
+  it("treats fullwidth punctuation as a no-space script but fullwidth Latin and digits as spaced", () => {
+    expect(joinTranscriptSpans(["ありがとう！", "Let's ship it."])).toBe(
+      "ありがとう！Let's ship it.",
+    );
+    expect(joinTranscriptSpans(["ＯＳ", "next"])).toBe("ＯＳ next");
+    expect(joinTranscriptSpans(["shipped", "２０２６"])).toBe(
+      "shipped ２０２６",
+    );
+    expect(joinTranscriptSpans(["完了（了）", "next"])).toBe("完了（了）next");
+  });
 });

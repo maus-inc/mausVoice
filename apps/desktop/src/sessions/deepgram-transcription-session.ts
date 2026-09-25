@@ -1,7 +1,5 @@
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
 import { buildDeepgramWebSocketUrl } from "../utils/deepgram.utils";
-import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger, redactQueryParamValues } from "../utils/log.utils";
 import {
   buildProviderVocabulary,
@@ -11,14 +9,12 @@ import {
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
-import {
-  createAudioChunkBuffer,
-  createReceivedChunkLogger,
-} from "./transcription-stream.utils";
+import { createAudioChunkBuffer } from "./transcription-stream.utils";
 
 type DeepgramStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
+  writeAudioChunk: (chunk: Float32Array) => void;
 };
 
 const LOGGER_PREFIX = "Deepgram WebSocket";
@@ -36,10 +32,8 @@ const startDeepgramStreaming = async (
   );
 
   let ws: WebSocket | null = null;
-  let unlisten: UnlistenFn | null = null;
   let isFinalized = false;
   const transcriptState = createTranscriptAccumulator();
-  const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
   const buffer = createAudioChunkBuffer(() => ws, {
     sampleRate,
@@ -51,10 +45,6 @@ const startDeepgramStreaming = async (
   const getText = () => transcriptState.text();
 
   const cleanup = () => {
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
     if (ws && ws.readyState !== WebSocket.CLOSED) {
       ws.close();
       ws = null;
@@ -129,25 +119,15 @@ const startDeepgramStreaming = async (
     }
   };
 
-  getLogger().verbose(`[${LOGGER_PREFIX}] Setting up audio_chunk listener...`);
-  unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
-    receivedLogger.record(event.payload.samples.length);
-    if (!isFinalized) {
-      try {
-        const typedChunk = ensureFloat32Array(event.payload.samples);
-        buffer.push(typedChunk);
-        buffer.flush(false);
-      } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
-          error,
-        );
-      }
+  const writeAudioChunk = (chunk: Float32Array) => {
+    if (isFinalized || ws?.readyState !== WebSocket.OPEN) return;
+    try {
+      buffer.push(chunk);
+      buffer.flush(false);
+    } catch (error) {
+      getLogger().error(`[${LOGGER_PREFIX}] Error sending audio chunk:`, error);
     }
-  });
-  getLogger().verbose(
-    `[${LOGGER_PREFIX}] Audio listener attached, connecting...`,
-  );
+  };
 
   return new Promise((resolve, reject) => {
     const wsUrl = buildDeepgramWebSocketUrl({
@@ -167,7 +147,7 @@ const startDeepgramStreaming = async (
       );
       buffer.flush(false);
       getLogger().verbose(`[${LOGGER_PREFIX}] Session ready`);
-      resolve({ finalize, cleanup });
+      resolve({ finalize, cleanup, writeAudioChunk });
     };
 
     ws.onmessage = (event) => {

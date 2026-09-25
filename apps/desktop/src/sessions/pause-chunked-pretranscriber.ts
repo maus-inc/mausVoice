@@ -33,8 +33,13 @@ const FLOOR_RISE = 0.0005;
 const PEAK_DECAY = 0.9995;
 const PROBE_LENGTH = 32;
 
+/**
+ * Scripts written without inter-word spaces, plus the CJK punctuation and
+ * halfwidth katakana that behave the same way. Fullwidth Latin and digits are
+ * deliberately excluded: they are Latin text that still needs a separator.
+ */
 const NO_SPACE_SCRIPT =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\u3000-\u303f\uff00-\uffef]/u;
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\u3000-\u303f\uff01-\uff0f\uff1a-\uff20\uff3b-\uff40\uff5b-\uff9f]/u;
 
 /**
  * Join transcripts of consecutive, non-overlapping audio spans. Scripts that

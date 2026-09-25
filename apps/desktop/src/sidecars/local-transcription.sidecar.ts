@@ -574,13 +574,15 @@ export class LocalTranscriptionSidecar extends BaseSidecar {
   ): Promise<void> {
     const currentStatus = await this.getModelStatus(model, true);
 
-    if (!currentStatus.downloaded || !currentStatus.valid) {
-      const download = await this.downloadModelInternal(model);
-      this.assertDownloadCompleted(model, download);
+    if (currentStatus.downloaded && currentStatus.valid) {
+      this.markModelReady(model);
+      return;
     }
 
-    const finalStatus = await this.getModelStatus(model, true);
+    const download = await this.downloadModelInternal(model);
+    this.assertDownloadCompleted(model, download);
 
+    const finalStatus = await this.getModelStatus(model, true);
     if (!finalStatus.downloaded || !finalStatus.valid) {
       throw new Error(
         finalStatus.validationError ||
