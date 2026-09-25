@@ -12,6 +12,7 @@ use whisper_rs::{
 };
 
 const SILENCE_RMS_THRESHOLD: f32 = 0.0025;
+const SILENCE_WINDOW_SECONDS: f64 = 0.3;
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionInput {
@@ -128,7 +129,7 @@ impl TranscriptionEngine {
         // deterministic and applies before any model-specific runtime is
         // loaded.
         if input.hallucination_filter_enabled
-            && is_near_silent(&filtered_samples, SILENCE_RMS_THRESHOLD)
+            && is_near_silent(&filtered_samples, input.sample_rate, SILENCE_RMS_THRESHOLD)
         {
             // Tolerate device-resolution failures here: this branch returns an
             // empty transcript without running inference, so a transient
@@ -190,7 +191,10 @@ impl TranscriptionEngine {
         // energy gate for very quiet speech/noise at the edge of the threshold.
         params.set_no_speech_thold(0.6);
         params.set_suppress_blank(true);
-        params.set_suppress_nst(true);
+        // Non-speech token suppression bans `" # ( ) * + / : ; < = > @ [ ] _`
+        // and friends, which breaks dictated emails, times, URLs, and
+        // quotes. whisper.cpp ships with it off for that reason.
+        params.set_suppress_nst(false);
 
         if let Some(language) = input
             .language
@@ -441,22 +445,22 @@ fn collect_transcription(
     Ok((transcript.trim().to_string(), segments))
 }
 
-fn is_near_silent(samples: &[f32], threshold: f32) -> bool {
-    if samples.is_empty() {
-        return true;
-    }
-
-    let mut sum_squares = 0.0_f64;
-    let mut count = 0_u64;
-    for sample in samples {
-        if sample.is_finite() {
-            let value = f64::from(*sample);
-            sum_squares += value * value;
-            count += 1;
-        }
-    }
-
-    count == 0 || (sum_squares / count as f64).sqrt() < f64::from(threshold)
+/// True only when every ~300 ms window is quieter than `threshold`. Judging
+/// the whole clip by its average RMS let long pauses hide a quiet but real
+/// utterance, which then came back as an empty transcript.
+fn is_near_silent(samples: &[f32], sample_rate: u32, threshold: f32) -> bool {
+    let window = ((f64::from(sample_rate) * SILENCE_WINDOW_SECONDS) as usize).max(1);
+    let threshold_squared = f64::from(threshold) * f64::from(threshold);
+    samples.chunks(window).all(|chunk| {
+        let (sum_squares, count) = chunk
+            .iter()
+            .filter(|sample| sample.is_finite())
+            .fold((0.0_f64, 0_u64), |(sum, count), sample| {
+                let value = f64::from(*sample);
+                (sum + value * value, count + 1)
+            });
+        count == 0 || sum_squares / (count as f64) < threshold_squared
+    })
 }
 
 pub fn ensure_gpu_runtime_available() -> Result<(), String> {
@@ -585,6 +589,31 @@ mod filter_contract_tests {
             // the ordinary inference path was reached rather than silence-gated.
             assert!(error.contains("unsupported deviceId"), "{error}");
         }
+    }
+
+    #[test]
+    fn quiet_speech_in_a_long_pause_is_not_silence_gated() {
+        // 0.5 s at 0.01 RMS inside 20 s of silence averages below the
+        // threshold over the whole clip, yet it is real speech.
+        let mut samples = vec![0.0_f32; 16_000 * 20];
+        for (index, sample) in samples.iter_mut().enumerate().take(8_000) {
+            *sample = if index % 2 == 0 { 0.01 } else { -0.01 };
+        }
+        let engine = TranscriptionEngine::new(ComputeMode::Cpu);
+        let mut input = quiet_input(WhisperModel::Tiny, true, 16_000);
+        input.samples = samples;
+        let error = engine.transcribe_blocking(input).unwrap_err();
+        assert!(error.contains("unsupported deviceId"), "{error}");
+    }
+
+    #[test]
+    fn near_silent_requires_every_window_to_be_quiet() {
+        assert!(is_near_silent(&[], 16_000, SILENCE_RMS_THRESHOLD));
+        assert!(is_near_silent(&[0.001; 16_000], 16_000, SILENCE_RMS_THRESHOLD));
+
+        let mut burst = vec![0.0_f32; 16_000 * 10];
+        burst[..4_800].fill(0.01);
+        assert!(!is_near_silent(&burst, 16_000, SILENCE_RMS_THRESHOLD));
     }
 
     #[test]
