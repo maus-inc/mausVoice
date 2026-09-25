@@ -25,6 +25,7 @@ import {
   geminiStreamChat,
   GENERATE_TEXT_MODELS,
   GenerateTextModel,
+  GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   groqStreamChat,
   OpenAIGenerateTextModel,
@@ -75,7 +76,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   // The default model the constructor falls back to when nothing is stored.
   // It is a live Groq id, so a post-processing failure never becomes a hard
   // 404 the way the retired `qwen/qwen3.6-27b` id did.
-  private defaultModel: GenerateTextModel = "openai/gpt-oss-20b";
+  private defaultModel: GenerateTextModel = GROQ_DEFAULT_GENERATE_TEXT_MODEL;
 
   constructor(apiKey: string, model: string | null) {
     super();

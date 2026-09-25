@@ -10,6 +10,7 @@ import {
   GEMINI_GENERATE_TEXT_MODELS,
   geminiGenerateTextResponse,
   GENERATE_TEXT_MODELS,
+  GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   OPENAI_GENERATE_TEXT_MODELS,
   openaiGenerateTextResponse,
@@ -166,7 +167,11 @@ describe("GenerateTextInput.signal forwarding", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    // Use the 120b model so this test can only pass through the abort guard.
+    // With the default model the abort and the "no distinct fallback" guards
+    // would be satisfied by the same branch and the test would pass even if
+    // the abort guard were removed.
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
     await expect(
       repo.generateText({ prompt: "p", signal: controller.signal }),
     ).rejects.toThrow("boom");
@@ -175,10 +180,12 @@ describe("GenerateTextInput.signal forwarding", () => {
     // to a second model) would burn quota after the deadline already fired.
     expect(mocked).toHaveBeenCalledTimes(1);
   });
+});
 
+describe("Groq fallback model", () => {
   // Regression: the Groq fallback used to point at a retired id, so a primary
   // failure turned into a hard 404 instead of a working second attempt.
-  it("Groq retries the fallback request on a model Groq still serves", async () => {
+  it("retries the primary 120b failure on the 20b model", async () => {
     const mocked = vi.mocked(groqGenerateTextResponse);
     mocked.mockRejectedValueOnce(new Error("primary down"));
     mocked.mockResolvedValueOnce(mockResponse("hi"));
@@ -187,21 +194,42 @@ describe("GenerateTextInput.signal forwarding", () => {
     await repo.generateText({ prompt: "p" });
 
     expect(mocked).toHaveBeenCalledTimes(2);
-    expect(GENERATE_TEXT_MODELS).toContain(mocked.mock.calls[1]![0]!.model);
+    expect(mocked.mock.calls[1]![0]!.model).toBe(
+      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
+    );
   });
 
   // Regression: the default model used to be the same id as the fallback, so
   // a default-model failure rethrew without ever trying the other live model.
-  it("Groq retries a distinct model when the default model fails", async () => {
+  it("retries a distinct model when the default model fails", async () => {
     const mocked = vi.mocked(groqGenerateTextResponse);
     mocked.mockRejectedValueOnce(new Error("primary down"));
     mocked.mockResolvedValueOnce(mockResponse("hi"));
 
-    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const repo = new GroqGenerateTextRepo(
+      "k",
+      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
+    );
     await repo.generateText({ prompt: "p" });
 
     expect(mocked).toHaveBeenCalledTimes(2);
-    expect(GENERATE_TEXT_MODELS).toContain(mocked.mock.calls[1]![0]!.model);
+    expect(mocked.mock.calls[0]![0]!.model).toBe(
+      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
+    );
+    expect(mocked.mock.calls[1]![0]!.model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("retries a distinct model when no model is stored", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockRejectedValueOnce(new Error("primary down"));
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    // No stored model resolves to the default; a failure must still retry.
+    const repo = new GroqGenerateTextRepo("k", null);
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(mocked).toHaveBeenCalledTimes(2);
+    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
 });
 
@@ -284,37 +312,20 @@ describe("generateText metadata reports the resolved model", () => {
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
-    expect(GENERATE_TEXT_MODELS).toContain(output.metadata?.model);
+    expect(output.metadata?.model).toBe(GROQ_DEFAULT_GENERATE_TEXT_MODEL);
   });
 
-  it("Groq falls back to the other model when the default model fails", async () => {
-    const mocked = vi.mocked(groqGenerateTextResponse);
-    mocked
+  it("Groq reports the other model when the default model fails", async () => {
+    vi.mocked(groqGenerateTextResponse)
       .mockRejectedValueOnce(new Error("primary down"))
       .mockResolvedValueOnce(mockResponse("hi"));
 
-    // The default model is also the fallback base. A default-model failure
-    // must still reach the other supported Groq model.
-    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+    const repo = new GroqGenerateTextRepo(
+      "k",
+      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
+    );
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(mocked).toHaveBeenCalledTimes(2);
-    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
-    expect(GENERATE_TEXT_MODELS).toContain(mocked.mock.calls[1]![0]!.model);
-  });
-
-  it("Groq falls back to the other model when no model is stored", async () => {
-    const mocked = vi.mocked(groqGenerateTextResponse);
-    mocked
-      .mockRejectedValueOnce(new Error("primary down"))
-      .mockResolvedValueOnce(mockResponse("hi"));
-
-    // No stored model resolves to the default; a failure must still retry.
-    const repo = new GroqGenerateTextRepo("k", null);
-    const output = await repo.generateText({ prompt: "p" });
-
-    expect(mocked).toHaveBeenCalledTimes(2);
     expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
 
