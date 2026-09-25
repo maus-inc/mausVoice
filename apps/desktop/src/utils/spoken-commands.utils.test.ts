@@ -188,6 +188,25 @@ describe("applySpokenCommands", () => {
     );
   });
 
+  it.each([
+    "Hello world scratch that new line of credit",
+    "Hello world scratch that period of time",
+    "Hello world scratch that the next line",
+  ])(
+    "does not count a following phrase that is not a command: %s",
+    (sentence) => {
+      expect(applySpokenCommands(sentence)).toBe(sentence);
+    },
+  );
+
+  it("does not close a clause with a structural command skipped in interim text", () => {
+    const options = { skipStructuralCommands: true };
+    expect(applySpokenCommands("hello period new line", "en", options)).toBe(
+      "hello period new line",
+    );
+    expect(applySpokenCommands("hello period new line")).toBe("hello.\n");
+  });
+
   it("does not let a listed noun block across punctuation", () => {
     expect(applySpokenCommands("Show some grace. Period.")).toBe(
       applySpokenCommands("Show some care. Period.").replace("care", "grace"),

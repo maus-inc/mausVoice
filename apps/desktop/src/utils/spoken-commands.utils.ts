@@ -303,7 +303,7 @@ const predecessorBlocked = (
   if (
     !blockedPredecessors ||
     previous.length === 0 ||
-    endsWithClausePunctuation(previous[previous.length - 1])
+    endsWithClausePunctuation(previous.at(-1) ?? "")
   ) {
     return false;
   }
@@ -464,21 +464,10 @@ const previousWordIn = (
   !endsWithClausePunctuation(previous) &&
   words.has(normalizedWord(previous));
 
-// Whether the words of some command start at `index`, ignoring context.
-const startsCommandAt = (tokens: string[], index: number): boolean =>
-  COMMANDS_BY_LENGTH.some(
-    (command) =>
-      index + command.words.length <= tokens.length &&
-      wordsMatch(
-        tokens.slice(index, index + command.words.length),
-        command.words,
-      ),
-  );
-
-// A command closes its clause when nothing follows it, punctuation ends it,
-// or the next token is capitalized or starts another command. Capitalization
-// stands in for a sentence start, so a proper noun also counts.
-const closesClause = (
+// Nothing follows, punctuation ends the command, or the next token is
+// capitalized. Capitalization stands in for a sentence start, so a proper
+// noun also counts.
+const endsClauseHere = (
   tokens: string[],
   index: number,
   span: number,
@@ -487,35 +476,19 @@ const closesClause = (
   return (
     next === undefined ||
     endsWithClausePunctuation(tokens[index + span - 1] ?? "") ||
-    startsWithUppercase(next) ||
-    startsCommandAt(tokens, index + span)
+    startsWithUppercase(next)
   );
 };
 
-// "scratch that" undoes speech only as its own clause, never after a subject
-// ("I'll scratch that off").
-const scratchStandsAlone = (
-  tokens: string[],
-  index: number,
-  span: number,
-): boolean =>
-  !previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS) &&
-  closesClause(tokens, index, span);
-
-const commandApplies = (
-  command: SpokenCommand,
+// The context checks an insert command must pass wherever it appears.
+const insertGatesPass = (
+  command: InsertCommand,
   tokens: string[],
   index: number,
   span: number,
   skipStructural: boolean,
 ): boolean => {
-  if (command.kind === "scratch") {
-    return !skipStructural && scratchStandsAlone(tokens, index, span);
-  }
   if (skipStructural && command.structural) {
-    return false;
-  }
-  if (command.clauseFinal && !closesClause(tokens, index, span)) {
     return false;
   }
   // The "that" closing a "scratch that" is not a determiner.
@@ -529,6 +502,65 @@ const commandApplies = (
     return false;
   }
   return !followerBlocked(tokens.slice(index + span), command.blockedFollowers);
+};
+
+// Whether a command that applies in its own context starts at `index`. It is
+// judged one level deep: a following command that must itself close a clause
+// ("period", "scratch that") counts only if the clause ends right after it,
+// which keeps the check from recursing.
+const commandFollowsAt = (
+  tokens: string[],
+  index: number,
+  skipStructural: boolean,
+): boolean =>
+  COMMANDS_BY_LENGTH.some((command) => {
+    const span = command.words.length;
+    if (
+      index + span > tokens.length ||
+      !wordsMatch(tokens.slice(index, index + span), command.words)
+    ) {
+      return false;
+    }
+    if (command.kind === "scratch") {
+      return !skipStructural && endsClauseHere(tokens, index, span);
+    }
+    return (
+      insertGatesPass(command, tokens, index, span, skipStructural) &&
+      (!command.clauseFinal || endsClauseHere(tokens, index, span))
+    );
+  });
+
+// A command closes its clause when the clause ends right after it or another
+// command that applies follows it.
+const closesClause = (
+  tokens: string[],
+  index: number,
+  span: number,
+  skipStructural: boolean,
+): boolean =>
+  endsClauseHere(tokens, index, span) ||
+  commandFollowsAt(tokens, index + span, skipStructural);
+
+const commandApplies = (
+  command: SpokenCommand,
+  tokens: string[],
+  index: number,
+  span: number,
+  skipStructural: boolean,
+): boolean => {
+  if (command.kind === "scratch") {
+    // "scratch that" undoes speech only as its own clause, never after a
+    // subject ("I'll scratch that off").
+    return (
+      !skipStructural &&
+      !previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS) &&
+      closesClause(tokens, index, span, skipStructural)
+    );
+  }
+  return (
+    insertGatesPass(command, tokens, index, span, skipStructural) &&
+    (!command.clauseFinal || closesClause(tokens, index, span, skipStructural))
+  );
 };
 
 const matchCommandAt = (
