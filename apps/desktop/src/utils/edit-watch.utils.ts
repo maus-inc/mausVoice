@@ -7,86 +7,83 @@ import {
 
 const MAX_EDIT_TOKENS = 8;
 
+const SMART_APOSTROPHE_PATTERN = /[\u2018\u2019]/g;
+const WHITESPACE_PATTERN = /\s+/g;
+
 /**
- * Locates the window of `fieldTokens` that best matches `insertedTokens` by
- * positional (case-insensitive) token equality. The inserted text is expected
- * to survive in the field nearly verbatim, with at most a couple of edited
- * tokens, so the best-scoring equal-length window is the dictation region.
+ * Collapses the differences a target app can introduce between the text
+ * mausVoice inserted and the text the accessibility API reports back: smart
+ * typography turning straight quotes curly, and reflowed whitespace.
  */
-const locateInsertedWindow = (
-  insertedTokens: string[],
-  fieldTokens: string[],
-): string[] => {
-  const n = insertedTokens.length;
-  const m = fieldTokens.length;
-  if (n === 0) {
-    return [];
-  }
+const normalizeForContainment = (text: string): string =>
+  text
+    .replace(SMART_APOSTROPHE_PATTERN, "'")
+    .replace(WHITESPACE_PATTERN, " ")
+    .trim()
+    .toLowerCase();
 
-  // The field is the transcript (or shorter); diff it directly.
-  if (m <= n) {
-    return fieldTokens;
+/**
+ * Confirms a field snapshot still holds the dictated text, so the watcher only
+ * ever diffs the field it actually dictated into.
+ *
+ * Without this the watcher would diff whatever field happens to be focused
+ * later in the 90 second window, and every word of that unrelated field would
+ * look like a correction. It also rejects a snapshot taken before the paste
+ * landed or after the user already corrected the dictation, because neither
+ * describes the moment the dictation arrived.
+ */
+export const baselineHoldsDictation = (
+  insertedText: string,
+  baselineText: string,
+): boolean => {
+  const inserted = normalizeForContainment(insertedText);
+  if (!inserted) {
+    return false;
   }
-
-  let bestStart = 0;
-  let bestScore = -1;
-  for (let start = 0; start + n <= m; start++) {
-    let score = 0;
-    for (let i = 0; i < n; i++) {
-      if (
-        fieldTokens[start + i].toLowerCase() === insertedTokens[i].toLowerCase()
-      ) {
-        score++;
-      }
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestStart = start;
-    }
-  }
-
-  return fieldTokens.slice(bestStart, bestStart + n);
+  return normalizeForContainment(baselineText).includes(inserted);
 };
 
 /**
- * Compares the text a dictation inserted with the current focused-field text
- * and returns proper-noun terms that look like the user's correction.
+ * Returns the proper-noun terms the user corrected in the focused field.
  *
- * A correction is a small replacement: at least one token changed, both the
- * added and removed token counts stay small, and at least one inserted token
- * still survives in the field (so an unrelated focused field never matches).
+ * The diff runs against the field as it read right after the dictation landed,
+ * not against the dictation itself. Document text that was already on screen is
+ * then on both sides of the diff and cancels out, so only what the user changed
+ * can be proposed. Locating the dictation inside an arbitrary document and
+ * diffing that instead let unrelated text be read as the correction.
+ *
+ * A correction is a small replacement: at least one token changed on each side,
+ * both counts stay small, and fewer tokens were removed than were dictated.
  */
 export const findEditCorrections = (args: {
   insertedText: string;
+  baselineText: string;
   fieldText: string;
   existingTerms: string[];
 }): string[] => {
-  const { insertedText, fieldText, existingTerms } = args;
+  const { insertedText, baselineText, fieldText, existingTerms } = args;
   const insertedTokens = tokenizeForComparison(insertedText);
   if (insertedTokens.length === 0) {
     return [];
   }
 
-  const fieldTokens = tokenizeForComparison(fieldText);
-  const windowTokens = locateInsertedWindow(insertedTokens, fieldTokens);
-  const windowText = windowTokens.join(" ");
+  const added = computeAddedTokens(baselineText, fieldText);
+  const removed = computeRemovedTokens(baselineText, fieldText);
 
-  const added = computeAddedTokens(insertedText, windowText);
-  const removed = computeRemovedTokens(insertedText, windowText);
-
+  // A long list of added tokens means the user rewrote the text.
   if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
     return [];
   }
 
-  // A pure insertion (nothing removed) is not a correction, and neither is a
-  // region that shares nothing with the inserted text. The zero-overlap
-  // rejection only applies to multi-token dictations: a single-word dictation
-  // that the user fully replaced ("theory" -> "Three") is exactly the case we
-  // want to learn, and is indistinguishable from an unrelated field.
+  // A pure insertion is the user adding their own words, not correcting the
+  // dictation, and a long removal is a rewrite.
   if (removed.length === 0 || removed.length > MAX_EDIT_TOKENS) {
     return [];
   }
 
+  // Replacing at least as much as was dictated is a rewrite. A single-word
+  // dictation is exempt: "theory" -> "Three" is exactly the case worth
+  // learning, and it necessarily removes the only dictated token.
   if (insertedTokens.length > 1 && removed.length >= insertedTokens.length) {
     return [];
   }

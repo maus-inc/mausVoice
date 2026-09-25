@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { delayed } from "@maus-inc/utilities";
 import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { collectTermValues } from "../utils/app.utils";
-import { findEditCorrections } from "../utils/edit-watch.utils";
+import {
+  baselineHoldsDictation,
+  findEditCorrections,
+} from "../utils/edit-watch.utils";
 import { getLogger } from "../utils/log.utils";
 import { getLocalStorage } from "../utils/local-storage.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
@@ -16,10 +20,41 @@ const MAX_DENIED_TERMS = 50;
 // delayed native toast IPC delivery cannot outlive the pending proposal.
 const PROPOSAL_TOAST_DURATION_MS = 10_000;
 const PROPOSAL_TTL_MS = PROPOSAL_TOAST_DURATION_MS + 2_000;
+/**
+ * How long the focused field must read identically before its text counts as
+ * finished. The watcher samples through an accessibility poll instead of
+ * keystroke events, so this is a trailing-edge debounce measured against the
+ * poll: a sample has to survive one poll unchanged and then still be unchanged
+ * once the quiet window has elapsed. Proposing on a mid-edit sample is what
+ * produced toasts for half-typed fragments such as "Son" while the user was
+ * still typing "Soniya".
+ */
+const EDIT_QUIESCENCE_MS = 1_200;
+/**
+ * The baseline has to be read while the dictation is still intact, so the
+ * capture starts the moment the dictation lands rather than waiting for the
+ * first watcher poll. Insertion is asynchronous in the target app, so the first
+ * read can still return the pre-paste field; retrying on a short interval
+ * catches the intact dictation long before a user could select a word and
+ * retype it. Without this, a correction finished before the first poll left the
+ * watcher with no baseline and nothing was ever learned.
+ */
+const BASELINE_CAPTURE_INTERVAL_MS = 150;
+const BASELINE_CAPTURE_ATTEMPTS = 8;
 
 type WatchSnapshot = {
   text: string;
   startedAt: number;
+  /**
+   * The focused field as it read while the dictation was still intact. Captured
+   * as soon as the dictation lands, with the first settled poll that still
+   * contains the dictation as the fallback. Either way the watcher only ever
+   * diffs against a snapshot it verified, never against a guess.
+   */
+  baselineText: string | null;
+  /** Last observed field text, and when it was first observed. */
+  settledText: string | null;
+  settledAt: number;
 };
 
 // The in-flight dictation snapshot is transient polling state, not UI state,
@@ -71,6 +106,44 @@ export const clearAutoLearnProposal = (): void => {
   });
 };
 
+const readFieldText = async (): Promise<string | null> => {
+  const info = await invoke<{ textContent: string | null }>(
+    "get_text_field_info",
+  );
+  return info.textContent?.trim() || null;
+};
+
+/**
+ * Reads the focused field until it holds the dictation, and records that
+ * snapshot as the baseline later polls diff against. Stops early once the watch
+ * is replaced or a baseline exists, and gives up after
+ * BASELINE_CAPTURE_ATTEMPTS reads so a field that never reports the dictation
+ * cannot keep the loop alive for the whole watch window.
+ */
+const captureBaseline = async (snapshot: WatchSnapshot): Promise<void> => {
+  for (let attempt = 0; attempt < BASELINE_CAPTURE_ATTEMPTS; attempt += 1) {
+    if (activeWatch !== snapshot || snapshot.baselineText) {
+      return;
+    }
+
+    try {
+      const fieldText = await readFieldText();
+      if (activeWatch !== snapshot) {
+        return;
+      }
+      if (fieldText && baselineHoldsDictation(snapshot.text, fieldText)) {
+        snapshot.baselineText ??= fieldText;
+        return;
+      }
+    } catch (error) {
+      getLogger().warning(`Edit watch baseline capture failed: ${error}`);
+      return;
+    }
+
+    await delayed(BASELINE_CAPTURE_INTERVAL_MS);
+  }
+};
+
 /**
  * Starts watching the target app for corrections after a dictation was
  * inserted. Replaces any previous snapshot; a no-op when the feature is off.
@@ -85,7 +158,17 @@ export const beginEditWatch = (text: string): void => {
     activeWatch = null;
     return;
   }
-  activeWatch = { text: normalized, startedAt: Date.now() };
+  const snapshot: WatchSnapshot = {
+    text: normalized,
+    startedAt: Date.now(),
+    baselineText: null,
+    settledText: null,
+    settledAt: 0,
+  };
+  activeWatch = snapshot;
+  // Fire and forget. captureBaseline swallows its own errors, so this cannot
+  // surface as an unhandled rejection.
+  void captureBaseline(snapshot);
 };
 
 export const endEditWatch = (): void => {
@@ -107,6 +190,41 @@ const isWatchActive = (): boolean => {
   return true;
 };
 
+/**
+ * Trailing-edge debounce over the poll. Reports settled only once the field has
+ * read identically for at least EDIT_QUIESCENCE_MS, so a poll that lands while
+ * the user is still typing records the sample and waits instead of proposing.
+ */
+const hasSettled = (snapshot: WatchSnapshot, fieldText: string): boolean => {
+  if (snapshot.settledText !== fieldText) {
+    snapshot.settledText = fieldText;
+    snapshot.settledAt = Date.now();
+    return false;
+  }
+  return Date.now() - snapshot.settledAt >= EDIT_QUIESCENCE_MS;
+};
+
+/**
+ * Fallback for when the eager capture never saw the dictation intact, which
+ * happens when the accessibility read fails at insertion time. Adopts the first
+ * settled field text that still contains the dictation. Returns null until such
+ * a sample exists, which keeps the watcher silent rather than guessing at a
+ * region of a document it never dictated into.
+ */
+const resolveBaseline = (
+  snapshot: WatchSnapshot,
+  fieldText: string,
+): string | null => {
+  if (snapshot.baselineText) {
+    return snapshot.baselineText;
+  }
+  if (!baselineHoldsDictation(snapshot.text, fieldText)) {
+    return null;
+  }
+  snapshot.baselineText = fieldText;
+  return fieldText;
+};
+
 const collectExistingTerms = (): string[] => collectTermValues(getAppState());
 
 const proposeAutoLearnTerm = async (term: string): Promise<void> => {
@@ -124,8 +242,8 @@ const proposeAutoLearnTerm = async (term: string): Promise<void> => {
 };
 
 /**
- * Reads the focused text field and, when it contains the inserted dictation
- * with a small proper-noun correction, proposes the corrected term.
+ * Reads the focused field once it has stopped changing and, when the user made
+ * a small proper-noun correction to the dictation, proposes the corrected term.
  */
 export const pollEditWatch = async (): Promise<void> => {
   if (!isWatchActive()) {
@@ -142,20 +260,38 @@ export const pollEditWatch = async (): Promise<void> => {
     if (Date.now() - pending.proposedAt <= PROPOSAL_TTL_MS) {
       return;
     }
+    // Expiry means the user saw the prompt and let it go, which is the same
+    // signal as clicking Ignore. Record it so the next poll cannot offer the
+    // identical term again on a loop.
+    rememberDeniedTerm(pending.term);
     clearAutoLearnProposal();
   }
 
   try {
-    const info = await invoke<{ textContent: string | null }>(
-      "get_text_field_info",
-    );
-    const fieldText = info.textContent?.trim();
+    const fieldText = await readFieldText();
     if (!fieldText) {
+      return;
+    }
+
+    // A dictation can land while this poll is in flight, which replaces the
+    // watch and clears any proposal. Drop the stale sample rather than
+    // proposing against a dictation the user has already moved past.
+    if (activeWatch !== snapshot) {
+      return;
+    }
+
+    if (!hasSettled(snapshot, fieldText)) {
+      return;
+    }
+
+    const baselineText = resolveBaseline(snapshot, fieldText);
+    if (!baselineText) {
       return;
     }
 
     const corrections = findEditCorrections({
       insertedText: snapshot.text,
+      baselineText,
       fieldText,
       existingTerms: collectExistingTerms(),
     });
