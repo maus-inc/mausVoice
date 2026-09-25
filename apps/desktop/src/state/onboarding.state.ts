@@ -108,6 +108,11 @@ export const updateOnboardingLastName = (
   };
 };
 
+export const isOnboardingNameDraftOwnedByAuth = (
+  ownerId: string | null,
+  authUid: string | null | undefined,
+): boolean => ownerId === null || (Boolean(authUid) && ownerId === authUid);
+
 export const resolveOnboardingName = (
   draft: OnboardingNameDraft,
   persistedName: string,

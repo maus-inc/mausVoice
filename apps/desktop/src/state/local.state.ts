@@ -21,6 +21,7 @@ export type LocalState = {
   /** Page to resume on restart. Cleared when onboarding finishes. */
   onboardingResumePage: OnboardingPageKey | null;
   onboardingNameDraft: string;
+  onboardingNameDraftUserId: string | null;
   /** Per-provider pipeline timing medians, keyed by transcription mode. */
   providerTiming: Record<string, TimingAggregate>;
 };
@@ -41,5 +42,6 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   completedPrerequisites: [],
   onboardingResumePage: null,
   onboardingNameDraft: "",
+  onboardingNameDraftUserId: null,
   providerTiming: {},
 };

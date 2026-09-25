@@ -35,6 +35,7 @@ beforeEach(() => {
     lastNameEnabled: false,
   });
   state.local.onboardingNameDraft = "";
+  state.local.onboardingNameDraftUserId = null;
   state.local.onboardingResumePage = null;
   state.auth = {
     uid: "user-id",
@@ -85,6 +86,7 @@ describe("SignInForm name editing", () => {
       lastName: "Watson",
     });
     expect(getAppState().local.onboardingNameDraft).toBe("Mary Jane Watson");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
     expect(getAppState().onboarding.currentPage).toBe("signIn");
 
     if (!firstNameInput) {
@@ -98,6 +100,41 @@ describe("SignInForm name editing", () => {
     setInputValue(firstNameInput, "");
 
     expect(getAppState().onboarding.firstName).toBe("");
+    expect(firstNameInput.value).toBe("");
+  });
+
+  it("adopts an ownerless persisted draft for the authenticated user", async () => {
+    const state = structuredClone(getAppState());
+    state.local.onboardingNameDraft = "Mary Jane Watson";
+    state.local.onboardingNameDraftUserId = null;
+    setAppState(state, true);
+
+    await renderForm();
+
+    expect(getAppState().onboarding.name).toBe("Mary Jane Watson");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
+  });
+
+  it("does not rehydrate fields while the user edits them", async () => {
+    await renderForm();
+    const firstNameInput = container.querySelector<HTMLInputElement>(
+      'input[autocomplete="given-name"]',
+    );
+    const lastNameInput = container.querySelector<HTMLInputElement>(
+      'input[autocomplete="family-name"]',
+    );
+    if (!firstNameInput || !lastNameInput) {
+      throw new Error("Name inputs were not rendered");
+    }
+
+    setInputValue(firstNameInput, "");
+    setInputValue(lastNameInput, "Smith");
+
+    expect(getAppState().onboarding).toMatchObject({
+      firstName: "",
+      lastName: "Smith",
+      lastNameEnabled: true,
+    });
     expect(firstNameInput.value).toBe("");
   });
 
@@ -146,6 +183,76 @@ describe("SignInForm name editing", () => {
     expect(getAppState().onboarding.name).toBe("Mary Watson");
   });
 
+  it("ignores a name draft owned by another authenticated user", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = {
+      uid: "new-user-id",
+      email: "maria@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    state.local.onboardingNameDraft = "Mary Jane Watson";
+    state.local.onboardingNameDraftUserId = "old-user-id";
+    setAppState(state, true);
+
+    await renderForm();
+
+    expect(getAppState().onboarding.name).toBe("Maria Garcia");
+    expect(getAppState().local.onboardingNameDraft).toBe("Maria Garcia");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("new-user-id");
+  });
+
+  it("re-prefills when the authenticated UID changes to the same provider name", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = {
+      uid: "first-user-id",
+      email: "alex@example.com",
+      displayName: "Alex Morgan",
+      providers: ["password"],
+    };
+    setAppState(state, true);
+    await renderForm();
+
+    const nextUser = structuredClone(getAppState());
+    nextUser.auth = {
+      uid: "second-user-id",
+      email: "alex@example.com",
+      displayName: "Alex Morgan",
+      providers: ["password"],
+    };
+    act(() => setAppState(nextUser, true));
+
+    expect(getAppState().local.onboardingNameDraftUserId).toBe(
+      "second-user-id",
+    );
+  });
+
+  it("hydrates a provider name that arrives after authentication", async () => {
+    const state = structuredClone(getAppState());
+    state.auth = {
+      uid: "user-id",
+      email: "maria@example.com",
+      displayName: null,
+      providers: ["password"],
+    };
+    setAppState(state, true);
+
+    await renderForm();
+    expect(getAppState().onboarding.name).toBe("");
+
+    const hydrated = structuredClone(getAppState());
+    hydrated.auth = {
+      uid: "user-id",
+      email: "maria@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    act(() => setAppState(hydrated, true));
+
+    expect(getAppState().onboarding.name).toBe("Maria Garcia");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
+  });
+
   it("clears stale last-name state and preserves a later resume page", async () => {
     const state = structuredClone(getAppState());
     state.auth = {
@@ -166,6 +273,7 @@ describe("SignInForm name editing", () => {
       wordsTotal: 0,
     };
     state.local.onboardingNameDraft = "Mary Jane Watson";
+    state.local.onboardingNameDraftUserId = "user-id";
     state.local.onboardingResumePage = "tutorial";
     setAppState(state, true);
 

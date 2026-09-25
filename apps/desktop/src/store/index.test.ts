@@ -47,6 +47,7 @@ describe("app store rehydration", () => {
       powerModeEnabled: true,
       hasHiddenTrialExtensionCard: true,
       onboardingNameDraft: "Mary Jane Watson",
+      onboardingNameDraftUserId: "user-id",
     });
 
     const local = await loadRehydratedLocal();
@@ -54,6 +55,7 @@ describe("app store rehydration", () => {
     expect(local.powerModeEnabled).toBe(true);
     expect(local.hasHiddenTrialExtensionCard).toBe(true);
     expect(local.onboardingNameDraft).toBe("Mary Jane Watson");
+    expect(local.onboardingNameDraftUserId).toBe("user-id");
   });
 
   it("falls back to the initial value for a local field absent from storage", async () => {

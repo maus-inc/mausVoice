@@ -22,11 +22,12 @@ import { UserDetailsForm } from "./UserDetailsForm";
 
 export default function OnboardingPage() {
   const currentPage = useAppStore((state) => state.onboarding.currentPage);
+  const authUid = useAppStore((state) => state.auth?.uid);
 
   useEffect(() => {
     ensureOnboardingFlow();
     resumeOnboardingPage();
-  }, []);
+  }, [authUid]);
 
   useEffect(() => {
     markOnboardingStepEntered(currentPage);

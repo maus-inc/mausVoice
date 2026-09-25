@@ -18,6 +18,7 @@ import {
 import {
   applyOnboardingNameDraft,
   createOnboardingNameDraft,
+  isOnboardingNameDraftOwnedByAuth,
   updateOnboardingFirstName,
   updateOnboardingLastName,
 } from "../../state/onboarding.state";
@@ -39,13 +40,16 @@ export const SignInForm = () => {
   const intl = useIntl();
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
-  const prefilledAuthUid = useRef<string | null>(null);
+  const prefilledNameSource = useRef<string | null>(null);
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();
   const loginStatus = useAppStore((state) => state.login.status);
   const onboardingNameDraft = useAppStore(
     (state) => state.local.onboardingNameDraft,
+  );
+  const onboardingNameDraftUserId = useAppStore(
+    (state) => state.local.onboardingNameDraftUserId,
   );
   const onboardingResumePage = useAppStore(
     (state) => state.local.onboardingResumePage,
@@ -64,22 +68,35 @@ export const SignInForm = () => {
 
   useEffect(() => {
     if (!isSignedIn || !auth) {
-      prefilledAuthUid.current = null;
+      prefilledNameSource.current = null;
       return;
     }
-    if (prefilledAuthUid.current === auth.uid) return;
-    prefilledAuthUid.current = auth.uid;
+    const draftBelongsToUser = isOnboardingNameDraftOwnedByAuth(
+      onboardingNameDraftUserId,
+      auth.uid,
+    );
+    const hasUsableDraft = draftBelongsToUser && Boolean(onboardingNameDraft);
     const providerName = auth.providers.includes("personal")
       ? ""
       : (auth.displayName ?? "");
-    const prefillName = onboardingNameDraft || providerName;
-    if (!prefillName) return;
+    const prefillName = hasUsableDraft ? onboardingNameDraft : providerName;
+    const prefillSource = hasUsableDraft
+      ? `draft:${auth.uid}`
+      : `provider:${auth.uid}:${providerName}`;
+    if (prefilledNameSource.current === prefillSource) return;
+    prefilledNameSource.current = prefillSource;
     produceAppState((draft) => {
+      if (onboardingNameDraft && !draftBelongsToUser) {
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+      }
+      if (!prefillName) return;
       const nameDraft = createOnboardingNameDraft(prefillName);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
+      draft.local.onboardingNameDraftUserId = auth.uid;
     });
-  }, [auth, isSignedIn, onboardingNameDraft]);
+  }, [auth, isSignedIn, onboardingNameDraft, onboardingNameDraftUserId]);
 
   useEffect(() => {
     if (!isSignedIn || existingName === "") return;
@@ -87,6 +104,7 @@ export const SignInForm = () => {
       const nameDraft = createOnboardingNameDraft(existingName);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
+      draft.local.onboardingNameDraftUserId = auth?.uid ?? null;
     });
     if (onboardingResumePage && onboardingResumePage !== "signIn") return;
     setEmailDialogOpen(false);
@@ -94,7 +112,13 @@ export const SignInForm = () => {
     goToOnboardingPage(
       isPersonalUse ? "personalCredentials" : "chooseTranscription",
     );
-  }, [existingName, isPersonalUse, isSignedIn, onboardingResumePage]);
+  }, [
+    auth?.uid,
+    existingName,
+    isPersonalUse,
+    isSignedIn,
+    onboardingResumePage,
+  ]);
 
   const handleClickLocalSetup = () => {
     trackButtonClick("onboarding_local_setup");
@@ -129,6 +153,7 @@ export const SignInForm = () => {
       const nameDraft = updateOnboardingFirstName(draft.onboarding, value);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
+      draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
     });
   };
 
@@ -137,6 +162,7 @@ export const SignInForm = () => {
       const nameDraft = updateOnboardingLastName(draft.onboarding, value);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
+      draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
     });
   };
 

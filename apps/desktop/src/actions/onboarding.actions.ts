@@ -5,6 +5,7 @@ import {
   applyOnboardingNameDraft,
   createOnboardingNameDraft,
   INITIAL_ONBOARDING_STATE,
+  isOnboardingNameDraftOwnedByAuth,
   OnboardingPageKey,
   OnboardingState,
   resolveOnboardingName,
@@ -134,17 +135,54 @@ export const resumeOnboardingPage = (): void => {
   const state = getAppState();
   const resume = state.local.onboardingResumePage;
   if (
+    state.auth &&
+    !isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth.uid,
+    )
+  ) {
+    const existingName = getMyUser(state)?.name.trim() ?? "";
+    produceAppState((draft) => {
+      draft.onboarding.submitting = false;
+      if (existingName) {
+        const nameDraft = createOnboardingNameDraft(existingName);
+        applyOnboardingNameDraft(draft.onboarding, nameDraft);
+        draft.local.onboardingNameDraft = existingName;
+      } else {
+        applyOnboardingNameDraft(
+          draft.onboarding,
+          createOnboardingNameDraft(""),
+        );
+        draft.onboarding.currentPage = "signIn";
+        draft.onboarding.isResuming = false;
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+      }
+      draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
+    });
+    return;
+  }
+  if (
     resume &&
     resume !== state.onboarding.currentPage &&
     state.onboarding.history.length === 0
   ) {
-    const resumeName =
-      state.local.onboardingNameDraft || getMyUser(state)?.name || "";
+    const draftBelongsToUser =
+      !state.auth ||
+      isOnboardingNameDraftOwnedByAuth(
+        state.local.onboardingNameDraftUserId,
+        state.auth.uid,
+      );
+    const resumeName = draftBelongsToUser
+      ? state.local.onboardingNameDraft || getMyUser(state)?.name || ""
+      : getMyUser(state)?.name || "";
     if (state.auth && resume !== "signIn" && !resumeName) {
       produceAppState((draft) => {
         draft.onboarding.currentPage = "signIn";
         draft.onboarding.isResuming = false;
         draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
       });
       return;
     }
@@ -158,6 +196,10 @@ export const resumeOnboardingPage = (): void => {
       draft.onboarding.currentPage = nearestKeptPage(resume);
       draft.onboarding.isResuming = true;
       draft.local.onboardingResumePage = draft.onboarding.currentPage;
+      draft.local.onboardingNameDraft = resumeName;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+      }
     });
   }
 };
@@ -230,6 +272,7 @@ export const resetOnboarding = () => {
   produceAppState((draft) => {
     Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
     draft.local.onboardingNameDraft = "";
+    draft.local.onboardingNameDraftUserId = null;
   });
 };
 
@@ -256,11 +299,23 @@ const getOptionalText = (value: string | null | undefined): string | null =>
 
 export const submitOnboarding = async () => {
   const state = getAppState();
+  const initiatingAuthUid = state.auth?.uid ?? null;
   const trimmedName = resolveOnboardingName(
     state.onboarding,
     state.local.onboardingNameDraft,
   );
-  if (!trimmedName && state.auth) {
+  const nameDraftBelongsToUser =
+    !state.auth ||
+    isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth.uid,
+    );
+  if (
+    state.auth &&
+    (!nameDraftBelongsToUser ||
+      !state.onboarding.firstName.trim() ||
+      !trimmedName)
+  ) {
     showErrorSnackbar(new Error("Enter your name before continuing."));
     return null;
   }
@@ -278,6 +333,9 @@ export const submitOnboarding = async () => {
     draft.onboarding.submitting = true;
     draft.onboarding.name = trimmedName;
     draft.local.onboardingNameDraft = trimmedName;
+    if (draft.auth?.uid) {
+      draft.local.onboardingNameDraftUserId = draft.auth.uid;
+    }
   });
 
   try {
@@ -395,26 +453,34 @@ export const submitOnboarding = async () => {
       preferencesRepo.setUserPreferences(preferences),
     ]);
 
-    produceAppState((draft) => {
-      setCurrentUser(draft, savedUser);
-      setUserPreferences(draft, savedPreferences);
-      draft.onboarding.submitting = false;
-      draft.onboarding.name = savedUser.name;
-      draft.local.onboardingNameDraft = savedUser.name;
-    });
+    if (getAppState().auth?.uid === initiatingAuthUid) {
+      produceAppState((draft) => {
+        setCurrentUser(draft, savedUser);
+        setUserPreferences(draft, savedPreferences);
+        draft.onboarding.submitting = false;
+        draft.onboarding.name = savedUser.name;
+        draft.local.onboardingNameDraft = savedUser.name;
+        if (draft.auth?.uid) {
+          draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        }
+      });
+    }
 
     await refreshMember();
     return savedUser;
   } catch (err) {
-    produceAppState((draft) => {
-      draft.onboarding.submitting = false;
-    });
+    if (getAppState().auth?.uid === initiatingAuthUid) {
+      produceAppState((draft) => {
+        draft.onboarding.submitting = false;
+      });
+    }
     showErrorSnackbar(err);
   }
 };
 
 export const finishOnboarding = async () => {
   const state = getAppState();
+  const initiatingAuthUid = state.auth?.uid ?? null;
   const existingUser = getMyUser(state);
   if (!existingUser) {
     throw new Error("Cannot finish onboarding: user not found");
@@ -437,14 +503,19 @@ export const finishOnboarding = async () => {
     };
 
     const savedUser = await repo.setMyUser(updatedUser);
-    produceAppState((draft) => {
-      setCurrentUser(draft, savedUser);
-      draft.local.onboardingResumePage = null;
-      draft.local.onboardingNameDraft = "";
-      draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
-    });
+    if (getAppState().auth?.uid === initiatingAuthUid) {
+      produceAppState((draft) => {
+        setCurrentUser(draft, savedUser);
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
+      });
+    }
 
-    await setAutoLaunchEnabled(true);
+    if (getAppState().auth?.uid === initiatingAuthUid) {
+      await setAutoLaunchEnabled(true);
+    }
 
     return savedUser;
   } catch (err) {

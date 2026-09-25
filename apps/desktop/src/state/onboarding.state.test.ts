@@ -1,12 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
   createOnboardingNameDraft,
+  isOnboardingNameDraftOwnedByAuth,
   resolveOnboardingName,
   updateOnboardingFirstName,
   updateOnboardingLastName,
 } from "./onboarding.state";
 
 describe("onboarding name draft", () => {
+  it("accepts legacy drafts without an owner", () => {
+    expect(isOnboardingNameDraftOwnedByAuth(null, "user-id")).toBe(true);
+  });
+
+  it("accepts drafts owned by the current user", () => {
+    expect(isOnboardingNameDraftOwnedByAuth("user-id", "user-id")).toBe(true);
+  });
+
+  it("rejects drafts owned by another user", () => {
+    expect(isOnboardingNameDraftOwnedByAuth("other-id", "user-id")).toBe(false);
+    expect(isOnboardingNameDraftOwnedByAuth("other-id", null)).toBe(false);
+  });
+
   it("hydrates every field from a full name", () => {
     expect(createOnboardingNameDraft("Mary Jane Watson")).toEqual({
       name: "Mary Jane Watson",

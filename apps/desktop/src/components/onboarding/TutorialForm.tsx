@@ -16,6 +16,7 @@ import {
   finishOnboarding,
   submitOnboarding,
 } from "../../actions/onboarding.actions";
+import { isOnboardingNameDraftOwnedByAuth } from "../../state/onboarding.state";
 import { setSelectedToneId } from "../../actions/user.actions";
 import { produceAppState, useAppStore } from "../../store";
 import { trackButtonClick } from "../../utils/analytics.utils";
@@ -616,13 +617,19 @@ export const TutorialForm = () => {
   );
   const primaryHotkey = hotkeyCombos[0] ?? [];
   const keysHeld = useAppStore((state) => state.keysHeld);
-  const onboardingFullName = useAppStore(
-    (state) =>
+  const onboardingFullName = useAppStore((state) => {
+    const draftBelongsToUser = isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth?.uid,
+    );
+    if (!draftBelongsToUser) return getMyUser(state)?.name || "Alex";
+    return (
       state.onboarding.name ||
       state.local.onboardingNameDraft ||
       getMyUser(state)?.name ||
-      "Alex",
-  );
+      "Alex"
+    );
+  });
   const userName = onboardingFullName;
 
   const setChatTone = async (toneId: string, force = false): Promise<void> => {

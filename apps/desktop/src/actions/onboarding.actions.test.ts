@@ -2,6 +2,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
 
+const actionMocks = vi.hoisted(() => ({
+  refreshMember: vi.fn(),
+  setAutoLaunchEnabled: vi.fn(),
+  setMyUser: vi.fn(),
+  setUserPreferences: vi.fn(),
+}));
+
+vi.mock("../repos", () => ({
+  getUserPreferencesRepo: () => ({
+    setUserPreferences: actionMocks.setUserPreferences,
+  }),
+  getUserRepo: () => ({
+    setMyUser: actionMocks.setMyUser,
+  }),
+}));
+vi.mock("./local-storage.actions", () => ({
+  clearLocalStorageValue: vi.fn(),
+}));
+vi.mock("./member.actions", () => ({
+  refreshMember: actionMocks.refreshMember,
+}));
+vi.mock("./settings.actions", () => ({
+  setAutoLaunchEnabled: actionMocks.setAutoLaunchEnabled,
+}));
+
 vi.mock("../utils/analytics.utils", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../utils/analytics.utils")>();
@@ -27,6 +52,7 @@ import {
   CURRENT_ONBOARDING_FLOW_VERSION,
   dismissTip,
   ensureOnboardingFlow,
+  finishOnboarding,
   goBackOnboardingPage,
   goToOnboardingPage,
   markPrerequisite,
@@ -44,9 +70,21 @@ const seed = () => {
   setAppState(structuredClone(INITIAL_APP_STATE), true);
 };
 
+const resetActionMocks = () => {
+  vi.clearAllMocks();
+  actionMocks.refreshMember.mockResolvedValue(undefined);
+  actionMocks.setAutoLaunchEnabled.mockResolvedValue(undefined);
+  actionMocks.setMyUser.mockImplementation((user: unknown) =>
+    Promise.resolve(user),
+  );
+  actionMocks.setUserPreferences.mockImplementation((preferences: unknown) =>
+    Promise.resolve(preferences),
+  );
+};
+
 describe("onboarding navigation outcomes", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetActionMocks();
     seed();
   });
 
@@ -106,7 +144,7 @@ describe("onboarding navigation outcomes", () => {
 
 describe("onboarding flow migration", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetActionMocks();
     seed();
   });
 
@@ -157,7 +195,7 @@ describe("onboarding flow migration", () => {
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
-  it("returns a signed-in resume without a name draft to sign-in", () => {
+  it("returns a signed-in resume without an owned name draft to sign-in", () => {
     const state = getAppState();
     const next = structuredClone(state);
     next.auth = {
@@ -168,7 +206,8 @@ describe("onboarding flow migration", () => {
     };
     next.local.onboardingResumePage = "tutorial";
     next.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
-    next.local.onboardingNameDraft = "";
+    next.local.onboardingNameDraft = "Mary Jane Watson";
+    next.local.onboardingNameDraftUserId = "old-user-id";
     setAppState(next, true);
 
     resumeOnboardingPage();
@@ -176,10 +215,12 @@ describe("onboarding flow migration", () => {
     expect(getAppState().onboarding.currentPage).toBe("signIn");
     expect(getAppState().onboarding.isResuming).toBe(false);
     expect(getAppState().local.onboardingResumePage).toBeNull();
+    expect(getAppState().local.onboardingNameDraft).toBe("");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe("user-id");
     expect(trackOnboardingOutcome).not.toHaveBeenCalled();
   });
 
-  it("rejects a signed-in submission without a name", async () => {
+  it("rejects a signed-in submission without a first name", async () => {
     const state = getAppState();
     const next = structuredClone(state);
     next.auth = {
@@ -189,12 +230,13 @@ describe("onboarding flow migration", () => {
       providers: ["password"],
     };
     Object.assign(next.onboarding, {
-      name: "",
+      name: "Mary Jane Watson",
       firstName: "",
-      lastName: "",
-      lastNameEnabled: false,
+      lastName: "Watson",
+      lastNameEnabled: true,
     });
     next.local.onboardingNameDraft = "";
+    next.local.onboardingNameDraftUserId = "user-id";
     setAppState(next, true);
 
     await expect(submitOnboarding()).resolves.toBeNull();
@@ -203,6 +245,122 @@ describe("onboarding flow migration", () => {
       new Error("Enter your name before continuing."),
     );
     expect(getAppState().onboarding.submitting).toBe(false);
+  });
+
+  it("does not apply a completed submission to a different auth user", async () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    Object.assign(next.onboarding, {
+      name: "Maria Garcia",
+      firstName: "Maria",
+      lastName: "Garcia",
+      lastNameEnabled: true,
+    });
+    next.local.onboardingNameDraft = "Maria Garcia";
+    next.local.onboardingNameDraftUserId = "first-user-id";
+    setAppState(next, true);
+
+    let resolveUser: (value: unknown) => void = () => undefined;
+    actionMocks.setMyUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const submission = submitOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0]?.[0];
+
+    const switched = structuredClone(getAppState());
+    switched.auth = {
+      uid: "second-user-id",
+      email: "second@example.com",
+      displayName: "Bob Jones",
+      providers: ["password"],
+    };
+    Object.assign(switched.onboarding, {
+      name: "Bob Jones",
+      firstName: "Bob",
+      lastName: "Jones",
+      lastNameEnabled: true,
+      submitting: false,
+    });
+    switched.local.onboardingNameDraft = "Bob Jones";
+    switched.local.onboardingNameDraftUserId = "second-user-id";
+    setAppState(switched, true);
+    resolveUser(pendingUser);
+    await submission;
+
+    expect(getAppState().onboarding).toMatchObject({
+      name: "Bob Jones",
+      submitting: false,
+    });
+    expect(getAppState().local.onboardingNameDraft).toBe("Bob Jones");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe(
+      "second-user-id",
+    );
+  });
+
+  it("does not finish shared onboarding state for a different auth user", async () => {
+    const state = getAppState();
+    const next = structuredClone(state);
+    next.auth = {
+      uid: "first-user-id",
+      email: "first@example.com",
+      displayName: "Maria Garcia",
+      providers: ["password"],
+    };
+    next.userById["first-user-id"] = {
+      id: "first-user-id",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      name: "Maria Garcia",
+      onboarded: false,
+      playInteractionChime: true,
+      hasFinishedTutorial: false,
+      wordsThisMonth: 0,
+      wordsTotal: 0,
+    };
+    next.local.onboardingResumePage = "tutorial";
+    next.local.onboardingNameDraft = "Maria Garcia";
+    next.local.onboardingNameDraftUserId = "first-user-id";
+    setAppState(next, true);
+
+    let resolveUser: (value: unknown) => void = () => undefined;
+    actionMocks.setMyUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const completion = finishOnboarding();
+    const pendingUser = actionMocks.setMyUser.mock.calls[0]?.[0];
+
+    const switched = structuredClone(getAppState());
+    switched.auth = {
+      uid: "second-user-id",
+      email: "second@example.com",
+      displayName: "Bob Jones",
+      providers: ["password"],
+    };
+    switched.local.onboardingResumePage = "micCheck";
+    switched.local.onboardingNameDraft = "Bob Jones";
+    switched.local.onboardingNameDraftUserId = "second-user-id";
+    setAppState(switched, true);
+    resolveUser(pendingUser);
+    await completion;
+
+    expect(getAppState().local.onboardingResumePage).toBe("micCheck");
+    expect(getAppState().local.onboardingNameDraft).toBe("Bob Jones");
+    expect(getAppState().local.onboardingNameDraftUserId).toBe(
+      "second-user-id",
+    );
+    expect(actionMocks.setAutoLaunchEnabled).not.toHaveBeenCalled();
   });
 
   it("resumes persisted progress and the canonical name draft", () => {
@@ -231,7 +389,7 @@ describe("onboarding flow migration", () => {
 
 describe("prerequisites and tips", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetActionMocks();
     seed();
   });
 
