@@ -16,8 +16,10 @@ import {
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
+  GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
+  OpenAITranscribeAudioRepo,
   OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
@@ -1067,5 +1069,72 @@ describe("ElevenLabs keyterms gating", () => {
 
     expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
     expect(keytermsOf(repo)).toContain("Soniya");
+  });
+});
+
+describe("provider segment hand-off to the silence gate", () => {
+  const providerSegments = [
+    {
+      text: "hello",
+      noSpeechProb: 0.2,
+      avgLogprob: -0.3,
+      tokens: [1, 2, 3],
+    },
+    { text: " there", noSpeechProb: "0.99", avgLogprob: null },
+  ];
+  const expected = [
+    { text: "hello", noSpeechProb: 0.2, avgLogprob: -0.3 },
+    { text: " there", noSpeechProb: undefined, avgLogprob: undefined },
+  ];
+  const input = {
+    samples: new Float32Array(1600).fill(0.5),
+    sampleRate: 16000,
+    hallucinationFilterEnabled: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Groq keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      input,
+    );
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "openaiTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new OpenAITranscribeAudioRepo(
+      "k",
+      null,
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI-compatible keeps avg_logprob and drops malformed or extra fields", async () => {
+    transcribeUtilMock.mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    });
+
+    const output = await new OpenAICompatibleTranscribeAudioRepo(
+      "key-id",
+      "https://example.com/v1",
+      "whisper-1",
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
   });
 });

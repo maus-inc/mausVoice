@@ -37,6 +37,7 @@ import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
 import {
   gateSilentSegments,
+  toTranscriptionSegments,
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
 import {
@@ -368,7 +369,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments,
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -405,7 +406,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments,
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -801,7 +802,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 
     return {
       text: transcript,
-      segments,
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

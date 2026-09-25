@@ -162,12 +162,35 @@ export type TranscriptionSegment = {
   avgLogprob?: number;
 };
 
+const finiteNumberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
 /**
- * Segments whose `no_speech_prob` meets or exceeds this are treated as
- * near-certain silence and dropped. The 0.9 threshold is deliberately
- * conservative so only clearly-silent segments are removed; genuine speech
- * (even quiet speech) is preserved verbatim. This mirrors the local RMS energy
- * gate that runs before inference for on-device transcription.
+ * Copies provider segments down to the fields the silence gate reads. The
+ * probabilities decide which words are dropped, so a value that is not a
+ * finite number is treated as absent rather than trusted.
+ */
+export const toTranscriptionSegments = (
+  segments:
+    | ReadonlyArray<{
+        text: string;
+        noSpeechProb?: unknown;
+        avgLogprob?: unknown;
+      }>
+    | undefined,
+): TranscriptionSegment[] | undefined =>
+  segments?.map((segment) => ({
+    text: segment.text,
+    noSpeechProb: finiteNumberOrUndefined(segment.noSpeechProb),
+    avgLogprob: finiteNumberOrUndefined(segment.avgLogprob),
+  }));
+
+/**
+ * The probability half of the silence test in `isLikelySilentSegment`. A
+ * segment at or above it is dropped only when the decoder was also unsure of
+ * its words (`avgLogprob` below `NO_SPEECH_AVG_LOGPROB_THRESHOLD`), or when
+ * the provider sent no `avgLogprob`. The 0.9 value is deliberately
+ * conservative so only clearly-silent segments are removed.
  */
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
 

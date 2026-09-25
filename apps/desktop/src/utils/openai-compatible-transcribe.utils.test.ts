@@ -56,6 +56,32 @@ describe("openaiCompatibleTranscribeAudio", () => {
     expect(url).toBe("https://example.com/v1/audio/transcriptions");
   });
 
+  it("ignores probabilities that are not finite numbers", async () => {
+    fetchMock.mockResolvedValue(
+      makeResponse({
+        text: "hello world",
+        segments: [
+          { text: "hello", no_speech_prob: "0.95", avg_logprob: "-2" },
+          { text: " world", no_speech_prob: null, avg_logprob: Number.NaN },
+          null,
+        ],
+      }),
+    );
+
+    const result = await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+    });
+
+    expect(result.segments).toEqual([
+      { text: "hello", noSpeechProb: undefined, avgLogprob: undefined },
+      { text: " world", noSpeechProb: undefined, avgLogprob: undefined },
+      { text: "", noSpeechProb: undefined, avgLogprob: undefined },
+    ]);
+  });
+
   it("reads avg_logprob alongside no_speech_prob from verbose segments", async () => {
     fetchMock.mockResolvedValue(
       makeResponse({
