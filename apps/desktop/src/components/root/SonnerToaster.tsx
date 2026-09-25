@@ -15,6 +15,7 @@ import GlobalStyles from "@mui/material/GlobalStyles";
 import { Toaster } from "sonner";
 
 import { accent } from "../../styles/palette";
+import { duration } from "../../styles/motion";
 import { hairline, premiumSurface } from "../../styles/shadows";
 
 export { toast } from "sonner";
@@ -69,7 +70,7 @@ export const SonnerToaster = () => {
             border: `${hairline.light(0.06)} !important`,
             borderRadius: "8px !important",
             fontWeight: `${theme.typography.fontWeightMedium} !important`,
-            transition: "background-color 180ms !important",
+            transition: `background-color ${duration.exit}s !important`,
             "&:hover": {
               background: `${theme.vars.palette.level3} !important`,
             },

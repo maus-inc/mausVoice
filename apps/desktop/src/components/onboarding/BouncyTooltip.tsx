@@ -141,7 +141,7 @@ export const BouncyTooltip = ({
               theme.vars?.palette.level1 ?? theme.palette.background.paper,
             px: 2,
             py: 1,
-            borderRadius: 3,
+            borderRadius: 1,
             boxShadow: `inset 0 0 0 1px ${ink(0.08)}, 0 1px 2px ${ink(
               0.08,
             )}, 0 8px 20px ${ink(0.1)}`,

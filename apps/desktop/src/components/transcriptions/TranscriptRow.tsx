@@ -262,7 +262,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           mx: -1,
           px: 1,
           py: 0.5,
-          borderRadius: 2,
+          borderRadius: 1,
           transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
           "&:hover": { bgcolor: "action.hover" },
           "@media (prefers-reduced-motion: reduce)": {

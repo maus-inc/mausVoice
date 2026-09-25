@@ -733,7 +733,7 @@ const ApiKeyCard = ({
             minWidth: 0,
             m: -1,
             p: 1,
-            borderRadius: 2,
+            borderRadius: 0.75,
             cursor: "pointer",
             transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
             "&:hover": { bgcolor: "action.hover" },

@@ -207,7 +207,7 @@ export function TypographyWithMore({
                 ml: "auto",
                 px: 1,
                 py: 0.25,
-                borderRadius: 2,
+                borderRadius: 0.75,
                 "&:hover": {
                   color: textPrimary,
                   backgroundColor:
