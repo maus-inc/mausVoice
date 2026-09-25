@@ -9,6 +9,7 @@ import {
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { type AudioChunkPayload } from "./audio-chunk-events";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 
 export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
@@ -52,7 +53,7 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
         phrases,
       });
 
-      this.unlisten = await listen<{ samples: number[] }>(
+      this.unlisten = await listen<AudioChunkPayload>(
         "audio_chunk",
         (event) => {
           this.receivedChunkCount++;

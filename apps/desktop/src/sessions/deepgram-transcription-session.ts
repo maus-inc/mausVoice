@@ -9,6 +9,7 @@ import {
   DEEPGRAM_KEYTERM_BUDGET,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
+import { type AudioChunkPayload } from "./audio-chunk-events";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
@@ -130,7 +131,7 @@ const startDeepgramStreaming = async (
   };
 
   getLogger().verbose(`[${LOGGER_PREFIX}] Setting up audio_chunk listener...`);
-  unlisten = await listen<{ samples: number[] }>("audio_chunk", (event) => {
+  unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) => {
     receivedLogger.record(event.payload.samples.length);
     if (!isFinalized) {
       try {

@@ -14,6 +14,7 @@ import {
 } from "../utils/prompt.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { drainSamples } from "./audio-buffer.utils";
+import { type AudioChunkPayload } from "./audio-chunk-events";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 
@@ -310,34 +311,31 @@ const startElevenLabsStreaming = async (
         getLogger().verbose(
           "[ElevenLabs WebSocket] Setting up audio_chunk listener...",
         );
-        unlisten = await listen<{ samples: number[] }>(
-          "audio_chunk",
-          (event) => {
-            receivedChunkCount++;
-            if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-              getLogger().verbose(
-                `[ElevenLabs WebSocket] Received chunk #${receivedChunkCount}, samples:`,
-                event.payload.samples.length,
+        unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) => {
+          receivedChunkCount++;
+          if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
+            getLogger().verbose(
+              `[ElevenLabs WebSocket] Received chunk #${receivedChunkCount}, samples:`,
+              event.payload.samples.length,
+            );
+          }
+          if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
+            try {
+              const rawChunk = ensureFloat32Array(event.payload.samples);
+              const typedChunk = needsResample
+                ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
+                : rawChunk;
+              pendingChunks.push(typedChunk);
+              pendingSampleCountRef.value += typedChunk.length;
+              flushPendingSamples(false);
+            } catch (error) {
+              getLogger().error(
+                "[ElevenLabs WebSocket] Error sending audio chunk:",
+                error,
               );
             }
-            if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
-              try {
-                const rawChunk = ensureFloat32Array(event.payload.samples);
-                const typedChunk = needsResample
-                  ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
-                  : rawChunk;
-                pendingChunks.push(typedChunk);
-                pendingSampleCountRef.value += typedChunk.length;
-                flushPendingSamples(false);
-              } catch (error) {
-                getLogger().error(
-                  "[ElevenLabs WebSocket] Error sending audio chunk:",
-                  error,
-                );
-              }
-            }
-          },
-        );
+          }
+        });
 
         getLogger().verbose(
           "[ElevenLabs WebSocket] Session ready, listener attached",

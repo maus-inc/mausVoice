@@ -54,6 +54,23 @@ const recordingTranscriber = () => {
   return { spans, transcribe };
 };
 
+/** True when `spans` tile `audio` exactly once, in any request order. */
+const coversExactly = (spans: Float32Array[], audio: Float32Array): boolean => {
+  const remaining = new Set(spans);
+  let offset = 0;
+  while (offset < audio.length) {
+    const span = [...remaining].find(
+      (candidate) =>
+        offset + candidate.length <= audio.length &&
+        candidate.every((value, index) => value === audio[offset + index]),
+    );
+    if (!span) return false;
+    remaining.delete(span);
+    offset += span.length;
+  }
+  return remaining.size === 0;
+};
+
 describe("PauseChunkedPretranscriber", () => {
   const recording = concat(
     segment(6, true, 1),
@@ -207,9 +224,20 @@ describe("PauseChunkedPretranscriber", () => {
     expect(transcribe).toHaveBeenCalledTimes(1);
   });
 
-  it("aligns a stream whose listener attached after capture started", async () => {
+  it("transcribes the unobserved prefix so a late listener still covers the whole recording", async () => {
+    // `feed(..., 700)` pins the first observed offset at exactly 700, so the
+    // prefix is exactly 700 samples and can be labelled by length alone.
+    // Everything else is checked by exact cover, which does not depend on the
+    // order the spans happened to be requested in.
     const { transcribe, spans } = recordingTranscriber();
-    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    const labelled: ChunkTranscriber = async (samples, rate, signal) => {
+      const result = await transcribe(samples, rate, signal);
+      return {
+        ...result,
+        text: samples.length === 700 ? "prefix" : result.text,
+      };
+    };
+    const target = new PauseChunkedPretranscriber(RATE, labelled, CONFIG);
     feed(target, recording, 700);
     expect(target.chunkCount).toBe(2);
 
@@ -217,11 +245,65 @@ describe("PauseChunkedPretranscriber", () => {
       samples: recording,
       sampleRate: RATE,
     });
-    const covered = spans.reduce((sum, span) => sum + span.length, 0);
-    expect(covered).toBe(recording.length - 700);
+    // Prefix + two committed spans + tail.
+    expect(result?.chunkCount).toBe(4);
+    // The prefix is joined first even though its request starts last.
+    expect(result?.text.split(" ")[0]).toBe("prefix");
+    // The spans tile the recording exactly once: no gap, no overlap, and no
+    // audio outside the recording.
+    expect(coversExactly(spans, recording)).toBe(true);
+  });
+
+  it("keeps the prefix span inside the whole recording and never re-sends the tail", async () => {
+    const { transcribe, spans } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording, 700);
+    await target.finish({ samples: recording, sampleRate: RATE });
+    // Two committed spans, plus the prefix and the tail, and no other audio is
+    // ever sent: total length equals the recording exactly.
+    expect(spans).toHaveLength(4);
+    expect(spans.reduce((sum, span) => sum + span.length, 0)).toBe(
+      recording.length,
+    );
+    expect(spans.some((span) => span.length === 700)).toBe(true);
     expect(spans.at(-1)?.at(-1)).toBe(recording.at(-1));
-    expect(result?.chunkCount).toBe(3);
-    expect(result?.metadata.transcriptionDurationMs).toBe(300);
+  });
+
+  it("falls back when the unobserved prefix is longer than one span", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    // Attach after 5.5 s, which is past the 5 s minimum span, so prefixing it
+    // would cost more than simply transcribing the whole recording.
+    feed(target, recording, 5_500);
+    expect(target.chunkCount).toBeGreaterThan(0);
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects a stream that diverges inside a committed span, not just at its end", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Inside the first committed span, far from both its start and the 32
+    // samples that the old suffix probe used to check.
+    const altered = recording.slice();
+    altered.fill(0.123, 3_000, 3_010);
+    await expect(
+      target.finish({ samples: altered, sampleRate: RATE }),
+    ).resolves.toBeNull();
+  });
+
+  it("accepts the untouched recording with a zeroed span boundary probe", async () => {
+    const { transcribe, spans } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // The first committed span is still exactly what the stream carried, so
+    // the digest check must not reject a legitimate recording.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.not.toBeNull();
+    expect(spans.length).toBeGreaterThan(0);
   });
 
   it("disables itself on a gap or a chunk without an offset", async () => {

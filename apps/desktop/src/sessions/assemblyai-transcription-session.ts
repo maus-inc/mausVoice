@@ -7,6 +7,7 @@ import {
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { type AudioChunkPayload } from "./audio-chunk-events";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
 import {
@@ -145,24 +146,21 @@ export const startAssemblyAIStreaming = async (
         getLogger().info(
           `[${LOGGER_PREFIX}] Setting up audio_chunk listener...`,
         );
-        unlisten = await listen<{ samples: number[] }>(
-          "audio_chunk",
-          (event) => {
-            receivedLogger.record(event.payload.samples.length);
-            if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
-              try {
-                const typedChunk = ensureFloat32Array(event.payload.samples);
-                buffer.push(typedChunk);
-                buffer.flush(false);
-              } catch (error) {
-                getLogger().error(
-                  `[${LOGGER_PREFIX}] Error sending audio chunk:`,
-                  error,
-                );
-              }
+        unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) => {
+          receivedLogger.record(event.payload.samples.length);
+          if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
+            try {
+              const typedChunk = ensureFloat32Array(event.payload.samples);
+              buffer.push(typedChunk);
+              buffer.flush(false);
+            } catch (error) {
+              getLogger().error(
+                `[${LOGGER_PREFIX}] Error sending audio chunk:`,
+                error,
+              );
             }
-          },
-        );
+          }
+        });
 
         getLogger().info(`[${LOGGER_PREFIX}] Session ready, listener attached`);
         resolve({ finalize, cleanup });
