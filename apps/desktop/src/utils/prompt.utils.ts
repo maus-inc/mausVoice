@@ -748,9 +748,17 @@ Process the transcript according to the instructions.
 
 // Reasoning models (gpt-oss, gpt-5, Gemini thinking) spend hidden reasoning
 // tokens from the same output budget as the JSON answer, so the budget must
-// cover both. A fixed 600-token cap truncated long dictations.
+// cover both. Only gpt-oss is asked for a lower effort (see
+// POST_PROCESS_REASONING_EFFORT); the headroom also covers models that reason
+// at their default effort. A fixed 600-token cap truncated long dictations.
 const POST_PROCESS_REASONING_HEADROOM_TOKENS = 1024;
+// Every request, however short, now asks for at least this many output
+// tokens (previously 600). Providers bill generated tokens, not the cap.
 const POST_PROCESS_MIN_OUTPUT_TOKENS = 2048;
+// Bounds cost. The budget saturates past about 2,400 estimated transcript
+// tokens (roughly 9,500 characters, or 11 to 14 minutes of speech). A longer
+// dictation can still be cut off; strict parsing then keeps the raw
+// transcript and warns instead of pasting a shortened one.
 const POST_PROCESS_MAX_OUTPUT_TOKENS = 8192;
 // Room for styles that lengthen the text, JSON string escaping, and scripts
 // that `estimateTokenCount` under-counts.

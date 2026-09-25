@@ -235,6 +235,18 @@ describe("postProcessTranscript output budget", () => {
     expect(result.warnings.join(" ")).toContain("truncated at its token limit");
   });
 
+  it("hints at truncation for a fenced reply cut off before its closing fence", async () => {
+    const rawTranscript = "we agreed to push the beta to october";
+    genRepo.generateText.mockResolvedValueOnce({
+      text: '```json\n{"result":"We agreed to push the beta',
+    });
+
+    const result = await postProcessTranscript({ rawTranscript, toneId: null });
+
+    expect(result.transcript).toBe(rawTranscript);
+    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+  });
+
   it("sizes the budget from the transcript and asks for low reasoning effort", async () => {
     genRepo.generateText.mockResolvedValue({
       text: JSON.stringify({ result: "ok" }),

@@ -417,7 +417,9 @@ describe("getPostProcessMaxTokens", () => {
 
   it("stays bounded for very long transcripts", () => {
     const huge = getPostProcessMaxTokens("word ".repeat(50_000));
+    expect(huge).toBe(8192);
     expect(getPostProcessMaxTokens("word ".repeat(100_000))).toBe(huge);
+    expect(getPostProcessMaxTokens("")).toBe(2048);
   });
 });
 

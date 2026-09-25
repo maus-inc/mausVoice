@@ -17,7 +17,10 @@ vi.mock("../utils/user.utils", async (importOriginal) => ({
   getMyUserName: () => "Tester",
   loadMyEffectiveDictationLanguage: async () => "en",
 }));
-import { previewToneStyle } from "./tone-preview.actions";
+import {
+  MAX_PREVIEW_SAMPLE_LEN,
+  previewToneStyle,
+} from "./tone-preview.actions";
 
 beforeEach(() => {
   generate.mockReset();
@@ -72,7 +75,7 @@ describe("style preview provider contract", () => {
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         signal: controller.signal,
-        maxTokens: getPostProcessMaxTokens("sample"),
+        maxTokens: 2048,
         reasoningEffort: "low",
         jsonResponse: {
           name: "transcription_cleaning",
@@ -80,6 +83,29 @@ describe("style preview provider contract", () => {
           schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
         },
       }),
+    );
+  });
+
+  it("sizes the output budget from the bounded sample, not the raw input", async () => {
+    generate.mockResolvedValueOnce({ text: '{"result":"Styled"}' });
+    const sentence = "We moved the launch to next quarter. ";
+    const longSample = sentence.repeat(
+      Math.ceil((MAX_PREVIEW_SAMPLE_LEN * 4) / sentence.length),
+    );
+    const boundedBudget = getPostProcessMaxTokens(
+      longSample.slice(0, MAX_PREVIEW_SAMPLE_LEN),
+    );
+
+    await previewToneStyle(
+      { promptTemplate: "Be concise." },
+      longSample,
+      new AbortController().signal,
+    );
+
+    expect(boundedBudget).toBeGreaterThan(2048);
+    expect(boundedBudget).toBeLessThan(getPostProcessMaxTokens(longSample));
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ maxTokens: boundedBudget }),
     );
   });
 });

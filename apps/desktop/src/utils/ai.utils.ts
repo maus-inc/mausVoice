@@ -54,6 +54,21 @@ export const extractJsonFromMarkdown = (text: string): string => {
 export const parsePostProcessingJson = (raw: string): unknown =>
   JSON.parse(extractJsonFromMarkdown(raw));
 
+/**
+ * True when a reply that failed to parse opens a JSON object but never closes
+ * it, the shape of output cut off at the model's token limit. Checked on the
+ * text itself rather than the parser's message, and tolerant of a code fence
+ * that was cut off before it closed.
+ */
+export const isLikelyTruncatedJson = (raw: string): boolean => {
+  const body = raw
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
+  return body.startsWith("{") && !body.endsWith("}");
+};
+
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>
   value ?? fallback;
 

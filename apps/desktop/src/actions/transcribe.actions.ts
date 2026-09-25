@@ -19,6 +19,7 @@ import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
 import {
+  isLikelyTruncatedJson,
   parsePostProcessingJson,
   unwrapNestedLlmResponse,
 } from "../utils/ai.utils";
@@ -284,9 +285,7 @@ const parseProcessedTranscript = (
     return { transcript: validationResult.data.result.trim(), warning: null };
   } catch (e) {
     const message = unknownToMessage(e);
-    const truncationHint = /Unterminated string|Unexpected end of JSON/i.test(
-      message,
-    )
+    const truncationHint = isLikelyTruncatedJson(raw)
       ? " The model output may have been truncated at its token limit."
       : "";
     return {

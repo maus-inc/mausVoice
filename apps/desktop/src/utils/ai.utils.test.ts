@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   unwrapNestedLlmResponse,
   extractJsonFromMarkdown,
+  isLikelyTruncatedJson,
   parsePostProcessingJson,
 } from "./ai.utils";
 
@@ -450,5 +451,24 @@ describe("parsePostProcessingJson", () => {
     expect(() => parsePostProcessingJson('{"result":"Done."')).toThrow(
       SyntaxError,
     );
+  });
+});
+
+describe("isLikelyTruncatedJson", () => {
+  it.each([
+    '{"result":"We agreed to push the beta to',
+    '```json\n{"result":"We agreed to push',
+    '  {"result":"Done."  ',
+  ])("flags an object that never closes: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(true);
+  });
+
+  it.each([
+    '{"result":"Done."}',
+    '```json\n{"result":"Done."}\n```',
+    "Sure, here is the cleaned text.",
+    "",
+  ])("does not flag complete JSON or prose: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(false);
   });
 });
