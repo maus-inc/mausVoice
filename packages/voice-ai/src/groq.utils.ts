@@ -23,6 +23,14 @@ export const GENERATE_TEXT_MODELS = [
 export type GenerateTextModel =
   (typeof GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
+/**
+ * Model the Groq repo selects when the user has not chosen one. It must stay
+ * inside `GENERATE_TEXT_MODELS` so a default-model failure can still fall back
+ * to a different live model instead of rethrowing with no second attempt.
+ */
+export const GROQ_DEFAULT_GENERATE_TEXT_MODEL: GenerateTextModel =
+  "openai/gpt-oss-20b";
+
 // Models that support `response_format: { type: "json_schema" }`.
 // See https://console.groq.com/docs/structured-outputs
 const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
