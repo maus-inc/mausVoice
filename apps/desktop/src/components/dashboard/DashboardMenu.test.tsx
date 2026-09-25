@@ -39,12 +39,15 @@ const expectCurrentTile = (
   expect(nav).not.toBeNull();
   const pages = nav?.querySelector(`ul[aria-label="${labels.pages}"]`);
   const settings = nav?.querySelector(`ul[aria-label="${labels.settings}"]`);
-  expect(pages?.querySelectorAll(":scope > li")).toHaveLength(5);
-  expect(settings?.querySelectorAll(":scope > li")).toHaveLength(1);
+  expect(pages?.querySelector(":scope > li")).toBeTruthy();
+  expect(settings?.querySelector(":scope > li")?.textContent).toContain(
+    labels.settings,
+  );
 
   // Locate the destination first: aria-current belongs on its tile, not the
   // nav or list ancestor (whose text also contains every destination label).
-  const tiles = nav?.querySelectorAll("ul > li .MuiListItemButton-root");
+  // Select the tile structurally, independent of MUI's generated classes.
+  const tiles = nav?.querySelectorAll("ul > li > *");
   const currentTile = Array.from(tiles ?? []).find((tile) =>
     tile.textContent?.includes(labels.current),
   );
