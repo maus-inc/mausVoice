@@ -32,6 +32,14 @@ export const GENERATE_TEXT_MODELS = [
 export type GenerateTextModel =
   (typeof GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
+/**
+ * The Groq generate-text model mausVoice uses when the user has not picked one
+ * and the one it falls back to when the picked model fails. Exported so the two
+ * cannot drift apart, which is how the fallback ended up naming a retired id in
+ * the first place. Must stay inside `GENERATE_TEXT_MODELS`.
+ */
+export const GROQ_DEFAULT_GENERATE_TEXT_MODEL = GENERATE_TEXT_MODELS[0];
+
 // Models that support `response_format: { type: "json_schema" }`.
 // See https://console.groq.com/docs/structured-outputs
 const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
@@ -183,7 +191,7 @@ export type GroqGenerateResponseOutput = {
 
 export const groqGenerateTextResponse = async ({
   apiKey,
-  model = "openai/gpt-oss-20b",
+  model = GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   system,
   prompt,
   imageUrls = [],

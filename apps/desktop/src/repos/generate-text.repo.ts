@@ -25,6 +25,7 @@ import {
   geminiStreamChat,
   GENERATE_TEXT_MODELS,
   GenerateTextModel,
+  GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
   groqStreamChat,
   OpenAIGenerateTextModel,
@@ -103,12 +104,11 @@ export class GenerateTextFallbackError extends Error {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  // Must stay inside `GENERATE_TEXT_MODELS`. The smaller gpt-oss tier is the
-  // documented Groq default and is what the constructor falls back to, so a
-  // post-processing failure on the 120b model still lands on a live model
-  // instead of a retired id. When the configured model already is this one,
+  // The same constant the constructor falls back to, so a post-processing
+  // failure on the other catalog model still lands on a live one instead of a
+  // retired id. When the configured model already is this one,
   // `generateWithFallback` rethrows rather than retrying the same model.
-  private fallbackModel: GenerateTextModel = "openai/gpt-oss-20b";
+  private fallbackModel: GenerateTextModel = GROQ_DEFAULT_GENERATE_TEXT_MODEL;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -120,7 +120,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     this.model =
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
-        : "openai/gpt-oss-20b";
+        : GROQ_DEFAULT_GENERATE_TEXT_MODEL;
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
