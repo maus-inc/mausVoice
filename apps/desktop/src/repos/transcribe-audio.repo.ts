@@ -802,7 +802,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 
     return {
       text: transcript,
-      segments: toTranscriptionSegments(segments),
+      segments,
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

@@ -1123,10 +1123,12 @@ describe("provider segment hand-off to the silence gate", () => {
     expect(output.segments).toEqual(expected);
   });
 
-  it("OpenAI-compatible keeps avg_logprob and drops malformed or extra fields", async () => {
+  it("OpenAI-compatible passes the parser's segments through with avg_logprob", async () => {
+    // openaiCompatibleTranscribeAudio already validates segments (see its
+    // tests), so the repo must hand them on without dropping avgLogprob.
     transcribeUtilMock.mockResolvedValue({
       text: "hello there",
-      segments: providerSegments,
+      segments: expected,
     });
 
     const output = await new OpenAICompatibleTranscribeAudioRepo(
