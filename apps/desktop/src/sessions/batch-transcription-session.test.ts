@@ -257,4 +257,54 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
       toastType: "error",
     });
   });
+  it("aborts a whole-recording request when the dictation is discarded", async () => {
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+    // No pause cut, so the whole-recording path is the one that runs.
+    streamRecording(join(segment(3, true, 9)));
+
+    let seen: AbortSignal | undefined;
+    let release: (() => void) | undefined;
+    mocks.transcribeAudio.mockImplementation(
+      async ({ signal }: { signal?: AbortSignal }) => {
+        seen = signal;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        if (signal?.aborted) throw signal.reason;
+        return transcriptionResult("done");
+      },
+    );
+
+    const pending = session.finalize({
+      samples: recording,
+      sampleRate: RATE,
+    });
+    await vi.waitFor(() => expect(seen).toBeDefined());
+    // The user discards while inference is still running.
+    session.cleanup();
+    expect(seen?.aborted).toBe(true);
+    release?.();
+
+    // A discard is not a failure, so it must not reach the user as one.
+    const result = await pending;
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([]);
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("re-arms the abort scope for the next recording", async () => {
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+    session.cleanup();
+
+    // A second dictation on the same session must still be able to transcribe.
+    await session.onRecordingStart(RATE);
+    const result = await session.finalize({
+      samples: join(segment(3, true, 8)),
+      sampleRate: RATE,
+    });
+    expect(result.rawTranscript).toBe("span");
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
 });

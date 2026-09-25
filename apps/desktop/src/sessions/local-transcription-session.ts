@@ -25,6 +25,7 @@ import {
   logPretranscription,
 } from "./batch-transcription-session";
 import type { PauseChunkedPretranscriber } from "./pause-chunked-pretranscriber";
+import { SessionAbortScope } from "./session-abort-scope";
 
 type LocalSessionContext = {
   prompt: string;
@@ -46,10 +47,14 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private unlisten: UnlistenFn | null = null;
   private pretranscriber: PauseChunkedPretranscriber | null = null;
   private context: LocalSessionContext | null = null;
+  /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
+  private abortScope = new SessionAbortScope();
   private startupWarnings: string[] = [];
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     this.cleanup();
+    // A previous recording may have aborted the scope; this one needs a live signal.
+    this.abortScope = new SessionAbortScope();
     this.startupWarnings = [];
 
     try {
@@ -100,7 +105,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       const pretranscribed = await this.finishPretranscription(audio, warnings);
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: the session is already torn down.
-      if (pretranscriber?.isDisposed) {
+      if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
         return { rawTranscript: null, metadata: {}, warnings };
       }
       return await this.transcribeWholeRecording(audio, warnings);
@@ -110,6 +115,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   }
 
   cleanup(): void {
+    this.abortScope.abort();
     getLogger().info(
       `[local-session] cleanup (hasUnlisten=${!!this.unlisten}, hasPretranscriber=${!!this.pretranscriber})`,
     );
@@ -182,20 +188,40 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     getLogger().info(
       `[local-session] transcribing the whole recording (${payloadSamples.length} samples at ${rate}Hz)`,
     );
-    const result = await transcribeAudio({
-      samples: payloadSamples,
-      sampleRate: rate,
-      hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
-    });
-    getLogger().info(
-      `[local-session] transcription complete (${result.rawTranscript.length} chars)`,
-    );
+    try {
+      const result = await transcribeAudio({
+        samples: payloadSamples,
+        sampleRate: rate,
+        hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
+        signal: this.abortScope.signal,
+      });
+      getLogger().info(
+        `[local-session] transcription complete (${result.rawTranscript.length} chars)`,
+      );
 
-    return {
-      rawTranscript: result.rawTranscript,
-      metadata: result.metadata,
-      warnings: [...warnings, ...result.warnings],
-    };
+      return {
+        rawTranscript: result.rawTranscript,
+        metadata: result.metadata,
+        warnings: [...warnings, ...result.warnings],
+      };
+    } catch (error) {
+      // A discard aborts the request on purpose, so it returns nothing rather
+      // than surfacing an error the user did not cause.
+      if (this.abortScope.isAborted) {
+        getLogger().info(
+          "[local-session] transcription cancelled: the dictation was discarded",
+        );
+        return {
+          rawTranscript: null,
+          metadata: {
+            transcriptionMode: "local",
+            transcriptionPrompt: this.context?.prompt ?? null,
+          },
+          warnings,
+        };
+      }
+      throw error;
+    }
   }
 
   /**
