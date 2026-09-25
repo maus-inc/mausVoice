@@ -539,6 +539,21 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_horizontal_seam_keeps_the_full_tangent_span_past_a_dock_inset() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { x: 40.0, y: 0.0, width: 1160.0, height: 960.0 };
+        let neighbor = MonitorRect { x: 0.0, y: -800.0, width: 1200.0, height: 800.0 };
+
+        let region = drag_region(monitor, work, &[neighbor], (600.0, 10.0));
+
+        assert!(!region.edge_mask.top);
+        assert!(region.edge_mask.left);
+        assert_eq!(region.bounds.x, monitor.x);
+        assert_eq!(region.bounds.right(), monitor.right());
+        assert_eq!(region.bounds.y, monitor.y);
+    }
+
+    #[test]
     fn partial_seam_latch_prevents_mask_flips_until_the_center_reenters() {
         let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
         let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };

@@ -915,10 +915,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 /// the rect is omitted.
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
+    let scale = x11::x11_root_scale(window);
     let monitor = pill_monitor(window, state);
     let monitor_rect = monitor.map(|m| {
         let workarea = m.workarea();
@@ -1103,19 +1100,19 @@ fn pill_monitor(window: &gtk::Window, state: &PillState) -> Option<gdk::Monitor>
             return Some(monitor);
         }
     }
-    let (w, h) = window.size();
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
-    x11::monitor_at_physical_point(
+    if state.backend.get() == Backend::X11 {
+        let (w, h) = window.size();
+        let scale = x11::x11_root_scale(window);
+        return x11::monitor_at_physical_point(
             &display,
             state.saved_x.get() + (w as f64 / 2.0) * scale,
             state.saved_y.get() + (h as f64 / 2.0) * scale,
             scale,
         )
         .or_else(|| display.primary_monitor())
-        .or_else(|| display.monitor(0))
+        .or_else(|| display.monitor(0));
+    }
+    display.primary_monitor().or_else(|| display.monitor(0))
 }
 
 fn selector_visible_headroom(local_top: f64, surface_y: f64, work_y: f64, scale: f64) -> f64 {
