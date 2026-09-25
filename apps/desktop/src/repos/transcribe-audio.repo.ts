@@ -368,10 +368,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments,
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -408,10 +405,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments,
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -807,10 +801,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments,
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,

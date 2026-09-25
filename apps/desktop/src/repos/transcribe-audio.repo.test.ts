@@ -243,6 +243,37 @@ describe("BaseTranscribeAudioRepo", () => {
       );
     });
 
+    it("keeps confidently decoded chunks whose window reports a high no_speech_prob", async () => {
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          {
+            text: chunkTexts[index] ?? "",
+            noSpeechProb: 0.97,
+            avgLogprob: -0.3,
+          },
+        ],
+      );
+      const sampleRate = 16000;
+
+      const result = await repo.transcribeAudio({
+        samples: createSamples(25, sampleRate),
+        sampleRate,
+      });
+
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
     it("preserves each chunk's raw text when hallucination filtering is disabled on long audio", async () => {
       // Mirrors the enabled-path test above but with the off switch on: every
       // chunk still has a near-certain-silence segment, but the repo must merge

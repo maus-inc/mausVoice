@@ -56,6 +56,26 @@ describe("openaiCompatibleTranscribeAudio", () => {
     expect(url).toBe("https://example.com/v1/audio/transcriptions");
   });
 
+  it("reads avg_logprob alongside no_speech_prob from verbose segments", async () => {
+    fetchMock.mockResolvedValue(
+      makeResponse({
+        text: "hello",
+        segments: [{ text: "hello", no_speech_prob: 0.95, avg_logprob: -0.3 }],
+      }),
+    );
+
+    const result = await openaiCompatibleTranscribeAudio({
+      baseUrl: "https://example.com/v1",
+      model: "whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+    });
+
+    expect(result.segments).toEqual([
+      { text: "hello", noSpeechProb: 0.95, avgLogprob: -0.3 },
+    ]);
+  });
+
   it("prefers verbose_json so capable servers return no_speech_prob segments", async () => {
     fetchMock.mockResolvedValue(makeResponse({ text: "hello world" }));
 

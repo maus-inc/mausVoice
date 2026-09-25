@@ -152,11 +152,14 @@ export const applyHallucinationFiltering = (
 
 /**
  * A single Whisper segment as returned by a `verbose_json` transcription.
- * `noSpeechProb` is the model's estimate that the segment contains no speech.
+ * `noSpeechProb` is the model's estimate that the segment's 30-second decode
+ * window contains no speech. `avgLogprob` is the decoder's confidence in the
+ * segment's own tokens.
  */
 export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
+  avgLogprob?: number;
 };
 
 /**
@@ -167,6 +170,33 @@ export type TranscriptionSegment = {
  * gate that runs before inference for on-device transcription.
  */
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
+
+/**
+ * Whisper's reference decoder skips a window as silent only when
+ * `no_speech_prob` is high AND the average log probability is below -1.0.
+ * A confidently decoded segment in a window with a high `no_speech_prob` is
+ * real speech, so it must not be dropped on the probability alone.
+ */
+export const NO_SPEECH_AVG_LOGPROB_THRESHOLD = -1;
+
+/**
+ * True when a segment is near-certain silence. Providers that omit
+ * `avgLogprob` fall back to the probability alone.
+ */
+export const isLikelySilentSegment = (
+  segment: TranscriptionSegment,
+): boolean => {
+  if (
+    segment.noSpeechProb == null ||
+    segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD
+  ) {
+    return false;
+  }
+  return (
+    segment.avgLogprob == null ||
+    segment.avgLogprob < NO_SPEECH_AVG_LOGPROB_THRESHOLD
+  );
+};
 
 /**
  * True when adjacent segment texts lack any boundary whitespace (`\s`, including
@@ -215,11 +245,7 @@ export const gateSilentSegments = (
   if (!segments || segments.length === 0) {
     return null;
   }
-  const kept = segments.filter(
-    (segment) =>
-      segment.noSpeechProb == null ||
-      segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
-  );
+  const kept = segments.filter((segment) => !isLikelySilentSegment(segment));
   // Nothing gated — keep the provider transcript (and its spacing) instead
   // of rebuilding from segments.
   if (kept.length === segments.length) {

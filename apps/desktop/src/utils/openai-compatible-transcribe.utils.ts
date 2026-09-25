@@ -20,6 +20,7 @@ export type OpenAICompatibleTranscriptionArgs = {
 export type OpenAICompatibleTranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
+  avgLogprob?: number;
 };
 
 export type OpenAICompatibleTranscribeAudioOutput = {
@@ -122,7 +123,11 @@ export const openaiCompatibleTranscribeAudio = async ({
 
   const data = (await finalResponse.json()) as {
     text?: string;
-    segments?: Array<{ text?: string; no_speech_prob?: number }>;
+    segments?: Array<{
+      text?: string;
+      no_speech_prob?: number;
+      avg_logprob?: number;
+    }>;
   };
 
   if (!data.text) {
@@ -136,6 +141,7 @@ export const openaiCompatibleTranscribeAudio = async ({
     ? data.segments.map((segment) => ({
         text: segment.text ?? "",
         noSpeechProb: segment.no_speech_prob,
+        avgLogprob: segment.avg_logprob,
       }))
     : undefined;
 

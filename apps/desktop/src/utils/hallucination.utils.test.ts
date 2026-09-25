@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyHallucinationFiltering,
   filterKnownSilenceHallucinations,
+  gateSilentSegments,
   isKnownSilenceHallucination,
   joinKeptSegmentTexts,
 } from "./hallucination.utils";
@@ -208,5 +209,45 @@ describe("applyHallucinationFiltering", () => {
     expect(applyHallucinationFiltering(raw, undefined, "en", true)).toBe(
       "Please review the doc. Best regards.",
     );
+  });
+});
+
+describe("gateSilentSegments decoder confidence", () => {
+  it("keeps confidently decoded speech even when no_speech_prob is high", () => {
+    const segments = [
+      { text: "Hello", noSpeechProb: 0.1, avgLogprob: -0.3 },
+      { text: " world", noSpeechProb: 0.95, avgLogprob: -0.2 },
+    ];
+    expect(gateSilentSegments(segments)).toBeNull();
+    expect(
+      applyHallucinationFiltering("Hello world", segments, "en", true),
+    ).toBe("Hello world");
+  });
+
+  it("does not empty a whole window of confident speech", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech", noSpeechProb: 0.97, avgLogprob: -0.4 },
+        { text: " continues here", noSpeechProb: 0.97, avgLogprob: -0.5 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("drops a high no_speech_prob segment the decoder was unsure about", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech.", noSpeechProb: 0.1, avgLogprob: -0.3 },
+        { text: " Thanks for watching!", noSpeechProb: 0.95, avgLogprob: -1.4 },
+      ]),
+    ).toBe("Real speech.");
+  });
+
+  it("falls back to the probability alone when avg_logprob is missing", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech.", noSpeechProb: 0.1 },
+        { text: " [BLANK_AUDIO]", noSpeechProb: 0.99 },
+      ]),
+    ).toBe("Real speech.");
   });
 });
