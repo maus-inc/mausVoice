@@ -72,7 +72,7 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  private fallbackModel: GenerateTextModel = "openai/gpt-oss-120b";
 
   constructor(apiKey: string, model: string | null) {
     super();

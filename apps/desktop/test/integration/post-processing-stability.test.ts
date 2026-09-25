@@ -25,13 +25,13 @@ const isTransientProviderError = (err: unknown): boolean => {
     typeof err === "object" &&
     "status" in err &&
     typeof err.status === "number" &&
-    err.status === 429
+    (err.status === 429 || err.status === 404)
   )
     return true;
   const msg = err instanceof Error ? err.message : String(err);
   return (
     /\b429\b|rate[-_ ]?limit/i.test(msg) ||
-    /json_validate_failed|max completion tokens reached|timed out after/i.test(
+    /json_validate_failed|max completion tokens reached|timed out after|model_not_found|does not exist or you do not have access/i.test(
       msg,
     )
   );
