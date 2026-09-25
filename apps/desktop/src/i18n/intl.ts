@@ -85,7 +85,7 @@ export const getIntlConfig = () => {
 export function getIntl(locale?: Locale) {
   const cache = createIntlCache();
   const detectedLocale = locale ?? detectLocale();
-  return createIntl(
+  const intl = createIntl(
     {
       locale: detectedLocale,
       defaultLocale: DEFAULT_LOCALE,
@@ -93,4 +93,16 @@ export function getIntl(locale?: Locale) {
     },
     cache,
   );
+  const rawFormat = intl.formatMessage;
+  (intl as any).formatMessage = (descriptor: any, values?: any, opts?: any) => {
+    try {
+      if (descriptor && !descriptor.id && descriptor.defaultMessage) {
+        return descriptor.defaultMessage;
+      }
+      return rawFormat(descriptor, values, opts);
+    } catch {
+      return descriptor?.defaultMessage ?? "";
+    }
+  };
+  return intl;
 }

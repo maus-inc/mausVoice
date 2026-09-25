@@ -1,5 +1,6 @@
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
+import { filterLocalTranscriptionSegments } from "../repos/transcribe-audio.repo";
 import { getAppState } from "../store";
 import {
   StopRecordingResponse,
@@ -30,6 +31,7 @@ type AudioChunkPayload = {
 
 type LocalSessionContext = {
   prompt: string;
+  hallucinationFilterEnabled: boolean;
 };
 
 export class LocalTranscriptionSession implements TranscriptionSession {
@@ -53,6 +55,8 @@ export class LocalTranscriptionSession implements TranscriptionSession {
         state,
       });
 
+      const hallucinationFilterEnabled =
+        state.userPrefs?.hallucinationFilterEnabled !== false;
       const settings = state.settings.aiTranscription;
       const sidecarSession =
         await getLocalTranscriptionSidecarManager().createStreamingSession({
@@ -62,10 +66,11 @@ export class LocalTranscriptionSession implements TranscriptionSession {
           language: whisperLanguage,
           initialPrompt: prompt || undefined,
           deviceId: getTranscriptionSidecarDeviceId(settings.device),
+          hallucinationFilterEnabled,
         });
 
       this.session = sidecarSession;
-      this.context = { prompt };
+      this.context = { prompt, hallucinationFilterEnabled };
       this.unlisten = await listen<AudioChunkPayload>(
         "audio_chunk",
         (event) => {
@@ -102,11 +107,20 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     try {
       getLogger().info(`[local-stream-session] finalizing streaming session`);
       const output = await this.session.finalize();
+      const segments = output.segments ?? [];
+      // Honor the same preference snapshot sent to the sidecar. ONNX has no
+      // probability metadata, so retain its text. With filtering enabled,
+      // keep an empty filtered result rather than reviving dropped segments.
+      const filteredText =
+        this.context?.hallucinationFilterEnabled === false ||
+        segments.length === 0
+          ? (output.text ?? "")
+          : filterLocalTranscriptionSegments(segments);
       getLogger().info(
-        `[local-stream-session] streaming finalize succeeded (${output.text.length} chars)`,
+        `[local-stream-session] streaming finalize succeeded (${filteredText.length} chars)`,
       );
       return {
-        rawTranscript: output.text.trim() || null,
+        rawTranscript: filteredText.trim() || null,
         metadata: {
           modelSize: output.model,
           inferenceDevice: output.inferenceDevice,
@@ -180,6 +194,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     const result = await transcribeAudio({
       samples: payloadSamples,
       sampleRate: rate,
+      hallucinationFilterEnabled: this.context?.hallucinationFilterEnabled,
     });
     getLogger().info(
       `[local-stream-session] batch fallback: transcription complete (${result.rawTranscript.length} chars)`,

@@ -19,9 +19,13 @@ export const useHeaderPortal = () => {
  * element is a new object on every render and would set state in a loop.
  */
 export const useSetHeaderContent = (content: ReactNode) => {
-  const { setLeftContent } = useHeaderPortal();
+  const context = useContext(HeaderPortalContext);
+  const setLeftContent = context?.setLeftContent;
 
   useEffect(() => {
+    if (!setLeftContent) {
+      return;
+    }
     setLeftContent(content);
     return () => setLeftContent(null);
   }, [content, setLeftContent]);

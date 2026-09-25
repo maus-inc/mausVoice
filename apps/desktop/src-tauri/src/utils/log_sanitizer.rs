@@ -12,7 +12,7 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         // Redact the preview value but keep the rest
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Received transcript:\s*.*?"preview"\s*:\s*)"(?:[^"\\]|\\.)*""#,
+                r#"(?m)(Received transcript:\s*[\s\S]*?"preview"\s*:\s*)"(?:[^"\\]|\\.)*""#,
             )
             .unwrap(),
             replacement: r#"${1}"[REDACTED]""#,
@@ -37,6 +37,42 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
             pattern: Regex::new(r"(?m)(final transcript:)\s*.+$").unwrap(),
             replacement: "$1 [REDACTED]",
         },
+        // LLM prompt: <full text until end of line>
+        SanitizeRule {
+            pattern: Regex::new(r"(?m)(LLM prompt:)\s*.+$").unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
+        // Webhook payload: <full text until end of line>
+        SanitizeRule {
+            pattern: Regex::new(r"(?m)(Webhook payload:)\s*.+$").unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
+        // Webhook URL: <url>, optionally wrapped in quotes
+        SanitizeRule {
+            pattern: Regex::new(r#"(?m)(Webhook URL:)\s*["']?https?://[^\s"']+["']?"#).unwrap(),
+            replacement: "$1 [REDACTED_URL]",
+        },
+        // Connector token/credential/secret/api key: <credential>, optionally
+        // wrapped in quotes. A quoted value may contain whitespace
+        // (`Connector token: "Bearer opaque-secret"`), so match the complete
+        // quoted value before falling back to a bare token.
+        SanitizeRule {
+            pattern: Regex::new(
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("[^"]*"|'[^']*'|[^\s"']+)"#,
+            )
+            .unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
+        // Meeting transcript: <full text until end of line>
+        SanitizeRule {
+            pattern: Regex::new(r"(?m)(Meeting transcript:)\s*.+$").unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
+        // Translation source/result/content: <full text until end of line>
+        SanitizeRule {
+            pattern: Regex::new(r"(?m)(Translation (?:source|result|content):)\s*.+$").unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
     ]
 });
 
@@ -48,7 +84,72 @@ pub fn sanitize_log_content(input: &str) -> String {
             .replace_all(&result, rule.replacement)
             .into_owned();
     }
-    result
+    redact_labeled_blocks(&result)
+}
+
+/// Labels whose payload may span multiple log lines. The regex rules above
+/// only redact the label's own line (`.+` never matches `\n`), so a payload
+/// continued on following lines would leak. This pass redacts the label line
+/// and every continuation line until the next timestamped log record. A bare
+/// `[` is not enough: a multiline payload can itself contain lines starting
+/// with `[` (for example a formatted JSON array).
+///
+/// "Received transcript:" is intentionally excluded: its rule is surgical
+/// (redacts only the `preview` value, keeps `length` metadata), and the
+/// preview pattern above is multiline-safe so pretty-printed JSON payloads
+/// are covered without redacting the whole block.
+const BLOCK_LABELS: &[&str] = &[
+    "Processed transcript:",
+    "LLM raw output:",
+    "finalizing with transcript:",
+    "final transcript:",
+    "LLM prompt:",
+    "Webhook payload:",
+    "Meeting transcript:",
+    "Translation source:",
+    "Translation result:",
+    "Translation content:",
+];
+
+/// Only a complete timestamp, level, and target envelope starts a new record.
+/// Date-like text in a payload is still a continuation, not a redaction boundary.
+static LOG_RECORD_PREFIX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^\[[0-9]{4}-[0-9]{2}-[0-9]{2}\]\[[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?\]\[(?:ERROR|WARN|INFO|DEBUG|TRACE)\]\[[^\]\r\n]+\](?:[ \t]|$)")
+        .expect("valid log record prefix")
+});
+
+fn is_log_record_start(line: &str) -> bool {
+    LOG_RECORD_PREFIX.is_match(line)
+}
+
+fn earliest_label(line: &str) -> Option<usize> {
+    BLOCK_LABELS
+        .iter()
+        .filter_map(|label| line.find(label).map(|pos| pos + label.len()))
+        .min()
+}
+
+fn redact_labeled_blocks(input: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_block = false;
+    // Keep CR characters and the final empty segment so benign CRLF/trailing
+    // newlines round-trip byte-for-byte. str::lines() intentionally drops both.
+    for line in input.split('\n') {
+        if let Some(end) = earliest_label(line) {
+            out.push(format!("{} [REDACTED]", &line[..end]));
+            in_block = true;
+        } else if in_block {
+            if is_log_record_start(line) {
+                in_block = false;
+                out.push(line.to_string());
+            } else {
+                out.push("[REDACTED]".to_string());
+            }
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out.join("\n")
 }
 
 #[cfg(test)]
@@ -128,6 +229,18 @@ mod tests {
     }
 
     #[test]
+    fn test_preserves_benign_line_boundaries() {
+        for input in [
+            "",
+            "connected\n",
+            "connected\r\nstopped\r\n",
+            "first\n\nlast\n",
+        ] {
+            assert_eq!(sanitize_log_content(input), input);
+        }
+    }
+
+    #[test]
     fn test_preserves_timing_logs() {
         let input = r#"[2024-01-15][14:30:45.123][DEBUG][webview] [AssemblyAI] Transcript timing: {"durationMs":1234}"#;
         let result = sanitize_log_content(input);
@@ -154,6 +267,108 @@ mod tests {
     }
 
     #[test]
+    fn test_redacts_llm_prompt() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] LLM prompt: Summarize the following meeting notes about Q4 budget planning...";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("LLM prompt: [REDACTED]"));
+        assert!(!result.contains("Q4 budget planning"));
+    }
+
+    #[test]
+    fn test_redacts_webhook_payload() {
+        let input = r#"[2024-01-15][14:30:45.123][DEBUG][webview] Webhook payload: {"event":"meeting.completed","data":{"id":"abc123"}}"#;
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook payload: [REDACTED]"));
+        assert!(!result.contains("abc123"));
+    }
+
+    #[test]
+    fn test_redacts_webhook_url() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Webhook URL: https://example.com/webhook/secret-endpoint";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook URL: [REDACTED_URL]"));
+        assert!(!result.contains("example.com"));
+    }
+
+    #[test]
+    fn test_redacts_connector_token() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: connector-token-fixture-9f3k2m";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("connector-token-fixture"));
+    }
+
+    #[test]
+    fn test_redacts_quoted_webhook_url() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Webhook URL: \"https://example.com/webhook/secret-endpoint\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Webhook URL: [REDACTED_URL]"));
+        assert!(!result.contains("example.com"));
+    }
+
+    #[test]
+    fn test_redacts_quoted_connector_token() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"connector-token-fixture-9f3k2m\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("connector-token-fixture"));
+    }
+
+    #[test]
+    fn test_redacts_connector_credential() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector credential: super_secret_value_12345";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector credential: [REDACTED]"));
+        assert!(!result.contains("super_secret_value"));
+    }
+
+    #[test]
+    fn test_redacts_meeting_transcript() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: Alice said the project deadline is next Friday and Bob agreed to deliver the API by Wednesday.";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Meeting transcript: [REDACTED]"));
+        assert!(!result.contains("Alice said"));
+    }
+
+    #[test]
+    fn test_redacts_translation_source() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation source: Bonjour, comment allez-vous aujourd'hui?";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation source: [REDACTED]"));
+        assert!(!result.contains("Bonjour"));
+    }
+
+    #[test]
+    fn test_redacts_translation_result() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation result: Hello, how are you today?";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation result: [REDACTED]"));
+        assert!(!result.contains("how are you"));
+    }
+
+    #[test]
+    fn test_redacts_multiline_meeting_transcript_block() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: Alice said the deadline moves\nsecond line of the same transcript with secrets\nthird line\n[2024-01-15][14:30:46.000][INFO][webview] Transcript pasted successfully";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Meeting transcript: [REDACTED]"));
+        assert!(!result.contains("Alice said"));
+        assert!(!result.contains("second line"));
+        assert!(!result.contains("third line"));
+        assert!(result.contains("Transcript pasted successfully"));
+    }
+
+    #[test]
+    fn test_redacts_multiline_translation_block() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Translation source: Bonjour\ncontinued source text\n[2024-01-15][14:30:46.000][DEBUG][webview] Translation result: Hello\ncontinued result text";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Translation source: [REDACTED]"));
+        assert!(result.contains("Translation result: [REDACTED]"));
+        assert!(!result.contains("Bonjour"));
+        assert!(!result.contains("continued source"));
+        assert!(!result.contains("continued result"));
+    }
+
+    #[test]
     fn test_empty_input() {
         assert_eq!(sanitize_log_content(""), "");
     }
@@ -164,4 +379,49 @@ mod tests {
         let result = sanitize_log_content(input);
         assert_eq!(result, input);
     }
+
+    #[test]
+    fn test_redacts_quoted_connector_token_with_whitespace() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer opaque-secret\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("opaque-secret"));
+    }
+
+    #[test]
+    fn test_redacts_pretty_printed_transcript_preview() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] [Deepgram] Received transcript: {\n  \"length\": 85,\n  \"preview\": \"Secret meeting notes\ncontinued on the next line\"\n}";
+        let result = sanitize_log_content(input);
+        assert!(!result.contains("Secret meeting notes"));
+        assert!(!result.contains("continued on the next line"));
+        assert!(result.contains("length"));
+    }
+
+    #[test]
+    fn test_bracket_continuation_line_stays_redacted() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: first secret line\n[\"second\", \"array-like\"] payload line\n[2024-01-15][14:30:46.000][INFO][webview] Transcript pasted successfully";
+        let result = sanitize_log_content(input);
+        assert!(!result.contains("first secret line"));
+        assert!(!result.contains("array-like"));
+        assert!(result.contains("Transcript pasted successfully"));
+    }
+
+    #[test]
+    fn date_like_continuations_do_not_end_redaction() {
+        for continuation in [
+            "[2024-01-15][secret payload]",
+            "[2024-01-15][14:30:45.123] secret payload",
+            "[2024-01-15][14:30:45.123][INFO] secret payload",
+            "[2024-01-15][14:30:45.123][INFO][webview]secret payload",
+        ] {
+            let input = format!(
+                "[2024-01-15][14:30:45.123][DEBUG][webview] Meeting transcript: private\n{continuation}\n[2024-01-15][14:30:46.000][INFO][webview] Safe metadata"
+            );
+            let result = sanitize_log_content(&input);
+            assert!(!result.contains("secret payload"));
+            assert!(!result.contains("private"));
+            assert!(result.contains("Safe metadata"));
+        }
+    }
+
 }

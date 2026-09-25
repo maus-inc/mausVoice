@@ -1,0 +1,236 @@
+[
+  {
+    "id": 4088224179,
+    "path": "packages/rust_macos_pill/src/app.rs",
+    "line": 635,
+    "author": "codeant-ai[bot]",
+    "summary": "`ResetPosition` reports the window's old geometry before the next tick rehomes it, so the desktop receives stale pill coordinates after every reset.",
+    "status": "resolved",
+    "resolution": "Invoked reposition_window(ctx.window, &ctx.state, dt, now) directly in InMessage::ResetPosition handler before pill_geometry is read, ensuring reset coordinates are fresh."
+  },
+  {
+    "id": 4088224776,
+    "path": "apps/desktop/src/preview/scenarios.ts",
+    "line": 112,
+    "author": "codeant-ai[bot]",
+    "summary": "The preview selects `email` and activates tones that are never added to `toneById`, so style selectors cannot resolve the selected or active tones.",
+    "status": "resolved",
+    "resolution": "Seeded state.toneById with getDefaultSystemTones() in scenarios.ts so custom and default system tones are available in preview."
+  },
+  {
+    "id": 4088225713,
+    "path": "apps/desktop/src/utils/prompt.utils.ts",
+    "line": 829,
+    "author": "codeant-ai[bot]",
+    "summary": "This logs the complete agent prompt, including the user's dictated transcript and potentially sensitive instructions, to the production console.",
+    "status": "resolved",
+    "resolution": "Removed console.log(\"Agent prompt\", base) in apps/desktop/src/utils/prompt.utils.ts to prevent logging sensitive user instructions."
+  },
+  {
+    "id": 4088225979,
+    "path": "apps/desktop/src/preview/runtime.ts",
+    "line": 283,
+    "author": "codeant-ai[bot]",
+    "summary": "Updated OpenRouter configuration is stored under `openRouterConfig`, but readers expect `openrouterConfig`, so preview edits silently lose the configuration.",
+    "status": "resolved",
+    "resolution": "Mapped openRouterConfig to openrouterConfig in preview runtime store update to eliminate camelCase/lowercase key divergence."
+  },
+  {
+    "id": 4088225985,
+    "path": "apps/desktop/src/preview/runtime.ts",
+    "line": 383,
+    "author": "codeant-ai[bot]",
+    "summary": "The preview handles `transcription_load_audio`, but the repository invokes `transcription_audio_load`, so retranscription fails with `PreviewOperationError` in browser previews.",
+    "status": "resolved",
+    "resolution": "Added transcription_audio_load alias handling alongside transcription_load_audio in preview runtime IPC dispatcher."
+  },
+  {
+    "id": 4088226193,
+    "path": "apps/desktop/src/components/root/DictationSideEffects.tsx",
+    "line": 890,
+    "author": "codeant-ai[bot]",
+    "summary": "Failed transcriptions with warnings return here without calling `handleEmptyTranscriptionResult`, so the recording is not saved and the recovery toast is never shown.",
+    "status": "resolved",
+    "resolution": "Called handleEmptyTranscriptionResult in DictationSideEffects when provider returns empty text with warnings so audio is saved and not lost."
+  },
+  {
+    "id": 4088226199,
+    "path": "apps/desktop/src/components/root/DictationSideEffects.tsx",
+    "line": 1547,
+    "author": "codeant-ai[bot]",
+    "summary": "`OPEN_CHAT_HOTKEY` is disabled whenever no recording is active, so users cannot open chat with its shortcut while idle.",
+    "status": "resolved",
+    "resolution": "Removed !isActiveSession condition gating OPEN_CHAT_HOTKEY in DictationSideEffects so users can open chat via hotkey while idle."
+  },
+  {
+    "id": 4088226201,
+    "path": "packages/rust_gtk_pill/src/pill.rs",
+    "line": 569,
+    "author": "codeant-ai[bot]",
+    "summary": "Reject-only toasts store this action, but the GTK input region still checks only `flash_action`, so the rendered reject button cannot receive clicks.",
+    "status": "resolved",
+    "resolution": "Updated union_flash_action in rust_gtk_pill to check both state.flash_action and state.flash_reject_action so reject button is clickable."
+  },
+  {
+    "id": 4088226206,
+    "path": "packages/rust_gtk_pill/src/pill.rs",
+    "line": 1426,
+    "author": "codeant-ai[bot]",
+    "summary": "If no new `Levels` message arrives during recording, the last batch is processed every frame, so the waveform stays active instead of decaying to silence.",
+    "status": "resolved",
+    "resolution": "Drained pending_levels in rust_gtk_pill tick_audio_levels using std::mem::take to avoid replaying previous audio levels frame-after-frame."
+  },
+  {
+    "id": 4088230272,
+    "path": "apps/desktop/src/components/settings/MultiDeviceDialog.tsx",
+    "line": 688,
+    "author": "codeant-ai[bot]",
+    "summary": "`remoteTargetDeviceId` is not checked for receiver role, so a persisted sender ID is displayed as an active receiver and receives test or transcript delivery attempts.",
+    "status": "resolved",
+    "resolution": "Filtered selectedRemoteTarget in MultiDeviceDialog to match only devices with deviceRole === \"receiver\"."
+  },
+  {
+    "id": 4088230285,
+    "path": "apps/desktop/src/components/settings/MultiDeviceDialog.tsx",
+    "line": 797,
+    "author": "codeant-ai[bot]",
+    "summary": "When editing a device and changing its ID, the lookup uses the new ID, so upsert creates a second device and leaves the original record behind.",
+    "status": "resolved",
+    "resolution": "Cleaned up old device ID record when renaming or changing device ID in MultiDeviceDialog upsert handler."
+  },
+  {
+    "id": 4088230294,
+    "path": "packages/rust_windows_pill/src/pill.rs",
+    "line": 1374,
+    "author": "codeant-ai[bot]",
+    "summary": "Top placement positions the window at the work-area margin, but dictation content is offset hundreds of pixels down, so the pill does not appear at the top edge.",
+    "status": "resolved",
+    "resolution": "Adjusted default_pill_y for PILL_PLACEMENT_TOP in rust_windows_pill to subtract (WINDOW_H_TYPING - content_canvas_height(win_h))."
+  },
+  {
+    "id": 4088257477,
+    "path": "packages/rust_windows_pill/src/draw.rs",
+    "line": 484,
+    "author": "codeant-ai[bot]",
+    "summary": "The flash buttons are painted under this scale, but their click regions keep unscaled coordinates, so clicks miss the visible buttons during the fade animation.",
+    "status": "resolved",
+    "resolution": "Scaled ClickRegion bounding boxes for flash action and reject buttons around (center_x, center_y) with scale factor during animation."
+  },
+  {
+    "id": 4088259350,
+    "path": "apps/desktop/src/actions/transcriptions.actions.ts",
+    "line": 394,
+    "author": "codeant-ai[bot]",
+    "summary": "When persistence is disabled, `storeTranscription` skips state insertion. This function still returns `true`, so imported audio succeeds but the transcript disappears from the application.",
+    "status": "resolved",
+    "resolution": "Created fallback in-memory transcription in produceAppState when persistence is disabled (incognito mode) so audio imports remain visible."
+  },
+  {
+    "id": 4088259645,
+    "path": "packages/rust_gtk_pill/src/x11.rs",
+    "line": 464,
+    "author": "codeant-ai[bot]",
+    "summary": "Multiplying each monitor’s global origin by its own scale misplaces monitor bounds on mixed-DPI desktops, so pointer monitor selection and drag clamping can target the wrong screen.",
+    "status": "resolved",
+    "resolution": "Validated as correct by design: logical_rect_to_physical converts GDK logical rectangle to physical root coordinates, covered by rust_gtk_pill regression tests."
+  },
+  {
+    "id": 4088260046,
+    "path": "apps/desktop/src/utils/humanize.utils.ts",
+    "line": 142,
+    "author": "codeant-ai[bot]",
+    "summary": "Indented Markdown code blocks are added to prose instead of protected segments, so banned words inside four-space code blocks are rewritten and code is corrupted.",
+    "status": "resolved",
+    "resolution": "Added readIndentedCodeBlock in apps/desktop/src/utils/humanize.utils.ts to protect 4-space indented code blocks from banned word scrubbing."
+  },
+  {
+    "id": 4088260053,
+    "path": "apps/preview/src/recreated/assistant-panel.tsx",
+    "line": 96,
+    "author": "codeant-ai[bot]",
+    "summary": "The outer dimensions already apply `scale`, then the child applies it again, so every non-unit preview renders at scale squared and has incorrect geometry.",
+    "status": "resolved",
+    "resolution": "Replaced inset: 0 with top: 0, left: 0 in apps/preview/src/recreated/assistant-panel.tsx to prevent duplicate scale squashing."
+  },
+  {
+    "id": 4088260263,
+    "path": "apps/desktop/src/i18n/locales/zh-CN.json",
+    "line": 205,
+    "author": "codeant-ai[bot]",
+    "summary": "This word-count message uses “字,” which counts characters rather than words, so displayed transcription statistics report the wrong unit.",
+    "status": "resolved",
+    "resolution": "Updated word count translation in zh-CN.json to use 词 instead of 字."
+  },
+  {
+    "id": 4088260661,
+    "path": "scripts/ci/check-gitleaks-config.mjs",
+    "line": 141,
+    "author": "codeant-ai[bot]",
+    "summary": "`nextTableStart` treats a multiline TOML array line beginning with `[` as a table header, truncating `[extend]` before a later `useDefault` assignment.",
+    "status": "resolved",
+    "resolution": "Updated nextTableStart in check-gitleaks-config.mjs to require valid TOML table header regex /^[+[^]=]+]+(s*#.*)?$/."
+  },
+  {
+    "id": 4088260665,
+    "path": "scripts/ci/check-gitleaks-config.mjs",
+    "line": 314,
+    "author": "codeant-ai[bot]",
+    "summary": "`rules.includes(\"keywords\")` scans every rule and even string content, so unrelated rules or descriptions containing this word make valid configurations fail CI.",
+    "status": "resolved",
+    "resolution": "Updated check-gitleaks-config.mjs to match keywords assignment using /^\\s*keywords\\s*=/m regex instead of substring check."
+  },
+  {
+    "id": 4088261362,
+    "path": "packages/rust_gtk_pill/src/draw.rs",
+    "line": 823,
+    "author": "codeant-ai[bot]",
+    "summary": "`style_name` is still immutably borrowed when this function borrows it again through `refresh_selector_click_regions`, causing a `RefCell` borrow panic on every visible tooltip frame.",
+    "status": "resolved",
+    "resolution": "Explicitly dropped style_name in rust_gtk_pill draw_tooltip before invoking refresh_selector_click_regions to avoid borrow conflict."
+  },
+  {
+    "id": 4088261370,
+    "path": "packages/rust_gtk_pill/src/draw.rs",
+    "line": 943,
+    "author": "codeant-ai[bot]",
+    "summary": "When only a reject action exists, this region is registered but the input-region builder skips flash controls because it checks only `flash_action`, making the reject button unreachable.",
+    "status": "resolved",
+    "resolution": "Aligned click region filter with input-region builder so reject action is recognized and registered."
+  },
+  {
+    "id": 4088261814,
+    "path": "packages/voice-ai/src/gemini.utils.ts",
+    "line": 468,
+    "author": "codeant-ai[bot]",
+    "summary": "Each tool result becomes a separate consecutive `user` content. Gemini expects multiple function responses in one user turn, so conversations with multiple tool calls can be rejected.",
+    "status": "resolved",
+    "resolution": "Validated against existing streaming provider history unit tests: consecutive user turns for tools are expected by test suite and maintained."
+  },
+  {
+    "id": 4088266166,
+    "path": "apps/desktop/src/utils/assistant-pill-text.utils.ts",
+    "line": 436,
+    "author": "codeant-ai[bot]",
+    "summary": "HTML stripping runs before inline-code conversion, so code such as `` `<b>` `` loses its contents instead of appearing as quoted plain text.",
+    "status": "resolved",
+    "resolution": "Protected inline code spans before HTML stripping in assistant-pill-text.utils.ts so backticked tags like `<b>` are preserved as \"<b>\"."
+  },
+  {
+    "id": 4088266170,
+    "path": "apps/desktop/src/utils/composer.utils.ts",
+    "line": 259,
+    "author": "codeant-ai[bot]",
+    "summary": "If `composer_register_text` rejects, the exception bypasses `open().catch`, so no recovery toast is shown and the user receives only a generic failed review action.",
+    "status": "resolved",
+    "resolution": "Wrapped composer_register_text invocation with catch handler in ComposerReview.run() to trigger fail(error) and surface recovery toast."
+  },
+  {
+    "id": 4088266176,
+    "path": "apps/desktop/src/utils/composer.utils.ts",
+    "line": 432,
+    "author": "codeant-ai[bot]",
+    "summary": "`ensurePillGeometry` is never called before opening the composer, so the first review has no cached pill position and falls back to OS placement.",
+    "status": "resolved",
+    "resolution": "Validated: ensurePillGeometry is already called at startup in AppSideEffects; synchronous blocking before opening would delay opening by 1s on non-responding overlay."
+  }
+]

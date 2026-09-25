@@ -7,9 +7,10 @@ use gtk::gdk;
 use gtk::glib::{self, ControlFlow};
 use gtk::prelude::*;
 use gtk_layer_shell::LayerShell;
+pub(crate) use rust_pill_shared::clock::monotonic_now as drag_clock_now;
 
 use crate::constants::*;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state::{FlameTongue, PillState, Rocket, RocketPhase, Spark, WindowMode};
 use crate::{draw, input, x11};
 
@@ -19,6 +20,15 @@ pub(crate) enum Backend {
     X11,
     PlainWayland,
 }
+
+// Wayland cannot expose a portable absolute work area. This finite safety
+// envelope replaces an unbounded clamp on every held/release frame.
+const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds = rust_pill_shared::drag::DragBounds {
+    min_x: -1e9,
+    min_y: -1e9,
+    max_x: 1e9,
+    max_y: 1e9,
+};
 
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
@@ -38,9 +48,20 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
     };
 
+    // X11 keeps room for the below selector slot under the pill, so a side
+    // flip animates inside space that is already there. LayerShell is bottom
+    // anchored (a taller surface would lift the pill) and PlainWayland is
+    // fullscreen, so both keep the typing size. X11 content and parking math
+    // exclude these reserved rows, preserving the visible pill and entry origin.
+    let window_h = if backend == Backend::X11 {
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32
+    } else {
+        WINDOW_H_TYPING
+    };
+
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     if backend != Backend::PlainWayland {
-        window.set_default_size(WINDOW_W_TYPING, WINDOW_H_TYPING);
+        window.set_default_size(WINDOW_W_TYPING, window_h);
     }
     window.set_decorated(false);
     window.set_app_paintable(true);
@@ -88,7 +109,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let overlay_widget = gtk::Overlay::new();
     let drawing_area = gtk::DrawingArea::new();
     if backend != Backend::PlainWayland {
-        drawing_area.set_size_request(WINDOW_W_TYPING, WINDOW_H_TYPING);
+        drawing_area.set_size_request(WINDOW_W_TYPING, window_h);
     }
     overlay_widget.add(&drawing_area);
 
@@ -119,6 +140,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
@@ -132,6 +154,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         assistant_messages: RefCell::new(Vec::new()),
         assistant_streaming: RefCell::new(None),
         assistant_permissions: RefCell::new(Vec::new()),
+        assistant_review: RefCell::new(None),
         panel_open_t: Cell::new(0.0),
         panel_open_velocity: Cell::new(0.0),
         kb_button_t: Cell::new(0.0),
@@ -155,6 +178,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -168,6 +193,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -176,6 +202,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -186,11 +214,22 @@ pub fn run(receiver: Receiver<InMessage>) {
         ring_points: RefCell::new(Vec::new()),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
+        drag_press_offset: Cell::new((0.0, 0.0)),
+        drag_motion: RefCell::new(rust_pill_shared::drag::DragController::new()),
+        drag_last_x: Cell::new(0.0),
+        drag_last_y: Cell::new(0.0),
+        hover_intent: RefCell::new(rust_pill_shared::hover::HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
+        hover_probed: Cell::new(false),
+        hover_probe_x: Cell::new(0.0),
+        hover_probe_y: Cell::new(0.0),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0.0),
         saved_y: Cell::new(0.0),
         x11_release_persisted: Cell::new(false),
+        x11_drag_applied: Cell::new((i32::MIN, i32::MIN)),
         drag_draw_offset_x: Cell::new(0.0),
         drag_draw_offset_y: Cell::new(0.0),
         cancel_flash: Cell::new(0.0),
@@ -204,13 +243,11 @@ pub fn run(receiver: Receiver<InMessage>) {
         window.connect_realize(move |window| x11::setup_x11_window(window, state_realize.clone()));
     }
 
-    if backend == Backend::PlainWayland {
-        let state_alloc = state.clone();
-        window.connect_size_allocate(move |_, alloc| {
-            state_alloc.alloc_width.set(alloc.width() as f64);
-            state_alloc.alloc_height.set(alloc.height() as f64);
-        });
-    }
+    let state_alloc = state.clone();
+    window.connect_size_allocate(move |_, alloc| {
+        state_alloc.alloc_width.set(alloc.width() as f64);
+        state_alloc.alloc_height.set(alloc.height() as f64);
+    });
 
     window.add_events(
         gdk::EventMask::ENTER_NOTIFY_MASK
@@ -219,6 +256,7 @@ pub fn run(receiver: Receiver<InMessage>) {
             | gdk::EventMask::BUTTON_PRESS_MASK
             | gdk::EventMask::BUTTON_RELEASE_MASK
             | gdk::EventMask::FOCUS_CHANGE_MASK
+            | gdk::EventMask::KEY_PRESS_MASK
             | gdk::EventMask::SCROLL_MASK
             | gdk::EventMask::SMOOTH_SCROLL_MASK,
     );
@@ -226,11 +264,14 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_enter = state.clone();
     window.connect_enter_notify_event(move |win, event| {
         let (mx, my) = event.position();
-        let is_over_pill = input::is_over_pill_area(&state_enter, mx, my);
-        if is_over_pill {
-            state_enter.hovered.set(true);
-            ipc::send(&OutMessage::Hover { hovered: true });
-        }
+        // Record the probe; the frame tick runs it through the hover-intent
+        // controller, so entering the window does not expand the pill until
+        // the pointer actually dwells on it.
+        state_enter
+            .hover_probed
+            .set(input::is_over_pill_area(&state_enter, mx, my));
+        state_enter.hover_probe_x.set(mx);
+        state_enter.hover_probe_y.set(my);
         if let Some(gdk_win) = win.window() {
             input::set_expanded_input_region(&gdk_win, &state_enter);
         }
@@ -252,17 +293,14 @@ pub fn run(receiver: Receiver<InMessage>) {
             clear_pointer_pin(&state_motion, &win_motion);
         }
 
-        // A held button owns the pointer, so the hit test cannot be trusted:
-        // dragging moves the window and easily outruns it.
-        let is_over_pill = rust_pill_shared::resolve_hover(
-            input::is_over_pill_area(&state_motion, mx, my),
-            state_motion.pointer_down.get(),
-        );
-        let was_hovered = state_motion.hovered.get();
-        if is_over_pill != was_hovered {
-            state_motion.hovered.set(is_over_pill);
-            ipc::send(&OutMessage::Hover { hovered: is_over_pill });
-        }
+        // Record the probe; the frame tick runs it through the hover-intent
+        // controller (dwell to arm, grace to exit, pin while held), so bursts
+        // of motion coalesce into one hover decision per frame.
+        state_motion
+            .hover_probed
+            .set(input::is_over_pill_area(&state_motion, mx, my));
+        state_motion.hover_probe_x.set(mx);
+        state_motion.hover_probe_y.set(my);
 
         if state_motion.long_press_active.get() {
             let start_x = state_motion.long_press_start_x.get();
@@ -277,13 +315,17 @@ pub fn run(receiver: Receiver<InMessage>) {
             }
         }
 
-        // While dragging, translate the Wayland draw position to follow the
-        // pointer (X11 handles its own toplevel movement elsewhere).
+        // While dragging on Wayland, record the newest pointer sample; the frame
+        // tick applies it through the shared controller (newest wins, so a
+        // burst of motion events coalesces into one move per frame). X11
+        // samples the root pointer on the frame clock instead.
         if state_motion.dragging.get() && state_motion.backend.get() != Backend::X11 {
-            let grab_x = state_motion.drag_cursor_x.get();
-            let grab_y = state_motion.drag_cursor_y.get();
-            state_motion.drag_draw_offset_x.set(mx - grab_x);
-            state_motion.drag_draw_offset_y.set(my - grab_y);
+            state_motion.drag_last_x.set(mx);
+            state_motion.drag_last_y.set(my);
+            state_motion
+                .drag_motion
+                .borrow_mut()
+                .push_sample(mx, my, drag_clock_now());
         }
 
         glib::Propagation::Proceed
@@ -294,8 +336,9 @@ pub fn run(receiver: Receiver<InMessage>) {
         // Dragging the pill drags its window out from under the pointer, so
         // mid-gesture crossings are an artefact, not the user leaving.
         if event.mode() == gdk::CrossingMode::Normal && !state_leave.pointer_down.get() {
-            state_leave.hovered.set(false);
-            ipc::send(&OutMessage::Hover { hovered: false });
+            // The pointer left for real; the tick's exit grace still applies,
+            // so a leave immediately followed by a re-enter does not flicker.
+            state_leave.hover_probed.set(false);
         }
         glib::Propagation::Proceed
     });
@@ -305,9 +348,9 @@ pub fn run(receiver: Receiver<InMessage>) {
     let win_press = window.clone();
     let backend_press = backend;
     window.connect_button_press_event(move |_, event| {
+        state_press.drag_cancelled.set(false);
         let (x, y) = event.position();
-        let is_typing = state_press.assistant_active.get()
-            && *state_press.assistant_input_mode.borrow() == "type";
+        let is_typing = state_press.is_typing();
         if is_typing {
             if backend_press == Backend::X11 {
                 x11::force_keyboard_focus(&win_press);
@@ -315,15 +358,23 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_press.grab_focus();
         }
         if input::is_on_pill_at(&state_press, x, y) {
-            state_press.x11_release_persisted.set(false);
+            if state_press.drag_motion.borrow_mut().interrupt_settle() {
+                persist_drag_position(&win_press, &state_press);
+            }
             state_press.pointer_down.set(true);
             state_press.long_press_active.set(true);
             state_press.long_press_elapsed.set(0.0);
             state_press.long_press_start_x.set(x);
             state_press.long_press_start_y.set(y);
-            state_press.drag_cancelled.set(false);
             state_press.drag_cursor_x.set(x);
             state_press.drag_cursor_y.set(y);
+            state_press.drag_press_offset.set(x11::physical_grab_offset(
+                (x, y), win_press.scale_factor(),
+            ));
+            // Seed the Wayland sample so the first drag frame has a sane
+            // pointer even if no motion event arrived since the press.
+            state_press.drag_last_x.set(x);
+            state_press.drag_last_y.set(y);
         }
         glib::Propagation::Proceed
     });
@@ -356,19 +407,21 @@ pub fn run(receiver: Receiver<InMessage>) {
         // through the shared teardown, so the button-release path and the
         // frame-tick missed-release backstop cannot drift apart.
         clear_pointer_pin(&state_click, &win_click);
-        if !was_dragging {
+        if !was_dragging && !state_click.drag_cancelled.get() {
             let (x, y) = event.position();
             input::handle_click(&state_click, x, y);
         }
 
-        // Hover was pinned for the duration of the gesture; settle it against
-        // the cursor's real position now that the pointer is free.
+        // Hover was pinned for the duration of the gesture; re-probe against
+        // the cursor's real position now that the pointer is free. The frame
+        // tick applies it (with exit grace), so releasing outside fades out
+        // instead of snapping off.
         let (rx, ry) = event.position();
-        let now_hovered = input::is_over_pill_area(&state_click, rx, ry);
-        if now_hovered != state_click.hovered.get() {
-            state_click.hovered.set(now_hovered);
-            ipc::send(&OutMessage::Hover { hovered: now_hovered });
-        }
+        state_click
+            .hover_probed
+            .set(input::is_over_pill_area(&state_click, rx, ry));
+        state_click.hover_probe_x.set(rx);
+        state_click.hover_probe_y.set(ry);
         glib::Propagation::Proceed
     });
 
@@ -381,8 +434,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_in = state.clone();
     let entry_focus_in = entry.clone();
     window.connect_focus_in_event(move |_, _| {
-        let is_typing = state_focus_in.assistant_active.get()
-            && *state_focus_in.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_in.is_typing();
         if is_typing {
             entry_focus_in.grab_focus();
         }
@@ -392,8 +444,7 @@ pub fn run(receiver: Receiver<InMessage>) {
     let state_focus_out = state.clone();
     let entry_focus_out = entry.clone();
     window.connect_focus_out_event(move |_, _| {
-        let is_typing = state_focus_out.assistant_active.get()
-            && *state_focus_out.assistant_input_mode.borrow() == "type";
+        let is_typing = state_focus_out.is_typing();
         if is_typing {
             entry_focus_out.select_region(0, 0);
         }
@@ -402,6 +453,7 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_draw = state.clone();
     let win_draw = window.clone();
+    let last_draw_error = Cell::new(None::<Instant>);
     drawing_area.connect_draw(move |_area, cr| {
         // draw_tooltip() computes tooltip_width during this pass. The tick
         // rebuilds the Wayland input region *before* drawing, so on the frame
@@ -411,6 +463,13 @@ pub fn run(receiver: Receiver<InMessage>) {
         // its own input shape.
         let width_before = state_draw.tooltip_width.get();
         draw::draw_all(cr, &state_draw);
+        if let Err(error) = cr.status() {
+            let now = Instant::now();
+            if last_draw_error.get().is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2)) {
+                eprintln!("pill drawing failed: {error}");
+                last_draw_error.set(Some(now));
+            }
+        }
         let width_changed = state_draw.tooltip_width.get() != width_before;
         if let Some(gdk_win) = win_draw.window().filter(|_| width_changed) {
             input::update_input_region(&gdk_win, &state_draw);
@@ -420,18 +479,35 @@ pub fn run(receiver: Receiver<InMessage>) {
 
     let state_entry = state.clone();
     entry.connect_activate(move |e| {
-        let text = e.text().to_string();
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            ipc::send(&OutMessage::TypedMessage { text: trimmed.to_string() });
+        // Enter submits: an insert decision while a transcript is under
+        // review, a message to the assistant otherwise.
+        *state_entry.entry_text.borrow_mut() = e.text().to_string();
+        if input::submit_entry(&state_entry) {
             e.set_text("");
-            *state_entry.entry_text.borrow_mut() = String::new();
         }
     });
 
     let state_entry_changed = state.clone();
     entry.connect_changed(move |e| {
         *state_entry_changed.entry_text.borrow_mut() = e.text().to_string();
+    });
+
+    let state_escape = state.clone();
+    window.connect_key_press_event(move |_, event| {
+        // Escape while a transcript is under review is a cancel decision, the
+        // same as on the Windows pill: the desktop is waiting for an answer.
+        // The window sees the key before the focused entry does, so this works
+        // whether or not the entry holds the keyboard.
+        if event.keyval() != gdk::keys::constants::Escape {
+            return glib::Propagation::Proceed;
+        }
+        match state_escape.pending_review_id() {
+            Some(review_id) => {
+                input::send_review_decision(&review_id, "cancel", None);
+                glib::Propagation::Stop
+            }
+            None => glib::Propagation::Proceed,
+        }
     });
 
     let receiver = Rc::new(RefCell::new(receiver));
@@ -459,6 +535,15 @@ pub fn run(receiver: Receiver<InMessage>) {
                     }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
+                    state_tick.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    // A new take sweeps any banner parked above the pill (for
+                    // example the retranscribing toast) so it cannot sit on the
+                    // style selector for the whole take. A resume from Paused
+                    // keeps toasts raised during the take, such as the cancel
+                    // confirm.
+                    if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                        clear_flash(&state_tick);
+                    }
                     if phase == Phase::Idle && prev != Phase::Idle {
                         state_tick.target_level.set(0.0);
                         state_tick.current_level.set(0.0);
@@ -472,25 +557,26 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.style_count.set(count);
                     *state_tick.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label } => {
+                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(toast_type.as_deref() == Some("error"));
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
                     *state_tick.flash_action.borrow_mut() = action;
                     *state_tick.flash_action_label.borrow_mut() = action_label;
+                    *state_tick.flash_reject_action.borrow_mut() = reject_action;
+                    *state_tick.flash_reject_action_label.borrow_mut() = reject_action_label;
                 }
                 InMessage::DismissToast => {
-                    state_tick.flash_visible.set(false);
-                    state_tick.flash_timer.set(0.0);
-                    *state_tick.flash_action.borrow_mut() = None;
-                    *state_tick.flash_action_label.borrow_mut() = None;
+                    clear_flash(&state_tick);
                 }
                 InMessage::Fireworks { message } => {
                     *state_tick.flash_message.borrow_mut() = message;
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FIREWORKS_TOTAL_DURATION);
 
@@ -504,6 +590,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.flash_is_error.set(false);
                     *state_tick.flash_action.borrow_mut() = None;
                     *state_tick.flash_action_label.borrow_mut() = None;
+                    *state_tick.flash_reject_action.borrow_mut() = None;
+                    *state_tick.flash_reject_action_label.borrow_mut() = None;
                     state_tick.flash_visible.set(true);
                     state_tick.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -519,6 +607,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.transcript_text.borrow_mut() = text;
                     state_tick.transcript_time_since_update.set(0.0);
                     state_tick.transcript_has_message.set(true);
+                }
+                InMessage::StageText { text } => {
+                    *state_tick.stage_text.borrow_mut() = text;
                 }
                 InMessage::Visibility { visibility } => {
                     state_tick.visibility.set(visibility);
@@ -536,6 +627,7 @@ pub fn run(receiver: Receiver<InMessage>) {
                     messages,
                     streaming,
                     permissions,
+                    review,
                 } => {
                     let was_active = state_tick.assistant_active.get();
                     state_tick.assistant_active.set(active);
@@ -546,18 +638,61 @@ pub fn run(receiver: Receiver<InMessage>) {
                     *state_tick.assistant_messages.borrow_mut() = messages;
                     *state_tick.assistant_streaming.borrow_mut() = streaming;
                     *state_tick.assistant_permissions.borrow_mut() = permissions;
+                    let previous_review_id = state_tick
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|r| r.id.clone());
+                    let review_id = review.as_ref().map(|r| r.id.clone());
+                    let review_text = review.as_ref().map(|r| r.text.clone());
+                    *state_tick.assistant_review.borrow_mut() = review;
 
-                    if active && !was_active {
+                    // The entry is the review surface: a new transcript loads
+                    // into it for editing, and answering the review empties it
+                    // again. An unchanged id leaves the user's edits alone.
+                    if review_id != previous_review_id {
+                        let text = review_text.unwrap_or_default();
+                        *state_tick.entry_text.borrow_mut() = text.clone();
+                        entry_tick.set_text(&text);
+                    }
+
+                    if (active && !was_active)
+                        || (review_id.is_some() && review_id != previous_review_id)
+                    {
                         state_tick.should_stick.set(true);
                         state_tick.scroll_offset.set(0.0);
                     }
                 }
                 InMessage::ResetPosition { strategy } => {
+                    state_tick.dragging.set(false);
+                    state_tick.pointer_down.set(false);
+                    state_tick.long_press_active.set(false);
+                    state_tick.long_press_elapsed.set(0.0);
+                    state_tick.drag_cancelled.set(true);
+                    // The X11 idle timer must not save the cancelled gesture
+                    // through its missed-release fallback after this reset.
+                    state_tick.x11_release_persisted.set(true);
                     state_tick.drag_draw_offset_x.set(0.0);
                     state_tick.drag_draw_offset_y.set(0.0);
+                    state_tick.drag_motion.borrow_mut().reset();
+                    state_tick.selector_placement.borrow_mut().reset();
+                    state_tick.crossing.borrow_mut().reset();
                     state_tick.has_saved_position.set(false);
                     state_tick.reset_strategy.set(strategy);
-                    ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: false,
+                        rect,
+                        monitor,
+                    });
+                }
+                InMessage::RequestPosition => {
+                    let (rect, monitor) = pill_geometry(&win_tick, &state_tick);
+                    ipc::send(&OutMessage::PositionChanged {
+                        has_saved_position: state_tick.has_saved_position.get(),
+                        rect,
+                        monitor,
+                    });
                 }
                 InMessage::Quit => {
                     quit_tick.set(true);
@@ -570,12 +705,29 @@ pub fn run(receiver: Receiver<InMessage>) {
         }
 
         release_pointer_if_button_up(&win_tick, &state_tick);
-        tick(&state_tick);
+        // One measured step for the whole frame: the transition springs and
+        // the drag controller share it, so a long frame slows everything
+        // together instead of each measuring a different slice.
+        let dt_tick = frame_dt();
+        tick(&state_tick, dt_tick);
+        tick_drag_frame(
+            &win_tick,
+            &state_tick,
+            backend_tick,
+            drag_clock_now(),
+            dt_tick,
+        );
+        tick_hover_frame(&state_tick);
+        tick_selector_placement(&win_tick, &state_tick, dt_tick);
+        tick_crossing_frame(&win_tick, &state_tick, dt_tick);
 
         // Show/hide entry for typing mode
-        let is_typing = state_tick.assistant_active.get()
-            && *state_tick.assistant_input_mode.borrow() == "type";
-        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
+        let is_typing = state_tick.is_typing();
+        if is_typing {
+            // Recomputed every frame rather than once on show. The window is
+            // resized by one message and the state that opens the entry by
+            // another, so a size that lands second would otherwise leave the
+            // entry sitting at the old geometry.
             let (ox, oy) = state_tick.content_offset();
             let dw = state_tick.draw_width.get();
             let dh = state_tick.draw_height.get();
@@ -600,6 +752,8 @@ pub fn run(receiver: Receiver<InMessage>) {
             entry_tick.set_margin_end(margin_end);
             entry_tick.set_margin_bottom(margin_bottom);
             entry_tick.set_height_request(PANEL_INPUT_HEIGHT as i32);
+        }
+        if is_typing && !gtk::prelude::WidgetExt::is_visible(&entry_tick) {
             entry_tick.set_visible(true);
             entry_tick.show();
             match backend_tick {
@@ -648,10 +802,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         // previously keyed off `phase == Recording` alone, which ignored the
         // user's preference: a pill set to Hidden still appeared while
         // recording, and Persistent never showed when idle.
-        let should_show = should_show_pill(
-            state_tick.visibility.get(),
-            state_tick.phase.get(),
-            state_tick.assistant_active.get(),
+        let should_show = rust_pill_shared::should_show_pill(
+            state_tick.visibility.get().into(),
+            state_tick.phase.get() != Phase::Idle,
+            state_tick.owns_panel(),
         );
         if should_show {
             win_tick.show();
@@ -751,26 +905,369 @@ pub fn run(receiver: Receiver<InMessage>) {
     main_loop.run();
 }
 
+/// Builds the pill window rect and the work area of the monitor it lives on,
+/// for the desktop to anchor the composer next to the real pill. Both rects
+/// are reported in physical pixels: the desktop compares them against each
+/// other and positions the composer via Tauri, which on X11 also works in
+/// physical pixels. On X11 the pill has a true saved position, so both are
+/// reported; on Wayland (where the layer-shell compositor owns placement and
+/// there is no queryable absolute position) only the monitor is reported and
+/// the rect is omitted.
+pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
+    let (w, h) = window.size();
+    let scale = x11::x11_root_scale(window);
+    let monitor = pill_monitor(window, state);
+    let monitor_rect = monitor.map(|m| {
+        let workarea = m.workarea();
+        let monitor_scale = m.scale_factor() as f64;
+        if state.backend.get() == Backend::X11 {
+            // GTK 3 X11 uses a screen-wide scale shared by the toplevel and
+            // every monitor rectangle, so all root-space conversions use it.
+            logical_rect_to_physical(&workarea, scale)
+        } else {
+            // Wayland has no queryable root position. Keep its existing
+            // compositor-layout origin and scaled extent for the monitor-only
+            // geometry sent to the composer.
+            Rect {
+                x: workarea.x() as f64,
+                y: workarea.y() as f64,
+                width: workarea.width() as f64 * monitor_scale,
+                height: workarea.height() as f64 * monitor_scale,
+            }
+        }
+    });
+    let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
+        Some(Rect {
+            x: state.saved_x.get(),
+            y: state.saved_y.get(),
+            width: w as f64 * scale,
+            height: h as f64 * scale,
+        })
+    } else {
+        None
+    };
+    (rect, monitor_rect)
+}
+
+/// Converts GDK's application-pixel monitor rectangle into X11 root pixels.
+pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
+    Rect {
+        x: g.x() as f64 * scale,
+        y: g.y() as f64 * scale,
+        width: g.width() as f64 * scale,
+        height: g.height() as f64 * scale,
+    }
+}
+
 /// Ends the gesture and tears down any active drag.
 ///
 /// Clears the hover pin and gesture flags. If a drag was in progress, the
-/// dropped position is persisted (X11 repositions via the window; other
-/// backends keep their draw offset) so a missed release caught by the
-/// frame-tick backstop does not strand the pill at its old position.
+/// release settle starts; the frame tick persists the settled position, so a
+/// missed release caught by the frame-tick backstop does not strand the pill
+/// at its old position.
 fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
     if state.dragging.get() {
-        if state.backend.get() == Backend::X11 {
-            let persisted = x11::persist_drop_position(window, state);
-            state.x11_release_persisted.set(persisted);
-        } else {
-            state.has_saved_position.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
-        }
+        // Flush the final held sample through the backend before ending. This
+        // also arms sub-frame drags and re-grabs that never reached a tick.
+        let now = drag_clock_now();
+        tick_drag_frame(window, state, state.backend.get(), now, 0.0);
+        state.drag_motion.borrow_mut().end_drag(now);
     }
     state.dragging.set(false);
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
+}
+
+thread_local! {
+    static LAST_FRAME: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Measured frame step shared by the transition springs and the drag
+/// motion, clamped like the other pills so a stall cannot explode a spring.
+fn frame_dt() -> f64 {
+    let now = Instant::now();
+    LAST_FRAME.with(|c| {
+        let prev = c.get();
+        c.set(Some(now));
+        match prev {
+            Some(p) => now.duration_since(p).as_secs_f64().clamp(0.001, 0.05),
+            None => 1.0 / 60.0,
+        }
+    })
+}
+
+/// True when the desktop asks GTK clients not to animate.
+pub(crate) fn reduced_motion() -> bool {
+    !gtk::Settings::default()
+        .map(|s| s.property::<bool>("gtk-enable-animations"))
+        .unwrap_or(true)
+}
+
+/// Advances one frame of drag motion on the frame clock. X11 samples the root
+/// pointer and moves the toplevel; the Wayland backends run the same
+/// controller in window-relative offset space (the compositor owns the
+/// toplevel there).
+fn tick_drag_frame(
+    window: &gtk::Window,
+    state: &PillState,
+    backend: Backend,
+    now: f64,
+    dt: f64,
+) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    if !dragging && !settling {
+        return;
+    }
+    match backend {
+        Backend::X11 => x11::tick_drag_frame(window, state, now, dt),
+        Backend::LayerShell | Backend::PlainWayland => {
+            tick_wayland_drag_frame(window, state, now, dt)
+        }
+    }
+}
+
+fn persist_drag_position(window: &gtk::Window, state: &PillState) {
+    if state.backend.get() == Backend::X11 {
+        let (x, y) = state.x11_drag_applied.get();
+        x11::persist_window_position(window, state, x as f64, y as f64);
+        return;
+    }
+    state.has_saved_position.set(true);
+    let (rect, monitor) = pill_geometry(window, state);
+    ipc::send(&OutMessage::PositionChanged { has_saved_position: true, rect, monitor });
+}
+
+fn begin_wayland_drag(
+    motion: &mut rust_pill_shared::drag::DragController,
+    press: (f64, f64),
+    offset: (f64, f64),
+    now: f64,
+) {
+    motion.begin_drag(press.0 - offset.0, press.1 - offset.1, offset.0, offset.1, now);
+}
+
+/// One frame of Wayland/LayerShell drag motion: the newest motion sample runs
+/// through the shared controller and its output becomes the pill draw offset.
+/// The bounds stay wide open. Without absolute coordinates there is no work
+/// area to clamp to, matching the unclamped event-driven math this replaces.
+fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt: f64) {
+    let dragging = state.dragging.get();
+    let mut motion = state.drag_motion.borrow_mut();
+    if dragging && motion.phase() != rust_pill_shared::drag::DragPhase::Held {
+        // First frame, or a re-grab while the previous release still settles:
+        // Preserve the drawn origin and latch the press relative to it.
+        // Re-arming also cancels the running settle.
+        begin_wayland_drag(
+            &mut motion,
+            (state.drag_cursor_x.get(), state.drag_cursor_y.get()),
+            (state.drag_draw_offset_x.get(), state.drag_draw_offset_y.get()),
+            now,
+        );
+    }
+    let was_settling = motion.is_settling();
+    let output = motion.advance(&rust_pill_shared::drag::DragFrame {
+        pointer_x: state.drag_last_x.get(),
+        pointer_y: state.drag_last_y.get(),
+        now,
+        dt,
+        bounds: WAYLAND_DRAG_BOUNDS,
+        // No work area on this backend: the compositor owns placement, so the
+        // ease stays off and the wide-open clamp above stands.
+        edge_work: None,
+        held: dragging,
+        reduced_motion: reduced_motion(),
+    });
+    drop(motion);
+    state.drag_draw_offset_x.set(output.x);
+    state.drag_draw_offset_y.set(output.y);
+    if was_settling && output.settled {
+        persist_drag_position(window, state);
+    }
+}
+
+/// Work-area monitor: prefer the visible X11 pill center, since a large
+/// transparent host may still belong to a different monitor. Other backends
+/// and lookup gaps retain window, saved-center, primary, first fallbacks.
+fn pill_monitor(window: &gtk::Window, state: &PillState) -> Option<gdk::Monitor> {
+    if let Some((monitor, _, _)) = x11_pill_monitor(window, state) {
+        return Some(monitor);
+    }
+    let display = window.display();
+    if let Some(gdk_win) = window.window() {
+        if let Some(monitor) = display.monitor_at_window(&gdk_win) {
+            return Some(monitor);
+        }
+    }
+    if state.backend.get() == Backend::X11 {
+        let (w, h) = window.size();
+        let scale = x11::x11_root_scale(window);
+        return x11::monitor_at_physical_point(
+            &display,
+            state.saved_x.get() + (w as f64 / 2.0) * scale,
+            state.saved_y.get() + (h as f64 / 2.0) * scale,
+            scale,
+        )
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0));
+    }
+    display.primary_monitor().or_else(|| display.monitor(0))
+}
+
+fn selector_visible_headroom(local_top: f64, surface_y: f64, work_y: f64, scale: f64) -> f64 {
+    local_top.min(local_top + (surface_y - work_y) / scale)
+}
+
+/// Headroom is limited by both the drawable surface and the monitor work area.
+/// Plain Wayland has no absolute origin, so it uses its drawable surface.
+fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
+    let (_, oy) = state.content_offset();
+    let (_, pill_y, ..) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let local_top = oy + pill_y;
+    if state.backend.get() == Backend::PlainWayland {
+        return local_top;
+    }
+    let Some(monitor) = pill_monitor(window, state) else { return local_top };
+    let scale = if state.backend.get() == Backend::X11 {
+        x11::x11_root_scale(window)
+    } else {
+        monitor.scale_factor() as f64
+    };
+    if !scale.is_finite() || scale <= 0.0 {
+        return local_top;
+    }
+    let work = logical_rect_to_physical(&monitor.workarea(), scale);
+    let surface_y = if state.backend.get() == Backend::X11 {
+        let y = state.x11_drag_applied.get().1;
+        if y == i32::MIN { return local_top; }
+        y as f64
+    } else {
+        let geometry = logical_rect_to_physical(&monitor.geometry(), scale);
+        geometry.y + geometry.height - (window.allocated_height() + MARGIN_BOTTOM) as f64 * scale
+    };
+    selector_visible_headroom(local_top, surface_y, work.y, scale)
+}
+
+/// Advances the shared selector-placement controller once per frame from the
+/// live headroom, so the selector drops below the pill exactly when the strip
+/// above no longer fits it. Draw and the input region read the blend back
+/// every frame, so both track the animation.
+fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
+    let space_above = selector_headroom(window, state);
+    state.selector_placement.borrow_mut().advance(
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
+}
+
+/// Center coordinates in the supplied X11 scale space.
+#[derive(Clone, Copy)]
+pub(crate) struct X11PillCenter {
+    /// Absolute center in root pixels when the window origin is available.
+    pub(crate) root: Option<(f64, f64)>,
+    /// Center offset from the toplevel origin, in physical pixels.
+    pub(crate) offset: (f64, f64),
+}
+
+/// Compute the rendered pill center once for all X11 seam calculations.
+///
+/// The local `offset` is scaled into the supplied scale space; `root` is a
+/// true root-pixel point only when `scale` is the window surface scale. GTK 3
+/// X11 uses one screen-wide factor for every monitor rectangle, so all live
+/// callers must pass that same surface scale (never an anchor-monitor scale).
+/// The toplevel origin is already in root pixels.
+pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCenter> {
+    if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let (ox, oy) = state.content_offset();
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let offset = ((ox + px + pw / 2.0) * scale, (oy + py + ph / 2.0) * scale);
+    let (window_x, window_y) = state.x11_drag_applied.get();
+    let root = if window_x == i32::MIN || window_y == i32::MIN {
+        None
+    } else {
+        Some((window_x as f64 + offset.0, window_y as f64 + offset.1))
+    };
+    Some(X11PillCenter { root, offset })
+}
+
+/// Resolve the monitor and rendered pill center from the applied X11 origin.
+fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
+    if state.backend.get() != Backend::X11 {
+        return None;
+    }
+    let scale = x11::x11_root_scale(window);
+    let center = x11_pill_center(state, scale)?;
+    let (cx, cy) = center.root?;
+    let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy, scale)?;
+    Some((monitor, cx, cy))
+}
+
+fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, f64, f64, f64) {
+    let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+    let Some((monitor, cx, cy)) = x11_pill_monitor(window, state) else { return unknown };
+    let scale = x11::x11_root_scale(window);
+    if !scale.is_finite() || scale <= 0.0 {
+        return unknown;
+    }
+    let g = logical_rect_to_physical(&monitor.geometry(), scale);
+    (g.x, g.y, g.width, g.height, cx, cy)
+}
+
+/// Advances the shared crossing-deformation controller once per frame from
+/// the monitor under the pill center. A reduced-motion trigger arms the
+/// border flash instead of deforming.
+fn tick_crossing_frame(window: &gtk::Window, state: &PillState, dt: f64) {
+    let (mx, my, mw, mh, cx, cy) = crossing_monitor(window, state);
+    let rm = reduced_motion();
+    let out = state.crossing.borrow_mut().advance(
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: mx,
+            monitor_y: my,
+            monitor_width: mw,
+            monitor_height: mh,
+            pill_cx: cx,
+            pill_cy: cy,
+            now: drag_clock_now(),
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
+}
+
+/// Advances hover intent one frame from the latest probe and reports edges.
+/// The hover IPC fires only on entered/exited, so every platform reports each
+/// transition exactly once.
+fn tick_hover_frame(state: &PillState) {
+    let output = state.hover_intent.borrow_mut().advance(
+        &rust_pill_shared::hover::HoverFrame {
+            probed: state.hover_probed.get(),
+            pointer_x: state.hover_probe_x.get(),
+            pointer_y: state.hover_probe_y.get(),
+            now: drag_clock_now(),
+            pointer_down: state.pointer_down.get(),
+        },
+    );
+    state.hovered.set(output.hovered);
+    if output.entered || output.exited {
+        ipc::send(&OutMessage::Hover {
+            hovered: output.hovered,
+        });
+    }
 }
 
 /// Frame-level backstop for a missed button release.
@@ -792,23 +1289,158 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
     else {
         return;
     };
-    let (_, _, _, mask) = gdk_window.device_position(&pointer);
+    let (.., mask) = gdk_window.device_position(&pointer);
     if !mask.contains(gdk::ModifierType::BUTTON1_MASK) {
         clear_pointer_pin(state, window);
+        // Teardown can flush a final drag move. Query again afterwards so the
+        // coordinates belong to the new window origin, not the previous frame.
+        let (_, x, y, _) = gdk_window.device_position(&pointer);
+        state.hover_probed.set(input::is_over_pill_area(state, x as f64, y as f64));
+        state.hover_probe_x.set(x as f64);
+        state.hover_probe_y.set(y as f64);
     }
 }
 
-fn tick(state: &PillState) {
-    tick_long_press(state);
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
+
+fn tick(state: &PillState, dt: f64) {
+    tick_long_press(state, dt);
     let phase = state.phase.get();
     let is_active = phase != Phase::Idle;
-    let is_recording = phase == Phase::Recording;
     let is_loading = phase == Phase::Loading;
     let hovered = state.hovered.get();
 
-    // Audio levels
+    tick_audio_levels(state, phase);
+
+    // Pill expand/collapse (spring)
+    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+
+    // Loading offset
+    if is_loading {
+        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
+    }
+
+    // Tooltip animation (spring)
+    // Hover-revealed in every phase except Paused, so the chevrons stay
+    // clickable mid-take. A take that starts under a parked pointer fades
+    // the tooltip until the pointer leaves the pill and comes back;
+    // rust_pill_shared owns the rule, every port agrees.
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+
+    // Panel open/close (spring)
+    // A pending review holds the panel open on its own: the transcript must
+    // stay visible until the user answers it.
+    let panel_target =
+        if state.owns_panel() {
+            1.0
+        } else {
+            0.0
+        };
+    rust_pill_shared::spring::spring_01(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
+
+    // Keyboard button (spring)
+    let is_voice = *state.assistant_input_mode.borrow() == "voice";
+    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
+
+    // Animate content dimensions toward target mode
+    let mode = state.effective_window_mode();
+    let (tw, th) = mode.dimensions();
+    rust_pill_shared::spring::spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+
+    // Shimmer phase for thinking animation
+    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
+
+    // Fireworks
+    tick_fireworks(state);
+
+    // Flame
+    tick_flame(state);
+
+    // Flash blue border
+    tick_flash_blue(state);
+
+    // Broadcast transcript
+    tick_transcript(state);
+
+    tick_flash(state, tooltip_target > 0.5, dt);
+
+    // Long-press cancel flash timer
+    if state.cancel_flash.get() > 0.0 {
+        let remaining = state.cancel_flash.get() - dt;
+        state.cancel_flash.set(remaining.max(0.0));
+    }
+
+    // Recording <-> paused crossfade driven by the same critically damped
+    // spring as the other pill transitions (settles, never overshoots).
+    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+
+    // Cancel + pause controls.
+    let controls_phase = state.phase.get();
+    let show_controls = !state.assistant_active.get()
+        && match controls_phase {
+            // Hover-revealed while recording, pinned open while paused.
+            Phase::Recording => state.hovered.get(),
+            Phase::Paused => true,
+            // Post-recording processing: neither cancel nor pause can still
+            // act on the take, so the controls fade out with the same spring.
+            Phase::Idle | Phase::Loading => false,
+        };
+    let cancel_target = if show_controls { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+
+    // Inflate animation. The target ramps up partway through the hold (not at
+    // the arm moment), so the pill is already growing while the ring fills and
+    // arming continues that motion instead of starting a new one.
+    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
+    let inflate_target = rust_pill_shared::inflate_target(
+        hold_p,
+        state.long_press_active.get(),
+        state.dragging.get(),
+    );
+    rust_pill_shared::spring::spring_01(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+
+    tick_ring(state, dt);
+
+    // Auto-scroll to bottom when new content arrives
+    if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
+        let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
+        state.scroll_offset.set(max_scroll);
+    }
+}
+
+/// Audio-level meters and the waveform phase they drive: pending input levels
+/// fold into the target level, decay toward silence when idle, and advance the
+/// wave animation at a level-dependent rate.
+fn tick_audio_levels(state: &PillState, phase: Phase) {
+    let is_recording = phase == Phase::Recording;
+    let is_loading = phase == Phase::Loading;
+
     if is_recording {
-        let levels = state.pending_levels.borrow();
+        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
         if !levels.is_empty() {
             let sum: f64 = levels.iter().map(|v| *v as f64).sum();
             let avg = sum / levels.len() as f64;
@@ -842,118 +1474,29 @@ fn tick(state: &PillState) {
     let effective_level = level.max(base_level);
     let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
     state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+}
 
-    // Pill expand/collapse (spring)
-    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS);
-
-    // Loading offset
-    if is_loading {
-        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
-    }
-
-    // Tooltip animation (spring)
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS);
-
-    // Panel open/close (spring)
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS);
-
-    // Keyboard button (spring)
-    let is_voice = *state.assistant_input_mode.borrow() == "voice";
-    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS);
-
-    // Animate content dimensions toward target mode
-    let mode = state.window_mode.get();
-    let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS);
-
-    // Shimmer phase for thinking animation
-    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
-
-    // Fireworks
-    tick_fireworks(state);
-
-    // Flame
-    tick_flame(state);
-
-    // Flash blue border
-    tick_flash_blue(state);
-
-    // Broadcast transcript
-    tick_transcript(state);
-
-    // Flash message timer
+/// Flash banner (native pill toast) expiry and fade spring. An action-less
+/// banner yields the strip above the pill to a revealed style tooltip, so the
+/// banner and the selector never sit on top of each other.
+fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
     if state.flash_visible.get() {
-        let remaining = state.flash_timer.get() - SPRING_DT;
+        let remaining = state.flash_timer.get() - dt;
         if remaining <= 0.0 {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
+            clear_flash(state);
         } else {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS);
-
-    // Long-press cancel flash timer
-    if state.cancel_flash.get() > 0.0 {
-        let remaining = state.cancel_flash.get() - SPRING_DT;
-        state.cancel_flash.set(remaining.max(0.0));
-    }
-
-    // Recording <-> paused crossfade driven by the same critically damped
-    // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS);
-
-    // Cancel + pause controls.
-    let controls_phase = state.phase.get();
-    let show_controls = !state.assistant_active.get()
-        && match controls_phase {
-            // Hover-revealed while recording, pinned open while paused.
-            Phase::Recording => state.hovered.get(),
-            Phase::Paused => true,
-            // Post-recording processing: neither cancel nor pause can still
-            // act on the take, so the controls fade out with the same spring.
-            Phase::Idle | Phase::Loading => false,
-        };
-    let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0);
-
-    // Inflate animation. The target ramps up partway through the hold (not at
-    // the arm moment), so the pill is already growing while the ring fills and
-    // arming continues that motion instead of starting a new one.
-    let hold_p = draw::long_press_progress(state.long_press_elapsed.get());
-    let inflate_target = rust_pill_shared::inflate_target(
-        hold_p,
-        state.long_press_active.get(),
-        state.dragging.get(),
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_revealed,
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS);
-
-    tick_ring(state);
-
-    // Auto-scroll to bottom when new content arrives
-    if state.should_stick.get() && state.assistant_active.get() && !state.assistant_compact.get() {
-        let max_scroll = (state.content_height.get() - state.viewport_height.get()).max(0.0);
-        state.scroll_offset.set(max_scroll);
-    }
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 }
 
-fn tick_long_press(state: &PillState) {
+fn tick_long_press(state: &PillState, dt: f64) {
     if !state.long_press_active.get() {
         return;
     }
@@ -964,12 +1507,13 @@ fn tick_long_press(state: &PillState) {
         return;
     }
 
-    let elapsed = state.long_press_elapsed.get() + SPRING_DT;
+    let elapsed = state.long_press_elapsed.get() + dt;
     state.long_press_elapsed.set(elapsed);
     if elapsed >= LONG_PRESS_DURATION {
         state.long_press_active.set(false);
         state.long_press_elapsed.set(0.0);
         state.dragging.set(true);
+        state.x11_release_persisted.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
     }
@@ -980,7 +1524,7 @@ fn tick_long_press(state: &PillState) {
 /// All the policy lives in `rust_pill_shared::advance_ring` so the three
 /// platform renderers cannot drift apart; this only marshals `Cell` state in
 /// and out of the shared struct.
-fn tick_ring(state: &PillState) {
+fn tick_ring(state: &PillState, dt: f64) {
     let held = state.dragging.get()
         || (state.long_press_active.get()
             && state.long_press_elapsed.get() > LONG_PRESS_HOLD_DELAY);
@@ -1000,7 +1544,7 @@ fn tick_ring(state: &PillState) {
             held,
             dragging: state.dragging.get(),
             progress: draw::long_press_progress(state.long_press_elapsed.get()),
-            delta_seconds: SPRING_DT,
+            delta_seconds: dt,
         },
         LONG_PRESS_HOLD_DELAY,
     );
@@ -1024,7 +1568,7 @@ fn tick_fireworks(state: &PillState) {
 
     let ww = state.draw_width.get();
     let wh = state.draw_height.get();
-    let (_, pill_y, _, _) = draw::pill_position(state, ww, wh);
+    let (_, pill_y, ..) = draw::pill_position(state, ww, wh);
     let origin_x = ww / 2.0;
     let origin_y = pill_y - FLASH_GAP - FLASH_HEIGHT / 2.0;
 
@@ -1197,93 +1741,112 @@ fn tick_transcript(state: &PillState) {
     }
 }
 
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * SPRING_DT;
-    let new_v = v + new_vel * SPRING_DT;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * SPRING_DT;
-    let new_v = v + new_vel * SPRING_DT;
-    if (new_v - target).abs() < 0.5 && (new_vel * SPRING_DT).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
-    }
-}
-
-/// Shared pill visibility policy.
-///
-/// Every backend (X11, Layer Shell, Plain Wayland) resolves visibility through
-/// this one function, so the user's preference means the same thing everywhere.
-///
-/// | Visibility     | Idle   | Recording | Assistant |
-/// |----------------|--------|-----------|-----------|
-/// | `Hidden`       | hidden | hidden    | visible   |
-/// | `WhileActive`  | hidden | visible   | visible   |
-/// | `Persistent`   | visible| visible   | visible   |
-///
-/// Assistant mode is a deliberate exception: the pill is the assistant's own
-/// surface, so it shows even when the preference is `Hidden`.
-pub(crate) fn should_show_pill(
-    visibility: Visibility,
-    phase: Phase,
-    is_assistant: bool,
-) -> bool {
-    let is_active = phase != Phase::Idle;
-    match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    }
-}
 
 #[cfg(test)]
-mod visibility_tests {
+mod geometry_tests {
     use super::*;
 
-    #[test]
-    fn hidden_stays_hidden_while_recording() {
-        // The Wayland regression: a Hidden pill used to appear while recording.
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Recording, false));
-        assert!(!should_show_pill(Visibility::Hidden, Phase::Idle, false));
+    /// Tolerance for float assertions — the repo's usual test epsilon (see
+    /// rust_pill_shared). The conversions here produce integral pixel values,
+    /// but comparing approximately keeps the tests robust if intermediate
+    /// math or types ever change.
+    const EPSILON: f64 = 1e-6;
+
+    fn assert_rect_close(actual: &Rect, expected: &Rect) {
+        let fields = [
+            ("x", actual.x, expected.x),
+            ("y", actual.y, expected.y),
+            ("width", actual.width, expected.width),
+            ("height", actual.height, expected.height),
+        ];
+        for (name, a, e) in fields {
+            assert!(
+                (a - e).abs() < EPSILON,
+                "{name}: expected ~{e}, got {a} (rect {actual:?} vs {expected:?})"
+            );
+        }
     }
 
     #[test]
-    fn hidden_still_shows_for_assistant() {
-        assert!(should_show_pill(Visibility::Hidden, Phase::Idle, true));
-        assert!(should_show_pill(Visibility::Hidden, Phase::Recording, true));
+    fn wayland_regrab_keeps_the_draw_offset_and_applies_the_last_sample() {
+        use rust_pill_shared::drag::{DragController, DragFrame};
+        for offset in [(0.0, 0.0), (120.0, -35.0), (-55.0, 70.0)] {
+            let mut motion = DragController::new();
+            begin_wayland_drag(&mut motion, (200.0, 100.0), offset, 0.0);
+            let mut frame = DragFrame {
+                pointer_x: 200.0, pointer_y: 100.0, now: 0.01, dt: 0.0,
+                bounds: WAYLAND_DRAG_BOUNDS,
+                edge_work: None, held: true, reduced_motion: true,
+            };
+            let unchanged = motion.advance(&frame);
+            assert_eq!((unchanged.x, unchanged.y), offset);
+            frame.pointer_x += 18.0;
+            frame.pointer_y += 14.0;
+            let tracked = motion.advance(&frame);
+            assert_eq!((tracked.x, tracked.y), (offset.0 + 18.0, offset.1 + 14.0));
+            motion.end_drag(0.01);
+            assert!(motion.is_settling());
+            begin_wayland_drag(&mut motion, (218.0, 114.0), (tracked.x, tracked.y), 0.02);
+            let regrabbed = motion.advance(&frame);
+            assert_eq!((regrabbed.x, regrabbed.y), (tracked.x, tracked.y));
+        }
     }
 
     #[test]
-    fn while_active_shows_only_when_busy() {
-        assert!(!should_show_pill(Visibility::WhileActive, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Recording, false));
-        assert!(should_show_pill(Visibility::WhileActive, Phase::Idle, true));
+    fn selector_headroom_respects_surface_and_scaled_monitor_edges() {
+        assert_eq!(selector_visible_headroom(24.0, 500.0, 0.0, 1.0), 24.0);
+        assert_eq!(selector_visible_headroom(80.0, -120.0, 0.0, 2.0), 20.0);
+        assert_eq!(selector_visible_headroom(80.0, -1120.0, -1000.0, 2.0), 20.0);
     }
 
     #[test]
-    fn persistent_always_shows() {
-        assert!(should_show_pill(Visibility::Persistent, Phase::Idle, false));
-        assert!(should_show_pill(Visibility::Persistent, Phase::Recording, false));
+    fn logical_rect_scales_monitor_origin_and_extent_into_root_pixels() {
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: 200.0,
+                y: 100.0,
+                width: 4000.0,
+                height: 2000.0,
+            },
+        );
+        let left_monitor = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 2.0);
+        assert_eq!(left_monitor.x, -3840.0);
+        assert_eq!(left_monitor.width, 3840.0);
+    }
+
+    #[test]
+    fn logical_rect_scale_one_is_unchanged() {
+        let rect = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 1.0);
+        assert_rect_close(
+            &rect,
+            &Rect {
+                x: -1920.0,
+                y: 0.0,
+                width: 1920.0,
+                height: 1080.0,
+            },
+        );
+    }
+
+    #[test]
+    fn pill_rect_and_workarea_share_physical_space() {
+        // Regression guard for the split coordinate spaces: a 200-logical-px
+        // pill parked at physical x=3800 on a 2000-logical-wide (4000 physical)
+        // work area at 2x must overflow the monitor in *both* spaces alike.
+        let scale = 2.0;
+        let monitor = logical_rect_to_physical(&gdk::Rectangle::new(0, 0, 2000, 1000), scale);
+        let pill = Rect {
+            x: 3800.0,
+            y: 0.0,
+            width: 200.0 * scale,
+            height: 80.0 * scale,
+        };
+        // With the old unscaled workarea (2000 wide) this comparison used the
+        // wrong space at any scale != 1. Inequality assertions, so no epsilon
+        // needed here.
+        assert!(pill.x + pill.width > monitor.x + monitor.width);
+        assert!(pill.x < monitor.x + monitor.width);
     }
 }

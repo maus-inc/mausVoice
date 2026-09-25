@@ -27,7 +27,7 @@ export const getIsEmulators = (): boolean => {
 };
 
 export type Flavor =
-  "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev";
+  "emulators" | "dev" | "prod" | "enterprise" | "enterprise-dev" | "preview";
 export const getFlavor = (): Flavor =>
   (import.meta.env.VITE_FLAVOR ?? "emulators") as Flavor;
 
@@ -49,6 +49,7 @@ export const getPlatform = (): Platform => {
 
 export const isMacOS = (): boolean => getPlatform() === "darwin";
 export const isWindows = (): boolean => getPlatform() === "win32";
+export const isLinux = (): boolean => getPlatform() === "linux";
 
 export const isWindows10 = (): boolean => {
   if (!isWindows()) {

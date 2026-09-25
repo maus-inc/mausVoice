@@ -26,7 +26,7 @@ pub(crate) const SPRING_STIFFNESS: f64 = 200.0;
 
 // ── Tooltip (style selector) ──────────────────────────────────────
 pub(crate) const TOOLTIP_HEIGHT: f64 = 32.0;
-pub(crate) const TOOLTIP_GAP: f64 = 6.0;
+pub(crate) const TOOLTIP_GAP: f64 = rust_pill_shared::placement::PLACEMENT_GAP;
 pub(crate) const TOOLTIP_RADIUS: f64 = 12.0;
 pub(crate) const TOOLTIP_FIXED_WIDTH: f64 = 172.0;
 
@@ -93,6 +93,13 @@ pub(crate) const PERM_CARD_HEIGHT: f64 = 68.0;
 pub(crate) const PERM_BUTTON_WIDTH: f64 = 80.0;
 pub(crate) const PERM_BUTTON_HEIGHT: f64 = 26.0;
 pub(crate) const PERM_BUTTON_GAP: f64 = 6.0;
+
+// Review-before-insert card.
+pub(crate) const REVIEW_TITLE_HEIGHT: f64 = 20.0;
+pub(crate) const REVIEW_LINE_HEIGHT: f64 = 20.0;
+/// Height of the row of review buttons that sits above the input bar. The row
+/// is fixed there rather than in the scrolling text, so it is always reachable.
+pub(crate) const REVIEW_ACTIONS_HEIGHT: f64 = 44.0;
 
 // ── Window sizes for each mode ────────────────────────────────────
 pub(crate) const WINDOW_W_COMPACT: i32 = 452;

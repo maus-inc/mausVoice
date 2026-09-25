@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
+import { getIntl } from "../i18n/intl";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -15,20 +16,57 @@ import type {
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
-import { routeTranscriptOutput } from "../utils/output-routing.utils";
+import { sendPillStageText } from "../utils/overlay.utils";
 import {
-  applyReplacements,
-  applySymbolConversions,
-} from "../utils/string.utils";
+  routeTranscriptOutput,
+  appendToDictationBacklog,
+  clearDictationBacklog,
+  drainDictationBacklog,
+  hasDictationBacklog,
+  incrementDictationBacklogNonce,
+} from "../utils/output-routing.utils";
+import { sanitizeTranscriptText } from "../utils/sanitize-transcript.utils";
+import { withTimeout } from "../utils/timeout.utils";
 import { getToneIdToUse, VERBATIM_TONE_ID } from "../utils/tone.utils";
-import { getMyUserPreferences } from "../utils/user.utils";
+import {
+  getMyDictationLanguage,
+  getMyUserPreferences,
+} from "../utils/user.utils";
 import { BaseStrategy } from "./base.strategy";
+
+/** Cap how long start waits on focused-app resolution so a hung native call
+ * cannot block recording indefinitely. Misses leave currentAppId null. */
+const LOAD_APP_TARGET_TIMEOUT_MS = 1500;
+
+/**
+ * Thin wrapper around the Tauri `check_focused_paste_target` command.
+ * Returns the target state without any side effects.
+ */
+async function checkFocusedPasteTarget(): Promise<
+  "editable" | "not_editable" | "unknown"
+> {
+  try {
+    const state = await invoke<"editable" | "not_editable" | "unknown">(
+      "check_focused_paste_target",
+    );
+    return state;
+  } catch (error) {
+    getLogger().warning(`check_focused_paste_target failed: ${error}`);
+    return "unknown";
+  }
+}
 
 export class DictationStrategy extends BaseStrategy {
   private streamedSegmentCount = 0;
   private streamedProcessedText = "";
   private pasteQueue: Promise<void> = Promise.resolve();
   private currentAppId: string | null = null;
+  /** True when the last known paste target was NOT editable, meaning
+   *  segments are being backlogged instead of pasted live. */
+  private backlogActive = false;
+  /** Monotonic session generation counter to prevent in-flight async paste
+   *  or backlog tasks from delivering after cleanup() runs. */
+  private sessionGeneration = 0;
 
   shouldStoreTranscript(): boolean {
     return true;
@@ -46,43 +84,195 @@ export class DictationStrategy extends BaseStrategy {
     return prefs.remoteTargetDeviceId;
   }
 
+  /**
+   * Drain the accumulated backlog, track the trailing space in
+   * `streamedProcessedText`, and log/recover from any failure.
+   * Returns `true` when text was delivered.
+   *
+   * This is the single place backlog-drain + trailing-space bookkeeping
+   * happens, so the two callers (checkAndDrainBacklog,
+   * handleInterimSegment) cannot desync or double-space.
+   */
+  private async drainBacklogAndAppendSpace(
+    newSegment?: string,
+  ): Promise<boolean> {
+    try {
+      const result = await drainDictationBacklog(newSegment, this.currentAppId);
+      // Only add a trailing separator when this is a standalone drain
+      // (no newSegment).  When the caller provides newSegment it has
+      // already appended the segment text to streamedProcessedText, so
+      // adding another space here would double-space.
+      if (result.delivered && !newSegment) {
+        this.streamedProcessedText += " ";
+      }
+      return result.delivered;
+    } catch (error) {
+      getLogger().error(`Backlog drain failed: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Chain paste work onto the serial queue. The stored chain always catches
+   * and logs failures, so one rejected callback cannot poison the queue and
+   * silently stop every later interim segment and backlog drain.
+   */
+  private enqueuePasteWork(work: () => Promise<void>): Promise<void> {
+    const task = this.pasteQueue.then(work);
+    this.pasteQueue = task.catch((error) => {
+      getLogger().error(`Queued paste work failed: ${error}`);
+    });
+    return this.pasteQueue;
+  }
+
+  /**
+   * Probe the currently focused element and, if it is editable (or the
+   * platform cannot tell), drain any accumulated dictation backlog into it.
+   *
+   * Fire-and-forget (logging errors internally). Safe to call from a
+   * polling interval — the operation is serialised on `this.pasteQueue`
+   * so it never races an in-flight interim segment.
+   */
+  checkAndDrainBacklog(): Promise<void> {
+    const generation = this.sessionGeneration;
+    return this.enqueuePasteWork(async () => {
+      if (this.sessionGeneration !== generation) {
+        return;
+      }
+      if (!hasDictationBacklog() && !this.backlogActive) {
+        return;
+      }
+
+      const state = await checkFocusedPasteTarget();
+      if (this.sessionGeneration !== generation) {
+        return;
+      }
+      if (state === "editable" || state === "unknown") {
+        // Target is now editable (or we can't tell — try paste anyway).
+        if (hasDictationBacklog()) {
+          await this.drainBacklogAndAppendSpace();
+        }
+        this.backlogActive = false;
+      }
+    });
+  }
+
   handleInterimSegment(segment: string): void {
     const state = getAppState();
 
-    const realtimeEnabled =
-      getMyUserPreferences(state)?.realtimeOutputEnabled ?? false;
+    const prefs = getMyUserPreferences(state);
+    const realtimeEnabled = prefs?.realtimeOutputEnabled ?? false;
     const toneId = getToneIdToUse(state);
     if (!realtimeEnabled || toneId !== VERBATIM_TONE_ID) {
       return;
     }
 
-    const sanitized = this.sanitizeTranscript(segment);
+    const sanitized = this.sanitizeTranscript(segment, { interim: true });
     if (!sanitized) {
       return;
     }
 
     const isFirst = this.streamedSegmentCount === 0;
     this.streamedSegmentCount++;
+    const generation = this.sessionGeneration;
 
-    this.pasteQueue = this.pasteQueue.then(async () => {
+    void this.enqueuePasteWork(async () => {
+      if (this.sessionGeneration !== generation) {
+        return;
+      }
       const text = sanitized;
-      const textToPaste = text + " ";
+      // Interim sanitize skips structural commands, so this rarely ends with
+      // "\n"; keep the branch for replacement/symbol output that already
+      // includes a trailing newline.
+      const textToPaste = text.endsWith("\n") ? text : `${text} `;
       this.streamedProcessedText += (isFirst ? "" : " ") + text;
 
-      try {
-        await routeTranscriptOutput({
-          text: textToPaste,
-          mode: "dictation",
-          currentAppId: this.currentAppId,
-        });
-      } catch (error) {
-        getLogger().error(`Failed to paste interim segment: ${error}`);
+      // Remote mode bypasses the backlog altogether.
+      if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
+        try {
+          await routeTranscriptOutput({
+            text: textToPaste,
+            mode: "dictation",
+            currentAppId: this.currentAppId,
+            skipReview: true,
+          });
+        } catch (error) {
+          getLogger().error(
+            `Failed to remote-deliver interim segment: ${error}`,
+          );
+        }
+        return;
       }
+
+      await this.deliverLocalInterim(text, textToPaste, generation);
     });
   }
 
-  private sanitizeTranscript(text: string): string | null {
+  private async deliverLocalInterim(
+    text: string,
+    textToPaste: string,
+    generation: number,
+  ): Promise<void> {
+    const target = await checkFocusedPasteTarget();
+    if (this.sessionGeneration !== generation) {
+      return;
+    }
+
+    if (target === "not_editable") {
+      // No editable target: accumulate, don't paste, don't flash.
+      this.backlogActive = true;
+      appendToDictationBacklog(text);
+      return;
+    }
+
+    // Target is editable (or unknown -- optimistically try to paste).
+    // Drain any accumulated backlog first, then paste the current segment.
+    if (hasDictationBacklog()) {
+      const delivered = await this.drainBacklogAndAppendSpace(text);
+      if (this.sessionGeneration !== generation) {
+        return;
+      }
+      if (!delivered) {
+        // The drain preserved the older backlog entries but never owned
+        // this segment; park it too instead of dropping it on the floor.
+        appendToDictationBacklog(text);
+        this.backlogActive = true;
+        return;
+      }
+      this.backlogActive = false;
+      return;
+    }
+
+    // No backlog -- paste this segment live as before.
+    this.backlogActive = false;
+    try {
+      const result = await routeTranscriptOutput({
+        text: textToPaste,
+        mode: "dictation",
+        currentAppId: this.currentAppId,
+        isInterim: true,
+        skipReview: true,
+      });
+      if (this.sessionGeneration !== generation) {
+        return;
+      }
+      if (!result.delivered) {
+        appendToDictationBacklog(text);
+        this.backlogActive = true;
+      }
+    } catch (error) {
+      getLogger().error(`Failed to paste interim segment: ${error}`);
+      appendToDictationBacklog(text);
+      this.backlogActive = true;
+    }
+  }
+
+  private sanitizeTranscript(
+    text: string,
+    opts?: { interim?: boolean },
+  ): string | null {
     const state = getAppState();
+    const prefs = getMyUserPreferences(state);
     const replacementRules = Object.values(state.termById)
       .filter((term) => term.isReplacement)
       .map((term) => ({
@@ -90,8 +280,16 @@ export class DictationStrategy extends BaseStrategy {
         destinationValue: term.destinationValue,
       }));
 
-    const afterReplacements = applyReplacements(text, replacementRules);
-    return applySymbolConversions(afterReplacements);
+    const sanitized = sanitizeTranscriptText({
+      rawTranscript: text,
+      replacementRules,
+      language: getMyDictationLanguage(state),
+      spokenCommandsEnabled: prefs?.spokenCommandsEnabled ?? true,
+      hallucinationFilterEnabled: prefs?.hallucinationFilterEnabled ?? true,
+      skipStructuralCommands: opts?.interim === true,
+    });
+    // Preserve structural whitespace such as "\n" from spoken "new line".
+    return /^[ \t]*$/.test(sanitized) ? null : sanitized;
   }
 
   validateAvailability(): Nullable<StrategyValidationError> {
@@ -102,7 +300,11 @@ export class DictationStrategy extends BaseStrategy {
 
   async loadAppTarget(): Promise<void> {
     try {
-      const appTarget = await tryRegisterCurrentAppTarget();
+      const appTarget = await withTimeout(
+        tryRegisterCurrentAppTarget(),
+        LOAD_APP_TARGET_TIMEOUT_MS,
+        "loadAppTarget",
+      );
       this.currentAppId = appTarget?.id ?? null;
     } catch {
       getLogger().verbose("Failed to resolve current app target at start");
@@ -110,8 +312,12 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async onBeforeStart(): Promise<void> {
-    // load asyncronously, non-blocking
-    this.loadAppTarget();
+    // Initialize session backlog state, then block (with timeout) until the
+    // focused app id is known so interim paste has currentAppId. Style seeding
+    // is owned by DictationSideEffects after loadManualStyleForCurrentApp.
+    clearDictationBacklog();
+    incrementDictationBacklogNonce();
+    await this.loadAppTarget();
   }
 
   async setPhase(phase: OverlayPhase): Promise<void> {
@@ -123,9 +329,21 @@ export class DictationStrategy extends BaseStrategy {
   ): Promise<HandleTranscriptResult> {
     const sanitizedTranscript = this.sanitizeTranscript(args.rawTranscript);
 
-    await this.pasteQueue;
+    // Drain any remaining backlog inside the serial queue. A polled drain
+    // (checkAndDrainBacklog) may already be in flight; running this drain
+    // outside the queue would let both snapshot and deliver the same backlog.
+    await this.enqueuePasteWork(async () => {
+      if (hasDictationBacklog()) {
+        getLogger().info(`Draining backlog segment(s) on finalize`);
+        await this.drainBacklogAndAppendSpace();
+      }
+    });
 
-    const transcript = this.streamedProcessedText || sanitizedTranscript;
+    // Interim paste already hit the focused app without structural commands
+    // (chunk-safe). The saved transcript uses the full sanitize so scratch /
+    // new-line are recorded. We do not rewrite already-streamed keystrokes.
+    const transcript =
+      sanitizedTranscript ?? this.streamedProcessedText ?? null;
     getLogger().verbose(
       `Streaming dictation complete (${this.streamedSegmentCount} segments)`,
     );
@@ -149,6 +367,7 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessMetadata: PostProcessMetadata = {};
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
+    let historyPersisted = false;
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
@@ -158,9 +377,13 @@ export class DictationStrategy extends BaseStrategy {
           transcript = args.processedTranscript;
           postProcessMetadata = args.serverPostProcessMetadata ?? {};
         } else {
+          sendPillStageText(
+            getIntl().formatMessage({ defaultMessage: "Polishing" }),
+          );
           const result = await postProcessTranscript({
             rawTranscript: sanitizedTranscript,
             toneId: args.toneId,
+            trace: args.trace,
           });
 
           transcript = result.transcript;
@@ -169,19 +392,51 @@ export class DictationStrategy extends BaseStrategy {
         }
       }
 
-      if (transcript) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      if (postProcessMetadata.postProcessFailed) {
+        getLogger().warning(
+          "Post-processing failed; preserving the transcript in History without insertion",
+        );
+        await showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Styling failed. The raw transcript is saved in History.",
+          }),
+          toastType: "error",
+          duration: 8000,
+          action: "open_transcriptions",
+        });
+      } else if (transcript) {
         try {
           getLogger().verbose(
             `Routing transcript output (${transcript.length} chars, app=${args.currentApp?.id ?? "none"})`,
           );
 
           const textToPaste = transcript.trim() + " ";
-          const result = await routeTranscriptOutput({
-            text: textToPaste,
-            mode: "dictation",
-            currentAppId: args.currentApp?.id ?? null,
-          });
+          const result = await routeTranscriptOutput(
+            {
+              text: textToPaste,
+              mode: "dictation",
+              currentAppId: args.currentApp?.id ?? null,
+            },
+            args.trace ?? null,
+          );
+          if (
+            result.delivered &&
+            result.deliveredText !== null &&
+            result.deliveredText !== textToPaste
+          ) {
+            // The review settled on an edited text. Adopt it for History and
+            // persist now so the exact edit becomes durable as soon as it lands.
+            transcript = result.deliveredText;
+            if (args.persistReviewedTranscript) {
+              historyPersisted = await args.persistReviewedTranscript({
+                transcript,
+                sanitizedTranscript,
+                postProcessMetadata,
+                postProcessWarnings,
+              });
+            }
+          }
           if (result.remote && result.delivered) {
             remoteStatus = "sent";
             showSnackbar("Transcript sent to paired receiver.", {
@@ -220,6 +475,7 @@ export class DictationStrategy extends BaseStrategy {
       postProcessWarnings,
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
+      historyPersisted,
     };
   }
 
@@ -234,13 +490,15 @@ export class DictationStrategy extends BaseStrategy {
   }
 
   async cleanup(): Promise<void> {
-    // Reset the streaming state so a stale queued paste can't chain into the
-    // next session. The in-flight promise is replaced: any paste that already
-    // started is allowed to complete, but no new work queues onto it and the
-    // final-transcript path will not wait on a stale queue.
+    // Increment the session generation counter first so in-flight tasks and
+    // deferred target probes are immediately invalidated and will not deliver.
+    this.sessionGeneration++;
     this.pasteQueue = Promise.resolve();
     this.streamedSegmentCount = 0;
     this.streamedProcessedText = "";
     this.currentAppId = null;
+    this.backlogActive = false;
+    clearDictationBacklog();
+    incrementDictationBacklogNonce();
   }
 }

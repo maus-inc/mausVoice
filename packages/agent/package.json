@@ -8,18 +8,22 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "example": "tsx scripts/example.ts"
   },
   "files": [
     "dist"
   ],
   "dependencies": {
-    "@maus-inc/types": "workspace:*"
+    "@maus-inc/types": "workspace:*",
+    "@maus-inc/utilities": "workspace:*"
   },
   "devDependencies": {
     "@maus-inc/typescript-config": "workspace:*",
     "@maus-inc/voice-ai": "workspace:*",
     "tsx": "^4.23.12",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^3.2.7"
   }
 }

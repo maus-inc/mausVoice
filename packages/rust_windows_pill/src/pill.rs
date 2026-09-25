@@ -1,3 +1,4 @@
+use rust_pill_shared::clock::monotonic_now as drag_now;
 use std::cell::{Cell, RefCell};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -13,9 +14,12 @@ use crate::constants::*;
 use crate::draw;
 use crate::gfx::Gfx;
 use crate::input;
-use crate::ipc::{self, InMessage, OutMessage, Phase, ResetStrategy, Visibility};
+use crate::ipc::{self, InMessage, OutMessage, Phase, Rect, ResetStrategy, Visibility};
 use crate::state;
 use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMode};
+use rust_pill_shared::drag::{DragBounds, DragController, DragFrame};
+use rust_pill_shared::edge::MonitorRect;
+use rust_pill_shared::hover::{HoverFrame, HoverIntent};
 
 // Issue #7: Thread-local statics are an architectural requirement, not a smell.
 // Win32 HWNDs are thread-affine — they must only be accessed on the thread that
@@ -25,6 +29,7 @@ use crate::state::{ClickAction, PillState, Rocket, RocketPhase, Spark, WindowMod
 // same ergonomics as globals without violating HWND affinity.
 
 const TIMER_CURSOR: usize = 2;
+const TOPMOST_REASSERT_INTERVAL: Duration = Duration::from_secs(2);
 
 thread_local! {
     static STATE: RefCell<Option<PillState>> = const { RefCell::new(None) };
@@ -37,6 +42,18 @@ thread_local! {
     static EDIT_CONTAINER: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_HWND: Cell<HWND> = const { Cell::new(HWND(std::ptr::null_mut())) };
     static EDIT_BG_BRUSH: Cell<HBRUSH> = const { Cell::new(HBRUSH(std::ptr::null_mut())) };
+    // Cached reduced-motion probe (see reduced_motion()); re-read at most
+    // every 2 s so the frame loop never pays for a settings call per tick.
+    static REDUCED_MOTION_CACHED: Cell<bool> = const { Cell::new(false) };
+    static REDUCED_MOTION_CHECKED: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+const PILL_PLACEMENT_BOTTOM: u8 = 0;
+const PILL_PLACEMENT_TOP: u8 = 1;
+thread_local! {
+    static LAST_TOPMOST_REASSERT: Cell<Option<Instant>> = const { Cell::new(None) };
+    static TOPMOST_REASSERT_COUNT: Cell<u32> = const { Cell::new(0) };
+    static PILL_PLACEMENT: Cell<u8> = const { Cell::new(PILL_PLACEMENT_BOTTOM) };
 }
 
 /// Runs the Windows pill: registers the window class, creates the layered
@@ -62,25 +79,38 @@ pub fn run(receiver: Receiver<InMessage>) {
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
         ..Default::default()
     };
-    unsafe { RegisterClassExW(&wc); }
+    unsafe {
+        RegisterClassExW(&wc);
+    }
 
-    let (wx, wy) = initial_position();
+    // The window keeps room for the below selector slot under the pill, so a
+    // side flip animates inside space that is already there. Content math
+    // stays on the typing constants, so the pill never moves for it.
+    let win_h =
+        WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+    let (wx, wy) = initial_position(win_h);
     let hwnd = unsafe {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class_name,
             w!("MausVoicePill"),
             WS_POPUP,
-            wx, wy,
-            WINDOW_W_TYPING, WINDOW_H_TYPING,
-            None, None, Some(hinstance.into()), None,
-        ).unwrap()
+            wx,
+            wy,
+            WINDOW_W_TYPING,
+            win_h,
+            None,
+            None,
+            Some(hinstance.into()),
+            None,
+        )
+        .unwrap()
     };
 
     HWND_CELL.with(|c| c.set(hwnd));
     eprintln!("[pill] window created in {:?}", t0.elapsed());
 
-    let gfx = Gfx::new(WINDOW_W_TYPING, WINDOW_H_TYPING).expect("Failed to create D2D context");
+    let gfx = Gfx::new(WINDOW_W_TYPING, win_h).expect("Failed to create D2D context");
     eprintln!("[pill] D2D/DWrite initialized in {:?}", t0.elapsed());
 
     let state = PillState {
@@ -99,12 +129,14 @@ pub fn run(receiver: Receiver<InMessage>) {
         tooltip_t: Cell::new(0.0),
         tooltip_velocity: Cell::new(0.0),
         tooltip_width: Cell::new(0.0),
+        style_tooltip_gate: rust_pill_shared::StyleTooltipGate::default(),
         window_mode: Cell::new(WindowMode::Dictation),
         draw_width: Cell::new(DICTATION_WINDOW_WIDTH as f64),
         draw_height: Cell::new(DICTATION_WINDOW_HEIGHT as f64),
         draw_w_velocity: Cell::new(0.0),
         draw_h_velocity: Cell::new(0.0),
         assistant_active: Cell::new(false),
+        assistant_review: RefCell::new(None),
         assistant_input_mode: RefCell::new("voice".to_string()),
         assistant_compact: Cell::new(true),
         assistant_conversation_id: RefCell::new(None),
@@ -137,6 +169,8 @@ pub fn run(receiver: Receiver<InMessage>) {
         flash_is_error: Cell::new(false),
         flash_action: RefCell::new(None),
         flash_action_label: RefCell::new(None),
+        flash_reject_action: RefCell::new(None),
+        flash_reject_action_label: RefCell::new(None),
         fireworks_active: Cell::new(false),
         fireworks_elapsed: Cell::new(0.0),
         fireworks_next_launch: Cell::new(0),
@@ -150,6 +184,7 @@ pub fn run(receiver: Receiver<InMessage>) {
         transcript_time_since_update: Cell::new(0.0),
         transcript_opacity: Cell::new(0.0),
         transcript_has_message: Cell::new(false),
+        stage_text: RefCell::new(None),
         long_press_active: Cell::new(false),
         long_press_elapsed: Cell::new(0.0),
         long_press_start_x: Cell::new(0.0),
@@ -158,14 +193,19 @@ pub fn run(receiver: Receiver<InMessage>) {
         drag_cancelled: Cell::new(false),
         drag_cursor_x: Cell::new(0.0),
         drag_cursor_y: Cell::new(0.0),
-        drag_grab_offset_x: Cell::new(0.0),
-        drag_grab_offset_y: Cell::new(0.0),
+        drag_motion: RefCell::new(DragController::new()),
+        last_monitor_topology: RefCell::new(None),
+        hover_intent: RefCell::new(HoverIntent::new()),
+        selector_placement: RefCell::new(rust_pill_shared::placement::SelectorPlacement::new()),
+        crossing: RefCell::new(rust_pill_shared::deform::CrossingDeform::new()),
         has_saved_position: Cell::new(false),
         reset_strategy: Cell::new(ResetStrategy::Current),
         saved_x: Cell::new(0),
         saved_y: Cell::new(0),
         inflate_t: Cell::new(0.0),
         inflate_velocity: Cell::new(0.0),
+        drag_label_t: Cell::new(0.0),
+        drag_label_velocity: Cell::new(0.0),
         ring_alpha: Cell::new(0.0),
         ring_release_progress: Cell::new(0.0),
         press_elapsed: Cell::new(0.0),
@@ -201,17 +241,20 @@ pub fn run(receiver: Receiver<InMessage>) {
                     windows::Win32::Media::timeEndPeriod(1);
                     return;
                 }
-                if handle_edit_message(&msg) { continue; }
+                if handle_edit_message(&msg) {
+                    continue;
+                }
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            if QUIT.with(|q| q.get()) { break; }
+            if QUIT.with(|q| q.get()) {
+                break;
+            }
 
             on_anim_tick(hwnd);
 
-            let elapsed = Instant::now().duration_since(
-                LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now),
-            );
+            let elapsed = Instant::now()
+                .duration_since(LAST_TICK.with(|c| c.get()).unwrap_or_else(Instant::now));
             if let Some(remaining) = frame_interval.checked_sub(elapsed) {
                 std::thread::sleep(remaining);
             }
@@ -246,14 +289,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         Some(_) => IDC_HAND,
                         None => IDC_ARROW,
                     };
-                    unsafe { SetCursor(LoadCursorW(None, cursor_id).ok()); }
+                    unsafe {
+                        SetCursor(LoadCursorW(None, cursor_id).ok());
+                    }
                 }
             });
             LRESULT(0)
         }
         WM_SETCURSOR => {
             let hit_test = (lparam.0 & 0xFFFF) as i16;
-            if hit_test == 1 { // HTCLIENT
+            if hit_test == 1 {
+                // HTCLIENT
                 LRESULT(1)
             } else {
                 unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -264,19 +310,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f64;
             STATE.with(|s| {
                 if let Some(ref state) = *s.borrow() {
-                    if state.assistant_active.get()
-                        && *state.assistant_input_mode.borrow() == "type"
-                    {
+                    if state.is_typing() {
                         focus_edit_control();
                     }
+                    // A fresh press owns its release, including selector clicks.
+                    state.drag_cancelled.set(false);
                     // Start long-press tracking if clicking on the pill body
                     if input::is_on_pill_at(state, x, y) {
+                        if state.drag_motion.borrow_mut().interrupt_settle() {
+                            persist_drag_position(hwnd, state);
+                        }
                         state.pointer_down.set(true);
                         state.long_press_active.set(true);
                         state.long_press_elapsed.set(0.0);
                         state.long_press_start_x.set(x);
                         state.long_press_start_y.set(y);
-                        state.drag_cancelled.set(false);
                     }
                 }
             });
@@ -297,7 +345,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     // The button is up, so hover stops being pinned.
                     state.pointer_down.set(false);
                     // Only fire click if the user wasn't dragging
-                    if !was_dragging {
+                    if !was_dragging && !state.drag_cancelled.get() {
                         input::handle_click(state, x, y);
                     }
                     // Hover was pinned for the duration of the gesture; settle
@@ -344,10 +392,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
                         if ch == '\r' || ch == '\n' {
-                            let text = state.entry_text.borrow().trim().to_string();
-                            if !text.is_empty() {
-                                ipc::send(&OutMessage::TypedMessage { text });
-                                *state.entry_text.borrow_mut() = String::new();
+                            // Enter submits: an insert decision while a
+                            // transcript is under review, a message to the
+                            // assistant otherwise.
+                            if input::submit_entry(state) {
+                                set_edit_text("");
                             }
                         } else if ch == '\u{8}' {
                             // Backspace
@@ -365,10 +414,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if wparam.0 == VK_ESCAPE.0 as usize {
                 STATE.with(|s| {
                     if let Some(ref state) = *s.borrow() {
-                        if state.assistant_active.get()
-                            && *state.assistant_input_mode.borrow() == "type"
-                        {
-                            ipc::send(&OutMessage::AssistantClose);
+                        // Escape while a transcript is under review is a
+                        // cancel decision: the desktop is waiting for an answer.
+                        match state.pending_review_id() {
+                            Some(review_id) => {
+                                input::send_review_decision(&review_id, "cancel", None)
+                            }
+                            None => {
+                                if state.is_typing() {
+                                    ipc::send(&OutMessage::AssistantClose);
+                                }
+                            }
                         }
                     }
                 });
@@ -376,7 +432,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             LRESULT(0)
         }
         WM_DESTROY => {
-            unsafe { PostQuitMessage(0); }
+            unsafe {
+                PostQuitMessage(0);
+            }
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
@@ -395,7 +453,9 @@ fn on_anim_tick(hwnd: HWND) {
     });
 
     if QUIT.with(|q| q.get()) {
-        unsafe { DestroyWindow(hwnd).ok(); }
+        unsafe {
+            DestroyWindow(hwnd).ok();
+        }
         return;
     }
 
@@ -419,11 +479,16 @@ fn on_anim_tick(hwnd: HWND) {
             // takes a second immutable borrow. Two immutable RefCell borrows are
             // safe; do NOT upgrade either to borrow_mut() or this path panics.
             tick_drag_release_fallback(hwnd, state);
+            tick_drag_frame(hwnd, state, dt);
             tick(state, dt);
+            tick_selector_placement(hwnd, state, dt);
+            tick_crossing(hwnd, state, dt);
             update_visibility(hwnd, state);
             update_typing_focus(hwnd, state);
         }
     });
+
+    maybe_reassert_topmost(hwnd, Instant::now());
 
     GFX.with(|g| {
         STATE.with(|s| {
@@ -448,6 +513,86 @@ fn on_cursor_tick(hwnd: HWND) {
     });
 }
 
+fn maybe_reassert_topmost(hwnd: HWND, now: Instant) {
+    let last = LAST_TOPMOST_REASSERT.with(|cell| cell.get());
+    if !should_reassert_topmost(last, now) {
+        return;
+    }
+    LAST_TOPMOST_REASSERT.with(|cell| cell.set(Some(now)));
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+    TOPMOST_REASSERT_COUNT.with(|c| c.set(c.get() + 1));
+}
+
+fn should_reassert_topmost(last: Option<Instant>, now: Instant) -> bool {
+    match last {
+        None => true,
+        Some(prev) => now.duration_since(prev) >= TOPMOST_REASSERT_INTERVAL,
+    }
+}
+
+fn query_client_area_animation() -> Option<bool> {
+    let mut enabled = BOOL(1);
+    unsafe {
+        // The typed SPI action writes a BOOL to this aligned out parameter.
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some((&mut enabled as *mut BOOL).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        ).ok()?;
+    }
+    Some(enabled.as_bool())
+}
+
+/// True when the user turned off client-area animation effects.
+/// Re-read at most every 2 s.
+fn reduced_motion() -> bool {
+    let now = Instant::now();
+    let stale = REDUCED_MOTION_CHECKED.with(|c| {
+        if let Some(prev) = c.get() {
+            now.duration_since(prev) >= Duration::from_secs(2)
+        } else {
+            true
+        }
+    });
+    if !stale {
+        return REDUCED_MOTION_CACHED.with(|c| c.get());
+    }
+    let off = REDUCED_MOTION_CACHED.with(|cache| {
+        update_reduced_motion_cache(cache, query_client_area_animation())
+    });
+    REDUCED_MOTION_CHECKED.with(|c| c.set(Some(now)));
+    off
+}
+
+fn update_reduced_motion_cache(cache: &Cell<bool>, queried_animation: Option<bool>) -> bool {
+    if let Some(enabled) = queried_animation {
+        cache.set(!enabled);
+    }
+    cache.get()
+}
+
+fn clear_flash(state: &PillState) {
+    rust_pill_shared::clear_flash_state(
+        &state.flash_visible,
+        &state.flash_timer,
+        &state.flash_action,
+        &state.flash_action_label,
+        &state.flash_reject_action,
+        &state.flash_reject_action_label,
+    );
+}
+
 /// Applies one IPC message to the pill state and marks the surface dirty so
 /// the next timer tick repaints.
 fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
@@ -470,6 +615,14 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             }
             let prev = state.phase.get();
             state.phase.set(phase);
+            state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+            // A new take sweeps any banner parked above the pill (for example
+            // the retranscribing toast) so it cannot sit on the style selector
+            // for the whole take. A resume from Paused keeps toasts raised
+            // during the take, such as the cancel confirm.
+            if phase == Phase::Recording && matches!(prev, Phase::Idle | Phase::Loading) {
+                clear_flash(state);
+            }
             if phase == Phase::Idle && prev != Phase::Idle {
                 state.target_level.set(0.0);
                 state.current_level.set(0.0);
@@ -483,25 +636,36 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.style_count.set(count);
             *state.style_name.borrow_mut() = name;
         }
-        InMessage::Toast { message, toast_type, duration, action, action_label } => {
+        InMessage::Toast {
+            message,
+            toast_type,
+            duration,
+            action,
+            action_label,
+            reject_action,
+            reject_action_label,
+        } => {
             *state.flash_message.borrow_mut() = message;
-            state.flash_is_error.set(toast_type.as_deref() == Some("error"));
+            state
+                .flash_is_error
+                .set(toast_type.as_deref() == Some("error"));
             state.flash_visible.set(true);
             state.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
             *state.flash_action.borrow_mut() = action;
             *state.flash_action_label.borrow_mut() = action_label;
+            *state.flash_reject_action.borrow_mut() = reject_action;
+            *state.flash_reject_action_label.borrow_mut() = reject_action_label;
         }
         InMessage::DismissToast => {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
+            clear_flash(state);
         }
         InMessage::Fireworks { message } => {
             *state.flash_message.borrow_mut() = message;
             state.flash_is_error.set(false);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
             state.flash_timer.set(FIREWORKS_TOTAL_DURATION);
             state.fireworks_active.set(true);
@@ -514,6 +678,8 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.flash_is_error.set(false);
             *state.flash_action.borrow_mut() = None;
             *state.flash_action_label.borrow_mut() = None;
+            *state.flash_reject_action.borrow_mut() = None;
+            *state.flash_reject_action_label.borrow_mut() = None;
             state.flash_visible.set(true);
             state.flash_timer.set(FLAME_TOTAL_DURATION);
 
@@ -530,6 +696,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.transcript_time_since_update.set(0.0);
             state.transcript_has_message.set(true);
         }
+        InMessage::StageText { text } => {
+            *state.stage_text.borrow_mut() = text;
+        }
         InMessage::Visibility { visibility } => {
             state.visibility.set(visibility);
         }
@@ -537,11 +706,34 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             state.window_mode.set(WindowMode::from_str(size));
         }
         InMessage::AssistantState {
-            active, input_mode, compact,
-            conversation_id, user_prompt,
-            messages, streaming, permissions,
+            active,
+            input_mode,
+            compact,
+            conversation_id,
+            user_prompt,
+            messages,
+            streaming,
+            permissions,
+            review,
         } => {
             let was_active = state.assistant_active.get();
+            let previous_review_id = state
+                .assistant_review
+                .borrow()
+                .as_ref()
+                .map(|r| r.id.clone());
+            let review_id = review.as_ref().map(|r| r.id.clone());
+            let review_text = review.as_ref().map(|r| r.text.clone());
+            *state.assistant_review.borrow_mut() = review;
+
+            // The entry is the review surface: a new transcript loads into it
+            // for editing, and answering the review empties it again. An
+            // unchanged id leaves the user's edits alone.
+            if review_id != previous_review_id {
+                let text = review_text.unwrap_or_default();
+                *state.entry_text.borrow_mut() = text.clone();
+                set_edit_text(&text);
+            }
             state.assistant_active.set(active);
             *state.assistant_input_mode.borrow_mut() = input_mode;
             state.assistant_compact.set(compact);
@@ -550,16 +742,46 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.assistant_messages.borrow_mut() = messages;
             *state.assistant_streaming.borrow_mut() = streaming;
             *state.assistant_permissions.borrow_mut() = permissions;
-            if active && !was_active {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id)
+            {
                 state.should_stick.set(true);
                 state.scroll_offset.set(0.0);
             }
         }
         InMessage::ResetPosition { strategy } => {
+            let hwnd = HWND_CELL.with(|c| c.get());
+            cancel_drag_gesture(hwnd, state);
             state.has_saved_position.set(false);
+            state.selector_placement.borrow_mut().reset();
+            state.crossing.borrow_mut().reset();
             state.reset_strategy.set(strategy);
             state.dirty.set(true);
-            ipc::send(&OutMessage::PositionChanged { has_saved_position: false });
+            reposition_to_cursor_monitor(hwnd, state);
+            check_hover(hwnd, state);
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: false,
+                rect: Some(rect),
+                monitor,
+            });
+        }
+        InMessage::RequestPosition => {
+            let hwnd = HWND_CELL.with(|c| c.get());
+            let (rect, monitor) = current_pill_geometry(hwnd);
+            ipc::send(&OutMessage::PositionChanged {
+                has_saved_position: state.has_saved_position.get(),
+                rect: Some(rect),
+                monitor,
+            });
+        }
+        InMessage::PillPlacement { placement } => {
+            let code = if placement == "top" {
+                PILL_PLACEMENT_TOP
+            } else {
+                PILL_PLACEMENT_BOTTOM
+            };
+            PILL_PLACEMENT.with(|c| c.set(code));
+            state.dirty.set(true);
         }
         InMessage::Quit => {
             QUIT.with(|q| q.set(true));
@@ -581,7 +803,7 @@ fn tick(state: &PillState, dt: f64) {
 
     // Audio levels (frame-rate independent)
     if is_recording {
-        let levels = state.pending_levels.borrow();
+        let levels = std::mem::take(&mut *state.pending_levels.borrow_mut());
         if !levels.is_empty() {
             let sum: f64 = levels.iter().map(|v| *v as f64).sum();
             let avg = sum / levels.len() as f64;
@@ -590,14 +812,18 @@ fn tick(state: &PillState, dt: f64) {
             let boosted = (combined.sqrt() * 1.35).min(1.0);
             let target = state.target_level.get();
             let mix = 1.0 - 0.25_f64.powf(frame_scale);
-            state.target_level.set((target * (1.0 - mix) + boosted * mix).min(1.0));
+            state
+                .target_level
+                .set((target * (1.0 - mix) + boosted * mix).min(1.0));
         }
     } else if is_loading {
         let target = state.target_level.get();
         state.target_level.set(target.max(PROCESSING_BASE_LEVEL));
     } else {
         state.target_level.set(0.0);
-        state.current_level.set(state.current_level.get() * 0.4_f64.powf(frame_scale));
+        state
+            .current_level
+            .set(state.current_level.get() * 0.4_f64.powf(frame_scale));
         if state.current_level.get() < 0.0002 {
             state.current_level.set(0.0);
         }
@@ -607,53 +833,107 @@ fn tick(state: &PillState, dt: f64) {
     let target = state.target_level.get();
     let smoothing = 1.0 - (1.0 - LEVEL_SMOOTHING).powf(frame_scale);
     let new_current = current + (target - current) * smoothing;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
 
     let decay = TARGET_DECAY_PER_FRAME.powf(frame_scale);
     let decayed = target * decay;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
 
     let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
+    } else {
+        0.0
+    };
     let effective_level = level.max(base_level);
     let advance = (WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level) * frame_scale;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
 
     // Paused keeps the pill fully expanded (voice field stays open, not mini mode).
-    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+    let expand_target =
+        if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+            1.0
+        } else {
+            0.0
+        };
+    rust_pill_shared::spring::spring_01(
+        &state.expand_t,
+        &state.expand_velocity,
+        expand_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
+
+    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+
+    if is_loading {
+        state
+            .loading_offset
+            .set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
+    }
+
+    let tooltip_target = rust_pill_shared::style_tooltip_target(
+        &state.style_tooltip_gate,
+        state.assistant_active.get(),
+        state.style_count.get(),
+        matches!(phase, Phase::Paused),
+        hovered,
+        state.expand_t.get(),
+    );
+    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(
+        &state.panel_open_t,
+        &state.panel_open_velocity,
+        panel_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
+
+    let is_voice = *state.assistant_input_mode.borrow() == "voice";
+    let kb_target = if state.assistant_active.get() && is_voice {
         1.0
     } else {
         0.0
     };
-    spring_anim(&state.expand_t, &state.expand_velocity, expand_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.kb_button_t,
+        &state.kb_button_velocity,
+        kb_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
-    if is_loading {
-        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED * frame_scale) % 1.0);
-    }
-
-    // While paused, fade/hide the style picker (polished/verbatim) but keep the
-    // main pill fully expanded via expand_target above.
-    let show_tooltip = !state.assistant_active.get()
-        && state.style_count.get() > 1
-        && phase != Phase::Paused
-        && (hovered || phase == Phase::Recording)
-        && state.expand_t.get() > 0.3;
-    let tooltip_target = if show_tooltip { 1.0 } else { 0.0 };
-    spring_anim(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
-
-    let panel_target = if state.assistant_active.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
-
-    let is_voice = *state.assistant_input_mode.borrow() == "voice";
-    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    spring_anim(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
-
-    let mode = state.window_mode.get();
+    let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
-    spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(
+        &state.draw_width,
+        &state.draw_w_velocity,
+        tw as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
+    rust_pill_shared::spring::spring_px(
+        &state.draw_height,
+        &state.draw_h_velocity,
+        th as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
-    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
+    state
+        .shimmer_phase
+        .set((state.shimmer_phase.get() + SHIMMER_SPEED * frame_scale) % 1.0);
 
     tick_fireworks(state, dt);
     tick_flame(state, dt);
@@ -664,21 +944,32 @@ fn tick(state: &PillState, dt: f64) {
     if state.flash_visible.get() {
         let remaining = state.flash_timer.get() - dt;
         if remaining <= 0.0 {
-            state.flash_visible.set(false);
-            state.flash_timer.set(0.0);
-            *state.flash_action.borrow_mut() = None;
-            *state.flash_action_label.borrow_mut() = None;
+            clear_flash(state);
         } else {
             state.flash_timer.set(remaining);
         }
     }
-    let flash_target = if state.flash_visible.get() { 1.0 } else { 0.0 };
-    spring_anim(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    let flash_target = rust_pill_shared::flash_banner_target(
+        state.flash_visible.get(),
+        state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
+        tooltip_target > 0.5,
+    );
+    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    spring_anim(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+    let pause_target = if state.phase.get() == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    rust_pill_shared::spring::spring_01(
+        &state.pause_t,
+        &state.pause_velocity,
+        pause_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -692,7 +983,13 @@ fn tick(state: &PillState, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    spring_anim(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.cancel_t,
+        &state.cancel_velocity,
+        cancel_target,
+        SPRING_STIFFNESS * 2.0,
+        dt,
+    );
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -703,7 +1000,13 @@ fn tick(state: &PillState, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    spring_anim(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.inflate_t,
+        &state.inflate_velocity,
+        inflate_target,
+        DRAG_INFLATE_STIFFNESS,
+        dt,
+    );
 
     tick_ring(state, dt);
 
@@ -714,7 +1017,9 @@ fn tick(state: &PillState, dt: f64) {
 }
 
 fn tick_fireworks(state: &PillState, dt: f64) {
-    if !state.fireworks_active.get() { return; }
+    if !state.fireworks_active.get() {
+        return;
+    }
 
     let elapsed = state.fireworks_elapsed.get() + dt;
     state.fireworks_elapsed.set(elapsed);
@@ -733,7 +1038,8 @@ fn tick_fireworks(state: &PillState, dt: f64) {
         let angle_rad = launch.angle_deg.to_radians();
         let color = FIREWORK_COLORS[next % FIREWORK_COLORS.len()];
         rockets.push(Rocket {
-            x: origin_x, y: origin_y,
+            x: origin_x,
+            y: origin_y,
             vx: launch.speed * angle_rad.sin(),
             vy: -launch.speed * angle_rad.cos(),
             trail: vec![(origin_x, origin_y)],
@@ -769,7 +1075,8 @@ fn tick_fireworks(state: &PillState, dt: f64) {
                         let speed_t = ((i * 7 + 3) % rocket.num_sparks.max(1)) as f64 / n;
                         let speed = FIREWORKS_SPARK_BASE_SPEED * (0.6 + 0.8 * speed_t);
                         rocket.sparks.push(Spark {
-                            x: rocket.x, y: rocket.y,
+                            x: rocket.x,
+                            y: rocket.y,
                             vx: speed * angle.cos(),
                             vy: speed * angle.sin(),
                             life: 1.0,
@@ -788,7 +1095,9 @@ fn tick_fireworks(state: &PillState, dt: f64) {
                     spark.life -= dt / FIREWORKS_SPARK_LIFE;
                 }
                 rocket.trail_alpha -= FIREWORKS_TRAIL_FADE_RATE * dt;
-                if rocket.trail_alpha < 0.0 { rocket.trail_alpha = 0.0; }
+                if rocket.trail_alpha < 0.0 {
+                    rocket.trail_alpha = 0.0;
+                }
             }
         }
     }
@@ -871,7 +1180,11 @@ fn tick_transcript(state: &PillState, dt: f64) {
         0.0
     };
 
-    let speed = if target > 0.5 { TRANSCRIPT_RISE_SPEED } else { TRANSCRIPT_FADE_SPEED };
+    let speed = if target > 0.5 {
+        TRANSCRIPT_RISE_SPEED
+    } else {
+        TRANSCRIPT_FADE_SPEED
+    };
     let opacity = state.transcript_opacity.get();
     let blend = 1.0 - (-speed * dt).exp();
     let next = opacity + (target - opacity) * blend;
@@ -885,15 +1198,11 @@ fn tick_transcript(state: &PillState, dt: f64) {
 }
 
 fn update_visibility(hwnd: HWND, state: &PillState) {
-    let visibility = state.visibility.get();
-    let is_active = state.phase.get() != Phase::Idle;
-    let is_assistant = state.assistant_active.get();
-
-    let should_show = match visibility {
-        Visibility::Hidden => is_assistant,
-        Visibility::WhileActive => is_active || is_assistant,
-        Visibility::Persistent => true,
-    };
+    let should_show = rust_pill_shared::should_show_pill(
+        state.visibility.get().into(),
+        state.phase.get() != Phase::Idle,
+        state.owns_panel(),
+    );
 
     unsafe {
         if should_show {
@@ -907,8 +1216,7 @@ fn update_visibility(hwnd: HWND, state: &PillState) {
 }
 
 fn update_typing_focus(_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.is_typing();
     let was_typing = TYPING_ACTIVE.with(|t| t.get());
 
     if is_typing && !was_typing {
@@ -927,10 +1235,14 @@ fn update_typing_focus(_hwnd: HWND, state: &PillState) {
 /// panel and syncs the hovered state (and the hover IPC message) on change.
 fn check_hover(hwnd: HWND, state: &PillState) {
     let mut cursor = POINT::default();
-    unsafe { let _ = GetCursorPos(&mut cursor); }
+    unsafe {
+        let _ = GetCursorPos(&mut cursor);
+    }
 
     let mut win_rect = RECT::default();
-    unsafe { let _ = GetWindowRect(hwnd, &mut win_rect); }
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut win_rect);
+    }
 
     let (ox, oy) = state.content_offset();
     let dw = state.draw_width.get();
@@ -950,21 +1262,30 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         && cy >= screen_pill_y - pad
         && cy <= screen_pill_y + pill_h + pad;
 
-    let in_panel = if state.assistant_active.get() {
+    let in_panel = if state.owns_panel() {
         let panel_x = win_rect.left as f64 + ox;
         let panel_y = win_rect.top as f64 + oy;
-        cx >= panel_x && cx <= panel_x + dw
-            && cy >= panel_y && cy <= panel_y + dh
+        cx >= panel_x && cx <= panel_x + dw && cy >= panel_y && cy <= panel_y + dh
     } else {
         false
     };
 
-    let in_tooltip = if state.tooltip_t.get() > 0.1 && state.style_count.get() > 1 {
+    let in_tooltip = if state.tooltip_opacity() > 0.1 && state.style_count.get() > 1 {
         let pill_area_top = win_rect.top as f64 + oy + (dh - PILL_AREA_HEIGHT);
         let tooltip_w = state.tooltip_width.get();
         let y_offset = (1.0 - state.tooltip_t.get()) * 4.0;
-        let tooltip_x = win_rect.left as f64 + ox + (dw - tooltip_w) / 2.0;
-        let tooltip_y = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
+        let blend = state.selector_placement.borrow().blend();
+        let (tooltip_x, tooltip_base) = rust_pill_shared::placement::tooltip_origin(
+            win_rect.left as f64 + ox,
+            pill_area_top,
+            dw,
+            PILL_AREA_HEIGHT,
+            tooltip_w,
+            TOOLTIP_HEIGHT,
+            TOOLTIP_GAP,
+            blend,
+        );
+        let tooltip_y = tooltip_base + y_offset * (1.0 - 2.0 * blend);
 
         cx >= tooltip_x
             && cx <= tooltip_x + tooltip_w
@@ -974,21 +1295,26 @@ fn check_hover(hwnd: HWND, state: &PillState) {
         false
     };
 
-    // A held button owns the pointer, so the hit tests above cannot be trusted:
-    // dragging moves the window and easily outruns it, which would collapse the
-    // pill to its unhovered size mid-gesture.
-    let new_hovered = rust_pill_shared::resolve_hover(
-        in_pill || in_tooltip || in_panel,
-        state.pointer_down.get(),
-    );
-    let was_hovered = state.hovered.get();
-
-    if new_hovered != was_hovered {
-        state.hovered.set(new_hovered);
+    // Hover intent: the pointer must dwell on the pill at low speed before
+    // expansion and tooltips fire, and they linger through a short grace once
+    // it leaves, so fast pass-throughs never flicker the pill. A held button
+    // pins hover regardless of the hit tests above: dragging moves the window
+    // and easily outruns it, which would collapse the pill mid-gesture.
+    let output = state.hover_intent.borrow_mut().advance(&HoverFrame {
+        probed: in_pill || in_tooltip || in_panel,
+        pointer_x: cx,
+        pointer_y: cy,
+        now: drag_now(),
+        pointer_down: state.pointer_down.get(),
+    });
+    state.hovered.set(output.hovered);
+    if output.entered || output.exited {
         state.dirty.set(true);
-        ipc::send(&OutMessage::Hover { hovered: new_hovered });
+        ipc::send(&OutMessage::Hover {
+            hovered: output.hovered,
+        });
     }
-    if !new_hovered {
+    if !output.hovered {
         state.mouse_x.set(-1000.0);
         state.mouse_y.set(-1000.0);
     }
@@ -996,7 +1322,10 @@ fn check_hover(hwnd: HWND, state: &PillState) {
 
 fn update_layered(hwnd: HWND, gfx: &Gfx) {
     unsafe {
-        let size = SIZE { cx: gfx.width, cy: gfx.height };
+        let size = SIZE {
+            cx: gfx.width,
+            cy: gfx.height,
+        };
         let src_point = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
@@ -1018,60 +1347,85 @@ fn update_layered(hwnd: HWND, gfx: &Gfx) {
     }
 }
 
-fn initial_position() -> (i32, i32) {
+/// Query a real monitor once, with one initialization and failure policy.
+/// Callers choose primary/nearest/containing lookup according to their role.
+fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
+    if monitor == HMONITOR::default() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(monitor, &mut info).as_bool().then_some(info) }
+}
+
+fn initial_position(win_h: i32) -> (i32, i32) {
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
         let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        let _ = GetMonitorInfoW(monitor, &mut info);
+        let Some(info) = query_monitor_info(monitor) else { return (0, 0) };
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
-        let x = wa.left + (wa_w - WINDOW_W_TYPING) / 2;
-        let y = wa.top + wa_h - WINDOW_H_TYPING - MARGIN_BOTTOM;
+        let x = default_pill_x(wa.left, wa_w, WINDOW_W_TYPING).round() as i32;
+        let y = default_pill_y(wa.top, wa_h, win_h);
         (x, y)
     }
 }
 
+// Drawing and the native entry use the fixed typing canvas. Extra selector
+// rows belong below it; they must not lift the parked content or panel clamp.
+fn content_canvas_height(win_h: i32) -> i32 {
+    win_h.clamp(0, WINDOW_H_TYPING)
+}
+
+fn default_pill_x(work_area_left: i32, work_area_width: i32, win_w: i32) -> f64 {
+    work_area_left as f64 + (work_area_width as f64 - win_w as f64) / 2.0
+}
+
+fn default_pill_y(work_area_top: i32, work_area_height: i32, win_h: i32) -> i32 {
+    let placement = PILL_PLACEMENT.with(|c| c.get());
+    if placement == PILL_PLACEMENT_TOP {
+        work_area_top + MARGIN_BOTTOM - (WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT)
+    } else {
+        work_area_top + work_area_height - content_canvas_height(win_h) - MARGIN_BOTTOM
+    }
+}
+
 fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
+    // The frame loop owns the window while a drag is held or settling; the
+    // cursor tick must not fight it with a stale saved position.
+    if state.dragging.get() || state.drag_motion.borrow().is_settling() {
+        return;
+    }
     unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
 
-        // The main window is never resized (fixed 600×362 canvas), so the live
-        // rect and the typing constants agree — but use the live rect anyway so
-        // nothing here assumes a specific mode's size.
+        // The main window keeps extra transparent rows below the pill for the
+        // below selector slot, so the live rect is taller than the typing
+        // constants — but use the live rect anyway so nothing here assumes a
+        // specific mode's size.
         let mut current = RECT::default();
         let _ = GetWindowRect(hwnd, &mut current);
         let win_w = current.right - current.left;
         let win_h = current.bottom - current.top;
 
-        // A drag belongs to whichever monitor the cursor is on. Everything
-        // else belongs to the monitor the pill actually lives on — resolving
+        // A parked pill belongs to the monitor it actually lives on. Resolving
         // the monitor from the live cursor here is what made a pinned pill hop
         // monitors (and clamp into the wrong work area) whenever the pointer
-        // crossed a screen edge.
-        let dragging = state.dragging.get();
-        let (px, py, pw, ph) = draw::pill_position(
-            state,
-            state.draw_width.get(),
-            state.draw_height.get(),
-        );
+        // crossed a screen edge. Drags and their release settles never reach
+        // this function; the frame loop positions them on the cursor's monitor.
+        let (px, py, pw, ph) =
+            draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (cox, coy) = state.content_offset();
         let footprint_cx = (cox + px + pw / 2.0).round() as i32;
         let footprint_cy = (coy + py + ph / 2.0).round() as i32;
-        let reset_to_cursor = !state.has_saved_position.get()
-            && state.reset_strategy.get() == ResetStrategy::Cursor;
-        let monitor = if dragging {
-            MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
-        } else if reset_to_cursor {
-            // One-shot re-home onto the cursor's monitor, then revert so the
-            // pill stays put on subsequent ticks.
-            state.reset_strategy.set(ResetStrategy::Current);
+        let reset_to_cursor =
+            !state.has_saved_position.get() && state.reset_strategy.get() == ResetStrategy::Cursor;
+        let monitor = if reset_to_cursor {
             MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY)
         } else if state.has_saved_position.get() {
             let saved_center = POINT {
@@ -1086,81 +1440,394 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             };
             MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST)
         };
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        let _ = GetMonitorInfoW(monitor, &mut info);
+        let Some(info) = query_monitor_info(monitor) else { return };
+        if reset_to_cursor {
+            // Consume the one-shot re-home only after lookup succeeds.
+            state.reset_strategy.set(ResetStrategy::Current);
+        }
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
 
-        // The OS window is a fixed 600×362 transparent canvas; the visible pill
-        // is drawn inside it, centred horizontally and bottom-anchored.
-        // Clamping the *window* into the work area boxes the pill into the
-        // middle of the screen — the invisible canvas margins eat hundreds of
-        // pixels on every side. In dictation mode, clamp the pill's visible
-        // footprint instead so it can be parked at the true screen edges;
-        // panel/typing modes fill the canvas, so they keep whole-window
-        // clamping.
-        let (min_x, min_y, max_x, max_y) =
-            if state.window_mode.get() == WindowMode::Dictation
-                && !state.assistant_active.get()
-            {
-                let fx = (cox + px).round() as i32;
-                let fy = (coy + py).round() as i32;
-                let fw = pw.round().max(1.0) as i32;
-                let fh = ph.round().max(1.0) as i32;
-                (
-                    wa.left - fx,
-                    wa.top - fy,
-                    wa.right - fx - fw,
-                    wa.bottom - fy - fh,
-                )
-            } else {
-                (wa.left, wa.top, wa.right - win_w, wa.bottom - win_h)
-            };
-
-        // A visible frame smaller than the clamp target inverts the bounds;
-        // keep max >= min so the clamp cannot push the origin off screen.
-        let max_x = max_x.max(min_x);
-        let max_y = max_y.max(min_y);
-
-        let (x, y) = if dragging {
-            // Drag mode: keep the grabbed point of the pill under the cursor so
-            // the window tracks the pointer 1:1 instead of jumping to centre it.
-            let mut dx = cursor.x - state.drag_grab_offset_x.get().round() as i32;
-            let mut dy = cursor.y - state.drag_grab_offset_y.get().round() as i32;
-            // Clamp the pill's footprint to the work area of whichever monitor
-            // holds the cursor.
-            dx = dx.max(min_x).min(max_x);
-            dy = dy.max(min_y).min(max_y);
-            (dx, dy)
-        } else if state.has_saved_position.get() {
+        let bounds = window_clamp_bounds(state, wa, win_w, win_h);
+        let (x, y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
             // of the monitor that position belongs to.
-            let mut sx = state.saved_x.get();
-            let mut sy = state.saved_y.get();
-            sx = sx.max(min_x).min(max_x);
-            sy = sy.max(min_y).min(max_y);
-            (sx, sy)
+            bounds.clamp_point(
+                state.saved_x.get() as f64,
+                state.saved_y.get() as f64,
+            )
         } else {
-            // Default: centre at the bottom of the pill's current monitor.
-            let mut x = wa.left + (wa_w - win_w) / 2;
-            let mut y = wa.top + wa_h - win_h - MARGIN_BOTTOM;
-            // Clamp into the work area, matching the drag and saved branches.
-            x = x.max(min_x).min(max_x);
-            y = y.max(min_y).min(max_y);
-            (x, y)
+            let x = default_pill_x(wa.left, wa_w, win_w);
+            let y = default_pill_y(wa.top, wa_h, win_h);
+            bounds.clamp_point(x, y as f64)
         };
+        // Win32 origins must be integral. The f64 default center can land
+        // halfway between pixels when the work-area and window widths differ
+        // in parity, so choose the nearest pixel after clamping.
+        let (x, y) = (x.round() as i32, y.round() as i32);
 
         if current.left != x || current.top != y {
             let _ = SetWindowPos(
-                hwnd, None, x, y, 0, 0,
+                hwnd,
+                None,
+                x,
+                y,
+                0,
+                0,
                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
     }
+}
+
+/// Clamp bounds for the window top-left inside a monitor work area.
+///
+/// The OS window is a fixed transparent canvas; the visible pill is drawn
+/// inside it, centred horizontally and bottom-anchored. Clamping the *window*
+/// into the work area boxes the pill into the middle of the screen, because
+/// the invisible canvas margins eat hundreds of pixels on every side. In dictation
+/// mode, clamp the pill's visible footprint instead so it can be parked at the
+/// true screen edges; panel/typing modes fill the canvas, so they keep
+/// whole-window clamping. Shared by the cursor-tick repositioning and the
+/// frame-loop drag so the two can never disagree about the work area.
+fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> DragBounds {
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let (cox, coy) = state.content_offset();
+    let (min_x, min_y, max_x, max_y) =
+        if state.effective_window_mode() == WindowMode::Dictation
+            && !state.assistant_active.get()
+        {
+            let fx = (cox + px).round() as i32;
+            let fy = (coy + py).round() as i32;
+            let fw = pw.round().max(1.0) as i32;
+            let fh = ph.round().max(1.0) as i32;
+            (
+                wa.left - fx,
+                wa.top - fy,
+                wa.right - fx - fw,
+                wa.bottom - fy - fh,
+            )
+        } else {
+            (wa.left, wa.top, wa.right - win_w, wa.bottom - content_canvas_height(win_h))
+        };
+
+    // Preserve inverted bounds here: drag placement may use them to collapse
+    // toward a shared seam, while parked placement normalizes in clamp_point.
+    DragBounds {
+        min_x: min_x as f64,
+        min_y: min_y as f64,
+        max_x: max_x as f64,
+        max_y: max_y as f64,
+    }
+}
+
+/// Frame-loop drag input: the cursor position, the current window rect, and
+/// the clamp bounds on the active drag monitor. Settling retains the drop
+/// monitor instead of following later cursor movement.
+fn monitor_rect(rect: RECT) -> rust_pill_shared::edge::MonitorRect {
+    rust_pill_shared::edge::MonitorRect {
+        x: rect.left as f64,
+        y: rect.top as f64,
+        width: (rect.right - rect.left) as f64,
+        height: (rect.bottom - rect.top) as f64,
+    }
+}
+
+struct MonitorEnumeration {
+    monitors: Vec<MonitorRect>,
+    failed: bool,
+}
+
+unsafe extern "system" fn collect_monitor_rect(
+    monitor: HMONITOR,
+    _hdc: HDC,
+    _rect: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
+    // SAFETY: EnumDisplayMonitors invokes this synchronously with the pointer
+    // to the live enumeration context passed in `dwData` below.
+    let snapshot = unsafe { &mut *(data.0 as *mut MonitorEnumeration) };
+    let Some(info) = query_monitor_info(monitor) else {
+        snapshot.failed = true;
+        return BOOL(0);
+    };
+    let candidate = monitor_rect(info.rcMonitor);
+    if !snapshot.monitors.contains(&candidate) {
+        snapshot.monitors.push(candidate);
+    }
+    BOOL(1)
+}
+
+/// Enumerate a complete monitor snapshot in virtual-screen pixel coordinates.
+/// Any callback or API failure marks the snapshot unknown; callers must not
+/// interpret a partial list as a monitor being unplugged.
+fn enumerate_monitor_topology(current: MonitorRect) -> Option<Vec<MonitorRect>> {
+    let mut snapshot = MonitorEnumeration { monitors: Vec::new(), failed: false };
+    let data = LPARAM(&mut snapshot as *mut _ as isize);
+    // SAFETY: EnumDisplayMonitors completes callbacks synchronously, so `data`
+    // remains a valid pointer to `snapshot` for the entire enumeration.
+    let succeeded = unsafe { EnumDisplayMonitors(None, None, Some(collect_monitor_rect), data) };
+    (succeeded.as_bool() && !snapshot.failed && snapshot.monitors.contains(&current))
+        .then_some(snapshot.monitors)
+}
+
+fn retain_monitor_topology(
+    last_known: &mut Option<Vec<MonitorRect>>,
+    current: MonitorRect,
+    enumerated: Option<Vec<MonitorRect>>,
+) -> Vec<MonitorRect> {
+    if let Some(snapshot) = enumerated.filter(|snapshot| snapshot.contains(&current)) {
+        *last_known = Some(snapshot.clone());
+        return snapshot;
+    }
+
+    last_known
+        .as_ref()
+        .filter(|snapshot| snapshot.contains(&current))
+        .cloned()
+        .unwrap_or_else(|| vec![current])
+}
+
+/// Return every monitor except the current one. This intentionally includes
+/// non-adjacent monitors so partial-overlap hysteresis can survive the pill
+/// center briefly leaving a neighbor's shared span.
+fn other_monitor_rects(current: MonitorRect, topology: &[MonitorRect]) -> Vec<MonitorRect> {
+    topology.iter().copied().filter(|monitor| *monitor != current).collect()
+}
+
+fn drag_monitor_neighbors(state: &PillState, current: MonitorRect) -> Vec<MonitorRect> {
+    let enumerated = enumerate_monitor_topology(current);
+    let topology = retain_monitor_topology(
+        &mut state.last_monitor_topology.borrow_mut(),
+        current,
+        enumerated,
+    );
+    other_monitor_rects(current, &topology)
+}
+
+fn drag_placement(
+    hwnd: HWND,
+    state: &PillState,
+) -> Option<(DragBounds, POINT, RECT, rust_pill_shared::edge::EdgeWork)> {
+    unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        let mut current = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut current);
+        let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
+            (cursor.x as f64, cursor.y as f64), state.dragging.get(),
+        );
+        let anchor = POINT { x: anchor_x.round() as i32, y: anchor_y.round() as i32 };
+        let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
+        let info = query_monitor_info(monitor)?;
+        let work_rect = monitor_rect(info.rcWork);
+        let (px, py, pw, ph) = draw::pill_position(
+            state, state.draw_width.get(), state.draw_height.get(),
+        );
+        let (content_x, content_y) = state.content_offset();
+        let center_x = current.left as f64 + content_x + px + pw / 2.0;
+        let center_y = current.top as f64 + content_y + py + ph / 2.0;
+        let area = if state.dragging.get() {
+            let current_monitor = monitor_rect(info.rcMonitor);
+            let neighbors = drag_monitor_neighbors(state, current_monitor);
+            state.drag_motion.borrow_mut().resolve_drag_region(
+                current_monitor,
+                work_rect,
+                &neighbors,
+                (center_x, center_y),
+            )
+        } else {
+            rust_pill_shared::edge::DragRegion {
+                bounds: work_rect,
+                edge_mask: rust_pill_shared::edge::EdgeMask::ALL,
+            }
+        };
+        let region = RECT {
+            left: area.bounds.x.round() as i32,
+            top: area.bounds.y.round() as i32,
+            right: area.bounds.right().round() as i32,
+            bottom: area.bounds.bottom().round() as i32,
+        };
+        let mut bounds = window_clamp_bounds(
+            state,
+            region,
+            current.right - current.left,
+            current.bottom - current.top,
+        );
+        if state.dragging.get() {
+            bounds.apply_shared_seam_bounds(
+                area.bounds,
+                (center_x - current.left as f64, center_y - current.top as f64),
+                area.edge_mask,
+            );
+        }
+        bounds.collapse_inverted(
+            area.edge_mask,
+            (current.left as f64, current.top as f64),
+        );
+        let work = rust_pill_shared::edge::EdgeWork {
+            width: work_rect.width,
+            height: work_rect.height,
+            edges: area.edge_mask,
+        };
+        Some((bounds, cursor, current, work))
+    }
+}
+
+/// Advances one frame of drag motion: pushes the newest cursor position into
+/// the shared controller and applies its output. Runs on the frame clock (not
+/// the cursor timer) so a held drag tracks at display rate. When a release
+/// settle finishes, the final position is persisted.
+fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
+    let dragging = state.dragging.get();
+    let settling = state.drag_motion.borrow().is_settling();
+    if !dragging && !settling {
+        return;
+    }
+    let Some((bounds, cursor, current, work)) = drag_placement(hwnd, state) else { return };
+    let output = state.drag_motion.borrow_mut().advance(&DragFrame {
+        pointer_x: cursor.x as f64,
+        pointer_y: cursor.y as f64,
+        now: drag_now(),
+        dt,
+        bounds,
+        edge_work: Some(work),
+        held: dragging,
+        reduced_motion: reduced_motion(),
+    });
+    let x = output.x.round() as i32;
+    let y = output.y.round() as i32;
+    if current.left != x || current.top != y {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+    if settling && output.settled {
+        persist_drag_position(hwnd, state);
+    }
+}
+
+/// Headroom above the selector's painted anchor, not the transparent canvas.
+fn selector_space_above(window_y: f64, work_y: f64, content_y: f64, pill_y: f64) -> f64 {
+    window_y + content_y + pill_y - work_y
+}
+
+/// Advances the shared selector-placement controller once per animation
+/// frame. Headroom comes from the live window rect against the monitor work
+/// area, so the selector drops below the pill exactly when the strip above
+/// no longer fits it. A missing work area leaves the side alone instead of
+/// flapping it.
+fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
+    let (rect, monitor) = current_pill_geometry(hwnd);
+    let (_, pill_y, _, _) = draw::pill_position(
+        state, state.draw_width.get(), state.draw_height.get(),
+    );
+    let space_above = monitor.map_or(f64::INFINITY, |work| {
+        selector_space_above(rect.y, work.y, state.content_offset().1, pill_y)
+    });
+    let changed = advance_selector_placement(
+        &mut state.selector_placement.borrow_mut(),
+        &rust_pill_shared::placement::PlacementFrame {
+            space_above,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt,
+            reduced_motion: reduced_motion(),
+        },
+    );
+    if changed {
+        state.dirty.set(true);
+    }
+}
+
+fn advance_selector_placement(
+    placement: &mut rust_pill_shared::placement::SelectorPlacement,
+    frame: &rust_pill_shared::placement::PlacementFrame,
+) -> bool {
+    let before = (placement.side(), placement.blend());
+    let output = placement.advance(frame);
+    (output.side, output.blend) != before
+}
+
+/// Full bounds of the monitor containing a screen point, for crossing feedback.
+/// The full monitor origin (not the work area) keys identity, so taskbar
+/// moves never read as crossings. Unknown points stay unknown instead of
+/// guessing.
+fn monitor_geometry_at(x: f64, y: f64) -> Option<Rect> {
+    if !x.is_finite() || !y.is_finite() {
+        return None;
+    }
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT { x: x.round() as i32, y: y.round() as i32 },
+            MONITOR_DEFAULTTONULL,
+        );
+        query_monitor_info(monitor).map(|info| Rect {
+            x: info.rcMonitor.left as f64,
+            y: info.rcMonitor.top as f64,
+            width: (info.rcMonitor.right - info.rcMonitor.left) as f64,
+            height: (info.rcMonitor.bottom - info.rcMonitor.top) as f64,
+        })
+    }
+}
+
+/// Advances the shared crossing-deformation controller once per frame from
+/// the monitor under the pill center. The transparent canvas may straddle a
+/// boundary the pill itself has not crossed, so the window monitor is not
+/// enough. A reduced-motion trigger arms the border flash instead.
+fn tick_crossing(hwnd: HWND, state: &PillState, dt: f64) {
+    let (rect, _) = current_pill_geometry(hwnd);
+    let (ox, oy) = state.content_offset();
+    let (px, py, pw, ph) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let cx = rect.x + ox + px + pw / 2.0;
+    let cy = rect.y + oy + py + ph / 2.0;
+    let monitor = monitor_geometry_at(cx, cy).unwrap_or(Rect {
+        x: f64::NAN, y: f64::NAN, width: f64::NAN, height: f64::NAN,
+    });
+    let rm = reduced_motion();
+    let (out, changed) = advance_crossing(
+        &mut state.crossing.borrow_mut(),
+        &rust_pill_shared::deform::CrossingFrame {
+            monitor_x: monitor.x,
+            monitor_y: monitor.y,
+            monitor_width: monitor.width,
+            monitor_height: monitor.height,
+            pill_cx: cx,
+            pill_cy: cy,
+            now: drag_now(),
+            dt,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: rm,
+        },
+    );
+    if changed {
+        state.dirty.set(true);
+    }
+    if out.triggered && rm {
+        state.flash_blue_active.set(true);
+        state.flash_blue_elapsed.set(0.0);
+    }
+}
+
+fn advance_crossing(
+    crossing: &mut rust_pill_shared::deform::CrossingDeform,
+    frame: &rust_pill_shared::deform::CrossingFrame,
+) -> (rust_pill_shared::deform::DeformOutput, bool) {
+    let before = crossing.scales();
+    let output = crossing.advance(frame);
+    let changed = before != (output.scale_x, output.scale_y);
+    (output, changed)
 }
 
 fn tick_long_press(state: &PillState, dt: f64) {
@@ -1174,7 +1841,6 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.long_press_elapsed.set(0.0);
         return;
     }
-
 
     // Cancel if mouse moved too far from start position (screen coords)
     unsafe {
@@ -1203,6 +1869,7 @@ fn tick_long_press(state: &PillState, dt: f64) {
         state.long_press_elapsed.set(0.0);
         // Enter drag mode directly (skip balloon pop for snappy interaction).
         state.dragging.set(true);
+        *state.last_monitor_topology.borrow_mut() = None;
         state.drag_cancelled.set(false);
         // Confirm the arm with the expanding halo, on the exact frame it fires.
         state.arm_pulse.set(rust_pill_shared::pulse_armed());
@@ -1217,12 +1884,21 @@ fn tick_long_press(state: &PillState, dt: f64) {
             let hwnd = HWND_CELL.with(|c| c.get());
             let mut rect = RECT::default();
             let _ = GetWindowRect(hwnd, &mut rect);
+
+            // Arm the shared controller with the grab point, and seed it
+            // with the arm sample so a quick release still has velocity data.
+            let now = drag_now();
+            state.drag_motion.borrow_mut().begin_drag(
+                cursor.x as f64 - rect.left as f64,
+                cursor.y as f64 - rect.top as f64,
+                rect.left as f64,
+                rect.top as f64,
+                now,
+            );
             state
-                .drag_grab_offset_x
-                .set(cursor.x as f64 - rect.left as f64);
-            state
-                .drag_grab_offset_y
-                .set(cursor.y as f64 - rect.top as f64);
+                .drag_motion
+                .borrow_mut()
+                .push_sample(cursor.x as f64, cursor.y as f64, now);
 
             // Take an OS-level pointer capture so we keep receiving mouse
             // input (and, critically, the button release) even when the
@@ -1230,6 +1906,45 @@ fn tick_long_press(state: &PillState, dt: f64) {
             let _ = SetCapture(hwnd);
         }
     }
+}
+
+/// Reads the pill window's screen rect and the work area of the monitor it
+/// lives on, so the desktop can anchor the composer next to the real pill
+/// instead of relying on OS-centred placement.
+fn current_pill_geometry(hwnd: HWND) -> (Rect, Option<Rect>) {
+    unsafe {
+        let mut wr = RECT::default();
+        let _ = GetWindowRect(hwnd, &mut wr);
+        let rect = Rect {
+            x: wr.left as f64,
+            y: wr.top as f64,
+            width: (wr.right - wr.left) as f64,
+            height: (wr.bottom - wr.top) as f64,
+        };
+        let monitor = {
+            let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            query_monitor_info(mon).map(|info| Rect {
+                x: info.rcWork.left as f64,
+                y: info.rcWork.top as f64,
+                width: (info.rcWork.right - info.rcWork.left) as f64,
+                height: (info.rcWork.bottom - info.rcWork.top) as f64,
+            })
+        };
+        (rect, monitor)
+    }
+}
+
+/// Cancel without saving the old drop. Clear gesture flags before releasing
+/// capture: ReleaseCapture can synchronously re-enter WM_CAPTURECHANGED.
+fn cancel_drag_gesture(hwnd: HWND, state: &PillState) {
+    state.long_press_active.set(false);
+    state.long_press_elapsed.set(0.0);
+    state.pointer_down.set(false);
+    // Consume a later button-up from the cancelled press without clicking.
+    state.drag_cancelled.set(true);
+    let _ = end_drag(hwnd, state, false);
+    // end_drag also runs when idle; cancel an already-running settle too.
+    state.drag_motion.borrow_mut().reset();
 }
 
 /// Terminate an in-progress drag, persist the drop position and release the
@@ -1240,16 +1955,15 @@ fn tick_long_press(state: &PillState, dt: f64) {
 fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     let was_dragging = state.dragging.get();
 
-    if was_dragging && persist_position {
-        // Leave the pill where it was dropped instead of snapping back.
-        let mut rect = RECT::default();
-        unsafe {
-            let _ = GetWindowRect(hwnd, &mut rect);
+    if was_dragging {
+        if persist_position {
+            // The drop point persists when the release settle finishes (the
+            // frame loop calls persist_drag_position on the settled frame),
+            // so the saved position always matches where the pill landed.
+            state.drag_motion.borrow_mut().end_drag(drag_now());
+        } else {
+            state.drag_motion.borrow_mut().reset();
         }
-        state.saved_x.set(rect.left);
-        state.saved_y.set(rect.top);
-        state.has_saved_position.set(true);
-        ipc::send(&OutMessage::PositionChanged { has_saved_position: true });
     }
 
     state.dragging.set(false);
@@ -1263,6 +1977,26 @@ fn end_drag(hwnd: HWND, state: &PillState, persist_position: bool) -> bool {
     }
 
     was_dragging
+}
+
+/// Persists the position the pill settled at after a drag: stores the live
+/// window origin (not the cursor) and tells the desktop, so the saved point
+/// matches the parked pill exactly.
+fn persist_drag_position(hwnd: HWND, state: &PillState) {
+    // Leave the pill where it was dropped instead of snapping back.
+    let mut rect = RECT::default();
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut rect);
+    }
+    state.saved_x.set(rect.left);
+    state.saved_y.set(rect.top);
+    state.has_saved_position.set(true);
+    let (win_rect, monitor) = current_pill_geometry(hwnd);
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect: Some(win_rect),
+        monitor,
+    });
 }
 
 /// Fallback release detection.
@@ -1303,8 +2037,6 @@ fn tick_drag_release_fallback(hwnd: HWND, state: &PillState) {
     // without a release event does not leave the pill pinned expanded.
     check_hover(hwnd, state);
 }
-
-
 
 /// Advances the long-press ring for one frame.
 ///
@@ -1356,40 +2088,6 @@ fn tick_ring(state: &PillState, dt: f64) {
     }
 }
 
-fn spring_anim(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.002 && new_vel.abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v.clamp(0.0, 1.0));
-        velocity.set(if !(0.0..=1.0).contains(&new_v) { 0.0 } else { new_vel });
-    }
-}
-
-fn spring_px(value: &Cell<f64>, velocity: &Cell<f64>, target: f64, stiffness: f64, dt: f64) {
-    let v = value.get();
-    let vel = velocity.get();
-    if v == target && vel == 0.0 { return; }
-    let damping = 2.0 * stiffness.sqrt();
-    let force = stiffness * (target - v) - damping * vel;
-    let new_vel = vel + force * dt;
-    let new_v = v + new_vel * dt;
-    if (new_v - target).abs() < 0.5 && (new_vel * dt).abs() < 0.5 {
-        value.set(target);
-        velocity.set(0.0);
-    } else {
-        value.set(new_v);
-        velocity.set(new_vel);
-    }
-}
-
 // ── Native text input overlay ────────────────────────────────────────
 
 const ES_AUTOHSCROLL: u32 = 0x0080;
@@ -1424,24 +2122,32 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
             class_name,
             w!(""),
             WS_POPUP | WS_CLIPCHILDREN,
-            0, 0, 400, PANEL_INPUT_HEIGHT as i32,
+            0,
+            0,
+            400,
+            PANEL_INPUT_HEIGHT as i32,
             Some(main_hwnd),
             None,
             Some(hinstance.into()),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let edit = CreateWindowExW(
             WS_EX_LEFT,
             w!("EDIT"),
             w!(""),
             WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | ES_AUTOHSCROLL),
-            0, 0, 400, PANEL_INPUT_HEIGHT as i32,
+            0,
+            0,
+            400,
+            PANEL_INPUT_HEIGHT as i32,
             Some(container),
             None,
             Some(hinstance.into()),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Always use the embedded Satoshi face for the type-mode editor.
         crate::font::install_embedded_satoshi();
@@ -1452,11 +2158,21 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
         lf.lfHeight = -18;
         lf.lfWeight = 500; // Medium
         let font = CreateFontIndirectW(&lf);
-        SendMessageW(edit, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+        SendMessageW(
+            edit,
+            WM_SETFONT,
+            Some(WPARAM(font.0 as usize)),
+            Some(LPARAM(1)),
+        );
 
         // Set internal margins
         let margins = (8u32 as isize) | ((8u32 as isize) << 16);
-        SendMessageW(edit, EM_SETMARGINS, Some(WPARAM((EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize)), Some(LPARAM(margins)));
+        SendMessageW(
+            edit,
+            EM_SETMARGINS,
+            Some(WPARAM((EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize)),
+            Some(LPARAM(margins)),
+        );
 
         EDIT_CONTAINER.with(|c| c.set(container));
         EDIT_HWND.with(|e| e.set(edit));
@@ -1464,7 +2180,10 @@ fn create_edit_overlay(hinstance: HMODULE, main_hwnd: HWND) {
 }
 
 unsafe extern "system" fn edit_container_proc(
-    hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM,
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
 ) -> LRESULT {
     match msg {
         WM_CTLCOLOREDIT => {
@@ -1495,31 +2214,45 @@ unsafe extern "system" fn edit_container_proc(
 /// Returns true if the message was consumed and should not be dispatched.
 fn handle_edit_message(msg: &MSG) -> bool {
     let edit = EDIT_HWND.with(|e| e.get());
-    if msg.hwnd != edit { return false; }
+    if msg.hwnd != edit {
+        return false;
+    }
 
     match msg.message {
         WM_KEYDOWN => {
             let ctrl = unsafe { (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0 };
 
             if msg.wParam.0 == VK_RETURN.0 as usize {
-                // Send the typed message
-                STATE.with(|s| {
-                    if let Some(ref state) = *s.borrow() {
-                        let text = state.entry_text.borrow().trim().to_string();
-                        if !text.is_empty() {
-                            ipc::send(&OutMessage::TypedMessage { text });
-                            *state.entry_text.borrow_mut() = String::new();
-                        }
-                    }
+                // Enter submits: an insert decision while a transcript is under
+                // review, a message to the assistant otherwise. Nothing was
+                // sent when the entry holds only blanks, so the text has to
+                // stay put instead of being wiped for no result.
+                let sent = STATE.with(|s| match *s.borrow() {
+                    Some(ref state) => input::submit_entry(state),
+                    None => false,
                 });
-                unsafe { let _ = SetWindowTextW(edit, w!("")); }
+                if sent {
+                    unsafe {
+                        let _ = SetWindowTextW(edit, w!(""));
+                    }
+                }
                 return true;
             } else if msg.wParam.0 == VK_ESCAPE.0 as usize {
-                ipc::send(&OutMessage::AssistantClose);
+                // Escape while a transcript is under review is a cancel
+                // decision: the desktop is waiting for an answer.
+                let review_id = STATE.with(|s| {
+                    s.borrow().as_ref().and_then(|state| state.pending_review_id())
+                });
+                match review_id {
+                    Some(review_id) => input::send_review_decision(&review_id, "cancel", None),
+                    None => ipc::send(&OutMessage::AssistantClose),
+                }
                 return true;
             } else if ctrl && msg.wParam.0 == 'A' as usize {
                 // Select all
-                unsafe { SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1))); }
+                unsafe {
+                    SendMessageW(edit, EM_SETSEL, Some(WPARAM(0)), Some(LPARAM(-1)));
+                }
                 return true;
             } else if ctrl && msg.wParam.0 == VK_BACK.0 as usize {
                 ctrl_backspace(edit);
@@ -1536,11 +2269,15 @@ fn ctrl_backspace(edit: HWND) {
         // Get caret position from return value: LOWORD=start, HIWORD=end
         let result = SendMessageW(edit, EM_GETSEL, None, None);
         let caret = ((result.0 >> 16) & 0xFFFF) as usize;
-        if caret == 0 { return; }
+        if caret == 0 {
+            return;
+        }
 
         // Get text as UTF-16
         let len = GetWindowTextLengthW(edit);
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
 
@@ -1556,15 +2293,24 @@ fn ctrl_backspace(edit: HWND) {
         }
 
         // Select from word start to caret and replace with empty
-        SendMessageW(edit, EM_SETSEL, Some(WPARAM(pos)), Some(LPARAM(caret as isize)));
+        SendMessageW(
+            edit,
+            EM_SETSEL,
+            Some(WPARAM(pos)),
+            Some(LPARAM(caret as isize)),
+        );
         let empty: [u16; 1] = [0];
-        SendMessageW(edit, EM_REPLACESEL, Some(WPARAM(1)), Some(LPARAM(empty.as_ptr() as isize)));
+        SendMessageW(
+            edit,
+            EM_REPLACESEL,
+            Some(WPARAM(1)),
+            Some(LPARAM(empty.as_ptr() as isize)),
+        );
     }
 }
 
 fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
+    let is_typing = state.is_typing();
     let container = EDIT_CONTAINER.with(|c| c.get());
     let edit = EDIT_HWND.with(|e| e.get());
 
@@ -1593,7 +2339,9 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
     let input_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0 - send_btn_size - 8.0;
 
     let mut win_rect = RECT::default();
-    unsafe { let _ = GetWindowRect(main_hwnd, &mut win_rect); }
+    unsafe {
+        let _ = GetWindowRect(main_hwnd, &mut win_rect);
+    }
 
     let screen_x = win_rect.left as f64 + ox + input_x;
     let screen_y = win_rect.top as f64 + oy + input_y + 1.0;
@@ -1603,20 +2351,28 @@ fn update_edit_overlay(main_hwnd: HWND, state: &PillState) {
         // Color key makes the background transparent; alpha matches text to panel opacity
         let alpha = (state.panel_open_t.get() * PANEL_BG_ALPHA * 255.0) as u8;
         let _ = SetLayeredWindowAttributes(
-            container, COLORREF(EDIT_COLOR_KEY), alpha,
+            container,
+            COLORREF(EDIT_COLOR_KEY),
+            alpha,
             LWA_COLORKEY | LWA_ALPHA,
         );
 
         let _ = SetWindowPos(
-            container, None,
-            screen_x as i32, screen_y as i32,
-            input_w as i32, h as i32,
+            container,
+            None,
+            screen_x as i32,
+            screen_y as i32,
+            input_w as i32,
+            h as i32,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
         );
         let _ = SetWindowPos(
-            edit, None,
-            0, 0,
-            input_w as i32, h as i32,
+            edit,
+            None,
+            0,
+            0,
+            input_w as i32,
+            h as i32,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE,
         );
     }
@@ -1633,7 +2389,9 @@ fn get_edit_text() -> String {
     let edit = EDIT_HWND.with(|e| e.get());
     unsafe {
         let len = GetWindowTextLengthW(edit);
-        if len == 0 { return String::new(); }
+        if len == 0 {
+            return String::new();
+        }
         let mut buf = vec![0u16; (len + 1) as usize];
         GetWindowTextW(edit, &mut buf);
         String::from_utf16_lossy(&buf[..len as usize])
@@ -1643,7 +2401,9 @@ fn get_edit_text() -> String {
 fn set_edit_text(text: &str) {
     let edit = EDIT_HWND.with(|e| e.get());
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    unsafe { let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr())); }
+    unsafe {
+        let _ = SetWindowTextW(edit, PCWSTR(wide.as_ptr()));
+    }
 }
 
 pub(crate) fn clear_edit_control() {
@@ -1656,5 +2416,206 @@ pub(crate) fn focus_edit_control() {
     unsafe {
         let _ = SetForegroundWindow(container);
         let _ = SetFocus(Some(edit));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clearing_crossing_deformation_requests_the_final_repaint() {
+        use rust_pill_shared::deform::{CrossingDeform, CrossingFrame};
+        let mut crossing = CrossingDeform::new();
+        let mut frame = CrossingFrame {
+            monitor_x: 0.0, monitor_y: 0.0, monitor_width: 1920.0, monitor_height: 1080.0,
+            pill_cx: 100.0, pill_cy: 500.0,
+            now: 0.0, dt: 1.0 / 60.0, stiffness: SPRING_STIFFNESS, reduced_motion: false,
+        };
+        assert!(!advance_crossing(&mut crossing, &frame).1);
+        frame.monitor_x = 1920.0;
+        frame.pill_cx = 200.0;
+        frame.now += frame.dt;
+        let (active, changed) = advance_crossing(&mut crossing, &frame);
+        assert!(active.triggered && active.active && changed);
+        frame.monitor_x = f64::NAN;
+        frame.reduced_motion = true;
+        frame.now += frame.dt;
+        let (rest, changed) = advance_crossing(&mut crossing, &frame);
+        assert!(changed);
+        assert!(!rest.active);
+        assert_eq!((rest.scale_x, rest.scale_y), (1.0, 1.0));
+        assert!(!advance_crossing(&mut crossing, &frame).1);
+    }
+
+    #[test]
+    fn failed_animation_query_preserves_the_last_successful_preference() {
+        let cache = Cell::new(false);
+        assert!(update_reduced_motion_cache(&cache, Some(false)));
+        assert!(update_reduced_motion_cache(&cache, None));
+        assert!(!update_reduced_motion_cache(&cache, Some(true)));
+        assert!(!update_reduced_motion_cache(&cache, None));
+    }
+
+    #[test]
+    fn reduced_motion_side_changes_request_a_redraw_even_without_velocity() {
+        use rust_pill_shared::placement::{PlacementFrame, SelectorPlacement};
+        let mut placement = SelectorPlacement::new();
+        let mut frame = PlacementFrame {
+            space_above: 0.0, tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS, dt: 0.02, reduced_motion: true,
+        };
+        assert!(advance_selector_placement(&mut placement, &frame));
+        assert_eq!(placement.blend_velocity(), 0.0);
+        assert!(!advance_selector_placement(&mut placement, &frame));
+        frame.space_above = 200.0;
+        assert!(advance_selector_placement(&mut placement, &frame));
+        assert_eq!(placement.blend_velocity(), 0.0);
+    }
+
+    #[test]
+    fn selector_headroom_uses_the_painted_anchor_across_monitor_origins() {
+        // Content origin plus the live pill top, across both canvas modes.
+        assert_eq!(
+            selector_space_above(20.0, 0.0, 120.0, 80.0),
+            220.0
+        );
+        assert_eq!(
+            selector_space_above(20.0, 0.0, 0.0, 200.0),
+            220.0
+        );
+        assert_eq!(
+            selector_space_above(-530.0, -550.0, 120.0, 80.0),
+            220.0
+        );
+        assert_eq!(
+            selector_space_above(-250.0, 0.0, 120.0, 80.0),
+            -50.0
+        );
+    }
+
+    #[test]
+    fn topmost_reassert_fires_on_first_tick() {
+        assert!(should_reassert_topmost(None, Instant::now()));
+    }
+
+    #[test]
+    fn topmost_reassert_skips_within_interval() {
+        let prev = Instant::now();
+        let next = prev + Duration::from_millis(500);
+        assert!(!should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn topmost_reassert_fires_after_interval() {
+        let prev = Instant::now();
+        let next = prev + TOPMOST_REASSERT_INTERVAL + Duration::from_millis(1);
+        assert!(should_reassert_topmost(Some(prev), next));
+    }
+
+    #[test]
+    fn maybe_reassert_topmost_invokes_setwindowpos() {
+        TOPMOST_REASSERT_COUNT.with(|c| c.set(0));
+        LAST_TOPMOST_REASSERT.with(|c| c.set(None));
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_first = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(after_first, 1, "first tick should fire reassert");
+
+        maybe_reassert_topmost(HWND(std::ptr::null_mut()), Instant::now());
+        let after_second = TOPMOST_REASSERT_COUNT.with(|c| c.get());
+        assert_eq!(
+            after_second, 1,
+            "immediate second tick should be throttled by interval"
+        );
+    }
+
+    #[test]
+    fn failed_monitor_enumeration_reuses_last_complete_topology() {
+        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1280.0, height: 900.0 };
+        let non_adjacent = MonitorRect { x: 5000.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let mut last_known = Some(vec![current, neighbor, non_adjacent]);
+
+        let topology = retain_monitor_topology(&mut last_known, current, None);
+
+        assert_eq!(topology, vec![current, neighbor, non_adjacent]);
+        assert_eq!(other_monitor_rects(current, &topology), vec![neighbor, non_adjacent]);
+    }
+
+    #[test]
+    fn complete_monitor_enumeration_replaces_removed_neighbors() {
+        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let removed = MonitorRect { x: 1920.0, y: 0.0, width: 1280.0, height: 900.0 };
+        let connected = MonitorRect { x: 0.0, y: 1080.0, width: 1920.0, height: 1080.0 };
+        let mut last_known = Some(vec![current, removed]);
+
+        let topology = retain_monitor_topology(
+            &mut last_known,
+            current,
+            Some(vec![current, connected]),
+        );
+
+        assert_eq!(other_monitor_rects(current, &topology), vec![connected]);
+    }
+
+    #[test]
+    fn an_incomplete_snapshot_without_a_cache_only_uses_the_known_monitor() {
+        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let mut last_known = None;
+
+        let topology = retain_monitor_topology(&mut last_known, current, None);
+
+        assert_eq!(topology, vec![current]);
+        assert_eq!(last_known, None);
+    }
+
+    #[test]
+    fn default_horizontal_center_preserves_half_pixel_until_nearest_rounding() {
+        let center = default_pill_x(0, 1921, 800);
+        assert!((center - 560.5).abs() < f64::EPSILON);
+        assert_eq!(center.round() as i32, 561);
+
+        let negative_origin = default_pill_x(-1920, 1921, 800);
+        assert!((negative_origin + 1359.5).abs() < f64::EPSILON);
+        assert_eq!(negative_origin.round() as i32, -1360);
+    }
+
+    #[test]
+    fn default_pill_y_bottom_anchors_to_bottom() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
+        assert_eq!(default_pill_y(0, 1080, 362), 1080 - 362 - MARGIN_BOTTOM);
+    }
+
+    #[test]
+    fn selector_reserve_does_not_lift_the_parked_windows_canvas() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
+        let full_h = WINDOW_H_TYPING
+            + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+        for work_top in [-1080, 0, 50] {
+            let y = default_pill_y(work_top, 1080, full_h);
+            assert_eq!(y, default_pill_y(work_top, 1080, WINDOW_H_TYPING));
+            assert_eq!(y + WINDOW_H_TYPING, work_top + 1080 - MARGIN_BOTTOM);
+            // Panel clamp must not undo the default placement on the next tick.
+            assert!(y <= work_top + 1080 - content_canvas_height(full_h));
+        }
+    }
+
+    #[test]
+    fn default_pill_y_top_anchors_to_top() {
+        PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_TOP));
+        let expected_offset = WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT;
+        assert_eq!(default_pill_y(0, 1080, 362), MARGIN_BOTTOM - expected_offset);
+        assert_eq!(default_pill_y(50, 1080, 362), 50 + MARGIN_BOTTOM - expected_offset);
+    }
+}
+
+#[cfg(test)]
+mod monitor_query_tests {
+    use super::{query_monitor_info, HMONITOR};
+
+    #[test]
+    fn null_monitor_is_not_a_zero_sized_work_area() {
+        assert!(query_monitor_info(HMONITOR::default()).is_none());
     }
 }

@@ -2,9 +2,11 @@ import type {
   AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   PostProcessingMode,
   TranscriptionMode,
+  UpdateChannel,
 } from "./common.types";
 
 export type UserPreferences = {
@@ -30,6 +32,7 @@ export type UserPreferences = {
   ignoreUpdateDialog: boolean;
   incognitoModeEnabled: boolean;
   incognitoModeIncludeInStats: boolean;
+  preserveAudioOnFailure: boolean;
   dictationLimitMinutes: number;
   dictationPillVisibility: DictationPillVisibility;
   realtimeOutputEnabled: boolean;
@@ -43,7 +46,31 @@ export type UserPreferences = {
   insertionMethod: Nullable<string>;
   typingSpeedMs: Nullable<number>;
   pillResetMonitorStrategy: PillResetMonitorStrategy;
+  pillPlacement: PillPlacement;
+  /** Update channel; beta offers prereleases and may lag back to stable. */
+  updateChannel: UpdateChannel;
   alwaysRequestAdminOnStartup: boolean;
+  handsFreeDelayMs: Nullable<number>;
+  /** Optional opt-in for activation-key + arrow style cycling while dictating. */
+  inDictationStyleSwitchingEnabled: boolean;
+  /** Suppress common silence hallucinations before post-processing. */
+  hallucinationFilterEnabled: boolean;
+  /** Review transcript text in the composer before inserting it. */
+  reviewBeforeInsert: Nullable<boolean>;
+  /** Tools enabled for agent mode; null means use the built-in registry defaults. */
+  agentEnabledTools: Nullable<string[]>;
+  /** Maximum agent loop iterations, clamped by the settings UI. */
+  agentMaxIterations: number;
+  /** Time allowed for a user permission response. */
+  agentPermissionTimeoutMs: number;
+  /** Deterministic "new line" / "scratch that" commands. Default on. */
+  spokenCommandsEnabled: boolean;
+  autoLearnDictionaryEnabled: boolean;
+  autoLearnFromEditsEnabled: boolean;
+  /** Opt-in to send the dictionary as ElevenLabs keyterms. Adds a 20% transcription surcharge, so it defaults to off and requires explicit acknowledgment. */
+  elevenLabsKeytermsEnabled: boolean;
+  /** JSON object of expansion feature-name -> boolean flag. */
+  expansionFlags: string;
 
   // deprecated
 };

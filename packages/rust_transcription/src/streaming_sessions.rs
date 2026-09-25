@@ -10,7 +10,10 @@ use crate::models::WhisperModel;
 /// A session that stops receiving chunks is almost certainly a crashed or
 /// disconnected client — it will never be finalized, so its audio buffer must
 /// not sit in memory forever. Ten minutes of no activity marks it stale.
+#[cfg(not(test))]
 const SESSION_IDLE_TTL: Duration = Duration::from_secs(10 * 60);
+#[cfg(test)]
+const SESSION_IDLE_TTL: Duration = Duration::from_millis(50);
 
 /// How often the background sweeper evicts stale sessions. Runs independently
 /// of `finalize`/`remove` so dropped clients cannot leak buffered samples.
@@ -23,6 +26,7 @@ pub struct BufferedTranscriptionSession {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
+    pub hallucination_filter_enabled: bool,
     pub samples: Vec<f32>,
     /// Last time the session was created or received samples. Drives TTL
     /// eviction; deliberately not refreshed by reads until the buffer is taken.
@@ -36,6 +40,7 @@ pub struct BufferedTranscriptionSessionInput {
     pub language: Option<String>,
     pub initial_prompt: Option<String>,
     pub device_id: Option<String>,
+    pub hallucination_filter_enabled: bool,
 }
 
 #[derive(Default)]
@@ -54,7 +59,11 @@ impl SessionStore {
         let now = Instant::now();
         let before = self.sessions.len();
         self.sessions
-            .retain(|_, session| now.duration_since(session.last_activity) < SESSION_IDLE_TTL);
+            .retain(|_, session| {
+                now.checked_duration_since(session.last_activity)
+                    .map(|d| d < SESSION_IDLE_TTL)
+                    .unwrap_or(true)
+            });
         self.last_eviction = Some(now);
         before - self.sessions.len()
     }
@@ -84,6 +93,7 @@ impl TranscriptionSessionRegistry {
             language: input.language,
             initial_prompt: input.initial_prompt,
             device_id: input.device_id,
+            hallucination_filter_enabled: input.hallucination_filter_enabled,
             samples: Vec::new(),
             last_activity: Instant::now(),
         };
@@ -156,31 +166,18 @@ mod tests {
             language: None,
             initial_prompt: None,
             device_id: None,
+            hallucination_filter_enabled: true,
         }
     }
 
     #[tokio::test]
     async fn stale_sessions_are_evicted_on_sweep() {
         let registry = TranscriptionSessionRegistry::default();
-        let fresh_id = registry.create(dummy_input()).await;
+        let stale_id = registry.create(dummy_input()).await;
 
-        let stale_id = Uuid::new_v4();
-        {
-            let mut store = registry.inner.lock().await;
-            store.sessions.insert(
-                stale_id,
-                BufferedTranscriptionSession {
-                    model: WhisperModel::Tiny,
-                    sample_rate: 16_000,
-                    language: None,
-                    initial_prompt: None,
-                    device_id: None,
-                    samples: Vec::new(),
-                    last_activity: Instant::now()
-                        - (SESSION_IDLE_TTL + Duration::from_secs(1)),
-                },
-            );
-        }
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        let fresh_id = registry.create(dummy_input()).await;
 
         assert_eq!(registry.sweep_stale().await, 1);
         assert!(registry.take(fresh_id).await.is_some());
@@ -191,17 +188,16 @@ mod tests {
     async fn append_refreshes_activity() {
         let registry = TranscriptionSessionRegistry::default();
         let session_id = registry.create(dummy_input()).await;
-        {
-            let mut store = registry.inner.lock().await;
-            if let Some(session) = store.sessions.get_mut(&session_id) {
-                session.last_activity =
-                    Instant::now() - (SESSION_IDLE_TTL - Duration::from_secs(5));
-            }
-        }
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
         assert!(registry
             .append_samples(session_id, vec![0.0, 0.0])
             .await
             .is_some());
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
         assert_eq!(registry.sweep_stale().await, 0);
         assert!(registry.take(session_id).await.is_some());
     }

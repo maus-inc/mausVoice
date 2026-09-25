@@ -19,6 +19,8 @@ export type OnboardingState = {
   name: string;
   title: string;
   currentPage: OnboardingPageKey;
+  /** Ephemeral resume intent; ordinary navigation clears automatic permission skips. */
+  isResuming: boolean;
   history: OnboardingPageKey[];
   submitting: boolean;
   tryItOutInput: string;
@@ -36,6 +38,7 @@ export const INITIAL_ONBOARDING_STATE: OnboardingState = {
   name: "",
   title: "",
   currentPage: "signIn",
+  isResuming: false,
   history: [],
   submitting: false,
   tryItOutInput: "",

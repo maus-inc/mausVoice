@@ -21,18 +21,21 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
         draw_assistant_panel(gfx, state, ww, wh);
     } else if state.flash_t.get() < 0.01 {
-        let pill_area_top = wh - PILL_AREA_HEIGHT;
-        draw_tooltip(gfx, state, ww, pill_area_top);
+        draw_tooltip(gfx, state, ww, wh);
     }
 
     if !state.assistant_active.get() && state.flame_active.get() {
         draw_flame(gfx, state, ww, wh);
     }
 
-    draw_pill(gfx, state, ww, wh);
+    paint_pill_attached(gfx, state, ww, wh, |gfx| {
+        draw_pill(gfx, state, ww, wh);
+    });
 
     if state.flash_blue_active.get() {
-        draw_flash_blue(gfx, state, ww, wh);
+        paint_pill_attached(gfx, state, ww, wh, |gfx| {
+            draw_flash_blue(gfx, state, ww, wh);
+        });
     }
 
     if state.assistant_active.get() {
@@ -60,7 +63,9 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         if state.ring_alpha.get() > 0.0
             || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
         {
-            draw_long_press_ring(gfx, state, ww, wh);
+            paint_pill_attached(gfx, state, ww, wh, |gfx| {
+                draw_long_press_ring(gfx, state, ww, wh);
+            });
         }
 
     }
@@ -125,6 +130,27 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
+/// Share the exact paint-only transform between the body and attached outlines.
+/// Register click regions in unscaled coordinates and preserve overlay order.
+fn paint_pill_attached(
+    gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64,
+    paint: impl FnOnce(&mut Gfx),
+) {
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        gfx.save();
+        gfx.scale_around(dcx, dcy, dsx, dsy);
+    }
+
+    paint(gfx);
+    if deformed {
+        gfx.restore();
+    }
+}
+
 /// Renders the pill body and its current content (waveform, paused bar,
 /// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
@@ -134,9 +160,9 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -161,7 +187,7 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             draw_loading(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(gfx, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -170,6 +196,7 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         x: rx, y: ry, w: pill_w, h: pill_h,
         action: ClickAction::Pill,
     });
+
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -249,6 +276,23 @@ fn draw_loading(
     gfx.save();
     gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
 
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        gfx.draw_text_centered(
+            stage,
+            rx,
+            ry,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, 0.9 * expand_t],
+        );
+        gfx.restore();
+
+        draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
+        return;
+    }
+
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
     let pad = pill_h * 0.1;
@@ -274,16 +318,77 @@ fn draw_loading(
     draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
 }
 
-fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    gfx.draw_text_centered("Click to dictate", rx, ry, pill_w, pill_h,
-        12.0, true, [1.0, 1.0, 1.0, 0.55 * expand_t]);
+fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+    let drag_t = state.drag_label_t.get();
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+
+    // Normalize baseline to pill vertical center (same concept as macOS/GTK base_y)
+    let base_y = ry + pill_h / 2.0;
+    let (y_idle_target, y_drag_target) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_IDLE_TEXT,
+            rx,
+            y_idle_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_idle],
+        );
+    }
+
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        gfx.draw_text_centered(
+            rust_pill_shared::LABEL_DRAG_TEXT,
+            rx,
+            y_drag_target - pill_h / 2.0,
+            pill_w,
+            pill_h,
+            12.0,
+            false,
+            [1.0, 1.0, 1.0, alpha_drag],
+        );
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
 
-fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
+fn tooltip_rendered_origin(pill: (f64, f64, f64, f64), blend: f64, tooltip_t: f64) -> (f64, f64) {
+    let (x, y) = rust_pill_shared::placement::tooltip_origin(
+        pill.0, pill.1, pill.2, pill.3, TOOLTIP_FIXED_WIDTH, TOOLTIP_HEIGHT, TOOLTIP_GAP, blend,
+    );
+    (x, y + (1.0 - tooltip_t) * 4.0 * (1.0 - 2.0 * blend))
+}
+
+/// Refresh selectors before input dispatch as well as paint. The surface can
+/// still contain the previous frame's regions while placement is advancing.
+pub(crate) fn refresh_selector_click_regions(state: &PillState) {
+    let mut regions = state.click_regions.borrow_mut();
+    regions.retain(|r| !matches!(r.action, ClickAction::StyleBackward | ClickAction::StyleForward));
+    if state.owns_panel() || state.panel_open_t.get() > 0.01
+        || state.flash_t.get() >= 0.01 || state.tooltip_opacity() < 0.01
+        || state.style_count.get() <= 1 || state.style_name.borrow().is_empty()
+        || state.tooltip_width.get() <= 0.0
+    {
+        return;
+    }
+    let (x, y) = tooltip_rendered_origin(
+        pill_position(state, state.draw_width.get(), state.draw_height.get()),
+        state.selector_placement.borrow().blend(), state.tooltip_t.get(),
+    );
+    let width = TOOLTIP_FIXED_WIDTH;
+    regions.splice(0..0, [
+        ClickRegion { x, y, w: width / 2.0, h: TOOLTIP_HEIGHT, action: ClickAction::StyleBackward },
+        ClickRegion { x: x + width / 2.0, y, w: width / 2.0, h: TOOLTIP_HEIGHT, action: ClickAction::StyleForward },
+    ]);
+}
+
+fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
-    if tooltip_t < 0.01 { return; }
+    let alpha = state.tooltip_opacity();
+    if alpha < 0.01 { return; }
 
     let style_name = state.style_name.borrow();
     if state.style_count.get() <= 1 || style_name.is_empty() { return; }
@@ -291,10 +396,10 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let tooltip_w = TOOLTIP_FIXED_WIDTH;
     state.tooltip_width.set(tooltip_w);
 
-    let tooltip_rx = (ww - tooltip_w) / 2.0;
-    let y_offset = (1.0 - tooltip_t) * 4.0;
-    let tooltip_ry = pill_area_top - TOOLTIP_GAP - TOOLTIP_HEIGHT + y_offset;
-    let alpha = tooltip_t;
+    let blend = state.selector_placement.borrow().blend();
+    let (tooltip_rx, tooltip_ry) = tooltip_rendered_origin(
+        pill_position(state, ww, wh), blend, tooltip_t,
+    );
 
     gfx.fill_rounded_rect(tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS,
         [0.0, 0.0, 0.0, 0.92 * alpha]);
@@ -319,18 +424,9 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, pill_area_top: f64) {
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
     let text_area_w = text_area_right - text_area_left;
     gfx.draw_text_centered(&style_name, text_area_left, tooltip_ry, text_area_w, TOOLTIP_HEIGHT,
-        13.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+        13.0, false, [1.0, 1.0, 1.0, 0.95 * alpha]);
 
-    // Click regions
-    let mid_x = tooltip_rx + tooltip_w / 2.0;
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: tooltip_rx, y: tooltip_ry, w: mid_x - tooltip_rx, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleBackward,
-    });
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: mid_x, y: tooltip_ry, w: tooltip_rx + tooltip_w - mid_x, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleForward,
-    });
+    refresh_selector_click_regions(state);
 }
 
 // ── Flash message ────────────────────────────────────────────────
@@ -344,7 +440,9 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     let (text_w, _) = gfx.measure_text(&message, 12.0, true);
 
@@ -354,7 +452,21 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         0.0
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let reject_w = if let Some(ref label) = *reject_label {
+        let (rw, _) = gfx.measure_text(label, 11.0, true);
+        rw + FLASH_ACTION_PADDING_H * 2.0
+    } else {
+        0.0
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -369,9 +481,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let center_y = full_y + FLASH_HEIGHT / 2.0;
 
     gfx.save();
-    gfx.translate(center_x, center_y);
-    gfx.scale(scale, scale);
-    gfx.translate(-center_x, -center_y);
+    gfx.scale_around(center_x, center_y, scale, scale);
 
     // Background
     let (bg_r, bg_g, bg_b) = if is_error { (0.35, 0.05, 0.05) } else { (0.0, 0.0, 0.0) };
@@ -379,7 +489,7 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         [bg_r, bg_g, bg_b, 0.92 * alpha]);
 
     // Message text
-    if has_action {
+    if has_action || has_reject {
         let (_, th) = gfx.measure_text(&message, 12.0, true);
         gfx.draw_text_top_left(&message, full_x + FLASH_PADDING_H,
             full_y + (FLASH_HEIGHT - th) / 2.0,
@@ -387,6 +497,36 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     } else {
         gfx.draw_text_centered(&message, full_x, full_y, flash_w, FLASH_HEIGHT,
             12.0, true, [1.0, 1.0, 1.0, 0.9 * alpha]);
+    }
+
+    // Reject button (drawn to the left of the accept button)
+    if let Some(ref label) = *reject_label {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        gfx.fill_rounded_rect(btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS,
+            [1.0, 1.0, 1.0, 0.2 * alpha]);
+
+        gfx.draw_text_centered(label, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT,
+            11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+
+        let sx = center_x + (btn_x - center_x) * scale;
+        let sy = center_y + (btn_y - center_y) * scale;
+        let sw = reject_w * scale;
+        let sh = FLASH_ACTION_HEIGHT * scale;
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: sx,
+            y: sy,
+            w: sw,
+            h: sh,
+            action: ClickAction::FlashReject,
+        });
     }
 
     // Action button
@@ -400,11 +540,16 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         gfx.draw_text_centered(label, btn_x, btn_y, action_w, FLASH_ACTION_HEIGHT,
             11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
 
+        let sx = center_x + (btn_x - center_x) * scale;
+        let sy = center_y + (btn_y - center_y) * scale;
+        let sw = action_w * scale;
+        let sh = FLASH_ACTION_HEIGHT * scale;
+
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: sx,
+            y: sy,
+            w: sw,
+            h: sh,
             action: ClickAction::FlashAction,
         });
     }
@@ -604,8 +749,13 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let panel_t = state.panel_open_t.get();
     if panel_t < 0.01 { return; }
 
-    let is_compact = state.assistant_compact.get();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() { REVIEW_ACTIONS_HEIGHT } else { 0.0 };
 
     let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
     let panel_x = (ww - panel_w) / 2.0;
@@ -632,7 +782,11 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let content_x = panel_x + PANEL_CONTENT_SIDE_INSET;
         let content_w = panel_w - PANEL_CONTENT_SIDE_INSET * 2.0;
 
-        let scroll_bottom = if is_typing { py + panel_h - PANEL_INPUT_HEIGHT } else { py + panel_h };
+        let scroll_bottom = if is_typing {
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
+        } else {
+            py + panel_h
+        };
         let scroll_h = (scroll_bottom - py).max(0.0);
         state.viewport_height.set(scroll_h);
 
@@ -687,6 +841,20 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                gfx,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar
         if is_typing {
@@ -765,11 +933,17 @@ fn draw_transcript(
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() { return; }
+    if messages.is_empty() && permissions.is_empty() && review.is_none() { return; }
 
     gfx.save();
     gfx.clip_rect(area_x, area_y, area_w, area_h);
+
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
 
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
@@ -824,8 +998,30 @@ fn draw_transcript(
         y = draw_permission_card(gfx, state, perm, area_x, y, area_w, alpha);
     }
 
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(gfx, state, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) =
+                rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
 
     gfx.restore();
 }
@@ -932,6 +1128,88 @@ fn draw_permission_card(
     }
 
     y + card_h
+}
+
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(
+    gfx: &Gfx, state: &PillState,
+    x: f64, y: f64, w: f64, alpha: f64,
+) -> f64 {
+    gfx.draw_text_top_left("REVIEW TRANSCRIPT", x, y, 11.0, true, false,
+        [1.0, 1.0, 1.0, 0.5 * alpha]);
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
+    let text = state.entry_text.borrow();
+    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
+    for line in wrap_text(gfx, preview.as_str(), w)
+        .into_iter()
+        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
+    {
+        gfx.draw_text_top_left(&line, x, text_y, 14.0, false, false,
+            [1.0, 1.0, 1.0, 0.92 * alpha]);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+#[allow(clippy::too_many_arguments)]
+fn draw_review_actions(
+    gfx: &Gfx, state: &PillState, review_id: &str,
+    panel_x: f64, y: f64, panel_w: f64, alpha: f64,
+) {
+    gfx.draw_text_top_left(
+        "Edit below, then press Enter to insert",
+        panel_x + PANEL_CONTENT_SIDE_INSET,
+        y + (REVIEW_ACTIONS_HEIGHT - 14.0) / 2.0,
+        11.0, false, false,
+        [1.0, 1.0, 1.0, 0.45 * alpha],
+    );
+
+    // Rendered right to left so "Insert" (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
+    let review = state.assistant_review.borrow();
+    let edit_label = review.as_ref().and_then(|review| review.edit_label.as_deref()).unwrap_or("Edit");
+    let buttons = [
+        ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
+        (edit_label, ClickAction::ReviewEdit(review_id.to_string()), 0.8),
+        ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
+        ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
+    ];
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
+
+    for (label, action, text_alpha) in buttons {
+        // Localized labels can be wider than the English four-letter caption.
+        let text_width = gfx.measure_text(label, 11.0, false).0;
+        let btn_w = (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8);
+        btn_x -= btn_w;
+
+        let hovered = is_mouse_over(state, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT);
+        let bg_alpha = if hovered { 0.18 } else { 0.08 };
+        let border_alpha = if hovered { 0.25 } else { 0.15 };
+        gfx.fill_rounded_rect(btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0,
+            [1.0, 1.0, 1.0, bg_alpha * alpha]);
+        gfx.stroke_rounded_rect(btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5,
+            [1.0, 1.0, 1.0, border_alpha * alpha], 1.0);
+
+        let text_a = if hovered { 1.0 } else { text_alpha };
+        gfx.draw_text_centered(label, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT,
+            11.0, false, [1.0, 1.0, 1.0, text_a * alpha]);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
 }
 
 fn draw_user_prompt_preview(
@@ -1261,9 +1539,9 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 
     if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Direct2D cannot stroke directly.
+        // One resampled perimeter drives the shadow, the comet and the head,
+        // so the layers can never drift apart and no geometry is built more
+        // than once per frame.
         let mut points = state.ring_points.borrow_mut();
         rust_pill_shared::resample_perimeter(
             &path,
@@ -1273,60 +1551,83 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             &mut points,
         );
 
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
+        // Degenerate geometry cannot occur with the shared perimeter (this
+        // block is only entered when `head_len > 0`), but the shadow slice
+        // and head placement below must never index an empty buffer — which
+        // `RingLayers::new` reports as `None`.
+        if let Some(layers) = rust_pill_shared::RingLayers::new(
+            &points, head_len, total_len, progress, arm_t, alpha,
+        ) {
+            // Shadow layer: a soft dark halo behind the silver ring so it stays
+            // readable on light backdrops. Direct2D has no cheap blur on the
+            // render path, so the ring path is stroked several times with
+            // growing widths and shrinking alphas — the passes sum to a
+            // falloff that is darkest right under the ring and gone within a
+            // few pixels. Widths, alphas and the arc's extent all come from
+            // the shared plan; only the stroking is platform code.
+            for (width, layer_alpha) in layers.shadow_passes() {
+                gfx.stroke_polyline(
+                    &points[..=layers.head_index],
+                    [0.0, 0.0, 0.0, layer_alpha],
+                    width,
+                );
             }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            shaded.push(ShadedSegment {
-                x1,
-                y1,
-                x2,
-                y2,
-                rgba: [
-                    LONG_PRESS_OUTLINE_COLOR.0,
-                    LONG_PRESS_OUTLINE_COLOR.1,
-                    LONG_PRESS_OUTLINE_COLOR.2,
-                    a,
-                ],
-                width: rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            });
-        }
-        gfx.draw_line_shaded(&shaded);
 
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
+            // Dark underlay beneath the comet head so the soft silver blob
+            // also separates from a light backdrop; mirrors the head's disc
+            // shading.
+            for disc in layers.underlay_discs() {
+                gfx.fill_circle(disc.cx, disc.cy, disc.radius, [0.0, 0.0, 0.0, disc.alpha]);
+            }
+
+            // Primary layer: the comet. Brightness is envelope × glimmer
+            // evaluated per evenly-spaced segment — the portable stand-in for
+            // a gradient along a path, which Direct2D cannot stroke directly.
+            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+            let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > head_len {
+                    break;
+                }
+                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+                if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
+                    continue;
+                }
+                shaded.push(ShadedSegment {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    rgba: [
+                        LONG_PRESS_OUTLINE_COLOR.0,
+                        LONG_PRESS_OUTLINE_COLOR.1,
+                        LONG_PRESS_OUTLINE_COLOR.2,
+                        a,
+                    ],
+                    width: rust_pill_shared::RING_CORE_WIDTH
+                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
+                });
+            }
+            gfx.draw_line_shaded(&shaded);
+
+            // Secondary layer: the soft head. Concentric discs approximate a
+            // radial falloff without allocating a gradient every frame. It
+            // dissolves and blooms before completion so nothing bright is left
+            // at the seam — once it has, the shared plan yields no discs.
+            for disc in layers.head_discs() {
                 gfx.fill_circle(
-                    hx,
-                    hy,
-                    rr,
+                    disc.cx,
+                    disc.cy,
+                    disc.radius,
                     [
                         LONG_PRESS_OUTLINE_COLOR.0,
                         LONG_PRESS_OUTLINE_COLOR.1,
                         LONG_PRESS_OUTLINE_COLOR.2,
-                        head_alpha * falloff * 0.5,
+                        disc.alpha,
                     ],
                 );
             }
@@ -1482,5 +1783,30 @@ mod control_layout_tests {
         assert_eq!(py, cy, "both controls share a baseline");
         let pill_centre = PILL_Y + PILL_H / 2.0;
         assert!((py + CANCEL_BUTTON_SIZE / 2.0 - pill_centre).abs() < f64::EPSILON);
+    }
+}
+
+#[cfg(test)]
+mod selector_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn selector_keeps_its_gap_from_the_live_pill_on_both_sides() {
+        for pill in [(150.0, 100.0, 60.0, 12.0), (120.0, 80.0, 120.0, 40.0)] {
+            let (above_x, above_y) = tooltip_rendered_origin(pill, 0.0, 1.0);
+            let (below_x, below_y) = tooltip_rendered_origin(pill, 1.0, 1.0);
+            assert_eq!(above_y + TOOLTIP_HEIGHT + TOOLTIP_GAP, pill.1);
+            assert_eq!(below_y, pill.1 + pill.3 + TOOLTIP_GAP);
+            assert_eq!(above_x + TOOLTIP_FIXED_WIDTH / 2.0, pill.0 + pill.2 / 2.0);
+            assert_eq!(above_x, below_x);
+        }
+    }
+
+    #[test]
+    fn long_transcript_review_bounds_text() {
+        let long_transcript = "Transcription word ".repeat(4000);
+        let (preview, truncated) = rust_pill_shared::bound_review_preview_text(&long_transcript);
+        assert!(truncated);
+        assert!(preview.len() <= rust_pill_shared::MAX_REVIEW_PREVIEW_CHARS + 60);
     }
 }

@@ -1,12 +1,8 @@
-import {
-  CheckRounded,
-  CloseRounded,
-  DoneAllRounded,
-} from "@mui/icons-material";
-import { Box, Chip, Stack, Typography } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
+import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import type { ToolPermission } from "@maus-inc/types";
+import { Check, CheckCheck, X } from "lucide-react";
 import { FormattedMessage } from "react-intl";
+import { overlayOnDark } from "../../styles/palette";
 import { useAppStore } from "../../store";
 import { ToolParamsTooltip } from "./ToolParamsTooltip";
 
@@ -18,6 +14,122 @@ type ToolPermissionPromptProps = {
   onAlwaysAllow: () => void;
 };
 
+type PermissionActionsProps = Pick<
+  ToolPermissionPromptProps,
+  "onAllow" | "onDeny" | "onAlwaysAllow"
+> & { overlay: boolean };
+
+const PermissionActions = ({
+  overlay,
+  onAllow,
+  onDeny,
+  onAlwaysAllow,
+}: PermissionActionsProps) => {
+  const iconSize = overlay ? 14 : 16;
+  const textButtonSx = overlay
+    ? { color: overlayOnDark.muted, minWidth: 0 }
+    : undefined;
+  return (
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        justifyContent: overlay ? "flex-end" : "flex-start",
+        mt: overlay ? 0.75 : 0,
+      }}
+    >
+      <Button
+        size="small"
+        variant="text"
+        onClick={onDeny}
+        startIcon={<X size={iconSize} strokeWidth={1.9} />}
+        sx={textButtonSx}
+      >
+        <FormattedMessage defaultMessage="Deny" />
+      </Button>
+      <Button
+        size="small"
+        variant="contained"
+        onClick={onAllow}
+        startIcon={<Check size={iconSize} strokeWidth={1.9} />}
+      >
+        <FormattedMessage defaultMessage="Allow" />
+      </Button>
+      <Button
+        size="small"
+        variant="text"
+        onClick={onAlwaysAllow}
+        startIcon={<CheckCheck size={iconSize} strokeWidth={1.9} />}
+        sx={textButtonSx}
+      >
+        <FormattedMessage defaultMessage="Always allow" />
+      </Button>
+    </Stack>
+  );
+};
+
+const PermissionDetails = ({
+  permission,
+  overlay,
+}: {
+  permission: ToolPermission;
+  overlay: boolean;
+}) => {
+  const toolInfo = useAppStore((s) => s.toolInfoById[permission.toolId]);
+  // Persisted/provider parameters are unknown values, not safe React children.
+  const reason =
+    typeof permission.params.reason === "string"
+      ? permission.params.reason
+      : null;
+  const allowed = permission.status === "allowed";
+  const appearance = overlay
+    ? {
+        heading: overlayOnDark.text,
+        secondary: overlayOnDark.muted,
+        iconSize: 14,
+      }
+    : { heading: undefined, secondary: "text.secondary", iconSize: 16 };
+  return (
+    <Stack spacing={0.25}>
+      <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+        <Typography
+          variant="body2"
+          sx={{
+            fontWeight: 600,
+            color: appearance.heading,
+          }}
+        >
+          {toolInfo?.description ?? permission.toolId}
+        </Typography>
+        <ToolParamsTooltip
+          params={permission.params}
+          iconColor={appearance.secondary}
+          iconSize={appearance.iconSize}
+        />
+        {!overlay && permission.status !== "pending" && (
+          <Chip
+            size="small"
+            color={allowed ? "success" : "error"}
+            sx={{ ml: "auto" }}
+            label={
+              allowed ? (
+                <FormattedMessage defaultMessage="Allowed" />
+              ) : (
+                <FormattedMessage defaultMessage="Denied" />
+              )
+            }
+          />
+        )}
+      </Stack>
+      {reason && (
+        <Typography variant="caption" sx={{ color: appearance.secondary }}>
+          {reason}
+        </Typography>
+      )}
+    </Stack>
+  );
+};
+
 export const ToolPermissionPrompt = ({
   permission,
   variant = "default",
@@ -25,216 +137,54 @@ export const ToolPermissionPrompt = ({
   onDeny,
   onAlwaysAllow,
 }: ToolPermissionPromptProps) => {
-  const theme = useTheme();
-  const toolInfo = useAppStore((s) => s.toolInfoById[permission.toolId]);
-  const isPending = permission.status === "pending";
-  const reason = permission.params.reason as string | undefined;
+  const overlay = variant === "overlay";
+  const details = (
+    <PermissionDetails permission={permission} overlay={overlay} />
+  );
+  const actions =
+    permission.status === "pending" ? (
+      <PermissionActions
+        overlay={overlay}
+        onAllow={onAllow}
+        onDeny={onDeny}
+        onAlwaysAllow={onAlwaysAllow}
+      />
+    ) : null;
 
-  if (variant === "overlay") {
-    const whiteHigh = alpha(theme.palette.common.white, 0.92);
-    const whiteMid = alpha(theme.palette.common.white, 0.5);
-
+  if (overlay) {
     return (
       <Box
         sx={{
           px: 1.5,
           py: 1,
           borderRadius: 1,
-          border: `1px solid ${alpha(theme.palette.common.white, 0.2)}`,
-          backgroundColor: alpha(theme.palette.common.white, 0.06),
+          border: `1px solid ${overlayOnDark.hairline}`,
+          backgroundColor: overlayOnDark.wash,
         }}
       >
-        <Stack
-          direction="row"
-          spacing={0.5}
-          sx={{
-            alignItems: "center",
-          }}
-        >
-          <Typography sx={{ fontSize: 13, fontWeight: 600, color: whiteHigh }}>
-            {toolInfo?.description ?? permission.toolId}
-          </Typography>
-          <ToolParamsTooltip
-            params={permission.params}
-            iconColor={whiteMid}
-            iconSize={14}
-          />
-        </Stack>
-        {reason && (
-          <Typography sx={{ fontSize: 12, color: whiteMid, mt: 0.25 }}>
-            {reason}
-          </Typography>
-        )}
-        {isPending && (
-          <Box
-            sx={{
-              display: "flex",
-              gap: 1,
-              justifyContent: "flex-end",
-              mt: 0.75,
-            }}
-          >
-            <OverlayButton color={whiteMid} bordered onMouseDown={onDeny}>
-              <CloseRounded sx={{ fontSize: 14 }} />
-              <FormattedMessage defaultMessage="Deny" />
-            </OverlayButton>
-            <OverlayButton filled onMouseDown={onAllow}>
-              <CheckRounded sx={{ fontSize: 14 }} />
-              <FormattedMessage defaultMessage="Allow" />
-            </OverlayButton>
-            <OverlayButton color={whiteMid} onMouseDown={onAlwaysAllow}>
-              <DoneAllRounded sx={{ fontSize: 14 }} />
-              <FormattedMessage defaultMessage="Always allow" />
-            </OverlayButton>
-          </Box>
-        )}
+        {details}
+        {actions}
       </Box>
     );
   }
-
   return (
-    <Stack
-      direction="row"
-      sx={{
-        justifyContent: "flex-start",
-      }}
-    >
+    <Stack direction="row" sx={{ justifyContent: "flex-start" }}>
       <Box
         sx={{
           maxWidth: "75%",
           px: 2,
           py: 1.5,
-          borderRadius: 1,
+          borderRadius: 2.5,
           border: 1,
-          borderColor: "primary.main",
-          bgcolor: "background.paper",
+          borderColor: "divider",
+          bgcolor: "level1",
         }}
       >
         <Stack spacing={1}>
-          <Stack spacing={0.25}>
-            <Stack
-              direction="row"
-              spacing={0.5}
-              sx={{
-                alignItems: "center",
-              }}
-            >
-              <Typography
-                variant="body2"
-                sx={{
-                  fontWeight: 600,
-                }}
-              >
-                {toolInfo?.description ?? permission.toolId}
-              </Typography>
-              <ToolParamsTooltip params={permission.params} />
-              {!isPending && (
-                <Chip
-                  size="small"
-                  label={permission.status}
-                  color={permission.status === "allowed" ? "success" : "error"}
-                  sx={{ ml: "auto" }}
-                />
-              )}
-            </Stack>
-            {reason && (
-              <Typography
-                variant="caption"
-                sx={{
-                  color: "text.secondary",
-                }}
-              >
-                {reason}
-              </Typography>
-            )}
-          </Stack>
-
-          {isPending && (
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{
-                justifyContent: "flex-start",
-              }}
-            >
-              <Chip
-                size="small"
-                variant="outlined"
-                label={<FormattedMessage defaultMessage="Deny" />}
-                icon={<CloseRounded />}
-                onClick={onDeny}
-              />
-              <Chip
-                size="small"
-                color="primary"
-                label={<FormattedMessage defaultMessage="Allow" />}
-                icon={<CheckRounded />}
-                onClick={onAllow}
-              />
-              <Chip
-                size="small"
-                variant="outlined"
-                label={<FormattedMessage defaultMessage="Always allow" />}
-                icon={<DoneAllRounded />}
-                sx={{ border: "none" }}
-                onClick={onAlwaysAllow}
-              />
-            </Stack>
-          )}
+          {details}
+          {actions}
         </Stack>
       </Box>
     </Stack>
-  );
-};
-
-const OverlayButton = ({
-  children,
-  color,
-  filled,
-  bordered,
-  onMouseDown,
-}: {
-  children: React.ReactNode;
-  color?: string;
-  filled?: boolean;
-  bordered?: boolean;
-  onMouseDown: () => void;
-}) => {
-  const theme = useTheme();
-  const whiteMid = alpha(theme.palette.common.white, 0.5);
-
-  return (
-    <Box
-      component="button"
-      onMouseDown={(e: React.MouseEvent) => {
-        e.stopPropagation();
-        onMouseDown();
-      }}
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.5,
-        px: 1,
-        py: 0.25,
-        fontSize: 12,
-        fontWeight: 500,
-        color: filled ? theme.palette.common.black : (color ?? whiteMid),
-        backgroundColor: filled ? theme.palette.common.white : "transparent",
-        border: bordered
-          ? `1px solid ${alpha(theme.palette.common.white, 0.2)}`
-          : filled
-            ? `1px solid ${theme.palette.common.white}`
-            : "none",
-        borderRadius: 1,
-        cursor: "pointer",
-        "&:hover": {
-          backgroundColor: filled
-            ? alpha(theme.palette.common.white, 0.85)
-            : alpha(theme.palette.common.white, 0.08),
-        },
-      }}
-    >
-      {children}
-    </Box>
   );
 };

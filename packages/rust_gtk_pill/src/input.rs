@@ -17,7 +17,7 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
     }
 
@@ -30,10 +30,17 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
 
     // Tooltip: same helper the draw code uses, so the hit box always covers
     // the painted tooltip (including after a Wayland drag).
-    if state.tooltip_t.get() >= TOOLTIP_VISIBLE_T {
+    if state.tooltip_opacity() >= TOOLTIP_VISIBLE_T {
         let tooltip_w = state.tooltip_width.get();
-        let (tooltip_x, tooltip_y) =
-            tooltip_rendered_origin(px, py, pw, tooltip_w, state.tooltip_t.get());
+        let (tooltip_x, tooltip_y) = tooltip_rendered_origin(
+            px,
+            py,
+            pw,
+            ph,
+            tooltip_w,
+            state.tooltip_t.get(),
+            state.selector_placement.borrow().blend(),
+        );
         if x >= tooltip_x && x <= tooltip_x + tooltip_w
             && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
         {
@@ -50,13 +57,14 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
 }
 
 pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
+    crate::draw::refresh_selector_click_regions(state);
     let (ox, oy) = state.content_offset();
     let x = x - ox;
     let y = y - oy;
     let dw = state.draw_width.get();
     let dh = state.draw_height.get();
 
-    if state.assistant_active.get() || state.panel_open_t.get() > 0.1 {
+    if state.owns_panel() || state.panel_open_t.get() > 0.1 {
         return false;
     }
 
@@ -77,7 +85,51 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     false
 }
 
+/// A23: Dispatch haptic/audio feedback to the desktop process.
+pub(crate) fn send_haptic(kind: &str) {
+    ipc::send(&OutMessage::HapticFeedback {
+        kind: kind.to_string(),
+    });
+}
+
+/// Report a review decision back to the desktop. The id travels with the
+/// decision so a late click on a card that has already been replaced is
+/// discarded instead of applied to the next transcript.
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) {
+    ipc::send(&OutMessage::ReviewDecision {
+        review_id: review_id.to_string(),
+        action: action.to_string(),
+        text,
+    });
+}
+
+/// Send whatever the entry holds.
+///
+/// While a transcript is under review the entry holds that transcript, so
+/// submitting it is the insert decision and carries any edit the user made.
+/// Otherwise it is a message for the assistant. An empty entry sends nothing,
+/// because there is nothing to insert or say.
+///
+/// Returns true when something was sent, so the caller can clear the platform
+/// text control only then.
+pub(crate) fn submit_entry(state: &PillState) -> bool {
+    // Send the text exactly as the user left it. Spacing at either end can be
+    // deliberate when the transcript lands in a document, so trimming is only
+    // ever used to decide whether there is anything to send.
+    let text = state.entry_text.borrow().clone();
+    if text.trim().is_empty() {
+        return false;
+    }
+    match state.pending_review_id() {
+        Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
+        None => ipc::send(&OutMessage::TypedMessage { text }),
+    }
+    *state.entry_text.borrow_mut() = String::new();
+    true
+}
+
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
+    crate::draw::refresh_selector_click_regions(state);
     let (ox, oy) = state.content_offset();
     let x = x - ox;
     let y = y - oy;
@@ -87,6 +139,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
         if region.contains(x, y) {
             match &region.action {
                 ClickAction::Pill => {
+                    // A pending review owns the pill surface: the transcript
+                    // must be answered (or cancelled) before a body click can
+                    // start dictation or an assistant turn again.
+                    if state.assistant_review.borrow().is_some() {
+                        return;
+                    }
+                    // Loading owns the current operation; another body click
+                    // must not emit feedback or start a second action.
+                    if !rust_pill_shared::can_emit_interaction_feedback(
+                        true,
+                        state.phase.get() == Phase::Loading,
+                    ) {
+                        return;
+                    }
+                    // The recording chime owns the pill-body click. The
+                    // desktop side plays start/stop clips for the same event,
+                    // so emitting a thock here doubled the sound.
                     if state.assistant_active.get() {
                         ipc::send(&OutMessage::AgentTalk);
                     } else {
@@ -94,24 +163,68 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     }
                 }
                 ClickAction::StyleForward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
                 }
                 ClickAction::StyleBackward => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
                 }
                 ClickAction::AssistantClose => {
-                    ipc::send(&OutMessage::AssistantClose);
-                }
-                ClickAction::OpenInNew => {
-                    if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                        ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                    // Closing the panel while a transcript is under review is
+                    // a cancel decision, not a silent dismissal: the desktop
+                    // needs an answer to release the queued reviews.
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    match review_id {
+                        Some(review_id) => send_review_decision(&review_id, "cancel", None),
+                        None => ipc::send(&OutMessage::AssistantClose),
                     }
-                    ipc::send(&OutMessage::AssistantClose);
+                }
+                ClickAction::ReviewInsert(id) => {
+                    // The entry is the transcript, edits included, and it
+                    // travels exactly as the user left it. An empty one has
+                    // nothing to insert, so the card simply stays up.
+                    let text = state.entry_text.borrow().clone();
+                    if !text.trim().is_empty() {
+                        send_review_decision(id, "insert", Some(text));
+                    }
+                }
+                ClickAction::ReviewCopy(id) => {
+                    let text = state.entry_text.borrow().clone();
+                    send_review_decision(id, "copy", Some(text));
+                }
+                ClickAction::ReviewEdit(id) => {
+                    let text = state.entry_text.borrow().clone();
+                    send_review_decision(id, "edit", Some(text));
+                }
+                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
+                ClickAction::OpenInNew => {
+                    let review_id = state
+                        .assistant_review
+                        .borrow()
+                        .as_ref()
+                        .map(|review| review.id.clone());
+                    if let Some(review_id) = review_id {
+                        // The desktop receives this exact edit and settles the
+                        // review only after its caller confirms it is durable.
+                        let text = state.entry_text.borrow().clone();
+                        send_review_decision(&review_id, "open", Some(text));
+                    } else {
+                        if let Some(ref id) = *state.assistant_conversation_id.borrow() {
+                            ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                        }
+                        ipc::send(&OutMessage::AssistantClose);
+                    }
                 }
                 ClickAction::KeyboardButton => {
                     ipc::send(&OutMessage::EnableTypeMode);
                 }
                 ClickAction::CancelDictation => {
+                    send_haptic("deep");
                     ipc::send(&OutMessage::CancelDictation);
                 }
                 ClickAction::PauseDictation => {
@@ -136,20 +249,33 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     });
                 }
                 ClickAction::SendButton => {
-                    let text = state.entry_text.borrow().trim().to_string();
-                    if !text.is_empty() {
-                        ipc::send(&OutMessage::TypedMessage { text });
-                        *state.entry_text.borrow_mut() = String::new();
-                    }
+                    submit_entry(state);
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
                         ipc::send(&OutMessage::ToastAction { action: action.clone() });
                     }
-                    state.flash_visible.set(false);
-                    state.flash_timer.set(0.0);
-                    *state.flash_action.borrow_mut() = None;
-                    *state.flash_action_label.borrow_mut() = None;
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
+                }
+                ClickAction::FlashReject => {
+                    if let Some(ref action) = *state.flash_reject_action.borrow() {
+                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                    }
+                    rust_pill_shared::clear_flash_state(
+                        &state.flash_visible,
+                        &state.flash_timer,
+                        &state.flash_action,
+                        &state.flash_action_label,
+                        &state.flash_reject_action,
+                        &state.flash_reject_action_label,
+                    );
                 }
             }
             return;
@@ -158,7 +284,13 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
 }
 
 pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
-    if !state.assistant_active.get() || state.assistant_compact.get() {
+    // A pending review makes the panel scrollable too. The card can sit below a
+    // conversation, and its buttons have to be reachable. The compact test
+    // mirrors the one the panel is drawn with.
+    let has_review = state.assistant_review.borrow().is_some();
+    let owns_panel = state.owns_panel();
+    let is_compact = state.assistant_compact.get() && !has_review;
+    if !owns_panel || is_compact {
         return;
     }
 
@@ -187,7 +319,7 @@ pub(crate) fn handle_scroll(state: &PillState, event: &gdk::EventScroll) {
 fn build_input_region(
     ox: f64, oy: f64,
     pill_x: f64, pill_y: f64, pill_w: f64, pill_h: f64,
-    tooltip_t: f64, tooltip_w: f64,
+    tooltip_t: f64, tooltip_w: f64, blend: f64,
     include_side_controls: bool,
 ) -> cairo::Region {
     let pill_rect = cairo::RectangleInt::new(
@@ -197,12 +329,12 @@ fn build_input_region(
         pill_h.ceil() as i32,
     );
 
-    let region = if tooltip_t >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
+    let region = if rust_pill_shared::placement::tooltip_opacity(tooltip_t, blend) >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
         // Same helper the draw code uses, so the region always covers the
         // painted tooltip. Centring on the pill rather than the window also
         // keeps them aligned horizontally once a drag moves the pill.
         let (tooltip_rx, tooltip_ry) =
-            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, blend);
         let tooltip_rect = cairo::RectangleInt::new(
             (ox + tooltip_rx).floor() as i32,
             (oy + tooltip_ry).floor() as i32,
@@ -233,6 +365,7 @@ fn input_region(
         ox, oy,
         pill_x, pill_y, pill_w, pill_h,
         state.tooltip_t.get(), state.tooltip_width.get(),
+        state.selector_placement.borrow().blend(),
         state.phase.get() != Phase::Idle,
     );
     union_flash_action(&region, state, ox, oy);
@@ -244,7 +377,7 @@ pub(crate) fn set_expanded_input_region(gdk_window: &gdk::Window, state: &PillSt
     let dh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
 
-    if state.assistant_active.get() {
+    if state.owns_panel() {
         let rect = cairo::RectangleInt::new(
             ox as i32, oy as i32,
             dw.ceil() as i32, dh.ceil() as i32,
@@ -268,13 +401,18 @@ fn union_flash_action(
     state: &PillState,
     ox: f64, oy: f64,
 ) {
-    if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
+    if (state.flash_action.borrow().is_none() && state.flash_reject_action.borrow().is_none())
+        || state.flash_t.get() < 0.5
+    {
         return;
     }
     // Use the click regions registered by draw code for exact coordinates
     let regions = state.click_regions.borrow();
     for r in regions.iter() {
-        if matches!(r.action, ClickAction::FlashAction) {
+        if matches!(
+            r.action,
+            ClickAction::FlashAction | ClickAction::FlashReject
+        ) {
             let rect = cairo::RectangleInt::new(
                 (ox + r.x) as i32,
                 (oy + r.y) as i32,
@@ -312,9 +450,9 @@ fn union_side_controls(
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let hovered = state.hovered.get();
     let is_active = state.phase.get() != Phase::Idle;
-    let is_assistant = state.assistant_active.get();
-
-    if is_assistant || hovered || is_active {
+    // A pending review draws buttons in the panel area, so the clickable
+    // region has to cover the panel even when the assistant is not running.
+    if state.owns_panel() || hovered || is_active {
         set_expanded_input_region(gdk_window, state);
     } else {
         let dw = state.draw_width.get();
@@ -339,6 +477,30 @@ mod input_region_tests {
     use super::*;
     use crate::draw::tooltip_origin;
 
+    #[test]
+    fn selector_action_targets_follow_the_live_input_shape_between_paints() {
+        let pill = (320.0, 140.0, 120.0, 32.0);
+        let width = 160.0;
+        for progress in [0.15, 0.5, 1.0] {
+            for blend in [0.0, 0.5, 1.0] {
+                let targets = crate::draw::selector_click_regions(pill, width, progress, blend);
+                let region = build_input_region(
+                    0.0, 0.0, pill.0, pill.1, pill.2, pill.3,
+                    progress, width, blend, false,
+                );
+                for target in targets {
+                    let x = target.x + target.w / 2.0;
+                    let y = target.y + target.h / 2.0;
+                    assert!(target.contains(x, y));
+                    assert_eq!(
+                        region.contains_point(x.floor() as i32, y.floor() as i32),
+                        rust_pill_shared::placement::tooltip_opacity(progress, blend) >= TOOLTIP_VISIBLE_T,
+                    );
+                }
+            }
+        }
+    }
+
     /// After a non-X11 drag the pill is drawn at base position + offset.
     /// The input region must include the moved pill body and both side
     /// controls at that shifted geometry.
@@ -360,7 +522,7 @@ mod input_region_tests {
         let region = build_input_region(
             ox, oy,
             pill_x, pill_y, pill_w, pill_h,
-            0.0, 0.0,   // no tooltip
+            0.0, 0.0, 0.0, // no tooltip
             true,       // include side controls
         );
 
@@ -405,13 +567,13 @@ mod input_region_tests {
             let region = build_input_region(
                 ox, oy,
                 pill_x, pill_y, pill_w, pill_h,
-                1.0, tooltip_w,  // tooltip fully shown
+                1.0, tooltip_w, 0.0, // tooltip fully shown, above
                 false,
             );
 
             // Every corner and the centre of the painted tooltip must be
             // covered, so the whole selector is clickable.
-            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, 1.0);
+            let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, 1.0, 0.0);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
@@ -428,18 +590,26 @@ mod input_region_tests {
         }
     }
 
-    /// The tooltip is centred on the pill and sits directly above it.
+    /// The tooltip is centred on the pill and sits on the picked side of it.
     #[test]
     fn tooltip_origin_tracks_the_pill() {
-        let (x0, y0) = tooltip_origin(240.0, 100.0, 120.0, 160.0);
+        let (x0, y0) = tooltip_origin(240.0, 100.0, 120.0, 32.0, 160.0, 0.0);
         // Centred: pill centre 300 - half tooltip 80 = 220.
         assert_eq!(x0, 220.0);
         assert_eq!(y0, 100.0 - TOOLTIP_GAP - TOOLTIP_HEIGHT);
 
         // A drag shifts the tooltip by exactly the same delta as the pill.
-        let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 160.0);
+        let (x1, y1) = tooltip_origin(240.0 + 80.0, 100.0 + 40.0, 120.0, 32.0, 160.0, 0.0);
         assert_eq!(x1 - x0, 80.0);
         assert_eq!(y1 - y0, 40.0);
+    }
+
+    /// Below the pill the tooltip hangs off the pill bottom instead.
+    #[test]
+    fn tooltip_origin_below_hangs_off_the_bottom() {
+        let (x, y) = tooltip_origin(240.0, 100.0, 120.0, 32.0, 160.0, 1.0);
+        assert_eq!(x, 220.0);
+        assert_eq!(y, 100.0 + 32.0 + TOOLTIP_GAP);
     }
 
     /// Mid-animation the tooltip is painted a few pixels low. The region must
@@ -456,12 +626,12 @@ mod input_region_tests {
             let region = build_input_region(
                 ox, oy,
                 pill_x, pill_y, pill_w, pill_h,
-                tooltip_t, tooltip_w,
+                tooltip_t, tooltip_w, 0.0,
                 false,
             );
 
             let (tx, ty) =
-                tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
+                tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, 0.0);
             let probes = [
                 (tx + 1.0, ty + 1.0, "top-left"),
                 (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
@@ -478,6 +648,42 @@ mod input_region_tests {
         }
     }
 
+    /// Below the pill the region must cover the hung tooltip and stop
+    /// claiming the strip above it.
+    #[test]
+    fn below_tooltip_sits_inside_region() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let tooltip_w = 160.0f64;
+        let region = build_input_region(
+            0.0, 0.0,
+            pill_x, pill_y, pill_w, pill_h,
+            1.0, tooltip_w, 1.0,
+            false,
+        );
+        let (tx, ty) =
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, 1.0, 1.0);
+        assert_eq!(ty, pill_y + pill_h + TOOLTIP_GAP);
+        for (px, py, label) in [
+            (tx + 1.0, ty + 1.0, "top-left"),
+            (tx + tooltip_w - 1.0, ty + 1.0, "top-right"),
+            (tx + tooltip_w / 2.0, ty + TOOLTIP_HEIGHT / 2.0, "centre"),
+            (tx + 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-left"),
+            (tx + tooltip_w - 1.0, ty + TOOLTIP_HEIGHT - 1.0, "bottom-right"),
+        ] {
+            assert!(
+                region.contains_point(px as i32, py as i32),
+                "below tooltip {label} outside region"
+            );
+        }
+        assert!(
+            !region.contains_point(
+                (tx + tooltip_w / 2.0) as i32,
+                (pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT / 2.0) as i32
+            ),
+            "above strip must not claim input while the tooltip hangs below"
+        );
+    }
+
     /// Drawing and input must agree on when the tooltip exists, otherwise it
     /// is painted before it becomes clickable.
     #[test]
@@ -489,11 +695,11 @@ mod input_region_tests {
         let region = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            TOOLTIP_VISIBLE_T, tooltip_w,
+            TOOLTIP_VISIBLE_T, tooltip_w, 0.0,
             false,
         );
         let (tx, ty) =
-            tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, TOOLTIP_VISIBLE_T);
+            tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, TOOLTIP_VISIBLE_T, 0.0);
         assert!(
             region.contains_point(
                 (tx + tooltip_w / 2.0) as i32,
@@ -507,7 +713,7 @@ mod input_region_tests {
         let hidden = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            0.0, tooltip_w,
+            0.0, tooltip_w, 0.0,
             false,
         );
         assert!(
@@ -541,10 +747,10 @@ mod input_region_tests {
         let with_tooltip = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            1.0, measured_w,
+            1.0, measured_w, 0.0,
             false,
         );
-        let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, measured_w, 1.0);
+        let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, measured_w, 1.0, 0.0);
         let probe = (
             (tx + measured_w / 2.0) as i32,
             (ty + TOOLTIP_HEIGHT / 2.0) as i32,
@@ -560,7 +766,7 @@ mod input_region_tests {
         let cleared = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
-            1.0, 0.0,
+            1.0, 0.0, 0.0,
             false,
         );
         assert!(
@@ -583,7 +789,7 @@ mod input_region_tests {
         let region = build_input_region(
             ox, oy,
             240.0, 100.0, 120.0, 32.0,
-            0.0, 0.0,
+            0.0, 0.0, 0.0,
             false,
         );
         assert!(region.contains_point(300, 116), "pill centre should be inside");

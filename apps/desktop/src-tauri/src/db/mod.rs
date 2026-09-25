@@ -1,8 +1,10 @@
 pub mod api_key_queries;
 pub mod app_target_queries;
 pub mod chat_message_queries;
+mod consolidation;
 pub mod conversation_queries;
 pub mod hotkey_queries;
+pub mod open;
 pub mod paired_remote_device_queries;
 pub mod preferences_queries;
 pub mod term_queries;
@@ -46,11 +48,15 @@ pub const APP_TARGETS_MIGRATION_SQL: &str = include_str!("migrations/019_app_tar
 pub const APP_TARGET_TONE_ID_MIGRATION_SQL: &str =
     include_str!("migrations/020_app_target_tone_id.sql");
 // NOTE: Migration "version" numbers here are the tauri_plugin_sql migration
-// versions, NOT sequential filenames. Some version numbers (e.g. 021, 069,
-// 070) were removed/rebased during early development before public release
-// and are intentionally absent — inserting placeholders would re-run them
-// against existing databases. The gap in filenames is cosmetic only; the
-// `version:` field in the vec![] below is what the plugin keys off.
+// versions, NOT sequential filenames. Some version numbers (e.g. 021, 070)
+// were removed/rebased during early development before public release and
+// are intentionally absent — inserting placeholders would re-run them
+// against existing databases. Version 069 was historically absent as well,
+// but is now the single post-0.1.5 consolidation step: 0.1.5 shipped through
+// 68, and every schema change after it lives in
+// migrations/069_consolidated_v0_1_6_schema.sql. The gap in filenames is
+// cosmetic only; the `version:` field in the vec![] below is what the plugin
+// keys off.
 pub const USER_PREFERENCES_INITIAL_TONES_MIGRATION_SQL: &str =
     include_str!("migrations/022_user_preferences_initial_tones.sql");
 pub const APP_TARGET_ICON_PATH_MIGRATION_SQL: &str =
@@ -135,15 +141,15 @@ pub const INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/067_insertion_method.sql");
 pub const APP_TARGET_INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/068_app_target_insertion_method.sql");
-pub const REMOVE_CLOUD_MODES_MIGRATION_SQL: &str =
-    include_str!("migrations/071_remove_cloud_modes.sql");
-pub const DROP_IS_ENTERPRISE_MIGRATION_SQL: &str =
-    include_str!("migrations/072_drop_is_enterprise.sql");
-pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
-    include_str!("migrations/073_pill_reset_monitor_strategy.sql");
-pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
-    include_str!("migrations/074_always_request_admin_on_startup.sql");
-
+/// The single post-0.1.5 consolidation step: every schema change that shipped
+/// after the 0.1.5 release (former migrations 071-088) plus the 0.1.6 update
+/// channel column, folded into one migration.
+pub const CONSOLIDATED_V0_1_6_MIGRATION_SQL: &str =
+    include_str!("migrations/069_consolidated_v0_1_6_schema.sql");
+/// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
+/// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
+/// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
+/// `auto_learn_from_edits_enabled`, and `eleven_labs_keyterms_enabled`.
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
         tauri_plugin_sql::Migration {
@@ -555,27 +561,9 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 71,
-            description: "remove_cloud_modes",
-            sql: REMOVE_CLOUD_MODES_MIGRATION_SQL,
-            kind: tauri_plugin_sql::MigrationKind::Up,
-        },
-        tauri_plugin_sql::Migration {
-            version: 72,
-            description: "drop_is_enterprise",
-            sql: DROP_IS_ENTERPRISE_MIGRATION_SQL,
-            kind: tauri_plugin_sql::MigrationKind::Up,
-        },
-        tauri_plugin_sql::Migration {
-            version: 73,
-            description: "add_pill_reset_monitor_strategy",
-            sql: PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL,
-            kind: tauri_plugin_sql::MigrationKind::Up,
-        },
-        tauri_plugin_sql::Migration {
-            version: 74,
-            description: "add_always_request_admin_on_startup",
-            sql: ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL,
+            version: 69,
+            description: "consolidated_v0_1_6_schema",
+            sql: CONSOLIDATED_V0_1_6_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

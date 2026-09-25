@@ -1,13 +1,14 @@
 import {
   Button,
   ButtonProps,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
 } from "@mui/material";
-import { ReactNode } from "react";
+import { ReactNode, useId } from "react";
 import { FormattedMessage } from "react-intl";
 
 export type ConfirmDialogProps = {
@@ -20,6 +21,8 @@ export type ConfirmDialogProps = {
   cancelLabel?: ReactNode;
   confirmButtonProps?: ButtonProps;
   cancelButtonProps?: ButtonProps;
+  destructive?: boolean;
+  busy?: boolean;
 };
 
 export const ConfirmDialog = ({
@@ -32,19 +35,53 @@ export const ConfirmDialog = ({
   cancelLabel,
   confirmButtonProps,
   cancelButtonProps,
+  destructive,
+  busy,
 }: ConfirmDialogProps) => {
+  const confirmContent = confirmLabel ?? (
+    <FormattedMessage defaultMessage="Confirm" />
+  );
+  const cancelContent = cancelLabel ?? (
+    <FormattedMessage defaultMessage="Cancel" />
+  );
+
+  const titleId = useId();
+  const contentId = useId();
+
   return (
-    <Dialog open={isOpen} onClose={onCancel} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog
+      open={isOpen}
+      onClose={busy ? undefined : onCancel}
+      maxWidth="xs"
+      fullWidth
+      aria-labelledby={titleId}
+      aria-describedby={contentId}
+    >
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent dividers>
-        <DialogContentText>{content}</DialogContentText>
+        <DialogContentText id={contentId}>{content}</DialogContentText>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button variant="text" onClick={onCancel} {...cancelButtonProps}>
-          {cancelLabel ?? <FormattedMessage defaultMessage="Cancel" />}
+        <Button
+          variant="text"
+          onClick={onCancel}
+          {...cancelButtonProps}
+          disabled={busy || cancelButtonProps?.disabled}
+        >
+          {cancelContent}
         </Button>
-        <Button variant="contained" onClick={onConfirm} {...confirmButtonProps}>
-          {confirmLabel ?? <FormattedMessage defaultMessage="Confirm" />}
+        <Button
+          variant="contained"
+          color={destructive ? "error" : "primary"}
+          onClick={onConfirm}
+          {...confirmButtonProps}
+          disabled={busy || confirmButtonProps?.disabled}
+        >
+          {busy ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : (
+            confirmContent
+          )}
         </Button>
       </DialogActions>
     </Dialog>

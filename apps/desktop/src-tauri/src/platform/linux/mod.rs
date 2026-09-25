@@ -1,4 +1,5 @@
 pub(crate) mod detect;
+pub(crate) mod launch_env;
 mod wl;
 mod x11;
 

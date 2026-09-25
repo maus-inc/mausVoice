@@ -11,6 +11,7 @@ import { PermissionSideEffects } from "./PermissionSideEffects";
 import { RootConfetti } from "./RootConfetti";
 import { RootDialogs } from "./RootDialogs";
 import { RootSideEffects } from "./RootSideEffects";
+import { ContextMenuProvider } from "../common/ContextMenu";
 
 function ErrorFallback({
   resetErrorBoundary,
@@ -20,7 +21,7 @@ function ErrorFallback({
   return (
     <Box sx={{ padding: 2 }}>
       <h2>
-        <FormattedMessage defaultMessage="Something went wrong:" />
+        <FormattedMessage defaultMessage="Something went wrong." />
       </h2>
       <FormattedMessage defaultMessage="The application encountered an unexpected error." />
       <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
@@ -48,7 +49,7 @@ export default function Root() {
   }, [location.pathname]);
 
   return (
-    <>
+    <ContextMenuProvider>
       <PermissionSideEffects />
       <RootConfetti />
       <RootSideEffects />
@@ -74,6 +75,6 @@ export default function Root() {
           </Box>
         </Suspense>
       </ErrorBoundary>
-    </>
+    </ContextMenuProvider>
   );
 }

@@ -22,6 +22,7 @@ import { OverlayPhase } from "../types/overlay.types";
 import { PermissionMap } from "../types/permission.types";
 
 import { AgentRunState } from "./agent.state";
+import { AutoLearnState, INITIAL_AUTO_LEARN_STATE } from "./auto-learn.state";
 import { ChatState, INITIAL_CHAT_STATE } from "./chat.state";
 import { DictionaryState, INITIAL_DICTIONARY_STATE } from "./dictionary.state";
 import { INITIAL_LOCAL_STATE, LocalState } from "./local.state";
@@ -106,12 +107,14 @@ export type AppState = {
   toolInfoById: Record<string, ToolInfo>;
   toolPermissionById: Record<string, ToolPermission>;
   agentStateByConversationId: Record<string, AgentRunState>;
-  streamingMessageById: Record<string, StreamingMessageState>;
+  // Entries exist only while their message is streaming. Missing IDs are normal.
+  streamingMessageById: Partial<Record<string, StreamingMessageState>>;
 
   local: LocalState;
   onboarding: OnboardingState;
   transcriptions: TranscriptionsState;
   dictionary: DictionaryState;
+  autoLearn: AutoLearnState;
   tones: TonesState;
   toneEditor: ToneEditorState;
   settings: SettingsState;
@@ -119,6 +122,12 @@ export type AppState = {
   login: LoginState;
   pillConversationId: Nullable<string>;
   assistantInputMode: AssistantInputMode;
+  /**
+   * Transcript currently shown on the native pill for review before insert.
+   * Only the review at the head of the queue is published here; the rest wait
+   * in `pill-review.actions`.
+   */
+  pendingPillReview: Nullable<{ id: string; text: string }>;
   chat: ChatState;
 
   snackbarMessage?: string;
@@ -126,6 +135,16 @@ export type AppState = {
   snackbarMode: SnackbarMode;
   snackbarDuration: number;
   snackbarTransitionDuration?: number;
+  snackbarAction?: { label: string; onClick: () => void };
+
+  /** Accumulated dictation segments while no editable target was focused.
+   *  Drained on the first editable-focus event or on transcription completion.
+   *  Cleared at session start — never carried across sessions. */
+  dictationBacklog: string[];
+  /** Monotonically incremented each time a new dictation session begins.
+   *  Any code reading the backlog must verify the nonce hasn't advanced
+   *  (i.e. a new session started) before acting on stale backlog data. */
+  dictationBacklogNonce: number;
 
   overlayCursor: Nullable<Vector2>;
   hotkeyTriggers: Record<string, number>;
@@ -172,6 +191,8 @@ export const INITIAL_APP_STATE: AppState = {
   snackbarMode: "info",
   snackbarDuration: 3000,
   snackbarTransitionDuration: undefined,
+  dictationBacklog: [],
+  dictationBacklogNonce: 0,
   overlayCursor: null,
   hotkeyTriggers: {},
   hotkeyStrategy: null,
@@ -180,11 +201,13 @@ export const INITIAL_APP_STATE: AppState = {
   supportsPasteKeybinds: "disabled",
   pillConversationId: null,
   assistantInputMode: "voice",
+  pendingPillReview: null,
   local: INITIAL_LOCAL_STATE,
   chat: INITIAL_CHAT_STATE,
   onboarding: INITIAL_ONBOARDING_STATE,
   transcriptions: INITIAL_TRANSCRIPTIONS_STATE,
   dictionary: INITIAL_DICTIONARY_STATE,
+  autoLearn: INITIAL_AUTO_LEARN_STATE,
   tones: INITIAL_TONES_STATE,
   toneEditor: INITIAL_TONE_EDITOR_STATE,
   settings: INITIAL_SETTINGS_STATE,
