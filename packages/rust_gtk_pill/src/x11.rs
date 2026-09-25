@@ -165,6 +165,15 @@ pub(crate) fn physical_grab_offset(press: (f64, f64), surface_scale: i32) -> (f6
     (press.0 * scale, press.1 * scale)
 }
 
+/// GTK 3 X11 uses one screen-wide device scale for monitor geometry and the
+/// toplevel surface, so all root-space conversions must share this factor.
+pub(crate) fn x11_root_scale(window: &gtk::Window) -> f64 {
+    window
+        .window()
+        .map(|surface| surface.scale_factor() as f64)
+        .unwrap_or(1.0)
+}
+
 /// Advances one frame of X11 drag motion on the frame clock: samples the root
 /// pointer, runs it through the shared controller, and moves the toplevel.
 /// The first frame lazily arms the controller using the physical offset
@@ -183,20 +192,23 @@ pub(crate) fn tick_drag_frame(
         }
     }
     let display = window.display();
+    let scale = x11_root_scale(window);
     let (cx, cy) = root_pointer(window);
     let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
         (cx as f64, cy as f64), dragging,
     );
-    let placement = placement_on_monitor(anchor_x, anchor_y, &display, window, state)
-        .or_else(|| {
-            let monitor = window.window().and_then(|surface| display.monitor_at_window(&surface))?;
-            let (x, y) = monitor_bottom_centre(&monitor);
-            placement_on_monitor(x, y, &display, window, state)
-        })
-        .or_else(|| {
-            let (x, y) = primary_monitor_bottom_centre(&display)?;
-            placement_on_monitor(x, y, &display, window, state)
-        });
+    let placement = placement_on_monitor(
+        anchor_x, anchor_y, dragging, scale, &display, window, state,
+    )
+    .or_else(|| {
+        let monitor = window.window().and_then(|surface| display.monitor_at_window(&surface))?;
+        let (x, y) = monitor_bottom_centre(&monitor, scale);
+        placement_on_monitor(x, y, dragging, scale, &display, window, state)
+    })
+    .or_else(|| {
+        let (x, y) = primary_monitor_bottom_centre(&display, scale)?;
+        placement_on_monitor(x, y, dragging, scale, &display, window, state)
+    });
     let Some(p) = placement else { return };
     let mut motion = state.drag_motion.borrow_mut();
     if dragging && motion.phase() != DragPhase::Held {
@@ -216,6 +228,7 @@ pub(crate) fn tick_drag_frame(
         edge_work: Some(rust_pill_shared::edge::EdgeWork {
             width: p.work_w,
             height: p.work_h,
+            edges: p.edge_mask,
         }),
         held: dragging,
         reduced_motion: crate::pill::reduced_motion(),
@@ -307,7 +320,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     // to (0, 0) would throw the pill into the top-left corner of the root
     // window; park it bottom-centre on the primary monitor instead — the same
     // anchor the idle placement logic uses for first paint.
-    .or_else(|| primary_monitor_bottom_centre(&display).and_then(|(bx, by)| {
+    .or_else(|| primary_monitor_bottom_centre(&display, x11_root_scale(window)).and_then(|(bx, by)| {
         pill_pos_on_monitor(
             bx,
             by,
@@ -424,16 +437,13 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
 /// Returns a bottom-centre anchor point (in physical pixels) for the primary
 /// monitor (or monitor 0 if there is no primary). Used as the initial-placement
 /// anchor when the cursor sits on a transiently-missing monitor at realize().
-fn primary_monitor_bottom_centre(display: &gdk::Display) -> Option<(f64, f64)> {
+fn primary_monitor_bottom_centre(display: &gdk::Display, scale: f64) -> Option<(f64, f64)> {
     let primary = display.primary_monitor().or_else(|| display.monitor(0))?;
-    Some(monitor_bottom_centre(&primary))
+    Some(monitor_bottom_centre(&primary, scale))
 }
 
-fn monitor_bottom_centre(monitor: &gdk::Monitor) -> (f64, f64) {
-    let phys = crate::pill::logical_rect_to_physical(
-        &monitor.geometry(),
-        monitor.scale_factor() as f64,
-    );
+fn monitor_bottom_centre(monitor: &gdk::Monitor, scale: f64) -> (f64, f64) {
+    let phys = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
     let centre_x = phys.x + phys.width / 2.0;
     // Containment is exclusive on the lower edge (`anchor_y < phys.y + phys.height`),
     // so sit one physical pixel inside rather than on the boundary.
@@ -454,15 +464,20 @@ pub(crate) struct MonitorPlacement {
     pub win_w: f64,
     pub content_h: f64,
     pub margin: f64,
+    pub edge_mask: rust_pill_shared::edge::EdgeMask,
 }
 
-/// Resolves physical root coordinates without passing them to GDK's logical
-/// point API. Missing handles during hot-unplug do not stop the search.
-pub(crate) fn monitor_at_physical_point(display: &gdk::Display, x: f64, y: f64) -> Option<gdk::Monitor> {
+/// Resolves a physical root point without passing it to GDK's logical point
+/// API. `scale` is the screen-wide X11 scale shared by all monitor rectangles.
+/// Missing handles during hot-unplug do not stop the search.
+pub(crate) fn monitor_at_physical_point(
+    display: &gdk::Display,
+    x: f64,
+    y: f64,
+    scale: f64,
+) -> Option<gdk::Monitor> {
     (0..display.n_monitors()).filter_map(|i| display.monitor(i)).find(|monitor| {
-        let rect = crate::pill::logical_rect_to_physical(
-            &monitor.geometry(), monitor.scale_factor() as f64,
-        );
+        let rect = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
         x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
     })
 }
@@ -473,13 +488,64 @@ pub(crate) fn monitor_at_physical_point(display: &gdk::Display, x: f64, y: f64) 
 fn placement_on_monitor(
     anchor_x: f64,
     anchor_y: f64,
+    seams_open: bool,
+    scale: f64,
     display: &gdk::Display,
     window: &gtk::Window,
     state: &PillState,
 ) -> Option<MonitorPlacement> {
-    let monitor = monitor_at_physical_point(display, anchor_x, anchor_y)?;
-    let scale = monitor.scale_factor() as f64;
+    let monitor = monitor_at_physical_point(display, anchor_x, anchor_y, scale)?;
+    let pill_center = if seams_open {
+        crate::pill::x11_pill_center(state, scale)
+    } else {
+        None
+    };
+    let seam_point = pill_center
+        .and_then(|center| center.root)
+        .unwrap_or((anchor_x, anchor_y));
     let wa = crate::pill::logical_rect_to_physical(&monitor.workarea(), scale);
+    let monitor_geometry = monitor.geometry();
+    let full = crate::pill::logical_rect_to_physical(&monitor_geometry, scale);
+    let neighbors: Vec<_> = if seams_open {
+        (0..display.n_monitors())
+            .filter_map(|index| display.monitor(index))
+            .filter(|candidate| {
+                let geometry = candidate.geometry();
+                geometry.x() != monitor_geometry.x()
+                    || geometry.y() != monitor_geometry.y()
+                    || geometry.width() != monitor_geometry.width()
+                    || geometry.height() != monitor_geometry.height()
+            })
+            .map(|candidate| {
+                let rect = crate::pill::logical_rect_to_physical(
+                    &candidate.geometry(),
+                    scale,
+                );
+                rust_pill_shared::edge::MonitorRect {
+                    x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let monitor_rect = rust_pill_shared::edge::MonitorRect {
+        x: full.x, y: full.y, width: full.width, height: full.height,
+    };
+    let work_area = rust_pill_shared::edge::MonitorRect {
+        x: wa.x, y: wa.y, width: wa.width, height: wa.height,
+    };
+    let region = if seams_open {
+        state.drag_motion.borrow_mut().resolve_drag_region(
+            monitor_rect,
+            work_area,
+            &neighbors,
+            seam_point,
+        )
+    } else {
+        rust_pill_shared::edge::drag_region(monitor_rect, work_area, &neighbors, seam_point)
+    };
+    let area = region.bounds;
     let (alloc_w, alloc_h) = window.size();
     // window.size() returns logical pixels; XMoveWindow and the
     // workarea math above are in physical pixels, so scale here too.
@@ -498,10 +564,8 @@ fn placement_on_monitor(
     // screen edges; panel/typing modes fill the canvas, so they keep
     // content-canvas clamping (the selector tail is transparent).
     //
-    // Inverted bounds (a zero-size work area or a footprint larger than
-    // the monitor) are fine to pass through: `clamp_point` normalizes
-    // max to min, so the clamp resolves to the minimum boundary instead
-    // of placing the window outside the work area.
+    // Normalize impossible ranges before clamping. On a shared axis this
+    // preserves the seam side; otherwise it safely collapses to the minimum.
     let (min_x, min_y, max_x, max_y) =
         if state.effective_window_mode() == WindowMode::Dictation
             && !state.assistant_active.get()
@@ -517,22 +581,23 @@ fn placement_on_monitor(
             let fw = pw * scale;
             let fh = ph * scale;
             (
-                wa.x - fx,
-                wa.y - fy,
-                wa.x + wa.width - fx - fw,
-                wa.y + wa.height - fy - fh,
+                area.x - fx,
+                area.y - fy,
+                area.right() - fx - fw,
+                area.bottom() - fy - fh,
             )
         } else {
-            (wa.x, wa.y, wa.x + wa.width - win_w, wa.y + wa.height - content_h)
+            (area.x, area.y, area.right() - win_w, area.bottom() - content_h)
         };
+    let mut bounds = DragBounds { min_x, min_y, max_x, max_y };
+    if let Some(center) = pill_center {
+        bounds.apply_shared_seam_bounds(area, center.offset, region.edge_mask);
+    }
+    let applied = state.x11_drag_applied.get();
+    bounds.collapse_inverted(region.edge_mask, (applied.0 as f64, applied.1 as f64));
 
     Some(MonitorPlacement {
-        bounds: DragBounds {
-            min_x,
-            min_y,
-            max_x,
-            max_y,
-        },
+        bounds,
         work_x: wa.x,
         work_y: wa.y,
         work_w: wa.width,
@@ -540,6 +605,7 @@ fn placement_on_monitor(
         win_w,
         content_h,
         margin,
+        edge_mask: region.edge_mask,
     })
 }
 
@@ -553,7 +619,15 @@ fn pill_pos_on_monitor(
     window: &gtk::Window,
     state: &PillState,
 ) -> Option<(c_int, c_int)> {
-    let p = placement_on_monitor(anchor_x, anchor_y, display, window, state)?;
+    let p = placement_on_monitor(
+        anchor_x,
+        anchor_y,
+        dragging,
+        x11_root_scale(window),
+        display,
+        window,
+        state,
+    )?;
 
     if dragging {
         // Keep the grabbed point of the window under the cursor (1:1
