@@ -878,7 +878,7 @@ mod tests {
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
 
-        let near_end = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 700.0));
+        let near_end = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 760.0));
         assert!(!near_end.edge_mask.right);
         let outside = drag.resolve_drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
         assert!(!outside.edge_mask.right);
