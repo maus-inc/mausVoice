@@ -47,46 +47,12 @@ export const extractJsonFromMarkdown = (text: string): string => {
 };
 
 /**
- * Parses LLM JSON output, repairing truncation at the model's token limit
- * (the classic failure is `SyntaxError: Unterminated string in JSON at
- * position N`). Walks the tail of the extracted JSON backwards, dropping
- * partial tokens and re-closing the object until it parses, so a truncated
- * response degrades to whatever complete fields survived instead of
- * discarding the whole post-processing result.
+ * Parses LLM JSON output strictly. A response cut off at the model's token
+ * limit is not valid JSON, so it throws and the caller keeps the full raw
+ * transcript. Repairing it would silently drop the end of the dictation.
  */
-export const parsePostProcessingJson = (raw: string): unknown => {
-  const extracted = extractJsonFromMarkdown(raw);
-
-  // Fast path: complete JSON.
-  try {
-    return JSON.parse(extracted);
-  } catch {
-    // Fall through to truncation repair.
-  }
-
-  let cut = extracted.length;
-  while (cut > 0) {
-    const boundary = Math.max(
-      extracted.lastIndexOf(",", cut - 1),
-      extracted.lastIndexOf('"', cut - 1),
-      extracted.lastIndexOf(" ", cut - 1),
-      extracted.lastIndexOf("\n", cut - 1),
-      extracted.lastIndexOf("\t", cut - 1),
-    );
-    if (boundary <= 0) {
-      break;
-    }
-    cut = boundary;
-    const repaired = `${extracted.slice(0, cut).replace(/,\s*$/, "")}"}`;
-    try {
-      return JSON.parse(repaired);
-    } catch {
-      // Keep cutting back towards the last complete boundary.
-    }
-  }
-
-  throw new Error("Could not parse or repair LLM JSON output");
-};
+export const parsePostProcessingJson = (raw: string): unknown =>
+  JSON.parse(extractJsonFromMarkdown(raw));
 
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>
   value ?? fallback;

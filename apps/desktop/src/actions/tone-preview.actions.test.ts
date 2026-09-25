@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { PROCESSED_TRANSCRIPTION_JSON_SCHEMA } from "../utils/prompt.utils";
+import {
+  getPostProcessMaxTokens,
+  PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
+} from "../utils/prompt.utils";
 
 const { generate } = vi.hoisted(() => ({
   generate: vi.fn(async (_input: unknown) => ({ text: "" })),
@@ -69,7 +72,8 @@ describe("style preview provider contract", () => {
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         signal: controller.signal,
-        maxTokens: 600,
+        maxTokens: getPostProcessMaxTokens("sample"),
+        reasoningEffort: "low",
         jsonResponse: {
           name: "transcription_cleaning",
           description: "JSON response with the processed transcription",

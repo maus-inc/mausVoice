@@ -8,8 +8,11 @@ import Groq from "groq-sdk/index";
 import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
-import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  buildReasoningEffortParams,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
+import type { CustomFetch, DiscoveredModelId, ReasoningEffort } from "./types";
 import {
   runSdkTranscription,
   TranscriptionSegment,
@@ -96,6 +99,7 @@ export type GroqGenerateTextArgs = {
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
@@ -113,6 +117,7 @@ export const groqGenerateTextResponse = async ({
   imageUrls = [],
   jsonResponse,
   maxTokens,
+  reasoningEffort,
   signal,
   customFetch,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
@@ -144,6 +149,7 @@ export const groqGenerateTextResponse = async ({
           messages,
           model,
           max_completion_tokens: maxTokens ?? 5000,
+          ...buildReasoningEffortParams(model, reasoningEffort),
           response_format: jsonResponse
             ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
               ? {

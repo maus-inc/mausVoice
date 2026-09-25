@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { unwrapNestedLlmResponse, extractJsonFromMarkdown } from "./ai.utils";
+import {
+  unwrapNestedLlmResponse,
+  extractJsonFromMarkdown,
+  parsePostProcessingJson,
+} from "./ai.utils";
 
 describe("unwrapNestedLlmResponse", () => {
   it("should return original object when value is already a string", () => {
@@ -426,5 +430,25 @@ Example 2:
       const result = extractJsonFromMarkdown(input);
       expect(result).toContain('{"text": "value with \\');
     });
+  });
+});
+
+describe("parsePostProcessingJson", () => {
+  it("parses complete JSON, including fenced blocks", () => {
+    expect(parsePostProcessingJson('{"result":"Hello."}')).toEqual({
+      result: "Hello.",
+    });
+    expect(parsePostProcessingJson('```json\n{"result":"Hi"}\n```')).toEqual({
+      result: "Hi",
+    });
+  });
+
+  it("rejects output cut off at the token limit instead of shortening it", () => {
+    expect(() =>
+      parsePostProcessingJson('{"result":"We agreed to push the beta to'),
+    ).toThrow(SyntaxError);
+    expect(() => parsePostProcessingJson('{"result":"Done."')).toThrow(
+      SyntaxError,
+    );
   });
 });

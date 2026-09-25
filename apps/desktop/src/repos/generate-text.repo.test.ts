@@ -177,6 +177,39 @@ describe("GenerateTextInput.signal forwarding", () => {
   });
 });
 
+describe("GenerateTextInput.reasoningEffort forwarding", () => {
+  it("Groq forwards the effort to the primary and the fallback model", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked
+      .mockRejectedValueOnce(new Error("primary failed"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    await new GroqGenerateTextRepo("k", "openai/gpt-oss-20b").generateText({
+      prompt: "p",
+      reasoningEffort: "low",
+    });
+
+    expect(mocked).toHaveBeenCalledTimes(2);
+    for (const [args] of mocked.mock.calls) {
+      expect(args.reasoningEffort).toBe("low");
+    }
+  });
+
+  it("Cerebras forwards the effort", async () => {
+    const mocked = vi.mocked(cerebrasGenerateTextResponse);
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    await new CerebrasGenerateTextRepo("k", null).generateText({
+      prompt: "p",
+      reasoningEffort: "low",
+    });
+
+    expect(mocked).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffort: "low" }),
+    );
+  });
+});
+
 describe("default model fallback when no model is stored", () => {
   const cases: [
     name: string,

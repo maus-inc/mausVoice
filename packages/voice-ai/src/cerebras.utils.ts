@@ -9,9 +9,10 @@ import { openaiCompatibleStreamChat } from "./openai.utils";
 import {
   buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
+  buildReasoningEffortParams,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
-import type { CustomFetch, DiscoveredModelId } from "./types";
+import type { CustomFetch, DiscoveredModelId, ReasoningEffort } from "./types";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
 export type CerebrasModel =
@@ -151,6 +152,7 @@ export type CerebrasGenerateTextArgs = {
   prompt: string;
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   customFetch?: CustomFetch;
   signal?: AbortSignal;
 };
@@ -167,6 +169,7 @@ export const cerebrasGenerateTextResponse = async ({
   prompt,
   jsonResponse,
   maxTokens,
+  reasoningEffort,
   customFetch,
   signal,
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
@@ -195,6 +198,7 @@ export const cerebrasGenerateTextResponse = async ({
         model,
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
+        ...buildReasoningEffortParams(model, reasoningEffort),
         top_p: 1,
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       };

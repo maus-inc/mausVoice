@@ -9,3 +9,6 @@ declare const discoveredModelIdBrand: unique symbol;
 export type DiscoveredModelId = string & {
   readonly [discoveredModelIdBrand]?: never;
 };
+
+/** Reasoning depth accepted by the gpt-oss family on Groq and Cerebras. */
+export type ReasoningEffort = "low" | "medium" | "high";
