@@ -10,8 +10,9 @@ Regenerate from the repository root:
 ```sh
 node reports/pr219/harness/build.mjs
 node node_modules/.cache/pr219-evidence.mjs
-pnpm exec prettier --write reports/pr219
 ```
+
+`reports/` is listed in `.prettierignore`, so these files are not formatted or checked by Prettier.
 
 ## Findings
 
