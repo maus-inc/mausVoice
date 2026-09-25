@@ -616,7 +616,10 @@ export const DictationSideEffects = () => {
       audioChunkUnlistenRef.current?.();
       audioChunkUnlistenRef.current = null;
       sessionRef.current?.cleanup();
-      strategyRef.current?.cleanup();
+      const strategyCleanup = strategyRef.current?.cleanup();
+      void strategyCleanup?.catch((error) => {
+        getLogger().warning(`Strategy cleanup failed during unmount: ${error}`);
+      });
       invoke("stop_recording").catch(() => undefined);
     };
   }, []);
@@ -723,6 +726,7 @@ export const DictationSideEffects = () => {
 
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
+      const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
       recordingOperationRef.current += 1;
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
@@ -731,8 +735,10 @@ export const DictationSideEffects = () => {
       clearCancelPromptTimer();
       hardResetHotkeyState();
       restoreSystemVolume();
-      audioChunkUnlistenRef.current?.();
-      audioChunkUnlistenRef.current = null;
+      if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
+        ownedAudioChunkUnlisten?.();
+        audioChunkUnlistenRef.current = null;
+      }
       await sendPhaseToPill("idle");
       invoke("stop_recording").catch((e) =>
         getLogger().verbose(`stop_recording failed during abort: ${e}`),
@@ -999,6 +1005,7 @@ export const DictationSideEffects = () => {
   );
 
   const stopRecordingRaw = useCallback(async (): Promise<RawStopResp> => {
+    const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
     getLogger().info("Stopping recording");
     clearRecordingTimers();
     restoreSystemVolume();
@@ -1023,8 +1030,10 @@ export const DictationSideEffects = () => {
         abortMessage: String(error),
       };
     } finally {
-      audioChunkUnlistenRef.current?.();
-      audioChunkUnlistenRef.current = null;
+      if (audioChunkUnlistenRef.current === ownedAudioChunkUnlisten) {
+        ownedAudioChunkUnlisten?.();
+        audioChunkUnlistenRef.current = null;
+      }
       // Phase convergence: every stop path (success, error, watchdog
       // timeout) must return the pill to idle.
       await sendPhaseToPill("idle");
@@ -1349,7 +1358,6 @@ export const DictationSideEffects = () => {
           getLogger().warning(
             "Session was aborted while starting; skipping timers and stopping stale capture",
           );
-          await stopOwnedNativeStart(nativeStartOwnerRef, operationId);
           startedSession.cleanup();
           return;
         }
@@ -1360,10 +1368,6 @@ export const DictationSideEffects = () => {
         startupAudioBuffer.replay();
         startupAudioBuffer.reset();
         audioForwardingReady = true;
-        if (!session.writeAudioChunk) {
-          audioChunkUnlistenRef.current?.();
-          audioChunkUnlistenRef.current = null;
-        }
 
         // Keep the user-configured active-audio timers at their established
         // start point after session initialization succeeds.
