@@ -4,7 +4,6 @@ use crate::constants::*;
 use crate::draw::{over_side_control, pill_position, tooltip_rendered_origin};
 use crate::gfx;
 use crate::state::{ClickAction, PillState};
-use rust_pill_shared::hover::{HOVER_ENTRY_PAD, HOVER_EXIT_PAD};
 
 fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
     if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
@@ -307,15 +306,14 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
 
     let currently_hovered = state.hovered.get();
     let pad = if currently_hovered {
-        HOVER_EXIT_PAD
+        rust_pill_shared::hover::HOVER_EXIT_PAD
     } else {
-        HOVER_ENTRY_PAD
+        rust_pill_shared::hover::HOVER_ENTRY_PAD
     };
-    let (pad_x, pad_y) = (pad, pad);
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-    if x >= pill_x - pad_x && x <= pill_x + pill_w + pad_x
-        && y >= pill_y - pad_y && y <= pill_y + pill_h + pad_y
+    if x >= pill_x - pad && x <= pill_x + pill_w + pad
+        && y >= pill_y - pad && y <= pill_y + pill_h + pad
     {
         return true;
     }
