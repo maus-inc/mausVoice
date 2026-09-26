@@ -117,6 +117,20 @@ describe("savePersonalDeepgramApiKey", () => {
     expect(apiKeyActionsMock.updateApiKey).not.toHaveBeenCalled();
   });
 
+  // Same reasoning on the save path, which is the one a user actually takes.
+  // upsertPersonalDeepgramApiKey builds its payload from the discovered row, so
+  // a hardcoded id here would also match zero rows in update_api_key.
+  it("saves an adopted key by its own id, not the default id", async () => {
+    setApiKeys([deepgramKey({ id: "adopted-7f3a" })]);
+
+    await savePersonalDeepgramApiKey("dg-existing");
+
+    expect(apiKeyActionsMock.updateApiKey).toHaveBeenCalledWith({
+      id: "adopted-7f3a",
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
+    });
+  });
+
   it("applies the transcription selection after saving", async () => {
     await savePersonalDeepgramApiKey("dg-new");
 

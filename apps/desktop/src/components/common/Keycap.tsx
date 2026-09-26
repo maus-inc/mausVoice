@@ -18,10 +18,11 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
           minHeight: 22,
           // minWidth replaces the flexbox automatic minimum size, so without
           // this a cap can render narrower than its label and the text spills
-          // past the painted cap. It bites where a badge sits inline in a
-          // sentence: the inline-flex badge shrink-to-fits its line, and the
-          // caps are flex items of a row that cannot wrap. That is
-          // KeybindingsForm, FeatureReleaseDialog and ManualStylingLayout.
+          // past the painted cap. HotkeyBadge wraps, so a long combo does not
+          // need this to fit; it still matters once the inline-flex badge has
+          // shrink-to-fit a tight line, where an individual wrapped row can
+          // still be narrower than its caps. That is the inline-in-sentence
+          // usage: KeybindingsForm, FeatureReleaseDialog, ManualStylingLayout.
           flexShrink: 0,
           px: 0.75,
           py: 0.25,

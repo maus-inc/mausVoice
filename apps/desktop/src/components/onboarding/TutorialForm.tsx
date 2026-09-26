@@ -401,7 +401,7 @@ const EmailStep = ({
           </Typography>
         </Box>
       </Box>
-      <Box sx={{ position: "relative", pb: 6 }}>
+      <Box sx={{ position: "relative" }}>
         <TextField
           multiline
           minRows={8}
