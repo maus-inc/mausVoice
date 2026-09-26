@@ -42,9 +42,6 @@ export const SignInForm = () => {
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
   const prefilledNameSource = useRef<string | null>(null);
-  // Tracks whether we've already auto-advanced past signIn for this auth
-  // session. Persisted in Zustand state (not a component ref) so it
-  // survives SignInForm unmount/remount when the user presses Back.
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();

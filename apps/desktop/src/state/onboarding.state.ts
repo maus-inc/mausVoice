@@ -113,16 +113,23 @@ export const updateOnboardingLastName = (
 };
 
 /** Releases the last-name field back to its inactive state, restoring the
- *  canonical name to just the first name (or the existing leading segment
- *  if the user had typed middle names) and clearing the last-name value. */
+ *  canonical name to the leading segment(s) of the existing canonical
+ *  name with the final token stripped (so middle names the user typed
+ *  are kept), falling back to just the trimmed first name when the
+ *  name is a single token. */
 export const clearOnboardingLastName = (
   draft: OnboardingNameDraft,
-): OnboardingNameDraft => ({
-  ...draft,
-  name: draft.firstName.trim(),
-  lastName: "",
-  lastNameEnabled: false,
-});
+): OnboardingNameDraft => {
+  const parts = draft.name.trim().split(/\s+/).filter(Boolean);
+  const name =
+    parts.length > 1 ? parts.slice(0, -1).join(" ") : draft.firstName.trim();
+  return {
+    ...draft,
+    name,
+    lastName: "",
+    lastNameEnabled: false,
+  };
+};
 
 export const isOnboardingNameDraftOwnedByAuth = (
   ownerId: string | null,

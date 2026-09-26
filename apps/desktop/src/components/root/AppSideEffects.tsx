@@ -190,6 +190,14 @@ export const AppSideEffects = () => {
   // uid ref so sign-out (null) → sign-in (X) still counts as a real
   // transition and bumps authSessionNonce + resets onboarding state,
   // while the first cold-start callback preserves the persisted resume.
+  //
+  // NOTE: today's PersonalAuthRepo always fires synchronously exactly
+  // once, so the uidChanged branch only executes when a future multi-
+  // callback auth repo is wired in, when the onError handler fires, or
+  // when tests drive the store by bumping authSessionNonce directly.
+  // The existing staleness tests in onboarding.actions.test.ts and
+  // OnboardingPage.test.tsx cover the downstream guards; the branch
+  // definition here is intentionally small.
   const authResolvedRef = useRef(false);
   const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the

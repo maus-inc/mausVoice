@@ -487,8 +487,7 @@ const useTutorialSubmission = ({
   const submittedRef = useRef(false);
   const submissionCompleteRef = useRef(false);
   const [initializing, setInitializing] = useState(true);
-  // Retry token so the user can re-run submitOnboarding after a write
-  // failure (disk full / locked DB / stale session) without reloading.
+  const [submissionFailed, setSubmissionFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   const setChatToneRef = useRef(setChatTone);
 
@@ -499,6 +498,7 @@ const useTutorialSubmission = ({
   const retry = useCallback(() => {
     submittedRef.current = false;
     submissionCompleteRef.current = false;
+    setSubmissionFailed(false);
     setRetryToken((t) => t + 1);
   }, []);
 
@@ -506,20 +506,18 @@ const useTutorialSubmission = ({
     let cancelled = false;
     const init = async () => {
       setInitializing(true);
+      setSubmissionFailed(false);
       try {
         if (!submittedRef.current) {
           submittedRef.current = true;
           const savedUser = await submitOnboarding();
           if (savedUser === null) {
-            // Stale session or write failure. The action has already
-            // reset submitting=false and surfaced an error snackbar
-            // where there was something to show. Unlock dictation so
-            // the tutorial remains usable; retry() re-runs the write.
             submittedRef.current = false;
             if (cancelled) return;
             produceAppState((draft) => {
               draft.onboarding.dictationOverrideEnabled = true;
             });
+            setSubmissionFailed(true);
             return;
           }
           submissionCompleteRef.current = Boolean(savedUser);
@@ -531,14 +529,15 @@ const useTutorialSubmission = ({
           draft.onboarding.dictationOverrideEnabled = true;
         });
       } catch (error) {
+        // submitOnboarding wraps all awaits in its own try/catch and
+        // returns null, so this branch is defensive. It still needs
+        // to surface a retry path rather than leaving the page inert.
         if (cancelled) return;
         submittedRef.current = false;
-        // The action surfaces errors itself, but re-enable dictation
-        // override so the user isn't locked on an inert page. retry()
-        // lets them re-attempt the write.
         produceAppState((draft) => {
           draft.onboarding.dictationOverrideEnabled = true;
         });
+        setSubmissionFailed(true);
         showErrorSnackbar(error);
       } finally {
         if (!cancelled) {
@@ -564,7 +563,7 @@ const useTutorialSubmission = ({
     };
   }, [retryToken]);
 
-  return { initializing, retry };
+  return { initializing, submissionFailed, retry };
 };
 
 /** Marks the tutorial as "started" once the user holds the hotkey combo. */
@@ -670,7 +669,9 @@ export const TutorialForm = () => {
     await setSelectedToneId(toneId);
   };
 
-  const { initializing } = useTutorialSubmission({ setChatTone });
+  const { initializing, submissionFailed, retry } = useTutorialSubmission({
+    setChatTone,
+  });
   useTutorialDictationStart({
     primaryHotkey,
     keysHeld,
@@ -788,22 +789,37 @@ ${userName}`;
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: "easeOut" }}
         >
-          {stepIndex === 0 ? (
+          {submissionFailed ? (
+            <Stack spacing={2} sx={{ alignItems: "center", py: 2 }}>
+              <Typography variant="body1" sx={{ textAlign: "center" }}>
+                <FormattedMessage defaultMessage="Something went wrong." />
+              </Typography>
+              <Button
+                variant="contained"
+                onClick={retry}
+                startIcon={<ArrowForward />}
+              >
+                <FormattedMessage defaultMessage="Try again" />
+              </Button>
+            </Stack>
+          ) : stepIndex === 0 ? (
             <NotesStep {...fieldProps} overlay={tooltips} />
           ) : (
             <EmailStep {...fieldProps} overlay={tooltips} />
           )}
-          <TutorialStepper
-            stepIndex={stepIndex}
-            onSelect={(index) => {
-              if (index === stepIndex) {
-                return;
-              }
-              setStepIndex(index);
-              setDictationValue("");
-              setHasStartedDictating(false);
-            }}
-          />
+          {!submissionFailed && (
+            <TutorialStepper
+              stepIndex={stepIndex}
+              onSelect={(index) => {
+                if (index === stepIndex) {
+                  return;
+                }
+                setStepIndex(index);
+                setDictationValue("");
+                setHasStartedDictating(false);
+              }}
+            />
+          )}
         </motion.div>
       )}
     </Stack>

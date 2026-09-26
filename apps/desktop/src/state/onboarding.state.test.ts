@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  clearOnboardingLastName,
   createOnboardingNameDraft,
   isOnboardingNameDraftOwnedByAuth,
   resolveOnboardingName,
@@ -109,5 +110,22 @@ describe("onboarding name draft", () => {
     };
 
     expect(resolveOnboardingName(draft, "")).toBe("Mary Watson");
+  });
+
+  it("clearOnboardingLastName preserves middle names when releasing", () => {
+    const draft = createOnboardingNameDraft("Mary Jane Watson");
+    const released = clearOnboardingLastName(draft);
+    expect(released.name).toBe("Mary Jane");
+    expect(released.firstName).toBe("Mary");
+    expect(released.lastName).toBe("");
+    expect(released.lastNameEnabled).toBe(false);
+  });
+
+  it("clearOnboardingLastName falls back to firstName for single-token names", () => {
+    const draft = createOnboardingNameDraft("Madonna");
+    const released = clearOnboardingLastName(draft);
+    expect(released.name).toBe("Madonna");
+    expect(released.lastName).toBe("");
+    expect(released.lastNameEnabled).toBe(false);
   });
 });
