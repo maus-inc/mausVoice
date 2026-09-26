@@ -194,6 +194,43 @@ describe("redaction.utils", () => {
       expect(result.keyboard).toBe("qwerty");
     });
 
+    it("redacts the auth credential names that survive the word boundary", async () => {
+      const result = await redactObject({
+        auth: "Bearer opaque",
+        authorization: "Bearer opaque",
+        authHeader: "Bearer opaque",
+        auth_header: "Bearer opaque",
+        "x-auth-token": "opaque",
+        config: { auth: "Bearer opaque" },
+      });
+      expect(result).toEqual({
+        auth: "[redacted]",
+        authorization: "[redacted]",
+        authHeader: "[redacted]",
+        auth_header: "[redacted]",
+        "x-auth-token": "[redacted]",
+        config: { auth: "[redacted]" },
+      });
+    });
+
+    // The unanchored "auth" alternative used to mask "author" and its kin,
+    // which is the over match this pattern no longer makes. A key is sensitive
+    // when "auth" is a whole key, a delimited component, or a known compound.
+    it("leaves incidental words that only start with the auth letters visible", async () => {
+      const result = await redactObject({
+        author: "Soniya",
+        authorName: "Soniya",
+        authority: "Riverside",
+        authentic: "genuine",
+      });
+      expect(result).toEqual({
+        author: "Soniya",
+        authorName: "Soniya",
+        authority: "Riverside",
+        authentic: "genuine",
+      });
+    });
+
     it("fully redacts nested arrays under sensitive keys", async () => {
       const result = (await redactObject({ passwords: [["foo"]] })) as {
         passwords: unknown;
@@ -423,4 +460,47 @@ describe("redaction.utils", () => {
       second: [{ password: "[redacted]", name: "ok" }],
     });
   });
+  it.each([
+    "cookie",
+    "set-cookie",
+    "setCookie",
+    "jwt",
+    "jwtToken",
+    "sessionId",
+    "session_id",
+    "sessionKey",
+    "otp",
+    "OTP",
+    "pin",
+    "passcode",
+    "passphrase",
+  ])(
+    "redacts a bearer-shaped key that is named none of the usual ways (%s)",
+    async (key) => {
+      // None of these is called a token, a secret or a key, so nothing above
+      // matched them, and each one is a credential in its own right.
+      expect(await redactObject({ [key]: "value" })).toEqual({
+        [key]: "[redacted]",
+      });
+    },
+  );
+
+  it.each([
+    "spinning",
+    "hotplate",
+    "mapping",
+    "shopping",
+    "keyboard",
+    "author",
+    "authState",
+  ])(
+    "leaves an ordinary word that merely contains a sensitive fragment (%s)",
+    async (key) => {
+      // A value masked for an ordinary word is a log line nobody can read, so
+      // the short fragments are delimited rather than matched anywhere.
+      expect(await redactObject({ [key]: "value" })).toEqual({
+        [key]: "value",
+      });
+    },
+  );
 });

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HttpError, retry } from "@maus-inc/utilities";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -10,6 +11,27 @@ import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.
 
 const makeResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status });
+
+const transcribe = () =>
+  openaiCompatibleTranscribeAudio({
+    baseUrl: "https://example.com/v1",
+    model: "whisper-1",
+    blob: new ArrayBuffer(8),
+    ext: "wav",
+  });
+
+// A Response body is a single-use stream and the retry policy resends the same
+// request, so every attempt needs a Response of its own.
+const respondWith = (body: string, status: number, headers?: HeadersInit) =>
+  fetchMock.mockImplementation(
+    async () => new Response(body, { status, headers }),
+  );
+
+const settled = (promise: Promise<unknown>): Promise<unknown> =>
+  promise.then(
+    () => null,
+    (error: unknown) => error,
+  );
 
 const requestBodyAt = (index: number): FormData => {
   const init = fetchMock.mock.calls[index]?.[1];
@@ -169,5 +191,92 @@ describe("openaiCompatibleTranscribeAudio", () => {
     ).rejects.toThrow(/503 - .*Service Unavailable/);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("openaiCompatibleTranscribeAudio reports the status as data", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("attempts a terminal status exactly once and keeps the existing message", async () => {
+    respondWith(JSON.stringify({ error: "quota exhausted" }), 402);
+
+    const error = await settled(retry({ fn: transcribe }));
+
+    // A rejected quota cannot clear on a second identical upload, so the
+    // attempt count is the behaviour that matters and is checked first.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as HttpError).status).toBe(402);
+    expect((error as HttpError).retryAfterMs).toBeNull();
+    // The message is what a caller shows and what the assertions above pin, so
+    // it has to stay byte-identical to the plain Error it replaced.
+    expect((error as Error).message).toBe(
+      'OpenAI Compatible transcription failed: 402 - {"error":"quota exhausted"}',
+    );
+  });
+
+  it("waits out a rate-limit hint and retries instead of failing at once", async () => {
+    vi.useFakeTimers();
+    respondWith("slow down", 429, { "retry-after": "1" });
+
+    const attempt = settled(retry({ fn: transcribe }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The hint sets the pace, so the second attempt must not run on the
+    // helper's own 20ms floor.
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    const error = await attempt;
+
+    expect((error as HttpError).status).toBe(429);
+    expect((error as HttpError).retryAfterMs).toBe(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("clamps a long rate-limit hint to the interactive cap", async () => {
+    vi.useFakeTimers();
+    respondWith("slow down", 503, { "retry-after": "60" });
+
+    const attempt = settled(retry({ fn: transcribe }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // DEFAULT_MAX_RETRY_DELAY_MS is 2s, so a person waiting on a dictation gets
+    // the 2s ceiling rather than the full minute the header asked for.
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    const error = await attempt;
+
+    expect((error as HttpError).status).toBe(503);
+    // The hint is parsed in full; only the wait is capped.
+    expect((error as HttpError).retryAfterMs).toBe(30_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps a 2xx body with no text a plain error", async () => {
+    respondWith(JSON.stringify({}), 200);
+
+    const error = await settled(transcribe());
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(HttpError);
+    expect((error as Error).message).toBe(
+      "Transcription failed: no text in response",
+    );
   });
 });

@@ -13,11 +13,29 @@ const SENSITIVE_KEY_PATTERNS = [
   /password|passwd|pwd/i,
   /secret|clientSecret|client_secret/i,
   /tokens?|accessTokens?|refreshTokens?|idTokens?/i,
-  /authorization|auth(?:Header|orization|_header)?/i,
+  /**
+   * "auth" names a credential as a whole key, as a delimited component such as
+   * "x-auth-token", or as a known compound such as "authHeader". A delimiter is
+   * anything that is not a letter or a digit, so an underscore separates like a
+   * hyphen. A letter or a digit right after "auth" starts an ordinary word such
+   * as "author" or "authentic", and the only such word that is a credential
+   * name is "authorization". That word stays unanchored because the real names
+   * put it inside compounds such as "Proxy-Authorization", and a compound of
+   * "auth" and a qualifier stays unanchored for the same reason.
+   */
+  /authorization|(?:^|[^a-z\d])auth(?![a-z\d])|auth(?:header|key|cookie|code|signature|url|uri)/i,
   /credential/i,
   /private/i,
   /api[_-]?key/i,
   /(?:access[_-]?key|key[_-]?id|session[_-]?key)/i,
+  // Session and browser credentials. No key here was called a token, a secret
+  // or a key, so nothing above matched them, and a logged `cookie` or a
+  // `sessionId` is a bearer credential in its own right. The three-letter
+  // ones are delimited on purpose: unanchored, `otp` also hides "hotplate" and
+  // `pin` also hides "spinning", and a value masked for an ordinary word is a
+  // log line nobody can read.
+  /cookies?|jwt|set[_-]?cookie|session[_-]?id/i,
+  /(?:^|[^a-z\d])(?:otp|pin|passcode|passphrase)(?:$|[^a-z\d])/i,
 ];
 
 const SECRET_VALUE_PATTERN =

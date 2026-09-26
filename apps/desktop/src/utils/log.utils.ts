@@ -51,14 +51,14 @@ export const redactQueryParamValues = (
 const REDACTION_FAILED = "[redaction-failed]";
 
 /**
- * Only a top level record is masked. A primitive, null, or a top level array
- * is rendered by JSON.stringify as it stands, so a top level array keeps its
- * elements unmasked. That is what the logger did before the masker existed,
- * and masking a top level array is tracked as a follow up. An array nested
- * inside a record is masked by the traversal itself.
+ * A primitive and null are rendered as they stand. Every other value is masked,
+ * a top level array included, so a sensitive key at any depth inside one is
+ * masked by the same rules that already reach an array nested in a record.
+ * A value that renders itself through toJSON stays a leaf, and the traversal
+ * resolves and redacts that rendered form rather than walking own properties.
  */
-const isMaskableObject = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+const isMaskable = (value: unknown): value is object => {
+  return value !== null && typeof value === "object";
 };
 
 const serializeForLog = (value: unknown): string => {
@@ -67,9 +67,13 @@ const serializeForLog = (value: unknown): string => {
   // reads own enumerable properties only and would otherwise turn a hostile
   // shape into an empty object that then gets logged.
   const raw = JSON.stringify(value);
-  if (!isMaskableObject(value)) return raw;
+  if (!isMaskable(value)) return raw;
   try {
-    return JSON.stringify(redactObjectSync(value));
+    // redactObjectSync types its argument as a record, the shape a caller
+    // hands it most often. Its traversal reaches an array through the same
+    // branch and returns the shape it was given, so a top level array still
+    // renders as a JSON array and the assertion matches how the call runs.
+    return JSON.stringify(redactObjectSync(value as Record<string, unknown>));
   } catch {
     return REDACTION_FAILED;
   }
