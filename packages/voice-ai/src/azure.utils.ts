@@ -428,14 +428,20 @@ const AZURE_REASON_EXCERPT_CHARS = 120;
  * a false positive costs a diagnosis and a false negative publishes a key. The
  * label may be quoted, because an error body or a gateway echo arrives as JSON,
  * where a closing quote sits between the label and the separator.
+ *
+ * Every quantifier here is bounded on purpose. The reason is text a remote end
+ * chose, so a pattern with two adjacent unbounded whitespace runs would let it
+ * choose input that backtracks, and a trailing boundary after a greedy run
+ * makes the engine retry every shorter length. Bounded runs and no trailing
+ * boundary keep this linear on hostile input, which the ReDoS case below pins.
  */
 const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // `Ocp-Apim-Subscription-Key: <value>`, `{"api_key":"<value>"}` and friends.
-  /\b(ocp-apim-subscription-key|subscription[-_]?key|api[-_]?key|apikey|access[-_]?token)\b["']?\s*[:=]\s*["']?\S+/gi,
+  /\b(?:ocp[-_]apim[-_]subscription[-_]key|subscription[-_]key|api(?:key|[-_]key)|apikey|access(?:[-_]token|token))\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
   // `Authorization: Bearer <value>`, `{"authorization":"<value>"}`, any scheme.
-  /\bauthorization\b["']?\s*[:=]\s*["']?\s*(?:bearer|basic|token)?\s*\S+/gi,
+  /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}(?:(?:bearer|basic|token)[ \t]{0,4})?\S+/gi,
   // A bare provider-style token, wherever it appears.
-  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}\b/g,
+  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g,
   // A JWT, which is long and structurally unmistakable.
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g,
 ];
@@ -446,10 +452,11 @@ const redactCredentialShapedText = (text: string): string =>
       redacted.replace(pattern, (match) => {
         // A quoted label leaves its closing quote in front of the separator, so
         // the label is cut before that quote and the separator is kept as it
-        // was written, which leaves a readable `label: [redacted]`.
+        // was written, which leaves a readable `label: [redacted]`. The quote
+        // run is bounded because a label is a handful of characters at most.
         const separator = match.search(/[:=]/);
         if (separator === -1) return "[redacted]";
-        const label = match.slice(0, separator).replace(/["']+$/, "");
+        const label = match.slice(0, separator).replace(/["']{1,2}$/, "");
         return `${label}${match[separator]} [redacted]`;
       }),
     text,

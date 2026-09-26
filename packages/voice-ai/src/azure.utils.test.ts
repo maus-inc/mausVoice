@@ -503,6 +503,49 @@ describe("azureTestIntegration message bounds", () => {
   });
 });
 
+describe("credential redaction is safe on hostile input", () => {
+  it("redacts a large reason built to make the patterns backtrack", async () => {
+    // The reason is text the remote end chose, so a pattern with adjacent
+    // unbounded whitespace runs, or a trailing boundary after a greedy run,
+    // would let it choose input that costs the engine super-linear time. The
+    // patterns bound every run for that reason.
+    //
+    // This is a forward-looking guard, not proof of a fixed vulnerability: it
+    // also passed against the earlier unbounded patterns, because V8's engine
+    // handles them without blowing up. It pins that the redaction path stays
+    // fast on a large hostile-shaped input, so a future pattern that really
+    // does backtrack fails here.
+    const hostile = [
+      "Ocp-Apim-Subscription-Key" +
+        '"'.repeat(20_000) +
+        " " +
+        ":".repeat(20_000),
+      "authorization" + " ".repeat(20_000) + "=" + '"'.repeat(20_000),
+      "api_key" + " ".repeat(20_000) + ":" + "sk" + "-a".repeat(20_000),
+      "eyJ" +
+        "a".repeat(20_000) +
+        "." +
+        "b".repeat(20_000) +
+        "." +
+        "c".repeat(20_000),
+    ].join(" ");
+    expect(hostile.length).toBeGreaterThan(100_000);
+
+    speech.error = `StatusCode: 503\n${hostile}`;
+    const started = Date.now();
+    // The classification of a 503 is covered elsewhere; what matters here is
+    // that the call settles at all, and quickly.
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow();
+    const elapsed = Date.now() - started;
+
+    // Generous enough that a loaded machine cannot fail it, tight enough that an
+    // exponential blowup cannot pass it.
+    expect(elapsed).toBeLessThan(2_000);
+  });
+});
+
 describe("writeWavChunkId", () => {
   it("writes an ASCII chunk id byte for byte", () => {
     const view = new DataView(new ArrayBuffer(4));
