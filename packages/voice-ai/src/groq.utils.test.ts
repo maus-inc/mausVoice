@@ -53,3 +53,41 @@ describe("groqGenerateTextResponse request body", () => {
     expect(body).not.toHaveProperty("reasoning_effort");
   });
 });
+
+describe("groqGenerateTextResponse retries", () => {
+  beforeEach(() => {
+    createChatCompletion.mockReset();
+  });
+
+  const reject = (status: number) =>
+    Object.assign(new Error(`status ${status}`), { status });
+
+  it.each([401, 402, 403])(
+    "does not retry a rejected key (%i)",
+    async (status) => {
+      createChatCompletion.mockRejectedValue(reject(status));
+
+      await expect(
+        groqGenerateTextResponse({
+          apiKey: "gsk_test",
+          model: "openai/gpt-oss-20b",
+          prompt: "p",
+        }),
+      ).rejects.toMatchObject({ status });
+      expect(createChatCompletion).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("still retries a transient failure", async () => {
+    createChatCompletion
+      .mockRejectedValueOnce(reject(503))
+      .mockResolvedValueOnce(completion);
+
+    await groqGenerateTextResponse({
+      apiKey: "gsk_test",
+      model: "openai/gpt-oss-20b",
+      prompt: "p",
+    });
+    expect(createChatCompletion).toHaveBeenCalledTimes(2);
+  });
+});

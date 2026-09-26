@@ -9,6 +9,10 @@ import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/complet
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import {
+  isKeyRejectedStatus,
+  readProviderStatus,
+} from "./provider-status.utils";
+import {
   buildReasoningEffortParams,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
@@ -123,10 +127,11 @@ export const groqGenerateTextResponse = async ({
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
     // A present-but-not-aborted signal is not an abort and must not disable
-    // retries for transient failures. Only an actually aborted signal is
-    // terminal.
+    // retries for transient failures. Only an actually aborted signal or a
+    // rejected key is terminal.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: (error) =>
+      !signal?.aborted && !isKeyRejectedStatus(readProviderStatus(error)),
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

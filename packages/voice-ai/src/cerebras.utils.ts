@@ -6,6 +6,7 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import { openaiCompatibleStreamChat } from "./openai.utils";
+import { readProviderStatus } from "./provider-status.utils";
 import {
   buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
@@ -67,20 +68,12 @@ export const redactCerebrasMessage = (message: string): string =>
     message,
   );
 
-const readStatus = (error: unknown): number | undefined => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return undefined;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-};
-
 /** True when a thrown value carries a non-retryable Cerebras HTTP status. */
 export const isCerebrasTerminalError = (error: unknown): boolean => {
   if (error instanceof CerebrasProviderError && error.status !== undefined) {
     return isCerebrasTerminalStatus(error.status);
   }
-  const status = readStatus(error);
+  const status = readProviderStatus(error);
   return status !== undefined && isCerebrasTerminalStatus(status);
 };
 
@@ -98,11 +91,7 @@ export const normalizeCerebrasError = (error: unknown): Error => {
     return error;
   }
 
-  const status =
-    typeof error === "object" && error !== null && "status" in error
-      ? (error as { status?: unknown }).status
-      : undefined;
-  const numericStatus = typeof status === "number" ? status : undefined;
+  const numericStatus = readProviderStatus(error);
 
   if (numericStatus === 402) {
     return new CerebrasProviderError(
