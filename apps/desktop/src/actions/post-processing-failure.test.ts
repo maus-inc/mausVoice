@@ -49,6 +49,7 @@ vi.mock("../utils/user.utils", async () => {
 });
 
 import { postProcessTranscript } from "./transcribe.actions";
+import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 
 describe("postProcessTranscript provider attribution on failure", () => {
   beforeEach(() => {
@@ -209,5 +210,85 @@ describe("postProcessTranscript provider attribution on failure", () => {
       .join(" ");
     expect(loggedCalls).not.toContain(sentinelTranscript);
     expect(loggedCalls).toContain("[REDACTED_TRANSCRIPT]");
+  });
+});
+
+describe("postProcessTranscript truncated responses", () => {
+  // A Cerebras or DeepSeek response arrives as bare JSON, so a body cut at
+  // POST_PROCESS_MAX_TOKENS lands here with no fence to give the truncation
+  // away. The repair loop still recovers a fragment, and that fragment must
+  // never be mistaken for the finished answer.
+  const CATCH_PATH_MESSAGE = "Failed to parse post-processing response";
+  const TRUNCATED_INPUT =
+    '{"result": "Hello there, this is a very long dictation that keeps';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("falls back to the raw transcript and flags the run as degraded", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: TRUNCATED_INPUT,
+      metadata: { postProcessingMode: "api" },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("hello world");
+    // The request itself succeeded, so the persisted failure sentinel must not
+    // be flipped: it backs a null/failed/succeeded column read by History.
+    expect(result.metadata.postProcessFailed).toBe(false);
+    expect(result.metadata.postProcessDegraded).toBe(true);
+    const warnings = result.warnings.join(" ");
+    expect(warnings).toContain(POST_PROCESS_TRUNCATED_WARNING);
+    expect(warnings).toContain(
+      "The styling response was cut off at the model's output limit",
+    );
+    // The fragment was discarded, so this is not the pre-existing catch path
+    // that reports an unrecoverable parse error.
+    expect(warnings).not.toContain(CATCH_PATH_MESSAGE);
+  });
+
+  it("keeps reporting an unrecoverable fenced response as a parse failure", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      // Cut inside a code fence: the missing closing backticks leave residue
+      // that no repair candidate can clear, so this still throws.
+      text: '```json\n{"result": "Hello there, this is a very long dictation that ke',
+      metadata: { postProcessingMode: "api" },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("hello world");
+    expect(result.metadata.postProcessFailed).toBe(false);
+    // Nothing usable came back, but the response was not a truncated one, so
+    // it must not borrow the truncation copy.
+    expect(result.metadata.postProcessDegraded).toBe(false);
+    const warnings = result.warnings.join(" ");
+    expect(warnings).toContain(CATCH_PATH_MESSAGE);
+    expect(warnings).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
+  });
+
+  it("leaves a complete response unflagged", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: '{"result": "Hello there."} Hope this helps!',
+      metadata: { postProcessingMode: "api" },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.transcript).toBe("Hello there.");
+    expect(result.metadata.postProcessDegraded).toBe(false);
+    expect(result.warnings).toEqual([]);
   });
 });

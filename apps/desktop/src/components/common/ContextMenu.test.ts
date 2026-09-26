@@ -240,6 +240,52 @@ describe("useContextMenu", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
+  it("closes on Tab without swallowing the key, so focus is not trapped", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    // A vertical menu must not cycle focus with Tab: the menu has to dismiss
+    // AND leave the event alone, otherwise keyboard focus cannot leave the
+    // open menu and Escape becomes the only undiscoverable way out.
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("closes on Shift+Tab without swallowing the key either", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("renders the menu into document.body, outside transformed ancestors", () => {
     act(() => {
       root.render(createElement(Harness));

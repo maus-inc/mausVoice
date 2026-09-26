@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import type { User } from "@maus-inc/types";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
@@ -89,5 +90,150 @@ describe("user repo IPC boundary for interactionFeedbackVolume", () => {
       interactionFeedbackVolume?: number | null;
     };
     expect(userArg.interactionFeedbackVolume).toBe(0.42);
+  });
+});
+
+/**
+ * `createdAt` and `onboardedAt` were fabricated as `new Date().toISOString()`
+ * on every read because no column backed them. The value moved with the clock,
+ * which pinned the release-dialog gate shut for everyone and reported a
+ * tenured account as brand new. The clock is pinned here so any dependence on
+ * "now" is a hard failure rather than a flake.
+ */
+describe("user repo profile timestamps", () => {
+  const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
+  const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";
+  const EPOCH = new Date(0).toISOString();
+
+  const CREATED = "2026-01-05T09:00:00.000Z";
+  const ONBOARDED = "2026-01-06T09:00:00.000Z";
+
+  const storedRow = (overrides: Record<string, unknown> = {}) => ({
+    id: LOCAL_USER_ID,
+    name: "Test",
+    bio: "",
+    onboarded: true,
+    playInteractionChime: true,
+    ...overrides,
+  });
+
+  const setAnchor = (key: string, value: string) =>
+    window.localStorage.setItem(key, JSON.stringify(value));
+
+  const readAnchor = (key: string) => window.localStorage.getItem(key);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.localStorage.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-01T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.localStorage.clear();
+  });
+
+  it("keeps createdAt stable across later reads", async () => {
+    capturedInvoke.mockResolvedValue(
+      storedRow({ createdAt: CREATED, onboardedAt: ONBOARDED }),
+    );
+    const repo = new LocalUserRepo();
+
+    const first = await repo.getMyUser();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z"));
+    const second = await repo.getMyUser();
+
+    expect(first?.createdAt).toBe(CREATED);
+    expect(second?.createdAt).toBe(CREATED);
+  });
+
+  it("keeps onboardedAt stable across later reads", async () => {
+    capturedInvoke.mockResolvedValue(
+      storedRow({ createdAt: CREATED, onboardedAt: ONBOARDED }),
+    );
+    const repo = new LocalUserRepo();
+
+    const first = await repo.getMyUser();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z"));
+    const second = await repo.getMyUser();
+
+    expect(first?.onboardedAt).toBe(ONBOARDED);
+    expect(second?.onboardedAt).toBe(ONBOARDED);
+  });
+
+  it("re-saving keeps the ORIGINAL timestamp instead of stamping now", async () => {
+    capturedInvoke.mockResolvedValue(
+      storedRow({ createdAt: CREATED, onboardedAt: ONBOARDED }),
+    );
+    const repo = new LocalUserRepo();
+
+    const loaded = await repo.getMyUser();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z"));
+    capturedInvoke.mockResolvedValue(
+      storedRow({ createdAt: CREATED, onboardedAt: ONBOARDED }),
+    );
+    await repo.setMyUser({ ...(loaded as User), name: "Renamed" });
+
+    const sent = capturedInvoke.mock.calls.at(-1)?.[1]?.user as {
+      createdAt: string;
+      onboardedAt: string | null;
+    };
+    expect(sent.createdAt).toBe(CREATED);
+    expect(sent.onboardedAt).toBe(ONBOARDED);
+  });
+
+  it("reports epoch and null for a legacy install with no anchor", async () => {
+    // A profile row that predates migration 89 and the anchors. Its age is
+    // genuinely unknown: epoch is the honest floor for createdAt and keeps the
+    // release dialog reachable, while onboardedAt stays null so analytics
+    // reports "unknown" rather than a fabricated date.
+    capturedInvoke.mockResolvedValue(storedRow());
+    const repo = new LocalUserRepo();
+
+    const loaded = await repo.getMyUser();
+
+    expect(loaded?.createdAt).toBe(EPOCH);
+    expect(loaded?.onboardedAt).toBeNull();
+  });
+
+  it("prefers the write-once anchor when the column is null", async () => {
+    setAnchor(ACCOUNT_CREATED_AT_KEY, CREATED);
+    setAnchor(ONBOARDED_AT_KEY, ONBOARDED);
+    capturedInvoke.mockResolvedValue(storedRow());
+    const repo = new LocalUserRepo();
+
+    const loaded = await repo.getMyUser();
+
+    expect(loaded?.createdAt).toBe(CREATED);
+    expect(loaded?.onboardedAt).toBe(ONBOARDED);
+  });
+
+  it("plants the anchor on first save and reuses it on later reads", async () => {
+    const repo = new LocalUserRepo();
+    capturedInvoke.mockResolvedValue(storedRow());
+
+    await repo.setMyUser({ ...minimalUser, createdAt: CREATED });
+
+    expect(readAnchor(ACCOUNT_CREATED_AT_KEY)).toBe(JSON.stringify(CREATED));
+
+    // A later read of a row whose column is still null recovers the anchor
+    // rather than inventing "now".
+    vi.setSystemTime(new Date("2026-09-09T12:00:00.000Z"));
+    const loaded = await repo.getMyUser();
+    expect(loaded?.createdAt).toBe(CREATED);
+  });
+
+  it("never overwrites an anchor that already exists", async () => {
+    setAnchor(ACCOUNT_CREATED_AT_KEY, CREATED);
+    const repo = new LocalUserRepo();
+    capturedInvoke.mockResolvedValue(storedRow());
+
+    await repo.setMyUser({
+      ...minimalUser,
+      createdAt: "2026-12-25T00:00:00.000Z",
+    });
+
+    expect(readAnchor(ACCOUNT_CREATED_AT_KEY)).toBe(JSON.stringify(CREATED));
   });
 });

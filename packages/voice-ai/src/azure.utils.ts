@@ -192,24 +192,72 @@ export type AzureTestIntegrationArgs = {
   region: string;
 };
 
+/** Bytes in a canonical 44-byte PCM WAV header. */
+const WAV_HEADER_BYTES = 44;
+const PROBE_SAMPLE_RATE = 16_000;
+const PROBE_CHANNELS = 1;
+const PROBE_BITS_PER_SAMPLE = 16;
+/** 0.3s of frames, long enough for the service to run one recognition turn. */
+const PROBE_FRAMES = 4_800;
+
+/**
+ * A real silent WAV file. The probe used to hand the recognizer a 0-byte
+ * buffer, which made `azureTranscribeAudio` throw a `RangeError` while reading
+ * the sample rate out of the header, so the probe never reached Azure and
+ * reported success for every key. The PCM payload stays zeroed, which is
+ * genuine silence and comes back as a completed `NoMatch`.
+ */
+const buildSilentWav = (): ArrayBuffer => {
+  const bytesPerSample = PROBE_BITS_PER_SAMPLE / 8;
+  const blockAlign = PROBE_CHANNELS * bytesPerSample;
+  const dataBytes = PROBE_FRAMES * blockAlign;
+  const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
+  const view = new DataView(buffer);
+
+  const writeTag = (offset: number, tag: string) => {
+    for (let index = 0; index < tag.length; index++) {
+      view.setUint8(offset + index, tag.charCodeAt(index));
+    }
+  };
+
+  writeTag(0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true); // chunk size after the RIFF header
+  writeTag(8, "WAVE");
+  writeTag(12, "fmt ");
+  view.setUint32(16, 16, true); // PCM fmt chunk size
+  view.setUint16(20, 1, true); // WAVE_FORMAT_PCM
+  view.setUint16(22, PROBE_CHANNELS, true);
+  view.setUint32(24, PROBE_SAMPLE_RATE, true);
+  view.setUint32(28, PROBE_SAMPLE_RATE * blockAlign, true); // byte rate
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, PROBE_BITS_PER_SAMPLE, true);
+  writeTag(36, "data");
+  view.setUint32(40, dataBytes, true);
+
+  return buffer;
+};
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
 }: AzureTestIntegrationArgs): Promise<boolean> => {
   try {
-    const silentBuffer = new ArrayBuffer(0);
     await azureTranscribeAudio({
       subscriptionKey,
       region,
-      blob: silentBuffer,
+      blob: buildSilentWav(),
     });
     return true;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "";
-    return (
-      !errorMessage.includes("authentication") &&
-      !errorMessage.includes("subscription")
-    );
+  } catch {
+    // Fail closed. The recognizer reports a failure through
+    // `err?: (e: string) => void`, so the reason only ever arrives as prose
+    // whose wording differs per transport: a blank region produces "You must
+    // specify the Cognitive Speech region to use.", a rejected credential
+    // produces a handshake or service message, and a locally malformed buffer
+    // produces a RangeError. Deciding by substring matched almost none of
+    // them and reported a working key for a dead one. Only a recognition round
+    // trip that actually completed proves the credentials work.
+    return false;
   }
 };
 

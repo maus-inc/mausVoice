@@ -5,6 +5,8 @@ import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { createId } from "../utils/id.utils";
+import { orFalse } from "../utils/nullable.utils";
+import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
   clearRetranscribeSuccess,
@@ -31,6 +33,7 @@ import {
   postProcessTranscript,
   storeTranscription,
   transcribeAudio,
+  type PostProcessMetadata,
 } from "./transcribe.actions";
 
 export const openTranscriptionDetailsDialog = (transcriptionId: string) => {
@@ -118,10 +121,53 @@ const processAudio = async ({
   return { transcribeResult, sanitizedTranscript, postProcessResult };
 };
 
+/**
+ * A retranscription row that also records the degraded outcome. The provider
+ * answered but the answer was unusable, and only `postProcessFailed` has a
+ * column, so the marker rides on the in-memory row and on the repo write. The
+ * native transcription model has no field for it yet and drops it, so it is
+ * runtime state rather than history: a reload falls back to reading the
+ * transcript, which still shows the preserved text.
+ */
+type RetranscribedRow = Transcription & {
+  postProcessDegraded?: boolean | null;
+};
+
+type RetranscribeUpdate = {
+  /** False when the run left the row without usable styling. */
+  styled: boolean;
+  /**
+   * Why the row kept its previous text, phrased for the error surface. Null
+   * on a styled run.
+   */
+  unstyledMessage: string | null;
+  transcription: RetranscribedRow;
+};
+
+/**
+ * The copy for a run that produced no styling. A request that never came back
+ * reports its recorded failure category; a response that came back unusable
+ * reports that its partial reply was dropped. Both explain the preserved text
+ * without claiming a raw transcript was pasted over it.
+ */
+const unstyledRunMessage = (metadata: PostProcessMetadata): string =>
+  orFalse(metadata.postProcessFailed)
+    ? (metadata.postProcessError ?? "")
+    : POST_PROCESS_TRUNCATED_WARNING;
+
+/**
+ * Whether this run left the row without usable styling. A failed request and an
+ * unusable answer are different failures with the same consequence here, so the
+ * guard reads both; treating them differently is what let a degraded run report
+ * success and overwrite polished text with raw ASR.
+ */
+const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
+  orFalse(metadata.postProcessFailed) || orFalse(metadata.postProcessDegraded);
+
 const updateStoredTranscription = async (
   transcription: Transcription,
   processed: ProcessedAudio,
-): Promise<Transcription> => {
+): Promise<RetranscribeUpdate> => {
   const { transcribeResult, sanitizedTranscript, postProcessResult } =
     processed;
   const warnings = [
@@ -134,13 +180,21 @@ const updateStoredTranscription = async (
   };
   const finalTranscript = postProcessResult.transcript;
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
+  const unstyled = isUnstyledPostProcess(postProcessResult.metadata);
 
-  const payload: Transcription = {
+  const payload: RetranscribedRow = {
     ...transcription,
-    transcript: finalTranscript,
+    transcript: unstyled
+      ? // Nothing styled came back, so the text this row already holds stays
+        // the best answer. Falling back to the new raw ASR covers a row that
+        // was never styled in the first place.
+        transcription.transcript || finalTranscript
+      : finalTranscript,
     sanitizedTranscript,
     modelSize: metadata.modelSize ?? null,
     inferenceDevice: metadata.inferenceDevice ?? null,
+    // The raw ASR from this run is the only record of what was actually said,
+    // so it is stored even when the styled transcript is left untouched.
     rawTranscript: transcribeResult.rawTranscript || finalTranscript,
     transcriptionPrompt: metadata.transcriptionPrompt ?? null,
     postProcessPrompt: metadata.postProcessPrompt ?? null,
@@ -155,6 +209,9 @@ const updateStoredTranscription = async (
     postProcessProvider: metadata.postProcessProvider ?? null,
     postProcessFailed: metadata.postProcessFailed ?? null,
     postProcessError: metadata.postProcessError ?? null,
+    postProcessDegraded: unstyled
+      ? true
+      : (metadata.postProcessDegraded ?? null),
     warnings: warnings.length > 0 ? warnings : null,
     // Durations must be re-read from the fresh run; spreading the old record
     // otherwise leaves stale timings in history after a retranscription.
@@ -163,9 +220,16 @@ const updateStoredTranscription = async (
   };
   // During an ephemeral session the update stays memory-only: build the fresh
   // payload for the caller but never write it through to the repository.
-  return isPersistenceAllowed()
-    ? getTranscriptionRepo().updateTranscription(payload)
+  const stored = isPersistenceAllowed()
+    ? await getTranscriptionRepo().updateTranscription(payload)
     : payload;
+  return {
+    styled: !unstyled,
+    unstyledMessage: unstyled
+      ? unstyledRunMessage(postProcessResult.metadata)
+      : null,
+    transcription: stored,
+  };
 };
 
 type RetranscribeTranscriptionParams = {
@@ -275,7 +339,7 @@ const performRetranscribe = async ({
   transcriptionId,
   toneId,
   languageCode,
-}: RetranscribeTranscriptionParams): Promise<void> => {
+}: RetranscribeTranscriptionParams): Promise<RetranscribeUpdate> => {
   const transcription = getRec(
     getAppState().transcriptionById,
     transcriptionId,
@@ -293,8 +357,9 @@ const performRetranscribe = async ({
   const updated = await updateStoredTranscription(transcription, processed);
 
   produceAppState((draft) => {
-    draft.transcriptionById[transcriptionId] = updated;
+    draft.transcriptionById[transcriptionId] = updated.transcription;
   });
+  return updated;
 };
 
 /**
@@ -304,6 +369,35 @@ const performRetranscribe = async ({
  */
 const abandonRetranscribeRun = (): void => {
   syncRetranscribeFeedback("abandoned");
+};
+
+/**
+ * Every route that ends a run without styling the row goes through here, so
+ * the row is freed, the error is shown, the loading toast is cleared, and the
+ * generation is released in one place. Releasing the generation matters as much
+ * as the rest: it is what lets a later run for this row start, so a path that
+ * reports an error without calling this would leave the row stuck in flight.
+ * Callers must first confirm they still own the current generation.
+ */
+const failRetranscribeRun = ({
+  transcriptionId,
+  generation,
+  message,
+  error,
+}: {
+  transcriptionId: string;
+  generation: number;
+  message: string;
+  error?: unknown;
+}): void => {
+  produceAppState((draft) => {
+    finishRetranscribe(draft.transcriptions, transcriptionId, false);
+  });
+  console.error("Failed to retranscribe audio", error ?? message);
+  const { failed } = retranscribeFeedbackCopy();
+  showErrorSnackbar(message || failed);
+  syncRetranscribeFeedback("error");
+  releaseRetranscribeGeneration(transcriptionId, generation);
 };
 
 export const retranscribeTranscription = async (
@@ -325,9 +419,20 @@ export const retranscribeTranscription = async (
   }
 
   try {
-    await performRetranscribe(params);
+    const update = await performRetranscribe(params);
     if (!isCurrentRetranscribeGeneration(transcriptionId, generation)) {
       abandonRetranscribeRun();
+      return;
+    }
+    if (!update.styled) {
+      // The row now holds its previous text plus this run's raw ASR, which is
+      // a usable outcome for the user but not the styling they asked for, so it
+      // must not be reported as a finished retranscription.
+      failRetranscribeRun({
+        transcriptionId,
+        generation,
+        message: update.unstyledMessage ?? "",
+      });
       return;
     }
     produceAppState((draft) => {
@@ -348,15 +453,12 @@ export const retranscribeTranscription = async (
       abandonRetranscribeRun();
       return;
     }
-    produceAppState((draft) => {
-      finishRetranscribe(draft.transcriptions, transcriptionId, false);
+    failRetranscribeRun({
+      transcriptionId,
+      generation,
+      message: error instanceof Error ? error.message : "",
+      error,
     });
-    console.error("Failed to retranscribe audio", error);
-    const { failed } = retranscribeFeedbackCopy();
-    const message = error instanceof Error ? error.message : failed;
-    showErrorSnackbar(message || failed);
-    syncRetranscribeFeedback("error");
-    releaseRetranscribeGeneration(transcriptionId, generation);
   }
 };
 

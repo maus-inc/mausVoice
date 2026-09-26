@@ -5,6 +5,7 @@ import {
   debug as tauriDebug,
   attachConsole,
 } from "@tauri-apps/plugin-log";
+import { redactObjectSync } from "./redaction.utils";
 type Logger = {
   info(...args: unknown[]): void;
   warning(...args: unknown[]): void;
@@ -40,13 +41,46 @@ export const redactQueryParamValues = (
   }
 };
 
+/**
+ * Mask sensitive keys before a value reaches the log sink. A fault inside the
+ * masker returns the value unchanged, because a logger that throws takes down
+ * the error the caller was trying to report.
+ */
+const maskSensitiveFields = (value: Record<string, unknown>): unknown => {
+  try {
+    return redactObjectSync(value);
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * The synchronous entry returns a record, so a top-level array would change
+ * shape if it were handed to it. Arrays nested inside an object are masked by
+ * the traversal itself.
+ */
+const isMaskableObject = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+};
+
+const serializeForLog = (value: unknown): string => {
+  // JSON.stringify of the raw value is the pre-existing gate for a throwing
+  // toJSON and for a circular graph. It has to run before the masker, which
+  // reads own enumerable properties only and would otherwise turn a hostile
+  // shape into an empty object that then gets logged.
+  const raw = JSON.stringify(value);
+  return isMaskableObject(value)
+    ? JSON.stringify(maskSensitiveFields(value))
+    : raw;
+};
+
 const stringify = (args: unknown[]): string =>
   args
     .map((arg) => {
       if (typeof arg === "string") return arg;
       if (arg instanceof Error) return arg.stack ?? arg.message;
       try {
-        return JSON.stringify(arg);
+        return serializeForLog(arg);
       } catch {
         return String(arg);
       }

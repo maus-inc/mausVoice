@@ -68,6 +68,85 @@ const DEFAULT_LIVE_FINALIZE_TIMEOUT_MS = 20_000;
 const MAX_LIVE_WARNINGS = 50;
 const LIVE_WARNING_LIMIT_MESSAGE =
   "Additional Gladia live-session warnings were omitted.";
+/** Stable wording so `addWarning` collapses a flapping socket to one line. */
+const LIVE_RECONNECT_WARNING = "Gladia live connection dropped; reconnecting.";
+
+/** A close code, or an inclusive `[start, end]` range of close codes. */
+export type GladiaCloseCode = number | [start: number, end: number];
+
+/**
+ * Close codes eligible for a reconnect: protocol and transport failures, and
+ * the private range Gladia uses for its own rejections. This is the SDK's
+ * documented default, pinned here so the policy is ours rather than an
+ * inherited vendor value. It is not the reason reconnects used to stop: 1006
+ * (abnormal closure, what a network drop produces) already sat inside
+ * `[1002, 4399]`.
+ */
+export const GLADIA_LIVE_RETRY_CLOSE_CODES: readonly GladiaCloseCode[] = [
+  [1002, 4399],
+  [4500, 9999],
+];
+
+export type GladiaLiveWsRetryConfig = {
+  maxAttemptsPerConnection: number;
+  maxConnections: number;
+  closeCodes: readonly GladiaCloseCode[];
+};
+
+/**
+ * `GladiaClient` keeps its merged options private. The retry block is the one
+ * field that has to be written after the merge, so this is the single
+ * documented exception.
+ */
+type GladiaClientOptionsView = {
+  options: { wsRetry: GladiaLiveWsRetryConfig };
+};
+
+/** The live retry block as the SDK's WebSocket client actually receives it. */
+export const readGladiaLiveWsRetryConfig = (
+  client: GladiaClient,
+): GladiaLiveWsRetryConfig =>
+  (client as unknown as GladiaClientOptionsView).options.wsRetry;
+
+/**
+ * The live client, configured so a live session survives a network drop.
+ *
+ * `maxConnections: 0` is the fix. The SDK charges every reconnect against
+ * that budget for the whole session rather than per outage
+ * (`connectionCount` only resets inside `connect(isRetry = false)`), so a
+ * budget of 4 meant a fourth drop killed the dictation for good no matter how
+ * healthy the network was afterwards. `maxAttemptsPerConnection` still bounds
+ * how hard the SDK retries one establishment, so this is not an unbounded
+ * loop.
+ */
+export const createGladiaLiveClient = ({
+  apiKey,
+}: {
+  apiKey: string;
+}): GladiaClient => {
+  const client = new GladiaClient({
+    apiKey: requireGladiaApiKey(apiKey),
+    httpRetry: { maxAttempts: 3 },
+    httpTimeout: 10_000,
+    wsRetry: {
+      maxAttemptsPerConnection: 3,
+      maxConnections: 0,
+    },
+    wsTimeout: 10_000,
+    liveTimeouts: { delete: 10_000 },
+  });
+  // `closeCodes` is assigned after the constructor merge on purpose. The SDK
+  // folds constructor options in with `deepMergeObjects`, which recurses into
+  // any value where both sides are objects, so an array option comes back as
+  // `{0: …, 1: …}` and `matchesCloseCode`'s `for (const item of list)` throws
+  // `TypeError: list is not iterable` on the first drop, which stops every
+  // reconnect instead of enabling them. Assigning the array onto the merged
+  // block keeps it iterable; `liveV2()` passes that same block to
+  // `WebSocketClient`, which reads it when a socket closes.
+  readGladiaLiveWsRetryConfig(client).closeCodes =
+    GLADIA_LIVE_RETRY_CLOSE_CODES;
+  return client;
+};
 
 const errorMessage = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error))
@@ -327,17 +406,7 @@ export const createGladiaStreamingSession = ({
   onFinalSegment,
   finalizeTimeoutMs = DEFAULT_LIVE_FINALIZE_TIMEOUT_MS,
 }: CreateGladiaStreamingSessionArgs): GladiaStreamingSession => {
-  const client = new GladiaClient({
-    apiKey: requireGladiaApiKey(apiKey),
-    httpRetry: { maxAttempts: 3 },
-    httpTimeout: 10_000,
-    wsRetry: {
-      maxAttemptsPerConnection: 3,
-      maxConnections: 4,
-    },
-    wsTimeout: 10_000,
-    liveTimeouts: { delete: 10_000 },
-  });
+  const client = createGladiaLiveClient({ apiKey });
   const liveClient = client.liveV2();
   const session = liveClient.startSession(
     buildLiveConfig({ sampleRate, language, model, customizations }),
@@ -453,9 +522,17 @@ export const createGladiaStreamingSession = ({
     }
   });
 
-  session.on("connecting", () => {
-    if (!disposed) {
-      onConnectionInterrupted?.();
+  session.on("connecting", ({ attempt }) => {
+    if (disposed) {
+      return;
+    }
+    onConnectionInterrupted?.();
+    // The SDK reports the running connection count here, so `attempt` is 1 for
+    // the initial connect and greater only once the socket has been dropped
+    // and rebuilt. Warning on the first connect would report an interruption
+    // for a perfectly healthy session.
+    if (attempt > 1) {
+      addWarning(LIVE_RECONNECT_WARNING);
     }
   });
 

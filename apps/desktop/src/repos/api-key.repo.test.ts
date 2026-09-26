@@ -6,6 +6,7 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
+import type { OpenRouterConfig } from "@maus-inc/types";
 import { LocalApiKeyRepo } from "./api-key.repo";
 import {
   OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
@@ -123,5 +124,77 @@ describe("LocalApiKeyRepo - transcription path persistence and clear contract", 
       saved.transcriptionPath,
     );
     expect(effectiveUrl).toBe("http://127.0.0.1:8000/v1/whisper/endpoint");
+  });
+});
+
+// The Rust `ApiKeyView` field carries `#[serde(rename = "openRouterConfig")]`,
+// which overrides the struct's `rename_all = "camelCase"`. Typing the fixture
+// against the generated binding means changing that rename breaks the build
+// here instead of silently regressing the read below.
+type ApiKeyViewWire = {
+  id: string;
+  name: string;
+  provider: string;
+  createdAt: number;
+  openRouterConfig?: string | null;
+};
+
+describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {
+  let repo: LocalApiKeyRepo;
+
+  const storedConfig: OpenRouterConfig = {
+    favoriteModels: ["anthropic/claude-sonnet-4"],
+    providerRouting: { order: ["anthropic", "together"] },
+  };
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    repo = new LocalApiKeyRepo();
+  });
+
+  it("reads the camel-R openRouterConfig wire key and parses it", async () => {
+    const wire: ApiKeyViewWire = {
+      id: "key-openrouter",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: 1000,
+      openRouterConfig: JSON.stringify(storedConfig),
+    };
+
+    invokeMock.mockResolvedValueOnce([wire]);
+
+    const [key] = await repo.listApiKeys();
+
+    expect(key.openRouterConfig).toEqual(storedConfig);
+  });
+
+  it("round-trips openRouterConfig so a read cannot lose what a write stored", async () => {
+    const wire: ApiKeyViewWire = {
+      id: "key-openrouter",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: 1000,
+      openRouterConfig: JSON.stringify(storedConfig),
+    };
+
+    // The update must send the camel-R key the Rust side deserializes.
+    invokeMock.mockResolvedValueOnce(wire);
+    await repo.updateApiKey({
+      id: "key-openrouter",
+      openRouterConfig: storedConfig,
+    });
+
+    const [, args] = invokeMock.mock.calls.at(-1) as [
+      string,
+      { request: Record<string, unknown> },
+    ];
+    expect(args.request).toHaveProperty("openRouterConfig");
+    expect(args.request).not.toHaveProperty("openrouterConfig");
+
+    // And the record handed back must survive the same mapping, so a later
+    // toggle of the sibling field cannot silently drop this one.
+    invokeMock.mockResolvedValueOnce([wire]);
+    const [key] = await repo.listApiKeys();
+    expect(key.openRouterConfig).toEqual(storedConfig);
   });
 });

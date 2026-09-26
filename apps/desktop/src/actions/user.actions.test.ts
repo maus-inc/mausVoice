@@ -1,17 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { getAppState, setAppState } from "../store";
+import { LOCAL_USER_ID } from "../utils/user.utils";
 import {
   createDefaultPreferences,
+  refreshCurrentUser,
   setAgentToolEnabled,
   setPreserveAudioOnFailure,
   setPillPlacement,
+  setPreferredLanguage,
   setRealtimeOutputEnabled,
   setReviewBeforeInsert,
+  setUserName,
 } from "./user.actions";
-import type { ToolInfo } from "@maus-inc/types";
+import type { ToolInfo, User } from "@maus-inc/types";
 
-const { loggerMock, prefsRepoMock } = vi.hoisted(() => {
+const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
   const loggerMock = {
     info: vi.fn(),
     warning: vi.fn(),
@@ -25,7 +29,11 @@ const { loggerMock, prefsRepoMock } = vi.hoisted(() => {
     setUserPreferences: vi.fn(async (preferences: unknown) => preferences),
     getUserPreferences: vi.fn(async () => null),
   };
-  return { loggerMock, prefsRepoMock };
+  const userRepoMock = {
+    setMyUser: vi.fn<(user: User) => Promise<User>>(async (user) => user),
+    getMyUser: vi.fn<() => Promise<User | null>>(async () => null),
+  };
+  return { loggerMock, prefsRepoMock, userRepoMock };
 });
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -39,7 +47,7 @@ vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
 
 vi.mock("../repos", () => ({
   getUserPreferencesRepo: () => prefsRepoMock,
-  getUserRepo: () => ({}),
+  getUserRepo: () => userRepoMock,
 }));
 
 const minimalToolInfo = (id: string): ToolInfo =>
@@ -200,5 +208,133 @@ describe("real-time output vs review-before-insert mutual exclusion", () => {
     await setRealtimeOutputEnabled(false);
 
     expect(getAppState().userPrefs?.reviewBeforeInsert).toBe(true);
+  });
+});
+
+/**
+ * `setMyUser` upserts the whole profile row. The save used to run behind an
+ * `AsyncLock`, which only counted callers: both writes were in flight at once
+ * and the slower one won, reverting every field the other had changed. These
+ * tests drive the queue deterministically with a controlled promise rather than
+ * with timers, so the interleaving is the same on every run.
+ */
+describe("updateUser serialization", () => {
+  const baseUser: User = {
+    id: LOCAL_USER_ID,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    name: "Before",
+    bio: null,
+    onboarded: true,
+    onboardedAt: "2026-01-01T00:00:00.000Z",
+    playInteractionChime: true,
+    hasFinishedTutorial: false,
+    wordsThisMonth: 0,
+    wordsTotal: 0,
+  };
+
+  const deferred = () => {
+    let release = () => {};
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { promise, release };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // `clearAllMocks` keeps implementations, so an unconsumed `…Once` value
+    // from an earlier test would leak into the next one. Reset explicitly and
+    // re-seed the defaults.
+    userRepoMock.setMyUser.mockReset();
+    userRepoMock.getMyUser.mockReset();
+    userRepoMock.setMyUser.mockImplementation(async (user) => user);
+    userRepoMock.getMyUser.mockResolvedValue(null);
+    setAppState(
+      {
+        ...structuredClone(INITIAL_APP_STATE),
+        userById: { [LOCAL_USER_ID]: baseUser },
+      },
+      true,
+    );
+  });
+
+  afterEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("lands both mutations when two updates overlap", async () => {
+    const gate = deferred();
+    const firstWriteStarted = deferred();
+    // The first write is held open. The row is written when the write RESOLVES,
+    // which is what a real database does, so a slower earlier write clobbers a
+    // faster later one.
+    const writes: User[] = [];
+    let calls = 0;
+    userRepoMock.setMyUser.mockImplementation(async (user) => {
+      calls += 1;
+      if (calls === 1) {
+        firstWriteStarted.release();
+        await gate.promise;
+      }
+      writes.push(user);
+      return user;
+    });
+
+    const first = setUserName("Renamed");
+    const second = setPreferredLanguage("fr");
+    await firstWriteStarted.promise;
+    gate.release();
+    await Promise.all([first, second]);
+
+    expect(writes).toHaveLength(2);
+    expect(writes.at(-1)?.name).toBe("Renamed");
+    expect(writes.at(-1)?.preferredLanguage).toBe("fr");
+    expect(getAppState().userById[LOCAL_USER_ID]?.name).toBe("Renamed");
+    expect(getAppState().userById[LOCAL_USER_ID]?.preferredLanguage).toBe("fr");
+  });
+
+  it("re-reads the row after a failed save instead of restoring a snapshot", async () => {
+    // Another writer committed `bio` between this mutation being queued and its
+    // save failing. A snapshot rollback would erase that commit.
+    const committed: User = { ...baseUser, bio: "Committed elsewhere" };
+    userRepoMock.setMyUser.mockRejectedValueOnce(new Error("disk full"));
+    userRepoMock.getMyUser.mockResolvedValueOnce(committed);
+
+    await expect(setUserName("Renamed")).rejects.toThrow("disk full");
+
+    expect(userRepoMock.getMyUser).toHaveBeenCalledTimes(1);
+    expect(getAppState().userById[LOCAL_USER_ID]?.bio).toBe(
+      "Committed elsewhere",
+    );
+  });
+
+  it("runs refreshCurrentUser on the same chain without deadlocking", async () => {
+    const gate = deferred();
+    const firstWriteStarted = deferred();
+    let calls = 0;
+    userRepoMock.setMyUser.mockImplementation(async (user) => {
+      calls += 1;
+      if (calls === 1) {
+        firstWriteStarted.release();
+        await gate.promise;
+      }
+      return user;
+    });
+    userRepoMock.getMyUser.mockResolvedValue({
+      ...baseUser,
+      name: "From disk",
+    });
+
+    const save = setUserName("Renamed");
+    // Enqueued while the save is still in flight. If refreshCurrentUser were
+    // ever called from inside a queued task, this would wait on itself.
+    const refresh = refreshCurrentUser();
+    await firstWriteStarted.promise;
+    gate.release();
+    await Promise.all([save, refresh]);
+
+    expect(userRepoMock.getMyUser).toHaveBeenCalled();
+    expect(getAppState().userById[LOCAL_USER_ID]?.name).toBe("From disk");
   });
 });

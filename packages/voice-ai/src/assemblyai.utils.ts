@@ -1,4 +1,4 @@
-import { delayed } from "@maus-inc/utilities";
+import { delayed, parseRetryAfterMs } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 export const ASSEMBLYAI_TRANSCRIPTION_MODELS = [
@@ -141,20 +141,10 @@ const getResponseRetryDelayMs = (
   response: Response,
   attempt: number,
 ): number => {
-  const retryAfter = response.headers.get("retry-after");
-  if (retryAfter) {
-    // RFC 7231 allows either delta-seconds ("120") or an HTTP-date
-    // ("Wed, 21 Oct 2015 07:28:00 GMT"); honor both forms.
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      return seconds * 1000;
-    }
-    const retryDateMs = Date.parse(retryAfter);
-    if (Number.isFinite(retryDateMs)) {
-      return Math.max(0, retryDateMs - Date.now());
-    }
-  }
-  return getBackoffMs(attempt);
+  // RFC 9110 allows either delta-seconds ("120") or an HTTP-date
+  // ("Wed, 21 Oct 2015 07:28:00 GMT"); the shared parser honours both.
+  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+  return retryAfterMs === null ? getBackoffMs(attempt) : retryAfterMs;
 };
 
 const getBoundedRetryDelayMs = (

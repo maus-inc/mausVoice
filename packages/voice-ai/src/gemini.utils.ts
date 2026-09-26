@@ -1,4 +1,9 @@
-import { retry, countWords, parseJsonObject } from "@maus-inc/utilities";
+import {
+  retry,
+  countWords,
+  parseJsonObject,
+  HttpError,
+} from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -84,19 +89,19 @@ const geminiModelPath = (model: string): string => {
 /**
  * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
  * can distinguish a permanent client error (400/401/403/404) from a transient
- * rate limit or server failure.
+ * rate limit or server failure. Extends the shared `HttpError` so every
+ * provider in this package reports failures with the same shape.
  */
-export class GeminiHttpError extends Error {
-  readonly status: number;
-
-  constructor(status: number, detail: string) {
+export class GeminiHttpError extends HttpError {
+  constructor(status: number, detail: string, retryAfter?: string | null) {
     super(
+      status,
       detail
         ? `Gemini responded ${status}: ${detail}`
         : `Gemini responded with status ${status}`,
+      { retryAfter },
     );
     this.name = "GeminiHttpError";
-    this.status = status;
   }
 }
 
@@ -175,7 +180,11 @@ const requestGemini = async (
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new GeminiHttpError(response.status, detail);
+    throw new GeminiHttpError(
+      response.status,
+      detail,
+      response.headers.get("retry-after"),
+    );
   }
 
   return response;

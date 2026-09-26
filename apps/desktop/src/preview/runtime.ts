@@ -75,7 +75,7 @@ const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   keyFull: apiKey.keyFull ?? null,
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
-  openrouterConfig: apiKey.openRouterConfig
+  openRouterConfig: apiKey.openRouterConfig
     ? JSON.stringify(apiKey.openRouterConfig)
     : null,
   baseUrl: apiKey.baseUrl ?? null,
@@ -268,7 +268,7 @@ class PreviewRuntime {
           keyFull: null,
           transcriptionModel: null,
           postProcessingModel: null,
-          openrouterConfig: null,
+          openRouterConfig: null,
         };
         this.database.apiKeys.set(String(apiKey.id), apiKey);
         return clone(apiKey);
@@ -280,10 +280,6 @@ class PreviewRuntime {
         const metadata = clone(request);
         const keyWasProvided = typeof metadata.key === "string";
         delete metadata.key;
-        if ("openRouterConfig" in metadata) {
-          metadata.openrouterConfig = metadata.openRouterConfig;
-          delete metadata.openRouterConfig;
-        }
         const apiKey = { ...previous, ...metadata };
         if (request.clearTranscriptionPath) {
           apiKey.transcriptionPath = null;

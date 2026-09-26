@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { unwrapNestedLlmResponse, extractJsonFromMarkdown } from "./ai.utils";
+import {
+  unwrapNestedLlmResponse,
+  extractJsonFromMarkdown,
+  parsePostProcessingJson,
+  parsePostProcessingJsonDetailed,
+} from "./ai.utils";
 
 describe("unwrapNestedLlmResponse", () => {
   it("should return original object when value is already a string", () => {
@@ -426,5 +431,112 @@ Example 2:
       const result = extractJsonFromMarkdown(input);
       expect(result).toContain('{"text": "value with \\');
     });
+  });
+});
+
+describe("parsePostProcessingJsonDetailed", () => {
+  // A response the model finished, possibly followed by residue. Recovering a
+  // value from one of these means the answer is whole, so `repaired` must stay
+  // false: callers use it to decide whether to keep a complete styled result.
+  it.each([
+    ["a complete response", '{"result": "Hello there."}', "Hello there."],
+    ["a short but complete response", '{"result": "Hi"}', "Hi"],
+    [
+      "a complete response followed by prose",
+      '{"result": "Hello there."} Hope this helps!',
+      "Hello there.",
+    ],
+    [
+      "a complete response with a stray comma",
+      '{"result": "Hi there.",}',
+      "Hi there.",
+    ],
+    [
+      "a complete response with a trailing period",
+      '{"result": "Hello there."}.',
+      "Hello there.",
+    ],
+    [
+      "a complete fenced response",
+      '```json\n{"result": "Hello there."}\n```',
+      "Hello there.",
+    ],
+  ])("reports %s as not truncated", (_name, raw, expected) => {
+    const parsed = parsePostProcessingJsonDetailed(raw);
+
+    expect(parsed.repaired).toBe(false);
+    expect(parsed.value).toEqual({ result: expected });
+  });
+
+  // The model never closed the object or the string, so whatever the repair
+  // loop salvages is only a prefix. The exact cut is an implementation detail,
+  // so these assert the fragment is a surviving prefix of the intended text
+  // rather than pinning a character offset.
+  it.each([
+    [
+      "a bare truncation",
+      '{"result": "Hello there, this is a very long dictation that keeps',
+      "Hello there, this is a very long dictation that keeps",
+    ],
+    [
+      "a truncation that ran past several commas",
+      '{"result": "First point, second point, third point, fourth poin',
+      "First point, second point, third point, fourth poin",
+    ],
+    [
+      "a truncation immediately after a field separator",
+      '{"result": "Kept result", "notes": "dropped field that never clo',
+      "Kept result",
+    ],
+  ])(
+    "flags %s as truncated and returns a surviving prefix",
+    (_n, raw, full) => {
+      const parsed = parsePostProcessingJsonDetailed(raw);
+
+      expect(parsed.repaired).toBe(true);
+      const { result } = parsed.value as { result: string };
+      expect(result.length).toBeGreaterThan(0);
+      expect(full.startsWith(result)).toBe(true);
+    },
+  );
+
+  it("still throws for a response cut inside a code fence", () => {
+    // The fence has no closing backticks, so the extracted text keeps the
+    // residue that makes every repair candidate invalid. A partial result must
+    // never be invented out of a fenced response.
+    expect(() =>
+      parsePostProcessingJsonDetailed(
+        '```json\n{"result": "Hello there, this is a very long dictation that ke',
+      ),
+    ).toThrow(/Could not parse or repair/);
+  });
+
+  it("still throws for text that holds no usable object", () => {
+    expect(() =>
+      parsePostProcessingJsonDetailed("I could not comply."),
+    ).toThrow(/Could not parse or repair/);
+  });
+});
+
+describe("parsePostProcessingJson", () => {
+  it("returns the parsed value and drops the truncation signal", () => {
+    expect(parsePostProcessingJson('{"result": "Hello there."}')).toEqual({
+      result: "Hello there.",
+    });
+    // The wrapper keeps serving callers that only need a value, including a
+    // salvaged fragment, so tone previews are unaffected by the new signal.
+    const salvaged = parsePostProcessingJson(
+      '{"result": "Hello there, this is cut off mid',
+    ) as { result: string };
+    expect(salvaged.result.length).toBeGreaterThan(0);
+    expect("Hello there, this is cut off mid".startsWith(salvaged.result)).toBe(
+      true,
+    );
+  });
+
+  it("throws when the response cannot be parsed or repaired", () => {
+    expect(() => parsePostProcessingJson("not json at all")).toThrow(
+      /Could not parse or repair/,
+    );
   });
 });

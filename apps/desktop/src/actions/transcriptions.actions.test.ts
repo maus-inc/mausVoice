@@ -66,6 +66,8 @@ vi.mock("../i18n/intl", async (importOriginal) => ({
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
+const { POST_PROCESS_TRUNCATED_WARNING } =
+  await import("../utils/prompt.utils");
 
 /** A run that never settles, so it stays in flight for the whole test. */
 const neverSettles = () => new Promise<never>(() => undefined);
@@ -611,5 +613,162 @@ describe("retranscribeTranscription persistence gate", () => {
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
     );
+  });
+});
+
+describe("retranscribeTranscription unstyled post-processing", () => {
+  const POLISHED = "Polished summary of the call.";
+  const RAW_ASR = "raw asr from this run";
+
+  const seedStyledRow = (id: string, transcript: string) => {
+    produceAppState((draft) => {
+      draft.transcriptionById[id] = {
+        ...sampleTranscription(id),
+        transcript,
+      };
+      draft.transcriptions.transcriptionIds = [id];
+    });
+  };
+
+  const mockUnstyledPostProcess = (
+    metadata: Record<string, unknown>,
+    warnings: string[] = [],
+  ) => {
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: RAW_ASR,
+      sanitizedTranscript: RAW_ASR,
+      warnings: [],
+      metadata: {},
+    });
+    postProcessTranscript.mockResolvedValue({
+      // The pipeline hands back the raw ASR whenever styling did not land.
+      transcript: RAW_ASR,
+      warnings,
+      metadata,
+    });
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetState();
+    mockSuccessfulPipeline();
+    loadTranscriptionAudio.mockResolvedValue({
+      samples: [0.1, 0.2],
+      sampleRate: 16000,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    resetState();
+  });
+
+  it("keeps the polished transcript when the post-processing request failed", async () => {
+    seedStyledRow("unstyled", POLISHED);
+    mockUnstyledPostProcess({
+      postProcessFailed: true,
+      postProcessError: "Quota or payment required (402)",
+    });
+
+    await retranscribeTranscription({ transcriptionId: "unstyled" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The text already on the row is worth more than raw ASR, so it stays.
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        postProcessDegraded: true,
+        postProcessFailed: true,
+      }),
+    );
+    expect(getAppState().transcriptionById["unstyled"]?.transcript).toBe(
+      POLISHED,
+    );
+    // The run failed, so the row must not show a success check or completion
+    // toast, and the recorded failure category is what the user is shown.
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      "Quota or payment required (402)",
+    );
+  });
+
+  it("keeps the polished transcript when the response was cut off", async () => {
+    seedStyledRow("truncated", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "truncated" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        postProcessDegraded: true,
+        // The provider answered, so the failure sentinel must stay false.
+        postProcessFailed: false,
+      }),
+    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+
+    // A failed run must free the row: the generation counter is released on
+    // this path, so a second run starts clean instead of being read as stale.
+    mockSuccessfulPipeline();
+    await retranscribeTranscription({ transcriptionId: "truncated" });
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
+      "truncated",
+    ]);
+    expect(showErrorSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the new raw ASR when the row was never styled", async () => {
+    seedStyledRow("unstyled-empty", "");
+    mockUnstyledPostProcess({ postProcessDegraded: true });
+
+    await retranscribeTranscription({ transcriptionId: "unstyled-empty" });
+
+    // There is no polished text to protect, so the raw ASR is strictly better
+    // than leaving the row empty.
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: RAW_ASR,
+        rawTranscript: RAW_ASR,
+        postProcessDegraded: true,
+      }),
+    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+  });
+
+  it("replaces the transcript and reports success when styling worked", async () => {
+    seedStyledRow("styled", POLISHED);
+    postProcessTranscript.mockResolvedValue({
+      transcript: "Freshly styled summary.",
+      warnings: [],
+      metadata: { postProcessFailed: false, postProcessDegraded: false },
+    });
+
+    await retranscribeTranscription({ transcriptionId: "styled" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: "Freshly styled summary.",
+        postProcessDegraded: false,
+      }),
+    );
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
+      "styled",
+    ]);
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
   });
 });

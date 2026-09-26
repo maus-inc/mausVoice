@@ -6,7 +6,7 @@
  * - Single instance (right-click elsewhere closes + reopens)
  * - Closes on: click (with item action), scroll, window blur, Escape
  * - Keyboard: ArrowUp/Down navigation, Enter/Space to activate
- * - Focus management (trap + restore on close)
+ * - Focus management (focus on open, restore on Escape or explicit close)
  * - Dark/light theming from MUI palette
  *
  * Usage:
@@ -237,8 +237,7 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
       if (actionableIndices.length === 0) return;
 
       switch (e.key) {
-        case "ArrowDown":
-        case "Tab": {
+        case "ArrowDown": {
           e.preventDefault();
           const currentPos = actionableIndices.indexOf(activeIndex);
           const nextPos = (currentPos + 1) % actionableIndices.length;
@@ -546,12 +545,19 @@ export const useContextMenu = (): UseContextMenuReturn => {
       closeMenu(false);
     };
 
-    const handleEscape = (e: KeyboardEvent) => {
+    const handleDismissKeys = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // Capture phase + stopPropagation: the menu consumes Escape so a
         // wrapping host (MUI dialog, drawer) does not also close.
         e.stopPropagation();
         closeMenu(true);
+        return;
+      }
+      if (e.key === "Tab") {
+        // A vertical menu must not cycle focus with Tab. Dismiss without
+        // restoring focus and without preventDefault, so the browser moves
+        // focus onward from where the user was before the menu opened.
+        closeMenu(false);
       }
     };
 
@@ -562,14 +568,14 @@ export const useContextMenu = (): UseContextMenuReturn => {
 
     window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("blur", handleBlur);
-    document.addEventListener("keydown", handleEscape, true);
+    document.addEventListener("keydown", handleDismissKeys, true);
 
     return () => {
       clearTimeout(clickAwayTimer);
       document.removeEventListener("mousedown", handleClickAway);
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("blur", handleBlur);
-      document.removeEventListener("keydown", handleEscape, true);
+      document.removeEventListener("keydown", handleDismissKeys, true);
     };
   }, [state, closeMenu]);
 

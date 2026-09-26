@@ -932,11 +932,10 @@ export const AppSideEffects = () => {
   pillVisibilityRef.current = effectivePillVisibility;
 
   // Serializes tray clicks. `updateUserPreferences` writes the whole
-  // preferences object, so two overlapping writes can clobber each other; and
-  // AsyncLock only counts callers, it does not queue them. Chaining onto a
-  // promise gives real ordering, and each link re-reads the ref so it acts on
-  // the state left by the previous write rather than on what was current when
-  // the user clicked.
+  // preferences object, so two overlapping writes can clobber each other.
+  // Chaining onto a promise gives real ordering, and each link re-reads the ref
+  // so it acts on the state left by the previous write rather than on what was
+  // current when the user clicked.
   const pillVisibilityQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // Label follows the persisted preference: startup hydration, tray clicks and

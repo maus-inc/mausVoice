@@ -19,7 +19,7 @@ import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
 import {
-  parsePostProcessingJson,
+  parsePostProcessingJsonDetailed,
   unwrapNestedLlmResponse,
 } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
@@ -50,6 +50,7 @@ import {
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   POST_PROCESS_MAX_TOKENS,
   PROCESSED_TRANSCRIPTION_SCHEMA,
+  POST_PROCESS_TRUNCATED_WARNING,
 } from "../utils/prompt.utils";
 import {
   applyHallucinationFiltering,
@@ -110,6 +111,21 @@ export type PostProcessMetadata = {
   postprocessDurationMs?: number | null;
   /** True when a post-processing request was attempted and failed. */
   postProcessFailed?: boolean | null;
+  /**
+   * True when the provider answered but the answer was unusable, so
+   * `transcript` holds the raw ASR instead of a styled result. Distinct from
+   * `postProcessFailed`, which means the request itself never produced an
+   * answer and backs a null/failed/succeeded column sentinel.
+   *
+   * The two consumers treat it differently on purpose. Dictation still pastes
+   * the raw words: it has no previous text to protect, its raw transcript is
+   * complete, and refusing to paste would make a two minute dictation deliver
+   * nothing at all when the user only loses styling they never received.
+   * Retranscription refuses instead, because the row already holds polished
+   * text worth protecting, and overwriting it with raw ASR would be a
+   * regression the user never asked for.
+   */
+  postProcessDegraded?: boolean | null;
   /** Sanitized, non-secret error message from a failed post-processing request. */
   postProcessError?: string | null;
 };
@@ -259,18 +275,42 @@ export const transcribeAudio = async ({
   };
 };
 
+type ProcessedTranscriptParse = {
+  transcript: string;
+  warning: string | null;
+  /**
+   * The provider answered, but what it sent cannot be used, so the transcript
+   * is the raw ASR rather than a styled result.
+   */
+  degraded: boolean;
+};
+
+const parseFailureWarning = (error: unknown): string => {
+  const message = unknownToMessage(error);
+  const truncationHint = /Unterminated string/i.test(message)
+    ? " The model output may have been truncated at its token limit."
+    : "";
+  return `Failed to parse post-processing response: ${message}.${truncationHint}`;
+};
+
 /**
  * Parse and validate the LLM's JSON post-processing response. Returns the
  * cleaned transcript on success, or the raw transcript plus a warning on
  * any parse/validation failure.
+ *
+ * A salvaged fragment is never used as the transcript. The repair in
+ * `parsePostProcessingJsonDetailed` only proves that the model was cut off, so
+ * the surviving fragment is a prefix of the intended result and pasting it
+ * would silently hand the user half a sentence.
  */
 const parseProcessedTranscript = (
   raw: string,
   fallback: string,
-): { transcript: string; warning: string | null } => {
+): ProcessedTranscriptParse => {
   try {
+    const { value, repaired } = parsePostProcessingJsonDetailed(raw);
     const parsed = unwrapNestedLlmResponse(
-      parsePostProcessingJson(raw) as Record<string, unknown>,
+      value as Record<string, unknown>,
       "processedTranscription",
     );
     const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
@@ -278,17 +318,26 @@ const parseProcessedTranscript = (
       return {
         transcript: fallback,
         warning: `Post-processing response validation failed: ${validationResult.error.message}`,
+        degraded: true,
       };
     }
-    return { transcript: validationResult.data.result.trim(), warning: null };
+    if (repaired) {
+      return {
+        transcript: fallback,
+        warning: POST_PROCESS_TRUNCATED_WARNING,
+        degraded: true,
+      };
+    }
+    return {
+      transcript: validationResult.data.result.trim(),
+      warning: null,
+      degraded: false,
+    };
   } catch (e) {
-    const message = unknownToMessage(e);
-    const truncationHint = /Unterminated string/i.test(message)
-      ? " The model output may have been truncated at its token limit."
-      : "";
     return {
       transcript: fallback,
-      warning: `Failed to parse post-processing response: ${message}.${truncationHint}`,
+      warning: parseFailureWarning(e),
+      degraded: false,
     };
   }
 };
@@ -375,6 +424,11 @@ const applyPostProcessSuccess = (
   // stale postProcessFailed=true on an updated row.
   metadata.postProcessFailed = false;
   metadata.postProcessError = null;
+  // A response that arrived but was cut off or failed validation leaves the
+  // raw ASR in place, so it needs its own flag: the request succeeded, and
+  // calling it a failure would corrupt the persisted failed/succeeded
+  // sentinel that history and the preview runtime read.
+  metadata.postProcessDegraded = parseResult.degraded;
   getLogger().verbose(
     "Post-process mode:",
     metadata.postProcessMode,
@@ -451,6 +505,9 @@ const recordPostProcessFailure = (
   const postprocessDuration = performance.now() - postprocessStart;
   metadata.postprocessDurationMs = Math.round(postprocessDuration);
   metadata.postProcessFailed = true;
+  // The request produced no answer at all, so this run is not a degraded
+  // response; the two flags stay disjoint.
+  metadata.postProcessDegraded = false;
   const rawMessage = unknownToMessage(error) || "Post-processing failed";
   const category = classifyPostProcessErrorCategory(rawMessage);
   const sanitizedMessage = redactTranscriptContent(rawMessage, rawTranscript);

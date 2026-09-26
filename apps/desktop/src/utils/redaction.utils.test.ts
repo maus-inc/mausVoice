@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { redactError, redactObject, redactString } from "./redaction.utils";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+  redactError,
+  redactObject,
+  redactObjectSync,
+  redactString,
+  redactStringSync,
+  type SyncRedactionMode,
+} from "./redaction.utils";
 
 describe("redaction.utils", () => {
   describe("redactString", () => {
@@ -221,6 +228,52 @@ describe("redaction.utils", () => {
         items: string[][];
       };
       expect(result.items).toEqual([["[redacted]"], ["[redacted]"]]);
+    });
+  });
+
+  describe("redactObjectSync", () => {
+    it("redacts a sensitive key nested in an object", () => {
+      expect(
+        redactObjectSync({ name: "ok", config: { apiKey: "opaque" } }),
+      ).toEqual({
+        name: "ok",
+        config: { apiKey: "[redacted]" },
+      });
+    });
+
+    it("redacts sensitive keys inside an array of objects", () => {
+      expect(
+        redactObjectSync({
+          rows: [{ token: "a", keep: "x" }, { token: "b" }],
+        }),
+      ).toEqual({
+        rows: [{ token: "[redacted]", keep: "x" }, { token: "[redacted]" }],
+      });
+    });
+
+    it("terminates on a cycle", () => {
+      const input: Record<string, unknown> = { name: "ok" };
+      input.self = input;
+      expect(redactObjectSync(input)).toEqual({
+        name: "ok",
+        self: "[circular]",
+      });
+    });
+
+    it("redacts a sensitive key at depth", () => {
+      expect(
+        redactObjectSync({
+          a: { b: { c: { d: { secret: "opaque", keep: "x" } } } },
+        }),
+      ).toEqual({
+        a: { b: { c: { d: { secret: "[redacted]", keep: "x" } } } },
+      });
+    });
+
+    it("offers only the modes a synchronous call can produce", () => {
+      expectTypeOf<SyncRedactionMode>().toEqualTypeOf<"full" | "truncate">();
+      expect(redactStringSync("secret-value")).toBe("[redacted]");
+      expect(redactStringSync("secret-value", "truncate")).toBe("se***ue");
     });
   });
 

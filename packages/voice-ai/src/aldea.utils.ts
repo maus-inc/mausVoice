@@ -1,4 +1,4 @@
-import { retry, countWords } from "@maus-inc/utilities";
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
 
 const ALDEA_API_URL = "https://api.aldea.ai/v1/listen";
 
@@ -55,8 +55,10 @@ export const aldeaTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `Aldea API request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 

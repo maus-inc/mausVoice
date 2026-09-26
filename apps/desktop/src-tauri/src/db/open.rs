@@ -163,6 +163,23 @@ async fn retire_consolidated_migrations(
     Ok(())
 }
 
+/// Every migration version a real build recorded in its ledger between the
+/// 0.1.5 release and the 0.1.6 consolidation, and which the consolidation
+/// (step 69) therefore folded into this build's target schema.
+///
+/// This is an explicit list on purpose. The previous `71..=88` range retired
+/// versions 070, 080 and 088 too, and those three numbers were never used by
+/// any ref in this repository, so a future legitimate `080_*.sql` or
+/// `088_*.sql` would have had its ledger row hard-deleted instead of
+/// surfacing as a downgrade. Adding a version here is now a deliberate edit and
+/// can never be a side effect of widening a number.
+///
+/// Keep in sync with `SHIPPED_CONSOLIDATION_ERA_VERSIONS` in the tests below,
+/// which records what `git log --all` actually shows.
+const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[i64] = &[
+    71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84, 85, 86, 87,
+];
+
 async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -210,15 +227,16 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     let mut retired: Vec<i64> = Vec::new();
     for version in applied_checksums.keys() {
         if !configured.contains(version) {
-            // Migrations 71-88 were folded into the single post-0.1.5
-            // consolidation step (69) for the 0.1.6 release. Databases
-            // written by intermediate builds recorded those steps
-            // individually; that schema is already part of this build's
-            // target, so the rows are retired below instead of failing the
-            // open as a downgrade. Any other unconfigured version keeps the
-            // strict behavior: a database from a genuinely newer release
-            // must surface loudly, not be rewritten underneath it.
-            if (71..=88).contains(version) {
+            // The individual migrations that the 0.1.6 release folded into the
+            // single post-0.1.5 consolidation step (69). Databases written by
+            // intermediate builds recorded those steps individually; that
+            // schema is already part of this build's target, so those rows are
+            // retired below instead of failing the open as a downgrade. Only
+            // the versions a real build actually shipped are listed, so any
+            // other unconfigured version keeps the strict behavior: a database
+            // from a genuinely newer release must surface loudly, not be
+            // rewritten underneath it.
+            if RETIRED_CONSOLIDATION_ERA_VERSIONS.contains(version) {
                 retired.push(*version);
                 continue;
             }
@@ -1148,8 +1166,7 @@ mod tests {
         pool.close().await;
         let error = open_app_database(&temp.path)
             .await
-            .err()
-            .expect("retirement must fail");
+            .expect_err("retirement must fail");
         assert!(error.contains("retirement blocked"), "{error}");
 
         let original = connect_pool(&temp.path).await.unwrap();
@@ -1191,8 +1208,7 @@ mod tests {
             .unwrap();
         let error = apply_migrations(&pool)
             .await
-            .err()
-            .expect("invalid checksum");
+            .expect_err("invalid checksum");
         assert!(matches!(error, OpenError::Integrity(_)));
         let versions: Vec<i64> = sqlx::query_scalar(
             "SELECT version FROM _sqlx_migrations WHERE version IN (69, 75, 87) ORDER BY version",

@@ -18,7 +18,6 @@ import {
   type PostProcessingMode,
   type TranscriptionMode,
 } from "../types/ai.types";
-import { AsyncLock } from "../utils/async-lock.utils";
 import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
@@ -50,47 +49,65 @@ import { showErrorSnackbar } from "./app.actions";
 import { refreshUpdatesForChannelChange } from "./updater.actions";
 import { setLocalStorageValue } from "./local-storage.actions";
 
-const userSaveLock = new AsyncLock();
+// Serializes profile mutations. `setMyUser` upserts the whole row, so two
+// overlapping writes can clobber each other: whichever lands last wins, and a
+// stale payload reverts every field the newer one changed. Each task reads the
+// latest committed user when it actually runs, so its payload builds on the
+// previous task's result rather than on a snapshot taken at call time.
+const { enqueue: enqueueUserMutation } = createMutationQueue();
 
-const updateUser = async (
+const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
   saveErrorMessage: string,
-): Promise<void> => {
-  const state = getAppState();
-  const existing = getMyUser(state);
-  if (!existing) {
-    getLogger().warning(`updateUser: user not found (${errorMessage})`);
-    showErrorSnackbar(errorMessage);
-    return;
-  }
+): Promise<void> =>
+  enqueueUserMutation(async () => {
+    const state = getAppState();
+    const existing = getMyUser(state);
+    if (!existing) {
+      getLogger().warning(`updateUser: user not found (${errorMessage})`);
+      showErrorSnackbar(errorMessage);
+      return;
+    }
 
-  const repo = getUserRepo();
-  const payload: User = {
-    ...existing,
-    updatedAt: new Date().toISOString(),
-  };
+    const repo = getUserRepo();
+    const payload: User = {
+      ...existing,
+      updatedAt: new Date().toISOString(),
+    };
 
-  updateCallback(payload);
-  produceAppState((draft) => {
-    setCurrentUser(draft, payload);
-  });
+    updateCallback(payload);
+    produceAppState((draft) => {
+      setCurrentUser(draft, payload);
+    });
 
-  await userSaveLock.run(async () => {
     try {
       getLogger().verbose(`Saving user (id=${payload.id})`);
       await repo.setMyUser(payload);
       getLogger().verbose("User saved successfully");
     } catch (error) {
       getLogger().error(`Failed to update user: ${error}`);
+      // Re-read instead of restoring the pre-call snapshot. Another task may
+      // have committed a change after this one started, and writing the
+      // snapshot back would erase it. If the re-read also fails the optimistic
+      // value stays and the error surfaces, which is the honest outcome.
+      const reloaded = await getUserRepo()
+        .getMyUser()
+        .catch((reloadError: unknown) => {
+          getLogger().error(
+            `Failed to re-read user after a failed save: ${reloadError}`,
+          );
+          return null;
+        });
       produceAppState((draft) => {
-        setCurrentUser(draft, existing);
+        if (reloaded) {
+          setCurrentUser(draft, reloaded);
+        }
       });
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
   });
-};
 
 export const createDefaultPreferences = (): UserPreferences => ({
   userId: LOCAL_USER_ID,
@@ -358,9 +375,12 @@ export const addWordsToCurrentUser = async (
   );
 };
 
-export const refreshCurrentUser = async (): Promise<void> => {
-  await userSaveLock.wait();
-
+// Runs on the same chain as `updateUser` so a refresh never reads a row that a
+// queued save is halfway through writing. It must never be called from inside
+// a queued task: the chain is already occupied there and the call would wait on
+// itself forever. The failure path in `updateUser` therefore re-reads the row
+// inline rather than calling this.
+const refreshUserAndPreferences = async (): Promise<void> => {
   try {
     getLogger().verbose("Refreshing current user and preferences");
     const [userResult, preferencesResult] = await Promise.allSettled([
@@ -402,6 +422,9 @@ export const refreshCurrentUser = async (): Promise<void> => {
     getLogger().error(`Failed to refresh user: ${error}`);
   }
 };
+
+export const refreshCurrentUser = (): Promise<void> =>
+  enqueueUserMutation(refreshUserAndPreferences);
 
 export const setPreferredMicrophone = async (
   preferredMicrophone: Nullable<string>,

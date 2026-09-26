@@ -5266,9 +5266,14 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn terminal_command_runs_ls_without_path_in_environment() {
-        // Serialize env mutation so it cannot race any other test.
-        static PATH_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = PATH_GUARD.lock().unwrap();
+        // Serialize env mutation so it cannot race any other test. The guard
+        // has to stay held while the child is spawned below, so it must be an
+        // async lock: a `std::sync::Mutex` held across an `.await` blocks a
+        // runtime thread on `lock()` instead of yielding, which stalls every
+        // other task on that thread for the whole spawn.
+        static PATH_GUARD: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
+            once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
+        let _guard = PATH_GUARD.lock().await;
 
         // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
         let original = std::env::var("PATH").ok();
