@@ -112,24 +112,19 @@ export const updateOnboardingLastName = (
   };
 };
 
-/** Releases the last-name field back to its inactive state, restoring the
- *  canonical name to the leading segment(s) of the existing canonical
- *  name with the final token stripped (so middle names the user typed
- *  are kept), falling back to just the trimmed first name when the
- *  name is a single token. */
+/** Releases the last-name field back to its inactive state after the user
+ *  activated it but left it empty on blur. The typing handler has already
+ *  run updateOnboardingLastName(""), so draft.name is first-name plus any
+ *  middle tokens (the last token was stripped by that update). We keep
+ *  that canonical name and just reset the last-name field/flag. */
 export const clearOnboardingLastName = (
   draft: OnboardingNameDraft,
-): OnboardingNameDraft => {
-  const parts = draft.name.trim().split(/\s+/).filter(Boolean);
-  const name =
-    parts.length > 1 ? parts.slice(0, -1).join(" ") : draft.firstName.trim();
-  return {
-    ...draft,
-    name,
-    lastName: "",
-    lastNameEnabled: false,
-  };
-};
+): OnboardingNameDraft => ({
+  ...draft,
+  name: draft.name.trim() || draft.firstName.trim(),
+  lastName: "",
+  lastNameEnabled: false,
+});
 
 export const isOnboardingNameDraftOwnedByAuth = (
   ownerId: string | null,

@@ -112,17 +112,27 @@ describe("onboarding name draft", () => {
     expect(resolveOnboardingName(draft, "")).toBe("Mary Watson");
   });
 
-  it("clearOnboardingLastName preserves middle names when releasing", () => {
-    const draft = createOnboardingNameDraft("Mary Jane Watson");
-    const released = clearOnboardingLastName(draft);
-    expect(released.name).toBe("Mary Jane");
+  it("clearOnboardingLastName preserves middle names the real flow keeps", () => {
+    // Mirror the real blur path: type a full name into last-name then clear
+    // it, which runs updateOnboardingLastName("") first, then clear helper.
+    const base = createOnboardingNameDraft("Mary Jane Watson Smith");
+    const afterClear = updateOnboardingLastName(base, "");
+    const released = clearOnboardingLastName(afterClear);
+    // "Mary Jane Watson Smith" with last-name cleared to "" becomes
+    // "Mary Jane Watson"; clear helper must not strip another token.
+    expect(released.name).toBe("Mary Jane Watson");
     expect(released.firstName).toBe("Mary");
     expect(released.lastName).toBe("");
     expect(released.lastNameEnabled).toBe(false);
   });
 
-  it("clearOnboardingLastName falls back to firstName for single-token names", () => {
-    const draft = createOnboardingNameDraft("Madonna");
+  it("clearOnboardingLastName falls back to firstName when name is empty", () => {
+    const draft = {
+      name: "",
+      firstName: "Madonna",
+      lastName: "",
+      lastNameEnabled: true,
+    };
     const released = clearOnboardingLastName(draft);
     expect(released.name).toBe("Madonna");
     expect(released.lastName).toBe("");

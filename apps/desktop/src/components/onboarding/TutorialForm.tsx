@@ -1,4 +1,10 @@
-import { ArrowForward, Check, Email, TouchApp } from "@mui/icons-material";
+import {
+  ArrowForward,
+  Check,
+  Email,
+  Refresh,
+  TouchApp,
+} from "@mui/icons-material";
 import {
   Box,
   Button,
@@ -146,24 +152,26 @@ const TutorialActionButtons = ({
   isLastStep,
   canContinue,
   submitting,
+  disabled,
   onSkip,
   onContinue,
 }: {
   isLastStep: boolean;
   canContinue: boolean;
   submitting: boolean;
+  disabled?: boolean;
   onSkip: () => void;
   onContinue: () => void;
 }) => {
   return (
     <Stack direction="row" spacing={2}>
-      <Button variant="text" onClick={onSkip} disabled={submitting}>
+      <Button variant="text" onClick={onSkip} disabled={submitting || disabled}>
         <FormattedMessage defaultMessage="Skip" />
       </Button>
       <Button
         variant="contained"
         onClick={onContinue}
-        disabled={!canContinue || submitting}
+        disabled={!canContinue || submitting || disabled}
         endIcon={isLastStep ? <Check /> : <ArrowForward />}
       >
         {isLastStep ? (
@@ -488,19 +496,12 @@ const useTutorialSubmission = ({
   const submissionCompleteRef = useRef(false);
   const [initializing, setInitializing] = useState(true);
   const [submissionFailed, setSubmissionFailed] = useState(false);
-  const [retryToken, setRetryToken] = useState(0);
   const setChatToneRef = useRef(setChatTone);
+  const initRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
     setChatToneRef.current = setChatTone;
   }, [setChatTone]);
-
-  const retry = useCallback(() => {
-    submittedRef.current = false;
-    submissionCompleteRef.current = false;
-    setSubmissionFailed(false);
-    setRetryToken((t) => t + 1);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -545,10 +546,13 @@ const useTutorialSubmission = ({
         }
       }
     };
+    initRef.current = init;
 
     void init();
     return () => {
       cancelled = true;
+      // Unmount-only cleanup (tone reset, checklist clear, override
+      // disable). Not run on retry.
       void setChatToneRef
         .current(POLISHED_TONE_ID, submissionCompleteRef.current)
         .catch((error) => {
@@ -561,7 +565,16 @@ const useTutorialSubmission = ({
         draft.onboarding.dictationOverrideEnabled = false;
       });
     };
-  }, [retryToken]);
+  }, []);
+
+  // Retry re-runs init() without tearing the effect down (so the unmount
+  // cleanup does not run between retries and no tone/checklist/dictation
+  // state is lost mid-session).
+  const retry = useCallback(() => {
+    submittedRef.current = false;
+    submissionCompleteRef.current = false;
+    void initRef.current();
+  }, []);
 
   return { initializing, submissionFailed, retry };
 };
@@ -739,6 +752,7 @@ ${userName}`;
           isLastStep={isLastStep}
           canContinue={canContinue}
           submitting={submitting}
+          disabled={submissionFailed}
           onSkip={() => void handleSkip()}
           onContinue={() => void handleContinue()}
         />
@@ -797,7 +811,7 @@ ${userName}`;
               <Button
                 variant="contained"
                 onClick={retry}
-                startIcon={<ArrowForward />}
+                startIcon={<Refresh />}
               >
                 <FormattedMessage defaultMessage="Try again" />
               </Button>
