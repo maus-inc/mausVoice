@@ -1168,8 +1168,22 @@ export const DictationSideEffects = () => {
 
         sessionRef.current = session;
         strategyRef.current = strategy;
+        // `abortRecording` nulls the refs; a replacement repoints them.
+        const isCurrent = () =>
+          sessionRef.current === session && strategyRef.current === strategy;
         await strategy.onBeforeStart();
         await session.onBeforeRecordingStart?.();
+
+        // An abort that finished during the awaits above has already sent
+        // `stop_recording`, so starting now would open a microphone nothing
+        // stops.
+        if (!isCurrent()) {
+          getLogger().warning(
+            "Recording start raced an abort or replacement before the microphone opened",
+          );
+          session.cleanup();
+          return;
+        }
 
         getLogger().info(
           `Starting recording (mic=${preferredMicrophone ?? "default"})`,
@@ -1183,10 +1197,7 @@ export const DictationSideEffects = () => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
             // than waiting for the other Promise.all branch.
-            if (
-              sessionRef.current === session &&
-              strategyRef.current === strategy
-            ) {
+            if (isCurrent()) {
               startProviderRecordingTimers();
             }
             return result;
@@ -1202,10 +1213,7 @@ export const DictationSideEffects = () => {
         // this invocation's session before continuing. Reading and invoking a
         // nullable current ref here previously crashed when the user stopped
         // mid-initialization.
-        if (
-          sessionRef.current !== session ||
-          strategyRef.current !== strategy
-        ) {
+        if (!isCurrent()) {
           getLogger().warning(
             "Recording start raced an abort or replacement; skipping stale session start",
           );
@@ -1214,21 +1222,15 @@ export const DictationSideEffects = () => {
           session.cleanup();
           return;
         }
-        const startedSession = session;
-        const startedStrategy = strategy;
+        await session.onRecordingStart(sampleRate);
 
-        await startedSession.onRecordingStart(sampleRate);
-
-        if (
-          sessionRef.current !== startedSession ||
-          strategyRef.current !== startedStrategy
-        ) {
+        if (!isCurrent()) {
           getLogger().warning(
             "Session was aborted while starting; skipping timers and volume dim",
           );
           // The abort path cleans whatever was current in the refs; release
           // this (now-orphaned) session defensively — cleanup is idempotent.
-          startedSession.cleanup();
+          session.cleanup();
           return;
         }
 
