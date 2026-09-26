@@ -98,7 +98,7 @@ const describeWindowError = (event: ErrorEvent): string => {
       target instanceof HTMLScriptElement
         ? target.src
         : (target as HTMLLinkElement).href;
-    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.`;
+    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Tauri v2 serves the app from its own custom protocol origin (tauri://localhost, or http://tauri.localhost on Windows), so this is almost always a path issue rather than a CORS one: if the built index.html uses a relative base, a URL like /dashboard/assets/x.js 404s because the asset path resolves under the current route. Check that vite's base is absolute.`;
   }
   const message = event.message ?? "";
   return event.error != null ? describe(event.error) : message;
@@ -106,8 +106,8 @@ const describeWindowError = (event: ErrorEvent): string => {
 
 // Installed as early as possible so that any failure while the React tree
 // mounts (or before it mounts) is shown on screen instead of a blank white
-// window. The built frontend can fail to execute under Tauri's asset:
-// protocol (e.g. module/CORS load failures) with no visible error otherwise.
+// window. The built frontend can fail to execute (e.g. module load failures)
+// with no visible error otherwise.
 //
 // After React has mounted, runtime errors and unhandled rejections must not
 // cover a working UI with the fatal overlay. Image/media load failures also

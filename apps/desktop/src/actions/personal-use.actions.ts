@@ -6,6 +6,7 @@ import { getLogger } from "../utils/log.utils";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_API_KEY_NAME,
+  PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
   PERSONAL_GROQ_API_KEY_ID,
   PERSONAL_GROQ_API_KEY_NAME,
   PERSONAL_GROQ_POST_PROCESSING_MODEL,
@@ -100,11 +101,16 @@ const upsertPersonalDeepgramApiKey = async (
   const existing = getPersonalDeepgramApiKey();
 
   if (!existing) {
-    return createApiKey({
+    const created = await createApiKey({
       id: PERSONAL_DEEPGRAM_API_KEY_ID,
       name: PERSONAL_DEEPGRAM_API_KEY_NAME,
       provider: "deepgram",
       key: configuredKey,
+    });
+
+    return updateApiKey({
+      id: created.id,
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
     });
   }
 
@@ -116,6 +122,11 @@ const upsertPersonalDeepgramApiKey = async (
   }
   if (existing.keyFull !== configuredKey) {
     updatePayload.key = configuredKey;
+  }
+  // Backfills keys created before the preset existed, which left the model
+  // picker empty. A model the user picked themselves is left alone.
+  if (!existing.transcriptionModel) {
+    updatePayload.transcriptionModel = PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL;
   }
 
   if (Object.keys(updatePayload).length === 1) {

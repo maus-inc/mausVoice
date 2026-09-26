@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
+  PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
   PERSONAL_GROQ_API_KEY_ID,
   resolvePersonalTranscriptionTarget,
 } from "./personal-use.utils";
+
+describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
+  it("presets a model the Deepgram provider actually offers", () => {
+    expect(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL).toBe(
+      DEEPGRAM_TRANSCRIPTION_MODELS[0],
+    );
+  });
+});
 
 describe("resolvePersonalTranscriptionTarget", () => {
   it("selects Personal Deepgram when both keys are present", () => {

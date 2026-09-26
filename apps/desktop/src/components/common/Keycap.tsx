@@ -16,6 +16,12 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
         (theme) => ({
           minWidth: 22,
           minHeight: 22,
+          // A keycap lives in compressible flex rows (the onboarding tutorial
+          // tooltip, inline sentences). Without this the cap shrinks toward its
+          // 22px floor while the label keeps its full width, so the painted
+          // background ends mid-label and the trailing characters render
+          // outside the cap, which reads as a stray letter next to the key.
+          flexShrink: 0,
           px: 0.75,
           py: 0.25,
           borderRadius: 0.5,

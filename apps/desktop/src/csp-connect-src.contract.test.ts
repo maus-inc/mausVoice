@@ -90,6 +90,10 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
   ["api-docs.deepseek.com", "doc comment URL"],
+  [
+    "tauri.localhost",
+    "fatal-error overlay text naming the custom protocol origin — never fetched",
+  ],
 ]);
 
 /**
