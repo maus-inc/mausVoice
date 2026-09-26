@@ -442,8 +442,10 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}(?:(?:bearer|basic|token)[ \t]{0,4})?\S+/gi,
   // A bare provider-style token, wherever it appears.
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g,
-  // A JWT, which is long and structurally unmistakable.
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g,
+  // A JWT, which is long and structurally unmistakable. Its whole body is
+  // base64url plus the two dots, so one class covers every segment and the
+  // length is what makes it distinctive.
+  /\beyJ[A-Za-z0-9_.-]{20,}/g,
 ];
 
 const redactCredentialShapedText = (text: string): string =>
