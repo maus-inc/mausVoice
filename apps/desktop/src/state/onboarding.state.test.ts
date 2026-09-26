@@ -126,7 +126,7 @@ describe("onboarding name draft", () => {
     expect(released.lastNameEnabled).toBe(false);
   });
 
-  it('updateOnboardingLastName("") strips all tokens in a multi-token surname', () => {
+  it('updateOnboardingLastName("") strips a multi-token surname', () => {
     // Paste/select-all delete of a double-barrel surname should remove all
     // of them, not leave a hidden orphan token in the canonical name.
     const base = {

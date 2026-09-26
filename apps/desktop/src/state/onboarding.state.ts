@@ -100,18 +100,17 @@ export const updateOnboardingLastName = (
 ): OnboardingNameDraft => {
   const trimmedLastName = lastName.trim();
   const parts = draft.name.trim().split(/\s+/).filter(Boolean);
-  // When clearing the last-name field (paste + delete, select-all +
-  // backspace), strip as many trailing tokens from the canonical name
-  // as the prior last-name value occupied. That handles multi-token
-  // surnames ("Watson Smith") so a clear removes the whole surname
-  // instead of leaving a hidden orphan token.
+  // Strip as many trailing tokens as the previous lastName value
+  // occupied, so editing a multi-token surname (paste/backspace of a
+  // double-barrel) does not duplicate or leave orphan tokens in the
+  // canonical name. Min-clamped to 1 for the single-token case.
   const priorLastNameTokens = draft.lastName
     .trim()
     .split(/\s+/)
     .filter(Boolean);
   const tokensToStrip = Math.min(
     parts.length,
-    trimmedLastName.length === 0 ? Math.max(priorLastNameTokens.length, 1) : 1,
+    Math.max(priorLastNameTokens.length, 1),
   );
   const keepCount = Math.max(parts.length - tokensToStrip, 0);
   const kept = parts.slice(0, keepCount).join(" ");
