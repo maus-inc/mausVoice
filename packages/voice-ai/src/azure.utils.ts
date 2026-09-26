@@ -436,8 +436,18 @@ const AZURE_REASON_EXCERPT_CHARS = 120;
  * boundary keep this linear on hostile input, which the ReDoS case below pins.
  */
 const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
-  // `Ocp-Apim-Subscription-Key: <value>`, `{"api_key":"<value>"}` and friends.
-  /\b(?:ocp[-_]apim[-_]subscription[-_]key|subscription[-_]key|api(?:key|[-_]key)|apikey|access(?:[-_]token|token))\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
+  // A labelled credential: `Ocp-Apim-Subscription-Key: v`, `api_key=v`,
+  // `{"access_token":"v"}`, `x-api-key: v` and so on. Matching the shape of the
+  // label rather than listing names keeps this one quantifier pair instead of
+  // five nested alternations, and it also catches names nobody enumerated, such
+  // as `client_secret` or `x-amz-security-token`.
+  //
+  // It over-matches on purpose: any label merely ENDING in one of those words
+  // is redacted whatever follows it, so `monkey=5` is redacted too. The text
+  // reaching this is an Azure failure reason, where no such field exists, and a
+  // redaction control that hides one harmless value is far cheaper than one that
+  // lets a key through because a new vendor prefix was not enumerated.
+  /\b[a-z0-9_.-]{0,24}(?:key|token|secret|password|credential)\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
   // `Authorization: Bearer <value>`, `{"authorization":"<value>"}`, any scheme.
   /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}(?:(?:bearer|basic|token)[ \t]{0,4})?\S+/gi,
   // A bare provider-style token, wherever it appears.
