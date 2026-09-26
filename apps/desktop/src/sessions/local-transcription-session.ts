@@ -85,6 +85,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       const hallucinationFilterEnabled =
         state.userPrefs?.hallucinationFilterEnabled !== false;
+      // Snapshot before anything can fail so the batch fallback honors the
+      // same preferences and records the same prompt.
+      this.context = { prompt, hallucinationFilterEnabled };
       const settings = state.settings.aiTranscription;
       const sidecarSession =
         await getLocalTranscriptionSidecarManager().createStreamingSession({
@@ -105,7 +108,6 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       }
 
       this.session = sidecarSession;
-      this.context = { prompt, hallucinationFilterEnabled };
       if (this.pendingSampleCount > 0) {
         getLogger().info(
           `[local-stream-session] flushing ${this.pendingSampleCount} samples captured during startup`,
@@ -123,7 +125,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `[local-stream-session] start failed, falling back (${message})`,
       );
-      this.cleanup();
+      this.releaseStream();
     }
   }
 
@@ -187,11 +189,15 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     getLogger().info(
       `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
     );
+    this.releaseStream();
+    this.context = null;
+  }
+
+  private releaseStream(): void {
     this.unlisten?.();
     this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
-    this.context = null;
     this.clearStartupBuffer();
     this.startupBufferOverflowed = false;
   }

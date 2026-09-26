@@ -280,6 +280,25 @@ describe("local streaming start capture", () => {
     expect(mocks.createStreamingSession).not.toHaveBeenCalled();
   });
 
+  it("keeps the start-time filter choice when the sidecar cannot start", async () => {
+    setFilter(false);
+    mocks.createStreamingSession.mockRejectedValueOnce(new Error("no model"));
+    mocks.transcribeAudio.mockResolvedValueOnce({
+      rawTranscript: "hello",
+      metadata: {},
+      warnings: [],
+    });
+    const session = new LocalTranscriptionSession();
+
+    await session.onRecordingStart(16000);
+    setFilter(true);
+    await session.finalize({ samples, sampleRate: 16000 });
+
+    expect(mocks.transcribeAudio).toHaveBeenCalledWith(
+      expect.objectContaining({ hallucinationFilterEnabled: false }),
+    );
+  });
+
   it("drops buffered audio and unsubscribes when the sidecar session cannot start", async () => {
     mocks.createStreamingSession.mockRejectedValueOnce(new Error("no model"));
     mocks.transcribeAudio.mockResolvedValueOnce({
