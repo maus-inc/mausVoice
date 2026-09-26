@@ -292,6 +292,35 @@ describe("generateText metadata reports the resolved model", () => {
     expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
 
+  it.each([401, 402, 403])(
+    "Groq does not fall back when the key itself is rejected (%i)",
+    async (status) => {
+      const keyError = Object.assign(new Error("rejected"), { status });
+      vi.mocked(groqGenerateTextResponse).mockRejectedValueOnce(keyError);
+
+      const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+
+      await expect(repo.generateText({ prompt: "p" })).rejects.toBe(keyError);
+      expect(groqGenerateTextResponse).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([400, 404, 429, 500])(
+    "Groq falls back on a model-specific failure (%i)",
+    async (status) => {
+      vi.mocked(groqGenerateTextResponse)
+        .mockRejectedValueOnce(Object.assign(new Error("boom"), { status }))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo(
+        "k",
+        "openai/gpt-oss-20b",
+      ).generateText({ prompt: "p" });
+
+      expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+    },
+  );
+
   it("Groq falls back to the smaller model when the larger one fails", async () => {
     vi.mocked(groqGenerateTextResponse)
       .mockRejectedValueOnce(new Error("boom"))

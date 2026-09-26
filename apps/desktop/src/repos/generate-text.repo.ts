@@ -35,6 +35,7 @@ import {
   openrouterStreamChat,
   ReasoningEffort,
 } from "@maus-inc/voice-ai";
+import { getLogger } from "../utils/log.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { PostProcessingMode } from "../types/ai.types";
 import { BaseRepo } from "./base.repo";
@@ -71,6 +72,16 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract generateText(input: GenerateTextInput): Promise<GenerateTextOutput>;
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
+
+// Auth and billing failures belong to the API key, so no other model can
+// succeed. Rate limits, a missing model, or invalid output (a 400 from JSON
+// validation) are model-specific, so those still fall back.
+const KEY_WIDE_FAILURE_STATUSES = new Set([401, 402, 403]);
+
+const providerStatus = (error: unknown): number | undefined => {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : undefined;
+};
 
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
@@ -130,9 +141,17 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     } catch (error) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
-      if (input.signal?.aborted || this.model === this.fallbackModel) {
+      const status = providerStatus(error);
+      if (
+        input.signal?.aborted ||
+        this.model === this.fallbackModel ||
+        (status !== undefined && KEY_WIDE_FAILURE_STATUSES.has(status))
+      ) {
         throw error;
       }
+      getLogger().warning(
+        `Groq ${this.model} failed (status ${status ?? "unknown"}); retrying with ${this.fallbackModel}`,
+      );
 
       const response = await this.requestGroq(this.fallbackModel, input);
       return { response, model: this.fallbackModel };
