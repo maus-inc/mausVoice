@@ -1,3 +1,4 @@
+import { unknownToMessage } from "@maus-inc/utilities";
 import * as sdk from "microsoft-cognitiveservices-speech-sdk";
 
 export type AzureTranscriptionArgs = {
@@ -309,28 +310,30 @@ const matchesAny = (reason: string, patterns: readonly RegExp[]): boolean =>
 
 /**
  * The SDK's own text for a key it refuses, quoted from
- * `microsoft-cognitiveservices-speech-sdk` 1.51.0:
- *
- * - `SpeechConfig.fromSubscription` calls
- *   `Contracts.throwIfNullOrWhitespace(subscriptionKey, "subscriptionKey")`,
- *   which throws `"throwIfNullOrWhitespace:subscriptionKey"` before any
- *   request leaves the process. That is the message a whitespace-only key
- *   produces here, and it carries no status, no "authentication", and no
- *   "key" wording that the keyword rules below would catch.
- * - `RestConfigBase.privRestErrors.authInvalidSubscriptionKey` is the REST
- *   layer's twin of its `authInvalidSubscriptionRegion` message, which the
- *   region rule below already reads.
+ * `microsoft-cognitiveservices-speech-sdk` 1.51.0.
+ * `SpeechConfig.fromSubscription` calls
+ * `Contracts.throwIfNullOrWhitespace(subscriptionKey, "subscriptionKey")`,
+ * which throws `"throwIfNullOrWhitespace:subscriptionKey"` before any request
+ * leaves the process. That is the message a whitespace-only key produces here,
+ * and it carries no status, no "authentication", and no "key" wording that the
+ * keyword rules around it would catch, so it needs a pattern of its own.
  */
-const BLANK_KEY_PATTERNS = [
-  /throwIfNullOr(?:Whitespace|Undefined):\s*subscriptionKey/i,
-  /specify either an authentication token/i,
-];
+const BLANK_KEY_PATTERN =
+  /throwIfNullOr(?:Whitespace|Undefined):\s*subscriptionKey/i;
 
 /**
  * Classify the reason the SDK handed over. The status code inside the SDK's
  * own message is the strongest signal it offers, so it is read first; the
  * keyword rules cover the SDK's local validation messages and the service body
  * on a REST rejection, which carry no status of their own.
+ *
+ * A rule here has to match something no earlier rule matches, because the list
+ * is scanned in order and every entry returns the same classification. The SDK
+ * twin of the region message,
+ * `RestConfigBase.privRestErrors.authInvalidSubscriptionKey` ("You must specify
+ * either an authentication token to use, or a Cognitive Speech subscription
+ * key."), is the reason `/authentication/i` is in the list; it needs no
+ * pattern of its own, and adding one would be dead weight.
  */
 const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
   const statusCode = AZURE_STATUS_CODE.exec(reason)?.[1];
@@ -343,7 +346,7 @@ const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
   }
   if (
     matchesAny(reason, [
-      ...BLANK_KEY_PATTERNS,
+      BLANK_KEY_PATTERN,
       /invalid subscription key/i,
       /access denied/i,
       /authentication/i,
@@ -407,23 +410,91 @@ const readAzureReason = (error: unknown): string => {
 const AZURE_REASON_EXCERPT_CHARS = 120;
 
 /**
+ * Redacts credential-shaped values out of text this app does not control.
+ *
+ * The reason is third-party prose: a gateway or proxy can echo the key it was
+ * given, and the webview console is handed to the native log sink, whose rolled
+ * file the user attaches to a diagnostics export. That sink's sanitizer only
+ * knows the labels this app writes itself, so nothing downstream would remove a
+ * token that arrived inside someone else's sentence.
+ *
+ * The match is deliberately loose on the value and strict on the label, because
+ * a false positive costs a diagnosis and a false negative publishes a key.
+ */
+const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
+  // `Ocp-Apim-Subscription-Key: <value>`, `api_key=<value>` and friends.
+  /\b(ocp-apim-subscription-key|subscription[-_]?key|api[-_]?key|apikey|access[-_]?token)\b\s*[:=]\s*\S+/gi,
+  // `Authorization: Bearer <value>` and any other scheme.
+  /\bauthorization\b\s*[:=]\s*(?:bearer|basic|token)?\s*\S+/gi,
+  // A bare provider-style token, wherever it appears.
+  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}\b/g,
+  // A JWT, which is long and structurally unmistakable.
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g,
+];
+
+const redactCredentialShapedText = (text: string): string =>
+  AZURE_CREDENTIAL_PATTERNS.reduce(
+    (redacted, pattern) =>
+      redacted.replace(pattern, (match) => {
+        const separator = match.search(/[:=]/);
+        const label = separator === -1 ? "" : match.slice(0, separator + 1);
+        return `${label} [redacted]`;
+      }),
+    text,
+  );
+
+/**
  * One bounded, single-line excerpt of the SDK's reason. The reason arrives as
  * multi-line service prose, so whitespace is collapsed before it is cut, and
  * the cut lands on a word boundary.
  */
-const summarizeAzureReason = (reason: string): string => {
+const summarizeAzureReason = (
+  reason: string,
+  limit = AZURE_REASON_EXCERPT_CHARS,
+): string => {
   const flattened = reason.replace(/\s+/g, " ").trim();
-  if (flattened.length <= AZURE_REASON_EXCERPT_CHARS) {
+  if (flattened.length <= limit) {
     return flattened;
   }
-  const truncated = flattened.slice(0, AZURE_REASON_EXCERPT_CHARS);
+  const truncated = flattened.slice(0, limit);
   const lastSpace = truncated.lastIndexOf(" ");
   const body =
-    lastSpace > AZURE_REASON_EXCERPT_CHARS / 2
-      ? truncated.slice(0, lastSpace)
-      : truncated;
+    lastSpace > limit / 2 ? truncated.slice(0, lastSpace) : truncated;
   return `${body.trimEnd()}…`;
 };
+
+/**
+ * What the log line carries instead of the raw reason. The reason is
+ * uncontrolled prose from the Azure SDK, and `initLogging` hands the webview
+ * console to the native log sink, whose rolled log file the user attaches to a
+ * diagnostics export. The native sink's own sanitizer only knows the labels
+ * this app writes ("Processed transcript:", "Connector token:"), so it leaves
+ * third-party prose alone.
+ *
+ * Whitespace is collapsed first, so the record is a single line and the
+ * sanitizer reads exactly the text that is written. The sanitizer then
+ * redacts key-shaped values and applies its own length cap, which bounds the
+ * record. What survives is the leading status code, endpoint and message, which
+ * is what a support request needs.
+ */
+/**
+ * The log gets a longer budget than the toast. A snackbar is read at a glance,
+ * but the log exists to be attached to a bug report, so it keeps enough context
+ * for a support answer, including the redacted markers that show a credential
+ * was present. Redaction still runs first, so a token is never present to be cut
+ * in half by the bound.
+ *
+ * The floor of this budget is a redacted marker on a typical reason, around 150
+ * characters in. Its ceiling is a long unbroken service body, which starts
+ * around 195 characters in, so the bound has to land between the two.
+ */
+const AZURE_REASON_LOG_CHARS = 240;
+
+const azureReasonForLog = (reason: string): string =>
+  summarizeAzureReason(
+    redactCredentialShapedText(unknownToMessage(reason)),
+    AZURE_REASON_LOG_CHARS,
+  );
 
 export const azureTestIntegration = async ({
   subscriptionKey,
@@ -443,13 +514,14 @@ export const azureTestIntegration = async ({
     // outcome where "provide a valid API key" is the right advice. Every other
     // outcome is raised with a bounded excerpt, so an exhausted quota, a region
     // the resource is not in, and an unreachable network are not all reported
-    // as a bad key, and the full reason goes to the log for support.
+    // as a bad key, and a redacted, single-line, capped form of the reason goes
+    // to the log for support.
     const reason = readAzureReason(error);
     const failure = classifyAzureProbeFailure(reason);
     if (failure === "credential") {
       return false;
     }
-    console.error("Azure integration probe failed:", reason);
+    console.error("Azure integration probe failed:", azureReasonForLog(reason));
     throw new Error(
       `${describeAzureProbeFailure(failure, region)} Azure reported: ${summarizeAzureReason(reason)}`,
     );

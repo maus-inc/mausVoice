@@ -172,8 +172,16 @@ export const cerebrasGenerateTextResponse = async ({
     // The status may arrive either as a raw SDK error (before normalization)
     // or already wrapped, so inspect both shapes.
     isRetryable: (error) => !signal?.aborted && !isCerebrasTerminalError(error),
-    // The wait between attempts is the part a rate limit can stretch to
-    // seconds, so the caller's signal has to end it too.
+    // An abort during the wait is honoured: `retry` hands the signal to its
+    // own wait, so a cancelled caller stops there instead of sitting it out.
+    // That wait is the helper's own 20ms. The helper stretches a wait for a
+    // `Retry-After` hint only, and it reads that hint off an `HttpError`.
+    // What reaches `retry` is the raw OpenAI SDK `APIError`: the `.catch`
+    // below normalizes only after `retry` has given up, and it hands back a
+    // `CerebrasProviderError` or a plain `Error`, never an `HttpError`. So a
+    // 429 is retried 20ms later. Converting inside `fn` (the pattern in
+    // `transcription.utils.ts`) is what would let a hint apply here, capped at
+    // the helper's 2s default.
     signal,
     fn: async () => {
       const client = createClient(apiKey, customFetch);

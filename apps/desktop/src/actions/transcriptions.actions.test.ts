@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
+import { getIntl } from "../i18n/intl";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
 import type { PostProcessMetadata } from "./transcribe.actions";
@@ -17,7 +18,6 @@ const {
   showPersistentToast,
   showCompletionToast,
   dismissToast,
-  formatMessage,
 } = vi.hoisted(() => ({
   loadTranscriptionAudio: vi.fn(),
   updateTranscription: vi.fn(),
@@ -29,9 +29,6 @@ const {
   showPersistentToast: vi.fn(async () => {}),
   showCompletionToast: vi.fn(async () => {}),
   dismissToast: vi.fn(async () => {}),
-  formatMessage: vi.fn(
-    (descriptor: { defaultMessage: string }) => descriptor.defaultMessage,
-  ),
 }));
 
 vi.mock("../repos", () => ({
@@ -76,29 +73,11 @@ vi.mock("./toast.actions", async () => ({
   showToast: vi.fn(async () => {}),
 }));
 
-// Spread the real module so helpers like detectLocale (pulled in through
-// user.utils) keep working; stubbing only getIntl made the whole success
-// path throw and silently skip the completion toast. The formatter is a spy so
-// a test can prove that a user-facing string was resolved through intl rather
-// than read straight off a constant, and can simulate a translated catalog.
-vi.mock("../i18n/intl", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../i18n/intl")>()),
-  getIntl: () => ({ formatMessage }),
-}));
-
-/** Resolve one `defaultMessage` to a stand-in translation from the catalog. */
-const stubTranslation = (english: string, translated: string) =>
-  formatMessage.mockImplementation((descriptor: { defaultMessage: string }) =>
-    descriptor.defaultMessage === english
-      ? translated
-      : descriptor.defaultMessage,
-  );
-
-/** Undo a `stubTranslation` override without resetting the call history. */
-const useEnglishCatalog = () =>
-  formatMessage.mockImplementation(
-    (descriptor: { defaultMessage: string }) => descriptor.defaultMessage,
-  );
+// The intl module is deliberately NOT stubbed. The real helper short-circuits
+// an id-less descriptor to its defaultMessage and only then delegates, so a
+// stub in its place would let a descriptor that resolves to a raw key, or to
+// nothing at all, pass the tests here. Every user-facing string in this file
+// therefore travels the production path.
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
@@ -704,7 +683,6 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   beforeEach(() => {
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.clearAllMocks();
-    useEnglishCatalog();
     resetState();
     mockSuccessfulPipeline();
     loadTranscriptionAudio.mockResolvedValue({
@@ -879,14 +857,9 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     );
   });
 
-  it("resolves the unstyled-run copy through intl", async () => {
+  it("resolves the unstyled-run copy through the real intl helper", async () => {
+    const intl = getIntl();
     seedStyledRow("localized", POLISHED);
-    // A stand-in catalog entry proves the toast carries whatever the active
-    // locale resolved, so the copy has to travel through formatMessage.
-    stubTranslation(
-      TRUNCATED_COPY,
-      "[de] Die Formatierungsantwort wurde abgeschnitten.",
-    );
     mockUnstyledPostProcess(
       { postProcessFailed: false, postProcessDegraded: true },
       [POST_PROCESS_TRUNCATED_WARNING],
@@ -894,12 +867,34 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
     await retranscribeTranscription({ transcriptionId: "localized" });
 
-    expect(formatMessage).toHaveBeenCalledWith({
-      defaultMessage: TRUNCATED_COPY,
-    });
-    expect(showErrorSnackbar).toHaveBeenCalledWith(
-      "[de] Die Formatierungsantwort wurde abgeschnitten.",
+    // `getIntl` is the production helper, not a stand-in. It returns the
+    // `defaultMessage` of a descriptor that carries no `id`, and only
+    // delegates to the catalog for one that does, where an undefined key comes
+    // back as the raw key. An empty `defaultMessage` is no shortcut at all and
+    // resolves to an empty string. So the sentence the snackbar carries is the
+    // proof that the action built the descriptor this helper needs, and it
+    // would fail here for a key, for an empty string, or for a stubbed helper
+    // that resolved to whatever the test told it to.
+    expect(intl.formatMessage({ defaultMessage: TRUNCATED_COPY })).toBe(
+      TRUNCATED_COPY,
     );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
+
+    // The other unusable-answer branch, through the same helper.
+    seedStyledRow("localized-unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({
+      transcriptionId: "localized-unreadable",
+    });
+
+    expect(intl.formatMessage({ defaultMessage: UNREADABLE_COPY })).toBe(
+      UNREADABLE_COPY,
+    );
+    expect(showErrorSnackbar).toHaveBeenLastCalledWith(UNREADABLE_COPY);
   });
 
   it("tells a cut-off reply apart from an unreadable one", async () => {

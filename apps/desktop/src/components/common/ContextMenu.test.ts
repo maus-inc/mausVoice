@@ -52,6 +52,36 @@ const nativeContextMenu = (target: Element, x = 120, y = 80): MouseEvent => {
   return event;
 };
 
+/**
+ * A right-click the way the browser sends one: the `mousedown` first, then the
+ * focusing steps it runs as its default action, then the `contextmenu`.
+ *
+ * jsdom does not run the focusing steps, so a test that dispatches only
+ * `contextmenu` leaves the old focus sitting in `document.activeElement` and
+ * cannot tell a working restore from a broken one. The steps unfocus the
+ * current element when the target is not focusable, which is exactly the case
+ * for the surfaces with no focusable ancestor, so that is what this does and
+ * it asserts the resulting focus really is on the body.
+ */
+const browserRightClick = (target: Element, x = 120, y = 80): MouseEvent => {
+  act(() => {
+    target.dispatchEvent(
+      new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+  });
+  act(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+  });
+  expect(document.activeElement).toBe(document.body);
+  return nativeContextMenu(target, x, y);
+};
+
 describe("ContextMenuProvider", () => {
   it("shows the clipboard menu on input right-click without throwing", () => {
     act(() => {
@@ -183,6 +213,32 @@ describe("useContextMenu", () => {
         "right-click me",
       ),
       createElement("span", { "data-testid": "result" }, lastLabel ?? "none"),
+      menu.renderMenu(),
+    );
+  };
+
+  /**
+   * A surface with nothing focusable in it or above it, matching the wired
+   * hosts that render a plain `div`/`Stack`, plus a focusable control
+   * elsewhere in the app for the user to have come from.
+   */
+  const BareHarness = () => {
+    const menu = useContextMenu();
+    return createElement(
+      "div",
+      null,
+      createElement("input", { "data-testid": "search" }),
+      createElement(
+        "div",
+        {
+          "data-testid": "bare",
+          onContextMenu: (e: React.MouseEvent) =>
+            menu.handleContextMenu(e.nativeEvent, [
+              { label: "Do thing", onClick: () => undefined },
+            ]),
+        },
+        createElement("span", { "data-testid": "bare-text" }, "right-click me"),
+      ),
       menu.renderMenu(),
     );
   };
@@ -342,34 +398,11 @@ describe("useContextMenu", () => {
     expect(document.activeElement).toBe(rowButton);
   });
 
-  it("restores the previously focused element when the surface host cannot take focus", () => {
+  it("restores the focused element when the surface host cannot take focus", () => {
     // Same non-focusable host, but nothing inside it can take focus either, so
-    // there is no target on the surface at all. The element that held focus
-    // before the menu opened is then the only place the user can be put back.
-    const BareHarness = () => {
-      const menu = useContextMenu();
-      return createElement(
-        "div",
-        null,
-        createElement("input", { "data-testid": "search" }),
-        createElement(
-          "div",
-          {
-            "data-testid": "bare",
-            onContextMenu: (e: React.MouseEvent) =>
-              menu.handleContextMenu(e.nativeEvent, [
-                { label: "Do thing", onClick: () => undefined },
-              ]),
-          },
-          createElement(
-            "span",
-            { "data-testid": "bare-text" },
-            "right-click me",
-          ),
-        ),
-        menu.renderMenu(),
-      );
-    };
+    // there is no target on the surface at all. The element that holds focus is
+    // then the only place the user can be put back. Opening the menu from the
+    // keyboard sends no mousedown, so nothing unfocused it.
     act(() => {
       root.render(createElement(BareHarness));
     });
@@ -385,6 +418,39 @@ describe("useContextMenu", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
 
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("restores the element a right-click unfocused on a surface with nothing focusable", () => {
+    // This is the shape of `TranscriptRow` and `ChatMessageBubble`: a plain
+    // `div`/`Stack` host, no focusable ancestor anywhere above it, and a menu
+    // opened by right-clicking its text. The mousedown the browser sends first
+    // runs its focusing steps, which unfocus the element the user was on, so by
+    // the time the menu opens `document.activeElement` is the body. Only an
+    // element captured before that mousedown can name where to go back to, and
+    // reading the live one lands the user on the body, from where the next Tab
+    // restarts at the top of the document.
+    act(() => {
+      root.render(createElement(BareHarness));
+    });
+
+    const input = container.querySelector(
+      '[data-testid="search"]',
+    ) as HTMLInputElement;
+    act(() => input.focus());
+    expect(document.activeElement).toBe(input);
+
+    browserRightClick(container.querySelector('[data-testid="bare-text"]')!);
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).not.toBe(document.body);
     expect(document.activeElement).toBe(input);
   });
 

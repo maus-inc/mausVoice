@@ -294,7 +294,11 @@ describe("azureTestIntegration", () => {
   it("blames the key for the SDK's missing-key message too", async () => {
     // Verbatim from RestConfigBase.privRestErrors.authInvalidSubscriptionKey,
     // the twin of the authInvalidSubscriptionRegion message the region rule
-    // already reads.
+    // reads. Nothing else in the credential list matches it: the words
+    // "invalid subscription key" and "access denied" are absent, so this is
+    // the only thing keeping the shared /authentication/ rule covered. A
+    // pattern naming this message would be dead weight, because every string
+    // it matches already contains "authentication".
     speech.error =
       "You must specify either an authentication token to use, or a Cognitive Speech subscription key.";
 
@@ -305,11 +309,22 @@ describe("azureTestIntegration", () => {
 });
 
 describe("azureTestIntegration message bounds", () => {
+  /** The single string the probe handed to the console, or "" if it logged none. */
+  const loggedLine = (): string => {
+    // This package targets ES2020, where `Array.prototype.at` is not in the
+    // lib, so the last call is taken by index.
+    const calls = consoleError.mock.calls;
+    const call = calls[calls.length - 1];
+    expect(call, "the probe must log the failure it raises").toBeDefined();
+    expect(call?.[0]).toBe("Azure integration probe failed:");
+    return String(call?.[1] ?? "");
+  };
+
   it("keeps a handshake rejection out of the snackbar and in the log", async () => {
     // A rejected handshake embeds a full web-services error document, and
     // ApiKeyList hands error.message to showErrorSnackbar, which is a bare
-    // String(message). The user gets a diagnosis and a short excerpt; the whole
-    // reason goes to the log.
+    // String(message). The user gets a diagnosis and a short excerpt; a
+    // single-line, capped form of the reason goes to the log.
     const reason = [
       "StatusCode: 500, wss://eastus.stt.speech.microsoft.com/speech/recognition",
       "Reason: WebSocket transport error for incoming WebSocket message:",
@@ -331,11 +346,58 @@ describe("azureTestIntegration message bounds", () => {
     // Bounded, and a snackbar never has to render a paragraph or a line break.
     expect(message.length).toBeLessThan(200);
     expect(message).not.toContain("\n");
-    // The detail is still available for a bug report.
-    expect(consoleError).toHaveBeenCalledWith(
-      "Azure integration probe failed:",
-      reason,
-    );
+    // The detail is still available for a bug report, as one log record.
+    const logged = loggedLine();
+    expect(logged).toContain("StatusCode: 500");
+    expect(logged).not.toContain("\n");
+    expect(logged.length).toBeLessThan(600);
+    // The 4,000 character service body is cut, not copied whole.
+    expect(logged).not.toContain("x".repeat(100));
+  });
+
+  it("redacts a credential-shaped reason before it reaches the log sink", async () => {
+    // The reason is third-party text the probe does not control: a proxy or a
+    // gateway can echo the key it forwarded. initLogging hands the webview
+    // console to the native log sink, whose rolled file the user attaches to a
+    // diagnostics export, and that sink's sanitizer only knows the labels this
+    // app writes. So nothing downstream of this line would remove the token.
+    // Assembled at runtime so this repository never holds a literal that
+    // matches a provider key pattern, which is the same thing the secret
+    // scanner looks for.
+    const token = ["sk", "proj", "9f2c4a7b1e6d8053ba41c7e9d2f60b84"].join("-");
+    speech.error = [
+      "Unable to contact server. StatusCode: 403",
+      "wss://eastus.stt.speech.microsoft.com/speech/recognition",
+      "Reason: upstream rejected the request",
+      `Ocp-Apim-Subscription-Key: ${token}`,
+      `Authorization: Bearer ${token}`,
+    ].join("\n");
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).resolves.toBe(false);
+
+    // A rejected credential returns false without logging, so drive a reason
+    // that classifies as a non-credential failure to reach the log line.
+    speech.error = [
+      "Unable to contact server. StatusCode: 0",
+      "wss://eastus.stt.speech.microsoft.com/speech/recognition",
+      "Reason: the gateway echoed the credentials it was given",
+      `Authorization: Bearer ${token}`,
+      `api_key=${token}`,
+    ].join("\n");
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/could not be reached/);
+
+    const logged = loggedLine();
+    expect(logged).not.toContain(token);
+    expect(logged).not.toContain("Bearer sk-proj-");
+    expect(logged).toContain("[redacted]");
+    // Still a usable diagnosis.
+    expect(logged).toContain("StatusCode: 0");
+    expect(logged).not.toContain("\n");
   });
 });
 

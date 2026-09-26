@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 
-const { genRepo, loggerMock } = vi.hoisted(() => {
+const { genRepo, loggerMock, repoWarnings } = vi.hoisted(() => {
   const genRepo = {
     generateText: vi.fn(),
     streamChat: vi.fn(),
   };
   return {
     genRepo,
+    repoWarnings: [] as string[],
     loggerMock: {
       info: vi.fn(),
       warning: vi.fn(),
@@ -28,7 +29,7 @@ vi.mock("../repos", () => ({
     repo: genRepo,
     apiKeyId: "cerebras-key",
     provider: "cerebras",
-    warnings: [],
+    warnings: repoWarnings,
   }),
   getTranscribeAudioRepo: () => ({ repo: null, apiKeyId: null, warnings: [] }),
   getTranscriptionRepo: () => ({}),
@@ -57,6 +58,7 @@ import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 describe("postProcessTranscript provider attribution on failure", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    repoWarnings.length = 0;
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
@@ -226,6 +228,7 @@ describe("postProcessTranscript truncated responses", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    repoWarnings.length = 0;
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
@@ -294,6 +297,30 @@ describe("postProcessTranscript truncated responses", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("appends the drop reason after any dispatch warning, so the cause is the last entry", async () => {
+    // A run can carry more than one warning. The generate-text repo
+    // contributes its dispatch and glossary warnings first, and the reason this
+    // answer was dropped lands after them. The surface that reports the run
+    // reads the last entry, so this is the case where the first entry and the
+    // last entry are different strings, and where reading `warnings[0]` would
+    // report the wrong cause.
+    const DISPATCH_WARNING = "Stale provider selection, using default dispatch";
+    repoWarnings.push(DISPATCH_WARNING);
+    genRepo.generateText.mockResolvedValueOnce({
+      text: TRUNCATED_INPUT,
+      metadata: { postProcessingMode: "api" },
+    });
+
+    const result = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(result.warnings).toHaveLength(2);
+    expect(result.warnings[0]).toBe(DISPATCH_WARNING);
+    expect(result.warnings.at(-1)).toBe(POST_PROCESS_TRUNCATED_WARNING);
+  });
+
   // The surface that reports an unusable reply maps this recorded reason to
   // localized copy, and it can only pick between "cut off" and "unreadable" if
   // the two stay separate values here. A truncation copy folded into the parse
@@ -318,11 +345,21 @@ describe("postProcessTranscript truncated responses", () => {
       toneId: null,
     });
 
+    // The surface that reports an unusable reply reads the LAST warning, so
+    // that is the entry pinned here. Each run records exactly one reason, so
+    // the equality also fails the moment a second warning joins the list and
+    // the last entry stops being the cause. Reading `warnings[0]` instead
+    // would let this test pass while the classifier reads a different entry.
     expect(truncated.warnings).toEqual([POST_PROCESS_TRUNCATED_WARNING]);
-    expect(unreadable.warnings[0]).toMatch(
-      new RegExp(`^${POST_PROCESS_PARSE_FAILURE_PREFIX}`),
+    expect(truncated.warnings.at(-1)).not.toContain(
+      POST_PROCESS_PARSE_FAILURE_PREFIX,
     );
-    expect(unreadable.warnings[0]).not.toContain(
+    expect(unreadable.warnings).toEqual([
+      expect.stringMatching(
+        new RegExp(`^${POST_PROCESS_PARSE_FAILURE_PREFIX}`),
+      ),
+    ]);
+    expect(unreadable.warnings.at(-1)).not.toContain(
       POST_PROCESS_TRUNCATED_WARNING,
     );
   });

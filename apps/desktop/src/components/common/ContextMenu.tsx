@@ -239,12 +239,39 @@ const restoreCandidate = (el: Element | null): HTMLElement | null => {
 };
 
 /**
+ * Whatever held focus before the browser ran the focusing steps for the most
+ * recent mousedown anywhere in the document.
+ *
+ * A `contextmenu` is always preceded by a `mousedown`, and those focusing steps
+ * run as the mousedown's default action, which is after every listener. Over a
+ * non-focusable area they unfocus the current element, so by the time the menu
+ * opens, `document.activeElement` is already `<body>` and reading it there can
+ * only ever return nothing. That is the case for the surfaces with no focusable
+ * ancestor of their own (`TranscriptRow`, `ChatMessageBubble`), so the value
+ * has to be taken in the capture phase, which runs before the default action.
+ *
+ * Module scope on purpose: one listener for the document rather than one per
+ * menu instance, because a list renders one menu hook per row.
+ */
+let focusBeforeMouseDown: HTMLElement | null = null;
+
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "mousedown",
+    () => {
+      focusBeforeMouseDown = restoreCandidate(document.activeElement);
+    },
+    true,
+  );
+}
+
+/**
  * Resolve where focus goes back to when the menu closes: the right-clicked
  * element when it can take focus, else the nearest focusable ancestor (a row
- * whose `ListItemButton` wraps the text the user hit), else whatever held
- * focus before the menu stole it. The menu itself is never a candidate,
- * because a right-click on it would otherwise overwrite the real target with
- * the node the menu already owns.
+ * whose `ListItemButton` wraps the text the user hit), else whatever still
+ * holds focus, and finally what held focus before this right-click unfocused
+ * it. The menu itself is never a candidate, because a right-click on it would
+ * otherwise overwrite the real target with the node the menu already owns.
  */
 const resolveRestoreTarget = (
   clicked: EventTarget | null,
@@ -254,7 +281,14 @@ const resolveRestoreTarget = (
     const candidate = restoreCandidate(el);
     if (candidate) return candidate;
   }
-  return restoreCandidate(document.activeElement);
+  // A menu opened from the keyboard, with no mousedown to run focusing steps,
+  // leaves the focused element in place, so this is the only way to get at it.
+  return (
+    restoreCandidate(document.activeElement) ??
+    // A right-click on a non-focusable area unfocused everything, so the
+    // pre-mousedown capture is what still knows where the user was.
+    restoreCandidate(focusBeforeMouseDown)
+  );
 };
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -502,7 +536,9 @@ export const useContextMenu = (): UseContextMenuReturn => {
   // Element that had focus before the menu opened, restored on close so
   // keyboard users keep their place (A11 focus-management requirement). It is
   // resolved to something focusable at open time, because a surface host that
-  // cannot take focus would turn every restore into a silent no-op.
+  // cannot take focus would turn every restore into a silent no-op. It can
+  // still be null: a surface with no focusable ancestor, right-clicked while
+  // nothing held focus, leaves nowhere to go back to.
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const closeMenu = useCallback((restoreFocus = false) => {

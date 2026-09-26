@@ -131,8 +131,16 @@ type RetranscribeUpdate = {
   unstyledMessage: string | null;
   /**
    * The recorded reason behind `unstyledMessage`, in the vocabulary the run
-   * stored. Never shown to the user; it goes to the log so a support report
-   * still carries the cause. Null on a styled run.
+   * stored, and always carried in the log so a support report keeps the cause.
+   * Null on a styled run.
+   *
+   * Whether it is also user-facing depends on the failure. For a response that
+   * came back unusable it is a developer string (a parse error, a schema issue
+   * list, the token-limit warning) and `unstyledMessage` is the localized
+   * outcome instead. For a request that never came back it is the recorded
+   * failure category, a closed vocabulary the run builds from the HTTP status
+   * with the transcript stripped out, so the error surface shows it as is and
+   * this duplicates `unstyledMessage` on that path.
    */
   unstyledReason: string | null;
   transcription: Transcription;

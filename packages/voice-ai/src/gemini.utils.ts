@@ -273,8 +273,12 @@ export const geminiTranscribeAudio = async ({
   return retry({
     retries: 3,
     isRetryable: (err) => isGeminiFailureRetryable(err, deadlineSignal),
-    // The deadline signal ends the wait between attempts too, which is where a
-    // 429 hint would otherwise park a request past its own deadline.
+    // The deadline signal ends the wait between attempts, so a cancelled or
+    // timed-out operation stops there instead of sitting the wait out. The
+    // hint is real here, unlike at the OpenAI-compatible providers:
+    // `requestGemini` throws a `GeminiHttpError`, an `HttpError` carrying the
+    // `retry-after` header, so a 429 wait grows to the hint. `maxRetryDelayMs`
+    // is left at its 2s default, far short of the five-minute deadline.
     signal: deadlineSignal,
     fn: async () => {
       const bytes = new Uint8Array(blob);
@@ -360,8 +364,12 @@ export const geminiGenerateTextResponse = async ({
   return retry({
     retries: 3,
     isRetryable: (err) => isGeminiFailureRetryable(err, deadlineSignal),
-    // The deadline signal ends the wait between attempts too, which is where a
-    // 429 hint would otherwise park a request past its own deadline.
+    // The deadline signal ends the wait between attempts, so a cancelled or
+    // timed-out operation stops there instead of sitting the wait out. The
+    // hint is real here, unlike at the OpenAI-compatible providers:
+    // `requestGemini` throws a `GeminiHttpError`, an `HttpError` carrying the
+    // `retry-after` header, so a 429 wait grows to the hint. `maxRetryDelayMs`
+    // is left at its 2s default, far short of the five-minute deadline.
     signal: deadlineSignal,
     fn: async () => {
       let fullPrompt = prompt;
