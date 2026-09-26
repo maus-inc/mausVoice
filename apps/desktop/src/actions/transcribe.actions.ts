@@ -970,13 +970,21 @@ export const storeTranscription = async (
   const storedTranscription = await persistTranscription(transcription);
   if (!storedTranscription) {
     if (audioSnapshot) {
-      await purgeStaleAudioSnapshots();
+      void purgeStaleAudioSnapshots();
     }
     return { transcription: null, wordCount: 0 };
   }
 
-  await recordUsageWords(wordsAdded);
-  await purgeStaleAudioSnapshots();
+  // Usage metering and the audio retention sweep are housekeeping, not the save
+  // the user is waiting on. The pill is already told to go idle by the time we
+  // get here, so it looks clickable, but this session stays locked until the
+  // stop path returns. Awaiting two slow calls here held that lock across a
+  // queued profile write and a disk scan, so a click landing in that gap was
+  // accepted by the pill and then dropped by the app. Both calls own their error
+  // handling, and both are safe to land late: a missed word count is one
+  // dictation of statistics, and a missed sweep runs again on the next one.
+  void recordUsageWords(wordsAdded);
+  void purgeStaleAudioSnapshots();
 
   markPipeline(input.trace, "persisted");
   const summary = summarizePipeline(input.trace);
