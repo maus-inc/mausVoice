@@ -44,7 +44,7 @@ describe("groqGenerateTextResponse request body", () => {
   it("omits the effort for a non-gpt-oss Groq model", async () => {
     await groqGenerateTextResponse({
       apiKey: "gsk_test",
-      model: "qwen/qwen3.8-27b",
+      model: "custom/model-without-reasoning-effort",
       prompt: "p",
       reasoningEffort: "low",
     });

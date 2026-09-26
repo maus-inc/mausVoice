@@ -266,12 +266,14 @@ const runReplies = () =>
 
 // 4. Output-token budget ---------------------------------------------------
 
+const BUDGET_WORDS = ["we", "agreed", "to", "push", "the", "beta"];
+
 const runBudget = () =>
   [20, 100, 250, 500, 1000, 1500, 2000, 3000].map((words) => {
-    const transcript = "we agreed to push the beta ".repeat(words / 6 + 1)
-      .split(" ")
-      .slice(0, words)
-      .join(" ");
+    const transcript = Array.from(
+      { length: words },
+      (_, i) => BUDGET_WORDS[i % BUDGET_WORDS.length],
+    ).join(" ");
     const estimate = newPrompt.estimateTokenCount(transcript);
     return {
       words,

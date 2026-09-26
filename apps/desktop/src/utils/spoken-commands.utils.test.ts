@@ -192,6 +192,7 @@ describe("applySpokenCommands", () => {
     "Hello world scratch that new line of credit",
     "Hello world scratch that period of time",
     "Hello world scratch that the next line",
+    "ok period and I'll scratch that",
   ])(
     "does not count a following phrase that is not a command: %s",
     (sentence) => {
