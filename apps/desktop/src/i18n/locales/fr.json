@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "L’historique des versions a renvoyé le statut {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "La sélection est trop longue pour être ajoutée au dictionnaire.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "Le serveur ne prend pas en charge la liste des modèles. Veuillez saisir le nom du modèle manuellement.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "La réponse de style n'a pas pu être lue, elle a donc été ignorée et le texte précédent a été conservé.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "La réponse de style a été coupée à la limite de sortie du modèle, la réponse partielle a donc été ignorée et le texte précédent a été conservé.",
   "the_user_has_dictated_the_following_command_transcript_execu": "L'utilisateur a dicté la commande suivante : ------- {transcript} ------- Exécutez cette commande et fournissez le résultat en {languageName}. Instructions : - Si l'utilisateur vous demande d'écrire, de créer, de rédiger ou de composer quelque chose → produisez ce contenu - Si l'utilisateur vous demande de résumer, d'analyser ou d'expliquer quelque chose → fournissez le résumé/l'analyse/l'explication - Si l'utilisateur vous demande de transformer ou de réécrire quelque chose → appliquez la transformation - Si l'utilisateur fournit une déclaration sans commande claire → nettoyez-la et présentez-la clairement Renvoyez UNIQUEMENT le résultat demandé, rien d'autre. Le résultat sera collé directement dans l'application de l'utilisateur.",
   "theme_mode": "Thème : {mode}",
   "theme_settings": "Paramètres du thème",

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { delayed, retry } from "./async";
+import { DEFAULT_MAX_RETRY_DELAY_MS, delayed, retry } from "./async";
 import { HttpError, MAX_RETRY_AFTER_MS, toHttpError } from "./http-error";
 
 describe("retry", () => {
@@ -101,7 +101,7 @@ describe("retry HTTP status policy", () => {
     }
   });
 
-  it("never waits longer than the Retry-After cap", async () => {
+  it("never waits longer than the Retry-After cap when a caller asks for the whole hint", async () => {
     vi.useFakeTimers();
     try {
       const fn = vi
@@ -110,7 +110,11 @@ describe("retry HTTP status policy", () => {
           new HttpError(503, "Service Unavailable", { retryAfter: "3600" }),
         )
         .mockResolvedValueOnce("ok");
-      const promise = retry({ fn, delay: 1 });
+      const promise = retry({
+        fn,
+        delay: 1,
+        maxRetryDelayMs: MAX_RETRY_AFTER_MS,
+      });
       const settled = expect(promise).resolves.toBe("ok");
 
       await vi.advanceTimersByTimeAsync(MAX_RETRY_AFTER_MS - 1);
@@ -118,6 +122,88 @@ describe("retry HTTP status policy", () => {
       await vi.advanceTimersByTimeAsync(1);
       await settled;
       expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pins the interactive ceiling the helper defaults to", () => {
+    // Two seconds, which outlives the window a 429 usually asks for and caps
+    // the extra wait for three attempts at four seconds.
+    expect(DEFAULT_MAX_RETRY_DELAY_MS).toBe(2_000);
+  });
+
+  it("holds an honest but long hint to the interactive ceiling by default", async () => {
+    // A dictation is a person waiting to speak, not a background job. A
+    // `Retry-After: 60` must not park the attempt for a minute, so the wait
+    // stops at the default ceiling (pinned above) and the caller is told the
+    // failure within seconds.
+    vi.useFakeTimers();
+    try {
+      const fn = vi
+        .fn()
+        .mockRejectedValueOnce(
+          new HttpError(429, "Too Many Requests", { retryAfter: "60" }),
+        )
+        .mockResolvedValueOnce("ok");
+      const promise = retry({ fn, delay: 1 });
+      const settled = expect(promise).resolves.toBe("ok");
+
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(fn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await settled;
+      expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never shortens the caller's own delay to fit the ceiling", async () => {
+    // The ceiling bounds what a server can add on top of the caller's pacing,
+    // so a caller that asked for a longer wait than the default still gets it.
+    vi.useFakeTimers();
+    try {
+      const fn = vi
+        .fn()
+        .mockRejectedValueOnce(new HttpError(503, "Service Unavailable"))
+        .mockResolvedValueOnce("ok");
+      const promise = retry({ fn, delay: 5_000, maxRetryDelayMs: 100 });
+      const settled = expect(promise).resolves.toBe("ok");
+
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(fn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await settled;
+      expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the caller's delay as the floor when the hint says zero", async () => {
+    // `Retry-After: 0` is a real hint rather than a missing one, and the shared
+    // helper still treats the caller's delay as the pace: a 0 second hint must
+    // not turn a rate limit into a busy retry. The floor holds even when the
+    // caller also drops the ceiling to zero.
+    vi.useFakeTimers();
+    try {
+      for (const maxRetryDelayMs of [DEFAULT_MAX_RETRY_DELAY_MS, 0]) {
+        const fn = vi
+          .fn()
+          .mockRejectedValueOnce(
+            new HttpError(429, "Too Many Requests", { retryAfter: "0" }),
+          )
+          .mockResolvedValueOnce("ok");
+        const promise = retry({ fn, delay: 1, maxRetryDelayMs });
+        const settled = expect(promise).resolves.toBe("ok");
+
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fn).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await settled;
+        expect(fn).toHaveBeenCalledTimes(2);
+      }
     } finally {
       vi.useRealTimers();
     }
@@ -212,7 +298,14 @@ describe("retry abort handling", () => {
         .mockRejectedValue(
           new HttpError(429, "Too Many Requests", { retryAfter: "30" }),
         );
-      const promise = retry({ fn, delay: 1, signal: controller.signal });
+      // This caller honours the hint in full, so the wait really is 30s and the
+      // abort at 5s is what has to end it.
+      const promise = retry({
+        fn,
+        delay: 1,
+        maxRetryDelayMs: MAX_RETRY_AFTER_MS,
+        signal: controller.signal,
+      });
       const rejected = expect(promise).rejects.toThrow("caller gave up");
 
       await vi.advanceTimersByTimeAsync(5_000);

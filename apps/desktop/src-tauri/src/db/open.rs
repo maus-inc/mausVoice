@@ -163,9 +163,14 @@ async fn retire_consolidated_migrations(
     Ok(())
 }
 
-/// Every migration version that ever existed between the 0.1.5 release and the
-/// 0.1.6 consolidation (step 69), and which that consolidation therefore folded
-/// into this build's target schema. Intermediate builds recorded those steps
+/// Every migration version that ever existed in the range 070 to 088, all of
+/// which the 0.1.6 consolidation folded into this build's target schema.
+///
+/// The numbers sit above the consolidation step (069) on purpose: the
+/// individual steps were written and shipped first, and the consolidation was
+/// numbered 069 afterwards, so "the steps between 069 and 089" is the numeric
+/// description of this list. 089 arrived after the consolidation and is still
+/// applied, so it is not retired. Intermediate builds recorded these steps
 /// individually, so their ledger rows retire on open instead of being reported
 /// as a downgrade.
 ///

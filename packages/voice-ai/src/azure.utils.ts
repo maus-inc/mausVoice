@@ -232,6 +232,31 @@ const PROBE_BITS_PER_SAMPLE = 16;
 const PROBE_FRAMES = 4_800;
 
 /**
+ * Write a WAV chunk id. The field is four ASCII bytes, so a code point above
+ * U+007F cannot be encoded at all. `for...of` walks code points rather than
+ * UTF-16 code units, so an astral character arrives here whole and is rejected
+ * instead of being written as two low bytes, which would corrupt the id for
+ * every reader of the file.
+ */
+export const writeWavChunkId = (
+  view: DataView,
+  offset: number,
+  tag: string,
+): void => {
+  let index = 0;
+  for (const character of tag) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || codePoint > 0x7f) {
+      throw new RangeError(
+        `A WAV chunk id is ASCII, so "${tag}" cannot be written at offset ${offset}.`,
+      );
+    }
+    view.setUint8(offset + index, codePoint);
+    index += 1;
+  }
+};
+
+/**
  * A real silent WAV file. The probe used to hand the recognizer a 0-byte
  * buffer, which made `azureTranscribeAudio` throw a `RangeError` while reading
  * the sample rate out of the header, so the probe never reached Azure and
@@ -245,19 +270,10 @@ export const buildSilentProbeWav = (): ArrayBuffer => {
   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes);
   const view = new DataView(buffer);
 
-  const writeTag = (offset: number, tag: string) => {
-    for (let index = 0; index < tag.length; index++) {
-      // A chunk id is ASCII, so a code point and its code unit are the same
-      // byte here. `codePointAt` is read rather than `charCodeAt` because it
-      // yields the whole code point instead of half of a surrogate pair.
-      view.setUint8(offset + index, tag.codePointAt(index) ?? 0);
-    }
-  };
-
-  writeTag(0, "RIFF");
+  writeWavChunkId(view, 0, "RIFF");
   view.setUint32(4, 36 + dataBytes, true); // chunk size after the RIFF header
-  writeTag(8, "WAVE");
-  writeTag(12, "fmt ");
+  writeWavChunkId(view, 8, "WAVE");
+  writeWavChunkId(view, 12, "fmt ");
   view.setUint32(16, 16, true); // PCM fmt chunk size
   view.setUint16(20, 1, true); // WAVE_FORMAT_PCM
   view.setUint16(22, PROBE_CHANNELS, true);
@@ -265,7 +281,7 @@ export const buildSilentProbeWav = (): ArrayBuffer => {
   view.setUint32(28, PROBE_SAMPLE_RATE * blockAlign, true); // byte rate
   view.setUint16(32, blockAlign, true);
   view.setUint16(34, PROBE_BITS_PER_SAMPLE, true);
-  writeTag(36, "data");
+  writeWavChunkId(view, 36, "data");
   view.setUint32(40, dataBytes, true);
 
   return buffer;
@@ -292,6 +308,25 @@ const matchesAny = (reason: string, patterns: readonly RegExp[]): boolean =>
   patterns.some((pattern) => pattern.test(reason));
 
 /**
+ * The SDK's own text for a key it refuses, quoted from
+ * `microsoft-cognitiveservices-speech-sdk` 1.51.0:
+ *
+ * - `SpeechConfig.fromSubscription` calls
+ *   `Contracts.throwIfNullOrWhitespace(subscriptionKey, "subscriptionKey")`,
+ *   which throws `"throwIfNullOrWhitespace:subscriptionKey"` before any
+ *   request leaves the process. That is the message a whitespace-only key
+ *   produces here, and it carries no status, no "authentication", and no
+ *   "key" wording that the keyword rules below would catch.
+ * - `RestConfigBase.privRestErrors.authInvalidSubscriptionKey` is the REST
+ *   layer's twin of its `authInvalidSubscriptionRegion` message, which the
+ *   region rule below already reads.
+ */
+const BLANK_KEY_PATTERNS = [
+  /throwIfNullOr(?:Whitespace|Undefined):\s*subscriptionKey/i,
+  /specify either an authentication token/i,
+];
+
+/**
  * Classify the reason the SDK handed over. The status code inside the SDK's
  * own message is the strongest signal it offers, so it is read first; the
  * keyword rules cover the SDK's local validation messages and the service body
@@ -308,6 +343,7 @@ const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
   }
   if (
     matchesAny(reason, [
+      ...BLANK_KEY_PATTERNS,
       /invalid subscription key/i,
       /access denied/i,
       /authentication/i,
@@ -360,6 +396,35 @@ const readAzureReason = (error: unknown): string => {
   return error instanceof Error ? error.message : String(error);
 };
 
+/**
+ * How much of the SDK's own prose rides along in the message the settings
+ * screen puts in a snackbar. `ApiKeyList` hands `error.message` straight to
+ * `showErrorSnackbar`, which is `String(message)` with no cap of its own, and a
+ * handshake rejection embeds a full web-services error document. The diagnosis
+ * sentence carries the action; the excerpt only helps a user who recognises
+ * their own key or region in it.
+ */
+const AZURE_REASON_EXCERPT_CHARS = 120;
+
+/**
+ * One bounded, single-line excerpt of the SDK's reason. The reason arrives as
+ * multi-line service prose, so whitespace is collapsed before it is cut, and
+ * the cut lands on a word boundary.
+ */
+const summarizeAzureReason = (reason: string): string => {
+  const flattened = reason.replace(/\s+/g, " ").trim();
+  if (flattened.length <= AZURE_REASON_EXCERPT_CHARS) {
+    return flattened;
+  }
+  const truncated = flattened.slice(0, AZURE_REASON_EXCERPT_CHARS);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const body =
+    lastSpace > AZURE_REASON_EXCERPT_CHARS / 2
+      ? truncated.slice(0, lastSpace)
+      : truncated;
+  return `${body.trimEnd()}…`;
+};
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
@@ -376,16 +441,17 @@ export const azureTestIntegration = async ({
     // proves the credentials work, and the reason decides what the caller is
     // told: a rejected credential returns false, because that is the one
     // outcome where "provide a valid API key" is the right advice. Every other
-    // outcome is raised with the SDK's own reason attached, so an exhausted
-    // quota, a region the resource is not in, and an unreachable network are
-    // not all reported as a bad key.
+    // outcome is raised with a bounded excerpt, so an exhausted quota, a region
+    // the resource is not in, and an unreachable network are not all reported
+    // as a bad key, and the full reason goes to the log for support.
     const reason = readAzureReason(error);
     const failure = classifyAzureProbeFailure(reason);
     if (failure === "credential") {
       return false;
     }
+    console.error("Azure integration probe failed:", reason);
     throw new Error(
-      `${describeAzureProbeFailure(failure, region)} Azure reported: ${reason.slice(0, 300)}`,
+      `${describeAzureProbeFailure(failure, region)} Azure reported: ${summarizeAzureReason(reason)}`,
     );
   }
 };

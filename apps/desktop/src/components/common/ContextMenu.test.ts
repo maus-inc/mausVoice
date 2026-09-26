@@ -292,6 +292,102 @@ describe("useContextMenu", () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it("returns focus to the nearest focusable ancestor of a non-focusable surface host", () => {
+    // Every wired surface renders its host as a plain `Box component="div"`
+    // with no tabIndex, so the element the user right-clicked can never take
+    // focus and `focus()` on it is a no-op. Restoring to it dropped the user
+    // on the body, from where the next Tab restarts at the top of the
+    // document. The row's own focusable child is the real return target.
+    const RowHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        {
+          "data-testid": "row",
+          onContextMenu: (e: React.MouseEvent) =>
+            menu.handleContextMenu(e.nativeEvent, [
+              { label: "Do thing", onClick: () => undefined },
+            ]),
+        },
+        createElement(
+          "div",
+          { "data-testid": "row-button", role: "button", tabIndex: 0 },
+          createElement(
+            "span",
+            { "data-testid": "row-text" },
+            "right-click me",
+          ),
+        ),
+        menu.renderMenu(),
+      );
+    };
+    act(() => {
+      root.render(createElement(RowHarness));
+    });
+
+    const text = container.querySelector('[data-testid="row-text"]')!;
+    const rowButton = container.querySelector('[data-testid="row-button"]')!;
+    nativeContextMenu(text);
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    // The host div is not focusable, so the restore has to land on the
+    // focusable row inside it rather than nowhere.
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(rowButton);
+  });
+
+  it("restores the previously focused element when the surface host cannot take focus", () => {
+    // Same non-focusable host, but nothing inside it can take focus either, so
+    // there is no target on the surface at all. The element that held focus
+    // before the menu opened is then the only place the user can be put back.
+    const BareHarness = () => {
+      const menu = useContextMenu();
+      return createElement(
+        "div",
+        null,
+        createElement("input", { "data-testid": "search" }),
+        createElement(
+          "div",
+          {
+            "data-testid": "bare",
+            onContextMenu: (e: React.MouseEvent) =>
+              menu.handleContextMenu(e.nativeEvent, [
+                { label: "Do thing", onClick: () => undefined },
+              ]),
+          },
+          createElement(
+            "span",
+            { "data-testid": "bare-text" },
+            "right-click me",
+          ),
+        ),
+        menu.renderMenu(),
+      );
+    };
+    act(() => {
+      root.render(createElement(BareHarness));
+    });
+
+    const input = container.querySelector(
+      '[data-testid="search"]',
+    ) as HTMLInputElement;
+    act(() => input.focus());
+    expect(document.activeElement).toBe(input);
+
+    nativeContextMenu(container.querySelector('[data-testid="bare-text"]')!);
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("closes on Shift+Tab without swallowing the key either", () => {
     act(() => {
       root.render(createElement(Harness));

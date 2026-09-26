@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   azureTestIntegration,
   azureTranscribeAudio,
   buildSilentProbeWav,
+  writeWavChunkId,
 } from "./azure.utils";
 
 // The Azure SDK is mocked at module level: azureTranscribeAudio wires real
@@ -23,11 +24,18 @@ const speech = vi.hoisted(() => ({
   formats: [] as unknown[][],
   calls: 0,
 }));
+/** Where the probe's own log lines land, so a test can read them. */
+const consoleError = vi.hoisted(() => vi.fn());
 
 vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
   SpeechConfig: {
+    // The real SDK runs Contracts.throwIfNullOrWhitespace on the key first, so
+    // a blank one never reaches the recognizer at all.
     fromSubscription: (key: string, region: string) => {
       speech.subscriptions.push([key, region]);
+      if (key.trim().length < 1) {
+        throw new Error("throwIfNullOrWhitespace:subscriptionKey");
+      }
       return { speechRecognitionLanguage: "" };
     },
   },
@@ -91,6 +99,14 @@ beforeEach(() => {
   speech.subscriptions = [];
   speech.formats = [];
   speech.calls = 0;
+  // The probe logs every failure it raises, which keeps the run readable and
+  // lets the message-bound test read what was logged.
+  vi.spyOn(console, "error").mockImplementation(consoleError);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  consoleError.mockClear();
 });
 
 describe("azureTranscribeAudio phrase list", () => {
@@ -260,5 +276,93 @@ describe("azureTestIntegration", () => {
     await expect(
       azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
     ).rejects.toThrow(/Something the SDK has never said before/);
+  });
+
+  it("blames the key when the SDK's own contract check refuses it", async () => {
+    // Verbatim from SpeechConfig.fromSubscription, which calls
+    // Contracts.throwIfNullOrWhitespace(subscriptionKey, "subscriptionKey")
+    // before any request leaves the process. The message names neither
+    // "authentication" nor "invalid subscription key", so it used to land in
+    // the unknown bucket and lose the credential advice.
+    await expect(
+      azureTestIntegration({ subscriptionKey: "   ", region: "eastus" }),
+    ).resolves.toBe(false);
+    // The recognizer is never reached: the SDK refused the key locally.
+    expect(speech.calls).toBe(0);
+  });
+
+  it("blames the key for the SDK's missing-key message too", async () => {
+    // Verbatim from RestConfigBase.privRestErrors.authInvalidSubscriptionKey,
+    // the twin of the authInvalidSubscriptionRegion message the region rule
+    // already reads.
+    speech.error =
+      "You must specify either an authentication token to use, or a Cognitive Speech subscription key.";
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).resolves.toBe(false);
+  });
+});
+
+describe("azureTestIntegration message bounds", () => {
+  it("keeps a handshake rejection out of the snackbar and in the log", async () => {
+    // A rejected handshake embeds a full web-services error document, and
+    // ApiKeyList hands error.message to showErrorSnackbar, which is a bare
+    // String(message). The user gets a diagnosis and a short excerpt; the whole
+    // reason goes to the log.
+    const reason = [
+      "StatusCode: 500, wss://eastus.stt.speech.microsoft.com/speech/recognition",
+      "Reason: WebSocket transport error for incoming WebSocket message:",
+      `  {"error":{"code":"500","message":"${"x".repeat(4_000)}"}}`,
+    ].join("\n");
+    speech.error = reason;
+
+    const error = await azureTestIntegration({
+      subscriptionKey: "key",
+      region: "eastus",
+    }).then(
+      () => "resolved",
+      (caught: unknown) => caught,
+    );
+
+    const message = (error as Error).message;
+    expect(message).toMatch(/could not confirm the key/);
+    expect(message).toContain("Azure reported:");
+    // Bounded, and a snackbar never has to render a paragraph or a line break.
+    expect(message.length).toBeLessThan(200);
+    expect(message).not.toContain("\n");
+    // The detail is still available for a bug report.
+    expect(consoleError).toHaveBeenCalledWith(
+      "Azure integration probe failed:",
+      reason,
+    );
+  });
+});
+
+describe("writeWavChunkId", () => {
+  it("writes an ASCII chunk id byte for byte", () => {
+    const view = new DataView(new ArrayBuffer(4));
+
+    writeWavChunkId(view, 0, "fmt ");
+
+    expect(Array.from(new Uint8Array(view.buffer))).toEqual([
+      0x66, 0x6d, 0x74, 0x20,
+    ]);
+  });
+
+  it("refuses a tag that is not ASCII instead of writing half a surrogate", () => {
+    // `for...of` walks code points, so an astral tag arrives whole. Writing
+    // its low byte would corrupt the chunk id for every reader of the file,
+    // which is what a UTF-16 code unit walk used to do.
+    const view = new DataView(new ArrayBuffer(4));
+    view.setUint8(0, 0xaa);
+
+    expect(() => writeWavChunkId(view, 0, "😀")).toThrow(RangeError);
+    expect(view.getUint8(0)).toBe(0xaa);
+
+    // A non-ASCII code point inside BMP range is refused on the same terms.
+    expect(() => writeWavChunkId(view, 0, "é")).toThrow(
+      /A WAV chunk id is ASCII/,
+    );
   });
 });

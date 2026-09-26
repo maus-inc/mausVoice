@@ -49,12 +49,34 @@ const isTerminalFailure = (error: unknown): boolean => {
 };
 
 /**
- * A server that sent `Retry-After` sets the pace, but never faster than the
- * caller's own delay, and never below zero.
+ * Longest a single wait between attempts may last, whatever the server asked
+ * for, unless the caller raises it.
+ *
+ * The helper is interactive by default (its own `delay` is 20ms) and every
+ * production caller is a user waiting on a response, so a hint longer than this
+ * buys nothing. Past a couple of seconds the user stops watching the app, and
+ * the attempt that finally runs is one they have already given up on. Two
+ * seconds outlives the window a 429 usually asks for, and it caps the extra wait
+ * for three attempts at four seconds instead of a minute.
  */
-const getRetryDelayMs = (error: unknown, fallbackMs: number): number => {
+export const DEFAULT_MAX_RETRY_DELAY_MS = 2_000;
+
+/**
+ * A server that sent `Retry-After` sets the pace, but never faster than the
+ * caller's own delay, never above the cap, and never below zero. The caller's
+ * delay is a floor it chose, so the cap only bounds what the server can add on
+ * top of it.
+ */
+const getRetryDelayMs = (
+  error: unknown,
+  fallbackMs: number,
+  maxDelayMs: number,
+): number => {
   const hintedMs = error instanceof HttpError ? error.retryAfterMs : null;
-  return hintedMs === null ? fallbackMs : Math.max(fallbackMs, hintedMs);
+  if (hintedMs === null) {
+    return fallbackMs;
+  }
+  return Math.max(fallbackMs, Math.min(hintedMs, maxDelayMs));
 };
 
 export const retry = async <T>(args: {
@@ -81,6 +103,14 @@ export const retry = async <T>(args: {
    * signal to its own call.
    */
   signal?: AbortSignal;
+  /**
+   * Raises the ceiling on one wait between attempts, for a caller that is
+   * meant to sit out a rate limit rather than keep a person waiting. The
+   * default suits an interactive caller; pass `MAX_RETRY_AFTER_MS` to honour
+   * the hint as far as the header parser allows. A caller's own `delay` is
+   * never shortened by this.
+   */
+  maxRetryDelayMs?: number;
 }): Promise<T> => {
   const {
     fn,
@@ -89,6 +119,7 @@ export const retry = async <T>(args: {
     isRetryable,
     retryTerminalStatuses = false,
     signal,
+    maxRetryDelayMs = DEFAULT_MAX_RETRY_DELAY_MS,
   } = args;
   const shouldRetry = (error: unknown): boolean => {
     if (!retryTerminalStatuses && isTerminalFailure(error)) {
@@ -106,7 +137,7 @@ export const retry = async <T>(args: {
       if (i >= retries - 1) {
         throw error;
       }
-      await delayed(getRetryDelayMs(error, delay), signal);
+      await delayed(getRetryDelayMs(error, delay, maxRetryDelayMs), signal);
       // Re-check after the wait. A caller that passed `signal` above has
       // already left the loop if it aborted, so this covers a caller that
       // signals through its own predicate instead. Skipping this check would

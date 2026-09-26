@@ -235,13 +235,15 @@ class PreviewRuntime {
     }
     // `transcription_path` is the one column the desktop statement gates on a
     // separate boolean rather than on null, so it keeps its own handling.
-    if (
-      request.clearTranscriptionPath === true ||
-      request.transcriptionPath === null
-    ) {
+    // `update_api_key` computes the stored value before the statement runs: an
+    // explicit `clear_transcription_path` of true wins outright, a supplied
+    // path is trimmed and an empty or whitespace-only result clears the
+    // column, and a path that was never mentioned leaves the column alone.
+    if (request.clearTranscriptionPath === true) {
       apiKey.transcriptionPath = null;
     } else if (typeof request.transcriptionPath === "string") {
-      apiKey.transcriptionPath = request.transcriptionPath;
+      const trimmed = request.transcriptionPath.trim();
+      apiKey.transcriptionPath = trimmed === "" ? null : trimmed;
     }
     this.database.apiKeys.set(String(apiKey.id), apiKey);
     return clone(apiKey);

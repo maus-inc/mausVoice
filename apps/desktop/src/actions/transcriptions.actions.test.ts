@@ -17,6 +17,7 @@ const {
   showPersistentToast,
   showCompletionToast,
   dismissToast,
+  formatMessage,
 } = vi.hoisted(() => ({
   loadTranscriptionAudio: vi.fn(),
   updateTranscription: vi.fn(),
@@ -28,6 +29,9 @@ const {
   showPersistentToast: vi.fn(async () => {}),
   showCompletionToast: vi.fn(async () => {}),
   dismissToast: vi.fn(async () => {}),
+  formatMessage: vi.fn(
+    (descriptor: { defaultMessage: string }) => descriptor.defaultMessage,
+  ),
 }));
 
 vi.mock("../repos", () => ({
@@ -74,14 +78,27 @@ vi.mock("./toast.actions", async () => ({
 
 // Spread the real module so helpers like detectLocale (pulled in through
 // user.utils) keep working; stubbing only getIntl made the whole success
-// path throw and silently skip the completion toast.
+// path throw and silently skip the completion toast. The formatter is a spy so
+// a test can prove that a user-facing string was resolved through intl rather
+// than read straight off a constant, and can simulate a translated catalog.
 vi.mock("../i18n/intl", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../i18n/intl")>()),
-  getIntl: () => ({
-    formatMessage: (descriptor: { defaultMessage: string }) =>
-      descriptor.defaultMessage,
-  }),
+  getIntl: () => ({ formatMessage }),
 }));
+
+/** Resolve one `defaultMessage` to a stand-in translation from the catalog. */
+const stubTranslation = (english: string, translated: string) =>
+  formatMessage.mockImplementation((descriptor: { defaultMessage: string }) =>
+    descriptor.defaultMessage === english
+      ? translated
+      : descriptor.defaultMessage,
+  );
+
+/** Undo a `stubTranslation` override without resetting the call history. */
+const useEnglishCatalog = () =>
+  formatMessage.mockImplementation(
+    (descriptor: { defaultMessage: string }) => descriptor.defaultMessage,
+  );
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
@@ -643,6 +660,12 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   /** The reason recorded for an answer that parsed but failed validation. */
   const VALIDATION_WARNING =
     "Post-processing response validation failed: result is required";
+  /** Localized copy for a reply that ran out of the model's output budget. */
+  const TRUNCATED_COPY =
+    "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.";
+  /** Localized copy for a reply that came back unreadable. */
+  const UNREADABLE_COPY =
+    "The styling reply could not be read, so it was discarded and the previous text was kept.";
 
   const seedStyledRow = (id: string, transcript: string) => {
     produceAppState((draft) => {
@@ -672,8 +695,16 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     });
   };
 
+  /** Every string the user was shown, joined for a substring check. */
+  const shownToUser = () =>
+    showErrorSnackbar.mock.calls.map(([message]) => String(message)).join(" ");
+
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.clearAllMocks();
+    useEnglishCatalog();
     resetState();
     mockSuccessfulPipeline();
     loadTranscriptionAudio.mockResolvedValue({
@@ -683,6 +714,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   });
 
   afterEach(() => {
+    consoleError.mockRestore();
     vi.clearAllMocks();
     resetState();
   });
@@ -739,7 +771,14 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFailed: false,
       }),
     );
-    expect(showErrorSnackbar).toHaveBeenCalledWith(
+    // The stored warning stays English because it lives on the row, but the
+    // toast resolves a localized sentence for it and logs the raw reason.
+    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
       POST_PROCESS_TRUNCATED_WARNING,
     );
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
@@ -790,11 +829,18 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       POLISHED,
     );
     // Unusable styling is not a finished retranscription, so the row must not
-    // report success, and the reason it dropped the answer is what the user is
-    // shown rather than a generic styling failure.
+    // report success. The toast names the outcome in localized copy, and the
+    // parse error that explains it stays in the log instead of leaking through
+    // a snackbar, Zod issue list and all.
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
     expect(showCompletionToast).not.toHaveBeenCalled();
-    expect(showErrorSnackbar).toHaveBeenCalledWith(unparsed.warnings[0]);
+    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(shownToUser()).not.toContain("Could not parse or repair");
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(unparsed.warnings[0]);
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      unparsed.warnings[0],
+    );
   });
 
   it("falls back to the new raw ASR when the row was never styled", async () => {
@@ -818,12 +864,67 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         postProcessFailed: false,
       }),
     );
-    // The recorded reason is what the user is shown. A validation failure is
-    // not a cut-off response and must not be described as one.
-    expect(showErrorSnackbar).toHaveBeenCalledWith(VALIDATION_WARNING);
+    // The recorded reason is not shown. The toast describes the outcome, and a
+    // validation failure must not borrow the cut-off copy any more than the
+    // raw schema issue list is shown.
+    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(VALIDATION_WARNING);
+    expect(shownToUser()).not.toContain("validation failed");
     expect(showErrorSnackbar).not.toHaveBeenCalledWith(
       POST_PROCESS_TRUNCATED_WARNING,
     );
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      VALIDATION_WARNING,
+    );
+  });
+
+  it("resolves the unstyled-run copy through intl", async () => {
+    seedStyledRow("localized", POLISHED);
+    // A stand-in catalog entry proves the toast carries whatever the active
+    // locale resolved, so the copy has to travel through formatMessage.
+    stubTranslation(
+      TRUNCATED_COPY,
+      "[de] Die Formatierungsantwort wurde abgeschnitten.",
+    );
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "localized" });
+
+    expect(formatMessage).toHaveBeenCalledWith({
+      defaultMessage: TRUNCATED_COPY,
+    });
+    expect(showErrorSnackbar).toHaveBeenCalledWith(
+      "[de] Die Formatierungsantwort wurde abgeschnitten.",
+    );
+  });
+
+  it("tells a cut-off reply apart from an unreadable one", async () => {
+    seedStyledRow("truncated-vs-unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({
+      transcriptionId: "truncated-vs-unreadable",
+    });
+
+    seedStyledRow("unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "unreadable" });
+
+    const shown = showErrorSnackbar.mock.calls.map(([message]) =>
+      String(message),
+    );
+    expect(shown).toEqual([TRUNCATED_COPY, UNREADABLE_COPY]);
   });
 
   it("replaces the transcript and reports success when styling worked", async () => {

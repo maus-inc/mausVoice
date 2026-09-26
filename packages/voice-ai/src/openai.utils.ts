@@ -189,6 +189,9 @@ export const openaiGenerateTextResponse = async ({
     // retries for transient failures.
     retries: 3,
     isRetryable: (error) => !signal?.aborted,
+    // The wait between attempts is the part a rate limit can stretch to
+    // seconds, so the caller's signal has to end it too.
+    signal,
     fn: async () => {
       const client = createClient(apiKey, baseUrl, customFetch);
 

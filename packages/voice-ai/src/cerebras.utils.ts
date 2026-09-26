@@ -172,6 +172,9 @@ export const cerebrasGenerateTextResponse = async ({
     // The status may arrive either as a raw SDK error (before normalization)
     // or already wrapped, so inspect both shapes.
     isRetryable: (error) => !signal?.aborted && !isCerebrasTerminalError(error),
+    // The wait between attempts is the part a rate limit can stretch to
+    // seconds, so the caller's signal has to end it too.
+    signal,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

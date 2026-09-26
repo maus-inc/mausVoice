@@ -338,6 +338,48 @@ describe("redaction.utils", () => {
       looping.toJSON = () => looping;
       expect(redactObjectSync({ looping })).toEqual({ looping: "[circular]" });
     });
+
+    it("terminates a cycle that sits below the root", () => {
+      const nested: Record<string, unknown> = { token: "opaque" };
+      nested.self = nested;
+      expect(redactObjectSync({ nested })).toEqual({
+        nested: { token: "[redacted]", self: "[circular]" },
+      });
+      const shared: Record<string, unknown> = { token: "opaque" };
+      expect(redactObjectSync({ first: shared, second: shared })).toEqual({
+        first: { token: "[redacted]" },
+        second: { token: "[redacted]" },
+      });
+    });
+
+    it("keeps the ancestor set out of the exported signature", () => {
+      expectTypeOf<Parameters<typeof redactObjectSync>>().toEqualTypeOf<
+        [Record<string, unknown>, string[]?, boolean?]
+      >();
+      expectTypeOf<Parameters<typeof redactObject>>().toEqualTypeOf<
+        [Record<string, unknown>, string[]?, boolean?]
+      >();
+    });
+
+    it("ignores a caller supplied ancestor set instead of dropping the record", () => {
+      // A caller cannot seed the set any more, so the four argument shape is
+      // unreachable through the exported signature. The cast reaches it to
+      // prove the argument is inert instead of a cycle marker.
+      const callWithSet = redactObjectSync as (
+        obj: Record<string, unknown>,
+        sensitiveKeys: string[],
+        forceFull: boolean,
+        ancestors: WeakSet<object>,
+      ) => Record<string, unknown>;
+      const input: Record<string, unknown> = {
+        name: "ok",
+        password: "hunter2",
+      };
+      expect(callWithSet(input, [], false, new WeakSet([input]))).toEqual({
+        name: "ok",
+        password: "[redacted]",
+      });
+    });
   });
 
   it("keeps a parsed __proto__ property as data without changing the output prototype", async () => {

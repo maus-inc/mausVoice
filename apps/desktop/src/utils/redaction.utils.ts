@@ -110,11 +110,11 @@ function redactArray(
   values: unknown[],
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
+  ancestors: WeakSet<object>,
 ): unknown[] {
   const result: unknown[] = [];
   for (const value of values) {
-    result.push(redactValue(value, sensitiveKeys, forceFull, seen));
+    result.push(redactValue(value, sensitiveKeys, forceFull, ancestors));
   }
   return result;
 }
@@ -123,7 +123,7 @@ function redactFields(
   obj: Record<string, unknown>,
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
+  ancestors: WeakSet<object>,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
@@ -136,7 +136,7 @@ function redactFields(
         value,
         sensitiveKeys,
         forceFull || isSensitiveKey(key, sensitiveKeys),
-        seen,
+        ancestors,
       ),
     });
   }
@@ -163,17 +163,17 @@ function redactJsonForm(
   value: { toJSON(): unknown },
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
+  ancestors: WeakSet<object>,
 ): unknown {
   if (forceFull) return REDACTED;
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
   try {
     // A sensitive key is redacted above without resolving, so the rendered
     // form is redacted under the ordinary key rules.
-    return redactValue(value.toJSON(), sensitiveKeys, false, seen);
+    return redactValue(value.toJSON(), sensitiveKeys, false, ancestors);
   } finally {
-    seen.delete(value);
+    ancestors.delete(value);
   }
 }
 
@@ -181,7 +181,7 @@ function redactValue(
   value: unknown,
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
+  ancestors: WeakSet<object>,
 ): unknown {
   if (typeof value === "string") {
     return forceFull
@@ -189,26 +189,32 @@ function redactValue(
       : redactStringValue(value);
   }
   if (hasJsonForm(value)) {
-    return redactJsonForm(value, sensitiveKeys, forceFull, seen);
+    return redactJsonForm(value, sensitiveKeys, forceFull, ancestors);
   }
   if (!isTraversable(value)) {
     return forceFull ? REDACTED : value;
   }
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
   try {
     return Array.isArray(value)
-      ? redactArray(value, sensitiveKeys, forceFull, seen)
-      : redactFields(value, sensitiveKeys, forceFull, seen);
+      ? redactArray(value, sensitiveKeys, forceFull, ancestors)
+      : redactFields(value, sensitiveKeys, forceFull, ancestors);
   } finally {
-    seen.delete(value);
+    ancestors.delete(value);
   }
 }
 
 /**
  * Redact sensitive keys and embedded secret patterns in a plain object.
  * Values under a sensitive key are fully redacted at every depth.
- * Circular references are replaced with "[circular]".
+ * A reference back to an ancestor on the current path is replaced with
+ * "[circular]".
+ *
+ * The path of ancestors is internal, so a caller cannot seed it. A value that
+ * sibling branches both reference is redacted once per branch instead of
+ * being marked circular, and a value a caller happens to be holding elsewhere
+ * cannot turn a whole record into a cycle marker.
  *
  * This is the synchronous entry point, so a caller that cannot return a
  * promise, such as the log serializer, can use it. A top level value that
@@ -219,11 +225,11 @@ export const redactObjectSync = (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
   forceFull = false,
-  seen: WeakSet<object> = new WeakSet(),
 ): Record<string, unknown> => {
+  const ancestors = new WeakSet<object>();
   // A resolved toJSON form can be any JSON value, so a record is the shape
   // callers get in the common case rather than a guarantee.
-  return redactValue(obj, sensitiveKeys, forceFull, seen) as Record<
+  return redactValue(obj, sensitiveKeys, forceFull, ancestors) as Record<
     string,
     unknown
   >;
@@ -237,7 +243,6 @@ export const redactObject = async (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
   forceFull = false,
-  seen: WeakSet<object> = new WeakSet(),
 ): Promise<Record<string, unknown>> => {
-  return redactObjectSync(obj, sensitiveKeys, forceFull, seen);
+  return redactObjectSync(obj, sensitiveKeys, forceFull);
 };

@@ -273,6 +273,9 @@ export const geminiTranscribeAudio = async ({
   return retry({
     retries: 3,
     isRetryable: (err) => isGeminiFailureRetryable(err, deadlineSignal),
+    // The deadline signal ends the wait between attempts too, which is where a
+    // 429 hint would otherwise park a request past its own deadline.
+    signal: deadlineSignal,
     fn: async () => {
       const bytes = new Uint8Array(blob);
       let binary = "";
@@ -357,6 +360,9 @@ export const geminiGenerateTextResponse = async ({
   return retry({
     retries: 3,
     isRetryable: (err) => isGeminiFailureRetryable(err, deadlineSignal),
+    // The deadline signal ends the wait between attempts too, which is where a
+    // 429 hint would otherwise park a request past its own deadline.
+    signal: deadlineSignal,
     fn: async () => {
       let fullPrompt = prompt;
       if (system) {

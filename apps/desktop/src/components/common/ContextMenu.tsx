@@ -191,6 +191,72 @@ const focusEditable = (t: EditableTarget): void => {
   }
 };
 
+// ── Focus-restore helpers ────────────────────────────────────────────────
+
+/** The rendered menu, so it never becomes its own restore target. */
+const MENU_SELECTOR = '[role="menu"]';
+
+/**
+ * Elements that can take focus. A plain `div` reports `tabIndex === -1`, the
+ * same value an explicit `tabindex="-1"` reports, so the IDL property cannot
+ * tell the two apart and the markup has to. Every wired surface renders its
+ * right-click host as a plain `Box component="div"`, and `focus()` on such an
+ * element does nothing, so a restore target has to be resolved to something
+ * focusable or the restore silently drops the user on `<body>`.
+ */
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "audio[controls]",
+  "button",
+  "iframe",
+  "input",
+  "select",
+  "textarea",
+  "video[controls]",
+  "[contenteditable]",
+  "[tabindex]",
+].join(",");
+
+/** Whether `focus()` on `el` would actually move focus. */
+const canReceiveFocus = (el: HTMLElement): boolean =>
+  el.matches(FOCUSABLE_SELECTOR) &&
+  el.isConnected &&
+  // `contenteditable="false"` opts a subtree out of the editable host walk
+  // and cannot take focus either.
+  el.getAttribute("contenteditable") !== "false" &&
+  // `input[type=hidden]` matches the selector above but is never focusable.
+  !(el instanceof HTMLInputElement && el.type === "hidden") &&
+  // `:disabled` also covers a control inside a disabled <fieldset>, which a
+  // bare `[disabled]` ancestor lookup would miss.
+  !el.matches(":disabled") &&
+  // A subtree that is `inert` refuses focus without being disabled itself.
+  el.closest("[inert]") === null;
+
+/** `el` when it is a usable restore target, otherwise null. */
+const restoreCandidate = (el: Element | null): HTMLElement | null => {
+  if (!(el instanceof HTMLElement) || !canReceiveFocus(el)) return null;
+  return el.closest(MENU_SELECTOR) ? null : el;
+};
+
+/**
+ * Resolve where focus goes back to when the menu closes: the right-clicked
+ * element when it can take focus, else the nearest focusable ancestor (a row
+ * whose `ListItemButton` wraps the text the user hit), else whatever held
+ * focus before the menu stole it. The menu itself is never a candidate,
+ * because a right-click on it would otherwise overwrite the real target with
+ * the node the menu already owns.
+ */
+const resolveRestoreTarget = (
+  clicked: EventTarget | null,
+): HTMLElement | null => {
+  let el: Element | null = clicked instanceof Element ? clicked : null;
+  for (; el; el = el.parentElement) {
+    const candidate = restoreCandidate(el);
+    if (candidate) return candidate;
+  }
+  return restoreCandidate(document.activeElement);
+};
+
 // ── Component ────────────────────────────────────────────────────────────
 
 interface ContextMenuProps {
@@ -408,9 +474,10 @@ export interface UseContextMenuReturn {
   renderMenu: () => React.ReactElement | null;
   /**
    * Close the menu programmatically. Pass `restoreFocus` to return focus to
-   * the element that had it before the menu opened (e.g. Escape or an item
-   * action); omit it for dismissals where the user is intentionally moving
-   * focus elsewhere (click-away, scroll, blur).
+   * the element the menu took it from (the right-clicked element, the nearest
+   * focusable ancestor of it, or the previously focused element; see Escape and
+   * Tab handling); omit it for dismissals where the user is intentionally
+   * moving focus elsewhere (click-away, scroll, blur).
    */
   closeMenu: (restoreFocus?: boolean) => void;
 }
@@ -433,7 +500,9 @@ export interface UseContextMenuReturn {
 export const useContextMenu = (): UseContextMenuReturn => {
   const [state, setState] = useState<ContextMenuState | null>(null);
   // Element that had focus before the menu opened, restored on close so
-  // keyboard users keep their place (A11 focus-management requirement).
+  // keyboard users keep their place (A11 focus-management requirement). It is
+  // resolved to something focusable at open time, because a surface host that
+  // cannot take focus would turn every restore into a silent no-op.
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const closeMenu = useCallback((restoreFocus = false) => {
@@ -443,11 +512,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
     // deliberately moving focus elsewhere and calling focus() during their
     // mousedown would defeat their click.
     const previous = previouslyFocusedRef.current;
-    if (
-      restoreFocus &&
-      previous?.isConnected &&
-      typeof previous.focus === "function"
-    ) {
+    if (restoreFocus && previous?.isConnected) {
       previous.focus();
     }
     previouslyFocusedRef.current = null;
@@ -490,22 +555,12 @@ export const useContextMenu = (): UseContextMenuReturn => {
       e.preventDefault();
       e.stopPropagation();
 
-      // Record the element that will lose focus once the menu's `autoFocus`
-      // steals it, so `closeMenu` can restore it later. Prefer the element the
-      // user actually right-clicked (the most natural return target for
-      // keyboard/a11y users), falling back to `document.activeElement`. This is
-      // updated on every open — including a reopen on a different surface
-      // while the menu is already open — but never captures the menu itself,
-      // whose `autoFocus` would otherwise overwrite the real restore target.
-      const clicked = e.target instanceof HTMLElement ? e.target : null;
-      const isClickOnMenu = clicked?.closest('[role="menu"]') != null;
-      let restoreTarget: HTMLElement | null = null;
-      if (clicked && !isClickOnMenu) {
-        restoreTarget = clicked;
-      } else if (document.activeElement instanceof HTMLElement) {
-        restoreTarget = document.activeElement;
-      }
-      previouslyFocusedRef.current = restoreTarget;
+      // Record where focus should return to once the menu steals it, so
+      // `closeMenu` can put the user back on the surface they acted on.
+      // Resolved on every open — including a reopen on a different surface
+      // while the menu is already open — and always to an element that can
+      // actually take focus, so the restore is never a silent no-op.
+      previouslyFocusedRef.current = resolveRestoreTarget(e.target);
 
       const estimatedHeight = Math.min(
         items.filter((i) => i.kind !== "divider").length * ITEM_HEIGHT +
@@ -527,7 +582,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
     const handleClickAway = (e: MouseEvent) => {
       // Don't close if clicking inside the menu
       const target = e.target as HTMLElement;
-      if (target.closest('[role="menu"]')) return;
+      if (target.closest(MENU_SELECTOR)) return;
       closeMenu(false);
     };
 
@@ -537,7 +592,7 @@ export const useContextMenu = (): UseContextMenuReturn => {
       // (the page, a parent list) dismisses the menu. The scroll listener is
       // registered with capture, so `e.target` is the scrolled element.
       const target = e.target as HTMLElement | null;
-      if (target?.closest('[role="menu"]')) return;
+      if (target?.closest(MENU_SELECTOR)) return;
       closeMenu(false);
     };
 
@@ -555,10 +610,16 @@ export const useContextMenu = (): UseContextMenuReturn => {
       }
       if (e.key === "Tab") {
         // A vertical menu must not cycle focus with Tab, so the key is left
-        // alone for the browser to move focus onward. The restore still has
-        // to happen: the menu itself is the focused node, so unmounting it
-        // without a restore target leaves focus on the body and the browser
-        // then restarts navigation from the top of the document.
+        // alone for the browser to move focus onward. The restore has to
+        // happen first: the menu holds the focused node, it is portaled to the
+        // end of <body>, and unmounting it without a restore leaves focus on
+        // the body, so the browser would then resume from the top of the
+        // document. Restoring during the keydown puts the user back on the
+        // surface, and the browser's own Tab continues from there. A surface
+        // with nothing focusable to restore (a bare `div` host and nothing
+        // focused beforehand) resolves to no target at all; there the browser
+        // resumes from its own right-click focus starting point, which is the
+        // surface the user pointed at.
         closeMenu(true);
       }
     };

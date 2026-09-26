@@ -51,10 +51,11 @@ export const redactQueryParamValues = (
 const REDACTION_FAILED = "[redaction-failed]";
 
 /**
- * Only a top level record needs masking. A primitive, null, or a top level
- * array keeps its shape through the traversal, so JSON.stringify already
- * renders it correctly. Arrays nested inside an object are masked by the
- * traversal itself.
+ * Only a top level record is masked. A primitive, null, or a top level array
+ * is rendered by JSON.stringify as it stands, so a top level array keeps its
+ * elements unmasked. That is what the logger did before the masker existed,
+ * and masking a top level array is tracked as a follow up. An array nested
+ * inside a record is masked by the traversal itself.
  */
 const isMaskableObject = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);

@@ -293,4 +293,37 @@ describe("postProcessTranscript truncated responses", () => {
     expect(result.metadata.postProcessDegraded).toBe(false);
     expect(result.warnings).toEqual([]);
   });
+
+  // The surface that reports an unusable reply maps this recorded reason to
+  // localized copy, and it can only pick between "cut off" and "unreadable" if
+  // the two stay separate values here. A truncation copy folded into the parse
+  // failure, or a parse failure that started with the truncation copy, would
+  // collapse both causes into one sentence for the user.
+  it("records a cut-off reply and an unreadable one as separate reasons", async () => {
+    genRepo.generateText.mockResolvedValueOnce({
+      text: TRUNCATED_INPUT,
+      metadata: { postProcessingMode: "api" },
+    });
+    const truncated = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    genRepo.generateText.mockResolvedValueOnce({
+      text: '```json\n{"result": "Hello there, this is a very long dictation that ke',
+      metadata: { postProcessingMode: "api" },
+    });
+    const unreadable = await postProcessTranscript({
+      rawTranscript: "hello world",
+      toneId: null,
+    });
+
+    expect(truncated.warnings).toEqual([POST_PROCESS_TRUNCATED_WARNING]);
+    expect(unreadable.warnings[0]).toMatch(
+      new RegExp(`^${POST_PROCESS_PARSE_FAILURE_PREFIX}`),
+    );
+    expect(unreadable.warnings[0]).not.toContain(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+  });
 });

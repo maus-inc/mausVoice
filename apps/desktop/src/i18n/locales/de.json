@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "Der Veröffentlichungsverlauf lieferte den Status {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "Die Auswahl ist zu lang, um sie zum Wörterbuch hinzuzufügen.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "Der Server unterstützt das Auflisten von Modellen nicht. Bitte geben Sie den Modellnamen manuell ein.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Die Formatierungsantwort konnte nicht gelesen werden, daher wurde sie verworfen und der bisherige Text beibehalten.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "Die Formatierungsantwort wurde am Ausgabelimit des Modells abgeschnitten, daher wurde die unvollständige Antwort verworfen und der bisherige Text beibehalten.",
   "the_user_has_dictated_the_following_command_transcript_execu": "Der Benutzer hat den folgenden Befehl diktiert: ------- {transcript} ------- Führe diesen Befehl aus und liefere die Ausgabe in {languageName}. Anweisungen: - Wenn der Benutzer dich bittet, etwas zu schreiben, zu erstellen, zu entwerfen oder zu verfassen → erzeuge diesen Inhalt - Wenn der Benutzer dich bittet, etwas zusammenzufassen, zu analysieren oder zu erklären → liefere die Zusammenfassung/Analyse/Erklärung - Wenn der Benutzer dich bittet, etwas zu transformieren oder umzuschreiben → wende die Transformation an - Wenn der Benutzer eine Aussage ohne klaren Befehl macht → bereinige sie und stelle sie klar dar Gib NUR die angeforderte Ausgabe zurück, sonst nichts. Die Ausgabe wird direkt in die Anwendung des Benutzers eingefügt.",
   "theme_mode": "Design: {mode}",
   "theme_settings": "Design-Einstellungen",

@@ -14,9 +14,10 @@ export const TERMINAL_CLIENT_STATUSES: ReadonlySet<number> = new Set([
 ]);
 
 /**
- * Ceiling for a server-provided `Retry-After` hint. A dictation is an
- * interactive session, so an honest but long hint (or a hostile one) must not
- * stall it; the helper falls back to its own backoff once the cap passes.
+ * Outermost ceiling on a parsed `Retry-After` hint, so a hostile or careless
+ * header cannot become an unbounded wait. It is the value a background caller
+ * passes as `maxRetryDelayMs` to honour a hint in full; an interactive caller
+ * keeps the far shorter `DEFAULT_MAX_RETRY_DELAY_MS`, and a dictation must.
  */
 export const MAX_RETRY_AFTER_MS = 30_000;
 
@@ -39,11 +40,14 @@ export const readHttpStatus = (error: unknown): number | undefined => {
 /**
  * RFC 9110 allows `Retry-After` as delta-seconds ("120") or as an HTTP-date
  * ("Wed, 21 Oct 2015 07:28:00 GMT"). Both are honoured and both are capped at
- * `MAX_RETRY_AFTER_MS`. An explicit delta-seconds hint is honoured as written,
- * so "0" really does mean retry now. A missing, malformed, or already-elapsed
- * hint returns `null` so the caller keeps its own backoff: a date in the past
- * is no longer an instruction, and returning 0 for it would turn a rate limit
- * into a busy retry.
+ * `MAX_RETRY_AFTER_MS`. An explicit delta-seconds hint is returned as written,
+ * including "0", so a caller can tell a deliberate "retry now" apart from a
+ * hint that was never sent. Whether "0" becomes an instant retry is the
+ * caller's decision to make: `retry` keeps its own delay as the floor, so a 0
+ * hint there still waits out that delay. A missing, malformed, or already
+ * elapsed hint returns `null` so the caller keeps its own backoff: a date in the
+ * past is no longer an instruction, and returning 0 for it would turn a rate
+ * limit into a busy retry.
  */
 export const parseRetryAfterMs = (
   retryAfter: string | null | undefined,
