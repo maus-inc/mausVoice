@@ -73,6 +73,11 @@ export const BouncyTooltip = ({
     <Box
       sx={{
         position: "absolute",
+        // Sits inside the strip the anchoring container reserves beneath the
+        // card, which is what keeps it clear of the step dots below. A
+        // two-line bubble is taller than that strip and will reach the card's
+        // lower edge; sizing the strip is a layout decision for whoever tunes
+        // the card, not something this component can absorb.
         bottom: 0,
         left: 0,
         right: 0,
@@ -110,6 +115,11 @@ export const BouncyTooltip = ({
           sx={{
             display: "flex",
             alignItems: "center",
+            // Keycaps refuse to shrink below their label, so a long hotkey
+            // combo has to be able to move onto its own line. Without this the
+            // row overflows the bubble and the clip on the surrounding pane
+            // cuts the last cap in half.
+            flexWrap: "wrap",
             gap: 1,
             bgcolor: "primary.main",
             color: "primary.contrastText",

@@ -88,8 +88,17 @@ fn find_jab_dll() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. `where java` on PATH
-    if let Ok(output) = std::process::Command::new("where").arg("java").output() {
+    // 2. `where java` on PATH. This binary is GUI-subsystem in release, so it
+    // owns no console and a console-subsystem child started without
+    // CREATE_NO_WINDOW is given a new one, which flashes on screen.
+    let mut where_cmd = std::process::Command::new("where");
+    where_cmd.arg("java");
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        where_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Ok(output) = where_cmd.output() {
         if let Ok(path_str) = String::from_utf8(output.stdout) {
             if let Some(line) = path_str.lines().next() {
                 if let Some(bin_dir) = std::path::Path::new(line.trim()).parent() {

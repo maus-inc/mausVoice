@@ -44,6 +44,11 @@ export type OnboardingFormLayoutProps = {
   actions?: React.ReactNode;
 };
 
+// The fade strips below need a pseudo-element, and Emotion rejects an unquoted
+// `content`: development throws on `''` and production emits `content:` with no
+// value, which the CSS parser drops. An empty string has to be spelled quoted.
+const EMPTY_PSEUDO_CONTENT = '""';
+
 export const OnboardingContinueButton = ({
   onClick,
   disabled,
@@ -111,7 +116,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::after": {
-            content: '""',
+            content: EMPTY_PSEUDO_CONTENT,
             position: "absolute",
             left: 0,
             right: 0,
@@ -146,7 +151,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::before": {
-            content: '""',
+            content: EMPTY_PSEUDO_CONTENT,
             position: "absolute",
             left: 0,
             right: 0,

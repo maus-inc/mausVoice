@@ -87,11 +87,13 @@ export default defineConfig(async ({ mode }) => {
     fileURLToPath(new URL(`./src/preview/tauri/${name}.ts`, import.meta.url));
 
   return {
-    // Relative base so the built index.html references ./assets/* instead of
-    // /assets/*. Tauri serves the release frontend over the asset: protocol,
-    // where absolute paths + the crossorigin module attribute can fail to
-    // load — leaving a blank white window with no script execution.
-    base: isBrowserPreview ? "/" : "./",
+    // Absolute base so asset URLs resolve from any route path. The app uses
+    // createBrowserRouter, so a relative base resolves ./assets/* under the
+    // current route (/dashboard/assets/* at /dashboard/settings), which is a
+    // path the custom protocol does not serve. Tauri answers it with
+    // index.html, so the module script is rejected on its MIME type and the
+    // window stays blank.
+    base: "/",
     // The preview keeps production page modules but substitutes the narrow
     // native boundary. Aliases are enabled only in the explicit preview mode;
     // desktop and native test builds continue to import Tauri normally.
@@ -172,11 +174,17 @@ export default defineConfig(async ({ mode }) => {
         },
       }),
       svgr(),
-      // Tauri serves the release frontend over the asset: protocol. The
-      // `crossorigin` attribute Vite adds to module/preload tags forces a
-      // CORS-mode fetch that the asset server can reject, leaving a blank
-      // white window. Same-origin module loading does not need it. Strip it
-      // only from <script>/<link> tags so we never touch inline strings.
+      // Tauri v2 serves the release frontend from its own custom protocol
+      // origin (`tauri://localhost`, or `http://tauri.localhost` on Windows).
+      // The `asset:` protocol is separate and only covers scoped local files
+      // such as recorded audio.
+      //
+      // This strips the `crossorigin` attribute Vite adds to module and preload
+      // tags. Same-origin fetches do not need it, and the handler was seen
+      // rejecting these loads and leaving a blank window, so the exact
+      // mechanism behind that was never pinned down. Keep the strip on that
+      // basis: it costs nothing, and removing it re-tests a blank window.
+      // Strip only from <script>/<link> tags so inline strings are never touched.
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {
