@@ -126,18 +126,22 @@ describe("onboarding name draft", () => {
     expect(released.lastNameEnabled).toBe(false);
   });
 
-  it('updateOnboardingLastName("") strips a multi-token surname', () => {
-    // Paste/select-all delete of a double-barrel surname should remove all
-    // of them, not leave a hidden orphan token in the canonical name.
+  it("updateOnboardingLastName strips multi-token surnames on any edit", () => {
     const base = {
       name: "Mary Watson Smith",
       firstName: "Mary",
       lastName: "Watson Smith",
       lastNameEnabled: true,
     };
+    // Select-all + delete clears the surname entirely.
     const afterClear = updateOnboardingLastName(base, "");
     expect(afterClear.name).toBe("Mary");
     expect(afterClear.lastName).toBe("");
+    // Backspacing a double-barrel down to one token replaces all of the
+    // prior last-name tokens rather than leaving a duplicate in name.
+    const shrunk = updateOnboardingLastName(base, "Watson");
+    expect(shrunk.name).toBe("Mary Watson");
+    expect(shrunk.lastName).toBe("Watson");
   });
 
   it("clearOnboardingLastName falls back to firstName when name is empty", () => {
