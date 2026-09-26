@@ -148,7 +148,7 @@ const unstyledRunMessage = (
 ): string =>
   orFalse(metadata.postProcessFailed)
     ? (metadata.postProcessError ?? "")
-    : (postProcessWarnings[postProcessWarnings.length - 1] ?? "");
+    : (postProcessWarnings.at(-1) ?? "");
 
 /**
  * Whether this run left the row without usable styling. A failed request and an

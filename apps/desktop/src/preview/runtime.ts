@@ -208,6 +208,45 @@ class PreviewRuntime {
     return this.scenario;
   }
 
+  /**
+   * Applies the same omit-versus-clear semantics the desktop statement uses, so
+   * the preview cannot diverge from the real transport on a column the caller
+   * never mentioned.
+   */
+  private updateApiKey(args: WireRecord): WireRecord {
+    const request = asRecord(args.request);
+    const previous = this.database.apiKeys.get(String(request.id));
+    if (!previous) throw new Error("API key not found.");
+    // The desktop statement writes every nullable column through
+    // `CASE WHEN ?n IS NOT NULL THEN ?n ELSE <column> END`, so a missing or
+    // null field means "leave what is stored alone". Spreading the raw request
+    // would instead wipe a value the caller never mentioned.
+    const apiKey: WireRecord = { ...previous };
+    for (const field of NULL_GUARDED_API_KEY_FIELDS) {
+      const value = request[field];
+      if (value !== null && value !== undefined) {
+        apiKey[field] = value;
+      }
+    }
+    if (typeof request.key === "string") {
+      // Do not keep an entered secret in the preview's mock transport.
+      apiKey.keyFull = null;
+      apiKey.keySuffix = "…preview";
+    }
+    // `transcription_path` is the one column the desktop statement gates on a
+    // separate boolean rather than on null, so it keeps its own handling.
+    if (
+      request.clearTranscriptionPath === true ||
+      request.transcriptionPath === null
+    ) {
+      apiKey.transcriptionPath = null;
+    } else if (typeof request.transcriptionPath === "string") {
+      apiKey.transcriptionPath = request.transcriptionPath;
+    }
+    this.database.apiKeys.set(String(apiKey.id), apiKey);
+    return clone(apiKey);
+  }
+
   async invoke(command: string, args: WireRecord = {}): Promise<unknown> {
     switch (command) {
       case "user_get_one":
@@ -290,40 +329,8 @@ class PreviewRuntime {
         this.database.apiKeys.set(String(apiKey.id), apiKey);
         return clone(apiKey);
       }
-      case "api_key_update": {
-        const request = asRecord(args.request);
-        const previous = this.database.apiKeys.get(String(request.id));
-        if (!previous) throw new Error("API key not found.");
-        // The desktop statement writes every nullable column through
-        // `CASE WHEN ?n IS NOT NULL THEN ?n ELSE <column> END`, so a missing
-        // or null field means "leave what is stored alone". Spreading the raw
-        // request would instead wipe a value the caller never mentioned, so
-        // the preview applies the same set of fields under the same rule.
-        const apiKey: WireRecord = { ...previous };
-        for (const field of NULL_GUARDED_API_KEY_FIELDS) {
-          const value = request[field];
-          if (value !== null && value !== undefined) {
-            apiKey[field] = value;
-          }
-        }
-        if (typeof request.key === "string") {
-          // Do not keep an entered secret in the preview's mock transport.
-          apiKey.keyFull = null;
-          apiKey.keySuffix = "…preview";
-        }
-        // `transcription_path` is the one column the desktop statement gates on
-        // a separate boolean rather than on null, so it keeps its own handling.
-        if (
-          request.clearTranscriptionPath === true ||
-          request.transcriptionPath === null
-        ) {
-          apiKey.transcriptionPath = null;
-        } else if (typeof request.transcriptionPath === "string") {
-          apiKey.transcriptionPath = request.transcriptionPath;
-        }
-        this.database.apiKeys.set(String(apiKey.id), apiKey);
-        return clone(apiKey);
-      }
+      case "api_key_update":
+        return this.updateApiKey(args);
       case "api_key_delete":
         this.database.apiKeys.delete(String(args.id));
         return undefined;
