@@ -63,11 +63,19 @@ export const AppHeader = () => {
 
   const myFullName = useAppStore((state) => {
     const user = getMyUser(state);
-    return user?.name ?? "Unknown";
+    return user?.name || "";
   });
   const myName = useAppStore(getMyUserFirstName);
 
-  const myInitials = useMemo(() => getInitials(myFullName), [myFullName]);
+  // Use a single fallback string ("Guest") for both the chip label and
+  // the avatar initials so they never disagree (e.g. "Guest" / "G", not
+  // "Guest" / "U" from the old "Unknown" fallback).
+  const displayName = myName || myFullName || "Guest";
+  const initialsSource = myFullName || displayName;
+  const myInitials = useMemo(
+    () => getInitials(initialsSource),
+    [initialsSource],
+  );
   const identifierData = useAsyncData(getIdentifier, []);
   const isGpuBuild =
     identifierData.state === "success" &&
@@ -155,7 +163,7 @@ export const AppHeader = () => {
                     lineHeight: 1,
                   }}
                 >
-                  {myName}
+                  {displayName}
                 </Typography>
                 <Typography
                   variant="caption"

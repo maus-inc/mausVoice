@@ -41,6 +41,10 @@ export const SignInForm = () => {
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
   const prefilledNameSource = useRef<string | null>(null);
+  // Tracks whether we've already auto-advanced past signIn for this auth
+  // session so pressing Back from chooseTranscription/personalCredentials
+  // doesn't immediately push the user forward again.
+  const autoAdvancedRef = useRef(false);
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();
@@ -60,6 +64,10 @@ export const SignInForm = () => {
 
   const existingUser = useAppStore((state) => getMyUser(state));
   const existingName = existingUser?.name?.trim() ?? "";
+
+  useEffect(() => {
+    if (!isSignedIn) autoAdvancedRef.current = false;
+  }, [isSignedIn]);
 
   const firstName = useAppStore((state) => state.onboarding.firstName);
   const lastName = useAppStore((state) => state.onboarding.lastName);
@@ -81,20 +89,29 @@ export const SignInForm = () => {
       ? ""
       : (auth.displayName ?? "");
     const prefillName = hasUsableDraft ? onboardingNameDraft : providerName;
+    // Key by (uid, kind, providerName) only — NOT on the draft value itself,
+    // because the draft is mutated by user typing and would otherwise
+    // re-trigger this effect on every keystroke and clobber input.
     const prefillSource = hasUsableDraft
-      ? `draft:${auth.uid}`
+      ? onboardingNameDraftUserId === auth.uid
+        ? `owned-draft:${auth.uid}`
+        : `ownerless-draft:${auth.uid}`
       : `provider:${auth.uid}:${providerName}`;
     if (prefilledNameSource.current === prefillSource) return;
     prefilledNameSource.current = prefillSource;
     produceAppState((draft) => {
-      // Always (re)scope the session to the currently authenticated UID. If
-      // the persisted draft belongs to a different user it must be rejected
-      // and the editable name fields cleared together with it so the
-      // previous user's name cannot survive as an ownerless draft.
       draft.local.onboardingSessionUserId = auth.uid;
+      // Foreign (different-UID) draft: clear it and either fall back to the
+      // provider name or reset to empty. Clears editable fields together
+      // with the persisted draft.
       if (onboardingNameDraft && !draftBelongsToUser) {
-        draft.local.onboardingNameDraft = "";
-        draft.local.onboardingNameDraftUserId = null;
+        applyOnboardingNameDraft(
+          draft.onboarding,
+          createOnboardingNameDraft(providerName),
+        );
+        draft.local.onboardingNameDraft = providerName;
+        draft.local.onboardingNameDraftUserId = providerName ? auth.uid : null;
+        return;
       }
       if (!prefillName) {
         applyOnboardingNameDraft(
@@ -105,23 +122,13 @@ export const SignInForm = () => {
         draft.local.onboardingNameDraftUserId = null;
         return;
       }
-      if (draftBelongsToUser && onboardingNameDraft) {
-        // Draft is valid for this user: keep it (don't overwrite with a
-        // provider prefill that could be shorter/stale).
-        applyOnboardingNameDraft(
-          draft.onboarding,
-          createOnboardingNameDraft(onboardingNameDraft),
-        );
-        draft.local.onboardingNameDraft = onboardingNameDraft;
-        draft.local.onboardingNameDraftUserId = auth.uid;
-        return;
-      }
-      const nameDraft = createOnboardingNameDraft(prefillName);
+      const nameToApply = hasUsableDraft ? onboardingNameDraft : prefillName;
+      const nameDraft = createOnboardingNameDraft(nameToApply);
       applyOnboardingNameDraft(draft.onboarding, nameDraft);
       draft.local.onboardingNameDraft = nameDraft.name;
       draft.local.onboardingNameDraftUserId = auth.uid;
     });
-  }, [auth, isSignedIn, onboardingNameDraft, onboardingNameDraftUserId]);
+  }, [auth, isSignedIn, onboardingNameDraftUserId]);
 
   useEffect(() => {
     if (!isSignedIn || !initialized || existingName === "") return;
@@ -133,6 +140,8 @@ export const SignInForm = () => {
       if (auth?.uid) draft.local.onboardingSessionUserId = auth.uid;
     });
     if (onboardingResumePage && onboardingResumePage !== "signIn") return;
+    if (autoAdvancedRef.current) return;
+    autoAdvancedRef.current = true;
     setEmailDialogOpen(false);
     setDidSignUpWithAccount(!isPersonalUse);
     goToOnboardingPage(
@@ -141,6 +150,7 @@ export const SignInForm = () => {
   }, [
     auth?.uid,
     existingName,
+    initialized,
     isPersonalUse,
     isSignedIn,
     onboardingResumePage,
@@ -207,7 +217,20 @@ export const SignInForm = () => {
   };
 
   const handleLastNameBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    updateLastName(e.target.value.trim());
+    const trimmed = e.target.value.trim();
+    if (trimmed.length === 0) {
+      // Activated but nothing was typed — release the field back to its
+      // inactive state so "optional" isn't a one-way latch.
+      produceAppState((draft) => {
+        draft.onboarding.lastName = "";
+        draft.onboarding.lastNameEnabled = false;
+        const fn = draft.onboarding.firstName.trim();
+        draft.onboarding.name = fn;
+        draft.local.onboardingNameDraft = fn;
+      });
+      return;
+    }
+    updateLastName(trimmed);
   };
 
   const handleLastNameActivate = () => {
@@ -294,51 +317,63 @@ export const SignInForm = () => {
               inputLabel: { shrink: true },
               htmlInput: {
                 "data-mausvoice-ignore": "true",
+                maxLength: 80,
               },
             }}
           />
-          <TextField
-            variant="outlined"
-            size="small"
-            label={<FormattedMessage defaultMessage="Last name" />}
-            placeholder={intl.formatMessage({ defaultMessage: "Doe" })}
-            value={lastName}
-            onChange={handleLastNameChange}
-            onBlur={handleLastNameBlur}
-            onFocus={handleLastNameActivate}
-            onClick={handleLastNameActivate}
+          {/* Wrap in a Box so hover/click activate the field even while
+              it is read-only. readOnly inputs do receive pointer events
+              (unlike disabled), but placing onMouseEnter on the wrapper
+              guarantees activation before the user moves onto the input
+              itself. The field is never HTML-disabled. */}
+          <Box
+            sx={{ flex: 1, position: "relative" }}
             onMouseEnter={handleLastNameActivate}
-            autoComplete="family-name"
-            fullWidth
-            sx={
-              !lastNameEnabled
-                ? {
-                    "& .MuiInputBase-input": {
-                      color: "text.disabled",
-                      WebkitTextFillColor: "unset",
-                      opacity: 0.6,
-                    },
-                    "& .MuiInputLabel-root": {
-                      color: "text.disabled",
-                    },
-                    "& .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "divider",
-                    },
-                    "&:hover .MuiOutlinedInput-notchedOutline": {
-                      borderColor: "text.secondary",
-                    },
-                  }
-                : undefined
-            }
-            slotProps={{
-              inputLabel: { shrink: true },
-              htmlInput: {
-                "aria-disabled": !lastNameEnabled,
-                "data-mausvoice-ignore": "true",
-                readOnly: !lastNameEnabled,
-              },
-            }}
-          />
+          >
+            <TextField
+              variant="outlined"
+              size="small"
+              label={<FormattedMessage defaultMessage="Last name" />}
+              placeholder={intl.formatMessage({ defaultMessage: "(optional)" })}
+              value={lastName}
+              onChange={handleLastNameChange}
+              onBlur={handleLastNameBlur}
+              onFocus={handleLastNameActivate}
+              onClick={handleLastNameActivate}
+              autoComplete="family-name"
+              fullWidth
+              sx={
+                !lastNameEnabled
+                  ? {
+                      "& .MuiInputBase-input": {
+                        color: "text.disabled",
+                        WebkitTextFillColor: "unset",
+                        opacity: 0.6,
+                        cursor: "pointer",
+                      },
+                      "& .MuiInputLabel-root": {
+                        color: "text.disabled",
+                      },
+                      "& .MuiOutlinedInput-notchedOutline": {
+                        borderColor: "divider",
+                      },
+                      "&:hover .MuiOutlinedInput-notchedOutline": {
+                        borderColor: "text.secondary",
+                      },
+                    }
+                  : undefined
+              }
+              slotProps={{
+                inputLabel: { shrink: true },
+                htmlInput: {
+                  "aria-disabled": !lastNameEnabled,
+                  "data-mausvoice-ignore": "true",
+                  readOnly: !lastNameEnabled,
+                  maxLength: 80,
+                },
+              }}
+            />
+          </Box>
         </Stack>
       </Stack>
     </OnboardingFormLayout>

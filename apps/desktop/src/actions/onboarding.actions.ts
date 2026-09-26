@@ -409,18 +409,11 @@ export const submitOnboarding = async () => {
       !state.onboarding.firstName.trim() ||
       !trimmedName)
   ) {
-    showErrorSnackbar(new Error("Enter your name before continuing."));
+    // Defensive: the Continue button is already disabled when firstName is
+    // empty, so return silently instead of surfacing an unlocalized message
+    // (this action module cannot import react-intl).
     return null;
   }
-  const preferredMicrophone = getOptionalText(
-    state.onboarding.preferredMicrophone,
-  );
-
-  const transcriptionPreference: TranscriptionPrefs =
-    getTranscriptionPrefs(state);
-
-  const postProcessingPreference: GenerativePrefs = getGenerativePrefs(state);
-  const agentModePreference = getAgentModePrefs(state);
 
   produceAppState((draft) => {
     draft.onboarding.submitting = true;
@@ -436,15 +429,27 @@ export const submitOnboarding = async () => {
     const repo = getUserRepo();
     const preferencesRepo = getUserPreferencesRepo();
     const now = new Date().toISOString();
-    const userId = getMyEffectiveUserId(state);
+
+    // Re-read state immediately before issuing writes so a stale completion
+    // from session A cannot write into account B's record after an auth
+    // handoff — even one that cycles A→B→A. userId and the User/Preferences
+    // payloads are derived from live state, not the entry snapshot.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      produceAppState((draft) => {
+        draft.onboarding.submitting = false;
+      });
+      return null;
+    }
+    const currentState = getAppState();
+    const userId = getMyEffectiveUserId(currentState);
 
     const user: User = {
       id: userId,
       createdAt: now,
       updatedAt: now,
       name: trimmedName,
-      title: getOptionalText(state.onboarding.title),
-      company: getOptionalText(state.onboarding.company),
+      title: getOptionalText(currentState.onboarding.title),
+      company: getOptionalText(currentState.onboarding.company),
       bio: null,
       onboarded: false,
       onboardedAt: null,
@@ -461,23 +466,21 @@ export const submitOnboarding = async () => {
       stylingMode: "manual",
       activeToneIds: [POLISHED_TONE_ID, EMAIL_TONE_ID, VERBATIM_TONE_ID],
       selectedToneId: POLISHED_TONE_ID,
-      referralSource: state.onboarding.referralSource || null,
+      referralSource: currentState.onboarding.referralSource || null,
     };
 
     const preferences = createOnboardingPreferences(
       userId,
-      preferredMicrophone,
-      transcriptionPreference,
-      postProcessingPreference,
-      agentModePreference,
+      getOptionalText(currentState.onboarding.preferredMicrophone),
+      getTranscriptionPrefs(currentState),
+      getGenerativePrefs(currentState),
+      getAgentModePrefs(currentState),
     );
 
-    const savedUser = await repo.setMyUser(user);
-    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
-      return null;
-    }
-    const savedPreferences =
-      await preferencesRepo.setUserPreferences(preferences);
+    const [savedUser, savedPreferences] = await Promise.all([
+      repo.setMyUser(user),
+      preferencesRepo.setUserPreferences(preferences),
+    ]);
     if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
       return null;
     }
@@ -505,16 +508,21 @@ export const submitOnboarding = async () => {
     produceAppState((draft) => {
       draft.onboarding.submitting = false;
     });
-    throw err;
+    showErrorSnackbar(err);
+    return null;
   }
 };
 
 export const finishOnboarding = async () => {
   const state = getAppState();
+  if (state.auth && !state.initialized) return null;
   const initiatingAuthSessionNonce = state.authSessionNonce;
   const existingUser = getMyUser(state);
   if (!existingUser) {
-    throw new Error("Cannot finish onboarding: user not found");
+    // Called before the post-auth init has hydrated the user row for this
+    // session; bail out silently. The init path will re-run onboarding once
+    // the new user loads.
+    return null;
   }
 
   clearLocalStorageValue("mausvoice:checklist-writing-style");
@@ -525,8 +533,16 @@ export const finishOnboarding = async () => {
     const repo = getUserRepo();
     const now = new Date().toISOString();
 
+    // Re-read state before writing so an auth handoff mid-await can't
+    // clobber the wrong account's record.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
+    const currentUser = getMyUser(getAppState());
+    if (!currentUser) return null;
+
     const updatedUser: User = {
-      ...existingUser,
+      ...currentUser,
       updatedAt: now,
       onboarded: true,
       onboardedAt: now,
@@ -557,6 +573,6 @@ export const finishOnboarding = async () => {
       return null;
     }
     showErrorSnackbar(err);
-    throw err;
+    return null;
   }
 };

@@ -267,9 +267,9 @@ describe("onboarding flow migration", () => {
 
     await expect(submitOnboarding()).resolves.toBeNull();
 
-    expect(showErrorSnackbar).toHaveBeenCalledWith(
-      new Error("Enter your name before continuing."),
-    );
+    // Defensive guard returns silently (Continue is already disabled
+    // when firstName is empty) rather than surfacing an English snackbar.
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
     expect(getAppState().onboarding.submitting).toBe(false);
   });
 

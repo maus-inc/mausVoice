@@ -514,9 +514,10 @@ const useTutorialSubmission = ({
       } catch (error) {
         if (cancelled) return;
         submittedRef.current = false;
-        produceAppState((draft) => {
-          draft.onboarding.dictationOverrideEnabled = true;
-        });
+        // Do NOT enable dictation override on failure — with no saved User
+        // record finishOnboarding cannot complete and the tutorial would
+        // be inescapable. Keep dictation off so the user doesn't get
+        // stranded; showErrorSnackbar surfaces the failure.
         showErrorSnackbar(error);
       } finally {
         if (!cancelled) {

@@ -372,26 +372,43 @@ export const AppSideEffects = () => {
     getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
     authReadyRef.current = true;
     setAuthReady(true);
-    const uidChanged = authUidRef.current !== nextAuthUid;
+    // Only treat this as a UID *transition* once we've observed a previous
+    // user (i.e. not on the first cold-start callback, when authUidRef is
+    // still null and local state is being rehydrated from localStorage).
+    // Resetting on every first resolution wipes a returning user's resumed
+    // onboarding session before OnboardingPage ever mounts.
+    const previousUid = authUidRef.current;
+    const sawPriorAuth = previousUid !== null;
+    const uidChanged = sawPriorAuth && previousUid !== nextAuthUid;
     produceAppState((draft) => {
       draft.auth = user;
       if (uidChanged) {
         authUidRef.current = nextAuthUid;
         draft.authSessionNonce += 1;
-        // When the authenticated UID changes (sign-in as a different account
-        // or sign-out → sign-in), reset the account-scoped onboarding slice
-        // so the incoming user never inherits a previous user's current page,
-        // history, title, company, mic choice, referral source, or name
-        // draft. resumeOnboardingPage also guards this on mount, but the
-        // guard only fires once; resetting here covers the case where
-        // OnboardingPage stays mounted across an auth transition.
+        // When the authenticated UID changes mid-session (sign-in as a
+        // different account, or sign-out → sign-in), reset the account-
+        // scoped onboarding slice so the incoming user never inherits a
+        // previous user's page, history, title, company, mic, referral
+        // source, or name draft. The mount-time guard in resumeOnboardingPage
+        // defends against state restored before the first auth callback.
         Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
         draft.local.onboardingResumePage = null;
         draft.local.onboardingNameDraft = "";
         draft.local.onboardingNameDraftUserId = null;
         draft.local.onboardingSessionUserId = nextAuthUid;
-        // The existing user record will be rehydrated from the repo by the
-        // normal post-auth init path, so we do NOT seed a name here.
+        // Reset init/stream readiness so the post-elevation gate re-runs
+        // against the new user's data instead of racing against the prior
+        // account's loaded state.
+        setInitReady(false);
+        setStreamReady(false);
+      } else if (!sawPriorAuth) {
+        // First cold-start resolution: record the UID but preserve any
+        // persisted resume page / name draft so a returning user can
+        // continue where they left off.
+        authUidRef.current = nextAuthUid;
+        if (nextAuthUid) {
+          draft.local.onboardingSessionUserId = nextAuthUid;
+        }
       }
       draft.initialized = false;
     });
