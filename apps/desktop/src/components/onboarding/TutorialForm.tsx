@@ -752,7 +752,7 @@ ${userName}`;
           isLastStep={isLastStep}
           canContinue={canContinue}
           submitting={submitting}
-          disabled={submissionFailed}
+          disabled={submissionFailed || initializing}
           onSkip={() => void handleSkip()}
           onContinue={() => void handleContinue()}
         />
