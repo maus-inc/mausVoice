@@ -35,6 +35,10 @@ export type OnboardingState = {
   didSignUpWithAccount: boolean;
   referralSource: string;
   dictationOverrideEnabled: boolean;
+  /** Uid for which we have already auto-advanced past signIn. Lives in
+   *  Zustand state (not a component ref) so it survives SignInForm
+   *  unmount/remount across Back navigation. */
+  autoAdvancedForSessionUserId: string | null;
 };
 
 export type OnboardingNameDraft = Pick<
@@ -108,6 +112,18 @@ export const updateOnboardingLastName = (
   };
 };
 
+/** Releases the last-name field back to its inactive state, restoring the
+ *  canonical name to just the first name (or the existing leading segment
+ *  if the user had typed middle names) and clearing the last-name value. */
+export const clearOnboardingLastName = (
+  draft: OnboardingNameDraft,
+): OnboardingNameDraft => ({
+  ...draft,
+  name: draft.firstName.trim(),
+  lastName: "",
+  lastNameEnabled: false,
+});
+
 export const isOnboardingNameDraftOwnedByAuth = (
   ownerId: string | null,
   authUid: string | null | undefined,
@@ -147,6 +163,7 @@ export const INITIAL_ONBOARDING_STATE: OnboardingState = {
   didSignUpWithAccount: false,
   referralSource: "",
   dictationOverrideEnabled: false,
+  autoAdvancedForSessionUserId: null,
 };
 
 if (getIsDevMode()) {

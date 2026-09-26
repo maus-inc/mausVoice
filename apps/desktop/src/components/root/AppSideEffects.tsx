@@ -185,6 +185,12 @@ export const AppSideEffects = () => {
   const [initReady, setInitReady] = useState(false);
   const authReadyRef = useRef(false);
   const authUidRef = useRef<string | null>(null);
+  // Starts false; flips to true after the very first onAuthStateChanged
+  // callback fires (which can be null). Track this separately from the
+  // uid ref so sign-out (null) → sign-in (X) still counts as a real
+  // transition and bumps authSessionNonce + resets onboarding state,
+  // while the first cold-start callback preserves the persisted resume.
+  const authResolvedRef = useRef(false);
   const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
@@ -372,39 +378,23 @@ export const AppSideEffects = () => {
     getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
     authReadyRef.current = true;
     setAuthReady(true);
-    // Only treat this as a UID *transition* once we've observed a previous
-    // user (i.e. not on the first cold-start callback, when authUidRef is
-    // still null and local state is being rehydrated from localStorage).
-    // Resetting on every first resolution wipes a returning user's resumed
-    // onboarding session before OnboardingPage ever mounts.
     const previousUid = authUidRef.current;
-    const sawPriorAuth = previousUid !== null;
-    const uidChanged = sawPriorAuth && previousUid !== nextAuthUid;
+    const firstCallbackSeen = authResolvedRef.current;
+    const uidChanged = firstCallbackSeen && previousUid !== nextAuthUid;
+    authResolvedRef.current = true;
     produceAppState((draft) => {
       draft.auth = user;
       if (uidChanged) {
         authUidRef.current = nextAuthUid;
         draft.authSessionNonce += 1;
-        // When the authenticated UID changes mid-session (sign-in as a
-        // different account, or sign-out → sign-in), reset the account-
-        // scoped onboarding slice so the incoming user never inherits a
-        // previous user's page, history, title, company, mic, referral
-        // source, or name draft. The mount-time guard in resumeOnboardingPage
-        // defends against state restored before the first auth callback.
         Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
         draft.local.onboardingResumePage = null;
         draft.local.onboardingNameDraft = "";
         draft.local.onboardingNameDraftUserId = null;
         draft.local.onboardingSessionUserId = nextAuthUid;
-        // Reset init/stream readiness so the post-elevation gate re-runs
-        // against the new user's data instead of racing against the prior
-        // account's loaded state.
         setInitReady(false);
         setStreamReady(false);
-      } else if (!sawPriorAuth) {
-        // First cold-start resolution: record the UID but preserve any
-        // persisted resume page / name draft so a returning user can
-        // continue where they left off.
+      } else if (!firstCallbackSeen) {
         authUidRef.current = nextAuthUid;
         if (nextAuthUid) {
           draft.local.onboardingSessionUserId = nextAuthUid;

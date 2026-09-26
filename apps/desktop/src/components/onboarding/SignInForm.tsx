@@ -17,6 +17,7 @@ import {
 } from "../../actions/onboarding.actions";
 import {
   applyOnboardingNameDraft,
+  clearOnboardingLastName,
   createOnboardingNameDraft,
   isOnboardingNameDraftOwnedByAuth,
   updateOnboardingFirstName,
@@ -42,9 +43,8 @@ export const SignInForm = () => {
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
   const prefilledNameSource = useRef<string | null>(null);
   // Tracks whether we've already auto-advanced past signIn for this auth
-  // session so pressing Back from chooseTranscription/personalCredentials
-  // doesn't immediately push the user forward again.
-  const autoAdvancedRef = useRef(false);
+  // session. Persisted in Zustand state (not a component ref) so it
+  // survives SignInForm unmount/remount when the user presses Back.
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();
@@ -64,10 +64,9 @@ export const SignInForm = () => {
 
   const existingUser = useAppStore((state) => getMyUser(state));
   const existingName = existingUser?.name?.trim() ?? "";
-
-  useEffect(() => {
-    if (!isSignedIn) autoAdvancedRef.current = false;
-  }, [isSignedIn]);
+  const autoAdvancedForSessionUserId = useAppStore(
+    (state) => state.onboarding.autoAdvancedForSessionUserId,
+  );
 
   const firstName = useAppStore((state) => state.onboarding.firstName);
   const lastName = useAppStore((state) => state.onboarding.lastName);
@@ -146,8 +145,10 @@ export const SignInForm = () => {
       if (auth?.uid) draft.local.onboardingSessionUserId = auth.uid;
     });
     if (onboardingResumePage && onboardingResumePage !== "signIn") return;
-    if (autoAdvancedRef.current) return;
-    autoAdvancedRef.current = true;
+    if (autoAdvancedForSessionUserId === auth?.uid) return;
+    produceAppState((draft) => {
+      draft.onboarding.autoAdvancedForSessionUserId = auth?.uid ?? null;
+    });
     setEmailDialogOpen(false);
     setDidSignUpWithAccount(!isPersonalUse);
     goToOnboardingPage(
@@ -155,6 +156,7 @@ export const SignInForm = () => {
     );
   }, [
     auth?.uid,
+    autoAdvancedForSessionUserId,
     existingName,
     initialized,
     isPersonalUse,
@@ -226,13 +228,14 @@ export const SignInForm = () => {
     const trimmed = e.target.value.trim();
     if (trimmed.length === 0) {
       // Activated but nothing was typed — release the field back to its
-      // inactive state so "optional" isn't a one-way latch.
+      // inactive state so "optional" isn't a one-way latch. Use the
+      // canonical helper so middle-name segments and owner pairing stay
+      // consistent with every other name-draft writer.
       produceAppState((draft) => {
-        draft.onboarding.lastName = "";
-        draft.onboarding.lastNameEnabled = false;
-        const fn = draft.onboarding.firstName.trim();
-        draft.onboarding.name = fn;
-        draft.local.onboardingNameDraft = fn;
+        const released = clearOnboardingLastName(draft.onboarding);
+        applyOnboardingNameDraft(draft.onboarding, released);
+        draft.local.onboardingNameDraft = released.name;
+        draft.local.onboardingNameDraftUserId = null;
       });
       return;
     }

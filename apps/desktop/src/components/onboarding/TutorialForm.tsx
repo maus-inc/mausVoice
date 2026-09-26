@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { motion } from "framer-motion";
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { showConfetti, showErrorSnackbar } from "../../actions/app.actions";
 import { clearLocalStorageValue } from "../../actions/local-storage.actions";
@@ -487,26 +487,45 @@ const useTutorialSubmission = ({
   const submittedRef = useRef(false);
   const submissionCompleteRef = useRef(false);
   const [initializing, setInitializing] = useState(true);
+  // Retry token so the user can re-run submitOnboarding after a write
+  // failure (disk full / locked DB / stale session) without reloading.
+  const [retryToken, setRetryToken] = useState(0);
   const setChatToneRef = useRef(setChatTone);
 
   useEffect(() => {
     setChatToneRef.current = setChatTone;
   }, [setChatTone]);
 
+  const retry = useCallback(() => {
+    submittedRef.current = false;
+    submissionCompleteRef.current = false;
+    setRetryToken((t) => t + 1);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
+      setInitializing(true);
       try {
         if (!submittedRef.current) {
           submittedRef.current = true;
           const savedUser = await submitOnboarding();
-          if (savedUser === null) return;
+          if (savedUser === null) {
+            // Stale session or write failure. The action has already
+            // reset submitting=false and surfaced an error snackbar
+            // where there was something to show. Unlock dictation so
+            // the tutorial remains usable; retry() re-runs the write.
+            submittedRef.current = false;
+            if (cancelled) return;
+            produceAppState((draft) => {
+              draft.onboarding.dictationOverrideEnabled = true;
+            });
+            return;
+          }
           submissionCompleteRef.current = Boolean(savedUser);
         }
 
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         produceAppState((draft) => {
           draft.onboarding.dictationOverrideEnabled = true;
@@ -514,10 +533,12 @@ const useTutorialSubmission = ({
       } catch (error) {
         if (cancelled) return;
         submittedRef.current = false;
-        // Do NOT enable dictation override on failure — with no saved User
-        // record finishOnboarding cannot complete and the tutorial would
-        // be inescapable. Keep dictation off so the user doesn't get
-        // stranded; showErrorSnackbar surfaces the failure.
+        // The action surfaces errors itself, but re-enable dictation
+        // override so the user isn't locked on an inert page. retry()
+        // lets them re-attempt the write.
+        produceAppState((draft) => {
+          draft.onboarding.dictationOverrideEnabled = true;
+        });
         showErrorSnackbar(error);
       } finally {
         if (!cancelled) {
@@ -541,9 +562,9 @@ const useTutorialSubmission = ({
         draft.onboarding.dictationOverrideEnabled = false;
       });
     };
-  }, []);
+  }, [retryToken]);
 
-  return { initializing };
+  return { initializing, retry };
 };
 
 /** Marks the tutorial as "started" once the user holds the hotkey combo. */
