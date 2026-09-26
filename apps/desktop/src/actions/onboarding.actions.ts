@@ -2,9 +2,13 @@ import { User, UserPreferences } from "@maus-inc/types";
 import { detectLocale } from "../i18n/intl";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
 import {
+  applyOnboardingNameDraft,
+  createOnboardingNameDraft,
   INITIAL_ONBOARDING_STATE,
+  isOnboardingNameDraftOwnedByAuth,
   OnboardingPageKey,
   OnboardingState,
+  resolveOnboardingName,
 } from "../state/onboarding.state";
 import { getAppState, produceAppState } from "../store";
 import { CURRENT_COHORT } from "../utils/analytics.utils";
@@ -129,18 +133,75 @@ export const resetTip = (id: string): void => {
 
 export const resumeOnboardingPage = (): void => {
   const state = getAppState();
+  if (state.auth && !state.initialized) return;
   const resume = state.local.onboardingResumePage;
+  const hasForeignNameDraft =
+    state.auth !== null &&
+    state.local.onboardingNameDraftUserId !== null &&
+    !isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth.uid,
+    );
+  const hasForeignSession =
+    state.auth !== null &&
+    state.local.onboardingSessionUserId !== null &&
+    state.local.onboardingSessionUserId !== state.auth.uid;
+  const hasUnownedCompletedSession =
+    state.auth !== null &&
+    state.local.onboardingSessionUserId === null &&
+    state.local.onboardingResumePage === null &&
+    state.local.onboardingNameDraft === "" &&
+    hasStaleOnboardingAccountState(state.onboarding);
+  if (hasForeignNameDraft || hasForeignSession || hasUnownedCompletedSession) {
+    const existingName = getMyUser(state)?.name.trim() ?? "";
+    produceAppState((draft) => {
+      Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+      applyOnboardingNameDraft(
+        draft.onboarding,
+        createOnboardingNameDraft(existingName),
+      );
+      draft.onboarding.currentPage = "signIn";
+      draft.onboarding.isResuming = false;
+      draft.local.onboardingResumePage = null;
+      draft.local.onboardingNameDraft = existingName;
+      draft.local.onboardingNameDraftUserId = draft.auth?.uid ?? null;
+      draft.local.onboardingSessionUserId = draft.auth?.uid ?? null;
+    });
+    return;
+  }
   if (
     resume &&
     resume !== state.onboarding.currentPage &&
     state.onboarding.history.length === 0
   ) {
+    const resumeName =
+      state.local.onboardingNameDraft || getMyUser(state)?.name || "";
+    if (state.auth && resume !== "signIn" && !resumeName) {
+      produceAppState((draft) => {
+        draft.onboarding.currentPage = "signIn";
+        draft.onboarding.isResuming = false;
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingSessionUserId = null;
+      });
+      return;
+    }
     // Restoring persisted state is not completing the initial sign-in step.
     // Keep the empty navigation stack rather than inventing a back target.
     produceAppState((draft) => {
+      applyOnboardingNameDraft(
+        draft.onboarding,
+        createOnboardingNameDraft(resumeName),
+      );
       draft.onboarding.currentPage = nearestKeptPage(resume);
       draft.onboarding.isResuming = true;
       draft.local.onboardingResumePage = draft.onboarding.currentPage;
+      draft.local.onboardingNameDraft = resumeName;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        draft.local.onboardingSessionUserId = draft.auth.uid;
+      }
     });
   }
 };
@@ -212,6 +273,9 @@ export const goToOnboardingPage = (
 export const resetOnboarding = () => {
   produceAppState((draft) => {
     Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+    draft.local.onboardingNameDraft = "";
+    draft.local.onboardingNameDraftUserId = null;
+    draft.local.onboardingSessionUserId = null;
   });
 };
 
@@ -227,52 +291,165 @@ export const setDidSignUpWithAccount = (didSignUp: boolean) => {
   });
 };
 
-export const setAwaitingSignInNavigation = (awaiting: boolean) => {
-  produceAppState((draft) => {
-    draft.onboarding.awaitingSignInNavigation = awaiting;
-  });
-};
-
 export const setOnboardingPreferredMicrophone = (microphone: string | null) => {
   produceAppState((draft) => {
     draft.onboarding.preferredMicrophone = microphone;
   });
 };
 
+const getOptionalText = (value: string | null | undefined): string | null =>
+  value?.trim() || null;
+
+const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
+  onboarding.name.trim() !== "" ||
+  onboarding.firstName.trim() !== "" ||
+  onboarding.lastName.trim() !== "" ||
+  onboarding.title.trim() !== "" ||
+  onboarding.company.trim() !== "" ||
+  onboarding.referralSource.trim() !== "" ||
+  onboarding.preferredMicrophone !== null;
+
+const createOnboardingPreferences = (
+  userId: string,
+  preferredMicrophone: string | null,
+  transcriptionPreference: TranscriptionPrefs,
+  postProcessingPreference: GenerativePrefs,
+  agentModePreference: ReturnType<typeof getAgentModePrefs>,
+): UserPreferences => ({
+  updateChannel: "stable",
+  gpuEnumerationEnabled:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.gpuEnumerationEnabled
+      : false,
+  userId,
+  transcriptionMode: transcriptionPreference.mode,
+  transcriptionApiKeyId:
+    transcriptionPreference.mode === "api"
+      ? transcriptionPreference.apiKeyId
+      : null,
+  transcriptionDevice:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.transcriptionDevice
+      : null,
+  transcriptionModelSize:
+    transcriptionPreference.mode === "local"
+      ? transcriptionPreference.transcriptionModelSize
+      : null,
+  postProcessingMode: postProcessingPreference.mode,
+  postProcessingApiKeyId:
+    postProcessingPreference.mode === "api"
+      ? postProcessingPreference.apiKeyId
+      : null,
+  postProcessingOllamaUrl: null,
+  postProcessingOllamaModel: null,
+  activeToneId: null,
+  gotStartedAt: null,
+  agentMode: agentModePreference.mode,
+  agentModeApiKeyId:
+    agentModePreference.mode === "api" ? agentModePreference.apiKeyId : null,
+  openclawGatewayUrl:
+    agentModePreference.mode === "openclaw"
+      ? agentModePreference.gatewayUrl
+      : null,
+  openclawToken:
+    agentModePreference.mode === "openclaw" ? agentModePreference.token : null,
+  lastSeenFeature: null,
+  activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
+  preferredMicrophone,
+  ignoreUpdateDialog: false,
+  incognitoModeEnabled: false,
+  incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
+  dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
+  dictationPillVisibility: "persistent",
+  realtimeOutputEnabled: false,
+  remoteOutputEnabled: false,
+  remoteTargetDeviceId: null,
+  remoteReceiverPort: null,
+  remoteReceiverAutoStart: false,
+  dictationAudioDim: 1.0,
+  pasteKeybind: null,
+  menuBarIconHidden: false,
+  insertionMethod: null,
+  typingSpeedMs: null,
+  pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
+  alwaysRequestAdminOnStartup: false,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  reviewBeforeInsert: null,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
+  spokenCommandsEnabled: true,
+  autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
+  elevenLabsKeytermsEnabled: false,
+  expansionFlags: "{}",
+});
+
 export const submitOnboarding = async () => {
   const state = getAppState();
-  const trimmedName = state.onboarding.name.trim();
-  const preferredMicrophone =
-    state.onboarding.preferredMicrophone?.trim() ?? null;
-  const normalizedMicrophone =
-    preferredMicrophone && preferredMicrophone.length > 0
-      ? preferredMicrophone
-      : null;
-
-  const transcriptionPreference: TranscriptionPrefs =
-    getTranscriptionPrefs(state);
-
-  const postProcessingPreference: GenerativePrefs = getGenerativePrefs(state);
-  const agentModePreference = getAgentModePrefs(state);
+  if (state.auth && !state.initialized) return null;
+  const initiatingAuthSessionNonce = state.authSessionNonce;
+  const trimmedName = resolveOnboardingName(
+    state.onboarding,
+    state.local.onboardingNameDraft,
+  );
+  const nameDraftBelongsToUser =
+    !state.auth ||
+    isOnboardingNameDraftOwnedByAuth(
+      state.local.onboardingNameDraftUserId,
+      state.auth.uid,
+    );
+  if (
+    state.auth &&
+    (!nameDraftBelongsToUser ||
+      !state.onboarding.firstName.trim() ||
+      !trimmedName)
+  ) {
+    // Defensive: the Continue button is already disabled when firstName is
+    // empty, so return silently instead of surfacing an unlocalized message
+    // (this action module cannot import react-intl).
+    return null;
+  }
 
   produceAppState((draft) => {
     draft.onboarding.submitting = true;
     draft.onboarding.name = trimmedName;
+    draft.local.onboardingNameDraft = trimmedName;
+    if (draft.auth?.uid) {
+      draft.local.onboardingNameDraftUserId = draft.auth.uid;
+      draft.local.onboardingSessionUserId = draft.auth.uid;
+    }
   });
 
   try {
     const repo = getUserRepo();
     const preferencesRepo = getUserPreferencesRepo();
     const now = new Date().toISOString();
-    const userId = getMyEffectiveUserId(state);
+
+    // Re-read state immediately before issuing writes so a stale completion
+    // from session A cannot write into account B's record after an auth
+    // handoff — even one that cycles A→B→A. userId and the User/Preferences
+    // payloads are derived from live state, not the entry snapshot.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      produceAppState((draft) => {
+        draft.onboarding.submitting = false;
+      });
+      return null;
+    }
+    const currentState = getAppState();
+    const userId = getMyEffectiveUserId(currentState);
 
     const user: User = {
       id: userId,
       createdAt: now,
       updatedAt: now,
       name: trimmedName,
-      title: state.onboarding.title.trim() || null,
-      company: state.onboarding.company.trim() || null,
+      title: getOptionalText(currentState.onboarding.title),
+      company: getOptionalText(currentState.onboarding.company),
       bio: null,
       onboarded: false,
       onboardedAt: null,
@@ -289,114 +466,63 @@ export const submitOnboarding = async () => {
       stylingMode: "manual",
       activeToneIds: [POLISHED_TONE_ID, EMAIL_TONE_ID, VERBATIM_TONE_ID],
       selectedToneId: POLISHED_TONE_ID,
-      referralSource: state.onboarding.referralSource || null,
+      referralSource: currentState.onboarding.referralSource || null,
     };
 
-    const preferences: UserPreferences = {
-      updateChannel: "stable",
-      gpuEnumerationEnabled:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.gpuEnumerationEnabled
-          : false,
+    const preferences = createOnboardingPreferences(
       userId,
-      transcriptionMode: transcriptionPreference.mode,
-      transcriptionApiKeyId:
-        transcriptionPreference.mode === "api"
-          ? transcriptionPreference.apiKeyId
-          : null,
-      transcriptionDevice:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.transcriptionDevice
-          : null,
-      transcriptionModelSize:
-        transcriptionPreference.mode === "local"
-          ? transcriptionPreference.transcriptionModelSize
-          : null,
-      postProcessingMode: postProcessingPreference.mode,
-      postProcessingApiKeyId:
-        postProcessingPreference.mode === "api"
-          ? postProcessingPreference.apiKeyId
-          : null,
-      postProcessingOllamaUrl: null,
-      postProcessingOllamaModel: null,
-      activeToneId: null,
-      gotStartedAt: null,
-      agentMode: agentModePreference.mode,
-      agentModeApiKeyId:
-        agentModePreference.mode === "api"
-          ? agentModePreference.apiKeyId
-          : null,
-      openclawGatewayUrl:
-        agentModePreference.mode === "openclaw"
-          ? agentModePreference.gatewayUrl
-          : null,
-      openclawToken:
-        agentModePreference.mode === "openclaw"
-          ? agentModePreference.token
-          : null,
-      lastSeenFeature: null,
-      activeDictationLanguage: PRIMARY_LANGUAGE_SENTINEL,
-      preferredMicrophone: normalizedMicrophone,
-      ignoreUpdateDialog: false,
-      incognitoModeEnabled: false,
-      incognitoModeIncludeInStats: false,
-      preserveAudioOnFailure: true,
-      dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
-      dictationPillVisibility: "persistent",
-      realtimeOutputEnabled: false,
-      remoteOutputEnabled: false,
-      remoteTargetDeviceId: null,
-      remoteReceiverPort: null,
-      remoteReceiverAutoStart: false,
-      dictationAudioDim: 1.0,
-      pasteKeybind: null,
-      menuBarIconHidden: false,
-      insertionMethod: null,
-      typingSpeedMs: null,
-      pillResetMonitorStrategy: "current",
-      pillPlacement: "bottom",
-      alwaysRequestAdminOnStartup: false,
-      handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
-      inDictationStyleSwitchingEnabled: false,
-      hallucinationFilterEnabled: true,
-      reviewBeforeInsert: null,
-      agentEnabledTools: null,
-      agentMaxIterations: 20,
-      agentPermissionTimeoutMs: 60_000,
-      spokenCommandsEnabled: true,
-      autoLearnDictionaryEnabled: true,
-      autoLearnFromEditsEnabled: false,
-      elevenLabsKeytermsEnabled: false,
-      expansionFlags: "{}",
-    };
+      getOptionalText(currentState.onboarding.preferredMicrophone),
+      getTranscriptionPrefs(currentState),
+      getGenerativePrefs(currentState),
+      getAgentModePrefs(currentState),
+    );
 
     const [savedUser, savedPreferences] = await Promise.all([
       repo.setMyUser(user),
       preferencesRepo.setUserPreferences(preferences),
     ]);
-
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
       setUserPreferences(draft, savedPreferences);
       draft.onboarding.submitting = false;
       draft.onboarding.name = savedUser.name;
+      draft.local.onboardingNameDraft = savedUser.name;
+      if (draft.auth?.uid) {
+        draft.local.onboardingNameDraftUserId = draft.auth.uid;
+        draft.local.onboardingSessionUserId = draft.auth.uid;
+      }
     });
 
     await refreshMember();
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     return savedUser;
   } catch (err) {
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     produceAppState((draft) => {
       draft.onboarding.submitting = false;
     });
     showErrorSnackbar(err);
+    return null;
   }
 };
 
 export const finishOnboarding = async () => {
   const state = getAppState();
+  if (state.auth && !state.initialized) return null;
+  const initiatingAuthSessionNonce = state.authSessionNonce;
   const existingUser = getMyUser(state);
   if (!existingUser) {
-    throw new Error("Cannot finish onboarding: user not found");
+    // Called before the post-auth init has hydrated the user row for this
+    // session; bail out silently. The init path will re-run onboarding once
+    // the new user loads.
+    return null;
   }
 
   clearLocalStorageValue("mausvoice:checklist-writing-style");
@@ -407,8 +533,16 @@ export const finishOnboarding = async () => {
     const repo = getUserRepo();
     const now = new Date().toISOString();
 
+    // Re-read state before writing so an auth handoff mid-await can't
+    // clobber the wrong account's record.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
+    const currentUser = getMyUser(getAppState());
+    if (!currentUser) return null;
+
     const updatedUser: User = {
-      ...existingUser,
+      ...currentUser,
       updatedAt: now,
       onboarded: true,
       onboardedAt: now,
@@ -416,17 +550,29 @@ export const finishOnboarding = async () => {
     };
 
     const savedUser = await repo.setMyUser(updatedUser);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     produceAppState((draft) => {
       setCurrentUser(draft, savedUser);
       draft.local.onboardingResumePage = null;
+      draft.local.onboardingNameDraft = "";
+      draft.local.onboardingNameDraftUserId = null;
+      draft.local.onboardingSessionUserId = null;
       draft.local.onboardingFlowVersion = CURRENT_ONBOARDING_FLOW_VERSION;
     });
 
     await setAutoLaunchEnabled(true);
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
 
     return savedUser;
   } catch (err) {
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     showErrorSnackbar(err);
-    throw err;
+    return null;
   }
 };

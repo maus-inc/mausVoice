@@ -28,6 +28,7 @@ import {
   checkForAppUpdates,
   installAvailableUpdate,
 } from "../../actions/updater.actions";
+import { INITIAL_ONBOARDING_STATE } from "../../state/onboarding.state";
 import {
   refreshCurrentUser,
   setActiveDictationLanguage,
@@ -183,6 +184,21 @@ export const AppSideEffects = () => {
   const [streamReady, setStreamReady] = useState(false);
   const [initReady, setInitReady] = useState(false);
   const authReadyRef = useRef(false);
+  const authUidRef = useRef<string | null>(null);
+  // Starts false; flips to true after the very first onAuthStateChanged
+  // callback fires (which can be null). Track this separately from the
+  // uid ref so sign-out (null) → sign-in (X) still counts as a real
+  // transition and bumps authSessionNonce + resets onboarding state,
+  // while the first cold-start callback preserves the persisted resume.
+  //
+  // NOTE: today's PersonalAuthRepo always fires synchronously exactly
+  // once, so the uidChanged branch only executes when a future multi-
+  // callback auth repo is wired in, when the onError handler fires, or
+  // when tests drive the store by bumping authSessionNonce directly.
+  // The existing staleness tests in onboarding.actions.test.ts and
+  // OnboardingPage.test.tsx cover the downstream guards; the branch
+  // definition here is intentionally small.
+  const authResolvedRef = useRef(false);
   const startupElevationAttemptedRef = useRef(false);
   // Tracks whether we've already notified about the current listener-failure episode, so the
   // 30s Rust slow-retry churn (failed -> connected -> failed) doesn't re-toast every cycle.
@@ -366,11 +382,32 @@ export const AppSideEffects = () => {
   }, []);
 
   const onAuthStateChanged = (user: AuthUser | null) => {
-    getLogger().info(`Auth state changed (uid=${user?.uid ?? "none"})`);
+    const nextAuthUid = user?.uid ?? null;
+    getLogger().info(`Auth state changed (uid=${nextAuthUid ?? "none"})`);
     authReadyRef.current = true;
     setAuthReady(true);
+    const previousUid = authUidRef.current;
+    const firstCallbackSeen = authResolvedRef.current;
+    const uidChanged = firstCallbackSeen && previousUid !== nextAuthUid;
+    authResolvedRef.current = true;
     produceAppState((draft) => {
       draft.auth = user;
+      if (uidChanged) {
+        authUidRef.current = nextAuthUid;
+        draft.authSessionNonce += 1;
+        Object.assign(draft.onboarding, INITIAL_ONBOARDING_STATE);
+        draft.local.onboardingResumePage = null;
+        draft.local.onboardingNameDraft = "";
+        draft.local.onboardingNameDraftUserId = null;
+        draft.local.onboardingSessionUserId = nextAuthUid;
+        setInitReady(false);
+        setStreamReady(false);
+      } else if (!firstCallbackSeen) {
+        authUidRef.current = nextAuthUid;
+        if (nextAuthUid) {
+          draft.local.onboardingSessionUserId = nextAuthUid;
+        }
+      }
       draft.initialized = false;
     });
   };

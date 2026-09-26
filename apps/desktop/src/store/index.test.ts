@@ -46,12 +46,18 @@ describe("app store rehydration", () => {
       ephemeralSessionActive: true,
       powerModeEnabled: true,
       hasHiddenTrialExtensionCard: true,
+      onboardingNameDraft: "Mary Jane Watson",
+      onboardingNameDraftUserId: "user-id",
+      onboardingSessionUserId: "user-id",
     });
 
     const local = await loadRehydratedLocal();
 
     expect(local.powerModeEnabled).toBe(true);
     expect(local.hasHiddenTrialExtensionCard).toBe(true);
+    expect(local.onboardingNameDraft).toBe("Mary Jane Watson");
+    expect(local.onboardingNameDraftUserId).toBe("user-id");
+    expect(local.onboardingSessionUserId).toBe("user-id");
   });
 
   it("falls back to the initial value for a local field absent from storage", async () => {

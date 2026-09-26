@@ -9,7 +9,7 @@ import { useIsOnboarded } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
 import { getEffectivePlan, planToDisplayName } from "../../utils/member.utils";
 import { getInitials } from "../../utils/string.utils";
-import { getMyUser } from "../../utils/user.utils";
+import { getMyUser, getMyUserFirstName } from "../../utils/user.utils";
 import {
   MenuPopoverBuilder,
   type MenuPopoverItem,
@@ -61,12 +61,21 @@ export const AppHeader = () => {
     planToDisplayName(getEffectivePlan(state)),
   );
 
-  const myName = useAppStore((state) => {
+  const myFullName = useAppStore((state) => {
     const user = getMyUser(state);
-    return user?.name ?? "Unknown";
+    return user?.name || "";
   });
+  const myName = useAppStore(getMyUserFirstName);
 
-  const myInitials = useMemo(() => getInitials(myName), [myName]);
+  // Use a single fallback string ("Guest") for both the chip label and
+  // the avatar initials so they never disagree (e.g. "Guest" / "G", not
+  // "Guest" / "U" from the old "Unknown" fallback).
+  const displayName = myName || myFullName || "Guest";
+  const initialsSource = myFullName || displayName;
+  const myInitials = useMemo(
+    () => getInitials(initialsSource),
+    [initialsSource],
+  );
   const identifierData = useAsyncData(getIdentifier, []);
   const isGpuBuild =
     identifierData.state === "success" &&
@@ -154,7 +163,7 @@ export const AppHeader = () => {
                     lineHeight: 1,
                   }}
                 >
-                  {myName}
+                  {displayName}
                 </Typography>
                 <Typography
                   variant="caption"
