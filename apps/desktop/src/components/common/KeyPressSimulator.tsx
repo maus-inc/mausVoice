@@ -70,9 +70,6 @@ export const KeyPressSimulator = ({ keys }: KeyPressSimulatorProps) => {
               sx={{
                 fontWeight: "bold",
                 textTransform: "capitalize",
-                // The 48px key box is a fixed height, so a wrapped label would
-                // spill past its bottom edge and read as clipped.
-                whiteSpace: "nowrap",
               }}
             >
               {displayKey}
