@@ -413,19 +413,27 @@ const AZURE_REASON_EXCERPT_CHARS = 120;
  * Redacts credential-shaped values out of text this app does not control.
  *
  * The reason is third-party prose: a gateway or proxy can echo the key it was
- * given, and the webview console is handed to the native log sink, whose rolled
- * file the user attaches to a diagnostics export. That sink's sanitizer only
+ * given, and the excerpt that carries it is shown in two places, the webview
+ * console handed to the native log sink, whose rolled file the user attaches to
+ * a diagnostics export, and the settings snackbar. That sink's sanitizer only
  * knows the labels this app writes itself, so nothing downstream would remove a
  * token that arrived inside someone else's sentence.
  *
+ * `unknownToMessage` runs before this and covers the shapes it knows, a Bearer
+ * token, its own list of labels, and a provider-prefixed token. What arrives
+ * here is what it missed: a gateway header it has no label for, a value with no
+ * provider prefix, and a token that carries no label at all.
+ *
  * The match is deliberately loose on the value and strict on the label, because
- * a false positive costs a diagnosis and a false negative publishes a key.
+ * a false positive costs a diagnosis and a false negative publishes a key. The
+ * label may be quoted, because an error body or a gateway echo arrives as JSON,
+ * where a closing quote sits between the label and the separator.
  */
 const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
-  // `Ocp-Apim-Subscription-Key: <value>`, `api_key=<value>` and friends.
-  /\b(ocp-apim-subscription-key|subscription[-_]?key|api[-_]?key|apikey|access[-_]?token)\b\s*[:=]\s*\S+/gi,
-  // `Authorization: Bearer <value>` and any other scheme.
-  /\bauthorization\b\s*[:=]\s*(?:bearer|basic|token)?\s*\S+/gi,
+  // `Ocp-Apim-Subscription-Key: <value>`, `{"api_key":"<value>"}` and friends.
+  /\b(ocp-apim-subscription-key|subscription[-_]?key|api[-_]?key|apikey|access[-_]?token)\b["']?\s*[:=]\s*["']?\S+/gi,
+  // `Authorization: Bearer <value>`, `{"authorization":"<value>"}`, any scheme.
+  /\bauthorization\b["']?\s*[:=]\s*["']?\s*(?:bearer|basic|token)?\s*\S+/gi,
   // A bare provider-style token, wherever it appears.
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}\b/g,
   // A JWT, which is long and structurally unmistakable.
@@ -436,23 +444,28 @@ const redactCredentialShapedText = (text: string): string =>
   AZURE_CREDENTIAL_PATTERNS.reduce(
     (redacted, pattern) =>
       redacted.replace(pattern, (match) => {
+        // A quoted label leaves its closing quote in front of the separator, so
+        // the label is cut before that quote and the separator is kept as it
+        // was written, which leaves a readable `label: [redacted]`.
         const separator = match.search(/[:=]/);
-        const label = separator === -1 ? "" : match.slice(0, separator + 1);
-        return `${label} [redacted]`;
+        if (separator === -1) return "[redacted]";
+        const label = match.slice(0, separator).replace(/["']+$/, "");
+        return `${label}${match[separator]} [redacted]`;
       }),
     text,
   );
 
 /**
- * One bounded, single-line excerpt of the SDK's reason. The reason arrives as
- * multi-line service prose, so whitespace is collapsed before it is cut, and
- * the cut lands on a word boundary.
+ * One bounded, single-line excerpt of the SDK's reason, safe to put in front of
+ * a user. Redaction runs before the bound, so a credential is never present to
+ * be cut in half, and the remainder keeps the status code, endpoint and wording
+ * the diagnosis is read from. The reason arrives as multi-line service prose, so
+ * the whitespace is collapsed before the cut lands on a word boundary.
  */
-const summarizeAzureReason = (
-  reason: string,
-  limit = AZURE_REASON_EXCERPT_CHARS,
-): string => {
-  const flattened = reason.replace(/\s+/g, " ").trim();
+const azureReasonExcerpt = (reason: string, limit: number): string => {
+  const flattened = redactCredentialShapedText(unknownToMessage(reason))
+    .replace(/\s+/g, " ")
+    .trim();
   if (flattened.length <= limit) {
     return flattened;
   }
@@ -464,37 +477,20 @@ const summarizeAzureReason = (
 };
 
 /**
- * What the log line carries instead of the raw reason. The reason is
- * uncontrolled prose from the Azure SDK, and `initLogging` hands the webview
- * console to the native log sink, whose rolled log file the user attaches to a
- * diagnostics export. The native sink's own sanitizer only knows the labels
- * this app writes ("Processed transcript:", "Connector token:"), so it leaves
- * third-party prose alone.
+ * The budget for the excerpt that goes to the log, which is longer than the
+ * snackbar's because the log is read to answer a support request rather than at
+ * a glance, and it keeps the redacted markers that show a credential was
+ * present.
  *
- * Whitespace is collapsed first, so the record is a single line and the
- * sanitizer reads exactly the text that is written. The sanitizer then
- * redacts key-shaped values and applies its own length cap, which bounds the
- * record. What survives is the leading status code, endpoint and message, which
- * is what a support request needs.
- */
-/**
- * The log gets a longer budget than the toast. A snackbar is read at a glance,
- * but the log exists to be attached to a bug report, so it keeps enough context
- * for a support answer, including the redacted markers that show a credential
- * was present. Redaction still runs first, so a token is never present to be cut
- * in half by the bound.
- *
- * The floor of this budget is a redacted marker on a typical reason, around 150
- * characters in. Its ceiling is a long unbroken service body, which starts
- * around 195 characters in, so the bound has to land between the two.
+ * Both ends of the range come from the reasons the tests in this file log. The
+ * lower end is the fully redacted gateway reason, 209 characters, so a bound
+ * under 209 cuts that record and drops the markers, which is the only thing the
+ * log line is there for. The upper end is the cap the bounds test puts on the
+ * logged record, under 600 characters, and an excerpt is its bound plus at most
+ * one ellipsis, so the bound stays at 598 or below. The value below sits just
+ * above the lower end and well under the upper one.
  */
 const AZURE_REASON_LOG_CHARS = 240;
-
-const azureReasonForLog = (reason: string): string =>
-  summarizeAzureReason(
-    redactCredentialShapedText(unknownToMessage(reason)),
-    AZURE_REASON_LOG_CHARS,
-  );
 
 export const azureTestIntegration = async ({
   subscriptionKey,
@@ -512,18 +508,20 @@ export const azureTestIntegration = async ({
     // proves the credentials work, and the reason decides what the caller is
     // told: a rejected credential returns false, because that is the one
     // outcome where "provide a valid API key" is the right advice. Every other
-    // outcome is raised with a bounded excerpt, so an exhausted quota, a region
-    // the resource is not in, and an unreachable network are not all reported
-    // as a bad key, and a redacted, single-line, capped form of the reason goes
-    // to the log for support.
+    // outcome is raised with a redacted, single-line, capped excerpt of the
+    // reason, because ApiKeyList hands that message to showErrorSnackbar, and
+    // the same excerpt with a longer budget goes to the log for support.
     const reason = readAzureReason(error);
     const failure = classifyAzureProbeFailure(reason);
     if (failure === "credential") {
       return false;
     }
-    console.error("Azure integration probe failed:", azureReasonForLog(reason));
+    console.error(
+      "Azure integration probe failed:",
+      azureReasonExcerpt(reason, AZURE_REASON_LOG_CHARS),
+    );
     throw new Error(
-      `${describeAzureProbeFailure(failure, region)} Azure reported: ${summarizeAzureReason(reason)}`,
+      `${describeAzureProbeFailure(failure, region)} Azure reported: ${azureReasonExcerpt(reason, AZURE_REASON_EXCERPT_CHARS)}`,
     );
   }
 };

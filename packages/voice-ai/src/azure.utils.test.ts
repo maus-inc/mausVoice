@@ -320,6 +320,38 @@ describe("azureTestIntegration message bounds", () => {
     return String(call?.[1] ?? "");
   };
 
+  /** The message of the failure the probe raised, which is what a user reads. */
+  const raisedMessage = async (): Promise<string> => {
+    const error = await azureTestIntegration({
+      subscriptionKey: "key",
+      region: "eastus",
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught as Error,
+    );
+    expect(
+      error,
+      "the probe must raise the failure it diagnoses",
+    ).toBeDefined();
+    return error?.message ?? "";
+  };
+
+  /**
+   * Credential shapes assembled at runtime, so this repository never holds a
+   * literal that matches a provider key pattern, which is what the secret
+   * scanner looks for. `azureKeyFixture` is a 32 character hex value shaped like
+   * an Azure subscription key, and `jwtFixture` is the three base64url segments
+   * of a token.
+   */
+  const azureKeyFixture = (): string =>
+    ["a1b2", "c3d4", "e5f6", "0718", "293a", "4b5c", "6d7e", "8f90"].join("");
+  const jwtFixture = (): string =>
+    [
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+      "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ",
+      "dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+    ].join(".");
+
   it("keeps a handshake rejection out of the snackbar and in the log", async () => {
     // A rejected handshake embeds a full web-services error document, and
     // ApiKeyList hands error.message to showErrorSnackbar, which is a bare
@@ -332,15 +364,7 @@ describe("azureTestIntegration message bounds", () => {
     ].join("\n");
     speech.error = reason;
 
-    const error = await azureTestIntegration({
-      subscriptionKey: "key",
-      region: "eastus",
-    }).then(
-      () => "resolved",
-      (caught: unknown) => caught,
-    );
-
-    const message = (error as Error).message;
+    const message = await raisedMessage();
     expect(message).toMatch(/could not confirm the key/);
     expect(message).toContain("Azure reported:");
     // Bounded, and a snackbar never has to render a paragraph or a line break.
@@ -397,6 +421,84 @@ describe("azureTestIntegration message bounds", () => {
     expect(logged).toContain("[redacted]");
     // Still a usable diagnosis.
     expect(logged).toContain("StatusCode: 0");
+    expect(logged).not.toContain("\n");
+  });
+
+  it("redacts a credential-shaped reason before it reaches the snackbar", async () => {
+    // The thrown message is the other half of the exposure the log line is
+    // guarded against: ApiKeyList hands error.message to showErrorSnackbar,
+    // which is a bare String(message), so the redaction has to run on the text
+    // the user reads and not only on the text that is logged. Only the value
+    // goes, so the status and the reason survive to tell the user what failed.
+    const key = azureKeyFixture();
+    speech.error = [
+      "StatusCode: 0",
+      `Ocp-Apim-Subscription-Key: ${key}`,
+      "Reason: the gateway echoed the request",
+    ].join("\n");
+
+    const message = await raisedMessage();
+
+    expect(message).not.toContain(key);
+    expect(message).toContain("Ocp-Apim-Subscription-Key: [redacted]");
+    expect(message).toContain("StatusCode: 0");
+    expect(message).toContain("the gateway echoed the request");
+    expect(message).toContain("Azure reported:");
+    expect(message).toMatch(/could not be reached/);
+    expect(message).not.toContain("\n");
+  });
+
+  it("redacts a credential named by a quoted JSON label", async () => {
+    // An error body or a gateway echo arrives as JSON, where a closing quote
+    // sits between the label and the separator, so a pattern that wants the
+    // separator directly after the label never matches this shape.
+    const key = azureKeyFixture();
+    speech.error = `{"ResourceId":"eastus","Ocp-Apim-Subscription-Key":"${key}"}`;
+
+    const message = await raisedMessage();
+    const logged = loggedLine();
+
+    for (const text of [message, logged]) {
+      expect(text).not.toContain(key);
+      expect(text).toContain("Ocp-Apim-Subscription-Key: [redacted]");
+      // The rest of the document is the part a support answer is read from.
+      expect(text).toContain('"ResourceId":"eastus"');
+    }
+    expect(message).toMatch(/could not confirm the key/);
+  });
+
+  it("redacts a gateway header and a JWT the shared redactor leaves alone", async () => {
+    // unknownToMessage in packages/utilities/src/error.ts covers a Bearer
+    // token, the labels on its own list (api_key, authorization, credential
+    // and the rest) and a provider-prefixed token, which is why the test above
+    // passes without this file's redactor. "Ocp-Apim-Subscription-Key" is not
+    // one of its labels, a 32 character hex value carries no provider prefix,
+    // and a JWT carries no label at all, so all three reach the redactor
+    // untouched. Deleting it would put every one of them in the log file the
+    // user attaches to a diagnostics export.
+    const key = azureKeyFixture();
+    const token = jwtFixture();
+    speech.error = [
+      "Unable to contact server. StatusCode: 0",
+      "wss://eastus.stt.speech.microsoft.com/speech/recognition",
+      `Ocp-Apim-Subscription-Key: ${key}`,
+      `Set-Cookie: auth=${token}`,
+    ].join("\n");
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/could not be reached/);
+
+    const logged = loggedLine();
+    expect(logged).not.toContain(key);
+    expect(logged).not.toContain(token);
+    expect(logged).toContain("Ocp-Apim-Subscription-Key: [redacted]");
+    // A token that carries no label is replaced whole, so the marker and the
+    // label in front of it are all that is left to read.
+    expect(logged).toMatch(/Set-Cookie: auth=\s?\[redacted\]/);
+    // Still a usable diagnosis, and one line.
+    expect(logged).toContain("StatusCode: 0");
+    expect(logged).toContain("wss://eastus.stt.speech.microsoft.com");
     expect(logged).not.toContain("\n");
   });
 });

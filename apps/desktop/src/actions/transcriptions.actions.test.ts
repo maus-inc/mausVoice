@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
-import { getIntl } from "../i18n/intl";
+import type { IntlShape } from "react-intl";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
 import type { PostProcessMetadata } from "./transcribe.actions";
@@ -73,11 +73,36 @@ vi.mock("./toast.actions", async () => ({
   showToast: vi.fn(async () => {}),
 }));
 
-// The intl module is deliberately NOT stubbed. The real helper short-circuits
-// an id-less descriptor to its defaultMessage and only then delegates, so a
-// stub in its place would let a descriptor that resolves to a raw key, or to
-// nothing at all, pass the tests here. Every user-facing string in this file
-// therefore travels the production path.
+const { intlFormatMessage } = vi.hoisted(() => ({
+  /** Every descriptor the code under test asked the intl layer to format. */
+  intlFormatMessage: vi.fn(),
+}));
+
+// The intl module is wrapped, never stubbed. `getIntl` short-circuits a
+// descriptor with no `id` to its `defaultMessage` and only then delegates, so
+// the string a formatted descriptor returns is the same string the source
+// hardcodes. Output alone cannot tell a routed message from a copied one; the
+// wrapper records the descriptors that were asked for and hands each one to
+// the real formatter, so the copy on screen still travels the production path
+// and a message that never reaches the intl layer cannot pass.
+vi.mock("../i18n/intl", async () => {
+  const actual =
+    await vi.importActual<typeof import("../i18n/intl")>("../i18n/intl");
+  return {
+    ...actual,
+    getIntl: (...args: Parameters<typeof actual.getIntl>) => {
+      const intl = actual.getIntl(...args);
+      const realFormatMessage = intl.formatMessage;
+      return {
+        ...intl,
+        formatMessage: (...format: Parameters<IntlShape["formatMessage"]>) => {
+          intlFormatMessage(format[0]);
+          return realFormatMessage(...format);
+        },
+      };
+    },
+  };
+});
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
@@ -857,8 +882,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     );
   });
 
-  it("resolves the unstyled-run copy through the real intl helper", async () => {
-    const intl = getIntl();
+  it("routes the unstyled-run copy through the intl layer", async () => {
     seedStyledRow("localized", POLISHED);
     mockUnstyledPostProcess(
       { postProcessFailed: false, postProcessDegraded: true },
@@ -867,20 +891,18 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
     await retranscribeTranscription({ transcriptionId: "localized" });
 
-    // `getIntl` is the production helper, not a stand-in. It returns the
-    // `defaultMessage` of a descriptor that carries no `id`, and only
-    // delegates to the catalog for one that does, where an undefined key comes
-    // back as the raw key. An empty `defaultMessage` is no shortcut at all and
-    // resolves to an empty string. So the sentence the snackbar carries is the
-    // proof that the action built the descriptor this helper needs, and it
-    // would fail here for a key, for an empty string, or for a stubbed helper
-    // that resolved to whatever the test told it to.
-    expect(intl.formatMessage({ defaultMessage: TRUNCATED_COPY })).toBe(
-      TRUNCATED_COPY,
+    // The descriptor is what the action asked the intl layer for, and the
+    // wrapper only records what it was given, so this fails the moment the
+    // action stops calling `getIntl` and inlines the sentence instead. The
+    // sentence itself cannot carry that proof: the real helper returns the
+    // `defaultMessage` of an id-less descriptor unchanged, so a formatted
+    // sentence and a hardcoded one are the same string.
+    expect(intlFormatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultMessage: TRUNCATED_COPY }),
     );
     expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
 
-    // The other unusable-answer branch, through the same helper.
+    // The other unusable-answer branch, through the same layer.
     seedStyledRow("localized-unreadable", POLISHED);
     mockUnstyledPostProcess(
       { postProcessFailed: false, postProcessDegraded: true },
@@ -891,8 +913,8 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       transcriptionId: "localized-unreadable",
     });
 
-    expect(intl.formatMessage({ defaultMessage: UNREADABLE_COPY })).toBe(
-      UNREADABLE_COPY,
+    expect(intlFormatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultMessage: UNREADABLE_COPY }),
     );
     expect(showErrorSnackbar).toHaveBeenLastCalledWith(UNREADABLE_COPY);
   });

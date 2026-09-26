@@ -247,8 +247,19 @@ const restoreCandidate = (el: Element | null): HTMLElement | null => {
  * non-focusable area they unfocus the current element, so by the time the menu
  * opens, `document.activeElement` is already `<body>` and reading it there can
  * only ever return nothing. That is the case for the surfaces with no focusable
- * ancestor of their own (`TranscriptRow`, `ChatMessageBubble`), so the value
- * has to be taken in the capture phase, which runs before the default action.
+ * ancestor of their own (`TranscriptRow`, `ChatMessageBubble`), so the value has
+ * to be read while that mousedown is still being dispatched, not after.
+ *
+ * Capture buys that ordering against the other listeners on the event path, not
+ * against the default action, which a bubble listener on `document` also
+ * precedes. A bubble listener runs after every element handler, so a handler
+ * that focuses on mousedown has already moved `document.activeElement` by the
+ * time it runs, and the handlers that stop mousedown propagation (`ListTile`'s
+ * hover buttons, `MenuPopover`, `ManualStylingRow`, and the model buttons in
+ * `AITranscriptionConfiguration`) keep it from running at all, which would leave
+ * the previous right-click's value behind. The capture phase is the first stop
+ * inside the document and nothing below it can cut it short, so the value is
+ * always where the user left it.
  *
  * Module scope on purpose: one listener for the document rather than one per
  * menu instance, because a list renders one menu hook per row.
