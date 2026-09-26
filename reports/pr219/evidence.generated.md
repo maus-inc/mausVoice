@@ -4,8 +4,8 @@ Base `d1f06ec` vs this branch, English. Correct means the output equals the hand
 
 | Set | Cases | Correct before | Correct after |
 | --- | --- | --- | --- |
-| Ordinary speech (must stay literal) | 23 | 4 | 23 |
-| Intended commands | 12 | 12 | 11 |
+| Ordinary speech (must stay literal) | 24 | 4 | 24 |
+| Intended commands | 13 | 13 | 12 |
 
 <details><summary>Every case</summary>
 
@@ -29,6 +29,7 @@ Base `d1f06ec` vs this branch, English. Correct means the output equals the hand
 | Add a semicolon there. | Add a semicolon there. | `Add a; there.` | ok |
 | The colon is part of the large intestine. | The colon is part of the large intestine. | `The: is part of the large intestine.` | ok |
 | He was diagnosed with colon cancer. | He was diagnosed with colon cancer. | ok | ok |
+| It was the difficult period Apple faced. | It was the difficult period Apple faced. | `It was the difficult. Apple faced.` | ok |
 | We need a new line of credit. | We need a new line of credit. | ok | ok |
 | That was a full stop for the project. | That was a full stop for the project. | `That was a. for the project.` | ok |
 | Let's scratch that idea and start over. | Let's scratch that idea and start over. | `idea and start over.` | ok |
@@ -38,6 +39,7 @@ Base `d1f06ec` vs this branch, English. Correct means the output equals the hand
 | Hello comma world | Hello, world | ok | ok |
 | That is final period | That is final. | ok | ok |
 | I'm done period See you | I'm done. See you | ok | ok |
+| I finished period Then I left | I finished. Then I left | ok | ok |
 | Send it today period | Send it today. | ok | ok |
 | call me tomorrow full stop | call me tomorrow. | ok | ok |
 | Stop period next line Go | Stop.\nGo | ok | ok |
@@ -51,14 +53,14 @@ Base `d1f06ec` vs this branch, English. Correct means the output equals the hand
 
 ## Segment silence gate
 
-The full `applyHallucinationFiltering` pipeline (probability gate, then the known-phrase filter), old vs new, on the same segments.
+The full `applyHallucinationFiltering` pipeline (probability gate, then the known-phrase filter), old vs new, on the same segments. The new side first measures each segment's own span of a synthetic clip (quiet speech where the case has speech, room tone elsewhere) with `markSilentSegmentAudio`, as the transcription repo does with the real chunk.
 
 | | Before | After |
 | --- | --- | --- |
 | Speech cases with words kept (of 5) | 2 | 5 |
-| Hallucination cases that reach the user (of 6) | 0 | 2 |
+| Hallucination cases that reach the user (of 6) | 0 | 0 |
 
-2 confident hallucinations pass the new gate and are then removed by the known-phrase filter.
+0 confident hallucinations pass the new gate and are then removed by the known-phrase filter.
 
 <details><summary>Every case</summary>
 
@@ -71,8 +73,8 @@ The full `applyHallucinationFiltering` pipeline (probability gate, then the know
 | Unsure decode of silence | hallucination | 0.97 / -1.3 | `(empty)` | `(empty)` |
 | Canonical hallucination, decoded confidently | hallucination | 0.96 / -0.2 | `(empty)` | `(empty)` |
 | Subtitle credit, decoded confidently | hallucination | 0.98 / -0.15 | `(empty)` | `(empty)` |
-| Confident hallucination not on the known-phrase list | hallucination | 0.95 / -0.35 | `(empty)` | `I'll see you in the next video.` |
-| Confident 'Thanks.' on silence (not on the list) | hallucination | 0.92 / -0.5 | `(empty)` | `Thanks.` |
+| Confident hallucination not on the known-phrase list | hallucination | 0.95 / -0.35 | `(empty)` | `(empty)` |
+| Confident 'Thanks.' on silence (not on the list) | hallucination | 0.92 / -0.5 | `(empty)` | `(empty)` |
 | Provider without avg_logprob, silent window | hallucination | 0.95 / - | `(empty)` | `(empty)` |
 | Speech then trailing silence hallucination | speech | 0.1 / -0.3; 0.94 / -0.25 | `Please call me back.` | `Please call me back.` |
 

@@ -38,6 +38,7 @@ const LITERAL = [
   "Add a semicolon there.",
   "The colon is part of the large intestine.",
   "He was diagnosed with colon cancer.",
+  "It was the difficult period Apple faced.",
   "We need a new line of credit.",
   "That was a full stop for the project.",
   "Let's scratch that idea and start over.",
@@ -50,6 +51,7 @@ const COMMANDS: CommandCase[] = [
   { input: "Hello comma world", expected: "Hello, world" },
   { input: "That is final period", expected: "That is final." },
   { input: "I'm done period See you", expected: "I'm done. See you" },
+  { input: "I finished period Then I left", expected: "I finished. Then I left" },
   { input: "Send it today period", expected: "Send it today." },
   { input: "call me tomorrow full stop", expected: "call me tomorrow." },
   { input: "Stop period next line Go", expected: "Stop.\nGo" },
@@ -106,86 +108,148 @@ const runSpoken = () => {
 type GateCase = {
   label: string;
   truth: "speech" | "hallucination";
-  segments: { text: string; noSpeechProb?: number; avgLogprob?: number }[];
+  segments: {
+    text: string;
+    noSpeechProb?: number;
+    avgLogprob?: number;
+    start: number;
+    end: number;
+  }[];
+  // The decoded clip: its length and where it holds speech. Everything else
+  // is room tone.
+  audio: { seconds: number; speech: { from: number; to: number; amp: number }[] };
 };
 
-// Each case is one decode where the provider returned these segments. The
-// transcript the pipeline starts from is the segments joined.
+const GATE_RATE = 16_000;
+const ROOM_TONE = 0.0005;
+
+// Each case is one decode where the provider returned these segments for
+// this audio. The transcript the pipeline starts from is the segments joined.
+// Speech amplitudes match the quiet cases in the RMS section.
 const GATE: GateCase[] = [
   {
     label: "Quiet opening after a pause, decoded confidently",
     truth: "speech",
     segments: [
-      { text: "Can you send the report by Friday?", noSpeechProb: 0.93, avgLogprob: -0.25 },
+      {
+        text: "Can you send the report by Friday?",
+        noSpeechProb: 0.93,
+        avgLogprob: -0.25,
+        start: 7.5,
+        end: 10,
+      },
     ],
+    audio: { seconds: 10, speech: [{ from: 7.5, to: 10, amp: 0.012 }] },
   },
   {
     label: "Short reply at the end of a long pause",
     truth: "speech",
-    segments: [{ text: "Yes, that works.", noSpeechProb: 0.91, avgLogprob: -0.4 }],
+    segments: [
+      { text: "Yes, that works.", noSpeechProb: 0.91, avgLogprob: -0.4, start: 19, end: 19.8 },
+    ],
+    audio: { seconds: 20, speech: [{ from: 19, to: 19.8, amp: 0.012 }] },
   },
   {
     label: "Soft-spoken name in a mostly silent window",
     truth: "speech",
     segments: [
-      { text: "Meeting with Adaeze at noon.", noSpeechProb: 0.95, avgLogprob: -0.6 },
+      {
+        text: "Meeting with Adaeze at noon.",
+        noSpeechProb: 0.95,
+        avgLogprob: -0.6,
+        start: 6,
+        end: 8,
+      },
     ],
+    audio: { seconds: 15, speech: [{ from: 6, to: 8, amp: 0.01 }] },
   },
   {
     label: "Ordinary speech, low no-speech probability",
     truth: "speech",
-    segments: [{ text: "Let's ship it on Monday.", noSpeechProb: 0.05, avgLogprob: -0.2 }],
+    segments: [
+      { text: "Let's ship it on Monday.", noSpeechProb: 0.05, avgLogprob: -0.2, start: 1, end: 3 },
+    ],
+    audio: { seconds: 5, speech: [{ from: 1, to: 3, amp: 0.08 }] },
   },
   {
     label: "Unsure decode of silence",
     truth: "hallucination",
-    segments: [{ text: "Thank you.", noSpeechProb: 0.97, avgLogprob: -1.3 }],
+    segments: [{ text: "Thank you.", noSpeechProb: 0.97, avgLogprob: -1.3, start: 2, end: 4 }],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Canonical hallucination, decoded confidently",
     truth: "hallucination",
-    segments: [{ text: "Thank you for watching!", noSpeechProb: 0.96, avgLogprob: -0.2 }],
+    segments: [
+      { text: "Thank you for watching!", noSpeechProb: 0.96, avgLogprob: -0.2, start: 5, end: 7 },
+    ],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Subtitle credit, decoded confidently",
     truth: "hallucination",
     segments: [
-      { text: "Subtitles by the Amara.org community", noSpeechProb: 0.98, avgLogprob: -0.15 },
+      {
+        text: "Subtitles by the Amara.org community",
+        noSpeechProb: 0.98,
+        avgLogprob: -0.15,
+        start: 6,
+        end: 9,
+      },
     ],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Confident hallucination not on the known-phrase list",
     truth: "hallucination",
     segments: [
-      { text: "I'll see you in the next video.", noSpeechProb: 0.95, avgLogprob: -0.35 },
+      {
+        text: "I'll see you in the next video.",
+        noSpeechProb: 0.95,
+        avgLogprob: -0.35,
+        start: 4,
+        end: 6,
+      },
     ],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Confident 'Thanks.' on silence (not on the list)",
     truth: "hallucination",
-    segments: [{ text: "Thanks.", noSpeechProb: 0.92, avgLogprob: -0.5 }],
+    segments: [{ text: "Thanks.", noSpeechProb: 0.92, avgLogprob: -0.5, start: 8, end: 9 }],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Provider without avg_logprob, silent window",
     truth: "hallucination",
-    segments: [{ text: "Bye.", noSpeechProb: 0.95 }],
+    segments: [{ text: "Bye.", noSpeechProb: 0.95, start: 3, end: 4 }],
+    audio: { seconds: 10, speech: [] },
   },
   {
     label: "Speech then trailing silence hallucination",
     truth: "speech",
     segments: [
-      { text: "Please call me back.", noSpeechProb: 0.1, avgLogprob: -0.3 },
-      { text: " Thank you for watching!", noSpeechProb: 0.94, avgLogprob: -0.25 },
+      { text: "Please call me back.", noSpeechProb: 0.1, avgLogprob: -0.3, start: 0, end: 2.5 },
+      {
+        text: " Thank you for watching!",
+        noSpeechProb: 0.94,
+        avgLogprob: -0.25,
+        start: 6,
+        end: 8,
+      },
     ],
+    audio: { seconds: 10, speech: [{ from: 0, to: 2.5, amp: 0.08 }] },
   },
 ];
 
 const runGate = () => {
   const rows = GATE.map((c) => {
     const raw = c.segments.map((s) => s.text).join("");
+    const samples = signal(c.audio.seconds, GATE_RATE, c.audio.speech, ROOM_TONE);
+    const measured = newHalluc.markSilentSegmentAudio(c.segments, samples, GATE_RATE);
     const before = oldHalluc.applyHallucinationFiltering(raw, c.segments, "en", true);
-    const after = newHalluc.applyHallucinationFiltering(raw, c.segments, "en", true);
-    const gateOnlyAfter = newHalluc.gateSilentSegments(c.segments) ?? raw;
+    const after = newHalluc.applyHallucinationFiltering(raw, measured, "en", true);
+    const gateOnlyAfter = newHalluc.gateSilentSegments(measured) ?? raw;
     return { ...c, raw, before, after, gateOnlyAfter };
   });
   const hasSpeech = (r: (typeof rows)[number], out: string) =>
@@ -407,7 +471,7 @@ const g = results.silenceGate;
 md.push(
   `## Segment silence gate`,
   "",
-  `The full \`applyHallucinationFiltering\` pipeline (probability gate, then the known-phrase filter), old vs new, on the same segments.`,
+  `The full \`applyHallucinationFiltering\` pipeline (probability gate, then the known-phrase filter), old vs new, on the same segments. The new side first measures each segment's own span of a synthetic clip (quiet speech where the case has speech, room tone elsewhere) with \`markSilentSegmentAudio\`, as the transcription repo does with the real chunk.`,
   "",
   `| | Before | After |`,
   `| --- | --- | --- |`,

@@ -166,6 +166,15 @@
       },
       {
         "kind": "literal",
+        "input": "It was the difficult period Apple faced.",
+        "expected": "It was the difficult period Apple faced.",
+        "before": "It was the difficult. Apple faced.",
+        "after": "It was the difficult period Apple faced.",
+        "beforeOk": false,
+        "afterOk": true
+      },
+      {
+        "kind": "literal",
         "input": "We need a new line of credit.",
         "expected": "We need a new line of credit.",
         "before": "We need a new line of credit.",
@@ -247,6 +256,15 @@
       },
       {
         "kind": "command",
+        "input": "I finished period Then I left",
+        "expected": "I finished. Then I left",
+        "before": "I finished. Then I left",
+        "after": "I finished. Then I left",
+        "beforeOk": true,
+        "afterOk": true
+      },
+      {
+        "kind": "command",
         "input": "Send it today period",
         "expected": "Send it today.",
         "before": "Send it today.",
@@ -321,14 +339,14 @@
     ],
     "summary": {
       "literal": {
-        "total": 23,
+        "total": 24,
         "before": 4,
-        "after": 23
+        "after": 24
       },
       "command": {
-        "total": 12,
-        "before": 12,
-        "after": 11
+        "total": 13,
+        "before": 13,
+        "after": 12
       }
     }
   },
@@ -341,9 +359,21 @@
           {
             "text": "Can you send the report by Friday?",
             "noSpeechProb": 0.93,
-            "avgLogprob": -0.25
+            "avgLogprob": -0.25,
+            "start": 7.5,
+            "end": 10
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": [
+            {
+              "from": 7.5,
+              "to": 10,
+              "amp": 0.012
+            }
+          ]
+        },
         "raw": "Can you send the report by Friday?",
         "before": "",
         "after": "Can you send the report by Friday?",
@@ -356,9 +386,21 @@
           {
             "text": "Yes, that works.",
             "noSpeechProb": 0.91,
-            "avgLogprob": -0.4
+            "avgLogprob": -0.4,
+            "start": 19,
+            "end": 19.8
           }
         ],
+        "audio": {
+          "seconds": 20,
+          "speech": [
+            {
+              "from": 19,
+              "to": 19.8,
+              "amp": 0.012
+            }
+          ]
+        },
         "raw": "Yes, that works.",
         "before": "",
         "after": "Yes, that works.",
@@ -371,9 +413,21 @@
           {
             "text": "Meeting with Adaeze at noon.",
             "noSpeechProb": 0.95,
-            "avgLogprob": -0.6
+            "avgLogprob": -0.6,
+            "start": 6,
+            "end": 8
           }
         ],
+        "audio": {
+          "seconds": 15,
+          "speech": [
+            {
+              "from": 6,
+              "to": 8,
+              "amp": 0.01
+            }
+          ]
+        },
         "raw": "Meeting with Adaeze at noon.",
         "before": "",
         "after": "Meeting with Adaeze at noon.",
@@ -386,9 +440,21 @@
           {
             "text": "Let's ship it on Monday.",
             "noSpeechProb": 0.05,
-            "avgLogprob": -0.2
+            "avgLogprob": -0.2,
+            "start": 1,
+            "end": 3
           }
         ],
+        "audio": {
+          "seconds": 5,
+          "speech": [
+            {
+              "from": 1,
+              "to": 3,
+              "amp": 0.08
+            }
+          ]
+        },
         "raw": "Let's ship it on Monday.",
         "before": "Let's ship it on Monday.",
         "after": "Let's ship it on Monday.",
@@ -401,9 +467,15 @@
           {
             "text": "Thank you.",
             "noSpeechProb": 0.97,
-            "avgLogprob": -1.3
+            "avgLogprob": -1.3,
+            "start": 2,
+            "end": 4
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "Thank you.",
         "before": "",
         "after": "",
@@ -416,13 +488,19 @@
           {
             "text": "Thank you for watching!",
             "noSpeechProb": 0.96,
-            "avgLogprob": -0.2
+            "avgLogprob": -0.2,
+            "start": 5,
+            "end": 7
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "Thank you for watching!",
         "before": "",
         "after": "",
-        "gateOnlyAfter": "Thank you for watching!"
+        "gateOnlyAfter": ""
       },
       {
         "label": "Subtitle credit, decoded confidently",
@@ -431,13 +509,19 @@
           {
             "text": "Subtitles by the Amara.org community",
             "noSpeechProb": 0.98,
-            "avgLogprob": -0.15
+            "avgLogprob": -0.15,
+            "start": 6,
+            "end": 9
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "Subtitles by the Amara.org community",
         "before": "",
         "after": "",
-        "gateOnlyAfter": "Subtitles by the Amara.org community"
+        "gateOnlyAfter": ""
       },
       {
         "label": "Confident hallucination not on the known-phrase list",
@@ -446,13 +530,19 @@
           {
             "text": "I'll see you in the next video.",
             "noSpeechProb": 0.95,
-            "avgLogprob": -0.35
+            "avgLogprob": -0.35,
+            "start": 4,
+            "end": 6
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "I'll see you in the next video.",
         "before": "",
-        "after": "I'll see you in the next video.",
-        "gateOnlyAfter": "I'll see you in the next video."
+        "after": "",
+        "gateOnlyAfter": ""
       },
       {
         "label": "Confident 'Thanks.' on silence (not on the list)",
@@ -461,13 +551,19 @@
           {
             "text": "Thanks.",
             "noSpeechProb": 0.92,
-            "avgLogprob": -0.5
+            "avgLogprob": -0.5,
+            "start": 8,
+            "end": 9
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "Thanks.",
         "before": "",
-        "after": "Thanks.",
-        "gateOnlyAfter": "Thanks."
+        "after": "",
+        "gateOnlyAfter": ""
       },
       {
         "label": "Provider without avg_logprob, silent window",
@@ -475,9 +571,15 @@
         "segments": [
           {
             "text": "Bye.",
-            "noSpeechProb": 0.95
+            "noSpeechProb": 0.95,
+            "start": 3,
+            "end": 4
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": []
+        },
         "raw": "Bye.",
         "before": "",
         "after": "",
@@ -490,18 +592,32 @@
           {
             "text": "Please call me back.",
             "noSpeechProb": 0.1,
-            "avgLogprob": -0.3
+            "avgLogprob": -0.3,
+            "start": 0,
+            "end": 2.5
           },
           {
             "text": " Thank you for watching!",
             "noSpeechProb": 0.94,
-            "avgLogprob": -0.25
+            "avgLogprob": -0.25,
+            "start": 6,
+            "end": 8
           }
         ],
+        "audio": {
+          "seconds": 10,
+          "speech": [
+            {
+              "from": 0,
+              "to": 2.5,
+              "amp": 0.08
+            }
+          ]
+        },
         "raw": "Please call me back. Thank you for watching!",
         "before": "Please call me back.",
         "after": "Please call me back.",
-        "gateOnlyAfter": "Please call me back. Thank you for watching!"
+        "gateOnlyAfter": "Please call me back."
       }
     ],
     "summary": {
@@ -510,8 +626,8 @@
       "speechKeptAfter": 5,
       "hallucinationCases": 6,
       "hallucinationsShownBefore": 0,
-      "hallucinationsShownAfter": 2,
-      "passedGateButCaughtByPhraseFilter": 2
+      "hallucinationsShownAfter": 0,
+      "passedGateButCaughtByPhraseFilter": 0
     }
   },
   "postProcessingReplies": [

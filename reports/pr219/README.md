@@ -17,25 +17,27 @@ node node_modules/.cache/pr219-evidence.mjs
 ## Findings
 
 <details>
-<summary>Spoken commands: 19 of 23 ordinary sentences were rewritten by the base, none by the branch</summary>
+<summary>Spoken commands: 20 of 24 ordinary sentences were rewritten by the base, none by the branch</summary>
 
-The base turns any "period", "comma", "colon", "new line", or "scratch that" into formatting, so "The billing period ends on Friday." became "The billing. ends on Friday." and "Let's scratch that idea and start over." lost everything before "idea". The branch keeps all 23 literal and still applies 11 of 12 intended commands.
+The base turns any "period", "comma", "colon", "new line", or "scratch that" into formatting, so "The billing period ends on Friday." became "The billing. ends on Friday." and "Let's scratch that idea and start over." lost everything before "idea". The branch keeps all 24 literal and still applies 12 of 13 intended commands.
+
+A capitalized word after "period" counts as a new sentence only when it is a common sentence opener (a pronoun, article, conjunction, question word, or a frequent imperative or sign-off). Transcription capitalizes other words mid-sentence only when they are names, so "It was the difficult period Apple faced." stays literal, while "I finished period Then I left" still becomes "I finished. Then I left".
 
 The one miss is deliberate: "hello period how are you", said with no pause, now stays literal because a lowercase word straight after "period" is read as the noun. A pause usually gives the transcript a comma or a capital, and then the command applies ("hello period, how are you" becomes "hello. how are you").
 
 </details>
 
 <details>
-<summary>Segment silence gate: recovers speech, and admits confident hallucinations that are not on the phrase list</summary>
+<summary>Segment silence gate: recovers speech without admitting confident hallucinations</summary>
 
-This is the trade-off the review asked to have measured. The fixtures are hand-written segments, not provider recordings, so the counts show which cases change, not how often each case happens in real use.
+The fixtures are hand-written segments over synthetic audio (quiet speech tones where a case has speech, room tone elsewhere), not provider recordings, so the counts show which cases change, not how often each case happens in real use.
 
 - Speech in a window Whisper scored as mostly silent, but decoded confidently: the base drops all 3 cases, the branch keeps all 3.
 - Canonical hallucinations decoded confidently ("Thank you for watching!", the Amara subtitle credit): both pass the new gate and are removed by the known-phrase filter, so the user sees nothing, as before.
-- Confident hallucinations that are not on the list ("I'll see you in the next video.", "Thanks."): the base drops them, the branch shows them. These are the new failure mode.
+- Confident hallucinations that are not on the list ("I'll see you in the next video.", "Thanks."): dropped by both. The branch drops them because their own span of audio has no speech energy.
 - Low-confidence decodes of silence, and providers that send no `avg_logprob`: unchanged, still dropped.
 
-The branch matches Whisper's reference decoder, which skips a window only when `no_speech_prob > 0.6` and `avg_logprob <= -1.0`. Losing real speech cannot be undone by the user, while a stray "Thanks." is visible and easy to delete, so the branch accepts the second risk to remove the first.
+The probability test follows Whisper's reference decoder, which skips a window only when `no_speech_prob > 0.6` and `avg_logprob <= -1.0`. That alone would show confident hallucinations, so a segment Whisper flags as silence but decodes confidently is also checked against the audio it covers: its `start`/`end` span, widened by 0.5 s for timestamp drift, is dropped when no 300 ms window reaches the local gate's speech floor (RMS 0.0025). Limits: this needs segment timestamps, which Groq, OpenAI `whisper-1`, and OpenAI-compatible Whisper servers return; providers without them keep the probability-only behavior. A hallucination laid over real background speech (a TV, a colleague) carries energy and is kept.
 
 </details>
 
