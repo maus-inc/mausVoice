@@ -1072,6 +1072,65 @@ describe("ElevenLabs keyterms gating", () => {
   });
 });
 
+describe("segment audio energy in the repo", () => {
+  const rate = 16_000;
+  // Quiet speech for the first 2 s, then room tone.
+  const samples = new Float32Array(rate * 5).map((_, i) =>
+    i < rate * 2 ? 0.05 * Math.sin((2 * Math.PI * 180 * i) / rate) : 0.0005,
+  );
+  const segments = [
+    {
+      text: "Call me back.",
+      noSpeechProb: 0.1,
+      avgLogprob: -0.2,
+      start: 0,
+      end: 2,
+    },
+    {
+      text: " Thanks.",
+      noSpeechProb: 0.95,
+      avgLogprob: -0.3,
+      start: 3,
+      end: 4.5,
+    },
+  ];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("marks a confident segment over room tone using the chunk's audio", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate },
+    );
+
+    expect(output.segments?.map((segment) => segment.audioSilent)).toEqual([
+      undefined,
+      true,
+    ]);
+  });
+
+  it("leaves segments unmeasured when the filter is off", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate, hallucinationFilterEnabled: false },
+    );
+
+    expect(output.segments?.some((segment) => "audioSilent" in segment)).toBe(
+      false,
+    );
+  });
+});
+
 describe("provider segment hand-off to the silence gate", () => {
   const providerSegments = [
     {

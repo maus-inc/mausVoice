@@ -11,7 +11,7 @@ A dictation crosses distinct stages, and most configuration and troubleshooting 
 2. **Capture:** the selected microphone supplies audio while the shortcut remains held.
 3. **Transcription:** either the local Whisper sidecar or an API provider converts audio into raw text.
 4. **Dictionary handling:** replacement rules correct or expand recognized text. Glossary context can help recognition where the provider supports it.
-5. **Filtering:** the hallucination filter strips known silence-only phrases when enabled.
+5. **Filtering:** when enabled, the hallucination filter strips known silence-only phrases and drops text the model marks as silence when that part of the recording holds no speech energy.
 6. **Spoken commands:** when enabled and the dictation language is English or Auto, formatting commands like "new line" and "scratch that" are executed.
 7. **Symbol conversions:** "hashtag" and "pound sign" are converted to `#`.
 8. **Post-processing:** when enabled, a generative provider applies the active writing style. With post-processing off, the text from the previous stages is the output.

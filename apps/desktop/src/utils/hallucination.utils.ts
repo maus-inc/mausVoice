@@ -1,3 +1,5 @@
+import type { AudioSamples } from "../types/audio.types";
+import { hasSpeechEnergy } from "./audio-energy.utils";
 import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 
 /**
@@ -154,12 +156,17 @@ export const applyHallucinationFiltering = (
  * A single Whisper segment as returned by a `verbose_json` transcription.
  * `noSpeechProb` is the model's estimate that the segment's 30-second decode
  * window contains no speech. `avgLogprob` is the decoder's confidence in the
- * segment's own tokens.
+ * segment's own tokens. `start` and `end` are seconds into the submitted
+ * audio. `audioSilent` is set by `markSilentSegmentAudio` when the segment's
+ * own span of that audio holds no speech energy.
  */
 export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
   avgLogprob?: number;
+  start?: number;
+  end?: number;
+  audioSilent?: boolean;
 };
 
 const finiteNumberOrUndefined = (value: unknown): number | undefined =>
@@ -176,6 +183,8 @@ export const toTranscriptionSegments = (
         text: string;
         noSpeechProb?: unknown;
         avgLogprob?: unknown;
+        start?: unknown;
+        end?: unknown;
       }>
     | undefined,
 ): TranscriptionSegment[] | undefined =>
@@ -183,6 +192,8 @@ export const toTranscriptionSegments = (
     text: segment.text,
     noSpeechProb: finiteNumberOrUndefined(segment.noSpeechProb),
     avgLogprob: finiteNumberOrUndefined(segment.avgLogprob),
+    start: finiteNumberOrUndefined(segment.start),
+    end: finiteNumberOrUndefined(segment.end),
   }));
 
 /**
@@ -202,24 +213,71 @@ export const NO_SPEECH_PROB_THRESHOLD = 0.9;
  */
 export const NO_SPEECH_AVG_LOGPROB_THRESHOLD = -1;
 
+const flaggedAsSilence = (segment: TranscriptionSegment): boolean =>
+  segment.noSpeechProb != null &&
+  segment.noSpeechProb >= NO_SPEECH_PROB_THRESHOLD;
+
+const decodedConfidently = (segment: TranscriptionSegment): boolean =>
+  segment.avgLogprob != null &&
+  segment.avgLogprob >= NO_SPEECH_AVG_LOGPROB_THRESHOLD;
+
 /**
- * True when a segment is near-certain silence. Providers that omit
- * `avgLogprob` fall back to the probability alone.
+ * True when a segment is near-certain silence: the model flagged its window
+ * as silence and either the decoder was unsure of the words, the provider
+ * sent no `avgLogprob`, or the segment's own audio holds no speech energy.
+ * The last case catches confident hallucinations such as "Thanks." over room
+ * tone without dropping quiet speech, which does carry energy.
  */
-export const isLikelySilentSegment = (
-  segment: TranscriptionSegment,
-): boolean => {
-  if (
-    segment.noSpeechProb == null ||
-    segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD
-  ) {
-    return false;
-  }
-  return (
-    segment.avgLogprob == null ||
-    segment.avgLogprob < NO_SPEECH_AVG_LOGPROB_THRESHOLD
-  );
-};
+export const isLikelySilentSegment = (segment: TranscriptionSegment): boolean =>
+  flaggedAsSilence(segment) &&
+  (!decodedConfidently(segment) || segment.audioSilent === true);
+
+/**
+ * Whisper segment timestamps can drift by a fraction of a second, so the
+ * measured span is widened on both sides. A wider span can only add energy,
+ * which keeps the segment.
+ */
+export const SEGMENT_AUDIO_PAD_SEC = 0.5;
+
+/**
+ * Measures the audio under each segment the probability test alone would
+ * keep (flagged as silence yet decoded confidently) and sets `audioSilent`.
+ * `samples` must be the exact audio the provider transcribed, since segment
+ * times are relative to it. Segments without usable times, or whose span
+ * falls outside the audio, are left unmarked and so keep today's behavior.
+ */
+export const markSilentSegmentAudio = (
+  segments: TranscriptionSegment[] | undefined,
+  samples: Exclude<AudioSamples, null | undefined>,
+  sampleRate: number,
+): TranscriptionSegment[] | undefined =>
+  segments?.map((segment) => {
+    if (
+      !flaggedAsSilence(segment) ||
+      !decodedConfidently(segment) ||
+      segment.start == null ||
+      segment.end == null ||
+      segment.end <= segment.start ||
+      sampleRate <= 0
+    ) {
+      return segment;
+    }
+    const from = Math.max(
+      0,
+      Math.floor((segment.start - SEGMENT_AUDIO_PAD_SEC) * sampleRate),
+    );
+    const to = Math.min(
+      samples.length,
+      Math.ceil((segment.end + SEGMENT_AUDIO_PAD_SEC) * sampleRate),
+    );
+    if (to <= from) {
+      return segment;
+    }
+    return {
+      ...segment,
+      audioSilent: !hasSpeechEnergy(samples.slice(from, to), sampleRate),
+    };
+  });
 
 /**
  * True when adjacent segment texts lack any boundary whitespace (`\s`, including

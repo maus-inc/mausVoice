@@ -16,4 +16,19 @@ describe("parseSdkTranscription segments", () => {
       { text: " world", noSpeechProb: undefined, avgLogprob: undefined },
     ]);
   });
+
+  it("reads segment start and end times in seconds", () => {
+    const result = parseSdkTranscription({
+      text: "hello world",
+      segments: [
+        { text: "hello", start: 0, end: 1.2 },
+        { text: " world", start: "1.2", end: null },
+      ],
+    });
+
+    expect(result.segments?.map(({ start, end }) => ({ start, end }))).toEqual([
+      { start: 0, end: 1.2 },
+      { start: undefined, end: undefined },
+    ]);
+  });
 });

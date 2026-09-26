@@ -137,6 +137,8 @@ export const openaiCompatibleTranscribeAudio = async ({
           text: typeof segment?.text === "string" ? segment.text : "",
           noSpeechProb: segment?.no_speech_prob,
           avgLogprob: segment?.avg_logprob,
+          start: segment?.start,
+          end: segment?.end,
         })),
       )
     : undefined;

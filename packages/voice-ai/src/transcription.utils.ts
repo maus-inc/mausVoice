@@ -4,6 +4,9 @@ export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
   avgLogprob?: number;
+  /** Segment bounds in seconds from the start of the submitted audio. */
+  start?: number;
+  end?: number;
 };
 
 export type TranscribeAudioOutput = {
@@ -75,6 +78,8 @@ export function parseSdkTranscription(
             typeof s.no_speech_prob === "number" ? s.no_speech_prob : undefined,
           avgLogprob:
             typeof s.avg_logprob === "number" ? s.avg_logprob : undefined,
+          start: typeof s.start === "number" ? s.start : undefined,
+          end: typeof s.end === "number" ? s.end : undefined,
         };
       });
     }
