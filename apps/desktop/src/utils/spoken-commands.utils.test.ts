@@ -177,6 +177,34 @@ describe("applySpokenCommands", () => {
     expect(applySpokenCommands(input)).toBe(expected);
   });
 
+  it.each([
+    "the difficult period Apple faced",
+    "it was a quiet period Sarah remembered fondly",
+    "revenue fell during a rough period Microsoft reported",
+    "I'll scratch that Netflix subscription",
+  ])(
+    "keeps a command word literal before a capitalized name: %s",
+    (sentence) => {
+      expect(applySpokenCommands(sentence)).toBe(sentence);
+    },
+  );
+
+  it.each([
+    ["I finished period Then I left", "I finished. Then I left"],
+    ["I finished period I left early", "I finished. I left early"],
+    [
+      "Thanks for the help period Best regards",
+      "Thanks for the help. Best regards",
+    ],
+    ["It works period The tests pass", "It works. The tests pass"],
+    ["Hello world scratch that The plan changed", "The plan changed"],
+  ])(
+    "still treats a capitalized sentence opener as a new sentence: %s",
+    (input, expected) => {
+      expect(applySpokenCommands(input)).toBe(expected);
+    },
+  );
+
   it("leaves a mid-sentence period alone even when meant as a command", () => {
     // A lowercase word straight after "period" reads as the noun. Speakers
     // who pause get a comma or capital from the model, which does apply.
