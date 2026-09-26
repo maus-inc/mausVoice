@@ -92,11 +92,15 @@ export const SignInForm = () => {
     // Key by (uid, kind, providerName) only — NOT on the draft value itself,
     // because the draft is mutated by user typing and would otherwise
     // re-trigger this effect on every keystroke and clobber input.
-    const prefillSource = hasUsableDraft
-      ? onboardingNameDraftUserId === auth.uid
-        ? `owned-draft:${auth.uid}`
-        : `ownerless-draft:${auth.uid}`
-      : `provider:${auth.uid}:${providerName}`;
+    let prefillSource: string;
+    if (hasUsableDraft) {
+      prefillSource =
+        onboardingNameDraftUserId === auth.uid
+          ? `owned-draft:${auth.uid}`
+          : `ownerless-draft:${auth.uid}`;
+    } else {
+      prefillSource = `provider:${auth.uid}:${providerName}`;
+    }
     if (prefilledNameSource.current === prefillSource) return;
     prefilledNameSource.current = prefillSource;
     produceAppState((draft) => {
@@ -105,12 +109,14 @@ export const SignInForm = () => {
       // provider name or reset to empty. Clears editable fields together
       // with the persisted draft.
       if (onboardingNameDraft && !draftBelongsToUser) {
+        const foreignDraftName = providerName.length > 0 ? providerName : "";
         applyOnboardingNameDraft(
           draft.onboarding,
-          createOnboardingNameDraft(providerName),
+          createOnboardingNameDraft(foreignDraftName),
         );
-        draft.local.onboardingNameDraft = providerName;
-        draft.local.onboardingNameDraftUserId = providerName ? auth.uid : null;
+        draft.local.onboardingNameDraft = foreignDraftName;
+        draft.local.onboardingNameDraftUserId =
+          foreignDraftName.length > 0 ? auth.uid : null;
         return;
       }
       if (!prefillName) {
