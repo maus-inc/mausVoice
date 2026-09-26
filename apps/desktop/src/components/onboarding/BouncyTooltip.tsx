@@ -73,11 +73,12 @@ export const BouncyTooltip = ({
     <Box
       sx={{
         position: "absolute",
-        // Hangs below the anchoring card rather than sitting in a reserved
-        // strip beneath it. A bottom-anchored tooltip grows upward as its
-        // content wraps, which would push the arrow and the first line of copy
-        // over the card.
-        top: "100%",
+        // Sits inside the strip the anchoring container reserves beneath the
+        // card, which is what keeps it clear of the step dots below. A
+        // two-line bubble is taller than that strip and will reach the card's
+        // lower edge; sizing the strip is a layout decision for whoever tunes
+        // the card, not something this component can absorb.
+        bottom: 0,
         left: 0,
         right: 0,
         display: "flex",

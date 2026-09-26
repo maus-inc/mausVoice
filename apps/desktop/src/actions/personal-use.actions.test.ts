@@ -158,6 +158,22 @@ describe("configurePersonalDefaults", () => {
     expect(apiKeyActionsMock.updateApiKey).not.toHaveBeenCalled();
   });
 
+  // getPersonalDeepgramApiKey also adopts a row matched on provider and name,
+  // so its id is not necessarily the personal-deepgram constant. The update
+  // must carry the row's real id: update_api_key matches on id, so a hardcoded
+  // constant would update zero rows and throw on every app start, because this
+  // function runs from RootSideEffects on every launch.
+  it("updates the adopted key by its own id, not the default id", async () => {
+    setApiKeys([deepgramKey({ id: "adopted-7f3a" })]);
+
+    await configurePersonalDefaults();
+
+    expect(apiKeyActionsMock.updateApiKey).toHaveBeenCalledWith({
+      id: "adopted-7f3a",
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
+    });
+  });
+
   // configurePersonalDefaults runs from RootSideEffects on every app start, so
   // a second run must not repeat the write.
   it("writes once across repeated starts, leaving the store holding the model", async () => {

@@ -16,10 +16,12 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
         (theme) => ({
           minWidth: 22,
           minHeight: 22,
-          // minWidth overrides the flex automatic minimum size, so without
-          // this a cap in a squeezed row can render narrower than its label
-          // and the text spills past the painted cap. The two rows that
-          // squeeze are the onboarding tooltip bubble and DictationInstruction.
+          // minWidth replaces the flexbox automatic minimum size, so without
+          // this a cap can render narrower than its label and the text spills
+          // past the painted cap. It bites where a badge sits inline in a
+          // sentence: the inline-flex badge shrink-to-fits its line, and the
+          // caps are flex items of a row that cannot wrap. That is
+          // KeybindingsForm, FeatureReleaseDialog and ManualStylingLayout.
           flexShrink: 0,
           px: 0.75,
           py: 0.25,

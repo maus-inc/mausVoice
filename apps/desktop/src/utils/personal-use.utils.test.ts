@@ -9,19 +9,27 @@ import {
 } from "./personal-use.utils";
 
 describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
-  // Pins the value to the provider's own model union. Indexing a widened array
-  // would silently produce `string | undefined`, which is assignable to the
-  // optional update payload and would turn the write into a no-op.
+  // Pin the value itself. This and the repo check below read the same array, so
+  // without a literal assertion a reorder or a different first entry would move
+  // the preset and the expectation together and stay green.
+  it("is Deepgram's current default model", () => {
+    expect(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL).toBe("nova-3");
+  });
+
+  // The preset must stay in the provider's own model union and must not become
+  // nullable: `string | undefined` is assignable to the optional update
+  // payload, so a widened array would silently turn the write into a no-op.
+  // `toExtend` rather than `toEqualTypeOf`, because adding a second Deepgram
+  // model widens that union, and a growing catalog is not a broken preset.
   it("stays a non-nullable Deepgram model", () => {
     expectTypeOf(
       PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
-    ).toEqualTypeOf<DeepgramTranscriptionModel>();
+    ).toExtend<DeepgramTranscriptionModel>();
   });
 
   // Asserts against the provider repo rather than the shared constant, because
-  // the repo is what populates the model picker. Comparing the constant to the
-  // array it was defined from would stay green even if the repo stopped
-  // offering the model, which is the case this preset exists to prevent.
+  // the repo is what populates the model picker. This covers the repo starting
+  // to filter, or the picker reading its list from somewhere else.
   it("is offered by the Deepgram provider that backs the picker", async () => {
     const offered = await getModelProviderRepo(
       "deepgram",

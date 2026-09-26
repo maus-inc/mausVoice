@@ -63,8 +63,9 @@ const PAGE_COUNT = 2;
 /**
  * The notes/email demo card mimics a third-party app window: white card with a
  * grey header strip. `overlay` is rendered inside the relative container so
- * absolutely-positioned tooltips keep anchoring to the card. The tooltip hangs
- * below the container, so no bottom padding is reserved for it.
+ * absolutely-positioned tooltips keep anchoring to the card. The bottom padding
+ * is the strip the tooltip occupies, which is what keeps it from reaching the
+ * step dots below; BouncyTooltip is bottom-anchored into it.
  */
 const TutorialWindow = ({
   header,
@@ -76,7 +77,7 @@ const TutorialWindow = ({
   overlay?: React.ReactNode;
 }) => {
   return (
-    <Box sx={{ position: "relative" }}>
+    <Box sx={{ position: "relative", pb: 6 }}>
       <Stack
         spacing={0}
         sx={{
@@ -400,7 +401,7 @@ const EmailStep = ({
           </Typography>
         </Box>
       </Box>
-      <Box sx={{ position: "relative" }}>
+      <Box sx={{ position: "relative", pb: 6 }}>
         <TextField
           multiline
           minRows={8}

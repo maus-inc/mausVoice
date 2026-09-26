@@ -177,10 +177,14 @@ export default defineConfig(async ({ mode }) => {
       // Tauri v2 serves the release frontend from its own custom protocol
       // origin (`tauri://localhost`, or `http://tauri.localhost` on Windows).
       // The `asset:` protocol is separate and only covers scoped local files
-      // such as recorded audio. The `crossorigin` attribute Vite adds to
-      // module/preload tags is unnecessary here, since those URLs are
-      // same-origin either way. Strip it only from <script>/<link> tags so we
-      // never touch inline strings.
+      // such as recorded audio.
+      //
+      // This strips the `crossorigin` attribute Vite adds to module and preload
+      // tags. Same-origin fetches do not need it, and the handler was seen
+      // rejecting these loads and leaving a blank window, so the exact
+      // mechanism behind that was never pinned down. Keep the strip on that
+      // basis: it costs nothing, and removing it re-tests a blank window.
+      // Strip only from <script>/<link> tags so inline strings are never touched.
       {
         name: "tauri-strip-crossorigin",
         transformIndexHtml(html) {

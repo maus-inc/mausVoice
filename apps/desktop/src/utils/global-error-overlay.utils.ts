@@ -90,7 +90,10 @@ export const shouldPaintFatalRejection = (): boolean => !appHasMounted();
 // plain `Event`, not an `ErrorEvent`: `event.error` is null and
 // `event.message` is undefined. Their `target` is the element, so read the
 // failing URL from there to give a useful message.
-const describeWindowError = (event: ErrorEvent): string => {
+// Exported so the pre-bundle copy of this message in index.html can be checked
+// against the live string here, rather than against source text that could hold
+// a stale duplicate.
+export const describeWindowError = (event: ErrorEvent): string => {
   const target = event.target as EventTarget | null;
   if (isFatalResourceTarget(target)) {
     const url =
