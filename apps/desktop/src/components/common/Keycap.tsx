@@ -16,11 +16,10 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
         (theme) => ({
           minWidth: 22,
           minHeight: 22,
-          // A keycap lives in compressible flex rows (the onboarding tutorial
-          // tooltip, inline sentences). Without this the cap shrinks toward its
-          // 22px floor while the label keeps its full width, so the painted
-          // background ends mid-label and the trailing characters render
-          // outside the cap, which reads as a stray letter next to the key.
+          // minWidth overrides the flex automatic minimum size, so without
+          // this a cap in a squeezed row can render narrower than its label
+          // and the text spills past the painted cap. The two rows that
+          // squeeze are the onboarding tooltip bubble and DictationInstruction.
           flexShrink: 0,
           px: 0.75,
           py: 0.25,

@@ -98,7 +98,7 @@ const describeWindowError = (event: ErrorEvent): string => {
       target instanceof HTMLScriptElement
         ? target.src
         : (target as HTMLLinkElement).href;
-    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Tauri v2 serves the app from its own custom protocol origin (tauri://localhost, or http://tauri.localhost on Windows), so this is almost always a path issue rather than a CORS one: if the built index.html uses a relative base, a URL like /dashboard/assets/x.js 404s because the asset path resolves under the current route. Check that vite's base is absolute.`;
+    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe asset could not be loaded. Tauri v2 serves the app from tauri://localhost (http://tauri.localhost on Windows) and answers unknown paths with index.html, so a URL that resolves to the wrong place comes back as HTML and the module is rejected on its MIME type.`;
   }
   const message = event.message ?? "";
   return event.error != null ? describe(event.error) : message;

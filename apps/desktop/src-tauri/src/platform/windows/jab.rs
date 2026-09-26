@@ -77,6 +77,18 @@ struct JabApi {
     set_caret_position: SetCaretPositionFn,
 }
 
+// Runs a console-subsystem helper without flashing a window. This binary is
+// GUI-subsystem in release, so it owns no console and a child started without
+// CREATE_NO_WINDOW is given a brand new one, which appears on screen.
+fn run_console_helper(program: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+}
+
 fn find_jab_dll() -> Option<std::path::PathBuf> {
     // 1. JAVA_HOME environment variable
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
@@ -89,7 +101,7 @@ fn find_jab_dll() -> Option<std::path::PathBuf> {
     }
 
     // 2. `where java` on PATH
-    if let Ok(output) = std::process::Command::new("where").arg("java").output() {
+    if let Ok(output) = run_console_helper("where", &["java"]) {
         if let Ok(path_str) = String::from_utf8(output.stdout) {
             if let Some(line) = path_str.lines().next() {
                 if let Some(bin_dir) = std::path::Path::new(line.trim()).parent() {

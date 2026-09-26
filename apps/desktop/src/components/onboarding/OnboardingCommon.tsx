@@ -44,10 +44,9 @@ export type OnboardingFormLayoutProps = {
   actions?: React.ReactNode;
 };
 
-// Emotion's serializer only accepts a `content` value that is a keyword or is
-// itself wrapped in quotes, and it rejects an empty string outright. The
-// pseudo-elements below must render a box, so the empty string is spelled as a
-// quoted `""`, which serializes to a valid CSS `content: ""`.
+// The fade strips below need a pseudo-element, and Emotion rejects an unquoted
+// `content`: development throws on `''` and production emits `content:` with no
+// value, which the CSS parser drops. An empty string has to be spelled quoted.
 const EMPTY_PSEUDO_CONTENT = '""';
 
 export const OnboardingContinueButton = ({

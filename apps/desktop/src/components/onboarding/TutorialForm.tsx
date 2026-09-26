@@ -63,7 +63,8 @@ const PAGE_COUNT = 2;
 /**
  * The notes/email demo card mimics a third-party app window: white card with a
  * grey header strip. `overlay` is rendered inside the relative container so
- * absolutely-positioned tooltips keep anchoring to the card.
+ * absolutely-positioned tooltips keep anchoring to the card. The tooltip hangs
+ * below the container, so no bottom padding is reserved for it.
  */
 const TutorialWindow = ({
   header,
@@ -75,7 +76,7 @@ const TutorialWindow = ({
   overlay?: React.ReactNode;
 }) => {
   return (
-    <Box sx={{ position: "relative", pb: 6 }}>
+    <Box sx={{ position: "relative" }}>
       <Stack
         spacing={0}
         sx={{

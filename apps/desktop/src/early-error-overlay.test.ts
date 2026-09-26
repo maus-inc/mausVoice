@@ -187,6 +187,21 @@ describe("early error overlay", () => {
     expect(nodes.has("maus-global-error-overlay")).toBe(false);
   });
 
+  // The same asset-failure text lives in the bundle handler and in the
+  // pre-bundle handler in index.html. The index.html copy is the one that runs
+  // when the bundle never loads at all, so the two must not drift.
+  it("keeps the index.html asset message in sync with the bundle handler", () => {
+    const bundleHandler = readFileSync(
+      new URL("./utils/global-error-overlay.utils.ts", import.meta.url),
+      "utf8",
+    );
+    const shared =
+      "The asset could not be loaded. Tauri v2 serves the app from tauri://localhost (http://tauri.localhost on Windows) and answers unknown paths with index.html, so a URL that resolves to the wrong place comes back as HTML and the module is rejected on its MIME type.";
+
+    expect(bundleHandler).toContain(shared);
+    expect(indexHtml).toContain(shared.replaceAll("\n", "\\n"));
+  });
+
   it("does not paint a fatal rejection overlay after React has mounted", () => {
     const { nodes, listeners } = installEarlyOverlay([{}]);
 

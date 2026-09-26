@@ -255,4 +255,15 @@ export const configurePersonalDefaults = async (): Promise<void> => {
   if (groqApiKey) {
     await applyPersonalGenerationDefaults(groqApiKey);
   }
+
+  // Backfill here as well as on save. Keys created before the Deepgram preset
+  // existed carry no transcription model, and this is the only path that runs
+  // for an already-configured install, so without it those users keep an empty
+  // model picker until they manually re-enter the key.
+  if (deepgramApiKey && !deepgramApiKey.transcriptionModel) {
+    await updateApiKey({
+      id: deepgramApiKey.id,
+      transcriptionModel: PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
+    });
+  }
 };

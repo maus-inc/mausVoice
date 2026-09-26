@@ -4,7 +4,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 use crate::platform::permissions;
 
@@ -139,7 +139,7 @@ pub fn request_elevation_relaunch(app: tauri::AppHandle) -> crate::platform::Nat
             PCWSTR(exe_wide.as_ptr()),
             PCWSTR(args_wide.as_ptr()),
             PCWSTR::null(),
-            SW_HIDE,
+            SW_SHOWNORMAL,
         )
     };
 
@@ -240,7 +240,7 @@ fn decide_parent_exit(
 fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        CreateProcessW, OpenProcess, WaitForSingleObject, CREATE_NO_WINDOW, INFINITE,
+        CreateProcessW, OpenProcess, WaitForSingleObject, INFINITE, PROCESS_CREATION_FLAGS,
         PROCESS_INFORMATION, PROCESS_SYNCHRONIZE, STARTUPINFOW,
     };
 
@@ -298,11 +298,7 @@ fn run_elevate_helper(parent_pid: u32, rest_args: &[String]) {
             None,
             None,
             false,
-            // Hides the console a console-subsystem build would flash here, and
-            // is ignored for a non-console app, so it cannot touch the main
-            // window. STARTF_USESHOWWINDOW would: it sets the launched
-            // process's first window state, and that process is mausVoice.
-            CREATE_NO_WINDOW,
+            PROCESS_CREATION_FLAGS(0),
             None,
             None,
             &si,

@@ -87,10 +87,12 @@ export default defineConfig(async ({ mode }) => {
     fileURLToPath(new URL(`./src/preview/tauri/${name}.ts`, import.meta.url));
 
   return {
-    // Use absolute base so asset URLs resolve correctly regardless of the
-    // current route path (e.g. after clearing local data and reloading at
-    // /dashboard/). The crossorigin attribute is stripped by the plugin
-    // below, preventing CORS-mode failures.
+    // Absolute base so asset URLs resolve from any route path. The app uses
+    // createBrowserRouter, so a relative base resolves ./assets/* under the
+    // current route (/dashboard/assets/* at /dashboard/settings), which is a
+    // path the custom protocol does not serve. Tauri answers it with
+    // index.html, so the module script is rejected on its MIME type and the
+    // window stays blank.
     base: "/",
     // The preview keeps production page modules but substitutes the narrow
     // native boundary. Aliases are enabled only in the explicit preview mode;
@@ -176,9 +178,8 @@ export default defineConfig(async ({ mode }) => {
       // origin (`tauri://localhost`, or `http://tauri.localhost` on Windows).
       // The `asset:` protocol is separate and only covers scoped local files
       // such as recorded audio. The `crossorigin` attribute Vite adds to
-      // module/preload tags forces a CORS-mode fetch that the custom protocol
-      // handler can reject, leaving a blank white window. Same-origin module
-      // loading does not need it. Strip it only from <script>/<link> tags so we
+      // module/preload tags is unnecessary here, since those URLs are
+      // same-origin either way. Strip it only from <script>/<link> tags so we
       // never touch inline strings.
       {
         name: "tauri-strip-crossorigin",

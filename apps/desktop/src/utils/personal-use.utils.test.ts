@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { DEEPGRAM_TRANSCRIPTION_MODELS } from "@maus-inc/voice-ai";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { DeepgramTranscriptionModel } from "@maus-inc/voice-ai";
+import { getModelProviderRepo } from "../repos";
 import {
   PERSONAL_DEEPGRAM_API_KEY_ID,
   PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
@@ -8,10 +9,25 @@ import {
 } from "./personal-use.utils";
 
 describe("PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL", () => {
-  it("presets a model the Deepgram provider actually offers", () => {
-    expect(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL).toBe(
-      DEEPGRAM_TRANSCRIPTION_MODELS[0],
-    );
+  // Pins the value to the provider's own model union. Indexing a widened array
+  // would silently produce `string | undefined`, which is assignable to the
+  // optional update payload and would turn the write into a no-op.
+  it("stays a non-nullable Deepgram model", () => {
+    expectTypeOf(
+      PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL,
+    ).toEqualTypeOf<DeepgramTranscriptionModel>();
+  });
+
+  // Asserts against the provider repo rather than the shared constant, because
+  // the repo is what populates the model picker. Comparing the constant to the
+  // array it was defined from would stay green even if the repo stopped
+  // offering the model, which is the case this preset exists to prevent.
+  it("is offered by the Deepgram provider that backs the picker", async () => {
+    const offered = await getModelProviderRepo(
+      "deepgram",
+    ).getTranscriptionModels({});
+
+    expect(offered).toContain(PERSONAL_DEEPGRAM_TRANSCRIPTION_MODEL);
   });
 });
 

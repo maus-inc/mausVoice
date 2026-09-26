@@ -31,6 +31,11 @@ export const HotkeyBadge = ({ keys, onClick, sx }: HotkeyBadgeProps) => {
         {
           display: "inline-flex",
           alignItems: "center",
+          // Caps never shrink, so without this a long combo stays one wide
+          // unbreakable box and overflows whatever inline row or tooltip
+          // bubble holds it, where a pane clip can cut the last cap in half.
+          // Wrapping here keeps the badge's width down to its widest single cap.
+          flexWrap: "wrap",
           ...(onClick
             ? {
                 border: "none",

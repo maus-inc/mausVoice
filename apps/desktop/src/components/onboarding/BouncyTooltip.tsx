@@ -73,7 +73,11 @@ export const BouncyTooltip = ({
     <Box
       sx={{
         position: "absolute",
-        bottom: 0,
+        // Hangs below the anchoring card rather than sitting in a reserved
+        // strip beneath it. A bottom-anchored tooltip grows upward as its
+        // content wraps, which would push the arrow and the first line of copy
+        // over the card.
+        top: "100%",
         left: 0,
         right: 0,
         display: "flex",
@@ -110,6 +114,11 @@ export const BouncyTooltip = ({
           sx={{
             display: "flex",
             alignItems: "center",
+            // Keycaps refuse to shrink below their label, so a long hotkey
+            // combo has to be able to move onto its own line. Without this the
+            // row overflows the bubble and the clip on the surrounding pane
+            // cuts the last cap in half.
+            flexWrap: "wrap",
             gap: 1,
             bgcolor: "primary.main",
             color: "primary.contrastText",
