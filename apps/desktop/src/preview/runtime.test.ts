@@ -120,6 +120,72 @@ describe("browser preview transport", () => {
     );
   });
 
+  it("keeps a stored openRouterConfig when an update omits it, as the desktop NULL guard does", async () => {
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-openrouter-key",
+        name: "OpenRouter",
+        provider: "openrouter",
+        key: `${"sk"}-preview`,
+      },
+    });
+    const stored = JSON.stringify({
+      favoriteModels: ["anthropic/claude-sonnet-4"],
+    });
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "preview-openrouter-key", openRouterConfig: stored },
+    });
+
+    // The desktop writes `openrouter_config = CASE WHEN ?9 IS NOT NULL THEN
+    // ?9 ELSE openrouter_config END`, so an update that does not carry the
+    // config has to leave it alone instead of clearing it. The repo always
+    // sends the key, with an undefined value when the caller omitted it, so
+    // that is the shape that has to survive.
+    await invokePreviewCommand("api_key_update", {
+      request: {
+        id: "preview-openrouter-key",
+        name: "Renamed",
+        openRouterConfig: undefined,
+      },
+    });
+
+    const keys =
+      await invokePreviewCommand<Record<string, unknown>[]>("api_key_list");
+    const saved = keys.find((key) => key.id === "preview-openrouter-key");
+    expect(saved?.name).toBe("Renamed");
+    expect(saved?.openRouterConfig).toBe(stored);
+  });
+
+  it("applies an explicit openRouterConfig on update", async () => {
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-openrouter-key",
+        name: "OpenRouter",
+        provider: "openrouter",
+        key: `${"sk"}-preview`,
+      },
+    });
+    const first = JSON.stringify({
+      favoriteModels: ["anthropic/claude-sonnet-4"],
+    });
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "preview-openrouter-key", openRouterConfig: first },
+    });
+    const second = JSON.stringify({ providerRouting: { order: ["together"] } });
+
+    const updated = await invokePreviewCommand<Record<string, unknown>>(
+      "api_key_update",
+      { request: { id: "preview-openrouter-key", openRouterConfig: second } },
+    );
+
+    expect(updated.openRouterConfig).toBe(second);
+    const keys =
+      await invokePreviewCommand<Record<string, unknown>[]>("api_key_list");
+    expect(
+      keys.find((key) => key.id === "preview-openrouter-key")?.openRouterConfig,
+    ).toBe(second);
+  });
+
   it.each([
     { prefix: {}, hotkeys: [] },
     { prefix: "", hotkeys: [] },

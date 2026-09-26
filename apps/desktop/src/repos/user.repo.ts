@@ -19,16 +19,27 @@ const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";
 
 /**
  * A legacy profile predates both the column and the anchor, so its age is
- * genuinely unknown. Epoch is the honest answer: it is a real lower bound, it
- * never drifts, and it keeps the release dialog reachable for exactly the
- * pre-existing users it was written for. `onboardedAt` has no such honest
- * filler, so it stays `null` and analytics reports "unknown" instead of
- * inventing an onboarding date.
+ * genuinely unknown. Epoch is the honest answer for display: it is a real
+ * lower bound, it never drifts, and it keeps the release dialog reachable for
+ * exactly the pre-existing users it was written for. It is a floor, not an
+ * observation, so it must never be stored; a save that persisted it would make
+ * the account report a 1970 creation date forever and would lock the anchor so
+ * a real instant arriving later could never take effect. `onboardedAt` has no
+ * such filler at all, so it stays `null` and analytics reports "unknown"
+ * instead of inventing an onboarding date.
  */
 const UNKNOWN_CREATED_AT = new Date(0).toISOString();
 
 const isTimestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
+
+/**
+ * The epoch floor stands for "unknown", so a value equal to it is never a real
+ * observation wherever it came from: the column, the anchor, or a user object
+ * a previous read already rounded down to the floor.
+ */
+const isKnownInstant = (value: unknown): value is string =>
+  isTimestamp(value) && value !== UNKNOWN_CREATED_AT;
 
 const readTimestampAnchor = (key: string): string | null => {
   const storage = getLocalStorage();
@@ -62,12 +73,23 @@ const writeTimestampAnchorOnce = (key: string, value: string): void => {
   }
 };
 
-const resolveCreatedAt = (persisted: string | null | undefined): string => {
-  if (isTimestamp(persisted)) {
+/**
+ * The newest real instant observed for `createdAt`: the column first, then the
+ * anchor. Null when neither holds one, which means the value is still unknown
+ * and `UNKNOWN_CREATED_AT` is the only honest thing to show.
+ */
+const observedCreatedAt = (
+  persisted: string | null | undefined,
+): string | null => {
+  if (isKnownInstant(persisted)) {
     return persisted;
   }
-  return readTimestampAnchor(ACCOUNT_CREATED_AT_KEY) ?? UNKNOWN_CREATED_AT;
+  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_KEY);
+  return isKnownInstant(anchored) ? anchored : null;
 };
+
+const resolveCreatedAt = (persisted: string | null | undefined): string =>
+  observedCreatedAt(persisted) ?? UNKNOWN_CREATED_AT;
 
 const resolveOnboardedAt = (
   persisted: string | null | undefined,
@@ -160,13 +182,16 @@ const fromLocalUser = (localUser: LocalUser): User => {
 };
 
 export const toLocalUser = (user: User): LocalUser => {
-  // The save is what makes the timestamp durable: the resolved value (column,
-  // then anchor, then the honest fallback) is written to SQLite, and the first
-  // save that knows a real instant also plants the anchor so a later read can
-  // still recover it if the row is ever lost.
-  const createdAt = resolveCreatedAt(user.createdAt);
+  // The save is what makes the timestamp durable: a real instant (column, then
+  // anchor) is written to SQLite and, the first time one is known, also planted
+  // as the anchor so a later read can still recover it if the row is lost. An
+  // unknown `createdAt` is written as null, never as the epoch floor, so a real
+  // instant arriving later still wins.
+  const observed = observedCreatedAt(user.createdAt);
   const onboardedAt = resolveOnboardedAt(user.onboardedAt);
-  writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_KEY, createdAt);
+  if (observed != null) {
+    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_KEY, observed);
+  }
   if (onboardedAt != null) {
     writeTimestampAnchorOnce(ONBOARDED_AT_KEY, onboardedAt);
   }
@@ -195,7 +220,7 @@ export const toLocalUser = (user: User): LocalUser => {
     streak: user.streak ?? null,
     streakRecordedAt: user.streakRecordedAt ?? null,
     referralSource: user.referralSource ?? null,
-    createdAt,
+    createdAt: observed,
     onboardedAt,
   };
 };

@@ -264,6 +264,34 @@ describe("useContextMenu", () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it("returns focus to the surface on Tab instead of dropping it on the body", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = container.querySelector("button")!;
+    nativeContextMenu(button);
+    expect(document.activeElement).toBe(
+      document.body.querySelector('[role="menu"]'),
+    );
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    // The menu held the focused node, so dismissing it without a restore
+    // target unmounts whatever was focused and leaves the document on the
+    // body. The browser's next Tab then restarts from the top of the page
+    // rather than continuing where the user was.
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
+
   it("closes on Shift+Tab without swallowing the key either", () => {
     act(() => {
       root.render(createElement(Harness));

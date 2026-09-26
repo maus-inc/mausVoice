@@ -35,9 +35,9 @@ describe("object arguments are masked before they reach the log sink", () => {
     );
   });
 
-  it("keeps the log line and falls back to the raw value when the masker faults", () => {
+  it("keeps the log line and withholds the value when the masker faults", () => {
     // The first read is the serialization gate, the second is the masker, and
-    // the third is the fallback serialization, so only the masker faults.
+    // the third would be the fallback serialization, so only the masker faults.
     let reads = 0;
     const flaky = {
       label: "visible",
@@ -48,7 +48,9 @@ describe("object arguments are masked before they reach the log sink", () => {
       },
     };
     expect(() => getLogger().info("flaky", flaky)).not.toThrow();
-    expect(logged()).toBe('flaky {"label":"visible","token":"opaque"}');
+    expect(nativeLog.info).toHaveBeenCalledTimes(1);
+    expect(logged()).toBe("flaky [redaction-failed]");
+    expect(logged()).not.toContain("opaque");
   });
 
   it("passes a non-sensitive object through unchanged", () => {
@@ -68,5 +70,22 @@ describe("object arguments are masked before they reach the log sink", () => {
     circular.self = circular;
     getLogger().info(circular);
     expect(logged()).toBe("[object Object]");
+  });
+
+  it("keeps the rendered form of an argument that renders itself", () => {
+    getLogger().info("at", { startedAt: new Date(0) });
+    expect(logged()).toBe('at {"startedAt":"1970-01-01T00:00:00.000Z"}');
+  });
+
+  it("keeps the rendered form of a top level argument that renders itself", () => {
+    getLogger().info(new Date(0));
+    expect(logged()).toBe('"1970-01-01T00:00:00.000Z"');
+  });
+
+  it("masks a secret reachable only through toJSON", () => {
+    getLogger().info("cfg", {
+      config: { toJSON: () => ({ apiKey: "opaque" }) },
+    });
+    expect(logged()).toBe('cfg {"config":{"apiKey":"[redacted]"}}');
   });
 });

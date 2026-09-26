@@ -554,10 +554,12 @@ export const useContextMenu = (): UseContextMenuReturn => {
         return;
       }
       if (e.key === "Tab") {
-        // A vertical menu must not cycle focus with Tab. Dismiss without
-        // restoring focus and without preventDefault, so the browser moves
-        // focus onward from where the user was before the menu opened.
-        closeMenu(false);
+        // A vertical menu must not cycle focus with Tab, so the key is left
+        // alone for the browser to move focus onward. The restore still has
+        // to happen: the menu itself is the focused node, so unmounting it
+        // without a restore target leaves focus on the body and the browser
+        // then restarts navigation from the top of the document.
+        closeMenu(true);
       }
     };
 

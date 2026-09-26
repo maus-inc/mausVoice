@@ -280,17 +280,30 @@ type ProcessedTranscriptParse = {
   warning: string | null;
   /**
    * The provider answered, but what it sent cannot be used, so the transcript
-   * is the raw ASR rather than a styled result.
+   * is the raw ASR rather than a styled result. Every outcome that returns the
+   * fallback is degraded, including the throw path: a response cut inside a
+   * code fence never reaches the repair loop, so it produces no styled text
+   * either. Reporting it as not degraded let the retranscription path treat
+   * the run as a success and overwrite the row's polished text with raw ASR.
    */
   degraded: boolean;
 };
+
+/**
+ * Prefix of the warning for a response that could not be parsed at all, as
+ * opposed to one that was repaired into a truncated fragment. Exported so
+ * consumers and tests can tell the two paths apart without restating the
+ * sentence.
+ */
+export const POST_PROCESS_PARSE_FAILURE_PREFIX =
+  "Failed to parse post-processing response";
 
 const parseFailureWarning = (error: unknown): string => {
   const message = unknownToMessage(error);
   const truncationHint = /Unterminated string/i.test(message)
     ? " The model output may have been truncated at its token limit."
     : "";
-  return `Failed to parse post-processing response: ${message}.${truncationHint}`;
+  return `${POST_PROCESS_PARSE_FAILURE_PREFIX}: ${message}.${truncationHint}`;
 };
 
 /**
@@ -334,10 +347,13 @@ const parseProcessedTranscript = (
       degraded: false,
     };
   } catch (e) {
+    // The request came back, so it is not a failed request and must not claim
+    // the persisted failure sentinel. It is still unusable, so the run is
+    // degraded like every other fallback path.
     return {
       transcript: fallback,
       warning: parseFailureWarning(e),
-      degraded: false,
+      degraded: true,
     };
   }
 };
@@ -424,10 +440,10 @@ const applyPostProcessSuccess = (
   // stale postProcessFailed=true on an updated row.
   metadata.postProcessFailed = false;
   metadata.postProcessError = null;
-  // A response that arrived but was cut off or failed validation leaves the
-  // raw ASR in place, so it needs its own flag: the request succeeded, and
-  // calling it a failure would corrupt the persisted failed/succeeded
-  // sentinel that history and the preview runtime read.
+  // A response that arrived but was cut off, failed validation, or could not
+  // be parsed leaves the raw ASR in place, so it needs its own flag: the
+  // request succeeded, and calling it a failure would corrupt the persisted
+  // failed/succeeded sentinel that history and the preview runtime read.
   metadata.postProcessDegraded = parseResult.degraded;
   getLogger().verbose(
     "Post-process mode:",

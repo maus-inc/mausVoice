@@ -6,7 +6,8 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
-import type { OpenRouterConfig } from "@maus-inc/types";
+import type { ApiKeyView } from "@maus-inc/desktop-native-apis";
+import type { ApiKeyProvider, OpenRouterConfig } from "@maus-inc/types";
 import { LocalApiKeyRepo } from "./api-key.repo";
 import {
   OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
@@ -128,15 +129,13 @@ describe("LocalApiKeyRepo - transcription path persistence and clear contract", 
 });
 
 // The Rust `ApiKeyView` field carries `#[serde(rename = "openRouterConfig")]`,
-// which overrides the struct's `rename_all = "camelCase"`. Typing the fixture
-// against the generated binding means changing that rename breaks the build
-// here instead of silently regressing the read below.
-type ApiKeyViewWire = {
-  id: string;
-  name: string;
-  provider: string;
-  createdAt: number;
-  openRouterConfig?: string | null;
+// which overrides the struct's `rename_all = "camelCase"`. Specta emits that
+// rename into the generated binding, so typing the fixture against the binding
+// means changing the rename on the Rust side breaks the build here instead of
+// silently regressing the read below. Specta widens `provider` to `string`, so
+// it is narrowed back to the domain union.
+type ApiKeyViewWire = Omit<ApiKeyView, "provider"> & {
+  provider: ApiKeyProvider;
 };
 
 describe("LocalApiKeyRepo - openRouterConfig wire key casing", () => {

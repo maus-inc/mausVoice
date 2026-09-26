@@ -8,6 +8,13 @@ import {
   type SyncRedactionMode,
 } from "./redaction.utils";
 
+/**
+ * A caller that guards on `typeof value === "object"`, such as the log
+ * serializer, reaches the top level with a value that is not a record.
+ */
+const asRecord = (value: object): Record<string, unknown> =>
+  value as Record<string, unknown>;
+
 describe("redaction.utils", () => {
   describe("redactString", () => {
     it("returns input unchanged when empty", async () => {
@@ -274,6 +281,62 @@ describe("redaction.utils", () => {
       expectTypeOf<SyncRedactionMode>().toEqualTypeOf<"full" | "truncate">();
       expect(redactStringSync("secret-value")).toBe("[redacted]");
       expect(redactStringSync("secret-value", "truncate")).toBe("se***ue");
+    });
+
+    it("keeps the rendered form of a top level value that renders itself", () => {
+      expect(redactObjectSync(asRecord(new Date(0)))).toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+      expect(
+        redactObjectSync(asRecord(new URL("https://example.com/v1"))),
+      ).toBe("https://example.com/v1");
+      expect(redactObjectSync({ toJSON: () => ({ name: "ok" }) })).toEqual({
+        name: "ok",
+      });
+    });
+
+    it("keeps the rendered form of a nested value that renders itself", () => {
+      expect(redactObjectSync({ at: asRecord(new Date(0)) }).at).toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+    });
+
+    it("redacts a secret reachable only through toJSON", () => {
+      const result = redactObjectSync({
+        config: { toJSON: () => ({ password: "hunter2", visible: "kept" }) },
+      });
+      expect(result.config).toEqual({
+        password: "[redacted]",
+        visible: "kept",
+      });
+      const inline = redactObjectSync({
+        note: { toJSON: () => `${"sk"}-abcdefghijklmnopqrstuvwxyz123456` },
+      });
+      expect(inline.note).toBe("[redacted-secret]");
+    });
+
+    it("redacts a value that renders itself under a sensitive key", () => {
+      expect(
+        redactObjectSync({ password: { toJSON: () => "hunter2" } }),
+      ).toEqual({ password: "[redacted]" });
+      expect(
+        redactObjectSync({ auth: { toJSON: () => ({ token: "opaque" }) } }),
+      ).toEqual({ auth: "[redacted]" });
+    });
+
+    it("resolves an array that renders itself instead of walking it", () => {
+      const rows = Object.assign([{ token: "opaque" }], {
+        toJSON: () => ({ token: "opaque" }),
+      });
+      expect(redactObjectSync({ rows })).toEqual({
+        rows: { token: "[redacted]" },
+      });
+    });
+
+    it("terminates when toJSON renders the value itself", () => {
+      const looping: Record<string, unknown> = { label: "ok" };
+      looping.toJSON = () => looping;
+      expect(redactObjectSync({ looping })).toEqual({ looping: "[circular]" });
     });
   });
 

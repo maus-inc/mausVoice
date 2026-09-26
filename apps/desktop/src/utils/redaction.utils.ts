@@ -86,8 +86,12 @@ export const redactError = async (error: unknown): Promise<string> => {
   return message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
+const isObject = (value: unknown): value is object => {
+  return value !== null && typeof value === "object";
+};
+
 const isNestedObject = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isObject(value) && !Array.isArray(value);
 };
 
 const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
@@ -140,21 +144,38 @@ function redactFields(
 }
 
 /**
- * A value with its own toJSON is rendered by JSON.stringify through that
- * method, so walking its own properties would replace the rendered form with
- * an empty object. Such a value is a leaf here, and is still redacted when it
- * sits under a sensitive key.
+ * A value that renders itself through toJSON is rendered through that method
+ * by JSON.stringify, so walking its own properties would replace the rendered
+ * form. Such a value is resolved instead, and the rendered form is redacted,
+ * which keeps a secret reachable only through toJSON from escaping the key
+ * based rules. Under a sensitive key the value is redacted without resolving.
  */
-const hasCustomJsonForm = (value: object): boolean =>
+const hasJsonForm = (value: unknown): value is { toJSON(): unknown } =>
+  isObject(value) &&
   typeof (value as { toJSON?: unknown }).toJSON === "function";
 
 const isTraversable = (
   value: unknown,
-): value is Record<string, unknown> | unknown[] => {
-  return (
-    Array.isArray(value) || (isNestedObject(value) && !hasCustomJsonForm(value))
-  );
-};
+): value is Record<string, unknown> | unknown[] =>
+  Array.isArray(value) || isNestedObject(value);
+
+function redactJsonForm(
+  value: { toJSON(): unknown },
+  sensitiveKeys: string[],
+  forceFull: boolean,
+  seen: WeakSet<object>,
+): unknown {
+  if (forceFull) return REDACTED;
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  try {
+    // A sensitive key is redacted above without resolving, so the rendered
+    // form is redacted under the ordinary key rules.
+    return redactValue(value.toJSON(), sensitiveKeys, false, seen);
+  } finally {
+    seen.delete(value);
+  }
+}
 
 function redactValue(
   value: unknown,
@@ -166,6 +187,9 @@ function redactValue(
     return forceFull
       ? redactStringSync(value, "full")
       : redactStringValue(value);
+  }
+  if (hasJsonForm(value)) {
+    return redactJsonForm(value, sensitiveKeys, forceFull, seen);
   }
   if (!isTraversable(value)) {
     return forceFull ? REDACTED : value;
@@ -187,7 +211,9 @@ function redactValue(
  * Circular references are replaced with "[circular]".
  *
  * This is the synchronous entry point, so a caller that cannot return a
- * promise, such as the log serializer, can use it.
+ * promise, such as the log serializer, can use it. A top level value that
+ * renders itself through toJSON is resolved, exactly as a nested one is, so
+ * the rendered form survives instead of collapsing to an empty object.
  */
 export const redactObjectSync = (
   obj: Record<string, unknown>,
@@ -195,13 +221,12 @@ export const redactObjectSync = (
   forceFull = false,
   seen: WeakSet<object> = new WeakSet(),
 ): Record<string, unknown> => {
-  const alreadySeen = seen.has(obj);
-  seen.add(obj);
-  try {
-    return redactFields(obj, sensitiveKeys, forceFull, seen);
-  } finally {
-    if (!alreadySeen) seen.delete(obj);
-  }
+  // A resolved toJSON form can be any JSON value, so a record is the shape
+  // callers get in the common case rather than a guarantee.
+  return redactValue(obj, sensitiveKeys, forceFull, seen) as Record<
+    string,
+    unknown
+  >;
 };
 
 /**

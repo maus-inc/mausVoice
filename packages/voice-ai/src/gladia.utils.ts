@@ -522,16 +522,26 @@ export const createGladiaStreamingSession = ({
     }
   });
 
-  session.on("connecting", ({ attempt }) => {
+  session.on("connecting", ({ attempt: connectionCount }) => {
     if (disposed) {
       return;
     }
     onConnectionInterrupted?.();
-    // The SDK reports the running connection count here, so `attempt` is 1 for
-    // the initial connect and greater only once the socket has been dropped
-    // and rebuilt. Warning on the first connect would report an interruption
-    // for a perfectly healthy session.
-    if (attempt > 1) {
+    // The `connecting` event carries one counter, and the SDK fills it with the
+    // WebSocket client's session-wide `connectionCount` rather than with that
+    // client's per-connection `attempt`: the WebSocket client emits
+    // `{ connection, attempt }` and the live session forwards it as
+    // `this.emit('connecting', { attempt: connection })`
+    // (node_modules/@gladiaio/sdk/src/v2/live/session.ts). `connectionCount`
+    // starts at 1 and only rises when a dropped socket is rebuilt, so it is the
+    // counter that identifies a reconnect, and a delivered value of 1 can only
+    // be an establishment retry inside the first connection. The SDK emits the
+    // first connect from inside `createSession`, before it attaches this
+    // handler, so no healthy start can reach this callback at all. Warning on a
+    // count of 1 would report an interruption the user never experienced, and
+    // the per-connection `attempt` never arrives here, so the two cases cannot
+    // be told apart if the SDK ever forwards it.
+    if (connectionCount > 1) {
       addWarning(LIVE_RECONNECT_WARNING);
     }
   });

@@ -6,7 +6,6 @@ import { getTranscriptionRepo } from "../repos";
 import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { createId } from "../utils/id.utils";
 import { orFalse } from "../utils/nullable.utils";
-import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 import {
   beginRetranscribe,
   clearRetranscribeSuccess,
@@ -121,18 +120,6 @@ const processAudio = async ({
   return { transcribeResult, sanitizedTranscript, postProcessResult };
 };
 
-/**
- * A retranscription row that also records the degraded outcome. The provider
- * answered but the answer was unusable, and only `postProcessFailed` has a
- * column, so the marker rides on the in-memory row and on the repo write. The
- * native transcription model has no field for it yet and drops it, so it is
- * runtime state rather than history: a reload falls back to reading the
- * transcript, which still shows the preserved text.
- */
-type RetranscribedRow = Transcription & {
-  postProcessDegraded?: boolean | null;
-};
-
 type RetranscribeUpdate = {
   /** False when the run left the row without usable styling. */
   styled: boolean;
@@ -141,19 +128,27 @@ type RetranscribeUpdate = {
    * on a styled run.
    */
   unstyledMessage: string | null;
-  transcription: RetranscribedRow;
+  transcription: Transcription;
 };
 
 /**
  * The copy for a run that produced no styling. A request that never came back
- * reports its recorded failure category; a response that came back unusable
- * reports that its partial reply was dropped. Both explain the preserved text
- * without claiming a raw transcript was pasted over it.
+ * reports its recorded failure category. A response that came back unusable has
+ * no category, so the cause comes from the warnings the post-processing step
+ * already recorded on the run: it appends the reason it dropped that answer
+ * last, after any dispatch or glossary warning, so the final entry is the
+ * cause. Reporting the recorded reason keeps a response that failed schema
+ * validation or could not be parsed from being described as a cut-off reply.
+ * Both explain the preserved text without claiming a raw transcript was pasted
+ * over it.
  */
-const unstyledRunMessage = (metadata: PostProcessMetadata): string =>
+const unstyledRunMessage = (
+  metadata: PostProcessMetadata,
+  postProcessWarnings: string[],
+): string =>
   orFalse(metadata.postProcessFailed)
     ? (metadata.postProcessError ?? "")
-    : POST_PROCESS_TRUNCATED_WARNING;
+    : (postProcessWarnings[postProcessWarnings.length - 1] ?? "");
 
 /**
  * Whether this run left the row without usable styling. A failed request and an
@@ -182,7 +177,7 @@ const updateStoredTranscription = async (
   if (!finalTranscript) throw new Error("Retranscription produced no text.");
   const unstyled = isUnstyledPostProcess(postProcessResult.metadata);
 
-  const payload: RetranscribedRow = {
+  const payload: Transcription = {
     ...transcription,
     transcript: unstyled
       ? // Nothing styled came back, so the text this row already holds stays
@@ -205,13 +200,13 @@ const updateStoredTranscription = async (
     postProcessDevice: metadata.postProcessDevice ?? null,
     postProcessModel: metadata.postProcessModel ?? null,
     // Match create-path sentinels: null = not attempted, true = failed,
-    // false = succeeded (set explicitly on the success path).
+    // false = succeeded (set explicitly on the success path). A failed request
+    // and an unusable answer stay disjoint here: a degraded run leaves this
+    // false because the request itself succeeded, and the reason it was
+    // dropped rides on `warnings`, which the row does persist.
     postProcessProvider: metadata.postProcessProvider ?? null,
     postProcessFailed: metadata.postProcessFailed ?? null,
     postProcessError: metadata.postProcessError ?? null,
-    postProcessDegraded: unstyled
-      ? true
-      : (metadata.postProcessDegraded ?? null),
     warnings: warnings.length > 0 ? warnings : null,
     // Durations must be re-read from the fresh run; spreading the old record
     // otherwise leaves stale timings in history after a retranscription.
@@ -226,7 +221,10 @@ const updateStoredTranscription = async (
   return {
     styled: !unstyled,
     unstyledMessage: unstyled
-      ? unstyledRunMessage(postProcessResult.metadata)
+      ? unstyledRunMessage(
+          postProcessResult.metadata,
+          postProcessResult.warnings,
+        )
       : null,
     transcription: stored,
   };

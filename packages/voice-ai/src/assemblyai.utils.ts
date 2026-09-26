@@ -142,7 +142,16 @@ const getResponseRetryDelayMs = (
   attempt: number,
 ): number => {
   // RFC 9110 allows either delta-seconds ("120") or an HTTP-date
-  // ("Wed, 21 Oct 2015 07:28:00 GMT"); the shared parser honours both.
+  // ("Wed, 21 Oct 2015 07:28:00 GMT"); the shared parser honours both, and
+  // returns null for a missing, malformed, or already-elapsed hint so the
+  // exponential backoff below applies instead of a zero-millisecond retry.
+  //
+  // The shared parser also caps a hint at MAX_RETRY_AFTER_MS (30s), so this
+  // provider honours a longer hint only up to that ceiling. It keeps the one
+  // shared parser rather than a local copy, and a dictation is an interactive
+  // session, so stalling it for a full hour on a hostile or misconfigured hint
+  // is the worse failure. The remaining budget is also bounded by the
+  // transcription deadline below.
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
   return retryAfterMs === null ? getBackoffMs(attempt) : retryAfterMs;
 };

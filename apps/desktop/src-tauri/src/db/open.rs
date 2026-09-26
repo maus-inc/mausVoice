@@ -163,19 +163,23 @@ async fn retire_consolidated_migrations(
     Ok(())
 }
 
-/// Every migration version a real build recorded in its ledger between the
-/// 0.1.5 release and the 0.1.6 consolidation, and which the consolidation
-/// (step 69) therefore folded into this build's target schema.
+/// Every migration version that ever existed between the 0.1.5 release and the
+/// 0.1.6 consolidation (step 69), and which that consolidation therefore folded
+/// into this build's target schema. Intermediate builds recorded those steps
+/// individually, so their ledger rows retire on open instead of being reported
+/// as a downgrade.
 ///
-/// This is an explicit list on purpose. The previous `71..=88` range retired
-/// versions 070, 080 and 088 too, and those three numbers were never used by
-/// any ref in this repository, so a future legitimate `080_*.sql` or
-/// `088_*.sql` would have had its ledger row hard-deleted instead of
-/// surfacing as a downgrade. Adding a version here is now a deliberate edit and
-/// can never be a side effect of widening a number.
+/// This is an explicit list on purpose. The previous `71..=88` range also
+/// retired 080 and 088, and no ref in this repository has ever used either
+/// number, so a future legitimate `080_*.sql` or `088_*.sql` would have had its
+/// ledger row hard-deleted instead of surfacing as a downgrade. Adding a
+/// version here is now a deliberate edit and can never be a side effect of
+/// widening a number.
 ///
-/// Keep in sync with `SHIPPED_CONSOLIDATION_ERA_VERSIONS` in the tests below,
-/// which records what `git log --all` actually shows.
+/// The list is exactly what `git log --all` shows for `src/db/migrations/`
+/// between 069 and 089, which is where 070, 080 and 088 are absent.
+/// `consolidated_intermediate_migration_rows_are_retired` below exercises the
+/// retirement path.
 const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[i64] = &[
     71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84, 85, 86, 87,
 ];

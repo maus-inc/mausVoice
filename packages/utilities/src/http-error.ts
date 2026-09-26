@@ -39,8 +39,11 @@ export const readHttpStatus = (error: unknown): number | undefined => {
 /**
  * RFC 9110 allows `Retry-After` as delta-seconds ("120") or as an HTTP-date
  * ("Wed, 21 Oct 2015 07:28:00 GMT"). Both are honoured and both are capped at
- * `MAX_RETRY_AFTER_MS`. A missing, malformed, or already-elapsed hint returns
- * `null` so the caller keeps its own backoff.
+ * `MAX_RETRY_AFTER_MS`. An explicit delta-seconds hint is honoured as written,
+ * so "0" really does mean retry now. A missing, malformed, or already-elapsed
+ * hint returns `null` so the caller keeps its own backoff: a date in the past
+ * is no longer an instruction, and returning 0 for it would turn a rate limit
+ * into a busy retry.
  */
 export const parseRetryAfterMs = (
   retryAfter: string | null | undefined,
@@ -57,10 +60,10 @@ export const parseRetryAfterMs = (
     return seconds < 0 ? null : Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }
   const targetMs = Date.parse(value);
-  if (!Number.isFinite(targetMs)) {
+  if (!Number.isFinite(targetMs) || targetMs <= now) {
     return null;
   }
-  return Math.min(Math.max(0, targetMs - now), MAX_RETRY_AFTER_MS);
+  return Math.min(targetMs - now, MAX_RETRY_AFTER_MS);
 };
 
 /**
@@ -85,6 +88,49 @@ export class HttpError extends Error {
 }
 
 /**
+ * Read one header off a response header bag. The provider SDKs hand over a
+ * plain record built by `parseHeaders` (lowercased names), while a raw fetch
+ * error carries a `Headers` instance, so both shapes are read here.
+ */
+const readHeader = (bag: unknown, name: string): string | null => {
+  if (typeof bag !== "object" || bag === null) {
+    return null;
+  }
+  const get = (bag as { get?: unknown }).get;
+  if (typeof get === "function") {
+    const value = (get as (header: string) => unknown).call(bag, name);
+    return typeof value === "string" ? value : null;
+  }
+  const record = bag as Record<string, unknown>;
+  const key = Object.keys(record).find(
+    (candidate) => candidate.toLowerCase() === name,
+  );
+  const value = key === undefined ? undefined : record[key];
+  return typeof value === "string" ? value : null;
+};
+
+/**
+ * The `Retry-After` hint a thrown value carries, if any. `APIError` puts the
+ * response headers straight on the error and a fetch error keeps them on
+ * `response.headers`, so a rate limit reaches the retry policy as data rather
+ * than as prose.
+ */
+const readRetryAfterHeader = (error: unknown): string | null => {
+  if (typeof error !== "object" || error === null) {
+    return null;
+  }
+  const carrier = error as { headers?: unknown; response?: unknown };
+  const fromResponse =
+    typeof carrier.response === "object" && carrier.response !== null
+      ? (carrier.response as { headers?: unknown }).headers
+      : undefined;
+  return (
+    readHeader(carrier.headers, "retry-after") ??
+    readHeader(fromResponse, "retry-after")
+  );
+};
+
+/**
  * Normalise any thrown value into an `HttpError` when it carries a numeric
  * status, preserving the original message. A provider SDK error already
  * exposes `status`, so wrapping it gives every provider the same error shape
@@ -101,5 +147,7 @@ export const toHttpError = (error: unknown): unknown => {
   }
   const message =
     error instanceof Error ? error.message : `HTTP request failed: ${status}`;
-  return new HttpError(status, message);
+  return new HttpError(status, message, {
+    retryAfter: readRetryAfterHeader(error),
+  });
 };

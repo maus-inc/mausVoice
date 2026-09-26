@@ -13,6 +13,27 @@ export type AzureTranscribeAudioOutput = {
   text: string;
 };
 
+/**
+ * A failure from the Azure recognizer, with the SDK's own reason kept beside
+ * the message.
+ *
+ * The recognizer reports a failure as prose only: its public one-shot API is
+ * `recognizeOnceAsync(cb, err?: (e: string) => void)`, and a failed handshake
+ * is rejected as the raw string built in the SDK's `ServiceRecognizerBase`
+ * ("Unable to contact server. StatusCode: 401, <endpoint> Reason: ..."). There
+ * is no structured error to read, so the reason is carried as data here and
+ * the credential probe classifies it instead of guessing from the message.
+ */
+export class AzureRecognitionError extends Error {
+  readonly reason: string;
+
+  constructor(message: string, reason: string) {
+    super(message);
+    this.name = "AzureRecognitionError";
+    this.reason = reason;
+  }
+}
+
 const AZURE_LOCALE_REGEX = /^[a-z]{2,3}-[A-Z]{2}$/;
 
 const applyPhraseList = (
@@ -176,12 +197,22 @@ export const azureTranscribeAudio = async ({
         } else if (result.reason === sdk.ResultReason.NoMatch) {
           resolve({ text: "" });
         } else {
-          reject(new Error(`Azure recognition failed: ${result.errorDetails}`));
+          reject(
+            new AzureRecognitionError(
+              `Azure recognition failed: ${result.errorDetails}`,
+              result.errorDetails,
+            ),
+          );
         }
       },
       (error) => {
         recognizer.close();
-        reject(new Error(`Azure API request failed: ${error}`));
+        reject(
+          new AzureRecognitionError(
+            `Azure API request failed: ${error}`,
+            error,
+          ),
+        );
       },
     );
   });
@@ -207,7 +238,7 @@ const PROBE_FRAMES = 4_800;
  * reported success for every key. The PCM payload stays zeroed, which is
  * genuine silence and comes back as a completed `NoMatch`.
  */
-const buildSilentWav = (): ArrayBuffer => {
+export const buildSilentProbeWav = (): ArrayBuffer => {
   const bytesPerSample = PROBE_BITS_PER_SAMPLE / 8;
   const blockAlign = PROBE_CHANNELS * bytesPerSample;
   const dataBytes = PROBE_FRAMES * blockAlign;
@@ -216,7 +247,10 @@ const buildSilentWav = (): ArrayBuffer => {
 
   const writeTag = (offset: number, tag: string) => {
     for (let index = 0; index < tag.length; index++) {
-      view.setUint8(offset + index, tag.charCodeAt(index));
+      // A chunk id is ASCII, so a code point and its code unit are the same
+      // byte here. `codePointAt` is read rather than `charCodeAt` because it
+      // yields the whole code point instead of half of a surrogate pair.
+      view.setUint8(offset + index, tag.codePointAt(index) ?? 0);
     }
   };
 
@@ -237,6 +271,95 @@ const buildSilentWav = (): ArrayBuffer => {
   return buffer;
 };
 
+/**
+ * What the probe can tell apart from the SDK's prose. Only a rejected
+ * credential is a reason to report "provide a valid API key"; every other
+ * outcome has a different fix, so it carries its own message instead.
+ */
+type AzureProbeFailure =
+  "credential" | "region" | "quota" | "unreachable" | "unknown";
+
+/** The handshake status the SDK embeds in its own failure message. */
+const AZURE_STATUS_CODE = /StatusCode:\s*(\d+)/i;
+
+const CREDENTIAL_STATUS_CODES = new Set([400, 401, 403]);
+const REGION_STATUS_CODES = new Set([404]);
+const QUOTA_STATUS_CODES = new Set([429]);
+/** The SDK reports 0 when the socket never reached the service at all. */
+const UNREACHABLE_STATUS_CODES = new Set([0]);
+
+const matchesAny = (reason: string, patterns: readonly RegExp[]): boolean =>
+  patterns.some((pattern) => pattern.test(reason));
+
+/**
+ * Classify the reason the SDK handed over. The status code inside the SDK's
+ * own message is the strongest signal it offers, so it is read first; the
+ * keyword rules cover the SDK's local validation messages and the service body
+ * on a REST rejection, which carry no status of their own.
+ */
+const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
+  const statusCode = AZURE_STATUS_CODE.exec(reason)?.[1];
+  if (statusCode !== undefined) {
+    const status = Number(statusCode);
+    if (CREDENTIAL_STATUS_CODES.has(status)) return "credential";
+    if (REGION_STATUS_CODES.has(status)) return "region";
+    if (QUOTA_STATUS_CODES.has(status)) return "quota";
+    if (UNREACHABLE_STATUS_CODES.has(status)) return "unreachable";
+  }
+  if (
+    matchesAny(reason, [
+      /invalid subscription key/i,
+      /access denied/i,
+      /authentication/i,
+      /\bunauthorized\b/i,
+    ])
+  ) {
+    return "credential";
+  }
+  if (matchesAny(reason, [/\bregion\b/i, /resource not found/i])) {
+    return "region";
+  }
+  if (matchesAny(reason, [/\bquota\b/i, /exhausted/i, /rate limit/i])) {
+    return "quota";
+  }
+  if (
+    matchesAny(reason, [
+      /unable to contact/i,
+      /\bnetwork\b/i,
+      /econnrefused/i,
+      /getaddrinfo/i,
+      /timed?\s?out/i,
+      /enotfound/i,
+    ])
+  ) {
+    return "unreachable";
+  }
+  return "unknown";
+};
+
+const describeAzureProbeFailure = (
+  failure: Exclude<AzureProbeFailure, "credential">,
+  region: string,
+): string => {
+  switch (failure) {
+    case "region":
+      return `Azure rejected the region "${region}". Use the region of the Speech resource, not the one the key was copied from.`;
+    case "quota":
+      return "Azure accepted the key but the subscription has no quota left. Raise the quota or wait for it to reset.";
+    case "unreachable":
+      return "Azure could not be reached from this machine. Check the network and any proxy or firewall.";
+    case "unknown":
+      return "Azure could not confirm the key.";
+  }
+};
+
+const readAzureReason = (error: unknown): string => {
+  if (error instanceof AzureRecognitionError) {
+    return error.reason;
+  }
+  return error instanceof Error ? error.message : String(error);
+};
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
@@ -245,19 +368,25 @@ export const azureTestIntegration = async ({
     await azureTranscribeAudio({
       subscriptionKey,
       region,
-      blob: buildSilentWav(),
+      blob: buildSilentProbeWav(),
     });
     return true;
-  } catch {
-    // Fail closed. The recognizer reports a failure through
-    // `err?: (e: string) => void`, so the reason only ever arrives as prose
-    // whose wording differs per transport: a blank region produces "You must
-    // specify the Cognitive Speech region to use.", a rejected credential
-    // produces a handshake or service message, and a locally malformed buffer
-    // produces a RangeError. Deciding by substring matched almost none of
-    // them and reported a working key for a dead one. Only a recognition round
-    // trip that actually completed proves the credentials work.
-    return false;
+  } catch (error) {
+    // Fail closed, but do not mislabel. Only a completed recognition round trip
+    // proves the credentials work, and the reason decides what the caller is
+    // told: a rejected credential returns false, because that is the one
+    // outcome where "provide a valid API key" is the right advice. Every other
+    // outcome is raised with the SDK's own reason attached, so an exhausted
+    // quota, a region the resource is not in, and an unreachable network are
+    // not all reported as a bad key.
+    const reason = readAzureReason(error);
+    const failure = classifyAzureProbeFailure(reason);
+    if (failure === "credential") {
+      return false;
+    }
+    throw new Error(
+      `${describeAzureProbeFailure(failure, region)} Azure reported: ${reason.slice(0, 300)}`,
+    );
   }
 };
 

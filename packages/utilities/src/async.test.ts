@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { retry } from "./async";
-import { HttpError, MAX_RETRY_AFTER_MS, parseRetryAfterMs } from "./http-error";
+import { delayed, retry } from "./async";
+import { HttpError, MAX_RETRY_AFTER_MS, toHttpError } from "./http-error";
 
 describe("retry", () => {
   it("returns the first successful result", async () => {
@@ -165,31 +165,89 @@ describe("retry HTTP status policy", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(isRetryable).not.toHaveBeenCalled();
   });
+
+  it("waits for the hint an SDK error carried, not the caller's backoff", async () => {
+    // The shape the two SDK transcription call sites normalise with
+    // `toHttpError` before handing the failure to this helper.
+    vi.useFakeTimers();
+    try {
+      const sdkError = Object.assign(new Error("429 Too Many Requests"), {
+        status: 429,
+        headers: { "retry-after": "1" },
+      });
+      const fn = vi
+        .fn()
+        .mockRejectedValueOnce(sdkError)
+        .mockResolvedValueOnce("ok");
+      const promise = retry({
+        fn: async () => {
+          try {
+            return await fn();
+          } catch (error) {
+            throw toHttpError(error);
+          }
+        },
+        delay: 1,
+      });
+      const settled = expect(promise).resolves.toBe("ok");
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(fn).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await settled;
+      expect(fn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
-describe("parseRetryAfterMs", () => {
-  it("reads delta-seconds", () => {
-    expect(parseRetryAfterMs("12")).toBe(12_000);
-    expect(parseRetryAfterMs("0")).toBe(0);
+describe("retry abort handling", () => {
+  it("stops waiting for a Retry-After hint once the caller's signal fires", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const fn = vi
+        .fn()
+        .mockRejectedValue(
+          new HttpError(429, "Too Many Requests", { retryAfter: "30" }),
+        );
+      const promise = retry({ fn, delay: 1, signal: controller.signal });
+      const rejected = expect(promise).rejects.toThrow("caller gave up");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      controller.abort(new Error("caller gave up"));
+      await rejected;
+      // The wait was for 30s. The abort has to end it, and no second attempt
+      // may run.
+      expect(fn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("reads an HTTP-date relative to now", () => {
-    const now = Date.parse("Wed, 21 Oct 2015 07:28:00 GMT");
-    expect(parseRetryAfterMs("Wed, 21 Oct 2015 07:28:30 GMT", now)).toBe(
-      30_000,
-    );
-    expect(parseRetryAfterMs("Wed, 21 Oct 2015 07:27:00 GMT", now)).toBe(0);
+  it("does not wait when the caller's signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("already gone"));
+    const fn = vi.fn().mockRejectedValue(new HttpError(503, "overloaded"));
+
+    await expect(
+      retry({ fn, delay: 1, retries: 3, signal: controller.signal }),
+    ).rejects.toThrow("already gone");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("caps an oversized hint", () => {
-    expect(parseRetryAfterMs("120")).toBe(MAX_RETRY_AFTER_MS);
-  });
-
-  it("returns null for a missing or malformed hint", () => {
-    expect(parseRetryAfterMs(null)).toBeNull();
-    expect(parseRetryAfterMs(undefined)).toBeNull();
-    expect(parseRetryAfterMs("   ")).toBeNull();
-    expect(parseRetryAfterMs("soon")).toBeNull();
-    expect(parseRetryAfterMs("-5")).toBeNull();
+  it("leaves a wait that no signal watches untouched", async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = delayed(40);
+      const settled = promise.then(() => "resolved");
+      await vi.advanceTimersByTimeAsync(39);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(settled).resolves.toBe("resolved");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

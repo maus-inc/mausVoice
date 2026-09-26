@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
+import type { PostProcessMetadata } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { getAppState, produceAppState, setAppState } from "../store";
 
@@ -10,6 +11,7 @@ const {
   updateTranscription,
   transcribeAudio,
   postProcessTranscript,
+  generateText,
   showSnackbar,
   showErrorSnackbar,
   showPersistentToast,
@@ -20,6 +22,7 @@ const {
   updateTranscription: vi.fn(),
   transcribeAudio: vi.fn(),
   postProcessTranscript: vi.fn(),
+  generateText: vi.fn(),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
   showPersistentToast: vi.fn(async () => {}),
@@ -32,6 +35,14 @@ vi.mock("../repos", () => ({
     loadTranscriptionAudio,
     updateTranscription,
   }),
+  // Only the unparseable-response test below reaches the real post-processing
+  // step, and it does so to produce genuine metadata for a provider answer.
+  getGenerateTextRepo: () => ({
+    repo: { generateText, streamChat: vi.fn() },
+    apiKeyId: "test-key",
+    provider: "test-provider",
+    warnings: [],
+  }),
 }));
 
 vi.mock("./transcribe.actions", () => ({
@@ -43,6 +54,14 @@ vi.mock("./transcribe.actions", () => ({
 vi.mock("./app.actions", () => ({
   showSnackbar,
   showErrorSnackbar,
+}));
+
+// Only the unparseable-response test below builds a real post-processing
+// request, and an empty app state carries no tone for it to resolve. Every
+// other test here uses the mocked post-processing step.
+vi.mock("../utils/tone.utils", () => ({
+  getToneById: () => null,
+  getToneConfig: () => ({ name: "Default", prompt: "" }),
 }));
 
 vi.mock("./toast.actions", async () => ({
@@ -619,6 +638,11 @@ describe("retranscribeTranscription persistence gate", () => {
 describe("retranscribeTranscription unstyled post-processing", () => {
   const POLISHED = "Polished summary of the call.";
   const RAW_ASR = "raw asr from this run";
+  /** The category `recordPostProcessFailure` records for a 402. */
+  const QUOTA_CATEGORY = "Quota or payment required (402)";
+  /** The reason recorded for an answer that parsed but failed validation. */
+  const VALIDATION_WARNING =
+    "Post-processing response validation failed: result is required";
 
   const seedStyledRow = (id: string, transcript: string) => {
     produceAppState((draft) => {
@@ -631,7 +655,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   };
 
   const mockUnstyledPostProcess = (
-    metadata: Record<string, unknown>,
+    metadata: PostProcessMetadata,
     warnings: string[] = [],
   ) => {
     transcribeAudio.mockResolvedValue({
@@ -665,10 +689,10 @@ describe("retranscribeTranscription unstyled post-processing", () => {
 
   it("keeps the polished transcript when the post-processing request failed", async () => {
     seedStyledRow("unstyled", POLISHED);
-    mockUnstyledPostProcess({
-      postProcessFailed: true,
-      postProcessError: "Quota or payment required (402)",
-    });
+    mockUnstyledPostProcess(
+      { postProcessFailed: true, postProcessError: QUOTA_CATEGORY },
+      [QUOTA_CATEGORY],
+    );
 
     await retranscribeTranscription({ transcriptionId: "unstyled" });
 
@@ -677,20 +701,24 @@ describe("retranscribeTranscription unstyled post-processing", () => {
         // The text already on the row is worth more than raw ASR, so it stays.
         transcript: POLISHED,
         rawTranscript: RAW_ASR,
-        postProcessDegraded: true,
+        warnings: [QUOTA_CATEGORY],
         postProcessFailed: true,
       }),
     );
     expect(getAppState().transcriptionById["unstyled"]?.transcript).toBe(
       POLISHED,
     );
+    // A failed request records the failure sentinel only. Nothing marks it as a
+    // degraded answer too, because the two describe different failures and the
+    // row must never claim both.
+    expect(updateTranscription.mock.calls[0]?.[0]).not.toHaveProperty(
+      "postProcessDegraded",
+    );
     // The run failed, so the row must not show a success check or completion
     // toast, and the recorded failure category is what the user is shown.
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
     expect(showCompletionToast).not.toHaveBeenCalled();
-    expect(showErrorSnackbar).toHaveBeenCalledWith(
-      "Quota or payment required (402)",
-    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(QUOTA_CATEGORY);
   });
 
   it("keeps the polished transcript when the response was cut off", async () => {
@@ -706,7 +734,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       expect.objectContaining({
         transcript: POLISHED,
         rawTranscript: RAW_ASR,
-        postProcessDegraded: true,
+        warnings: [POST_PROCESS_TRUNCATED_WARNING],
         // The provider answered, so the failure sentinel must stay false.
         postProcessFailed: false,
       }),
@@ -727,9 +755,56 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(showErrorSnackbar).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the polished transcript when the provider response cannot be parsed", async () => {
+    seedStyledRow("unparseable", POLISHED);
+    generateText.mockResolvedValueOnce({
+      // Cut inside a code fence: the missing closing backticks leave residue no
+      // repair candidate can clear, so the parse throws instead of recovering a
+      // truncated fragment. The metadata that comes back is the point of this
+      // test, so the real post-processing step produces it.
+      text: '```json\n{"result": "Hello there, this is a very long dictation that ke',
+      metadata: { postProcessingMode: "api" },
+    });
+    const { postProcessTranscript: runPostProcessing } = await vi.importActual<
+      typeof import("./transcribe.actions")
+    >("./transcribe.actions");
+    const unparsed = await runPostProcessing({
+      rawTranscript: RAW_ASR,
+      toneId: null,
+    });
+    mockUnstyledPostProcess(unparsed.metadata, unparsed.warnings);
+
+    await retranscribeTranscription({ transcriptionId: "unparseable" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The polished text stays, and this run's raw ASR is the only record of
+        // what was actually said.
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        // The request came back, so the failure sentinel stays false.
+        postProcessFailed: false,
+      }),
+    );
+    expect(getAppState().transcriptionById["unparseable"]?.transcript).toBe(
+      POLISHED,
+    );
+    // Unusable styling is not a finished retranscription, so the row must not
+    // report success, and the reason it dropped the answer is what the user is
+    // shown rather than a generic styling failure.
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showErrorSnackbar).toHaveBeenCalledWith(unparsed.warnings[0]);
+  });
+
   it("falls back to the new raw ASR when the row was never styled", async () => {
     seedStyledRow("unstyled-empty", "");
-    mockUnstyledPostProcess({ postProcessDegraded: true });
+    // A response that parses but fails schema validation is unusable for a
+    // different reason than a cut-off one, and it always records that reason.
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
 
     await retranscribeTranscription({ transcriptionId: "unstyled-empty" });
 
@@ -739,10 +814,14 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       expect.objectContaining({
         transcript: RAW_ASR,
         rawTranscript: RAW_ASR,
-        postProcessDegraded: true,
+        warnings: [VALIDATION_WARNING],
+        postProcessFailed: false,
       }),
     );
-    expect(showErrorSnackbar).toHaveBeenCalledWith(
+    // The recorded reason is what the user is shown. A validation failure is
+    // not a cut-off response and must not be described as one.
+    expect(showErrorSnackbar).toHaveBeenCalledWith(VALIDATION_WARNING);
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
       POST_PROCESS_TRUNCATED_WARNING,
     );
   });
@@ -760,7 +839,7 @@ describe("retranscribeTranscription unstyled post-processing", () => {
     expect(updateTranscription).toHaveBeenCalledWith(
       expect.objectContaining({
         transcript: "Freshly styled summary.",
-        postProcessDegraded: false,
+        postProcessFailed: false,
       }),
     );
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([

@@ -48,7 +48,10 @@ vi.mock("../utils/user.utils", async () => {
   };
 });
 
-import { postProcessTranscript } from "./transcribe.actions";
+import {
+  postProcessTranscript,
+  POST_PROCESS_PARSE_FAILURE_PREFIX,
+} from "./transcribe.actions";
 import { POST_PROCESS_TRUNCATED_WARNING } from "../utils/prompt.utils";
 
 describe("postProcessTranscript provider attribution on failure", () => {
@@ -218,7 +221,6 @@ describe("postProcessTranscript truncated responses", () => {
   // POST_PROCESS_MAX_TOKENS lands here with no fence to give the truncation
   // away. The repair loop still recovers a fragment, and that fragment must
   // never be mistaken for the finished answer.
-  const CATCH_PATH_MESSAGE = "Failed to parse post-processing response";
   const TRUNCATED_INPUT =
     '{"result": "Hello there, this is a very long dictation that keeps';
 
@@ -245,12 +247,9 @@ describe("postProcessTranscript truncated responses", () => {
     expect(result.metadata.postProcessDegraded).toBe(true);
     const warnings = result.warnings.join(" ");
     expect(warnings).toContain(POST_PROCESS_TRUNCATED_WARNING);
-    expect(warnings).toContain(
-      "The styling response was cut off at the model's output limit",
-    );
     // The fragment was discarded, so this is not the pre-existing catch path
     // that reports an unrecoverable parse error.
-    expect(warnings).not.toContain(CATCH_PATH_MESSAGE);
+    expect(warnings).not.toContain(POST_PROCESS_PARSE_FAILURE_PREFIX);
   });
 
   it("keeps reporting an unrecoverable fenced response as a parse failure", async () => {
@@ -268,11 +267,14 @@ describe("postProcessTranscript truncated responses", () => {
 
     expect(result.transcript).toBe("hello world");
     expect(result.metadata.postProcessFailed).toBe(false);
+    // The answer was unusable even though the request came back, so the run is
+    // degraded. Reporting it as a success is what let a retranscription
+    // overwrite the row's polished text with this raw ASR fallback.
+    expect(result.metadata.postProcessDegraded).toBe(true);
+    const warnings = result.warnings.join(" ");
+    expect(warnings).toContain(POST_PROCESS_PARSE_FAILURE_PREFIX);
     // Nothing usable came back, but the response was not a truncated one, so
     // it must not borrow the truncation copy.
-    expect(result.metadata.postProcessDegraded).toBe(false);
-    const warnings = result.warnings.join(" ");
-    expect(warnings).toContain(CATCH_PATH_MESSAGE);
     expect(warnings).not.toContain(POST_PROCESS_TRUNCATED_WARNING);
   });
 

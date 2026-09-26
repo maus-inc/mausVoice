@@ -236,4 +236,46 @@ describe("user repo profile timestamps", () => {
 
     expect(readAnchor(ACCOUNT_CREATED_AT_KEY)).toBe(JSON.stringify(CREATED));
   });
+
+  it("never plants the epoch floor as the creation anchor", async () => {
+    // A legacy install reads epoch because the column is still null. Any save
+    // of that loaded user (a rename, a settings toggle) must not turn the floor
+    // into a stored fact, or the account reports a 1970 creation date forever
+    // and the write-once anchor refuses every real instant afterwards.
+    const repo = new LocalUserRepo();
+    capturedInvoke.mockResolvedValue(storedRow());
+    const loaded = (await repo.getMyUser()) as User;
+    expect(loaded.createdAt).toBe(EPOCH);
+
+    await repo.setMyUser({ ...loaded, name: "Renamed" });
+
+    expect(readAnchor(ACCOUNT_CREATED_AT_KEY)).toBeNull();
+    const sent = capturedInvoke.mock.calls.at(-1)?.[1]?.user as {
+      createdAt: string | null;
+    };
+    expect(sent.createdAt).toBeNull();
+  });
+
+  it("lets a real creation date win after a legacy save recorded the floor", async () => {
+    const repo = new LocalUserRepo();
+    capturedInvoke.mockResolvedValue(storedRow());
+    const loaded = (await repo.getMyUser()) as User;
+
+    await repo.setMyUser({ ...loaded, name: "Renamed" });
+
+    // The real instant only becomes known later, for example once a later
+    // release backfills the column. It has to take effect in both stores.
+    await repo.setMyUser({ ...loaded, createdAt: CREATED });
+    expect(readAnchor(ACCOUNT_CREATED_AT_KEY)).toBe(JSON.stringify(CREATED));
+    const sent = capturedInvoke.mock.calls.at(-1)?.[1]?.user as {
+      createdAt: string | null;
+    };
+    expect(sent.createdAt).toBe(CREATED);
+
+    // A read whose column is still null recovers the anchor rather than
+    // falling back to the floor.
+    capturedInvoke.mockResolvedValue(storedRow());
+    const reloaded = await repo.getMyUser();
+    expect(reloaded?.createdAt).toBe(CREATED);
+  });
 });

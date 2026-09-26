@@ -42,22 +42,19 @@ export const redactQueryParamValues = (
 };
 
 /**
- * Mask sensitive keys before a value reaches the log sink. A fault inside the
- * masker returns the value unchanged, because a logger that throws takes down
- * the error the caller was trying to report.
+ * Stands in for an object argument when masking faults. The value is withheld
+ * because the masker stopped part way through and cannot say which of its
+ * fields were sensitive, and the line is still written so the caller sees the
+ * failure instead of losing the record. A logger must not throw either, since
+ * that would take down the error the caller was trying to report.
  */
-const maskSensitiveFields = (value: Record<string, unknown>): unknown => {
-  try {
-    return redactObjectSync(value);
-  } catch {
-    return value;
-  }
-};
+const REDACTION_FAILED = "[redaction-failed]";
 
 /**
- * The synchronous entry returns a record, so a top-level array would change
- * shape if it were handed to it. Arrays nested inside an object are masked by
- * the traversal itself.
+ * Only a top level record needs masking. A primitive, null, or a top level
+ * array keeps its shape through the traversal, so JSON.stringify already
+ * renders it correctly. Arrays nested inside an object are masked by the
+ * traversal itself.
  */
 const isMaskableObject = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -69,9 +66,12 @@ const serializeForLog = (value: unknown): string => {
   // reads own enumerable properties only and would otherwise turn a hostile
   // shape into an empty object that then gets logged.
   const raw = JSON.stringify(value);
-  return isMaskableObject(value)
-    ? JSON.stringify(maskSensitiveFields(value))
-    : raw;
+  if (!isMaskableObject(value)) return raw;
+  try {
+    return JSON.stringify(redactObjectSync(value));
+  } catch {
+    return REDACTION_FAILED;
+  }
 };
 
 const stringify = (args: unknown[]): string =>
