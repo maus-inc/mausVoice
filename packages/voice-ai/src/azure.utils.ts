@@ -432,8 +432,9 @@ const AZURE_REASON_EXCERPT_CHARS = 120;
  * Every quantifier here is bounded on purpose. The reason is text a remote end
  * chose, so a pattern with two adjacent unbounded whitespace runs would let it
  * choose input that backtracks, and a trailing boundary after a greedy run
- * makes the engine retry every shorter length. Bounded runs and no trailing
- * boundary keep this linear on hostile input, which the ReDoS case below pins.
+ * makes the engine retry every shorter length. That is defence in depth rather
+ * than a live hazard: `unknownToMessage` already caps the string these run over
+ * at 512 characters, so the input is bounded before it ever reaches here.
  */
 const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // A labelled credential: `Ocp-Apim-Subscription-Key: v`, `api_key=v`,
@@ -448,8 +449,13 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // redaction control that hides one harmless value is far cheaper than one that
   // lets a key through because a new vendor prefix was not enumerated.
   /\b[a-z0-9_.-]{0,24}(?:key|token|secret|password|credential)\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
-  // `Authorization: Bearer <value>`, `{"authorization":"<value>"}`, any scheme.
-  /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}(?:(?:bearer|basic|token)[ \t]{0,4})?\S+/gi,
+  // `Authorization: <scheme> <credential>`, for any scheme. The value runs to
+  // the end of the line rather than to the next space, because the scheme is
+  // not a fixed list: a scheme this pattern does not know still carries the
+  // credential after it, so `Authorization: ApiKey v` must lose the v and not
+  // only the scheme word. It also covers the parameters a scheme carries, such
+  // as the nonce in a Digest header.
+  /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,2}["']?[^\r\n]+/gi,
   // A bare provider-style token, wherever it appears.
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g,
   // A JWT, which is long and structurally unmistakable. Its whole body is

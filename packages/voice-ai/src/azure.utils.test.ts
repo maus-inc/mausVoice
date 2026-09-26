@@ -308,18 +308,22 @@ describe("azureTestIntegration", () => {
   });
 });
 
-describe("azureTestIntegration message bounds", () => {
-  /** The single string the probe handed to the console, or "" if it logged none. */
-  const loggedLine = (): string => {
-    // This package targets ES2020, where `Array.prototype.at` is not in the
-    // lib, so the last call is taken by index.
-    const calls = consoleError.mock.calls;
-    const call = calls[calls.length - 1];
-    expect(call, "the probe must log the failure it raises").toBeDefined();
-    expect(call?.[0]).toBe("Azure integration probe failed:");
-    return String(call?.[1] ?? "");
-  };
+/**
+ * The single string the probe handed to the console, or "" if it logged none.
+ * Hoisted to module scope so every probe test can assert on what was written
+ * rather than each describe keeping its own copy of the capture.
+ */
+const loggedLine = (): string => {
+  // This package targets ES2020, where `Array.prototype.at` is not in the lib,
+  // so the last call is taken by index.
+  const calls = consoleError.mock.calls;
+  const call = calls[calls.length - 1];
+  expect(call, "the probe must log the failure it raises").toBeDefined();
+  expect(call?.[0]).toBe("Azure integration probe failed:");
+  return String(call?.[1] ?? "");
+};
 
+describe("azureTestIntegration message bounds", () => {
   /** The message of the failure the probe raised, which is what a user reads. */
   const raisedMessage = async (): Promise<string> => {
     const error = await azureTestIntegration({
@@ -504,17 +508,46 @@ describe("azureTestIntegration message bounds", () => {
 });
 
 describe("credential redaction is safe on hostile input", () => {
-  it("redacts a large reason built to make the patterns backtrack", async () => {
-    // The reason is text the remote end chose, so a pattern with adjacent
-    // unbounded whitespace runs, or a trailing boundary after a greedy run,
-    // would let it choose input that costs the engine super-linear time. The
-    // patterns bound every run for that reason.
+  it("redacts a credential whatever scheme the Authorization header names", async () => {
+    // The scheme is not a fixed list, and the credential is what follows it. A
+    // pattern that stopped after a scheme word it recognised would leave the
+    // credential in the clear for every other scheme, and a scheme can carry
+    // parameters of its own.
     //
-    // This is a forward-looking guard, not proof of a fixed vulnerability: it
-    // also passed against the earlier unbounded patterns, because V8's engine
-    // handles them without blowing up. It pins that the redaction path stays
-    // fast on a large hostile-shaped input, so a future pattern that really
-    // does backtrack fails here.
+    // The value is deliberately opaque: shaped like nothing else, so the only
+    // thing that can catch it is the authorization pattern. A provider-style
+    // token would be redacted by the bare-token rule whatever this pattern did,
+    // which would make the test pass either way.
+    const credential = "7d41b0c9a3e6f582";
+    for (const header of [
+      `Authorization: ApiKey ${credential}`,
+      `Authorization: Bearer ${credential}`,
+      `Authorization: CustomScheme ${credential}`,
+      `Authorization: Digest username="u", nonce="${credential}"`,
+      `Proxy-Authorization: Negotiate ${credential}`,
+      `Authorization: ${credential}`,
+    ]) {
+      speech.error = `StatusCode: 0\n${header}`;
+      await expect(
+        azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+      ).rejects.toThrow();
+
+      const written = loggedLine();
+      expect(written).toContain("[redacted]");
+      expect(written).not.toContain(credential);
+      // The label survives, so the line is still a diagnosis.
+      expect(written.toLowerCase()).toContain("authorization");
+    }
+  });
+
+  it("redacts a large reason built to make the patterns work hardest", async () => {
+    // The reason is text the remote end chose, so the patterns are bounded
+    // rather than trusting it. In production `unknownToMessage` already caps
+    // the string at 512 characters before it reaches the redactor, so this is
+    // defence in depth. What this pins is that a large hostile-shaped reason is
+    // redacted correctly and settles quickly, not that a live backtracking bug
+    // was fixed: the earlier unbounded patterns also passed it, because V8
+    // handles those without blowing up.
     const hostile = [
       "Ocp-Apim-Subscription-Key" +
         '"'.repeat(20_000) +
