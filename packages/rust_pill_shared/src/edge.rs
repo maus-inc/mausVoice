@@ -1,24 +1,24 @@
 //! Edge repulsion shared by the three pill renderers.
 //!
 //! Each monitor edge owns an activation band [`EDGE_BAND_FRACTION`] of the
-//! work area deep. Outside the band the pill tracks 1:1; inside, a cubic
-//! ease pulls it toward a [`EDGE_REST_GAP`] resting line. The ease joins the
-//! 1:1 tracking with a matching slope at the band boundary, so crossing it
-//! is invisible, and it is monotone, so the pill never reverses or rebounds.
-//! Fast flings toward an edge compress the ease (the pill travels deeper into the
-//! band) but the work-area clamp still holds, so nothing ever leaves the
-//! screen.
+//! work area deep. Outside the band the pill tracks 1:1; inside, a cubic ease
+//! pulls it toward a [`EDGE_REST_GAP`] resting line. Matching slope at the
+//! band boundary makes entry invisible, and monotonicity prevents reversal
+//! or rebound. Fast flings compress the ease but remain clamped at the edge.
 //!
 //! The ease is a pure function of position and velocity, not an integrator,
-//! so it is frame-rate independent by construction: no substeps, no stall
-//! clamping, no snap thresholds. Reduced motion uses the full ease with no
-//! speed modulation, which keeps the safe gap with no moving parts at all.
+//! so it is frame-rate independent by construction: no substeps, stall
+//! clamping, or snap thresholds. Reduced motion uses the full ease without
+//! speed modulation, preserving the safe gap with no moving parts.
 //!
-//! The ease runs on the window origin against the drag bounds, which the
-//! platforms already derive from the work area plus the pill footprint. A
-//! window origin on the bounds edge means the pill edge touches the work
-//! area edge, so easing the origin toward bounds-plus-gap eases the pill
-//! toward gap exactly, with no footprint math in here.
+//! Easing runs on the window origin against bounds already adjusted for the
+//! visible pill footprint; an origin on a bound places the pill edge at the
+//! work-area edge without footprint math here. During a drag, adjacent-monitor
+//! seams replace only the connected edge's work-area bound with a center-
+//! crossing plane. Other exposed edges keep their work-area limits, so a
+//! side-by-side crossing cannot escape past a top or bottom panel. Releasing
+//! ends the seam exception: settling uses work-area bounds and returns the
+//! pill fully on-screen.
 
 /// Band depth as a fraction of the work-area dimension on that axis.
 pub const EDGE_BAND_FRACTION: f64 = 0.05;
@@ -30,6 +30,7 @@ pub const EDGE_FLING_SPEED: f64 = 2500.0;
 /// Slowest ease blend. Even the fastest fling keeps this much pull toward
 /// the resting line, so the band always resists at least a little.
 pub const EDGE_MIN_BLEND: f64 = 0.25;
+const MONITOR_SEAM_TOLERANCE: f64 = 1.0;
 
 /// Work-area size in the platform's drag space. The band is a fraction of
 /// these; non-finite or non-positive dimensions disable the ease and leave
@@ -38,19 +39,361 @@ pub const EDGE_MIN_BLEND: f64 = 0.25;
 pub struct EdgeWork {
     pub width: f64,
     pub height: f64,
+    pub edges: EdgeMask,
 }
 
 impl EdgeWork {
     pub fn active(&self) -> bool {
         self.width.is_finite() && self.height.is_finite() && self.width > 0.0 && self.height > 0.0
     }
+
+    pub const fn all(width: f64, height: f64) -> Self {
+        Self { width, height, edges: EdgeMask::ALL }
+    }
+}
+
+/// Which sides of the current monitor are exposed desktop edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeMask {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
+}
+
+impl EdgeMask {
+    pub const ALL: Self = Self { left: true, right: true, top: true, bottom: true };
+}
+
+/// A monitor rectangle in the platform's absolute drag-coordinate space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl MonitorRect {
+    pub fn right(self) -> f64 { self.x + self.width }
+    pub fn bottom(self) -> f64 { self.y + self.height }
+
+    fn valid(self) -> bool {
+        self.x.is_finite() && self.y.is_finite()
+            && self.width.is_finite() && self.height.is_finite()
+            && self.width > 0.0 && self.height > 0.0
+            && self.right().is_finite() && self.bottom().is_finite()
+    }
+}
+
+/// Per-frame drag area. Shared sides use the full monitor edge and disable
+/// edge resistance; adapters shift those bounds to the pill-center crossing
+/// plane. Exposed sides retain their work-area bounds even when a
+/// perpendicular shared seam is open.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DragRegion {
+    pub bounds: MonitorRect,
+    pub edge_mask: EdgeMask,
+}
+
+/// Resolve which sides of a monitor connect to another monitor at the current
+/// pill-center coordinate. This stateless form is useful for parked placement;
+/// held drags should use [`SeamTracker`] to keep partial-overlap seams stable.
+pub fn drag_region(
+    monitor: MonitorRect,
+    work_area: MonitorRect,
+    neighbors: &[MonitorRect],
+    seam_point: (f64, f64),
+) -> DragRegion {
+    let exposed = exposed_edges(monitor, neighbors, seam_point);
+    region_for_edges(monitor, work_area, exposed)
+}
+
+fn exposed_edges(
+    monitor: MonitorRect,
+    neighbors: &[MonitorRect],
+    seam_point: (f64, f64),
+) -> EdgeMask {
+    EdgeMask {
+        left: !has_neighbor(monitor, neighbors, seam_point, Side::Left),
+        right: !has_neighbor(monitor, neighbors, seam_point, Side::Right),
+        top: !has_neighbor(monitor, neighbors, seam_point, Side::Top),
+        bottom: !has_neighbor(monitor, neighbors, seam_point, Side::Bottom),
+    }
+}
+
+fn region_for_edges(
+    monitor: MonitorRect,
+    work_area: MonitorRect,
+    exposed: EdgeMask,
+) -> DragRegion {
+    if !monitor.valid() || !work_area.valid() {
+        let bounds = if work_area.valid() {
+            work_area
+        } else if monitor.valid() {
+            monitor
+        } else {
+            MonitorRect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 }
+        };
+        return DragRegion { bounds, edge_mask: EdgeMask::ALL };
+    }
+
+    // Expand only the connected edge to the monitor boundary. Keeping every
+    // exposed edge on the work area preserves panel/taskbar clearance even
+    // when a perpendicular shared seam is open.
+    let left = if exposed.left { work_area.x } else { monitor.x };
+    let right = if exposed.right { work_area.right() } else { monitor.right() };
+    let top = if exposed.top { work_area.y } else { monitor.y };
+    let bottom = if exposed.bottom { work_area.bottom() } else { monitor.bottom() };
+    DragRegion {
+        bounds: MonitorRect {
+            x: left,
+            y: top,
+            width: (right - left).max(0.0),
+            height: (bottom - top).max(0.0),
+        },
+        edge_mask: exposed,
+    }
+}
+
+/// Maximum release margin as a fraction of the shorter monitor span along a
+/// shared edge. The actual margin is capped at one quarter of the overlap, so
+/// the latch scales with platform coordinate units without swallowing short
+/// shared segments.
+pub const SEAM_HYSTERESIS_FRACTION: f64 = 0.10;
+
+/// Per-drag partial-seam latch. Once a side opens near an overlap endpoint it
+/// stays open while the center travels beyond that endpoint, then releases
+/// only after the center returns by a fraction of the adjacent monitors' span.
+/// A source-monitor change, removal of the latched neighbor, or new drag resets
+/// the latch.
+#[derive(Debug, Clone)]
+pub struct SeamTracker {
+    monitor: Option<MonitorRect>,
+    neighbors: [Option<MonitorRect>; 4],
+}
+
+impl Default for SeamTracker {
+    fn default() -> Self {
+        Self { monitor: None, neighbors: [None; 4] }
+    }
+}
+
+impl SeamTracker {
+    pub fn reset(&mut self) {
+        self.monitor = None;
+        self.neighbors = [None; 4];
+    }
+
+    pub fn resolve(
+        &mut self,
+        monitor: MonitorRect,
+        work_area: MonitorRect,
+        neighbors: &[MonitorRect],
+        seam_point: (f64, f64),
+    ) -> DragRegion {
+        if !monitor.valid()
+            || !work_area.valid()
+            || !seam_point.0.is_finite()
+            || !seam_point.1.is_finite()
+        {
+            self.reset();
+            return drag_region(monitor, work_area, neighbors, seam_point);
+        }
+        if self.monitor != Some(monitor) {
+            self.reset();
+            self.monitor = Some(monitor);
+        }
+
+        let mut exposed = exposed_edges(monitor, neighbors, seam_point);
+        for (index, side) in [Side::Left, Side::Right, Side::Top, Side::Bottom]
+            .into_iter()
+            .enumerate()
+        {
+            let coordinate = match side {
+                Side::Left | Side::Right => seam_point.1,
+                Side::Top | Side::Bottom => seam_point.0,
+            };
+            if let Some(latched) = self.neighbors[index] {
+                if !neighbors.contains(&latched) {
+                    self.neighbors[index] = None;
+                    continue;
+                }
+                let Some((start, end)) = neighbor_interval(monitor, latched, side) else {
+                    self.neighbors[index] = None;
+                    continue;
+                };
+                let margin = seam_hysteresis_margin(monitor, latched, side, start, end);
+                if coordinate >= start + margin && coordinate <= end - margin {
+                    self.neighbors[index] = None;
+                } else {
+                    set_side(&mut exposed, side, false);
+                }
+            } else if !side_is_exposed(exposed, side) {
+                if let Some(neighbor) = neighbors.iter().copied().find(|neighbor| {
+                    neighbor_interval(monitor, *neighbor, side).map_or(false, |(start, end)| {
+                        let margin = seam_hysteresis_margin(monitor, *neighbor, side, start, end);
+                        coordinate <= start + margin || coordinate >= end - margin
+                    })
+                }) {
+                    self.neighbors[index] = Some(neighbor);
+                }
+            }
+        }
+
+        region_for_edges(monitor, work_area, exposed)
+    }
+}
+
+fn side_is_exposed(edges: EdgeMask, side: Side) -> bool {
+    match side {
+        Side::Left => edges.left,
+        Side::Right => edges.right,
+        Side::Top => edges.top,
+        Side::Bottom => edges.bottom,
+    }
+}
+
+fn set_side(edges: &mut EdgeMask, side: Side, exposed: bool) {
+    match side {
+        Side::Left => edges.left = exposed,
+        Side::Right => edges.right = exposed,
+        Side::Top => edges.top = exposed,
+        Side::Bottom => edges.bottom = exposed,
+    }
+}
+
+fn neighbor_interval(
+    monitor: MonitorRect,
+    neighbor: MonitorRect,
+    side: Side,
+) -> Option<(f64, f64)> {
+    if !monitor.valid() || !neighbor.valid() {
+        return None;
+    }
+    let (touches_edge, start, end) = match side {
+        Side::Left => (
+            touches(neighbor.right(), monitor.x),
+            monitor.y.max(neighbor.y),
+            monitor.bottom().min(neighbor.bottom()),
+        ),
+        Side::Right => (
+            touches(neighbor.x, monitor.right()),
+            monitor.y.max(neighbor.y),
+            monitor.bottom().min(neighbor.bottom()),
+        ),
+        Side::Top => (
+            touches(neighbor.bottom(), monitor.y),
+            monitor.x.max(neighbor.x),
+            monitor.right().min(neighbor.right()),
+        ),
+        Side::Bottom => (
+            touches(neighbor.y, monitor.bottom()),
+            monitor.x.max(neighbor.x),
+            monitor.right().min(neighbor.right()),
+        ),
+    };
+    (touches_edge && end > start).then_some((start, end))
+}
+
+fn seam_hysteresis_margin(
+    monitor: MonitorRect,
+    neighbor: MonitorRect,
+    side: Side,
+    start: f64,
+    end: f64,
+) -> f64 {
+    let shared_axis_span = match side {
+        Side::Left | Side::Right => monitor.height.min(neighbor.height),
+        Side::Top | Side::Bottom => monitor.width.min(neighbor.width),
+    };
+    (shared_axis_span * SEAM_HYSTERESIS_FRACTION).min((end - start) * 0.25)
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+fn has_neighbor(
+    monitor: MonitorRect,
+    neighbors: &[MonitorRect],
+    seam_point: (f64, f64),
+    side: Side,
+) -> bool {
+    if !monitor.valid() || !seam_point.0.is_finite() || !seam_point.1.is_finite() {
+        return false;
+    }
+    neighbors.iter().copied().filter(|neighbor| neighbor.valid()).any(|neighbor| {
+        match side {
+            Side::Left => touches(neighbor.right(), monitor.x)
+                && overlaps_at(
+                    seam_point.1,
+                    monitor.y,
+                    monitor.bottom(),
+                    neighbor.y,
+                    neighbor.bottom(),
+                ),
+            Side::Right => touches(neighbor.x, monitor.right())
+                && overlaps_at(
+                    seam_point.1,
+                    monitor.y,
+                    monitor.bottom(),
+                    neighbor.y,
+                    neighbor.bottom(),
+                ),
+            Side::Top => touches(neighbor.bottom(), monitor.y)
+                && overlaps_at(
+                    seam_point.0,
+                    monitor.x,
+                    monitor.right(),
+                    neighbor.x,
+                    neighbor.right(),
+                ),
+            Side::Bottom => touches(neighbor.y, monitor.bottom())
+                && overlaps_at(
+                    seam_point.0,
+                    monitor.x,
+                    monitor.right(),
+                    neighbor.x,
+                    neighbor.right(),
+                ),
+        }
+    })
+}
+
+fn touches(a: f64, b: f64) -> bool {
+    (a - b).abs() <= MONITOR_SEAM_TOLERANCE
+}
+
+fn overlaps_at(point: f64, a0: f64, a1: f64, b0: f64, b1: f64) -> bool {
+    let overlap_start = a0.max(b0);
+    let overlap_end = a1.min(b1);
+    overlap_end > overlap_start
+        && point >= overlap_start - MONITOR_SEAM_TOLERANCE
+        && point <= overlap_end + MONITOR_SEAM_TOLERANCE
 }
 
 /// Ease one axis toward its resting line. `pos` is the clamped window
 /// origin, `vel` its velocity (positive away from `min`), `min`/`max` the
-/// drag bounds, `dim` the work-area size on this axis. Returns a position
+/// drag bounds, and `dim` the work-area size on this axis. Returns a position
 /// inside `[min, max]`.
 pub fn ease_axis(pos: f64, vel: f64, min: f64, max: f64, dim: f64) -> f64 {
+    ease_axis_with_edges(pos, vel, min, max, dim, true, true)
+}
+
+fn ease_axis_with_edges(
+    pos: f64,
+    vel: f64,
+    min: f64,
+    max: f64,
+    dim: f64,
+    ease_min: bool,
+    ease_max: bool,
+) -> f64 {
     if !pos.is_finite() || !vel.is_finite() || !min.is_finite() || !max.is_finite() {
         return pos;
     }
@@ -59,10 +402,14 @@ pub fn ease_axis(pos: f64, vel: f64, min: f64, max: f64, dim: f64) -> f64 {
     if !band.is_finite() || band <= EDGE_REST_GAP || band * 2.0 >= span {
         return pos;
     }
-    let eased = if pos - min < max - pos {
-        ease_side(pos, vel, min, band, -1.0)
-    } else {
-        ease_side(pos, vel, max, band, 1.0)
+    let from_min = pos - min;
+    let from_max = max - pos;
+    let eased = match (ease_min, ease_max) {
+        (true, true) if from_min < from_max => ease_side(pos, vel, min, band, -1.0),
+        (true, true) => ease_side(pos, vel, max, band, 1.0),
+        (true, false) => ease_side(pos, vel, min, band, -1.0),
+        (false, true) => ease_side(pos, vel, max, band, 1.0),
+        (false, false) => pos,
     };
     eased.clamp(min, min + span)
 }
@@ -70,16 +417,11 @@ pub fn ease_axis(pos: f64, vel: f64, min: f64, max: f64, dim: f64) -> f64 {
 /// Ease against one edge. `edge` is the bounds value on that side, `dir` is
 /// -1 for the minimum edge and +1 for the maximum edge.
 fn ease_side(pos: f64, vel: f64, edge: f64, band: f64, dir: f64) -> f64 {
-    // `dir` points out of the work area: -1 at min, +1 at max. Thus `e`
-    // is positive inside either band, and `vel * dir` is speed toward its edge.
+    // `dir` points out of the work area, so `e` is positive inside either
+    // edge band and `vel * dir` is the speed moving toward that edge.
     let e = (edge - pos) * dir;
-    if e < 0.0 || e >= band {
-        return pos;
-    }
+    if e < 0.0 || e >= band { return pos; }
     let rise = band - EDGE_REST_GAP;
-    // Cubic Hermite: zero slope at the resting line, unit slope where it
-    // joins raw tracking. For narrow bands, shorten the transition and keep
-    // a flat inner section; otherwise the cubic would initially go backwards.
     let transition = band.min(3.0 * rise);
     let start = band - transition;
     let s = ((e - start) / transition).clamp(0.0, 1.0);
@@ -89,24 +431,24 @@ fn ease_side(pos: f64, vel: f64, edge: f64, band: f64, dir: f64) -> f64 {
     let toward_edge = (vel * dir).max(0.0);
     let blend = if toward_edge.is_finite() {
         (1.0 - toward_edge / EDGE_FLING_SPEED).clamp(EDGE_MIN_BLEND, 1.0)
-    } else {
-        1.0
-    };
-    // Subtract the outward direction to map the eased inward distance back.
+    } else { 1.0 };
     edge - dir * (e + (rest - e) * blend)
 }
 
-/// Ease a clamped window origin against the work area on both axes. Corners
-/// ease per axis independently. A missing or dead work size returns the
-/// position untouched.
-pub fn ease_point(x: f64, y: f64, vx: f64, vy: f64, bounds: (f64, f64, f64, f64), work: Option<EdgeWork>) -> (f64, f64) {
-    let Some(work) = work.filter(|w| w.active()) else {
-        return (x, y);
-    };
+/// Ease a clamped window origin against the enabled work-area edges.
+pub fn ease_point(
+    x: f64,
+    y: f64,
+    vx: f64,
+    vy: f64,
+    bounds: (f64, f64, f64, f64),
+    work: Option<EdgeWork>,
+) -> (f64, f64) {
+    let Some(work) = work.filter(|w| w.active()) else { return (x, y); };
     let (min_x, min_y, max_x, max_y) = bounds;
     (
-        ease_axis(x, vx, min_x, max_x, work.width),
-        ease_axis(y, vy, min_y, max_y, work.height),
+        ease_axis_with_edges(x, vx, min_x, max_x, work.width, work.edges.left, work.edges.right),
+        ease_axis_with_edges(y, vy, min_y, max_y, work.height, work.edges.top, work.edges.bottom),
     )
 }
 
@@ -131,13 +473,215 @@ mod tests {
     }
 
     #[test]
+    fn disabled_edge_remains_direct_while_the_opposite_edge_still_resists() {
+        let x = ease_axis_with_edges(1.0, 0.0, 0.0, MAX, DIM, false, true);
+        assert_eq!(x, 1.0);
+        let right = ease_axis_with_edges(MAX - 1.0, 0.0, 0.0, MAX, DIM, false, true);
+        assert!(right <= MAX - EDGE_REST_GAP && right > MAX - BAND);
+    }
+
+    #[test]
+    fn drag_region_opens_a_vertical_monitor_seam() {
+        let top = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let bottom = MonitorRect { x: 0.0, y: 1080.0, width: 1920.0, height: 1080.0 };
+        let work = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1040.0 };
+        let region = drag_region(top, work, &[bottom], (900.0, 1039.0));
+        assert_eq!(region.bounds.bottom(), 1080.0);
+        assert!(!region.edge_mask.bottom);
+        assert!(region.edge_mask.top);
+        let point = ease_point(
+            900.0,
+            1075.0,
+            0.0,
+            0.0,
+            (region.bounds.x, region.bounds.y, region.bounds.right(), region.bounds.bottom()),
+            Some(EdgeWork { width: 1920.0, height: 1040.0, edges: region.edge_mask }),
+        );
+        assert_eq!(point.1, 1075.0);
+    }
+
+    #[test]
+    fn partial_monitor_seam_opens_only_where_the_neighbor_exists() {
+        let current = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
+        let work = MonitorRect { width: 1180.0, ..current };
+        let connected = drag_region(current, work, &[neighbor], (1190.0, 500.0));
+        let near_seam = drag_region(current, work, &[neighbor], (1190.0, 800.5));
+        let beyond_tolerance = drag_region(current, work, &[neighbor], (1190.0, 801.01));
+        let exposed = drag_region(current, work, &[neighbor], (1190.0, 900.0));
+        assert!(!connected.edge_mask.right);
+        assert!(!near_seam.edge_mask.right);
+        assert!(beyond_tolerance.edge_mask.right);
+        assert!(exposed.edge_mask.right);
+        assert_eq!(connected.bounds.right(), current.right());
+        assert_eq!(exposed.bounds.right(), work.right());
+
+        let corner_only = MonitorRect { x: 1200.0, y: 1000.0, ..neighbor };
+        let corner = drag_region(current, work, &[corner_only], (1199.5, 1000.0));
+        assert!(corner.edge_mask.right, "corner contact is not a traversable seam");
+    }
+
+    #[test]
+    fn a_shared_vertical_seam_preserves_exposed_top_and_bottom_workarea_bounds() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { x: 0.0, y: 40.0, width: 1180.0, height: 900.0 };
+        let neighbor = MonitorRect { x: 1200.0, y: 0.0, width: 1000.0, height: 1000.0 };
+
+        let region = drag_region(monitor, work, &[neighbor], (1190.0, 900.0));
+
+        assert!(!region.edge_mask.right);
+        assert!(region.edge_mask.top);
+        assert!(region.edge_mask.bottom);
+        assert_eq!(region.bounds.right(), monitor.right());
+        assert_eq!(region.bounds.y, work.y);
+        assert_eq!(region.bounds.bottom(), work.bottom());
+
+        let seam_x = region.bounds.right() - 1.0;
+        let (eased_x, eased_y) = ease_point(
+            seam_x,
+            region.bounds.y,
+            0.0,
+            0.0,
+            (region.bounds.x, region.bounds.y, region.bounds.right(), region.bounds.bottom()),
+            Some(EdgeWork { width: work.width, height: work.height, edges: region.edge_mask }),
+        );
+        assert_eq!(eased_x, seam_x, "the shared side must not repel the crossing");
+        assert!(eased_y > work.y, "the exposed top edge must retain its safe gap");
+    }
+
+    #[test]
+    fn a_shared_horizontal_seam_preserves_exposed_left_and_right_workarea_bounds() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { x: 40.0, y: 20.0, width: 1120.0, height: 960.0 };
+        let neighbor = MonitorRect { x: 0.0, y: -800.0, width: 1200.0, height: 800.0 };
+
+        let region = drag_region(monitor, work, &[neighbor], (600.0, 10.0));
+
+        assert!(!region.edge_mask.top);
+        assert!(region.edge_mask.left);
+        assert!(region.edge_mask.right);
+        assert_eq!(region.bounds.x, work.x);
+        assert_eq!(region.bounds.right(), work.right());
+        assert_eq!(region.bounds.y, monitor.y);
+    }
+
+    #[test]
+    fn partial_seam_latch_prevents_mask_flips_until_the_center_reenters() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
+        let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
+        let mut tracker = SeamTracker::default();
+
+        let near_end = tracker.resolve(monitor, work, &[neighbor], (1190.0, 760.0));
+        assert!(!near_end.edge_mask.right);
+        let outside_overlap = tracker.resolve(monitor, work, &[neighbor], (1190.0, 900.0));
+        assert!(!outside_overlap.edge_mask.right);
+        assert_eq!(outside_overlap.bounds.right(), monitor.right());
+
+        // Returning by the scale-relative hysteresis margin releases the latch,
+        // but the naturally connected seam stays open. Leaving again re-arms it.
+        let reentered = tracker.resolve(monitor, work, &[neighbor], (1190.0, 680.0));
+        assert!(!reentered.edge_mask.right);
+        let near_end_again = tracker.resolve(monitor, work, &[neighbor], (1190.0, 760.0));
+        assert!(!near_end_again.edge_mask.right);
+        let outside_again = tracker.resolve(monitor, work, &[neighbor], (1190.0, 900.0));
+        assert!(!outside_again.edge_mask.right);
+
+        let unplugged = tracker.resolve(monitor, work, &[], (1190.0, 900.0));
+        assert!(unplugged.edge_mask.right);
+        assert_eq!(unplugged.bounds.right(), work.right());
+    }
+
+    #[test]
+    fn seam_hysteresis_is_capped_for_short_partial_overlaps() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let neighbor = MonitorRect { x: 1920.0, y: 1070.0, width: 1280.0, height: 1000.0 };
+        let (start, end) = neighbor_interval(monitor, neighbor, Side::Right).unwrap();
+
+        assert_eq!(end - start, 10.0);
+        assert_eq!(
+            seam_hysteresis_margin(monitor, neighbor, Side::Right, start, end),
+            2.5,
+        );
+    }
+
+    #[test]
+    fn seam_hysteresis_scales_with_the_monitor_coordinate_space() {
+        let physical_monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let physical_neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let physical_margin = seam_hysteresis_margin(
+            physical_monitor,
+            physical_neighbor,
+            Side::Right,
+            0.0,
+            1080.0,
+        );
+
+        let logical_monitor = MonitorRect { x: 0.0, y: 0.0, width: 960.0, height: 540.0 };
+        let logical_neighbor = MonitorRect { x: 960.0, y: 0.0, width: 960.0, height: 540.0 };
+        let logical_margin = seam_hysteresis_margin(
+            logical_monitor,
+            logical_neighbor,
+            Side::Right,
+            0.0,
+            540.0,
+        );
+
+        assert_eq!(physical_margin, 108.0);
+        assert_eq!(logical_margin, 54.0);
+        assert_eq!(physical_margin, logical_margin * 2.0);
+    }
+
+    #[test]
+    fn release_from_a_shared_seam_uses_work_area_bounds() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
+        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
+        let neighbor = MonitorRect { x: 1200.0, y: 0.0, width: 1000.0, height: 1000.0 };
+
+        let held = drag_region(monitor, work, &[neighbor], (1190.0, 500.0));
+        let released = drag_region(monitor, work, &[], (1190.0, 500.0));
+
+        assert!(!held.edge_mask.right);
+        assert_eq!(released.edge_mask, EdgeMask::ALL);
+        assert_eq!(released.bounds, work);
+    }
+
+    #[test]
+    fn edge_region_uses_work_area_on_exposed_sides() {
+        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let work = MonitorRect { x: 0.0, y: 40.0, width: 1920.0, height: 1040.0 };
+        let region = drag_region(monitor, work, &[], (900.0, 100.0));
+        assert_eq!(region.bounds, work);
+        assert_eq!(region.edge_mask, EdgeMask::ALL);
+    }
+
+    #[test]
+    fn invalid_drag_region_inputs_return_finite_fallback_bounds() {
+        let monitor = MonitorRect { x: -100.0, y: 20.0, width: 800.0, height: 600.0 };
+        let invalid_work = MonitorRect { width: f64::NAN, ..monitor };
+        let fallback = drag_region(monitor, invalid_work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds, monitor);
+        assert_eq!(fallback.edge_mask, EdgeMask::ALL);
+
+        let work = MonitorRect { x: 0.0, y: 0.0, width: 640.0, height: 480.0 };
+        let invalid_monitor = MonitorRect { width: 0.0, ..monitor };
+        let fallback = drag_region(invalid_monitor, work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds, work);
+
+        let fallback = drag_region(invalid_monitor, invalid_work, &[], (0.0, 0.0));
+        assert_eq!(fallback.bounds.x, 0.0);
+        assert_eq!(fallback.bounds.y, 0.0);
+        assert_eq!(fallback.bounds.width, 0.0);
+        assert_eq!(fallback.bounds.height, 0.0);
+    }
+
+    #[test]
     fn both_inner_edge_bands_preserve_the_resting_gap() {
         let left = ease_axis(MIN + 1.0, 0.0, MIN, MAX, DIM);
         let right = ease_axis(MAX - 1.0, 0.0, MIN, MAX, DIM);
         assert!(left >= MIN + EDGE_REST_GAP);
         assert!(right <= MAX - EDGE_REST_GAP);
         assert!((left + right - MIN - MAX).abs() < 1e-9);
-        // Outside the band the side helper does not ease; ease_axis owns the clamp.
         assert_eq!(ease_side(MIN - 1.0, 0.0, MIN, BAND, -1.0), MIN - 1.0);
         assert_eq!(ease_side(MAX + 1.0, 0.0, MAX, BAND, 1.0), MAX + 1.0);
     }
@@ -145,14 +689,12 @@ mod tests {
     #[test]
     fn ease_is_monotone_across_the_band() {
         let mut last = f64::NEG_INFINITY;
-        let mut steps = 0;
-        while steps <= 200 {
-            let pos = MIN + BAND * steps as f64 / 200.0;
+        for step in 0..=200 {
+            let pos = MIN + BAND * step as f64 / 200.0;
             let eased = ease_axis(pos, 0.0, MIN, MAX, DIM);
             assert!(eased >= last, "ease reversed at {pos}");
             assert!(eased >= MIN && eased <= MIN + BAND, "ease left the band at {pos}");
             last = eased;
-            steps += 1;
         }
     }
 
@@ -249,16 +791,30 @@ mod tests {
 
     #[test]
     fn point_eases_corners_per_axis() {
-        let (x, y) = ease_point(0.0, 0.0, 0.0, 0.0, (MIN, MIN, MAX, MAX), Some(EdgeWork { width: DIM, height: DIM }));
+        let (x, y) = ease_point(
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            (MIN, MIN, MAX, MAX),
+            Some(EdgeWork::all(DIM, DIM)),
+        );
         assert_eq!((x, y), (MIN + EDGE_REST_GAP, MIN + EDGE_REST_GAP));
-        let (x, y) = ease_point(500.0, 500.0, 0.0, 0.0, (MIN, MIN, MAX, MAX), Some(EdgeWork { width: DIM, height: DIM }));
+        let (x, y) = ease_point(
+            500.0,
+            500.0,
+            0.0,
+            0.0,
+            (MIN, MIN, MAX, MAX),
+            Some(EdgeWork::all(DIM, DIM)),
+        );
         assert_eq!((x, y), (500.0, 500.0));
     }
 
     #[test]
     fn point_without_work_size_is_identity() {
         assert_eq!(ease_point(4.0, 4.0, 0.0, 0.0, (MIN, MIN, MAX, MAX), None), (4.0, 4.0));
-        let dead = EdgeWork { width: 0.0, height: DIM };
+        let dead = EdgeWork::all(0.0, DIM);
         assert_eq!(ease_point(4.0, 4.0, 0.0, 0.0, (MIN, MIN, MAX, MAX), Some(dead)), (4.0, 4.0));
     }
 }

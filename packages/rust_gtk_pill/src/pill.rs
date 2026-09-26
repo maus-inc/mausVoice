@@ -915,21 +915,26 @@ pub fn run(receiver: Receiver<InMessage>) {
 /// the rect is omitted.
 pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
+    let scale = x11::x11_root_scale(window);
     let monitor = pill_monitor(window, state);
     let monitor_rect = monitor.map(|m| {
-        // `workarea()` is in logical pixels while the pill rect below is
-        // physical (`saved_x`/`saved_y` are X11 root coordinates and the
-        // logical window size is scaled). The two rects must share one
-        // coordinate space for the desktop's composer-anchoring math, so
-        // scale the workarea by its monitor's own scale factor — via the
-        // shared logical→physical conversion the X11 placement math also
-        // uses (`pill_pos_on_monitor`).
+        let workarea = m.workarea();
         let monitor_scale = m.scale_factor() as f64;
-        logical_rect_to_physical(&m.workarea(), monitor_scale)
+        if state.backend.get() == Backend::X11 {
+            // GTK 3 X11 uses a screen-wide scale shared by the toplevel and
+            // every monitor rectangle, so all root-space conversions use it.
+            logical_rect_to_physical(&workarea, scale)
+        } else {
+            // Wayland has no queryable root position. Keep its existing
+            // compositor-layout origin and scaled extent for the monitor-only
+            // geometry sent to the composer.
+            Rect {
+                x: workarea.x() as f64,
+                y: workarea.y() as f64,
+                width: workarea.width() as f64 * monitor_scale,
+                height: workarea.height() as f64 * monitor_scale,
+            }
+        }
     });
     let rect = if state.has_saved_position.get() && state.backend.get() == Backend::X11 {
         Some(Rect {
@@ -944,13 +949,7 @@ pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<
     (rect, monitor_rect)
 }
 
-/// Converts a GDK logical-pixel rectangle (a monitor's geometry or work area)
-/// into the physical root-pixel space used for X11 window positioning and
-/// `Rect` reporting. This is the single source of truth for the
-/// logical→physical conversion: `pill_geometry` here and the placement math
-/// in `pill_pos_on_monitor` both go through it, so any scaling tweak lands in
-/// exactly one place. `Rectangle` is plain data, so this stays unit-testable
-/// without a display connection.
+/// Converts GDK's application-pixel monitor rectangle into X11 root pixels.
 pub(crate) fn logical_rect_to_physical(g: &gdk::Rectangle, scale: f64) -> Rect {
     Rect {
         x: g.x() as f64 * scale,
@@ -1101,18 +1100,19 @@ fn pill_monitor(window: &gtk::Window, state: &PillState) -> Option<gdk::Monitor>
             return Some(monitor);
         }
     }
-    let (w, h) = window.size();
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
-    x11::monitor_at_physical_point(
+    if state.backend.get() == Backend::X11 {
+        let (w, h) = window.size();
+        let scale = x11::x11_root_scale(window);
+        return x11::monitor_at_physical_point(
             &display,
             state.saved_x.get() + (w as f64 / 2.0) * scale,
             state.saved_y.get() + (h as f64 / 2.0) * scale,
+            scale,
         )
         .or_else(|| display.primary_monitor())
-        .or_else(|| display.monitor(0))
+        .or_else(|| display.monitor(0));
+    }
+    display.primary_monitor().or_else(|| display.monitor(0))
 }
 
 fn selector_visible_headroom(local_top: f64, surface_y: f64, work_y: f64, scale: f64) -> f64 {
@@ -1130,7 +1130,11 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
         return local_top;
     }
     let Some(monitor) = pill_monitor(window, state) else { return local_top };
-    let scale = monitor.scale_factor() as f64;
+    let scale = if state.backend.get() == Backend::X11 {
+        x11::x11_root_scale(window)
+    } else {
+        monitor.scale_factor() as f64
+    };
     if !scale.is_finite() || scale <= 0.0 {
         return local_top;
     }
@@ -1163,42 +1167,59 @@ fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
     );
 }
 
-/// Live monitor and visible center shared by placement and crossing. X11
-/// reads the applied origin even before a saved drop; Wayland has no portable
-/// absolute origin and therefore uses the caller's fallback.
-fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
-    if state.backend.get() != Backend::X11 {
-        return None;
-    }
-    let (window_x, window_y) = state.x11_drag_applied.get();
-    if window_x == i32::MIN || window_y == i32::MIN {
-        return None;
-    }
-    let display = window.display();
-    let scale = window
-        .window()
-        .map(|gdk_win| gdk_win.scale_factor() as f64)
-        .unwrap_or(1.0);
-    if !scale.is_finite() || scale <= 0.0 {
+/// Center coordinates in the supplied X11 scale space.
+#[derive(Clone, Copy)]
+pub(crate) struct X11PillCenter {
+    /// Absolute center in root pixels when the window origin is available.
+    pub(crate) root: Option<(f64, f64)>,
+    /// Center offset from the toplevel origin, in physical pixels.
+    pub(crate) offset: (f64, f64),
+}
+
+/// Compute the rendered pill center once for all X11 seam calculations.
+///
+/// The local `offset` is scaled into the supplied scale space; `root` is a
+/// true root-pixel point only when `scale` is the window surface scale. GTK 3
+/// X11 uses one screen-wide factor for every monitor rectangle, so all live
+/// callers must pass that same surface scale (never an anchor-monitor scale).
+/// The toplevel origin is already in root pixels.
+pub(crate) fn x11_pill_center(state: &PillState, scale: f64) -> Option<X11PillCenter> {
+    if state.backend.get() != Backend::X11 || !scale.is_finite() || scale <= 0.0 {
         return None;
     }
     let (ox, oy) = state.content_offset();
     let (px, py, pw, ph) =
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
-    let cx = window_x as f64 + (ox + px + pw / 2.0) * scale;
-    let cy = window_y as f64 + (oy + py + ph / 2.0) * scale;
-    let monitor = x11::monitor_at_physical_point(&display, cx, cy)?;
+    let offset = ((ox + px + pw / 2.0) * scale, (oy + py + ph / 2.0) * scale);
+    let (window_x, window_y) = state.x11_drag_applied.get();
+    let root = if window_x == i32::MIN || window_y == i32::MIN {
+        None
+    } else {
+        Some((window_x as f64 + offset.0, window_y as f64 + offset.1))
+    };
+    Some(X11PillCenter { root, offset })
+}
+
+/// Resolve the monitor and rendered pill center from the applied X11 origin.
+fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Monitor, f64, f64)> {
+    if state.backend.get() != Backend::X11 {
+        return None;
+    }
+    let scale = x11::x11_root_scale(window);
+    let center = x11_pill_center(state, scale)?;
+    let (cx, cy) = center.root?;
+    let monitor = x11::monitor_at_physical_point(&window.display(), cx, cy, scale)?;
     Some((monitor, cx, cy))
 }
 
 fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, f64, f64, f64) {
     let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
     let Some((monitor, cx, cy)) = x11_pill_monitor(window, state) else { return unknown };
-    let ms = monitor.scale_factor() as f64;
-    if !ms.is_finite() || ms <= 0.0 {
+    let scale = x11::x11_root_scale(window);
+    if !scale.is_finite() || scale <= 0.0 {
         return unknown;
     }
-    let g = logical_rect_to_physical(&monitor.geometry(), ms);
+    let g = logical_rect_to_physical(&monitor.geometry(), scale);
     (g.x, g.y, g.width, g.height, cx, cy)
 }
 
@@ -1779,9 +1800,7 @@ mod geometry_tests {
     }
 
     #[test]
-    fn logical_rect_is_scaled_into_physical_pixels() {
-        // A 2000x1000 logical work area at origin (100, 50) on a 2x monitor
-        // must come out in the same physical space the pill rect uses.
+    fn logical_rect_scales_monitor_origin_and_extent_into_root_pixels() {
         let rect = logical_rect_to_physical(&gdk::Rectangle::new(100, 50, 2000, 1000), 2.0);
         assert_rect_close(
             &rect,
@@ -1792,6 +1811,9 @@ mod geometry_tests {
                 height: 2000.0,
             },
         );
+        let left_monitor = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 2.0);
+        assert_eq!(left_monitor.x, -3840.0);
+        assert_eq!(left_monitor.width, 3840.0);
     }
 
     #[test]
