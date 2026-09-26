@@ -837,6 +837,15 @@ fn clear_flash(state: &PillState) {
     );
 }
 
+fn ns_rect_to_monitor_rect(frame: NSRect) -> rust_pill_shared::edge::MonitorRect {
+    rust_pill_shared::edge::MonitorRect {
+        x: frame.origin.x,
+        y: frame.origin.y,
+        width: frame.size.width,
+        height: frame.size.height,
+    }
+}
+
 fn crossing_identity(frame: NSRect, primary_top: f64, cx_up: f64, cy_up: f64) -> (f64, f64, f64, f64, f64, f64) {
     let monitor = to_top_down(frame, primary_top);
     (monitor.x, monitor.y, monitor.width, monitor.height, cx_up, primary_top - cy_up)
@@ -1443,68 +1452,117 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             footprint_center(win_frame.origin.x, win_frame.origin.y)
         };
 
-        // Find the screen the anchor point belongs to.
-        let mut chosen_visible: Option<NSRect> = None;
+        // Resolve monitor bounds in Cocoa's global point space. A connected
+        // neighbor opens only its shared edge; the visible frame remains the
+        // clamp on exposed edges to keep the Dock and menu bar clear.
+        let monitor_frames: Vec<rust_pill_shared::edge::MonitorRect> = (0..count)
+            .map(|i| {
+                let screen: id = msg_send![screens, objectAtIndex:i];
+                let frame: NSRect = msg_send![screen, frame];
+                ns_rect_to_monitor_rect(frame)
+            })
+            .collect();
+        let mut chosen: Option<(NSRect, rust_pill_shared::edge::MonitorRect, rust_pill_shared::edge::EdgeMask)> = None;
         for i in 0..count {
             let screen: id = msg_send![screens, objectAtIndex:i];
             let frame: NSRect = msg_send![screen, frame];
-
             if anchor_x >= frame.origin.x
                 && anchor_x < frame.origin.x + frame.size.width
                 && anchor_y >= frame.origin.y
                 && anchor_y < frame.origin.y + frame.size.height
             {
-                chosen_visible = Some(screen_visible_frame(screen));
+                let visible = screen_visible_frame(screen);
+                let full = ns_rect_to_monitor_rect(frame);
+                let work_area = ns_rect_to_monitor_rect(visible);
+                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+                let region = if dragging {
+                    state.drag_motion.borrow_mut().resolve_drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                } else {
+                    rust_pill_shared::edge::drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                };
+                chosen = Some((visible, region.bounds, region.edge_mask));
                 break;
             }
         }
 
-        // An anchor that belongs to no screen means the display topology
-        // changed out from under a parked pill (monitor unplugged, resolution
-        // shrunk): recover onto the primary screen's visible frame instead of
-        // freezing wherever the pill happened to be.
-        let visible = match chosen_visible {
-            Some(visible) => visible,
+        // If a display disappears mid-drag, retain the primary screen's safe
+        // visible frame rather than freezing at stale coordinates.
+        let (visible, drag_region, edge_mask) = match chosen {
+            Some(resolved) => resolved,
             None if count > 0 => {
                 let primary: id = msg_send![screens, objectAtIndex:0usize];
-                screen_visible_frame(primary)
+                let frame: NSRect = msg_send![primary, frame];
+                let visible = screen_visible_frame(primary);
+                let full = ns_rect_to_monitor_rect(frame);
+                let work_area = ns_rect_to_monitor_rect(visible);
+                let seam_point = footprint_center(win_frame.origin.x, win_frame.origin.y);
+                let region = if dragging {
+                    state.drag_motion.borrow_mut().resolve_drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                } else {
+                    rust_pill_shared::edge::drag_region(
+                        full, work_area, &monitor_frames, seam_point,
+                    )
+                };
+                (visible, region.bounds, region.edge_mask)
             }
             None => return,
         };
 
-        // The OS window is a fixed 600×362 transparent canvas; the visible pill
-        // is drawn inside it, centred horizontally and bottom-anchored.
-        // Clamping the *window* into the visible frame boxes the pill into the
-        // middle of the screen — the invisible canvas margins eat hundreds of
-        // pixels on every side. In dictation mode, clamp the pill's visible
-        // footprint instead so it can be parked at the true screen edges;
-        // panel/typing modes fill the canvas, so they keep whole-window
-        // clamping. (Window origin is the bottom-left corner in y-up screen
-        // coordinates, while the view is flipped y-down, so a view-space top
-        // edge at `fy` maps to screen y = origin.y + win_h − fy.)
+        // Keep the work-area clamp on exposed sides, but use the full display
+        // edge on shared seams so the grab point can cross without resistance.
+        let clamp_frame = if dragging {
+            drag_region
+        } else {
+            rust_pill_shared::edge::MonitorRect {
+                x: visible.origin.x,
+                y: visible.origin.y,
+                width: visible.size.width,
+                height: visible.size.height,
+            }
+        };
+        // The OS window is a fixed transparent canvas; clamp the visible pill
+        // footprint in dictation mode so transparent canvas margins do not
+        // box the pill away from the actual screen edge.
         let (min_x, min_y, max_x, max_y) =
             if state.effective_window_mode() == WindowMode::Dictation
                 && !state.assistant_active.get()
             {
                 (
-                    visible.origin.x - fx,
-                    visible.origin.y - win_h + fy + ph,
-                    visible.origin.x + visible.size.width - fx - pw,
-                    visible.origin.y + visible.size.height - win_h + fy,
+                    clamp_frame.x - fx,
+                    clamp_frame.y - win_h + fy + ph,
+                    clamp_frame.right() - fx - pw,
+                    clamp_frame.bottom() - win_h + fy,
                 )
             } else {
                 (
-                    visible.origin.x,
-                    visible.origin.y,
-                    visible.origin.x + visible.size.width - win_w,
-                    visible.origin.y + visible.size.height - win_h,
+                    clamp_frame.x,
+                    clamp_frame.y,
+                    clamp_frame.right() - win_w,
+                    clamp_frame.bottom() - win_h,
                 )
             };
+        let mut bounds = DragBounds { min_x, min_y, max_x, max_y };
+        if dragging {
+            bounds.apply_shared_seam_bounds(
+                drag_region,
+                (fx + pw / 2.0, win_h - fy - ph / 2.0),
+                edge_mask,
+            );
+        }
 
-        // A visible frame smaller than the clamp target inverts the bounds;
-        // keep max >= min so the clamp cannot push the origin off screen.
-        let max_x = max_x.max(min_x);
-        let max_y = max_y.max(min_y);
+        let edge_work_mask = if dragging { edge_mask } else {
+            rust_pill_shared::edge::EdgeMask::ALL
+        };
+        bounds.collapse_inverted(
+            edge_work_mask,
+            (win_frame.origin.x, win_frame.origin.y),
+        );
 
         // Drag motion runs through the shared controller: direct 1:1 tracking
         // while held, a velocity-aware settle after release. Both apply every
@@ -1516,15 +1574,11 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
                 pointer_y: mouse_loc.y,
                 now,
                 dt,
-                bounds: DragBounds {
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                },
+                bounds,
                 edge_work: Some(rust_pill_shared::edge::EdgeWork {
                     width: visible.size.width,
                     height: visible.size.height,
+                    edges: edge_work_mask,
                 }),
                 held: dragging,
                 reduced_motion: reduced_motion(),
@@ -1541,8 +1595,8 @@ fn reposition_window(window: id, state: &PillState, dt: f64, now: f64) {
             // frame of the screen that position belongs to.
             let mut tx = state.saved_x.get();
             let mut ty = state.saved_y.get();
-            tx = tx.max(min_x).min(max_x);
-            ty = ty.max(min_y).min(max_y);
+            tx = tx.max(bounds.min_x).min(bounds.max_x);
+            ty = ty.max(bounds.min_y).min(bounds.max_y);
             (tx, ty)
         } else {
             // Default: centre at bottom of the pill's own screen.

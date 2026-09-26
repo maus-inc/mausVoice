@@ -138,28 +138,31 @@ describe("groqGenerateTextResponse", () => {
     });
   });
 
-  it("uses json_schema for Groq models that support structured outputs", async () => {
-    const { call, jsonResponse } =
-      await runGroqJsonResponseCase("openai/gpt-oss-20b");
+  it.each(["openai/gpt-oss-20b", "openai/gpt-oss-120b"])(
+    "uses json_schema for Groq model %s with structured-output support",
+    async (model) => {
+      const { call, jsonResponse } = await runGroqJsonResponseCase(model);
 
-    expect(call).toMatchObject({
-      model: "openai/gpt-oss-20b",
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: jsonResponse.name,
-          description: jsonResponse.description,
-          schema: jsonResponse.schema,
+      expect(call).toMatchObject({
+        model,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: jsonResponse.name,
+            description: jsonResponse.description,
+            schema: jsonResponse.schema,
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 
   it("falls back to json_object for Groq models without structured-output support", async () => {
-    const { call } = await runGroqJsonResponseCase("qwen/qwen3.8-27b");
+    const model = "custom/model-without-structured-output";
+    const { call } = await runGroqJsonResponseCase(model);
 
     expect(call).toMatchObject({
-      model: "qwen/qwen3.8-27b",
+      model,
       response_format: { type: "json_object" },
     });
   });
