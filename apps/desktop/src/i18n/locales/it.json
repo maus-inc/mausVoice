@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "La cronologia delle versioni ha restituito lo stato {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "La selezione è troppo lunga per essere aggiunta al dizionario.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "Il server non supporta l'elenco dei modelli. Inserisci il nome del modello manualmente.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Non è stato possibile leggere la risposta di stile, quindi è stata scartata e il testo precedente è stato mantenuto.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "La risposta di stile è stata troncata al limite di output del modello, quindi la risposta parziale è stata scartata e il testo precedente è stato mantenuto.",
   "the_user_has_dictated_the_following_command_transcript_execu": "L'utente ha dettato il seguente comando: ------- {transcript} ------- Esegui questo comando e fornisci l'output in {languageName}. Istruzioni: - Se l'utente ti chiede di scrivere, creare, abbozzare o comporre qualcosa → produci quel contenuto - Se l'utente ti chiede di riassumere, analizzare o spiegare qualcosa → fornisci il riassunto/l'analisi/spiegazione - Se l'utente ti chiede di trasformare o riscrivere qualcosa → applica la trasformazione - Se l'utente fornisce un'affermazione senza un comando chiaro → sistemala e presentala in modo chiaro Restituisci SOLO l'output richiesto, nient'altro. L'output verrà incollato direttamente nell'applicazione dell'utente.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Impostazioni tema",

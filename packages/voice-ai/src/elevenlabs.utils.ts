@@ -1,4 +1,4 @@
-import { retry, countWords } from "@maus-inc/utilities";
+import { HttpError, retry, countWords } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 export type ElevenLabsTestIntegrationArgs = {
@@ -16,10 +16,12 @@ export const elevenlabsTestIntegration = async ({
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(
+    throw new HttpError(
+      response.status,
       detail
         ? `ElevenLabs responded ${response.status}: ${detail}`
         : `ElevenLabs responded with status ${response.status}`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
   return true;
@@ -83,8 +85,10 @@ export const elevenlabsTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `ElevenLabs API request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 

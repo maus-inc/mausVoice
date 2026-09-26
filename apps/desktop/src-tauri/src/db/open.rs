@@ -163,6 +163,40 @@ async fn retire_consolidated_migrations(
     Ok(())
 }
 
+/// Every migration version any ref in this repository used in the range 070 to
+/// 088, all of which the 0.1.6 consolidation folded into this build's target
+/// schema.
+///
+/// The numbers sit above the consolidation step (069) on purpose: the
+/// individual steps were written and shipped first, and the consolidation was
+/// numbered 069 afterwards, so "the steps between 069 and 089" is the numeric
+/// description of this list. 089 arrived after the consolidation and is still
+/// applied, so it is not retired. Intermediate builds recorded these steps
+/// individually, so their ledger rows retire on open instead of being reported
+/// as a downgrade.
+///
+/// This is an explicit list on purpose. The previous `71..=88` range also
+/// retired 080 and 088, and no ref in this repository has ever used either
+/// number, so a future legitimate `080_*.sql` or `088_*.sql` would have had its
+/// ledger row hard-deleted instead of surfacing as a downgrade. Adding a
+/// version here is now a deliberate edit and can never be a side effect of
+/// widening a number.
+///
+/// The list is exactly what `git log --all --diff-filter=A --name-only` shows
+/// for `src/db/migrations/`, which is a `NNN_*.sql` file for every entry here
+/// and nothing for 070, 080 or 088. A ledger row for one of those three is
+/// therefore never retired and still surfaces as a downgrade. The header of
+/// `migrations/069_consolidated_v0_1_6_schema.sql` names the same 16 steps,
+/// `expansion_flags` included, because that column arrived on the 075 step
+/// rather than on a step of its own.
+/// `consolidated_intermediate_migration_rows_are_retired` below exercises the
+/// retirement path, and
+/// `unretired_consolidation_era_numbers_surface_as_a_downgrade` covers the
+/// three gaps.
+const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[i64] = &[
+    71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84, 85, 86, 87,
+];
+
 async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -210,15 +244,16 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     let mut retired: Vec<i64> = Vec::new();
     for version in applied_checksums.keys() {
         if !configured.contains(version) {
-            // Migrations 71-88 were folded into the single post-0.1.5
-            // consolidation step (69) for the 0.1.6 release. Databases
-            // written by intermediate builds recorded those steps
-            // individually; that schema is already part of this build's
-            // target, so the rows are retired below instead of failing the
-            // open as a downgrade. Any other unconfigured version keeps the
-            // strict behavior: a database from a genuinely newer release
-            // must surface loudly, not be rewritten underneath it.
-            if (71..=88).contains(version) {
+            // The individual migrations that the 0.1.6 release folded into the
+            // single post-0.1.5 consolidation step (69). Databases written by
+            // intermediate builds recorded those steps individually; that
+            // schema is already part of this build's target, so those rows are
+            // retired below instead of failing the open as a downgrade. Only
+            // the versions a real build actually shipped are listed, so any
+            // other unconfigured version keeps the strict behavior: a database
+            // from a genuinely newer release must surface loudly, not be
+            // rewritten underneath it.
+            if RETIRED_CONSOLIDATION_ERA_VERSIONS.contains(version) {
                 retired.push(*version);
                 continue;
             }
@@ -683,10 +718,14 @@ mod tests {
     #[test]
     fn migration_checksum_is_stable_across_lf_and_crlf() {
         let lf_sql = "CREATE TABLE test (\n  id INTEGER PRIMARY KEY,\n  name TEXT NOT NULL\n);\n";
-        let crlf_sql = "CREATE TABLE test (\r\n  id INTEGER PRIMARY KEY,\r\n  name TEXT NOT NULL\r\n);\r\n";
+        let crlf_sql =
+            "CREATE TABLE test (\r\n  id INTEGER PRIMARY KEY,\r\n  name TEXT NOT NULL\r\n);\r\n";
         let lf_hash = migration_checksum(lf_sql);
         let crlf_hash = migration_checksum(crlf_sql);
-        assert_eq!(lf_hash, crlf_hash, "CRLF and LF must produce identical SHA-384 checksums");
+        assert_eq!(
+            lf_hash, crlf_hash,
+            "CRLF and LF must produce identical SHA-384 checksums"
+        );
     }
 
     #[tokio::test]
@@ -745,8 +784,12 @@ mod tests {
             "broken archive must exist after recovery"
         );
 
-        let removed = delete_quarantined_databases(&temp.dir).expect("quarantine deletion succeeds");
-        assert!(removed >= 1, "must delete at least one quarantined directory");
+        let removed =
+            delete_quarantined_databases(&temp.dir).expect("quarantine deletion succeeds");
+        assert!(
+            removed >= 1,
+            "must delete at least one quarantined directory"
+        );
 
         assert!(
             std::fs::read_dir(&temp.dir)
@@ -1148,8 +1191,7 @@ mod tests {
         pool.close().await;
         let error = open_app_database(&temp.path)
             .await
-            .err()
-            .expect("retirement must fail");
+            .expect_err("retirement must fail");
         assert!(error.contains("retirement blocked"), "{error}");
 
         let original = connect_pool(&temp.path).await.unwrap();
@@ -1189,10 +1231,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let error = apply_migrations(&pool)
-            .await
-            .err()
-            .expect("invalid checksum");
+        let error = apply_migrations(&pool).await.expect_err("invalid checksum");
         assert!(matches!(error, OpenError::Integrity(_)));
         let versions: Vec<i64> = sqlx::query_scalar(
             "SELECT version FROM _sqlx_migrations WHERE version IN (69, 75, 87) ORDER BY version",
@@ -1249,6 +1288,63 @@ mod tests {
                     .starts_with("mausvoice.broken-")),
             "retiring consolidation-era rows must never quarantine the database"
         );
+    }
+
+    #[tokio::test]
+    async fn unretired_consolidation_era_numbers_surface_as_a_downgrade() {
+        // 070, 080 and 088 are the three numbers in the 070 to 088 range that
+        // no ref in this repository ever used. A ledger row for one of them is
+        // not a folded consolidation step, so it must be surfaced and left in
+        // place. Hard-deleting it would hide a database written by a release
+        // this build knows nothing about, which is what widening the retired
+        // list back to a range would do.
+        for version in [70_i64, 80, 88] {
+            let temp = TempDb::new();
+            let path = &temp.path;
+            let pool = try_open(path).await.expect("initial migrate");
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?1, 'never_shipped', true, x'deadbeef', 0)",
+            )
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+
+            let error = open_app_database(path)
+                .await
+                .expect_err("an unused version must not open silently");
+            assert!(
+                error.contains(&format!("migration {version} is recorded"))
+                    && error.contains("not in the current migration set"),
+                "version {version} must surface as a downgrade, got: {error}"
+            );
+
+            let check = connect_pool(path).await.expect("reconnect");
+            let survivors: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1")
+                    .bind(version)
+                    .fetch_one(&check)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                survivors, 1,
+                "the row for version {version} must survive, not be deleted"
+            );
+            check.close().await;
+            assert!(
+                std::fs::read_dir(&temp.dir)
+                    .unwrap()
+                    .flatten()
+                    .all(|entry| !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("mausvoice.broken-")),
+                "surfacing version {version} must never quarantine the database"
+            );
+        }
     }
 
     #[tokio::test]

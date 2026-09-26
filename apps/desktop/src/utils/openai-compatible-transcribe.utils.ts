@@ -1,3 +1,4 @@
+import { HttpError } from "@maus-inc/utilities";
 import {
   buildOpenAICompatibleTranscriptionUrl,
   normalizeOpenAICompatibleBaseUrl,
@@ -113,10 +114,16 @@ export const openaiCompatibleTranscribeAudio = async ({
   }
 
   if (!finalResponse.ok) {
-    throw new Error(
+    // The status travels on the error as data so a retry policy can read a
+    // terminal 4xx as terminal and wait out a `Retry-After` hint on a 429 or
+    // 503. The message is unchanged, so existing assertions and any caller
+    // that shows it to the user read exactly as before.
+    throw new HttpError(
+      finalResponse.status,
       `OpenAI Compatible transcription failed: ${finalResponse.status} - ${
         errorBody || "Unknown error"
       }`,
+      { retryAfter: finalResponse.headers.get("retry-after") },
     );
   }
 
@@ -126,6 +133,8 @@ export const openaiCompatibleTranscribeAudio = async ({
   };
 
   if (!data.text) {
+    // A 2xx body with no text is a malformed payload, not an HTTP failure, so
+    // there is no status to report and it stays a plain error.
     throw new Error("Transcription failed: no text in response");
   }
 

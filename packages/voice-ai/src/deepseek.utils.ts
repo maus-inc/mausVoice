@@ -66,6 +66,15 @@ export const deepseekGenerateTextResponse = async ({
     // retries for transient failures.
     retries: 3,
     isRetryable: (error) => !signal?.aborted,
+    // An abort during the wait is honoured: `retry` hands the signal to its
+    // own wait, so a cancelled caller stops there instead of sitting it out.
+    // That wait is the helper's own 20ms, because the helper only stretches
+    // a wait for a `Retry-After` hint and reads that hint off an `HttpError`.
+    // DeepSeek is called through the OpenAI SDK, whose own `APIError` nothing
+    // here converts, so a 429 is retried 20ms later. Converting the failure
+    // with `toHttpError` inside `fn` (the pattern in `transcription.utils.ts`)
+    // is what would let a hint apply here, capped at the helper's 2s default.
+    signal,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

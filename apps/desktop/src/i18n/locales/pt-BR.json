@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "O histórico de versões retornou o status {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "A seleção é longa demais para ser adicionada ao dicionário.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "O servidor não suporta a listagem de modelos. Por favor, insira o nome do modelo manualmente.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Não foi possível ler a resposta de estilo, então ela foi descartada e o texto anterior foi mantido.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "A resposta de estilo foi cortada no limite de saída do modelo, então a resposta parcial foi descartada e o texto anterior foi mantido.",
   "the_user_has_dictated_the_following_command_transcript_execu": "O usuário ditou o seguinte comando: ------- {transcript} ------- Execute este comando e forneça a saída em {languageName}. Instruções: - Se o usuário pedir para escrever, criar, rascunhar ou compor algo → produza esse conteúdo - Se o usuário pedir para resumir, analisar ou explicar algo → forneça o resumo/análise/explicação - Se o usuário pedir para transformar ou reescrever algo → aplique a transformação - Se o usuário fornecer uma declaração sem um comando claro → limpe-a e apresente-a claramente Retorne SOMENTE a saída solicitada, nada mais. A saída será colada diretamente no aplicativo do usuário.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Configurações de tema",

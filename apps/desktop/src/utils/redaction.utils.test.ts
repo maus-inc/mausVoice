@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { redactError, redactObject, redactString } from "./redaction.utils";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+  redactError,
+  redactObject,
+  redactObjectSync,
+  redactString,
+  redactStringSync,
+  type SyncRedactionMode,
+} from "./redaction.utils";
+
+/**
+ * A caller that guards on `typeof value === "object"`, such as the log
+ * serializer, reaches the top level with a value that is not a record.
+ */
+const asRecord = (value: object): Record<string, unknown> =>
+  value as Record<string, unknown>;
 
 describe("redaction.utils", () => {
   describe("redactString", () => {
@@ -180,6 +194,43 @@ describe("redaction.utils", () => {
       expect(result.keyboard).toBe("qwerty");
     });
 
+    it("redacts the auth credential names that survive the word boundary", async () => {
+      const result = await redactObject({
+        auth: "Bearer opaque",
+        authorization: "Bearer opaque",
+        authHeader: "Bearer opaque",
+        auth_header: "Bearer opaque",
+        "x-auth-token": "opaque",
+        config: { auth: "Bearer opaque" },
+      });
+      expect(result).toEqual({
+        auth: "[redacted]",
+        authorization: "[redacted]",
+        authHeader: "[redacted]",
+        auth_header: "[redacted]",
+        "x-auth-token": "[redacted]",
+        config: { auth: "[redacted]" },
+      });
+    });
+
+    // The unanchored "auth" alternative used to mask "author" and its kin,
+    // which is the over match this pattern no longer makes. A key is sensitive
+    // when "auth" is a whole key, a delimited component, or a known compound.
+    it("leaves incidental words that only start with the auth letters visible", async () => {
+      const result = await redactObject({
+        author: "Soniya",
+        authorName: "Soniya",
+        authority: "Riverside",
+        authentic: "genuine",
+      });
+      expect(result).toEqual({
+        author: "Soniya",
+        authorName: "Soniya",
+        authority: "Riverside",
+        authentic: "genuine",
+      });
+    });
+
     it("fully redacts nested arrays under sensitive keys", async () => {
       const result = (await redactObject({ passwords: [["foo"]] })) as {
         passwords: unknown;
@@ -224,6 +275,150 @@ describe("redaction.utils", () => {
     });
   });
 
+  describe("redactObjectSync", () => {
+    it("redacts a sensitive key nested in an object", () => {
+      expect(
+        redactObjectSync({ name: "ok", config: { apiKey: "opaque" } }),
+      ).toEqual({
+        name: "ok",
+        config: { apiKey: "[redacted]" },
+      });
+    });
+
+    it("redacts sensitive keys inside an array of objects", () => {
+      expect(
+        redactObjectSync({
+          rows: [{ token: "a", keep: "x" }, { token: "b" }],
+        }),
+      ).toEqual({
+        rows: [{ token: "[redacted]", keep: "x" }, { token: "[redacted]" }],
+      });
+    });
+
+    it("terminates on a cycle", () => {
+      const input: Record<string, unknown> = { name: "ok" };
+      input.self = input;
+      expect(redactObjectSync(input)).toEqual({
+        name: "ok",
+        self: "[circular]",
+      });
+    });
+
+    it("redacts a sensitive key at depth", () => {
+      expect(
+        redactObjectSync({
+          a: { b: { c: { d: { secret: "opaque", keep: "x" } } } },
+        }),
+      ).toEqual({
+        a: { b: { c: { d: { secret: "[redacted]", keep: "x" } } } },
+      });
+    });
+
+    it("offers only the modes a synchronous call can produce", () => {
+      expectTypeOf<SyncRedactionMode>().toEqualTypeOf<"full" | "truncate">();
+      expect(redactStringSync("secret-value")).toBe("[redacted]");
+      expect(redactStringSync("secret-value", "truncate")).toBe("se***ue");
+    });
+
+    it("keeps the rendered form of a top level value that renders itself", () => {
+      expect(redactObjectSync(asRecord(new Date(0)))).toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+      expect(
+        redactObjectSync(asRecord(new URL("https://example.com/v1"))),
+      ).toBe("https://example.com/v1");
+      expect(redactObjectSync({ toJSON: () => ({ name: "ok" }) })).toEqual({
+        name: "ok",
+      });
+    });
+
+    it("keeps the rendered form of a nested value that renders itself", () => {
+      expect(redactObjectSync({ at: asRecord(new Date(0)) }).at).toBe(
+        "1970-01-01T00:00:00.000Z",
+      );
+    });
+
+    it("redacts a secret reachable only through toJSON", () => {
+      const result = redactObjectSync({
+        config: { toJSON: () => ({ password: "hunter2", visible: "kept" }) },
+      });
+      expect(result.config).toEqual({
+        password: "[redacted]",
+        visible: "kept",
+      });
+      const inline = redactObjectSync({
+        note: { toJSON: () => `${"sk"}-abcdefghijklmnopqrstuvwxyz123456` },
+      });
+      expect(inline.note).toBe("[redacted-secret]");
+    });
+
+    it("redacts a value that renders itself under a sensitive key", () => {
+      expect(
+        redactObjectSync({ password: { toJSON: () => "hunter2" } }),
+      ).toEqual({ password: "[redacted]" });
+      expect(
+        redactObjectSync({ auth: { toJSON: () => ({ token: "opaque" }) } }),
+      ).toEqual({ auth: "[redacted]" });
+    });
+
+    it("resolves an array that renders itself instead of walking it", () => {
+      const rows = Object.assign([{ token: "opaque" }], {
+        toJSON: () => ({ token: "opaque" }),
+      });
+      expect(redactObjectSync({ rows })).toEqual({
+        rows: { token: "[redacted]" },
+      });
+    });
+
+    it("terminates when toJSON renders the value itself", () => {
+      const looping: Record<string, unknown> = { label: "ok" };
+      looping.toJSON = () => looping;
+      expect(redactObjectSync({ looping })).toEqual({ looping: "[circular]" });
+    });
+
+    it("terminates a cycle that sits below the root", () => {
+      const nested: Record<string, unknown> = { token: "opaque" };
+      nested.self = nested;
+      expect(redactObjectSync({ nested })).toEqual({
+        nested: { token: "[redacted]", self: "[circular]" },
+      });
+      const shared: Record<string, unknown> = { token: "opaque" };
+      expect(redactObjectSync({ first: shared, second: shared })).toEqual({
+        first: { token: "[redacted]" },
+        second: { token: "[redacted]" },
+      });
+    });
+
+    it("keeps the ancestor set out of the exported signature", () => {
+      expectTypeOf<Parameters<typeof redactObjectSync>>().toEqualTypeOf<
+        [Record<string, unknown>, string[]?, boolean?]
+      >();
+      expectTypeOf<Parameters<typeof redactObject>>().toEqualTypeOf<
+        [Record<string, unknown>, string[]?, boolean?]
+      >();
+    });
+
+    it("ignores a caller supplied ancestor set instead of dropping the record", () => {
+      // A caller cannot seed the set any more, so the four argument shape is
+      // unreachable through the exported signature. The cast reaches it to
+      // prove the argument is inert instead of a cycle marker.
+      const callWithSet = redactObjectSync as (
+        obj: Record<string, unknown>,
+        sensitiveKeys: string[],
+        forceFull: boolean,
+        ancestors: WeakSet<object>,
+      ) => Record<string, unknown>;
+      const input: Record<string, unknown> = {
+        name: "ok",
+        password: "hunter2",
+      };
+      expect(callWithSet(input, [], false, new WeakSet([input]))).toEqual({
+        name: "ok",
+        password: "[redacted]",
+      });
+    });
+  });
+
   it("keeps a parsed __proto__ property as data without changing the output prototype", async () => {
     const input = JSON.parse(
       '{"__proto__":{"secret":"hidden","visible":"kept"},"name":"ok"}',
@@ -265,4 +460,47 @@ describe("redaction.utils", () => {
       second: [{ password: "[redacted]", name: "ok" }],
     });
   });
+  it.each([
+    "cookie",
+    "set-cookie",
+    "setCookie",
+    "jwt",
+    "jwtToken",
+    "sessionId",
+    "session_id",
+    "sessionKey",
+    "otp",
+    "OTP",
+    "pin",
+    "passcode",
+    "passphrase",
+  ])(
+    "redacts a bearer-shaped key that is named none of the usual ways (%s)",
+    async (key) => {
+      // None of these is called a token, a secret or a key, so nothing above
+      // matched them, and each one is a credential in its own right.
+      expect(await redactObject({ [key]: "value" })).toEqual({
+        [key]: "[redacted]",
+      });
+    },
+  );
+
+  it.each([
+    "spinning",
+    "hotplate",
+    "mapping",
+    "shopping",
+    "keyboard",
+    "author",
+    "authState",
+  ])(
+    "leaves an ordinary word that merely contains a sensitive fragment (%s)",
+    async (key) => {
+      // A value masked for an ordinary word is a log line nobody can read, so
+      // the short fragments are delimited rather than matched anywhere.
+      expect(await redactObject({ [key]: "value" })).toEqual({
+        [key]: "value",
+      });
+    },
+  );
 });

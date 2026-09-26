@@ -1,5 +1,9 @@
 import OpenAI from "openai";
-import { retry } from "@maus-inc/utilities";
+import {
+  isTerminalHttpStatus,
+  readHttpStatus,
+  retry,
+} from "@maus-inc/utilities";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -35,14 +39,13 @@ export class CerebrasProviderError extends Error {
   }
 }
 
-/** True when a status must not be retried (billing, auth, bad request). */
+/**
+ * True when a status must not be retried (billing, auth, bad request). Reads
+ * the shared terminal-status set so this provider and the shared `retry`
+ * helper can never disagree about which statuses are permanent.
+ */
 export const isCerebrasTerminalStatus = (status: number): boolean =>
-  status === 400 ||
-  status === 401 ||
-  status === 402 ||
-  status === 403 ||
-  status === 404 ||
-  status === 422;
+  isTerminalHttpStatus(status);
 
 /**
  * Replace the literal API key and common authorization material anywhere in
@@ -66,20 +69,12 @@ export const redactCerebrasMessage = (message: string): string =>
     message,
   );
 
-const readStatus = (error: unknown): number | undefined => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return undefined;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-};
-
 /** True when a thrown value carries a non-retryable Cerebras HTTP status. */
 export const isCerebrasTerminalError = (error: unknown): boolean => {
   if (error instanceof CerebrasProviderError && error.status !== undefined) {
     return isCerebrasTerminalStatus(error.status);
   }
-  const status = readStatus(error);
+  const status = readHttpStatus(error);
   return status !== undefined && isCerebrasTerminalStatus(status);
 };
 
@@ -97,11 +92,7 @@ export const normalizeCerebrasError = (error: unknown): Error => {
     return error;
   }
 
-  const status =
-    typeof error === "object" && error !== null && "status" in error
-      ? (error as { status?: unknown }).status
-      : undefined;
-  const numericStatus = typeof status === "number" ? status : undefined;
+  const numericStatus = readHttpStatus(error);
 
   if (numericStatus === 402) {
     return new CerebrasProviderError(
@@ -181,6 +172,17 @@ export const cerebrasGenerateTextResponse = async ({
     // The status may arrive either as a raw SDK error (before normalization)
     // or already wrapped, so inspect both shapes.
     isRetryable: (error) => !signal?.aborted && !isCerebrasTerminalError(error),
+    // An abort during the wait is honoured: `retry` hands the signal to its
+    // own wait, so a cancelled caller stops there instead of sitting it out.
+    // That wait is the helper's own 20ms. The helper stretches a wait for a
+    // `Retry-After` hint only, and it reads that hint off an `HttpError`.
+    // What reaches `retry` is the raw OpenAI SDK `APIError`: the `.catch`
+    // below normalizes only after `retry` has given up, and it hands back a
+    // `CerebrasProviderError` or a plain `Error`, never an `HttpError`. So a
+    // 429 is retried 20ms later. Converting inside `fn` (the pattern in
+    // `transcription.utils.ts`) is what would let a hint apply here, capped at
+    // the helper's 2s default.
+    signal,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 

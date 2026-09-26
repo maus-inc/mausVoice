@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "O histórico de versões devolveu o estado {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "A seleção é demasiado longa para ser adicionada ao dicionário.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "O servidor não suporta a listagem de modelos. Por favor, introduza o nome do modelo manualmente.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "Não foi possível ler a resposta de estilo, por isso foi descartada e o texto anterior foi mantido.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "A resposta de estilo foi cortada no limite de saída do modelo, por isso a resposta parcial foi descartada e o texto anterior foi mantido.",
   "the_user_has_dictated_the_following_command_transcript_execu": "O utilizador ditou o seguinte comando: ------- {transcript} ------- Execute este comando e forneça o resultado em {languageName}. Instruções: - Se o utilizador pedir para escrever, criar, redigir ou compor algo → produza esse conteúdo - Se o utilizador pedir para resumir, analisar ou explicar algo → forneça o resumo/análise/explicação - Se o utilizador pedir para transformar ou reescrever algo → aplique a transformação - Se o utilizador fornecer uma afirmação sem um comando claro → limpe-a e apresente-a de forma clara Devolve APENAS o resultado pedido, nada mais. O resultado será colado diretamente na aplicação do utilizador.",
   "theme_mode": "Tema: {mode}",
   "theme_settings": "Definições de tema",

@@ -1,14 +1,41 @@
 export type RedactionMode = "full" | "hash" | "truncate";
 
+/**
+ * The modes a synchronous call can produce. "hash" is excluded by type
+ * because crypto.subtle returns a promise and node:crypto is unreachable from
+ * a synchronous webview call, so a hashed value cannot exist here.
+ */
+export type SyncRedactionMode = Exclude<RedactionMode, "hash">;
+
+const REDACTED = "[redacted]";
+
 const SENSITIVE_KEY_PATTERNS = [
   /password|passwd|pwd/i,
   /secret|clientSecret|client_secret/i,
   /tokens?|accessTokens?|refreshTokens?|idTokens?/i,
-  /authorization|auth(?:Header|orization|_header)?/i,
+  /**
+   * "auth" names a credential as a whole key, as a delimited component such as
+   * "x-auth-token", or as a known compound such as "authHeader". A delimiter is
+   * anything that is not a letter or a digit, so an underscore separates like a
+   * hyphen. A letter or a digit right after "auth" starts an ordinary word such
+   * as "author" or "authentic", and the only such word that is a credential
+   * name is "authorization". That word stays unanchored because the real names
+   * put it inside compounds such as "Proxy-Authorization", and a compound of
+   * "auth" and a qualifier stays unanchored for the same reason.
+   */
+  /authorization|(?:^|[^a-z\d])auth(?![a-z\d])|auth(?:header|key|cookie|code|signature|url|uri)/i,
   /credential/i,
   /private/i,
   /api[_-]?key/i,
   /(?:access[_-]?key|key[_-]?id|session[_-]?key)/i,
+  // Session and browser credentials. No key here was called a token, a secret
+  // or a key, so nothing above matched them, and a logged `cookie` or a
+  // `sessionId` is a bearer credential in its own right. The three-letter
+  // ones are delimited on purpose: unanchored, `otp` also hides "hotplate" and
+  // `pin` also hides "spinning", and a value masked for an ordinary word is a
+  // log line nobody can read.
+  /cookies?|jwt|set[_-]?cookie|session[_-]?id/i,
+  /(?:^|[^a-z\d])(?:otp|pin|passcode|passphrase)(?:$|[^a-z\d])/i,
 ];
 
 const SECRET_VALUE_PATTERN =
@@ -38,6 +65,20 @@ const truncateString = (input: string): string => {
 };
 
 /**
+ * Redact a string without awaiting, for callers that cannot return a promise.
+ * "hash" is absent from the mode union because it needs promise-based crypto.
+ */
+export const redactStringSync = (
+  input: string,
+  mode: SyncRedactionMode = "full",
+): string => {
+  if (!input) {
+    return input;
+  }
+  return mode === "truncate" ? truncateString(input) : REDACTED;
+};
+
+/**
  * Redact a string according to the given mode.
  * "full" replaces with [redacted], "hash" replaces with a short hash,
  * "truncate" shows only the first and last two characters.
@@ -49,13 +90,10 @@ export const redactString = async (
   if (!input) {
     return input;
   }
-  if (mode === "full") {
-    return "[redacted]";
-  }
   if (mode === "hash") {
     return sha256Prefix(input);
   }
-  return truncateString(input);
+  return redactStringSync(input, mode);
 };
 
 /**
@@ -66,8 +104,12 @@ export const redactError = async (error: unknown): Promise<string> => {
   return message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
+const isObject = (value: unknown): value is object => {
+  return value !== null && typeof value === "object";
+};
+
 const isNestedObject = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return isObject(value) && !Array.isArray(value);
 };
 
 const isSensitiveKey = (key: string, sensitiveKeys: string[]): boolean => {
@@ -82,25 +124,25 @@ const redactStringValue = (value: string): string => {
   return value.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
 };
 
-async function redactArray(
+function redactArray(
   values: unknown[],
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
-): Promise<unknown[]> {
+  ancestors: WeakSet<object>,
+): unknown[] {
   const result: unknown[] = [];
   for (const value of values) {
-    result.push(await redactValue(value, sensitiveKeys, forceFull, seen));
+    result.push(redactValue(value, sensitiveKeys, forceFull, ancestors));
   }
   return result;
 }
 
-async function redactFields(
+function redactFields(
   obj: Record<string, unknown>,
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
-): Promise<Record<string, unknown>> {
+  ancestors: WeakSet<object>,
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     // Assignment would invoke the inherited __proto__ setter for parsed JSON.
@@ -108,56 +150,117 @@ async function redactFields(
       enumerable: true,
       configurable: true,
       writable: true,
-      value: await redactValue(
+      value: redactValue(
         value,
         sensitiveKeys,
         forceFull || isSensitiveKey(key, sensitiveKeys),
-        seen,
+        ancestors,
       ),
     });
   }
   return result;
 }
 
-async function redactValue(
+/**
+ * A value that renders itself through toJSON is rendered through that method
+ * by JSON.stringify, so walking its own properties would replace the rendered
+ * form. Such a value is resolved instead, and the rendered form is redacted,
+ * which keeps a secret reachable only through toJSON from escaping the key
+ * based rules. Under a sensitive key the value is redacted without resolving.
+ */
+const hasJsonForm = (value: unknown): value is { toJSON(): unknown } =>
+  isObject(value) &&
+  typeof (value as { toJSON?: unknown }).toJSON === "function";
+
+const isTraversable = (
+  value: unknown,
+): value is Record<string, unknown> | unknown[] =>
+  Array.isArray(value) || isNestedObject(value);
+
+function redactJsonForm(
+  value: { toJSON(): unknown },
+  sensitiveKeys: string[],
+  forceFull: boolean,
+  ancestors: WeakSet<object>,
+): unknown {
+  if (forceFull) return REDACTED;
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
+  try {
+    // A sensitive key is redacted above without resolving, so the rendered
+    // form is redacted under the ordinary key rules.
+    return redactValue(value.toJSON(), sensitiveKeys, false, ancestors);
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function redactValue(
   value: unknown,
   sensitiveKeys: string[],
   forceFull: boolean,
-  seen: WeakSet<object>,
-): Promise<unknown> {
+  ancestors: WeakSet<object>,
+): unknown {
   if (typeof value === "string") {
-    return forceFull ? redactString(value, "full") : redactStringValue(value);
+    return forceFull
+      ? redactStringSync(value, "full")
+      : redactStringValue(value);
   }
-  if (!Array.isArray(value) && !isNestedObject(value)) {
-    return forceFull ? "[redacted]" : value;
+  if (hasJsonForm(value)) {
+    return redactJsonForm(value, sensitiveKeys, forceFull, ancestors);
   }
-  if (seen.has(value)) return "[circular]";
-  seen.add(value);
+  if (!isTraversable(value)) {
+    return forceFull ? REDACTED : value;
+  }
+  if (ancestors.has(value)) return "[circular]";
+  ancestors.add(value);
   try {
     return Array.isArray(value)
-      ? await redactArray(value, sensitiveKeys, forceFull, seen)
-      : await redactFields(value, sensitiveKeys, forceFull, seen);
+      ? redactArray(value, sensitiveKeys, forceFull, ancestors)
+      : redactFields(value, sensitiveKeys, forceFull, ancestors);
   } finally {
-    seen.delete(value);
+    ancestors.delete(value);
   }
 }
 
 /**
  * Redact sensitive keys and embedded secret patterns in a plain object.
  * Values under a sensitive key are fully redacted at every depth.
- * Circular references are replaced with "[circular]".
+ * A reference back to an ancestor on the current path is replaced with
+ * "[circular]".
+ *
+ * The path of ancestors is internal, so a caller cannot seed it. A value that
+ * sibling branches both reference is redacted once per branch instead of
+ * being marked circular, and a value a caller happens to be holding elsewhere
+ * cannot turn a whole record into a cycle marker.
+ *
+ * This is the synchronous entry point, so a caller that cannot return a
+ * promise, such as the log serializer, can use it. A top level value that
+ * renders itself through toJSON is resolved, exactly as a nested one is, so
+ * the rendered form survives instead of collapsing to an empty object.
+ */
+export const redactObjectSync = (
+  obj: Record<string, unknown>,
+  sensitiveKeys: string[] = [],
+  forceFull = false,
+): Record<string, unknown> => {
+  const ancestors = new WeakSet<object>();
+  // A resolved toJSON form can be any JSON value, so a record is the shape
+  // callers get in the common case rather than a guarantee.
+  return redactValue(obj, sensitiveKeys, forceFull, ancestors) as Record<
+    string,
+    unknown
+  >;
+};
+
+/**
+ * The promise returning form of redactObjectSync, kept for callers that
+ * already await it. The traversal itself is synchronous.
  */
 export const redactObject = async (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
   forceFull = false,
-  seen: WeakSet<object> = new WeakSet(),
 ): Promise<Record<string, unknown>> => {
-  const alreadySeen = seen.has(obj);
-  seen.add(obj);
-  try {
-    return await redactFields(obj, sensitiveKeys, forceFull, seen);
-  } finally {
-    if (!alreadySeen) seen.delete(obj);
-  }
+  return redactObjectSync(obj, sensitiveKeys, forceFull);
 };

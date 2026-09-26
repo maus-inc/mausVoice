@@ -81,11 +81,11 @@ jobs:
       - name: Run transcription unit tests
         shell: bash
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" transcription-unit cargo test --manifest-path packages/rust_transcription/Cargo.toml --lib
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" transcription-unit cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib
       - name: Run non-ignored integration tests
         shell: bash
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" sidecar cargo test --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --nocapture --test-threads=1
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" sidecar cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --nocapture --test-threads=1
 
       - name: Run ignored end-to-end integration tests
-        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --ignored --nocapture --test-threads=1
+        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --test sidecar_integration -- --ignored --nocapture --test-threads=1

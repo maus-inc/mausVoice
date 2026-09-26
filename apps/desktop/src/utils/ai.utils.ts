@@ -46,20 +46,44 @@ export const extractJsonFromMarkdown = (text: string): string => {
   return text.trim();
 };
 
+export type ParsedPostProcessingJson = {
+  value: unknown;
+  /**
+   * True only when the model never closed the object or string, which is what
+   * a response cut at the token limit looks like. A finished document followed
+   * by trailing prose, a stray comma, or a stray period parses on its own, so
+   * it reports false: those are residue, not a lost tail.
+   */
+  repaired: boolean;
+};
+
+/** A comma that only survives because the model wrote `,}` or `,]`. */
+const STRAY_TRAILING_COMMA_RE = /,\s*([}\]])/g;
+/** A comma the truncation left hanging at the cut point. */
+const DANGLING_TRAILING_COMMA_RE = /,\s*$/;
+
 /**
  * Parses LLM JSON output, repairing truncation at the model's token limit
  * (the classic failure is `SyntaxError: Unterminated string in JSON at
  * position N`). Walks the tail of the extracted JSON backwards, dropping
  * partial tokens and re-closing the object until it parses, so a truncated
- * response degrades to whatever complete fields survived instead of
+ * response still yields whatever complete fields survived instead of
  * discarding the whole post-processing result.
+ *
+ * The caller needs to know whether it got a whole answer or a salvaged
+ * fragment, so each boundary is tried in order: parse the head exactly as the
+ * model wrote it, and only re-close it when that fails. Re-closing is what
+ * distinguishes a cut-off response, because only a truncated one has no
+ * parseable prefix.
  */
-export const parsePostProcessingJson = (raw: string): unknown => {
+export const parsePostProcessingJsonDetailed = (
+  raw: string,
+): ParsedPostProcessingJson => {
   const extracted = extractJsonFromMarkdown(raw);
 
   // Fast path: complete JSON.
   try {
-    return JSON.parse(extracted);
+    return { value: JSON.parse(extracted), repaired: false };
   } catch {
     // Fall through to truncation repair.
   }
@@ -69,6 +93,10 @@ export const parsePostProcessingJson = (raw: string): unknown => {
     const boundary = Math.max(
       extracted.lastIndexOf(",", cut - 1),
       extracted.lastIndexOf('"', cut - 1),
+      // The closing brace is a boundary of its own: without it a response that
+      // only carries a trailing period would be cut back to the closing quote
+      // and re-closed, reporting a complete value as truncated.
+      extracted.lastIndexOf("}", cut - 1),
       extracted.lastIndexOf(" ", cut - 1),
       extracted.lastIndexOf("\n", cut - 1),
       extracted.lastIndexOf("\t", cut - 1),
@@ -77,9 +105,24 @@ export const parsePostProcessingJson = (raw: string): unknown => {
       break;
     }
     cut = boundary;
-    const repaired = `${extracted.slice(0, cut).replace(/,\s*$/, "")}"}`;
+    for (const head of [extracted.slice(0, cut), extracted.slice(0, cut + 1)]) {
+      // A head that already parses is a finished response whose tail is only
+      // residue. Dropping a comma the model left before its own closing brace
+      // removes that residue without inventing an end, so this is still a
+      // complete answer. A genuinely truncated object has no parseable prefix
+      // at any boundary, so this can never hide a lost tail.
+      const withoutStrayComma = head.replace(STRAY_TRAILING_COMMA_RE, "$1");
+      for (const candidate of new Set([head, withoutStrayComma])) {
+        try {
+          return { value: JSON.parse(candidate.trim()), repaired: false };
+        } catch {
+          // The outer object is still open, so this really was cut off.
+        }
+      }
+    }
+    const candidate = `${extracted.slice(0, cut).replace(DANGLING_TRAILING_COMMA_RE, "")}"}`;
     try {
-      return JSON.parse(repaired);
+      return { value: JSON.parse(candidate), repaired: true };
     } catch {
       // Keep cutting back towards the last complete boundary.
     }
@@ -87,6 +130,9 @@ export const parsePostProcessingJson = (raw: string): unknown => {
 
   throw new Error("Could not parse or repair LLM JSON output");
 };
+
+export const parsePostProcessingJson = (raw: string): unknown =>
+  parsePostProcessingJsonDetailed(raw).value;
 
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>
   value ?? fallback;

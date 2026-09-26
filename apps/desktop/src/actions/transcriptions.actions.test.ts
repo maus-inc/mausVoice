@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Transcription } from "@maus-inc/types";
+import type { IntlShape } from "react-intl";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { RETRANSCRIPTION_SUCCESS_VISIBLE_MS } from "../state/transcriptions.state";
+import type { PostProcessMetadata } from "./transcribe.actions";
 import { createDefaultPreferences } from "./user.actions";
 import { getAppState, produceAppState, setAppState } from "../store";
 
@@ -10,6 +12,7 @@ const {
   updateTranscription,
   transcribeAudio,
   postProcessTranscript,
+  generateText,
   showSnackbar,
   showErrorSnackbar,
   showPersistentToast,
@@ -20,6 +23,7 @@ const {
   updateTranscription: vi.fn(),
   transcribeAudio: vi.fn(),
   postProcessTranscript: vi.fn(),
+  generateText: vi.fn(),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
   showPersistentToast: vi.fn(async () => {}),
@@ -31,6 +35,14 @@ vi.mock("../repos", () => ({
   getTranscriptionRepo: () => ({
     loadTranscriptionAudio,
     updateTranscription,
+  }),
+  // Only the unparseable-response test below reaches the real post-processing
+  // step, and it does so to produce genuine metadata for a provider answer.
+  getGenerateTextRepo: () => ({
+    repo: { generateText, streamChat: vi.fn() },
+    apiKeyId: "test-key",
+    provider: "test-provider",
+    warnings: [],
   }),
 }));
 
@@ -45,6 +57,14 @@ vi.mock("./app.actions", () => ({
   showErrorSnackbar,
 }));
 
+// Only the unparseable-response test below builds a real post-processing
+// request, and an empty app state carries no tone for it to resolve. Every
+// other test here uses the mocked post-processing step.
+vi.mock("../utils/tone.utils", () => ({
+  getToneById: () => null,
+  getToneConfig: () => ({ name: "Default", prompt: "" }),
+}));
+
 vi.mock("./toast.actions", async () => ({
   runToast: (await import("../../test/helpers/toast-mock")).runToastMock,
   showPersistentToast,
@@ -53,19 +73,41 @@ vi.mock("./toast.actions", async () => ({
   showToast: vi.fn(async () => {}),
 }));
 
-// Spread the real module so helpers like detectLocale (pulled in through
-// user.utils) keep working; stubbing only getIntl made the whole success
-// path throw and silently skip the completion toast.
-vi.mock("../i18n/intl", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../i18n/intl")>()),
-  getIntl: () => ({
-    formatMessage: (descriptor: { defaultMessage: string }) =>
-      descriptor.defaultMessage,
-  }),
+const { intlFormatMessage } = vi.hoisted(() => ({
+  /** Every descriptor the code under test asked the intl layer to format. */
+  intlFormatMessage: vi.fn(),
 }));
+
+// The intl module is wrapped, never stubbed. `getIntl` short-circuits a
+// descriptor with no `id` to its `defaultMessage` and only then delegates, so
+// the string a formatted descriptor returns is the same string the source
+// hardcodes. Output alone cannot tell a routed message from a copied one; the
+// wrapper records the descriptors that were asked for and hands each one to
+// the real formatter, so the copy on screen still travels the production path
+// and a message that never reaches the intl layer cannot pass.
+vi.mock("../i18n/intl", async () => {
+  const actual =
+    await vi.importActual<typeof import("../i18n/intl")>("../i18n/intl");
+  return {
+    ...actual,
+    getIntl: (...args: Parameters<typeof actual.getIntl>) => {
+      const intl = actual.getIntl(...args);
+      const realFormatMessage = intl.formatMessage;
+      return {
+        ...intl,
+        formatMessage: (...format: Parameters<IntlShape["formatMessage"]>) => {
+          intlFormatMessage(format[0]);
+          return realFormatMessage(...format);
+        },
+      };
+    },
+  };
+});
 
 const { retranscribeTranscription, openRetranscribeDialog } =
   await import("./transcriptions.actions");
+const { POST_PROCESS_TRUNCATED_WARNING } =
+  await import("../utils/prompt.utils");
 
 /** A run that never settles, so it stays in flight for the whole test. */
 const neverSettles = () => new Promise<never>(() => undefined);
@@ -611,5 +653,319 @@ describe("retranscribeTranscription persistence gate", () => {
     expect(getAppState().transcriptionById["tx-gate"]?.transcript).toBe(
       "retranscribed text",
     );
+  });
+});
+
+describe("retranscribeTranscription unstyled post-processing", () => {
+  const POLISHED = "Polished summary of the call.";
+  const RAW_ASR = "raw asr from this run";
+  /** The category `recordPostProcessFailure` records for a 402. */
+  const QUOTA_CATEGORY = "Quota or payment required (402)";
+  /** The reason recorded for an answer that parsed but failed validation. */
+  const VALIDATION_WARNING =
+    "Post-processing response validation failed: result is required";
+  /** Localized copy for a reply that ran out of the model's output budget. */
+  const TRUNCATED_COPY =
+    "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.";
+  /** Localized copy for a reply that came back unreadable. */
+  const UNREADABLE_COPY =
+    "The styling reply could not be read, so it was discarded and the previous text was kept.";
+
+  const seedStyledRow = (id: string, transcript: string) => {
+    produceAppState((draft) => {
+      draft.transcriptionById[id] = {
+        ...sampleTranscription(id),
+        transcript,
+      };
+      draft.transcriptions.transcriptionIds = [id];
+    });
+  };
+
+  const mockUnstyledPostProcess = (
+    metadata: PostProcessMetadata,
+    warnings: string[] = [],
+  ) => {
+    transcribeAudio.mockResolvedValue({
+      rawTranscript: RAW_ASR,
+      sanitizedTranscript: RAW_ASR,
+      warnings: [],
+      metadata: {},
+    });
+    postProcessTranscript.mockResolvedValue({
+      // The pipeline hands back the raw ASR whenever styling did not land.
+      transcript: RAW_ASR,
+      warnings,
+      metadata,
+    });
+  };
+
+  /** Every string the user was shown, joined for a substring check. */
+  const shownToUser = () =>
+    showErrorSnackbar.mock.calls.map(([message]) => String(message)).join(" ");
+
+  let consoleError: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.clearAllMocks();
+    resetState();
+    mockSuccessfulPipeline();
+    loadTranscriptionAudio.mockResolvedValue({
+      samples: [0.1, 0.2],
+      sampleRate: 16000,
+    });
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+    vi.clearAllMocks();
+    resetState();
+  });
+
+  it("keeps the polished transcript when the post-processing request failed", async () => {
+    seedStyledRow("unstyled", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: true, postProcessError: QUOTA_CATEGORY },
+      [QUOTA_CATEGORY],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "unstyled" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The text already on the row is worth more than raw ASR, so it stays.
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        warnings: [QUOTA_CATEGORY],
+        postProcessFailed: true,
+      }),
+    );
+    expect(getAppState().transcriptionById["unstyled"]?.transcript).toBe(
+      POLISHED,
+    );
+    // A failed request records the failure sentinel only. Nothing marks it as a
+    // degraded answer too, because the two describe different failures and the
+    // row must never claim both.
+    expect(updateTranscription.mock.calls[0]?.[0]).not.toHaveProperty(
+      "postProcessDegraded",
+    );
+    // The run failed, so the row must not show a success check or completion
+    // toast, and the recorded failure category is what the user is shown.
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showErrorSnackbar).toHaveBeenCalledWith(QUOTA_CATEGORY);
+  });
+
+  it("keeps the polished transcript when the response was cut off", async () => {
+    seedStyledRow("truncated", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "truncated" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        warnings: [POST_PROCESS_TRUNCATED_WARNING],
+        // The provider answered, so the failure sentinel must stay false.
+        postProcessFailed: false,
+      }),
+    );
+    // The stored warning stays English because it lives on the row, but the
+    // toast resolves a localized sentence for it and logs the raw reason.
+    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+
+    // A failed run must free the row: the generation counter is released on
+    // this path, so a second run starts clean instead of being read as stale.
+    mockSuccessfulPipeline();
+    await retranscribeTranscription({ transcriptionId: "truncated" });
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
+      "truncated",
+    ]);
+    expect(showErrorSnackbar).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the polished transcript when the provider response cannot be parsed", async () => {
+    seedStyledRow("unparseable", POLISHED);
+    generateText.mockResolvedValueOnce({
+      // Cut inside a code fence: the missing closing backticks leave residue no
+      // repair candidate can clear, so the parse throws instead of recovering a
+      // truncated fragment. The metadata that comes back is the point of this
+      // test, so the real post-processing step produces it.
+      text: '```json\n{"result": "Hello there, this is a very long dictation that ke',
+      metadata: { postProcessingMode: "api" },
+    });
+    const { postProcessTranscript: runPostProcessing } = await vi.importActual<
+      typeof import("./transcribe.actions")
+    >("./transcribe.actions");
+    const unparsed = await runPostProcessing({
+      rawTranscript: RAW_ASR,
+      toneId: null,
+    });
+    mockUnstyledPostProcess(unparsed.metadata, unparsed.warnings);
+
+    await retranscribeTranscription({ transcriptionId: "unparseable" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        // The polished text stays, and this run's raw ASR is the only record of
+        // what was actually said.
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        // The request came back, so the failure sentinel stays false.
+        postProcessFailed: false,
+      }),
+    );
+    expect(getAppState().transcriptionById["unparseable"]?.transcript).toBe(
+      POLISHED,
+    );
+    // Unusable styling is not a finished retranscription, so the row must not
+    // report success. The toast names the outcome in localized copy, and the
+    // parse error that explains it stays in the log instead of leaking through
+    // a snackbar, Zod issue list and all.
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
+    expect(showCompletionToast).not.toHaveBeenCalled();
+    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(shownToUser()).not.toContain("Could not parse or repair");
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(unparsed.warnings[0]);
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      unparsed.warnings[0],
+    );
+  });
+
+  it("falls back to the new raw ASR when the row was never styled", async () => {
+    seedStyledRow("unstyled-empty", "");
+    // A response that parses but fails schema validation is unusable for a
+    // different reason than a cut-off one, and it always records that reason.
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "unstyled-empty" });
+
+    // There is no polished text to protect, so the raw ASR is strictly better
+    // than leaving the row empty.
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: RAW_ASR,
+        rawTranscript: RAW_ASR,
+        warnings: [VALIDATION_WARNING],
+        postProcessFailed: false,
+      }),
+    );
+    // The recorded reason is not shown. The toast describes the outcome, and a
+    // validation failure must not borrow the cut-off copy any more than the
+    // raw schema issue list is shown.
+    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(VALIDATION_WARNING);
+    expect(shownToUser()).not.toContain("validation failed");
+    expect(showErrorSnackbar).not.toHaveBeenCalledWith(
+      POST_PROCESS_TRUNCATED_WARNING,
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      VALIDATION_WARNING,
+    );
+  });
+
+  it("routes the unstyled-run copy through the intl layer", async () => {
+    seedStyledRow("localized", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "localized" });
+
+    // The descriptor is what the action asked the intl layer for, and the
+    // wrapper only records what it was given, so this fails the moment the
+    // action stops calling `getIntl` and inlines the sentence instead. The
+    // sentence itself cannot carry that proof: the real helper returns the
+    // `defaultMessage` of an id-less descriptor unchanged, so a formatted
+    // sentence and a hardcoded one are the same string.
+    expect(intlFormatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultMessage: TRUNCATED_COPY }),
+    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(TRUNCATED_COPY);
+
+    // The other unusable-answer branch, through the same layer.
+    seedStyledRow("localized-unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({
+      transcriptionId: "localized-unreadable",
+    });
+
+    expect(intlFormatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultMessage: UNREADABLE_COPY }),
+    );
+    expect(showErrorSnackbar).toHaveBeenLastCalledWith(UNREADABLE_COPY);
+  });
+
+  it("tells a cut-off reply apart from an unreadable one", async () => {
+    seedStyledRow("truncated-vs-unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [POST_PROCESS_TRUNCATED_WARNING],
+    );
+
+    await retranscribeTranscription({
+      transcriptionId: "truncated-vs-unreadable",
+    });
+
+    seedStyledRow("unreadable", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessDegraded: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "unreadable" });
+
+    const shown = showErrorSnackbar.mock.calls.map(([message]) =>
+      String(message),
+    );
+    expect(shown).toEqual([TRUNCATED_COPY, UNREADABLE_COPY]);
+  });
+
+  it("replaces the transcript and reports success when styling worked", async () => {
+    seedStyledRow("styled", POLISHED);
+    postProcessTranscript.mockResolvedValue({
+      transcript: "Freshly styled summary.",
+      warnings: [],
+      metadata: { postProcessFailed: false, postProcessDegraded: false },
+    });
+
+    await retranscribeTranscription({ transcriptionId: "styled" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: "Freshly styled summary.",
+        postProcessFailed: false,
+      }),
+    );
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
+      "styled",
+    ]);
+    expect(showCompletionToast).toHaveBeenCalledWith(
+      "Retranscription complete",
+    );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
   });
 });

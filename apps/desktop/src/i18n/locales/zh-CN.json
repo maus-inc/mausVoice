@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "版本历史返回状态 {status}。",
   "the_selection_is_too_long_to_add_to_the_dictionary": "所选内容过长，无法添加到词典。",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "服务器不支持模型列表。请手动输入模型名称。",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "无法读取风格回复，因此该回复已被丢弃，之前的文本已保留。",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "风格回复在模型输出上限处被截断，因此不完整的回复已被丢弃，之前的文本已保留。",
   "the_user_has_dictated_the_following_command_transcript_execu": "用户口述了以下命令：------- {transcript} ------- 请执行此命令，并以 {languageName} 提供输出。说明： - 如果用户要求您撰写、创建、起草或编写内容 → 生成该内容 - 如果用户要求您总结、分析或解释内容 → 提供总结/分析/解释 - 如果用户要求您转换或重写内容 → 应用该转换 - 如果用户给出了没有清晰命令的陈述 → 整理并清晰地呈现它 仅返回所请求的输出，不要返回其他内容。输出将直接粘贴到用户的应用程序中。",
   "theme_mode": "主题：{mode}",
   "theme_settings": "主题设置",

@@ -137,23 +137,23 @@ jobs:
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
-        run: cargo test --lib
+        run: cargo test --locked --lib
       # The release gate must cover every crate that ships in the artifact,
       # not just the Tauri backend: transcription (downloads, resume,
       # ONNX inference plumbing) and the pill crates buildable on this runner.
       - name: Run transcription unit tests
         env:
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/packages/rust_transcription/cmake/linux-ci-toolchain.cmake
-        run: cargo test --manifest-path packages/rust_transcription/Cargo.toml --lib
+        run: cargo test --locked --manifest-path packages/rust_transcription/Cargo.toml --lib
       - name: Run shared pill geometry tests
-        run: cargo test --manifest-path packages/rust_pill_shared/Cargo.toml
+        run: cargo test --locked --manifest-path packages/rust_pill_shared/Cargo.toml
       # The gtk pill unit tests are pure math/state (long-press progress,
       # control layout, cairo input regions, visibility) and never open a
       # display, but linking libgtk on a headless runner is safest under a
       # virtual X server — xvfb-run guarantees the gate cannot hang on a
       # missing DISPLAY if a display-touching test is ever added.
       - name: Run Linux pill tests
-        run: xvfb-run -a cargo test --manifest-path packages/rust_gtk_pill/Cargo.toml
+        run: xvfb-run -a cargo test --locked --manifest-path packages/rust_gtk_pill/Cargo.toml
 
   build:
     name: Build ${{ matrix.label }}

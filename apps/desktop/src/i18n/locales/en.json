@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "The release history returned status {status}.",
   "the_selection_is_too_long_to_add_to_the_dictionary": "The selection is too long to add to the dictionary.",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "The server doesn't support model listing. Please enter the model name manually.",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "The styling reply could not be read, so it was discarded and the previous text was kept.",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "The styling reply was cut off at the model's output limit, so the partial reply was discarded and the previous text was kept.",
   "the_user_has_dictated_the_following_command_transcript_execu": "The user has dictated the following command: ------- {transcript} ------- Execute this command and provide the output in {languageName}. Instructions: - If the user asks you to write, create, draft, or compose something → produce that content - If the user asks you to summarize, analyze, or explain something → provide the summary/analysis/explanation - If the user asks you to transform or rewrite something → apply the transformation - If the user provides a statement without a clear command → clean it up and present it clearly Return ONLY the requested output, nothing else. The output will be pasted directly into the user's application.",
   "theme_mode": "Theme: {mode}",
   "theme_settings": "Theme settings",

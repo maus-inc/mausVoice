@@ -120,6 +120,128 @@ describe("browser preview transport", () => {
     );
   });
 
+  it("keeps a stored openRouterConfig when an update omits it, as the desktop NULL guard does", async () => {
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-openrouter-key",
+        name: "OpenRouter",
+        provider: "openrouter",
+        key: `${"sk"}-preview`,
+      },
+    });
+    const stored = JSON.stringify({
+      favoriteModels: ["anthropic/claude-sonnet-4"],
+    });
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "preview-openrouter-key", openRouterConfig: stored },
+    });
+
+    // The desktop writes `openrouter_config = CASE WHEN ?9 IS NOT NULL THEN
+    // ?9 ELSE openrouter_config END`, so an update that does not carry the
+    // config has to leave it alone instead of clearing it. The repo always
+    // sends the key, with an undefined value when the caller omitted it, so
+    // that is the shape that has to survive.
+    await invokePreviewCommand("api_key_update", {
+      request: {
+        id: "preview-openrouter-key",
+        name: "Renamed",
+        openRouterConfig: undefined,
+      },
+    });
+
+    const keys =
+      await invokePreviewCommand<Record<string, unknown>[]>("api_key_list");
+    const saved = keys.find((key) => key.id === "preview-openrouter-key");
+    expect(saved?.name).toBe("Renamed");
+    expect(saved?.openRouterConfig).toBe(stored);
+  });
+
+  it("applies an explicit openRouterConfig on update", async () => {
+    await invokePreviewCommand("api_key_create", {
+      apiKey: {
+        id: "preview-openrouter-key",
+        name: "OpenRouter",
+        provider: "openrouter",
+        key: `${"sk"}-preview`,
+      },
+    });
+    const first = JSON.stringify({
+      favoriteModels: ["anthropic/claude-sonnet-4"],
+    });
+    await invokePreviewCommand("api_key_update", {
+      request: { id: "preview-openrouter-key", openRouterConfig: first },
+    });
+    const second = JSON.stringify({ providerRouting: { order: ["together"] } });
+
+    const updated = await invokePreviewCommand<Record<string, unknown>>(
+      "api_key_update",
+      { request: { id: "preview-openrouter-key", openRouterConfig: second } },
+    );
+
+    expect(updated.openRouterConfig).toBe(second);
+    const keys =
+      await invokePreviewCommand<Record<string, unknown>[]>("api_key_list");
+    expect(
+      keys.find((key) => key.id === "preview-openrouter-key")?.openRouterConfig,
+    ).toBe(second);
+  });
+
+  it("mirrors the desktop transcription_path trim, clear and omit clauses", async () => {
+    const seed = async (id: string, transcriptionPath: string) => {
+      await invokePreviewCommand("api_key_create", {
+        apiKey: {
+          id,
+          name: "Whisper",
+          provider: "openai",
+          key: `${"sk"}-preview`,
+          transcriptionPath,
+        },
+      });
+    };
+    const update = (id: string, request: Record<string, unknown>) =>
+      invokePreviewCommand<Record<string, unknown>>("api_key_update", {
+        request: { id, ...request },
+      });
+
+    // A field the user emptied still sends whitespace, and `update_api_key`
+    // trims before it decides: an empty result clears the column.
+    await seed("preview-trim", "/stored/v1");
+    expect(
+      (await update("preview-trim", { transcriptionPath: " \t\n " }))
+        .transcriptionPath,
+    ).toBeNull();
+
+    // A path with padding is stored trimmed, not as typed.
+    await seed("preview-padded", "/stored/v1");
+    const padded = await update("preview-padded", {
+      transcriptionPath: "  /whisper/v1/audio/transcriptions  ",
+    });
+    expect(padded.transcriptionPath).toBe("/whisper/v1/audio/transcriptions");
+
+    // An explicit clear wins over a path sent in the same request.
+    await seed("preview-clear", "/stored/v1");
+    expect(
+      (
+        await update("preview-clear", {
+          transcriptionPath: "/ignored/v1",
+          clearTranscriptionPath: true,
+        })
+      ).transcriptionPath,
+    ).toBeNull();
+
+    // A request that never mentions the column leaves it alone, and so does a
+    // null with no clear flag: the desktop deserialises both to None, and only
+    // `clear_transcription_path` reaching the statement clears the column.
+    await seed("preview-omitted", "/stored/v1");
+    const omitted = await update("preview-omitted", { name: "Renamed" });
+    expect(omitted.name).toBe("Renamed");
+    expect(omitted.transcriptionPath).toBe("/stored/v1");
+    expect(
+      (await update("preview-omitted", { transcriptionPath: null }))
+        .transcriptionPath,
+    ).toBe("/stored/v1");
+  });
+
   it.each([
     { prefix: {}, hotkeys: [] },
     { prefix: "", hotkeys: [] },

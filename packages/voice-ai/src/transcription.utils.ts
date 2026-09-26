@@ -1,4 +1,4 @@
-import { countWords, retry } from "@maus-inc/utilities";
+import { countWords, retry, toHttpError } from "@maus-inc/utilities";
 
 export type TranscriptionSegment = {
   text: string;
@@ -105,14 +105,21 @@ export async function runSdkTranscription(
   return retry({
     retries: 3,
     fn: async () => {
-      const response = await transcribe({
-        ...params,
-        language:
-          params.language && params.language !== "auto"
-            ? params.language
-            : undefined,
-      });
-      return parseSdkTranscription(response);
+      try {
+        const response = await transcribe({
+          ...params,
+          language:
+            params.language && params.language !== "auto"
+              ? params.language
+              : undefined,
+        });
+        return parseSdkTranscription(response);
+      } catch (error) {
+        // Normalise the provider SDK's APIError into the shared HttpError so
+        // the retry policy reads the status as data for every provider. A
+        // malformed payload still surfaces as the original error.
+        throw toHttpError(error);
+      }
     },
   });
 }

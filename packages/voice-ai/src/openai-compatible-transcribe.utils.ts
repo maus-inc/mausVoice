@@ -1,6 +1,6 @@
 import { toFile } from "openai/uploads";
 import type { FileLike } from "openai/uploads";
-import { countWords, retry } from "@maus-inc/utilities";
+import { countWords, retry, toHttpError } from "@maus-inc/utilities";
 
 export type TranscribeAudioClientShape = {
   audio: {
@@ -40,19 +40,29 @@ export const openaiCompatibleTranscribeAudio = async ({
   return retry({
     retries: 3,
     fn: async () => {
-      const file = await toFile(blob, `audio.${ext}`);
-      const response = await client.audio.transcriptions.create({
-        file,
-        model,
-        prompt,
-        language: language && language !== "auto" ? language : undefined,
-      });
+      try {
+        const file = await toFile(blob, `audio.${ext}`);
+        const response = await client.audio.transcriptions.create({
+          file,
+          model,
+          prompt,
+          language: language && language !== "auto" ? language : undefined,
+        });
 
-      if (!response.text) {
-        throw new Error("Transcription failed");
+        if (!response.text) {
+          // The provider answered 2xx with an empty body, so there is no HTTP
+          // status to report; this stays a plain error rather than an
+          // invented one.
+          throw new Error("Transcription failed: no text in response");
+        }
+
+        return { text: response.text, wordsUsed: countWords(response.text) };
+      } catch (error) {
+        // Normalise the provider SDK's APIError into the shared HttpError so
+        // the retry policy reads the status as data for every provider. A
+        // transport failure still surfaces as the original error.
+        throw toHttpError(error);
       }
-
-      return { text: response.text, wordsUsed: countWords(response.text) };
     },
   });
 };

@@ -800,6 +800,8 @@
   "the_release_history_returned_status_status": "版本記錄傳回狀態 {status}。",
   "the_selection_is_too_long_to_add_to_the_dictionary": "所選內容過長，無法加入詞典。",
   "the_server_doesn_t_support_model_listing_please_enter_the_mo": "伺服器不支援模型列表。請手動輸入模型名稱。",
+  "the_styling_reply_could_not_be_read_so_it_was_discarded_and": "無法讀取樣式回覆，因此該回覆已被捨棄，先前的文字已保留。",
+  "the_styling_reply_was_cut_off_at_the_model_s_output_limit_so": "樣式回覆在模型輸出上限處被截斷，因此不完整的回覆已被捨棄，先前的文字已保留。",
   "the_user_has_dictated_the_following_command_transcript_execu": "使用者已口述以下指令：------- {transcript} ------- 請執行此指令，並以 {languageName} 提供輸出。指示：- 若使用者要求撰寫、建立、草擬或創作某物 → 產生該內容 - 若使用者要求總結、分析或解釋某物 → 提供摘要／分析／解釋 - 若使用者要求轉換或重寫某物 → 套用該轉換 - 若使用者提供陳述但無明確指令 → 整理清楚後呈現 僅回傳所要求的輸出，不要有其他內容。該輸出將直接貼到使用者的應用程式中。",
   "theme_mode": "主題：{mode}",
   "theme_settings": "主題設定",

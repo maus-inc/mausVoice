@@ -75,7 +75,7 @@ const toLocalApiKey = (apiKey: PreviewData["apiKeys"][number]): WireRecord => ({
   keyFull: apiKey.keyFull ?? null,
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
-  openrouterConfig: apiKey.openRouterConfig
+  openRouterConfig: apiKey.openRouterConfig
     ? JSON.stringify(apiKey.openRouterConfig)
     : null,
   baseUrl: apiKey.baseUrl ?? null,
@@ -167,6 +167,23 @@ const toDatabase = (data: PreviewData): PreviewDatabase => ({
 const getList = (records: Map<string, WireRecord>): WireRecord[] =>
   [...records.values()].map(clone);
 
+/**
+ * The nullable `api_key_update` columns, in the wire casing the request uses.
+ * Each one is written through `CASE WHEN ?n IS NOT NULL THEN ?n ELSE <column>
+ * END` on the desktop, so a request that omits the key, or sends it as null,
+ * leaves the stored value untouched.
+ */
+const NULL_GUARDED_API_KEY_FIELDS = [
+  "name",
+  "keySuffix",
+  "transcriptionModel",
+  "postProcessingModel",
+  "openRouterConfig",
+  "baseUrl",
+  "azureRegion",
+  "includeV1Path",
+] as const;
+
 const iconSvg = encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" rx="18" fill="#6264a7"/><path d="M18 30h44v22H18z" fill="#fff" opacity=".9"/><circle cx="30" cy="41" r="5" fill="#6264a7"/></svg>',
 );
@@ -189,6 +206,47 @@ class PreviewRuntime {
 
   getScenario(): PreviewScenarioId {
     return this.scenario;
+  }
+
+  /**
+   * Applies the same omit-versus-clear semantics the desktop statement uses, so
+   * the preview cannot diverge from the real transport on a column the caller
+   * never mentioned.
+   */
+  private updateApiKey(args: WireRecord): WireRecord {
+    const request = asRecord(args.request);
+    const previous = this.database.apiKeys.get(String(request.id));
+    if (!previous) throw new Error("API key not found.");
+    // The desktop statement writes every nullable column through
+    // `CASE WHEN ?n IS NOT NULL THEN ?n ELSE <column> END`, so a missing or
+    // null field means "leave what is stored alone". Spreading the raw request
+    // would instead wipe a value the caller never mentioned.
+    const apiKey: WireRecord = { ...previous };
+    for (const field of NULL_GUARDED_API_KEY_FIELDS) {
+      const value = request[field];
+      if (value !== null && value !== undefined) {
+        apiKey[field] = value;
+      }
+    }
+    if (typeof request.key === "string") {
+      // Do not keep an entered secret in the preview's mock transport.
+      apiKey.keyFull = null;
+      apiKey.keySuffix = "…preview";
+    }
+    // `transcription_path` is the one column the desktop statement gates on a
+    // separate boolean rather than on null, so it keeps its own handling.
+    // `update_api_key` computes the stored value before the statement runs: an
+    // explicit `clear_transcription_path` of true wins outright, a supplied
+    // path is trimmed and an empty or whitespace-only result clears the
+    // column, and a path that was never mentioned leaves the column alone.
+    if (request.clearTranscriptionPath === true) {
+      apiKey.transcriptionPath = null;
+    } else if (typeof request.transcriptionPath === "string") {
+      const trimmed = request.transcriptionPath.trim();
+      apiKey.transcriptionPath = trimmed === "" ? null : trimmed;
+    }
+    this.database.apiKeys.set(String(apiKey.id), apiKey);
+    return clone(apiKey);
   }
 
   async invoke(command: string, args: WireRecord = {}): Promise<unknown> {
@@ -268,34 +326,13 @@ class PreviewRuntime {
           keyFull: null,
           transcriptionModel: null,
           postProcessingModel: null,
-          openrouterConfig: null,
+          openRouterConfig: null,
         };
         this.database.apiKeys.set(String(apiKey.id), apiKey);
         return clone(apiKey);
       }
-      case "api_key_update": {
-        const request = asRecord(args.request);
-        const previous = this.database.apiKeys.get(String(request.id));
-        if (!previous) throw new Error("API key not found.");
-        const metadata = clone(request);
-        const keyWasProvided = typeof metadata.key === "string";
-        delete metadata.key;
-        if ("openRouterConfig" in metadata) {
-          metadata.openrouterConfig = metadata.openRouterConfig;
-          delete metadata.openRouterConfig;
-        }
-        const apiKey = { ...previous, ...metadata };
-        if (request.clearTranscriptionPath) {
-          apiKey.transcriptionPath = null;
-        }
-        if (keyWasProvided) {
-          // Do not keep an entered secret in the preview's mock transport.
-          apiKey.keyFull = null;
-          apiKey.keySuffix = "…preview";
-        }
-        this.database.apiKeys.set(String(apiKey.id), apiKey);
-        return clone(apiKey);
-      }
+      case "api_key_update":
+        return this.updateApiKey(args);
       case "api_key_delete":
         this.database.apiKeys.delete(String(args.id));
         return undefined;

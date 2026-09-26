@@ -20,14 +20,18 @@ export default function ChatsPage() {
   const selectedId = searchParams.get("id");
   const conversationIds = useAppStore((s) => s.chat.conversationIds);
 
+  // URL sync only. Writing the param re-renders and hands the new id to the
+  // effect below, so loading here as well would read every conversation twice
+  // on each cold open.
   useEffect(() => {
     if (!selectedId && conversationIds.length > 0) {
-      const firstId = conversationIds[0];
-      setSearchParams({ id: firstId }, { replace: true });
-      void loadChatMessages(firstId);
+      setSearchParams({ id: conversationIds[0] }, { replace: true });
     }
   }, [selectedId, conversationIds, setSearchParams]);
 
+  // Every load funnels through here. Deep links, back/forward and chat
+  // switches all arrive as a new `selectedId`, so the id alone is enough to
+  // decide that a read is due.
   useEffect(() => {
     if (selectedId) {
       void loadChatMessages(selectedId);
