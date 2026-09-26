@@ -53,9 +53,10 @@ describe("applySpokenCommands", () => {
   });
 
   it("scratches the previous sentence", () => {
-    expect(applySpokenCommands("Hello world scratch that goodbye")).toBe(
-      "goodbye",
+    expect(applySpokenCommands("Hello world. Scratch that. Goodbye.")).toBe(
+      "Goodbye.",
     );
+    expect(applySpokenCommands("Hello world scratch that")).toBe("");
     expect(applySpokenCommands("First sentence. Second scratch that")).toBe(
       "First sentence.",
     );
@@ -80,7 +81,7 @@ describe("applySpokenCommands", () => {
 
   it("keeps the space after a partial scratch", () => {
     expect(
-      applySpokenCommands("First sentence. Second scratch that more"),
+      applySpokenCommands("First sentence. Second, scratch that, more"),
     ).toBe("First sentence. more");
   });
 
@@ -140,6 +141,120 @@ describe("applySpokenCommands", () => {
 
   it("keeps original gaps around a matched command", () => {
     expect(applySpokenCommands("hello  comma  world")).toBe("hello,  world");
+  });
+
+  it.each([
+    "I finished the report. I'll scratch that off my to-do list.",
+    "Let's scratch that idea and start over.",
+    "We should scratch that from the agenda.",
+    "Hello world scratch that goodbye",
+    "The billing period ends on Friday.",
+    "During the period we saw strong growth.",
+    "My period was late.",
+    "The sprint period ends Friday.",
+    "The observation period lasted six weeks.",
+    "We extended the notice period.",
+    "We're launching a new line today.",
+    "Can you read the next line for me?",
+    "Put a comma after the name.",
+    "The colon is part of the large intestine.",
+    "Where does the question mark go?",
+    "Add a semicolon there.",
+    "That was a full stop for the project.",
+    "Remove that comma.",
+  ])("leaves ordinary speech unchanged: %s", (sentence) => {
+    expect(applySpokenCommands(sentence)).toBe(sentence);
+  });
+
+  it.each([
+    ["Hello world scratch that new paragraph Goodbye", "\n\nGoodbye"],
+    ["Hello world scratch that period", "."],
+    ["Stop period next line Go", "Stop.\nGo"],
+    ["That is final period", "That is final."],
+    ["I'm done period See you", "I'm done. See you"],
+    ["hello comma world", "hello, world"],
+  ])("still applies genuine commands: %s", (input, expected) => {
+    expect(applySpokenCommands(input)).toBe(expected);
+  });
+
+  it.each([
+    "the difficult period Apple faced",
+    "it was a quiet period Sarah remembered fondly",
+    "revenue fell during a rough period Microsoft reported",
+    "I'll scratch that Netflix subscription",
+  ])(
+    "keeps a command word literal before a capitalized name: %s",
+    (sentence) => {
+      expect(applySpokenCommands(sentence)).toBe(sentence);
+    },
+  );
+
+  it.each([
+    ["I finished period Then I left", "I finished. Then I left"],
+    ["I finished period I left early", "I finished. I left early"],
+    [
+      "Thanks for the help period Best regards",
+      "Thanks for the help. Best regards",
+    ],
+    ["It works period The tests pass", "It works. The tests pass"],
+    ["Hello world scratch that The plan changed", "The plan changed"],
+  ])(
+    "still treats a capitalized sentence opener as a new sentence: %s",
+    (input, expected) => {
+      expect(applySpokenCommands(input)).toBe(expected);
+    },
+  );
+
+  it("leaves a mid-sentence period alone even when meant as a command", () => {
+    // A lowercase word straight after "period" reads as the noun. Speakers
+    // who pause get a comma or capital from the model, which does apply.
+    expect(applySpokenCommands("hello period how are you")).toBe(
+      "hello period how are you",
+    );
+    expect(applySpokenCommands("hello period, how are you")).toBe(
+      "hello. how are you",
+    );
+  });
+
+  it.each([
+    "Hello world scratch that new line of credit",
+    "Hello world scratch that period of time",
+    "Hello world scratch that the next line",
+    "ok period and I'll scratch that",
+  ])(
+    "does not count a following phrase that is not a command: %s",
+    (sentence) => {
+      expect(applySpokenCommands(sentence)).toBe(sentence);
+    },
+  );
+
+  it("does not close a clause with a structural command skipped in interim text", () => {
+    const options = { skipStructuralCommands: true };
+    expect(applySpokenCommands("hello period new line", "en", options)).toBe(
+      "hello period new line",
+    );
+    expect(applySpokenCommands("hello period new line")).toBe("hello.\n");
+  });
+
+  it("does not let a listed noun block across punctuation", () => {
+    expect(applySpokenCommands("Show some grace. Period.")).toBe(
+      applySpokenCommands("Show some care. Period.").replace("care", "grace"),
+    );
+    expect(applySpokenCommands("Pay the notice. Period.")).toBe(
+      applySpokenCommands("Pay the invoice. Period.").replace(
+        "invoice",
+        "notice",
+      ),
+    );
+  });
+
+  it("treats a word closed off by punctuation as outside the command", () => {
+    expect(applySpokenCommands("Keep this. We. Scratch that.")).toBe(
+      "Keep this.",
+    );
+    expect(applySpokenCommands("Keep this. We scratch that.")).toBe(
+      "Keep this. We scratch that.",
+    );
   });
 
   it("skips scratch and newlines on interim chunks", () => {

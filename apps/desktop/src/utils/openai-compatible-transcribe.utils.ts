@@ -4,6 +4,10 @@ import {
   OPENAI_COMPATIBLE_DEFAULT_TRANSCRIPTION_PATH,
 } from "./openai-compatible.utils";
 import { secureFetch } from "./secure-fetch.utils";
+import {
+  toTranscriptionSegments,
+  type TranscriptionSegment,
+} from "./hallucination.utils";
 
 export type OpenAICompatibleTranscriptionArgs = {
   baseUrl: string;
@@ -17,14 +21,9 @@ export type OpenAICompatibleTranscriptionArgs = {
   customFetch?: typeof secureFetch;
 };
 
-export type OpenAICompatibleTranscriptionSegment = {
-  text: string;
-  noSpeechProb?: number;
-};
-
 export type OpenAICompatibleTranscribeAudioOutput = {
   text: string;
-  segments?: OpenAICompatibleTranscriptionSegment[];
+  segments?: TranscriptionSegment[];
 };
 
 export const openaiCompatibleTranscribeAudio = async ({
@@ -122,7 +121,7 @@ export const openaiCompatibleTranscribeAudio = async ({
 
   const data = (await finalResponse.json()) as {
     text?: string;
-    segments?: Array<{ text?: string; no_speech_prob?: number }>;
+    segments?: unknown;
   };
 
   if (!data.text) {
@@ -133,10 +132,15 @@ export const openaiCompatibleTranscribeAudio = async ({
   // servers return `null` or an object for segments when no timing info is
   // available, and the unsized `data.segments.map(...)` would throw.
   const segments = Array.isArray(data.segments)
-    ? data.segments.map((segment) => ({
-        text: segment.text ?? "",
-        noSpeechProb: segment.no_speech_prob,
-      }))
+    ? toTranscriptionSegments(
+        data.segments.map((segment: Record<string, unknown> | null) => ({
+          text: typeof segment?.text === "string" ? segment.text : "",
+          noSpeechProb: segment?.no_speech_prob,
+          avgLogprob: segment?.avg_logprob,
+          start: segment?.start,
+          end: segment?.end,
+        })),
+      )
     : undefined;
 
   return { text: data.text, segments };

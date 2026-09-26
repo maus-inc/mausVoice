@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
-import { PROCESSED_TRANSCRIPTION_JSON_SCHEMA } from "../utils/prompt.utils";
+import {
+  getPostProcessMaxTokens,
+  PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
+} from "../utils/prompt.utils";
 
 const { generate } = vi.hoisted(() => ({
   generate: vi.fn(async (_input: unknown) => ({ text: "" })),
@@ -14,7 +17,10 @@ vi.mock("../utils/user.utils", async (importOriginal) => ({
   getMyUserName: () => "Tester",
   loadMyEffectiveDictationLanguage: async () => "en",
 }));
-import { previewToneStyle } from "./tone-preview.actions";
+import {
+  MAX_PREVIEW_SAMPLE_LEN,
+  previewToneStyle,
+} from "./tone-preview.actions";
 
 beforeEach(() => {
   generate.mockReset();
@@ -69,13 +75,37 @@ describe("style preview provider contract", () => {
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         signal: controller.signal,
-        maxTokens: 600,
+        maxTokens: 2048,
+        reasoningEffort: "low",
         jsonResponse: {
           name: "transcription_cleaning",
           description: "JSON response with the processed transcription",
           schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
         },
       }),
+    );
+  });
+
+  it("sizes the output budget from the bounded sample, not the raw input", async () => {
+    generate.mockResolvedValueOnce({ text: '{"result":"Styled"}' });
+    const sentence = "We moved the launch to next quarter. ";
+    const longSample = sentence.repeat(
+      Math.ceil((MAX_PREVIEW_SAMPLE_LEN * 4) / sentence.length),
+    );
+    const boundedBudget = getPostProcessMaxTokens(
+      longSample.slice(0, MAX_PREVIEW_SAMPLE_LEN),
+    );
+
+    await previewToneStyle(
+      { promptTemplate: "Be concise." },
+      longSample,
+      new AbortController().signal,
+    );
+
+    expect(boundedBudget).toBeGreaterThan(2048);
+    expect(boundedBudget).toBeLessThan(getPostProcessMaxTokens(longSample));
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ maxTokens: boundedBudget }),
     );
   });
 });

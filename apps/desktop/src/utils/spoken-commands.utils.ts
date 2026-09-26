@@ -10,6 +10,10 @@ import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
  * a silent no-op for the first-class `auto` setting. Isolated "scratch that"
  * drops the previous sentence. Abbreviations such as "Dr." are not sentence
  * boundaries. Only "scratch that" undoes speech.
+ *
+ * Command words are also ordinary English nouns and verbs ("the billing
+ * period", "scratch that off my list"), so a match only applies where the
+ * words cannot be part of the surrounding sentence.
  */
 
 export const isEnglishSpokenCommandLanguage = (
@@ -24,6 +28,8 @@ type InsertCommand = {
   value: string;
   attachLeft?: boolean;
   structural?: boolean;
+  // Also an ordinary noun, so it only applies where it closes a clause.
+  clauseFinal?: boolean;
   blockedFollowers?: string[][];
   blockedPredecessors?: string[][];
 };
@@ -76,8 +82,30 @@ const COMMANDS: SpokenCommand[] = [
   }),
   insert(["period"], ".", {
     attachLeft: true,
-    blockedFollowers: [["of"], ["in"], ["piece"]],
-    blockedPredecessors: [["time"], ["trial"], ["grace"]],
+    clauseFinal: true,
+    // Mid-sentence uses ("the sprint period ends") fail `clauseFinal`. These
+    // cover a compound noun that ends the sentence ("until the notice
+    // period."), where position cannot tell it apart. Not exhaustive.
+    blockedPredecessors: [
+      ["time"],
+      ["trial"],
+      ["grace"],
+      ["billing"],
+      ["reporting"],
+      ["waiting"],
+      ["cooling"],
+      ["notice"],
+      ["probation"],
+      ["probationary"],
+      ["transition"],
+      ["fiscal"],
+      ["accounting"],
+      ["payment"],
+      ["rental"],
+      ["warranty"],
+      ["vesting"],
+      ["blackout"],
+    ],
   }),
   insert(["colon"], ":", { attachLeft: true, blockedFollowers: [["cancer"]] }),
   insert(["semicolon"], ";", { attachLeft: true }),
@@ -86,6 +114,243 @@ const COMMANDS: SpokenCommand[] = [
 const COMMANDS_BY_LENGTH = [...COMMANDS].sort(
   (left, right) => right.words.length - left.words.length,
 );
+
+const SCRATCH_COMMAND_WORDS = COMMANDS.filter(
+  (command) => command.kind === "scratch",
+).map((command) => command.words);
+
+// A command word right after one of these is a noun in the sentence
+// ("the period", "a comma", "read the next line"), not a dictated mark.
+const NOUN_DETERMINERS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "his",
+  "her",
+  "its",
+  "our",
+  "their",
+  "each",
+  "every",
+  "another",
+  "any",
+  "some",
+  "no",
+  "which",
+  "what",
+  "whose",
+  "per",
+  "same",
+  "last",
+  "next",
+]);
+
+// "scratch that" right after one of these is a verb phrase inside the
+// sentence ("I'll scratch that off", "let's scratch that idea").
+const SCRATCH_CLAUSE_SUBJECTS = new Set([
+  "i",
+  "i'll",
+  "i'd",
+  "we",
+  "we'll",
+  "we'd",
+  "you",
+  "you'll",
+  "they",
+  "they'll",
+  "he",
+  "she",
+  "let's",
+  "lets",
+  "to",
+  "can",
+  "could",
+  "should",
+  "will",
+  "would",
+  "must",
+  "might",
+  "may",
+  "can't",
+  "cannot",
+  "don't",
+  "didn't",
+  "won't",
+  "not",
+  "never",
+]);
+
+// Closed-class words that commonly open a sentence. Transcription only
+// capitalizes a word mid-sentence when it is a name, so a capitalized word
+// after "period" starts a new sentence only if it is one of these
+// ("I finished period Then I left"); a capitalized name or brand ("the
+// difficult period Apple faced") leaves the command word literal. Names that
+// double as these words ("May", "Will", "Go") are left out.
+const SENTENCE_STARTERS = new Set([
+  "i",
+  "i'm",
+  "i'll",
+  "i've",
+  "i'd",
+  "you",
+  "you're",
+  "you'll",
+  "you've",
+  "we",
+  "we're",
+  "we'll",
+  "we've",
+  "they",
+  "they're",
+  "they'll",
+  "he",
+  "he's",
+  "she",
+  "she's",
+  "it",
+  "it's",
+  "there",
+  "there's",
+  "here",
+  "here's",
+  "that's",
+  "let's",
+  "the",
+  "a",
+  "an",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "our",
+  "their",
+  "his",
+  "her",
+  "its",
+  "some",
+  "all",
+  "both",
+  "each",
+  "every",
+  "no",
+  "and",
+  "but",
+  "or",
+  "so",
+  "then",
+  "also",
+  "now",
+  "next",
+  "first",
+  "second",
+  "finally",
+  "however",
+  "still",
+  "yet",
+  "because",
+  "if",
+  "when",
+  "while",
+  "after",
+  "before",
+  "once",
+  "since",
+  "although",
+  "though",
+  "anyway",
+  "meanwhile",
+  "otherwise",
+  "instead",
+  "maybe",
+  "perhaps",
+  "please",
+  "thanks",
+  "thank",
+  "yes",
+  "ok",
+  "okay",
+  "well",
+  "oh",
+  "actually",
+  "sure",
+  "just",
+  "again",
+  "today",
+  "tomorrow",
+  "yesterday",
+  "what",
+  "what's",
+  "why",
+  "how",
+  "where",
+  "who",
+  "which",
+  "is",
+  "are",
+  "was",
+  "were",
+  "do",
+  "does",
+  "did",
+  "can",
+  "could",
+  "would",
+  "should",
+  "have",
+  "has",
+  "had",
+  "don't",
+  "can't",
+  "in",
+  "on",
+  "at",
+  "for",
+  "with",
+  "from",
+  "to",
+  "by",
+  "as",
+  "about",
+  // Common imperatives, greetings, and sign-offs.
+  "see",
+  "let",
+  "call",
+  "send",
+  "check",
+  "look",
+  "come",
+  "remember",
+  "note",
+  "make",
+  "take",
+  "get",
+  "keep",
+  "give",
+  "tell",
+  "ask",
+  "talk",
+  "hi",
+  "hello",
+  "hey",
+  "bye",
+  "goodbye",
+  "good",
+  "great",
+  "sorry",
+  "best",
+  "kind",
+  "regards",
+  "cheers",
+  "sincerely",
+]);
 
 // ASCII-only by design: the spoken-command pipeline is English-gated
 // (isEnglishSanitizeLanguage), so command tokens are always ASCII and any
@@ -106,6 +371,11 @@ const isWhitespaceChar = (char: string): boolean =>
 
 const isSentenceStop = (char: string): boolean =>
   char === "." || char === "!" || char === "?";
+
+const endsWithClausePunctuation = (token: string): boolean =>
+  /[.!?,;:]$/.test(token);
+
+const startsWithUppercase = (token: string): boolean => /^[A-Z]/.test(token);
 
 type ParsedSpeech = {
   leading: string;
@@ -194,7 +464,13 @@ const predecessorBlocked = (
   previous: string[],
   blockedPredecessors: string[][] | undefined,
 ): boolean => {
-  if (!blockedPredecessors || previous.length === 0) {
+  // Punctuation after the previous word ("The rest. Period.") ends the
+  // phrase, so the two words are not a compound.
+  if (
+    !blockedPredecessors ||
+    previous.length === 0 ||
+    endsWithClausePunctuation(previous.at(-1) ?? "")
+  ) {
     return false;
   }
   return blockedPredecessors.some((predecessor) => {
@@ -342,6 +618,97 @@ export type ApplySpokenCommandsOptions = {
   skipStructuralCommands?: boolean;
 };
 
+const normalizedWord = (token: string | undefined): string =>
+  stripEdgePunctuation((token ?? "").replaceAll("\u2019", "'"));
+
+// `previous` belongs to the sentence unless punctuation closes it off.
+const previousWordIn = (
+  previous: string | undefined,
+  words: ReadonlySet<string>,
+): boolean =>
+  previous !== undefined &&
+  !endsWithClausePunctuation(previous) &&
+  words.has(normalizedWord(previous));
+
+const startsSentence = (token: string): boolean =>
+  startsWithUppercase(token) && SENTENCE_STARTERS.has(normalizedWord(token));
+
+// Nothing follows, punctuation ends the command, or the next token opens a
+// new sentence.
+const endsClauseHere = (
+  tokens: string[],
+  index: number,
+  span: number,
+): boolean => {
+  const next = tokens[index + span];
+  return (
+    next === undefined ||
+    endsWithClausePunctuation(tokens[index + span - 1] ?? "") ||
+    startsSentence(next)
+  );
+};
+
+// The context checks an insert command must pass wherever it appears.
+const insertGatesPass = (
+  command: InsertCommand,
+  tokens: string[],
+  index: number,
+  span: number,
+  skipStructural: boolean,
+): boolean => {
+  if (skipStructural && command.structural) {
+    return false;
+  }
+  // The "that" closing a "scratch that" is not a determiner.
+  if (
+    previousWordIn(tokens[index - 1], NOUN_DETERMINERS) &&
+    !predecessorBlocked(tokens.slice(0, index), SCRATCH_COMMAND_WORDS)
+  ) {
+    return false;
+  }
+  if (predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)) {
+    return false;
+  }
+  return !followerBlocked(tokens.slice(index + span), command.blockedFollowers);
+};
+
+// Whether a command that applies in its own context starts at `index`. It is
+// judged one level deep: a following command that must itself close a clause
+// ("period", "scratch that") counts only if the clause ends right after it,
+// which keeps the check from recursing.
+const commandFollowsAt = (
+  tokens: string[],
+  index: number,
+  skipStructural: boolean,
+): boolean =>
+  COMMANDS_BY_LENGTH.some((command) => {
+    const span = command.words.length;
+    if (
+      index + span > tokens.length ||
+      !wordsMatch(tokens.slice(index, index + span), command.words)
+    ) {
+      return false;
+    }
+    if (command.kind === "scratch") {
+      return !skipStructural && endsClauseHere(tokens, index, span);
+    }
+    return (
+      insertGatesPass(command, tokens, index, span, skipStructural) &&
+      (!command.clauseFinal || endsClauseHere(tokens, index, span))
+    );
+  });
+
+// A command closes its clause when the clause ends right after it or another
+// command that applies follows it.
+const closesClause = (
+  tokens: string[],
+  index: number,
+  span: number,
+  skipStructural: boolean,
+): boolean =>
+  endsClauseHere(tokens, index, span) ||
+  commandFollowsAt(tokens, index + span, skipStructural);
+
 const commandApplies = (
   command: SpokenCommand,
   tokens: string[],
@@ -350,15 +717,18 @@ const commandApplies = (
   skipStructural: boolean,
 ): boolean => {
   if (command.kind === "scratch") {
-    return !skipStructural;
+    // "scratch that" undoes speech only as its own clause, never after a
+    // subject ("I'll scratch that off").
+    return (
+      !skipStructural &&
+      !previousWordIn(tokens[index - 1], SCRATCH_CLAUSE_SUBJECTS) &&
+      closesClause(tokens, index, span, skipStructural)
+    );
   }
-  if (skipStructural && command.structural) {
-    return false;
-  }
-  if (predecessorBlocked(tokens.slice(0, index), command.blockedPredecessors)) {
-    return false;
-  }
-  return !followerBlocked(tokens.slice(index + span), command.blockedFollowers);
+  return (
+    insertGatesPass(command, tokens, index, span, skipStructural) &&
+    (!command.clauseFinal || closesClause(tokens, index, span, skipStructural))
+  );
 };
 
 const matchCommandAt = (

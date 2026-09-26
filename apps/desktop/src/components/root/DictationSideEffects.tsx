@@ -374,6 +374,9 @@ export const DictationSideEffects = () => {
 
   const strategyRef = useRef<BaseStrategy | null>(null);
   const sessionRef = useRef<TranscriptionSession | null>(null);
+  // Bumped synchronously by every start and abort, so an in-flight start can
+  // tell it was superseded even before the abort reaches its ref cleanup.
+  const recordingAttemptRef = useRef(0);
   const preDictationVolumeRef = useRef<number | null>(null);
   const recordingWarningTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recordingAutoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -641,6 +644,7 @@ export const DictationSideEffects = () => {
 
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
+      recordingAttemptRef.current += 1;
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
       );
@@ -1107,6 +1111,7 @@ export const DictationSideEffects = () => {
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
+      const attempt = ++recordingAttemptRef.current;
       const state = getAppState();
       const mode = args.mode;
       const language = args.language || getMyPrimaryDictationLanguage(state);
@@ -1139,6 +1144,12 @@ export const DictationSideEffects = () => {
         !state.local.disableAutoStyleLoading
       ) {
         await loadManualStyleForCurrentApp();
+        if (recordingAttemptRef.current !== attempt) {
+          getLogger().warning(
+            "Recording start was aborted or replaced while loading the style",
+          );
+          return;
+        }
       }
 
       // Seed the start snapshot after app-based style load. It is the
@@ -1168,7 +1179,33 @@ export const DictationSideEffects = () => {
 
         sessionRef.current = session;
         strategyRef.current = strategy;
+        const isCurrent = () =>
+          recordingAttemptRef.current === attempt &&
+          sessionRef.current === session &&
+          strategyRef.current === strategy;
+        // A superseded start must not leave capture running. An abort's own
+        // `stop_recording` can land before a late `start_recording`, so stop
+        // again unless a replacement now owns the (shared) native recorder.
+        const abandonStart = (reason: string, micOpened: boolean) => {
+          getLogger().warning(`Recording start ${reason}`);
+          session.cleanup();
+          const replaced =
+            sessionRef.current !== null && sessionRef.current !== session;
+          if (micOpened && !replaced) {
+            invoke("stop_recording").catch((e) =>
+              getLogger().verbose(
+                `stop_recording failed for an abandoned start: ${e}`,
+              ),
+            );
+          }
+        };
         await strategy.onBeforeStart();
+        await session.onBeforeRecordingStart?.();
+
+        if (!isCurrent()) {
+          abandonStart("was superseded before the microphone opened", false);
+          return;
+        }
 
         getLogger().info(
           `Starting recording (mic=${preferredMicrophone ?? "default"})`,
@@ -1182,10 +1219,7 @@ export const DictationSideEffects = () => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
             // than waiting for the other Promise.all branch.
-            if (
-              sessionRef.current === session &&
-              strategyRef.current === strategy
-            ) {
+            if (isCurrent()) {
               startProviderRecordingTimers();
             }
             return result;
@@ -1196,35 +1230,17 @@ export const DictationSideEffects = () => {
         getLogger().verbose(`Recording started (sampleRate=${sampleRate})`);
 
         // A stop/abort can arrive while `start_recording` is still opening
-        // the mic (WASAPI init can take >1s on loaded machines).
-        // `abortRecording` nulls the refs, so require the refs to still match
-        // this invocation's session before continuing. Reading and invoking a
-        // nullable current ref here previously crashed when the user stopped
-        // mid-initialization.
-        if (
-          sessionRef.current !== session ||
-          strategyRef.current !== strategy
-        ) {
-          getLogger().warning(
-            "Recording start raced an abort or replacement; skipping stale session start",
-          );
+        // the mic (WASAPI init can take >1s on loaded machines). Reading and
+        // invoking a nullable current ref here previously crashed when the
+        // user stopped mid-initialization.
+        if (!isCurrent()) {
+          abandonStart("was superseded while the microphone opened", true);
           return;
         }
-        const startedSession = session;
-        const startedStrategy = strategy;
+        await session.onRecordingStart(sampleRate);
 
-        await startedSession.onRecordingStart(sampleRate);
-
-        if (
-          sessionRef.current !== startedSession ||
-          strategyRef.current !== startedStrategy
-        ) {
-          getLogger().warning(
-            "Session was aborted while starting; skipping timers and volume dim",
-          );
-          // The abort path cleans whatever was current in the refs; release
-          // this (now-orphaned) session defensively — cleanup is idempotent.
-          startedSession.cleanup();
+        if (!isCurrent()) {
+          abandonStart("was superseded during session start", true);
           return;
         }
 

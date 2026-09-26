@@ -16,8 +16,10 @@ import {
   DeepgramTranscribeAudioRepo,
   ElevenLabsTranscribeAudioRepo,
   GladiaTranscribeAudioRepo,
+  GroqTranscribeAudioRepo,
   LocalTranscribeAudioRepo,
   OpenAICompatibleTranscribeAudioRepo,
+  OpenAITranscribeAudioRepo,
   OpenRouterTranscribeAudioRepo,
   TranscribeAudioOutput,
   TranscribeSegmentInput,
@@ -238,6 +240,37 @@ describe("BaseTranscribeAudioRepo", () => {
       const result = await repo.transcribeAudio({ samples, sampleRate });
 
       expect(result.text).not.toContain("[BLANK_AUDIO]");
+      expect(result.text).toBe(
+        "The cat sat still. A dog ran home. Birds flew away.",
+      );
+    });
+
+    it("keeps confidently decoded chunks whose window reports a high no_speech_prob", async () => {
+      const chunkTexts = [
+        "The cat sat still.",
+        "A dog ran home.",
+        "Birds flew away.",
+      ];
+      const repo = new MockTranscribeAudioRepo(
+        10,
+        2,
+        3,
+        (_input, index) => chunkTexts[index] ?? "",
+        (_input, index) => [
+          {
+            text: chunkTexts[index] ?? "",
+            noSpeechProb: 0.97,
+            avgLogprob: -0.3,
+          },
+        ],
+      );
+      const sampleRate = 16000;
+
+      const result = await repo.transcribeAudio({
+        samples: createSamples(25, sampleRate),
+        sampleRate,
+      });
+
       expect(result.text).toBe(
         "The cat sat still. A dog ran home. Birds flew away.",
       );
@@ -1036,5 +1069,133 @@ describe("ElevenLabs keyterms gating", () => {
 
     expect(repo).toBeInstanceOf(ElevenLabsTranscribeAudioRepo);
     expect(keytermsOf(repo)).toContain("Soniya");
+  });
+});
+
+describe("segment audio energy in the repo", () => {
+  const rate = 16_000;
+  // Quiet speech for the first 2 s, then room tone.
+  const samples = new Float32Array(rate * 5).map((_, i) =>
+    i < rate * 2 ? 0.05 * Math.sin((2 * Math.PI * 180 * i) / rate) : 0.0005,
+  );
+  const segments = [
+    {
+      text: "Call me back.",
+      noSpeechProb: 0.1,
+      avgLogprob: -0.2,
+      start: 0,
+      end: 2,
+    },
+    {
+      text: " Thanks.",
+      noSpeechProb: 0.95,
+      avgLogprob: -0.3,
+      start: 3,
+      end: 4.5,
+    },
+  ];
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("marks a confident segment over room tone using the chunk's audio", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate },
+    );
+
+    expect(output.segments?.map((segment) => segment.audioSilent)).toEqual([
+      undefined,
+      true,
+    ]);
+  });
+
+  it("leaves segments unmeasured when the filter is off", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "Call me back. Thanks.",
+      segments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      { samples, sampleRate: rate, hallucinationFilterEnabled: false },
+    );
+
+    expect(output.segments?.some((segment) => "audioSilent" in segment)).toBe(
+      false,
+    );
+  });
+});
+
+describe("provider segment hand-off to the silence gate", () => {
+  const providerSegments = [
+    {
+      text: "hello",
+      noSpeechProb: 0.2,
+      avgLogprob: -0.3,
+      tokens: [1, 2, 3],
+    },
+    { text: " there", noSpeechProb: "0.99", avgLogprob: null },
+  ];
+  const expected = [
+    { text: "hello", noSpeechProb: 0.2, avgLogprob: -0.3 },
+    { text: " there", noSpeechProb: undefined, avgLogprob: undefined },
+  ];
+  const input = {
+    samples: new Float32Array(1600).fill(0.5),
+    sampleRate: 16000,
+    hallucinationFilterEnabled: false,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Groq keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "groqTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new GroqTranscribeAudioRepo("k", null).transcribeAudio(
+      input,
+    );
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI keeps avg_logprob and drops malformed or extra fields", async () => {
+    vi.spyOn(voiceAi, "openaiTranscribeAudio").mockResolvedValue({
+      text: "hello there",
+      segments: providerSegments,
+    } as never);
+
+    const output = await new OpenAITranscribeAudioRepo(
+      "k",
+      null,
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
+  });
+
+  it("OpenAI-compatible passes the parser's segments through with avg_logprob", async () => {
+    // openaiCompatibleTranscribeAudio already validates segments (see its
+    // tests), so the repo must hand them on without dropping avgLogprob.
+    transcribeUtilMock.mockResolvedValue({
+      text: "hello there",
+      segments: expected,
+    });
+
+    const output = await new OpenAICompatibleTranscribeAudioRepo(
+      "key-id",
+      "https://example.com/v1",
+      "whisper-1",
+    ).transcribeAudio(input);
+
+    expect(output.segments).toEqual(expected);
   });
 });

@@ -177,6 +177,39 @@ describe("GenerateTextInput.signal forwarding", () => {
   });
 });
 
+describe("GenerateTextInput.reasoningEffort forwarding", () => {
+  it("Groq forwards the effort to the primary and the fallback model", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked
+      .mockRejectedValueOnce(new Error("primary failed"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    await new GroqGenerateTextRepo("k", "openai/gpt-oss-20b").generateText({
+      prompt: "p",
+      reasoningEffort: "low",
+    });
+
+    expect(mocked).toHaveBeenCalledTimes(2);
+    for (const [args] of mocked.mock.calls) {
+      expect(args.reasoningEffort).toBe("low");
+    }
+  });
+
+  it("Cerebras forwards the effort", async () => {
+    const mocked = vi.mocked(cerebrasGenerateTextResponse);
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    await new CerebrasGenerateTextRepo("k", null).generateText({
+      prompt: "p",
+      reasoningEffort: "low",
+    });
+
+    expect(mocked).toHaveBeenCalledWith(
+      expect.objectContaining({ reasoningEffort: "low" }),
+    );
+  });
+});
+
 describe("default model fallback when no model is stored", () => {
   const cases: [
     name: string,
@@ -257,6 +290,61 @@ describe("generateText metadata reports the resolved model", () => {
     const output = await repo.generateText({ prompt: "p" });
 
     expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+  });
+
+  it.each([401, 402, 403])(
+    "Groq does not fall back when the key itself is rejected (%i)",
+    async (status) => {
+      const keyError = Object.assign(new Error("rejected"), { status });
+      vi.mocked(groqGenerateTextResponse).mockRejectedValueOnce(keyError);
+
+      const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+
+      await expect(repo.generateText({ prompt: "p" })).rejects.toBe(keyError);
+      expect(groqGenerateTextResponse).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([400, 404, 429, 500])(
+    "Groq falls back on a model-specific failure (%i)",
+    async (status) => {
+      vi.mocked(groqGenerateTextResponse)
+        .mockRejectedValueOnce(Object.assign(new Error("boom"), { status }))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo(
+        "k",
+        "openai/gpt-oss-20b",
+      ).generateText({ prompt: "p" });
+
+      expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
+    },
+  );
+
+  it("Groq falls back to the smaller model when the larger one fails", async () => {
+    vi.mocked(groqGenerateTextResponse)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
+    const output = await repo.generateText({ prompt: "p" });
+
+    expect(output.metadata?.model).toBe("openai/gpt-oss-20b");
+  });
+
+  it("Groq falls back only to production models", async () => {
+    for (const model of GENERATE_TEXT_MODELS) {
+      vi.mocked(groqGenerateTextResponse)
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce(mockResponse("hi"));
+
+      const output = await new GroqGenerateTextRepo("k", model).generateText({
+        prompt: "p",
+      });
+
+      expect(GENERATE_TEXT_MODELS).toContain(output.metadata?.model);
+      expect(output.metadata?.model).not.toBe(model);
+    }
   });
 
   it("OpenAI reports the configured model", async () => {

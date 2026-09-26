@@ -746,8 +746,38 @@ Process the transcript according to the instructions.
   );
 };
 
-// Shared output budget for production transforms and style previews.
-export const POST_PROCESS_MAX_TOKENS = 600;
+// Reasoning models (gpt-oss, gpt-5, Gemini thinking) spend hidden reasoning
+// tokens from the same output budget as the JSON answer, so the budget must
+// cover both. Only gpt-oss is asked for a lower effort (see
+// POST_PROCESS_REASONING_EFFORT); the headroom also covers models that reason
+// at their default effort. A fixed 600-token cap truncated long dictations.
+const POST_PROCESS_REASONING_HEADROOM_TOKENS = 1024;
+// Every request, however short, now asks for at least this many output
+// tokens (previously 600). Providers bill generated tokens, not the cap.
+const POST_PROCESS_MIN_OUTPUT_TOKENS = 2048;
+// Bounds cost. The budget saturates past about 2,400 estimated transcript
+// tokens (roughly 9,500 characters, or 11 to 14 minutes of speech). A longer
+// dictation can still be cut off; strict parsing then keeps the raw
+// transcript and warns instead of pasting a shortened one.
+const POST_PROCESS_MAX_OUTPUT_TOKENS = 8192;
+// Room for styles that lengthen the text, JSON string escaping, and scripts
+// that `estimateTokenCount` under-counts.
+const POST_PROCESS_OUTPUT_EXPANSION = 3;
+
+/** Output token budget for one post-processing request over `transcript`. */
+export const getPostProcessMaxTokens = (transcript: string): number => {
+  const budget =
+    POST_PROCESS_REASONING_HEADROOM_TOKENS +
+    Math.ceil(estimateTokenCount(transcript) * POST_PROCESS_OUTPUT_EXPANSION);
+  return Math.min(
+    POST_PROCESS_MAX_OUTPUT_TOKENS,
+    Math.max(POST_PROCESS_MIN_OUTPUT_TOKENS, budget),
+  );
+};
+
+// Cleanup is a formatting task. Low effort keeps gpt-oss reasoning from
+// consuming the output budget before the answer starts.
+export const POST_PROCESS_REASONING_EFFORT = "low";
 
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   result: z.string().describe("The processed transcription"),

@@ -3,6 +3,10 @@ import { countWords, retry } from "@maus-inc/utilities";
 export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
+  avgLogprob?: number;
+  /** Segment bounds in seconds from the start of the submitted audio. */
+  start?: number;
+  end?: number;
 };
 
 export type TranscribeAudioOutput = {
@@ -39,9 +43,9 @@ export const contentToString = (
 
 /**
  * Defensively read an OpenAI-compatible transcription response. The SDK types
- * `create` as a union, so we read `segments[].no_speech_prob` ourselves to
- * support issue #54's probability-gated silence handling regardless of the
- * requested `response_format`.
+ * `create` as a union, so we read `segments[].no_speech_prob` and
+ * `segments[].avg_logprob` ourselves to support issue #54's probability-gated
+ * silence handling regardless of the requested `response_format`.
  */
 export function parseSdkTranscription(
   response: unknown,
@@ -57,7 +61,7 @@ export function parseSdkTranscription(
     throw new Error("Transcription failed: missing or empty text");
   }
 
-  let segments: Array<{ text: string; noSpeechProb?: number }> | undefined;
+  let segments: TranscriptionSegment[] | undefined;
   if (Array.isArray(record.segments)) {
     const allSegmentsValid = record.segments.every(
       (s): s is Record<string, unknown> =>
@@ -72,6 +76,10 @@ export function parseSdkTranscription(
           text: s.text as string,
           noSpeechProb:
             typeof s.no_speech_prob === "number" ? s.no_speech_prob : undefined,
+          avgLogprob:
+            typeof s.avg_logprob === "number" ? s.avg_logprob : undefined,
+          start: typeof s.start === "number" ? s.start : undefined,
+          end: typeof s.end === "number" ? s.end : undefined,
         };
       });
     }

@@ -27,13 +27,17 @@ import {
   GenerateTextModel,
   groqGenerateTextResponse,
   groqStreamChat,
+  isKeyRejectedStatus,
   OpenAIGenerateTextModel,
   openaiGenerateTextResponse,
   openaiStreamChat,
   OPENROUTER_DEFAULT_MODEL,
   openrouterGenerateTextResponse,
   openrouterStreamChat,
+  readProviderStatus,
+  ReasoningEffort,
 } from "@maus-inc/voice-ai";
+import { getLogger } from "../utils/log.utils";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { PostProcessingMode } from "../types/ai.types";
 import { BaseRepo } from "./base.repo";
@@ -43,6 +47,8 @@ export type GenerateTextInput = {
   prompt: string;
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  /** Honored only by providers and models that accept an effort level. */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Cancellation handle for the underlying provider request. Threaded through
    * every provider so a timed out post-processing call stops consuming quota
@@ -72,7 +78,7 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "openai/gpt-oss-120b";
+  private fallbackModel: GenerateTextModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -85,6 +91,13 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
         : "openai/gpt-oss-20b";
+    // Fall back to the other production model. Groq retires preview models
+    // at short notice (qwen/qwen3.6-27b shut down on 2026-09-14), and a
+    // retired fallback turns every transient primary failure into a 404.
+    this.fallbackModel =
+      this.model === "openai/gpt-oss-120b"
+        ? "openai/gpt-oss-20b"
+        : "openai/gpt-oss-120b";
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
@@ -100,34 +113,41 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     };
   }
 
+  private requestGroq(model: GenerateTextModel, input: GenerateTextInput) {
+    return groqGenerateTextResponse({
+      apiKey: this.groqApiKey,
+      model,
+      prompt: input.prompt,
+      system: input.system ?? undefined,
+      jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
+      reasoningEffort: input.reasoningEffort,
+      signal: input.signal,
+    });
+  }
+
   private async generateWithFallback(input: GenerateTextInput) {
     try {
-      const response = await groqGenerateTextResponse({
-        apiKey: this.groqApiKey,
-        model: this.model,
-        prompt: input.prompt,
-        system: input.system ?? undefined,
-        jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
-        signal: input.signal,
-      });
+      const response = await this.requestGroq(this.model, input);
       return { response, model: this.model };
     } catch (error) {
       // An aborted request must never fall back: the abort is the caller's
       // deadline decision, not a provider failure worth another attempt.
-      if (input.signal?.aborted || this.model === this.fallbackModel) {
+      // A rejected key fails on every model. Rate limits, a missing model,
+      // or invalid output (a 400 from JSON validation) are model-specific.
+      const status = readProviderStatus(error);
+      if (
+        input.signal?.aborted ||
+        this.model === this.fallbackModel ||
+        isKeyRejectedStatus(status)
+      ) {
         throw error;
       }
+      getLogger().warning(
+        `Groq ${this.model} failed (status ${status ?? "unknown"}); retrying with ${this.fallbackModel}`,
+      );
 
-      const response = await groqGenerateTextResponse({
-        apiKey: this.groqApiKey,
-        model: this.fallbackModel,
-        prompt: input.prompt,
-        system: input.system ?? undefined,
-        jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
-        signal: input.signal,
-      });
+      const response = await this.requestGroq(this.fallbackModel, input);
       return { response, model: this.fallbackModel };
     }
   }
@@ -495,6 +515,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      reasoningEffort: input.reasoningEffort,
       signal: input.signal,
     });
 

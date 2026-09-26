@@ -170,3 +170,28 @@ describe("cerebrasGenerateTextResponse 402 handling", () => {
     expect(createChatCompletion).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("cerebrasGenerateTextResponse reasoning effort", () => {
+  it.each([
+    ["gpt-oss-120b", "low"],
+    ["gemma-4-31b", undefined],
+  ] as const)(
+    "sends reasoning_effort=%s only when the model accepts it",
+    async (model, expected) => {
+      createChatCompletion.mockReset();
+      createChatCompletion.mockResolvedValueOnce({
+        choices: [{ message: { content: "ok" } }],
+      });
+
+      await cerebrasGenerateTextResponse({
+        apiKey: "csk_test",
+        model,
+        prompt: "hello",
+        reasoningEffort: "low",
+      });
+
+      const [body] = createChatCompletion.mock.calls[0] ?? [];
+      expect(body?.reasoning_effort).toBe(expected);
+    },
+  );
+});

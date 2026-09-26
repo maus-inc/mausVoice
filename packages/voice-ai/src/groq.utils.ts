@@ -8,8 +8,15 @@ import Groq from "groq-sdk/index";
 import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/completions";
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
-import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
-import type { CustomFetch, DiscoveredModelId } from "./types";
+import {
+  isKeyRejectedStatus,
+  readProviderStatus,
+} from "./provider-status.utils";
+import {
+  buildReasoningEffortParams,
+  parseOpenAICompatibleGenerateTextResponse,
+} from "./openai-compatible-generate.utils";
+import type { CustomFetch, DiscoveredModelId, ReasoningEffort } from "./types";
 import {
   runSdkTranscription,
   TranscriptionSegment,
@@ -96,6 +103,7 @@ export type GroqGenerateTextArgs = {
   imageUrls?: string[];
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
   customFetch?: CustomFetch;
 };
@@ -113,15 +121,17 @@ export const groqGenerateTextResponse = async ({
   imageUrls = [],
   jsonResponse,
   maxTokens,
+  reasoningEffort,
   signal,
   customFetch,
 }: GroqGenerateTextArgs): Promise<GroqGenerateResponseOutput> => {
   return retry({
     // A present-but-not-aborted signal is not an abort and must not disable
-    // retries for transient failures. Only an actually aborted signal is
-    // terminal.
+    // retries for transient failures. Only an actually aborted signal or a
+    // rejected key is terminal.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: (error) =>
+      !signal?.aborted && !isKeyRejectedStatus(readProviderStatus(error)),
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -144,6 +154,7 @@ export const groqGenerateTextResponse = async ({
           messages,
           model,
           max_completion_tokens: maxTokens ?? 5000,
+          ...buildReasoningEffortParams(model, reasoningEffort),
           response_format: jsonResponse
             ? JSON_SCHEMA_SUPPORTED_MODELS.has(model)
               ? {

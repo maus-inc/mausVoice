@@ -29,22 +29,50 @@ type AudioChunkPayload = {
   samples: number[];
 };
 
+// Bounds the startup buffer's memory. The capture rate is unknown when the
+// buffer starts, so the cap is in samples: 30 s at 48 kHz, longer at lower
+// rates (90 s at 16 kHz). Past it the sidecar is far from ready, so buffering
+// stops and finalize batch-transcribes the full recording instead.
+const MAX_STARTUP_BUFFER_SAMPLES = 48_000 * 30;
+
 type LocalSessionContext = {
   prompt: string;
   hallucinationFilterEnabled: boolean;
 };
 
+// One instance serves one recording: `createTranscriptionSession` builds a
+// fresh session per dictation.
 export class LocalTranscriptionSession implements TranscriptionSession {
   private unlisten: UnlistenFn | null = null;
   private session: LocalSidecarStreamingSession | null = null;
   private context: LocalSessionContext | null = null;
   private startupWarnings: string[] = [];
+  private pendingChunks: number[][] = [];
+  private pendingSampleCount = 0;
+  private startupBufferOverflowed = false;
+
+  // Capture emits chunks as soon as the microphone opens and Tauri does not
+  // replay events, so subscribe before recording starts and buffer until the
+  // sidecar session exists. Otherwise the opening words never reach it.
+  async onBeforeRecordingStart(): Promise<void> {
+    this.cleanup();
+    try {
+      await this.startListening();
+    } catch (error) {
+      getLogger().warning(
+        `[local-stream-session] early audio subscription failed (${this.toErrorMessage(error)})`,
+      );
+    }
+  }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    this.cleanup();
     this.startupWarnings = [];
 
     try {
+      // The early hook did not run or could not subscribe.
+      if (!this.unlisten) {
+        await this.startListening();
+      }
       const state = getAppState();
       const dictationLanguage = await loadMyEffectiveDictationLanguage(state);
       const whisperLanguage =
@@ -57,6 +85,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       const hallucinationFilterEnabled =
         state.userPrefs?.hallucinationFilterEnabled !== false;
+      // Snapshot before anything can fail so the batch fallback honors the
+      // same preferences and records the same prompt.
+      this.context = { prompt, hallucinationFilterEnabled };
       const settings = state.settings.aiTranscription;
       const sidecarSession =
         await getLocalTranscriptionSidecarManager().createStreamingSession({
@@ -69,17 +100,23 @@ export class LocalTranscriptionSession implements TranscriptionSession {
           hallucinationFilterEnabled,
         });
 
+      if (this.startupBufferOverflowed) {
+        sidecarSession.cleanup();
+        throw new Error(
+          "startup audio outgrew the buffer before the sidecar was ready",
+        );
+      }
+
       this.session = sidecarSession;
-      this.context = { prompt, hallucinationFilterEnabled };
-      this.unlisten = await listen<AudioChunkPayload>(
-        "audio_chunk",
-        (event) => {
-          if (!this.session || !event.payload.samples.length) {
-            return;
-          }
-          this.session.writeAudioChunk(event.payload.samples);
-        },
-      );
+      if (this.pendingSampleCount > 0) {
+        getLogger().info(
+          `[local-stream-session] flushing ${this.pendingSampleCount} samples captured during startup`,
+        );
+      }
+      for (const chunk of this.pendingChunks) {
+        sidecarSession.writeAudioChunk(chunk);
+      }
+      this.clearStartupBuffer();
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
@@ -88,7 +125,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `[local-stream-session] start failed, falling back (${message})`,
       );
-      this.cleanup();
+      this.releaseStream();
     }
   }
 
@@ -152,11 +189,17 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     getLogger().info(
       `[local-stream-session] cleanup (hasSession=${!!this.session}, hasUnlisten=${!!this.unlisten})`,
     );
+    this.releaseStream();
+    this.context = null;
+  }
+
+  private releaseStream(): void {
     this.unlisten?.();
     this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
-    this.context = null;
+    this.clearStartupBuffer();
+    this.startupBufferOverflowed = false;
   }
 
   supportsStreaming(): boolean {
@@ -164,6 +207,37 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   }
 
   setInterimResultCallback(): void {}
+
+  private async startListening(): Promise<void> {
+    this.unlisten = await listen<AudioChunkPayload>("audio_chunk", (event) =>
+      this.handleAudioChunk(event.payload.samples),
+    );
+  }
+
+  private handleAudioChunk(samples: number[]): void {
+    if (!samples.length) {
+      return;
+    }
+    if (this.session) {
+      this.session.writeAudioChunk(samples);
+      return;
+    }
+    if (this.startupBufferOverflowed) {
+      return;
+    }
+    if (this.pendingSampleCount + samples.length > MAX_STARTUP_BUFFER_SAMPLES) {
+      this.startupBufferOverflowed = true;
+      this.clearStartupBuffer();
+      return;
+    }
+    this.pendingChunks.push(samples);
+    this.pendingSampleCount += samples.length;
+  }
+
+  private clearStartupBuffer(): void {
+    this.pendingChunks = [];
+    this.pendingSampleCount = 0;
+  }
 
   private async finalizeWithBatchFallback(
     audio: StopRecordingResponse,

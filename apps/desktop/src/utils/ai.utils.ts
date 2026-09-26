@@ -47,45 +47,49 @@ export const extractJsonFromMarkdown = (text: string): string => {
 };
 
 /**
- * Parses LLM JSON output, repairing truncation at the model's token limit
- * (the classic failure is `SyntaxError: Unterminated string in JSON at
- * position N`). Walks the tail of the extracted JSON backwards, dropping
- * partial tokens and re-closing the object until it parses, so a truncated
- * response degrades to whatever complete fields survived instead of
- * discarding the whole post-processing result.
+ * Parses LLM JSON output strictly. A response cut off at the model's token
+ * limit is not valid JSON, so it throws and the caller keeps the full raw
+ * transcript. Repairing it would silently drop the end of the dictation.
  */
-export const parsePostProcessingJson = (raw: string): unknown => {
-  const extracted = extractJsonFromMarkdown(raw);
+export const parsePostProcessingJson = (raw: string): unknown =>
+  JSON.parse(extractJsonFromMarkdown(raw));
 
-  // Fast path: complete JSON.
-  try {
-    return JSON.parse(extracted);
-  } catch {
-    // Fall through to truncation repair.
+/**
+ * True when a reply that failed to parse opens a JSON object but ends inside
+ * a string or with brackets still open, the shape of output cut off at the
+ * model's token limit. Braces inside string values are ignored, and a code
+ * fence cut off before it closed is tolerated.
+ */
+export const isLikelyTruncatedJson = (raw: string): boolean => {
+  const body = raw
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/, "")
+    .trim();
+  if (!body.startsWith("{")) {
+    return false;
   }
-
-  let cut = extracted.length;
-  while (cut > 0) {
-    const boundary = Math.max(
-      extracted.lastIndexOf(",", cut - 1),
-      extracted.lastIndexOf('"', cut - 1),
-      extracted.lastIndexOf(" ", cut - 1),
-      extracted.lastIndexOf("\n", cut - 1),
-      extracted.lastIndexOf("\t", cut - 1),
-    );
-    if (boundary <= 0) {
-      break;
-    }
-    cut = boundary;
-    const repaired = `${extracted.slice(0, cut).replace(/,\s*$/, "")}"}`;
-    try {
-      return JSON.parse(repaired);
-    } catch {
-      // Keep cutting back towards the last complete boundary.
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of body) {
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      depth += 1;
+    } else if (char === "}" || char === "]") {
+      depth -= 1;
     }
   }
-
-  throw new Error("Could not parse or repair LLM JSON output");
+  return inString || depth > 0;
 };
 
 const preferenceOr = <T>(value: T | null | undefined, fallback: T): T =>

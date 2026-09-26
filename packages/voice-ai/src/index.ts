@@ -12,6 +12,7 @@ export * from "./azure-openai.utils";
 export * from "./deepseek.utils";
 export * from "./gemini.utils";
 export * from "./cerebras.utils";
+export * from "./provider-status.utils";
 export * from "./speaches.utils";
 export * from "./xai.utils";
 export * from "./gladia.utils";

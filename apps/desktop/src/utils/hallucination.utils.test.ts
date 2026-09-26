@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyHallucinationFiltering,
   filterKnownSilenceHallucinations,
+  gateSilentSegments,
   isKnownSilenceHallucination,
   joinKeptSegmentTexts,
+  markSilentSegmentAudio,
 } from "./hallucination.utils";
 
 describe("silence hallucination filtering", () => {
@@ -208,5 +210,143 @@ describe("applyHallucinationFiltering", () => {
     expect(applyHallucinationFiltering(raw, undefined, "en", true)).toBe(
       "Please review the doc. Best regards.",
     );
+  });
+});
+
+describe("gateSilentSegments decoder confidence", () => {
+  it("keeps confidently decoded speech even when no_speech_prob is high", () => {
+    const segments = [
+      { text: "Hello", noSpeechProb: 0.1, avgLogprob: -0.3 },
+      { text: " world", noSpeechProb: 0.95, avgLogprob: -0.2 },
+    ];
+    expect(gateSilentSegments(segments)).toBeNull();
+    expect(
+      applyHallucinationFiltering("Hello world", segments, "en", true),
+    ).toBe("Hello world");
+  });
+
+  it("does not empty a whole window of confident speech", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech", noSpeechProb: 0.97, avgLogprob: -0.4 },
+        { text: " continues here", noSpeechProb: 0.97, avgLogprob: -0.5 },
+      ]),
+    ).toBeNull();
+  });
+
+  it("drops a high no_speech_prob segment the decoder was unsure about", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech.", noSpeechProb: 0.1, avgLogprob: -0.3 },
+        { text: " Thanks for watching!", noSpeechProb: 0.95, avgLogprob: -1.4 },
+      ]),
+    ).toBe("Real speech.");
+  });
+
+  it("falls back to the probability alone when avg_logprob is missing", () => {
+    expect(
+      gateSilentSegments([
+        { text: "Real speech.", noSpeechProb: 0.1 },
+        { text: " [BLANK_AUDIO]", noSpeechProb: 0.99 },
+      ]),
+    ).toBe("Real speech.");
+  });
+});
+
+describe("segment audio energy", () => {
+  const rate = 16_000;
+  // Room tone everywhere, plus a quiet 180 Hz voice-like tone in `speech`.
+  const audio = (seconds: number, speech: [number, number][] = []) => {
+    const out = new Float32Array(seconds * rate);
+    for (let i = 0; i < out.length; i++) {
+      const t = i / rate;
+      out[i] = 0.0005 * Math.sin(2 * Math.PI * 50 * t);
+      if (speech.some(([from, to]) => t >= from && t < to)) {
+        out[i] += 0.012 * Math.sin(2 * Math.PI * 180 * t);
+      }
+    }
+    return out;
+  };
+  const confident = { noSpeechProb: 0.95, avgLogprob: -0.3 };
+
+  it("drops a confident hallucination whose own audio is silent", () => {
+    const segments = markSilentSegmentAudio(
+      [
+        {
+          text: "Send it today.",
+          noSpeechProb: 0.1,
+          avgLogprob: -0.2,
+          start: 0,
+          end: 2,
+        },
+        {
+          text: " I'll see you in the next video.",
+          ...confident,
+          start: 3,
+          end: 5,
+        },
+      ],
+      audio(6, [[0, 2]]),
+      rate,
+    );
+
+    expect(segments?.[1]?.audioSilent).toBe(true);
+    expect(applyHallucinationFiltering("", segments, "en", true)).toBe(
+      "Send it today.",
+    );
+  });
+
+  it("keeps quiet speech that the model flagged but decoded confidently", () => {
+    const segments = markSilentSegmentAudio(
+      [{ text: "Yes, that works.", ...confident, start: 19.3, end: 19.8 }],
+      audio(20, [[19.3, 19.8]]),
+      rate,
+    );
+
+    expect(segments?.[0]?.audioSilent).toBe(false);
+    expect(gateSilentSegments(segments)).toBeNull();
+  });
+
+  it("widens the span so a slightly early timestamp still finds the speech", () => {
+    const segments = markSilentSegmentAudio(
+      [{ text: "Yes.", ...confident, start: 2, end: 2.5 }],
+      audio(5, [[2.8, 3.2]]),
+      rate,
+    );
+
+    expect(segments?.[0]?.audioSilent).toBe(false);
+  });
+
+  it.each([
+    ["no timestamps", { text: "Thanks.", ...confident }],
+    [
+      "a span past the audio",
+      { text: "Thanks.", ...confident, start: 30, end: 31 },
+    ],
+    ["an empty span", { text: "Thanks.", ...confident, start: 2, end: 2 }],
+    [
+      "a segment the model did not flag",
+      {
+        text: "Thanks.",
+        noSpeechProb: 0.2,
+        avgLogprob: -0.3,
+        start: 1,
+        end: 2,
+      },
+    ],
+    [
+      "an unsure segment the probability test already drops",
+      {
+        text: "Thanks.",
+        noSpeechProb: 0.95,
+        avgLogprob: -1.4,
+        start: 1,
+        end: 2,
+      },
+    ],
+  ])("leaves %s unmeasured", (_label, segment) => {
+    const [marked] = markSilentSegmentAudio([segment], audio(5), rate) ?? [];
+
+    expect(marked).toBe(segment);
   });
 });

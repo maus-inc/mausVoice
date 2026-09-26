@@ -5,6 +5,20 @@ import {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import { contentToString } from "./transcription.utils";
+import type { ReasoningEffort } from "./types";
+
+const GPT_OSS_MODEL = /(^|\/)gpt-oss-/;
+
+/**
+ * Request fields that set the reasoning effort. Only the gpt-oss family
+ * accepts low, medium, and high. Other models reject those values or take
+ * different ones (Groq's Qwen models, for example), so they get no field.
+ */
+export const buildReasoningEffortParams = (
+  model: string,
+  effort: ReasoningEffort | undefined,
+): { reasoning_effort?: ReasoningEffort } =>
+  effort && GPT_OSS_MODEL.test(model) ? { reasoning_effort: effort } : {};
 
 export type OpenAICompatibleGenerateTextOptions = {
   messages?: ChatCompletionMessageParam[];

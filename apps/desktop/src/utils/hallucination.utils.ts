@@ -1,3 +1,5 @@
+import type { AudioSamples } from "../types/audio.types";
+import { hasSpeechEnergy } from "./audio-energy.utils";
 import { isEnglishSanitizeLanguage } from "./sanitize-language.utils";
 
 /**
@@ -152,21 +154,130 @@ export const applyHallucinationFiltering = (
 
 /**
  * A single Whisper segment as returned by a `verbose_json` transcription.
- * `noSpeechProb` is the model's estimate that the segment contains no speech.
+ * `noSpeechProb` is the model's estimate that the segment's 30-second decode
+ * window contains no speech. `avgLogprob` is the decoder's confidence in the
+ * segment's own tokens. `start` and `end` are seconds into the submitted
+ * audio. `audioSilent` is set by `markSilentSegmentAudio` when the segment's
+ * own span of that audio holds no speech energy.
  */
 export type TranscriptionSegment = {
   text: string;
   noSpeechProb?: number;
+  avgLogprob?: number;
+  start?: number;
+  end?: number;
+  audioSilent?: boolean;
 };
 
+const finiteNumberOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
 /**
- * Segments whose `no_speech_prob` meets or exceeds this are treated as
- * near-certain silence and dropped. The 0.9 threshold is deliberately
- * conservative so only clearly-silent segments are removed; genuine speech
- * (even quiet speech) is preserved verbatim. This mirrors the local RMS energy
- * gate that runs before inference for on-device transcription.
+ * Copies provider segments down to the fields the silence gate reads. The
+ * probabilities decide which words are dropped, so a value that is not a
+ * finite number is treated as absent rather than trusted.
+ */
+export const toTranscriptionSegments = (
+  segments:
+    | ReadonlyArray<{
+        text: string;
+        noSpeechProb?: unknown;
+        avgLogprob?: unknown;
+        start?: unknown;
+        end?: unknown;
+      }>
+    | undefined,
+): TranscriptionSegment[] | undefined =>
+  segments?.map((segment) => ({
+    text: segment.text,
+    noSpeechProb: finiteNumberOrUndefined(segment.noSpeechProb),
+    avgLogprob: finiteNumberOrUndefined(segment.avgLogprob),
+    start: finiteNumberOrUndefined(segment.start),
+    end: finiteNumberOrUndefined(segment.end),
+  }));
+
+/**
+ * The probability half of the silence test in `isLikelySilentSegment`. A
+ * segment at or above it is dropped only when the decoder was also unsure of
+ * its words (`avgLogprob` below `NO_SPEECH_AVG_LOGPROB_THRESHOLD`), or when
+ * the provider sent no `avgLogprob`. The 0.9 value is deliberately
+ * conservative so only clearly-silent segments are removed.
  */
 export const NO_SPEECH_PROB_THRESHOLD = 0.9;
+
+/**
+ * Whisper's reference decoder skips a window as silent only when
+ * `no_speech_prob` is high AND the average log probability is below -1.0.
+ * A confidently decoded segment in a window with a high `no_speech_prob` is
+ * real speech, so it must not be dropped on the probability alone.
+ */
+export const NO_SPEECH_AVG_LOGPROB_THRESHOLD = -1;
+
+const flaggedAsSilence = (segment: TranscriptionSegment): boolean =>
+  segment.noSpeechProb != null &&
+  segment.noSpeechProb >= NO_SPEECH_PROB_THRESHOLD;
+
+const decodedConfidently = (segment: TranscriptionSegment): boolean =>
+  segment.avgLogprob != null &&
+  segment.avgLogprob >= NO_SPEECH_AVG_LOGPROB_THRESHOLD;
+
+/**
+ * True when a segment is near-certain silence: the model flagged its window
+ * as silence and either the decoder was unsure of the words, the provider
+ * sent no `avgLogprob`, or the segment's own audio holds no speech energy.
+ * The last case catches confident hallucinations such as "Thanks." over room
+ * tone without dropping quiet speech, which does carry energy.
+ */
+export const isLikelySilentSegment = (segment: TranscriptionSegment): boolean =>
+  flaggedAsSilence(segment) &&
+  (!decodedConfidently(segment) || segment.audioSilent === true);
+
+/**
+ * Whisper segment timestamps can drift by a fraction of a second, so the
+ * measured span is widened on both sides. A wider span can only add energy,
+ * which keeps the segment.
+ */
+export const SEGMENT_AUDIO_PAD_SEC = 0.5;
+
+/**
+ * Measures the audio under each segment the probability test alone would
+ * keep (flagged as silence yet decoded confidently) and sets `audioSilent`.
+ * `samples` must be the exact audio the provider transcribed, since segment
+ * times are relative to it. Segments without usable times, or whose span
+ * falls outside the audio, are left unmarked and so keep today's behavior.
+ */
+export const markSilentSegmentAudio = (
+  segments: TranscriptionSegment[] | undefined,
+  samples: Exclude<AudioSamples, null | undefined>,
+  sampleRate: number,
+): TranscriptionSegment[] | undefined =>
+  segments?.map((segment) => {
+    if (
+      !flaggedAsSilence(segment) ||
+      !decodedConfidently(segment) ||
+      segment.start == null ||
+      segment.end == null ||
+      segment.end <= segment.start ||
+      sampleRate <= 0
+    ) {
+      return segment;
+    }
+    const from = Math.max(
+      0,
+      Math.floor((segment.start - SEGMENT_AUDIO_PAD_SEC) * sampleRate),
+    );
+    const to = Math.min(
+      samples.length,
+      Math.ceil((segment.end + SEGMENT_AUDIO_PAD_SEC) * sampleRate),
+    );
+    if (to <= from) {
+      return segment;
+    }
+    return {
+      ...segment,
+      audioSilent: !hasSpeechEnergy(samples.slice(from, to), sampleRate),
+    };
+  });
 
 /**
  * True when adjacent segment texts lack any boundary whitespace (`\s`, including
@@ -215,11 +326,7 @@ export const gateSilentSegments = (
   if (!segments || segments.length === 0) {
     return null;
   }
-  const kept = segments.filter(
-    (segment) =>
-      segment.noSpeechProb == null ||
-      segment.noSpeechProb < NO_SPEECH_PROB_THRESHOLD,
-  );
+  const kept = segments.filter((segment) => !isLikelySilentSegment(segment));
   // Nothing gated — keep the provider transcript (and its spacing) instead
   // of rebuilding from segments.
   if (kept.length === segments.length) {
