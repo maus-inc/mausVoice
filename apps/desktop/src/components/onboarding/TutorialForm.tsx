@@ -795,6 +795,13 @@ ${userName}`;
     />
   );
 
+  const stepContent =
+    stepIndex === 0 ? (
+      <NotesStep {...fieldProps} overlay={tooltips} />
+    ) : (
+      <EmailStep {...fieldProps} overlay={tooltips} />
+    );
+
   const rightContent = (
     <Stack sx={{ width: "100%", maxWidth: 400, alignItems: "stretch" }}>
       {!initializing && (
@@ -816,10 +823,8 @@ ${userName}`;
                 <FormattedMessage defaultMessage="Try again" />
               </Button>
             </Stack>
-          ) : stepIndex === 0 ? (
-            <NotesStep {...fieldProps} overlay={tooltips} />
           ) : (
-            <EmailStep {...fieldProps} overlay={tooltips} />
+            stepContent
           )}
           {!submissionFailed && (
             <TutorialStepper
