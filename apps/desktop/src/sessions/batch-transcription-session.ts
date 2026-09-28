@@ -105,9 +105,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   private abortScope = new SessionAbortScope();
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    this.cleanup();
-    // A previous recording may have aborted the scope; this one needs a live signal.
-    this.abortScope = new SessionAbortScope();
+    this.resetForRecording();
     const pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
       selectText: (result) => result.rawTranscript,
@@ -121,6 +119,9 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       getLogger().verbose(
         `Batch session: pretranscription unavailable (${error})`,
       );
+      // The recording is still live, it just has no pretranscriber, so the
+      // scope must stay live for the whole-recording request at stop.
+      this.resetForRecording();
     }
   }
 
@@ -139,6 +140,12 @@ export class BatchTranscriptionSession implements TranscriptionSession {
     } finally {
       this.cleanup();
     }
+  }
+
+  /** Tears down the previous recording and gives this one a live abort scope. */
+  private resetForRecording(): void {
+    this.cleanup();
+    this.abortScope = new SessionAbortScope();
   }
 
   cleanup(): void {
