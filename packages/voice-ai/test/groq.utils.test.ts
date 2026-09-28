@@ -382,9 +382,7 @@ describe("retired model handling", () => {
     expect((error as Error).message).toContain(
       "retired, renamed, or not enabled for your account",
     );
-    expect((error as Error).message).not.toMatch(
-      /has retired or renamed it/,
-    );
+    expect((error as Error).message).not.toMatch(/has retired or renamed it/);
   });
 
   it("redacts a Groq gsk_ key echoed by a 401 instead of leaking it", async () => {
@@ -516,10 +514,9 @@ describe("abort handling during the retry sleep", () => {
       if (createCompletion.mock.calls.length === 1) {
         controller.abort();
       }
-      throw Object.assign(
-        new Error(`upstream 503 rejected ${ECHOING_KEY}`),
-        { status: 503 },
-      );
+      throw Object.assign(new Error(`upstream 503 rejected ${ECHOING_KEY}`), {
+        status: 503,
+      });
     });
 
     vi.resetModules();
@@ -579,4 +576,3 @@ describe("abort handling during the retry sleep", () => {
     expect(error.name).toBe("AbortError");
   });
 });
-

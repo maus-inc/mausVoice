@@ -299,26 +299,28 @@ describe("Groq fallback model", () => {
     mocked
       .mockRejectedValueOnce(
         Object.assign(
-          new Error("The model `x` does not exist or you do not have access to it."),
+          new Error(
+            "The model `x` does not exist or you do not have access to it.",
+          ),
           { status: 404 },
         ),
       )
       .mockRejectedValueOnce(
         Object.assign(
-          new Error("The model `y` does not exist or you do not have access to it."),
+          new Error(
+            "The model `y` does not exist or you do not have access to it.",
+          ),
           { status: 404 },
         ),
       );
 
     const repo = new GroqGenerateTextRepo("k", null);
-    const error = await repo
-      .generateText({ prompt: "p" })
-      .then(
-        () => {
-          throw new Error("expected the chain to fail");
-        },
-        (e: unknown) => e as Error,
-      );
+    const error = await repo.generateText({ prompt: "p" }).then(
+      () => {
+        throw new Error("expected the chain to fail");
+      },
+      (e: unknown) => e as Error,
+    );
 
     expect(error.message).toContain(
       "Choose a different post-processing model in Settings.",
@@ -339,14 +341,12 @@ describe("Groq fallback model", () => {
       );
 
     const repo = new GroqGenerateTextRepo("k", null);
-    const error = await repo
-      .generateText({ prompt: "p" })
-      .then(
-        () => {
-          throw new Error("expected the chain to fail");
-        },
-        (e: unknown) => e as Error,
-      );
+    const error = await repo.generateText({ prompt: "p" }).then(
+      () => {
+        throw new Error("expected the chain to fail");
+      },
+      (e: unknown) => e as Error,
+    );
 
     expect(error.message).not.toContain("Choose a different post-processing");
     expect(error.message).toContain("Retry the request.");
