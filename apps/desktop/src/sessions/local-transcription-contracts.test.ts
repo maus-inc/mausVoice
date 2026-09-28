@@ -5,6 +5,7 @@ import { createDefaultPreferences } from "../actions/user.actions";
 import { LocalTranscribeAudioRepo } from "../repos/transcribe-audio.repo";
 import { LocalTranscriptionSession } from "./local-transcription-session";
 import { gateSilentSegments } from "../utils/hallucination.utils";
+import { openAudioChunkStreamFor } from "../../test/helpers/audio-chunk-relay";
 
 const mocks = vi.hoisted(() => ({
   transcribe: vi.fn(),
@@ -110,6 +111,7 @@ describe("local filter ownership", () => {
     async (later) => {
       setFilter(false);
       const session = new LocalTranscriptionSession();
+      await openAudioChunkStreamFor(session);
       await session.onRecordingStart(16000);
       setFilter(later);
       const output = await session.finalize({ samples, sampleRate: 16000 });
@@ -122,6 +124,7 @@ describe("local filter ownership", () => {
   );
   it("transcribes nothing when the recording carries no audio", async () => {
     const session = new LocalTranscriptionSession();
+    await openAudioChunkStreamFor(session);
     await session.onRecordingStart(16000);
     const output = await session.finalize({
       samples: new Float32Array(0),
@@ -135,6 +138,7 @@ describe("local filter ownership", () => {
       new Error("sidecar unreachable"),
     );
     const session = new LocalTranscriptionSession();
+    await openAudioChunkStreamFor(session);
     await session.onRecordingStart(16000);
     const output = await session.finalize({ samples, sampleRate: 16000 });
     expect(output.rawTranscript).toBe("thank you");

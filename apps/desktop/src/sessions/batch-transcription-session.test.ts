@@ -22,6 +22,7 @@ vi.mock("../utils/log.utils", () => ({
 }));
 
 import { BatchTranscriptionSession } from "./batch-transcription-session";
+import { openAudioChunkStreamFor } from "../../test/helpers/audio-chunk-relay";
 
 const RATE = 1_000;
 
@@ -64,11 +65,23 @@ const chunkListener = (): ((samples: number[], offset: number) => void) => {
 };
 
 /** Streams `audio` in 100-sample frames, the way the recorder emits it. */
-const streamRecording = (audio: Float32Array, from = 0) => {
+const streamRecording = (audio: Float32Array, from = 0, to = audio.length) => {
   const emit = chunkListener();
-  for (let offset = from; offset < audio.length; offset += 100) {
-    emit(Array.from(audio.subarray(offset, offset + 100)), offset);
+  for (let offset = from; offset < to; offset += 100) {
+    emit(
+      Array.from(audio.subarray(offset, Math.min(offset + 100, to))),
+      offset,
+    );
   }
+};
+
+/**
+ * Registers the session's chunk stream and starts it, the order a capture
+ * entry point uses: the stream is live before the recorder ever emits.
+ */
+const startSession = async (session: BatchTranscriptionSession) => {
+  await openAudioChunkStreamFor(session);
+  await session.onRecordingStart(RATE);
 };
 
 const transcriptionResult = (text: string) => ({
@@ -95,7 +108,7 @@ beforeEach(() => {
 describe("BatchTranscriptionSession pretranscription wiring", () => {
   it("listens for audio chunks on start and unlistens on cleanup", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     expect(mocks.listen).toHaveBeenCalledWith(
       "audio_chunk",
       expect.any(Function),
@@ -108,7 +121,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("prefers pretranscription over the whole recording and never requests the whole recording", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
     mocks.transcribeAudio.mockImplementation(async ({ samples }) =>
       transcriptionResult(`span of ${samples.length}`),
@@ -138,7 +151,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("falls through to the whole recording when pretranscription cannot be trusted", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
 
     // A diverged stream is rejected by the span check, so the recording is
@@ -158,7 +171,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("falls through to the whole recording when a span request fails", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
     mocks.transcribeAudio.mockImplementation(async ({ samples }) => {
       if (samples.length === recording.length) {
@@ -178,7 +191,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("spends no further request when a cancel lands mid-finalize", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
 
     let releaseTail = () => {};
@@ -210,8 +223,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     expect(requestedAudio()).not.toContain(recording.length);
   });
 
-  it("keeps recording when the audio_chunk listener fails to attach", async () => {
-    mocks.listen.mockRejectedValueOnce(new Error("no event permission"));
+  it("records the whole recording when the capture entry point registered no chunk stream", async () => {
     const session = new BatchTranscriptionSession();
     await expect(session.onRecordingStart(RATE)).resolves.toBeUndefined();
 
@@ -224,9 +236,36 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     expect(requestedAudio()).toEqual([recording.length]);
   });
 
+  it("delivers a capture that started before the session bound", async () => {
+    const session = new BatchTranscriptionSession();
+    mocks.transcribeAudio.mockImplementation(async ({ samples }) =>
+      transcriptionResult(`span of ${samples.length}`),
+    );
+    await openAudioChunkStreamFor(session);
+    // The recorder is already running when the session starts, so the first
+    // frames are only delivered when it binds.
+    streamRecording(recording, 0, 20_000);
+    await session.onRecordingStart(RATE);
+    streamRecording(recording, 20_000);
+
+    const result = await session.finalize({
+      samples: recording,
+      sampleRate: RATE,
+    });
+    const lengths = requestedAudio();
+
+    expect(result.rawTranscript).toBe(
+      lengths.map((length) => `span of ${length}`).join(" "),
+    );
+    expect(lengths).toHaveLength(3);
+    expect(lengths.reduce((sum, length) => sum + length, 0)).toBe(
+      recording.length,
+    );
+  });
+
   it("skips the request when the recording carries no audio", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
 
     const result = await session.finalize({
       samples: new Float32Array(0),
@@ -240,7 +279,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("reports a failed whole-recording request as a warning instead of throwing", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     mocks.transcribeAudio.mockRejectedValue(new Error("provider down"));
 
     const result = await session.finalize({
@@ -259,7 +298,7 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
   });
   it("aborts a whole-recording request when the dictation is discarded", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     // No pause cut, so the whole-recording path is the one that runs.
     streamRecording(join(segment(3, true, 9)));
 
@@ -295,11 +334,11 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
 
   it("re-arms the abort scope for the next recording", async () => {
     const session = new BatchTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     session.cleanup();
 
-    // A second dictation on the same session must still be able to transcribe.
-    await session.onRecordingStart(RATE);
+    // A second dictation gets a fresh relay and must still transcribe.
+    await startSession(session);
     const result = await session.finalize({
       samples: join(segment(3, true, 8)),
       sampleRate: RATE,

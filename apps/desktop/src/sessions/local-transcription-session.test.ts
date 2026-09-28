@@ -7,6 +7,8 @@ import {
   normalizeLocalWhisperModel,
 } from "../utils/local-transcription.utils";
 import { LocalTranscriptionSession } from "./local-transcription-session";
+import { openAudioChunkStreamFor } from "../../test/helpers/audio-chunk-relay";
+import { MAX_BUFFERED_SAMPLES } from "./recording-audio-relay";
 
 const mocks = vi.hoisted(() => ({
   transcribeAudio: vi.fn(),
@@ -86,11 +88,29 @@ const chunkListener = (): ((samples: number[], offset: number) => void) => {
 };
 
 /** Streams `audio` in 100-sample frames, the way the recorder emits it. */
-const streamRecording = (audio: Float32Array, from = 0) => {
+const streamRecording = (audio: Float32Array, from = 0, to = audio.length) => {
   const emit = chunkListener();
-  for (let offset = from; offset < audio.length; offset += 100) {
-    emit(Array.from(audio.subarray(offset, offset + 100)), offset);
+  for (let offset = from; offset < to; offset += 100) {
+    emit(
+      Array.from(audio.subarray(offset, Math.min(offset + 100, to))),
+      offset,
+    );
   }
+};
+
+/**
+ * Registers the session's chunk stream and starts it, the order a capture
+ * entry point uses. `whileStarting` stands in for the user speaking before the
+ * session has finished preparing.
+ */
+const startSession = async (
+  session: LocalTranscriptionSession,
+  whileStarting?: () => void,
+) => {
+  await openAudioChunkStreamFor(session);
+  const starting = session.onRecordingStart(RATE);
+  whileStarting?.();
+  await starting;
 };
 
 const spanResult = (samples: Float32Array) => ({
@@ -142,9 +162,9 @@ beforeEach(() => {
 });
 
 describe("LocalTranscriptionSession pretranscription wiring", () => {
-  it("listens for audio chunks on start and unlistens on cleanup", async () => {
+  it("holds the registered chunk stream until cleanup releases it", async () => {
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     expect(mocks.listen).toHaveBeenCalledWith(
       "audio_chunk",
       expect.any(Function),
@@ -153,11 +173,15 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
     session.cleanup();
     expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+    // The relay belongs to the recording, so a re-armed scope keeps the stream
+    // and only the session's own teardown releases it.
+    await startSession(session);
+    expect(mocks.unlisten).toHaveBeenCalledTimes(1);
   });
 
-  it("prepares the model before it listens, so a download never waits for the stop", async () => {
+  it("keeps the chunk stream open while it prepares the model", async () => {
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     const settings = INITIAL_APP_STATE.settings.aiTranscription;
 
     expect(mocks.getModelStatus).toHaveBeenCalledWith({
@@ -165,21 +189,60 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
       preferGpu: isGpuPreferredTranscriptionDevice(settings.device),
     });
     expect(mocks.downloadModel).not.toHaveBeenCalled();
-    expect(mocks.order).toEqual(["getModelStatus", "listen"]);
+    // The stream is registered before the session starts, so the model
+    // download runs with the listener already holding the user's audio.
+    expect(mocks.order).toEqual(["listen", "getModelStatus"]);
+    expect(mocks.unlisten).not.toHaveBeenCalled();
   });
 
   it("downloads a missing model while the user is still speaking", async () => {
     modelStatus = { downloaded: false, valid: false };
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
 
     expect(mocks.downloadModel).toHaveBeenCalledTimes(1);
-    expect(mocks.order).toEqual(["getModelStatus", "downloadModel", "listen"]);
+    expect(mocks.order).toEqual(["listen", "getModelStatus", "downloadModel"]);
+  });
+
+  it("delivers the whole recording a model download was running behind", async () => {
+    modelStatus = { downloaded: false, valid: false };
+    let finishDownload = () => {};
+    const downloading = new Promise<void>((resolve) => {
+      finishDownload = resolve;
+    });
+    mocks.downloadModel.mockImplementation(async () => {
+      await downloading;
+      return { downloaded: true, valid: true };
+    });
+    const session = new LocalTranscriptionSession();
+    await openAudioChunkStreamFor(session);
+    const starting = session.onRecordingStart(RATE);
+    // The first run: the user speaks through the whole download.
+    streamRecording(recording, 0, 30_000);
+    finishDownload();
+    await starting;
+    streamRecording(recording, 30_000);
+
+    const result = await session.finalize({
+      samples: recording,
+      sampleRate: RATE,
+    });
+    const lengths = requestedAudio();
+
+    // Spans cover the download as well as the rest, so the recording never
+    // fell back to a single whole-recording request.
+    expect(lengths.length).toBeGreaterThan(1);
+    expect(lengths.reduce((sum, length) => sum + length, 0)).toBe(
+      recording.length,
+    );
+    expect(result.rawTranscript).toBe(
+      lengths.map((length) => `span of ${length}`).join(" "),
+    );
   });
 
   it("transcribes each span once and never the whole recording", async () => {
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
 
     const result = await session.finalize({
@@ -206,7 +269,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
   it("transcribes the whole recording when no span was cut", async () => {
     const short = join(segment(10, true, 1), segment(10, true, 2));
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(short);
 
     const result = await session.finalize({ samples: short, sampleRate: RATE });
@@ -219,7 +282,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
   it("keeps a recording's filter snapshot for every span and the whole recording", async () => {
     setFilter(false);
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
     // The user re-enables the filter while still speaking.
     setFilter(true);
@@ -238,7 +301,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
       warnings: [],
     });
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
 
     const result = await session.finalize({
@@ -251,7 +314,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
   it("spends no further request when a cancel lands mid-finalize", async () => {
     const session = new LocalTranscriptionSession();
-    await session.onRecordingStart(RATE);
+    await startSession(session);
     streamRecording(recording);
 
     let releaseTail = () => {};
@@ -279,8 +342,7 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
     expect(requestedAudio()).not.toContain(recording.length);
   });
 
-  it("keeps recording when the audio_chunk listener fails to attach", async () => {
-    mocks.listen.mockRejectedValueOnce(new Error("no event permission"));
+  it("records the whole recording when the capture entry point registered no chunk stream", async () => {
     const session = new LocalTranscriptionSession();
     await expect(session.onRecordingStart(RATE)).resolves.toBeUndefined();
 
@@ -289,6 +351,29 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
       sampleRate: RATE,
     });
 
+    expect(result.warnings).toEqual([
+      expect.stringContaining("Local pretranscription unavailable"),
+    ]);
+    expect(result.rawTranscript).toBe(`raw ${recording.length}`);
+    expect(requestedAudio()).toEqual([recording.length]);
+  });
+
+  it("records the whole recording when the relay overflowed before the session bound", async () => {
+    const session = new LocalTranscriptionSession();
+    await openAudioChunkStreamFor(session);
+    // More audio than the relay holds, which is what a model download longer
+    // than its buffer looks like.
+    streamRecording(new Float32Array(MAX_BUFFERED_SAMPLES + 1).fill(0.1));
+    await expect(session.onRecordingStart(RATE)).resolves.toBeUndefined();
+
+    const result = await session.finalize({
+      samples: recording,
+      sampleRate: RATE,
+    });
+
+    expect(result.warnings).toEqual([
+      expect.stringContaining("Local pretranscription unavailable"),
+    ]);
     expect(result.rawTranscript).toBe(`raw ${recording.length}`);
     expect(requestedAudio()).toEqual([recording.length]);
   });

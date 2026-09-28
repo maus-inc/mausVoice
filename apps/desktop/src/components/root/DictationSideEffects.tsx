@@ -33,6 +33,7 @@ import { useTauriListen } from "../../hooks/tauri.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { browserRouter } from "../../router";
 import { createTranscriptionSession } from "../../sessions";
+import { startCaptureWithSessionAudio } from "../../sessions/recording-audio-relay";
 import { RecordingMode } from "../../state/app.state";
 import { getAppState, produceAppState, useAppStore } from "../../store";
 import { AgentStrategy } from "../../strategies/agent.strategy";
@@ -1177,9 +1178,17 @@ export const DictationSideEffects = () => {
         isPausedRef.current = false;
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
-          invoke<StartRecordingResponse>("start_recording", {
-            args: { preferredMicrophone },
-          }).then((result) => {
+          // The `audio_chunk` emitter only exists once `start_recording` has
+          // run, and it emits on the recorder's first ticks, so the session's
+          // stream is registered here, before the invoke, and holds the audio
+          // until the session binds it. A session that binds it after
+          // `onRecordingStart` (a model download) would otherwise never see
+          // that audio again.
+          startCaptureWithSessionAudio(session, () =>
+            invoke<StartRecordingResponse>("start_recording", {
+              args: { preferredMicrophone },
+            }),
+          ).then((result) => {
             // The phase update can outlive microphone startup. Anchor provider
             // wall-clock limits at the instant native capture succeeds rather
             // than waiting for the other Promise.all branch.

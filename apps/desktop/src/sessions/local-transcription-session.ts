@@ -1,4 +1,3 @@
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { transcribeAudio } from "../actions/transcribe.actions";
 import type { SettingsTranscriptionState } from "../state/settings.state";
 import { getAppState } from "../store";
@@ -18,13 +17,13 @@ import {
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
 import { loadMyEffectiveDictationLanguage } from "../utils/user.utils";
-import { listenToAudioChunks } from "./audio-chunk-events";
 import {
   createActionPretranscriber,
   LOCAL_PRETRANSCRIPTION,
   logPretranscription,
 } from "./batch-transcription-session";
 import type { PauseChunkedPretranscriber } from "./pause-chunked-pretranscriber";
+import type { RecordingAudioRelay } from "./recording-audio-relay";
 import { SessionAbortScope } from "./session-abort-scope";
 
 type LocalSessionContext = {
@@ -44,12 +43,17 @@ type LocalSessionContext = {
  * single whole-recording request when it has nothing usable.
  */
 export class LocalTranscriptionSession implements TranscriptionSession {
-  private unlisten: UnlistenFn | null = null;
+  readonly consumesAudioChunkRelay = true;
+  private audioRelay: RecordingAudioRelay | null = null;
   private pretranscriber: PauseChunkedPretranscriber | null = null;
   private context: LocalSessionContext | null = null;
   /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
   private abortScope = new SessionAbortScope();
   private startupWarnings: string[] = [];
+
+  attachAudioChunkRelay(relay: RecordingAudioRelay): void {
+    this.audioRelay = relay;
+  }
 
   async onRecordingStart(sampleRate: number): Promise<void> {
     this.resetForRecording();
@@ -66,21 +70,33 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
       const hallucinationFilterEnabled =
         state.userPrefs?.hallucinationFilterEnabled !== false;
-      // Load the model before the user speaks, so neither the first span nor
-      // the whole-recording request pays for a cold start or a download after
-      // they have already stopped.
+      // The model is loaded while the user is already speaking, so the relay
+      // holds the audio this wait would otherwise lose. Nothing below runs
+      // until a sink is bound to the relay.
       await this.warmModel(state.settings.aiTranscription);
 
       this.context = { prompt, hallucinationFilterEnabled };
+      const relay = this.audioRelay;
+      if (!relay) {
+        throw new Error("no audio chunk stream was registered before capture");
+      }
       const pretranscriber = createActionPretranscriber(sampleRate, {
         config: LOCAL_PRETRANSCRIPTION,
         hallucinationFilterEnabled,
         selectText: (result) => result.sanitizedTranscript,
       });
       this.pretranscriber = pretranscriber;
-      this.unlisten = await listenToAudioChunks((samples, offset) => {
-        pretranscriber.push(samples, offset);
-      });
+      // Binding replays everything the recorder emitted since capture began,
+      // so the spans still cover the recording from its first sample.
+      if (
+        !relay.bind((samples, offset) => {
+          pretranscriber.push(samples, offset);
+        })
+      ) {
+        throw new Error(
+          "the live audio stream overflowed before this session bound to it",
+        );
+      }
     } catch (error) {
       const message = this.toErrorMessage(error);
       this.startupWarnings.push(
@@ -115,19 +131,29 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     }
   }
 
-  /** Tears down the previous recording and gives this one a live abort scope. */
+  /**
+   * Tears down the previous recording and gives this one a live abort scope.
+   * The relay survives it: the capture entry point handed it over before
+   * `start_recording`, and this recording is what it is still holding audio
+   * for.
+   */
   private resetForRecording(): void {
-    this.cleanup();
+    this.teardown();
     this.abortScope = new SessionAbortScope();
   }
 
   cleanup(): void {
+    this.teardown();
+    this.audioRelay?.release();
+    this.audioRelay = null;
+  }
+
+  private teardown(): void {
     this.abortScope.abort();
     getLogger().info(
-      `[local-session] cleanup (hasUnlisten=${!!this.unlisten}, hasPretranscriber=${!!this.pretranscriber})`,
+      `[local-session] cleanup (hasPretranscriber=${!!this.pretranscriber})`,
     );
-    this.unlisten?.();
-    this.unlisten = null;
+    this.audioRelay?.unbind();
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
     this.context = null;

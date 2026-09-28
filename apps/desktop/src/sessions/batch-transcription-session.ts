@@ -1,4 +1,3 @@
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { showToast } from "../actions/toast.actions";
 import {
   type TranscribeAudioResult,
@@ -10,7 +9,7 @@ import {
   TranscriptionSessionResult,
 } from "../types/transcription-session.types";
 import { getLogger } from "../utils/log.utils";
-import { listenToAudioChunks } from "./audio-chunk-events";
+import type { RecordingAudioRelay } from "./recording-audio-relay";
 import { SessionAbortScope } from "./session-abort-scope";
 import {
   PauseChunkedPretranscriber,
@@ -99,22 +98,39 @@ const emptyResult = (): TranscriptionSessionResult => ({
  * Only handles transcription, not post-processing.
  */
 export class BatchTranscriptionSession implements TranscriptionSession {
+  readonly consumesAudioChunkRelay = true;
+  private audioRelay: RecordingAudioRelay | null = null;
   private pretranscriber: PauseChunkedPretranscriber | null = null;
-  private unlisten: UnlistenFn | null = null;
   /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
   private abortScope = new SessionAbortScope();
 
+  attachAudioChunkRelay(relay: RecordingAudioRelay): void {
+    this.audioRelay = relay;
+  }
+
   async onRecordingStart(sampleRate: number): Promise<void> {
     this.resetForRecording();
-    const pretranscriber = createActionPretranscriber(sampleRate, {
-      config: CLOUD_PRETRANSCRIPTION,
-      selectText: (result) => result.rawTranscript,
-    });
-    this.pretranscriber = pretranscriber;
     try {
-      this.unlisten = await listenToAudioChunks((samples, offset) =>
-        pretranscriber.push(samples, offset),
-      );
+      const relay = this.audioRelay;
+      if (!relay) {
+        throw new Error("no audio chunk stream was registered before capture");
+      }
+      const pretranscriber = createActionPretranscriber(sampleRate, {
+        config: CLOUD_PRETRANSCRIPTION,
+        selectText: (result) => result.rawTranscript,
+      });
+      this.pretranscriber = pretranscriber;
+      // Binding replays everything the recorder emitted since capture began,
+      // so the spans still cover the recording from its first sample.
+      if (
+        !relay.bind((samples, offset) => {
+          pretranscriber.push(samples, offset);
+        })
+      ) {
+        throw new Error(
+          "the live audio stream overflowed before this session bound to it",
+        );
+      }
     } catch (error) {
       getLogger().verbose(
         `Batch session: pretranscription unavailable (${error})`,
@@ -142,16 +158,26 @@ export class BatchTranscriptionSession implements TranscriptionSession {
     }
   }
 
-  /** Tears down the previous recording and gives this one a live abort scope. */
+  /**
+   * Tears down the previous recording and gives this one a live abort scope.
+   * The relay survives it: the capture entry point handed it over before
+   * `start_recording`, and this recording is what it is still holding audio
+   * for.
+   */
   private resetForRecording(): void {
-    this.cleanup();
+    this.teardown();
     this.abortScope = new SessionAbortScope();
   }
 
   cleanup(): void {
+    this.teardown();
+    this.audioRelay?.release();
+    this.audioRelay = null;
+  }
+
+  private teardown(): void {
     this.abortScope.abort();
-    this.unlisten?.();
-    this.unlisten = null;
+    this.audioRelay?.unbind();
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
   }
@@ -167,8 +193,8 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   ): Promise<TranscriptionSessionResult | null> {
     const pretranscriber = this.pretranscriber;
     if (!pretranscriber || pretranscriber.chunkCount === 0) return null;
-    this.unlisten?.();
-    this.unlisten = null;
+    // The recorder has stopped, so nothing more can arrive.
+    this.audioRelay?.unbind();
     const started = performance.now();
     const result = await pretranscriber.finish(audio);
     if (!result) {
