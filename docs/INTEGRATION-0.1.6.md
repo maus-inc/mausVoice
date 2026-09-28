@@ -10,7 +10,7 @@ arena/01a0ca7d-mausvoice      shared base, and the head branch of #208
 #208 is the vehicle that carries `arena/01a0ca7d-mausvoice` into the `0.1.6` release branch. It is the base
 of this stack. **Nothing merges into it, and it is not one of the PRs landed here.**
 
-Every other open PR is finished and merged into this branch.
+Every open PR listed in the merge order below still needs to be rebased and merged into this branch.
 
 ## Boundaries
 
@@ -22,11 +22,12 @@ Every other open PR is finished and merged into this branch.
 
 Merges into one branch are serial. One at a time.
 
-1. Confirm the PR is `MERGEABLE`, CI is green, and no bot finding is unanswered.
+1. Confirm the PR is `MERGEABLE`, CI is green, and no bot finding is unresolved or unclosed.
 2. Rebase the PR branch onto the current tip of `integration/0.1.6-staging`.
 3. Resolve conflicts without discarding already-landed work. If that is not possible, stop and hand back.
-4. Merge with `--no-ff`, message naming the PR.
-5. Confirm CI is green here before starting the next.
+4. Require the rebased PR head to receive fresh green CI and review-bot verification.
+5. Merge with `--no-ff`, message naming the PR.
+6. Confirm CI is green here before starting the next.
 
 ## Resource limits — this machine is small
 
@@ -55,8 +56,7 @@ pnpm --filter @maus-inc/voice-ai test
 pnpm --filter @repo/agent test
 ```
 
-Before push: `pnpm run build`, `pnpm run check-types`, and the linter. Never edit a test to hide a
-defect. Bug fixes get a regression test.
+Before push, run `pnpm run build` when resources permit; otherwise skip it. Always run `pnpm run check-types` and the linter. Never edit a test to hide a defect. Bug fixes get a regression test.
 
 ## SonarCloud
 
@@ -69,5 +69,6 @@ reflow with `void`.
 ## Review
 
 Every review finding from sourcery-ai, codeant-ai, kilocode, greptile, ahoybuoy, sonarcloud,
-socket-security and deepscan has to be closed before a PR lands here. The per-PR merge order is tracked
+socket-security and deepscan has to be closed before a PR lands here. Answering a finding
+without fixing it or resolving its thread does not count. The per-PR merge order is tracked
 on the integration PR.
