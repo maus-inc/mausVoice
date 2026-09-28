@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { createMessageId } from "../../scripts/formatjs-id.mjs";
 import en from "../i18n/locales/en.json";
@@ -118,5 +121,57 @@ describe("catalog coverage", () => {
       .map((descriptor) => createMessageId(descriptor.defaultMessage))
       .filter((id) => !(id in en));
     expect(missing).toEqual([]);
+  });
+
+  it("declares no reason as an inline literal the build cannot annotate", () => {
+    // The identity check above pins the fallback specifically. This one covers
+    // the general form of the same defect, so a reason added later as a bare
+    // `{ defaultMessage }` literal is caught before it ships rather than after.
+    //
+    // A catalog lookup cannot catch it, which is why the source is read here:
+    // `createMessageId` derives the same key from a literal's text whether or
+    // not the formatjs transform ever annotated it, so a literal passes the
+    // check above while still throwing in the app. The property that
+    // distinguishes them is that a literal is an object expression, and the
+    // transform only reaches the ones built by a `defineMessage` call. The
+    // babel plugin is not loaded under a unit test run, so this asserts
+    // against the same source the plugin transforms.
+    const source = ts.createSourceFile(
+      "post-process-error-category.ts",
+      readFileSync(
+        fileURLToPath(
+          new URL("./post-process-error-category.ts", import.meta.url),
+        ),
+        "utf8",
+      ),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+
+    const isReasonType = (node: ts.TypeNode): boolean => {
+      const text = node.getText(source);
+      return (
+        text === "PostProcessErrorReason" ||
+        text === "Readonly<Record<string, PostProcessErrorReason>>"
+      );
+    };
+
+    const literals: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        node.type &&
+        node.initializer &&
+        isReasonType(node.type) &&
+        ts.isIdentifier(node.name) &&
+        ts.isObjectLiteralExpression(node.initializer)
+      ) {
+        literals.push(node.name.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+
+    expect(literals).toEqual([]);
   });
 });
