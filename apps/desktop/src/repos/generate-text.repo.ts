@@ -27,6 +27,7 @@ import {
   GenerateTextModel,
   GROQ_DEFAULT_GENERATE_TEXT_MODEL,
   groqGenerateTextResponse,
+  GroqGenerateResponseOutput,
   groqStreamChat,
   isGroqAccountScopedError,
   isGroqModelUnavailableError,
@@ -194,25 +195,44 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       GenerateTextModel | undefined;
   }
 
-  private async generateWithFallback(input: GenerateTextInput) {
-    let primaryCause: unknown;
+  /**
+   * One attempt at one model, reported as a result rather than thrown.
+   *
+   * The caller decides whether a failure is worth a second model, and that
+   * decision depends on the shape of the cause, so the cause has to come back
+   * as a value. Returning it also keeps a single catch for the whole chain:
+   * two catch blocks in one method, or a `.catch` callback beside a `try`, both
+   * read as two names for the same thing and force one of them to be renamed
+   * around the other.
+   */
+  private async attemptModel(
+    model: GenerateTextModel,
+    input: GenerateTextInput,
+  ): Promise<
+    | { ok: true; response: GroqGenerateResponseOutput }
+    | { ok: false; cause: unknown }
+  > {
     try {
       const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
-        model: this.model,
+        model,
         prompt: input.prompt,
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
         signal: input.signal,
       });
-      return { response, model: this.model };
-    } catch (thrown) {
-      // Captured into a named binding rather than caught as `error`, because
-      // the fallback call below binds its own cause and a catch parameter of
-      // the same name in an enclosing scope would shadow it.
-      primaryCause = thrown;
+      return { ok: true, response };
+    } catch (error_) {
+      return { ok: false, cause: error_ };
     }
+  }
+
+  private async generateWithFallback(input: GenerateTextInput) {
+    const primary = await this.attemptModel(this.model, input);
+    if (primary.ok) return { response: primary.response, model: this.model };
+
+    const primaryCause = primary.cause;
 
     // An aborted request must never fall back: the abort is the caller's
     // deadline decision, not a provider failure worth another attempt.
@@ -234,26 +254,23 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       throw primaryCause;
     }
 
-    const response = await groqGenerateTextResponse({
-      apiKey: this.groqApiKey,
-      model: fallbackModel,
-      prompt: input.prompt,
-      system: input.system ?? undefined,
-      jsonResponse: input.jsonResponse,
-      maxTokens: input.maxTokens,
-      signal: input.signal,
-    }).catch((fallbackCause: unknown) => {
-      // An abort during the second attempt is still the caller's deadline,
-      // not a chain failure, so it is not dressed up as one.
-      if (input.signal?.aborted) throw fallbackCause;
-      throw new GroqGenerateTextFallbackError({
-        primaryModel: this.model,
-        fallbackModel,
-        primaryCause,
-        fallbackCause,
-      });
+    const fallback = await this.attemptModel(fallbackModel, input);
+    if (fallback.ok) {
+      return { response: fallback.response, model: fallbackModel };
+    }
+
+    // An abort during the second attempt is still the caller's deadline,
+    // not a chain failure, so it is not dressed up as one.
+    if (input.signal?.aborted) {
+      throw fallback.cause;
+    }
+
+    throw new GroqGenerateTextFallbackError({
+      primaryModel: this.model,
+      fallbackModel,
+      primaryCause,
+      fallbackCause: fallback.cause,
     });
-    return { response, model: fallbackModel };
   }
 
   async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {
