@@ -684,6 +684,15 @@ export const AZURE_PHRASE_LIST_BUDGET: VocabularyBudget = {
   maxCharacters: 10_000,
 };
 
+/**
+ * Builds the `initial_prompt` for the recognizer.
+ *
+ * This is a glossary and domain-term bias only. It deliberately takes no style
+ * input: `initial_prompt` is a token bias, not a formatting instruction, and
+ * asking it to "format as email" is unreliable and degrades recognition
+ * accuracy. Style is applied deterministically after transcription by
+ * `fast-style.utils.ts`, which is the same path for every provider.
+ */
 export const buildLocalizedTranscriptionPrompt = (args: {
   entries: DictionaryEntries;
   dictationLanguage: DictationLanguageCode;
@@ -692,6 +701,7 @@ export const buildLocalizedTranscriptionPrompt = (args: {
   const prompt =
     getRec(transcriptionPromptByCode, args.dictationLanguage) ??
     transcriptionPromptByCode.en;
+
   // The localized instruction sentence (the "<glossary/>" token is the
   // dictionary slot) sits on top of the term budget, so subtract its length
   // before capping the terms. That keeps the rendered initial_prompt within

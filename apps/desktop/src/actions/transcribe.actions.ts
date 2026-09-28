@@ -15,7 +15,7 @@ import type { GenerateTextOutput } from "../repos/generate-text.repo";
 import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
 import type { AppState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
-import { PostProcessingMode, TranscriptionMode } from "../types/ai.types";
+import { PostProcessingRunMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
 import {
@@ -61,6 +61,11 @@ import {
   getMyUserName,
   loadMyEffectiveDictationLanguage,
 } from "../utils/user.utils";
+import {
+  FAST_STYLE_MAX_INPUT_CHARS,
+  applyFastStyle,
+  canApplyFastStyle,
+} from "../utils/fast-style.utils";
 import { showErrorSnackbar } from "./app.actions";
 import { addWordsToCurrentUser } from "./user.actions";
 
@@ -71,6 +76,8 @@ export type TranscribeAudioInput = {
   /** Preserve the recording's filter snapshot when retrying streamed audio. */
   hallucinationFilterEnabled?: boolean;
   trace?: PipelineTrace | null;
+  /** Optional style id for fast transcription-time styling (no LLM). */
+  toneId?: string | null;
 };
 
 export type TranscribeAudioMetadata = {
@@ -103,7 +110,7 @@ export type PostProcessMetadata = {
   postProcessPrompt?: string | null;
   postProcessApiKeyId?: string | null;
   postProcessProvider?: string | null;
-  postProcessMode?: PostProcessingMode | null;
+  postProcessMode?: PostProcessingRunMode | null;
   postProcessDevice?: string | null;
   /** Resolved model id used for post-processing (e.g. "openai/gpt-oss-20b"). */
   postProcessModel?: string | null;
@@ -136,6 +143,7 @@ export const transcribeAudio = async ({
   dictationLanguage: dictationLanguageOverride,
   hallucinationFilterEnabled: filterOverride,
   trace,
+  toneId,
 }: TranscribeAudioInput): Promise<TranscribeAudioResult> => {
   const state = getAppState();
   const hallucinationFilterEnabled =
@@ -165,10 +173,13 @@ export const transcribeAudio = async ({
     mapDictationLanguageToWhisperLanguage(dictationLanguage);
 
   getLogger().verbose(
-    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}`,
+    `Transcribing audio: language=${dictationLanguage}, whisper=${whisperLanguage}, sampleRate=${sampleRate}, toneId=${toneId ?? "none"}`,
   );
 
   const dictionaryEntries = collectDictionaryEntries(state);
+  // Best practice: transcription prompt is ONLY for glossary/domain bias (<50 tokens),
+  // NOT for style formatting. Style is applied deterministically in fast-style.utils.ts
+  // after transcription (universal across ALL providers).
   const transcriptionPrompt = buildLocalizedTranscriptionPrompt({
     entries: dictionaryEntries,
     dictationLanguage,
@@ -496,6 +507,58 @@ const beginPostProcessingRequest = ({
   metadata.postProcessMode = "api";
 };
 
+/**
+ * Deterministic local styling, shared by both fast paths: no LLM configured,
+ * and the LLM path falling back after a provider failure. Records mode,
+ * duration and any truncation, then returns the styled text, or null when the
+ * tone has no local transform or the transform threw, so the caller keeps its
+ * own behaviour.
+ *
+ * Deliberately does not touch postProcessProvider, postProcessApiKeyId or
+ * postProcessModel. Those record which provider the user chose and which model
+ * ran; a local transform used neither, and overwriting them would hide the
+ * user's selection on a failed LLM call.
+ */
+const applyFastLocalStyle = ({
+  rawTranscript,
+  toneId,
+  metadata,
+  warnings,
+  reason,
+}: {
+  rawTranscript: string;
+  toneId: Nullable<string>;
+  metadata: PostProcessMetadata;
+  warnings: string[];
+  reason: "no-llm" | "llm-failed";
+}): string | null => {
+  if (!canApplyFastStyle(toneId)) return null;
+
+  const startedAt = performance.now();
+  let styled: string;
+  try {
+    styled = applyFastStyle(rawTranscript, toneId ?? null);
+  } catch (error) {
+    getLogger().warning(
+      `Fast local style failed for tone=${toneId}, reason=${reason}: ${error}`,
+    );
+    return null;
+  }
+
+  metadata.postProcessMode = "fast";
+  metadata.postProcessModel = null;
+  metadata.postprocessDurationMs = Math.round(performance.now() - startedAt);
+  if (rawTranscript.length > FAST_STYLE_MAX_INPUT_CHARS) {
+    warnings.push(
+      `Fast local style kept the first ${FAST_STYLE_MAX_INPUT_CHARS} of ${rawTranscript.length} characters.`,
+    );
+  }
+  getLogger().info(
+    `Fast local style applied for tone=${toneId}, reason=${reason}, in ${metadata.postprocessDurationMs}ms`,
+  );
+  return styled;
+};
+
 const runPostProcessingRequest = async ({
   state,
   rawTranscript,
@@ -571,11 +634,33 @@ const runPostProcessingRequest = async ({
       postprocessStart,
     );
   } catch (error) {
-    // Terminal provider failure (e.g. Cerebras 402) or network error. Keep
-    // the raw transcript and the selected-provider attribution; do not
-    // throw into the dictation pipeline or wait for the unrelated 60s
-    // timeout. The sanitized message never includes the key, auth header,
-    // or transcript.
+    // Terminal provider failure (e.g. Cerebras 402) or network error. Degrade
+    // to the deterministic local style so the user still gets styled output,
+    // then record the failure. The LLM call really did fail, so
+    // postProcessFailed stays true and the error category is kept; only the
+    // returned text comes from the local path.
+    const fastStyled = applyFastLocalStyle({
+      rawTranscript,
+      toneId,
+      metadata,
+      warnings,
+      reason: "llm-failed",
+    });
+    if (fastStyled !== null) {
+      recordPostProcessFailure(
+        error,
+        metadata,
+        warnings,
+        postprocessStart,
+        rawTranscript,
+      );
+      warnings.push(
+        "Fast local style applied instead of the LLM post-processor.",
+      );
+      return fastStyled;
+    }
+
+    // No fast fallback: return raw with failure metadata (dead-letter path)
     recordPostProcessFailure(
       error,
       metadata,
@@ -607,6 +692,14 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
   if (!gen.repo) {
+    const fastStyled = applyFastLocalStyle({
+      rawTranscript,
+      toneId,
+      metadata,
+      warnings,
+      reason: "no-llm",
+    });
+    if (fastStyled !== null) return fastStyled;
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
     return rawTranscript;

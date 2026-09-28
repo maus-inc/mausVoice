@@ -33,10 +33,16 @@ vi.mock("../repos", () => ({
   getTranscribeAudioRepo: () => ({ repo: null, apiKeyId: null, warnings: [] }),
   getTranscriptionRepo: () => ({}),
 }));
-vi.mock("../utils/tone.utils", () => ({
-  getToneById: () => null,
-  getToneConfig: () => ({ name: "Default", prompt: "" }),
-}));
+vi.mock("../utils/tone.utils", async () => {
+  const actual = await vi.importActual<typeof import("../utils/tone.utils")>(
+    "../utils/tone.utils",
+  );
+  return {
+    ...actual,
+    getToneById: () => null,
+    getToneConfig: () => ({ name: "Default", prompt: "" }),
+  };
+});
 vi.mock("../utils/user.utils", async () => {
   const actual = await vi.importActual<typeof import("../utils/user.utils")>(
     "../utils/user.utils",
@@ -209,5 +215,104 @@ describe("postProcessTranscript provider attribution on failure", () => {
       .join(" ");
     expect(loggedCalls).not.toContain(sentinelTranscript);
     expect(loggedCalls).toContain("[REDACTED_TRANSCRIPT]");
+  });
+});
+
+describe("postProcessTranscript fast local style", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("degrades to the local style on a provider failure without erasing the failure signal", async () => {
+    class Cerebras402 extends Error {
+      status = 402;
+      constructor() {
+        super("402 status code (no body)");
+        this.name = "CerebrasProviderError";
+      }
+    }
+    genRepo.generateText.mockRejectedValueOnce(new Cerebras402());
+
+    const result = await postProcessTranscript({
+      rawTranscript: "um so I went to the store",
+      toneId: "default",
+    });
+
+    // The user still gets styled output instead of the raw transcript.
+    expect(result.transcript.toLowerCase()).not.toContain("um");
+    expect(result.metadata.postProcessMode).toBe("fast");
+
+    // The LLM call really did fail, so the failure must stay visible. Before
+    // this was fixed the fallback set postProcessFailed=false and cleared
+    // postProcessError, which hid the 402 from the UI entirely.
+    expect(result.metadata.postProcessFailed).toBe(true);
+    expect(result.metadata.postProcessError).toContain("402");
+
+    // Provider attribution records the user's choice, not the local fallback.
+    expect(result.metadata.postProcessProvider).toBe("cerebras");
+    expect(result.metadata.postProcessApiKeyId).toBe("cerebras-key");
+
+    // No LLM model ran, so the model column must not claim one did.
+    expect(result.metadata.postProcessModel).toBeNull();
+    expect(result.warnings.join(" ")).toContain("402");
+    expect(result.warnings.join(" ")).toContain("Fast local style");
+  });
+
+  it("returns the raw transcript unchanged when the tone has no local style", async () => {
+    genRepo.generateText.mockRejectedValueOnce(new Error("provider rejected"));
+
+    const result = await postProcessTranscript({
+      rawTranscript: "um so I went to the store",
+      toneId: "verbatim",
+    });
+
+    expect(result.transcript).toBe("um so I went to the store");
+    expect(result.metadata.postProcessMode).toBe("api");
+    expect(result.metadata.postProcessFailed).toBe(true);
+  });
+
+  it("uses the local style when no provider is configured, and reports no model", async () => {
+    const { postProcessTranscript: run } = await import("./transcribe.actions");
+    const repos = await import("../repos");
+    const spy = vi.spyOn(repos, "getGenerateTextRepo").mockReturnValueOnce({
+      repo: null,
+      apiKeyId: null,
+      provider: null,
+      warnings: [],
+    } as unknown as ReturnType<typeof repos.getGenerateTextRepo>);
+
+    const result = await run({
+      rawTranscript: "um so I went to the store",
+      toneId: "bullets",
+    });
+
+    spy.mockRestore();
+    expect(result.metadata.postProcessMode).toBe("fast");
+    expect(result.metadata.postProcessModel).toBeNull();
+    expect(result.transcript).toContain("- ");
+  });
+
+  it("warns when the local style had to drop the tail of a long dictation", async () => {
+    const { FAST_STYLE_MAX_INPUT_CHARS } =
+      await import("../utils/fast-style.utils");
+    const { postProcessTranscript: run } = await import("./transcribe.actions");
+    const repos = await import("../repos");
+    const spy = vi.spyOn(repos, "getGenerateTextRepo").mockReturnValueOnce({
+      repo: null,
+      apiKeyId: null,
+      provider: null,
+      warnings: [],
+    } as unknown as ReturnType<typeof repos.getGenerateTextRepo>);
+
+    const result = await run({
+      rawTranscript: "a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 500),
+      toneId: "default",
+    });
+
+    spy.mockRestore();
+    expect(result.warnings.join(" ")).toContain(
+      String(FAST_STYLE_MAX_INPUT_CHARS),
+    );
   });
 });

@@ -57,7 +57,7 @@ export const AIPostProcessingConfiguration = () => {
               color: "text.secondary",
             }}
           >
-            <FormattedMessage defaultMessage="No AI post-processing will run on new transcripts." />
+            <FormattedMessage defaultMessage="LLM post-processing is off. Selected writing styles will still be applied instantly via fast local formatting — no network call, ideal for Deepgram and other fast transcription providers." />
           </Typography>
         )}
 

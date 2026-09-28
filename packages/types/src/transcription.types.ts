@@ -1,4 +1,4 @@
-import { PostProcessingMode, TranscriptionMode } from "./common.types";
+import { PostProcessingRunMode, TranscriptionMode } from "./common.types";
 
 export type Transcription = {
   id: string;
@@ -16,7 +16,7 @@ export type Transcription = {
   transcriptionApiKeyId?: string | null;
   postProcessApiKeyId?: string | null;
   transcriptionMode?: TranscriptionMode | null;
-  postProcessMode?: PostProcessingMode | null;
+  postProcessMode?: PostProcessingRunMode | null;
   postProcessDevice?: string | null;
   postProcessModel?: string | null;
   postProcessProvider?: string | null;

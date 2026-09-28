@@ -487,7 +487,7 @@ describe("provider budgets match documented API limits", () => {
 });
 
 describe("buildLocalizedTranscriptionPrompt", () => {
-  const state = {} as Parameters<
+  const baseState = {} as Parameters<
     typeof buildLocalizedTranscriptionPrompt
   >[0]["state"];
 
@@ -495,7 +495,7 @@ describe("buildLocalizedTranscriptionPrompt", () => {
     const result = buildLocalizedTranscriptionPrompt({
       entries: { sources: ["Soniya", "Ralf"], replacements: [] },
       dictationLanguage: "en",
-      state,
+      state: baseState,
     });
     expect(result).toContain("Soniya, Ralf");
     expect(result).toContain("Consider this glossary");
@@ -509,12 +509,37 @@ describe("buildLocalizedTranscriptionPrompt", () => {
     const result = buildLocalizedTranscriptionPrompt({
       entries: { sources: manyTerms, replacements: [] },
       dictationLanguage: "en",
-      state,
+      state: baseState,
     });
     // 650 characters of terms + separators + the fixed instruction text,
     // keeping the whole prompt under whisper's ~224-token prompt ceiling.
     expect(result.length).toBeLessThan(900);
     expect(result).not.toContain("dictionaryterm150");
+  });
+
+  it("carries no style instruction, only the glossary", () => {
+    const result = buildLocalizedTranscriptionPrompt({
+      entries: { sources: ["MyCompany"], replacements: [] },
+      dictationLanguage: "en",
+      state: baseState,
+    });
+
+    // The recognizer's initial_prompt is a token bias. Style is applied after
+    // transcription by fast-style.utils.ts, so the prompt must stay glossary
+    // only. Pinned structurally: the builder takes no style argument at all, so
+    // there is no way to inject one.
+    expect(result).toContain("MyCompany");
+    expect(result).not.toMatch(/style/i);
+    expect(result).not.toMatch(/\b(email|bullets|formal|notes|concise)\b/i);
+    // Identical output for an empty glossary, so nothing style-shaped hides in
+    // the instruction sentence either.
+    expect(
+      buildLocalizedTranscriptionPrompt({
+        entries: { sources: [], replacements: [] },
+        dictationLanguage: "en",
+        state: baseState,
+      }),
+    ).not.toMatch(/style/i);
   });
 });
 

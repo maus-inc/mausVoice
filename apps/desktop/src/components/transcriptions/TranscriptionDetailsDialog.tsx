@@ -159,6 +159,9 @@ export const TranscriptionDetailsDialog = () => {
     if (transcription?.postProcessMode === "api") {
       return <FormattedMessage defaultMessage="API" />;
     }
+    if (transcription?.postProcessMode === "fast") {
+      return <FormattedMessage defaultMessage="Fast (local)" />;
+    }
     return <FormattedMessage defaultMessage="Disabled" />;
   }, [transcription?.postProcessDevice, transcription?.postProcessMode]);
 

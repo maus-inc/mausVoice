@@ -100,17 +100,13 @@ describe("StyleHotkeysDialog post-processing gate", () => {
     });
   };
 
-  it("renders non-functional hotkey rows and disables save when post-processing is off", async () => {
+  it("keeps hotkey rows functional even when LLM post-processing is off (fast path)", async () => {
     setPostProcessingEnabled(false);
     await renderDialog();
 
-    const disabledHotkey = findButton("Set hotkey");
-    expect(disabledHotkey?.disabled).toBe(true);
-    expect(findButton("Save")?.disabled).toBe(true);
-    expect(findEditableHotkey()).toBeUndefined();
-
-    // The disabled-button wrapper owns the existing explanatory tooltip; this
-    // test stays focused on the gate itself instead of observing UI timers.
+    // Fast local styling keeps hotkeys usable
+    expect(findEditableHotkey()).toBeDefined();
+    expect(findButton("Save")?.disabled).toBe(false);
   });
 
   it("keeps hotkey editing available when post-processing is configured", async () => {
@@ -121,15 +117,14 @@ describe("StyleHotkeysDialog post-processing gate", () => {
     expect(findButton("Save")?.disabled).toBe(false);
   });
 
-  it("disables rows immediately when post-processing is turned off", async () => {
+  it("keeps rows enabled when post-processing is turned off (fast path)", async () => {
     setPostProcessingEnabled(true);
     await renderDialog();
     expect(findEditableHotkey()).toBeDefined();
 
     act(() => setPostProcessingEnabled(false));
 
-    expect(findButton("Set hotkey")?.disabled).toBe(true);
-    expect(findButton("Save")?.disabled).toBe(true);
-    expect(findEditableHotkey()).toBeUndefined();
+    expect(findEditableHotkey()).toBeDefined();
+    expect(findButton("Save")?.disabled).toBe(false);
   });
 });
