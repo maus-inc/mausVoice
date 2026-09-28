@@ -326,6 +326,21 @@ describe("findEditCorrections", () => {
       ).toEqual(["Ralf"]);
     });
 
+    it("learns a replacement of the first dictated word beside typed text", () => {
+      // The user typed `Note` in front of the dictation, swapped the first
+      // dictated word for `Zeta`, and fixed the last one. `Note` is outside
+      // the dictation and must not be offered; `Zeta` replaced a dictated word
+      // and must be, which is why the leading run is not clamped tight to the
+      // first surviving token.
+      expect(
+        find({
+          insertedText: "call alpha beta Ralph",
+          baselineText: "x call alpha beta Ralph",
+          fieldText: "x Note Zeta alpha beta Ralf",
+        }),
+      ).toEqual(["Zeta", "Ralf"]);
+    });
+
     it("still learns when a dictated word before the correction was deleted", () => {
       // The leading run is bounded from both sides, so deleting a dictated
       // token must not drag the text in front of it into the comparison.

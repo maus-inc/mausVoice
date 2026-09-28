@@ -75,6 +75,13 @@ type WatchSnapshot = {
    * for the rest of the watch. Only an explicit Ignore is remembered beyond it.
    */
   proposedTerms: Set<string>;
+  /**
+   * Whether this watch has already reported that its field is too long to
+   * align. The report is a diagnostic for a condition that cannot change while
+   * the field keeps its length, and every settled poll would otherwise repeat
+   * it, so one watch logs it once.
+   */
+  unalignableReported: boolean;
   /** Last observed field text, and when it was first observed. */
   settledText: string | null;
   settledAt: number;
@@ -224,6 +231,7 @@ export const beginEditWatch = (text: string): void => {
     baselineText: null,
     baselineOccurrences: 0,
     proposedTerms: new Set<string>(),
+    unalignableReported: false,
     settledText: null,
     settledAt: 0,
   };
@@ -362,11 +370,16 @@ export const pollEditWatch = async (): Promise<void> => {
       baselineText,
       fieldText,
       existingTerms: collectExistingTerms(),
-      onUnalignable: (tokenCount) =>
+      onUnalignable: (tokenCount) => {
+        if (snapshot.unalignableReported) {
+          return;
+        }
+        snapshot.unalignableReported = true;
         getLogger().warning(
           `Edit watch skipped a ${tokenCount} token field: above the ` +
             `alignment bound, so a correction in it cannot be located`,
-        ),
+        );
+      },
     });
     if (corrections.length === 0) {
       return;

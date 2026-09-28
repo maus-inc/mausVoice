@@ -47,13 +47,18 @@ vi.mock("../utils/local-storage.utils", () => ({
         },
 }));
 
+// Stable instances so a test can assert on what was actually logged. The
+// production helper mints fresh mocks per call, which is exactly why a
+// diagnostic that never fires is invisible.
+const getLoggerMock = vi.hoisted(() => ({
+  info: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  verbose: vi.fn(),
+}));
+
 vi.mock("../utils/log.utils", () => ({
-  getLogger: () => ({
-    info: vi.fn(),
-    warning: vi.fn(),
-    error: vi.fn(),
-    verbose: vi.fn(),
-  }),
+  getLogger: () => getLoggerMock,
 }));
 
 vi.mock("../i18n/intl", () => ({
@@ -339,6 +344,27 @@ describe("edit-watch proposal lifecycle", () => {
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
     expect(state.autoLearn.proposal).toBeNull();
+  });
+
+  it("reports a field too long to align once per dictation, not once per poll", async () => {
+    // The bound can only stop offering, never fix, and the field's length does
+    // not change while the watch runs. Repeating the line every 500ms would be
+    // about 180 identical writes to the native log sink per dictation.
+    const filler = "lorem ipsum dolor sit amet consectetur ".repeat(200);
+    getLoggerMock.warning.mockClear();
+    beginEditWatch("call Ralph");
+    setField(`${filler} call Ralph`);
+    await advanceAndPoll(1_500);
+    setField(`${filler} call Ralf`);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal).toBeNull();
+    const warnings = getLoggerMock.warning.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.includes("alignment bound"));
+    expect(warnings).toHaveLength(1);
   });
 
   it("keeps blocking polls while the proposal toast is still live", async () => {
