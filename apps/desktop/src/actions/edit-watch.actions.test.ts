@@ -314,24 +314,28 @@ describe("edit-watch proposal lifecycle", () => {
   });
 
   it("keeps the denial in memory when local storage cannot answer", async () => {
-    // A blocked or quota-limited origin leaves nowhere to persist, which used
-    // to reinstate the repeat the deny list exists to prevent.
+    // A blocked or quota-limited origin leaves nowhere to persist, which would
+    // otherwise reinstate the repeat the deny list exists to prevent. A word
+    // unique to this test keeps the session copy from leaking into the others.
     storageBlocked.value = true;
 
-    beginEditWatch("call Ralph");
-    await settleBaseline("call Ralph");
-    setField("call Ralf");
+    beginEditWatch("call Brendon");
+    await settleBaseline("call Brendon");
+    setField("call Bryn");
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
-    expect(state.autoLearn.proposal?.term).toBe("Ralf");
+    expect(state.autoLearn.proposal?.term).toBe("Bryn");
 
     rejectAutoLearnProposal();
     expect(state.autoLearn.proposal).toBeNull();
     expect(backingStore.has(DENIED_KEY)).toBe(false);
 
     // Storage answers again, but it never saw the denial, so only the session
-    // copy is standing between the user and the same prompt on every poll.
+    // copy is standing between the user and the same prompt.
     storageBlocked.value = false;
+    beginEditWatch("call Brendon");
+    await settleBaseline("call Brendon");
+    setField("call Bryn");
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
     expect(state.autoLearn.proposal).toBeNull();
@@ -416,17 +420,20 @@ describe("edit-watch proposal lifecycle", () => {
   });
 
   it("rejecting a proposal records the denial", async () => {
-    beginEditWatch("call Ralph");
-    await settleBaseline("call Ralph");
+    // A word unique to this test: the session copy of the deny list outlives a
+    // single case, so reusing a term another case proposes would make this one
+    // pass or fail on test order rather than on the behaviour.
+    beginEditWatch("call Marlon");
+    await settleBaseline("call Marlon");
 
-    setField("call Ralf");
+    setField("call Marlene");
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
 
     rejectAutoLearnProposal();
     expect(state.autoLearn.proposal).toBeNull();
     expect(JSON.parse(backingStore.get(DENIED_KEY) as string)).toContain(
-      "ralf",
+      "marlene",
     );
 
     await advanceAndPoll(1_500);

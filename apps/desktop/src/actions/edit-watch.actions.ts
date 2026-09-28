@@ -88,18 +88,28 @@ const isFeatureEnabled = (): boolean =>
   getMyUserPreferences(getAppState())?.autoLearnFromEditsEnabled ?? false;
 
 /**
- * The session copy of the deny list, used only when local storage cannot
- * answer. Storage is the source of truth wherever it works, so a blocked or
- * quota-limited origin has nothing to fall back on, and dropping the denial
- * there would let the same prompt repeat on every poll in exactly the case the
- * list exists to prevent.
+ * The session copy of the deny list. Local storage is the durable record, but
+ * a blocked or quota-limited origin leaves nowhere to write, so a denial made
+ * there would be lost the moment storage answered again and the same prompt
+ * would return on every poll, in exactly the case the list exists to prevent.
+ * The two are therefore merged on read. A term only reaches either list because
+ * the user pressed Ignore, so merging can only ever over-deny a word they have
+ * already turned down, never suppress something new.
  */
 let sessionDeniedTerms = new Set<string>();
 
 const readDeniedTerms = (): Set<string> => {
+  const stored = readStoredDeniedTerms();
+  if (stored.size === 0) {
+    return new Set(sessionDeniedTerms);
+  }
+  return new Set([...stored, ...sessionDeniedTerms]);
+};
+
+const readStoredDeniedTerms = (): Set<string> => {
   const storage = getLocalStorage();
   if (!storage) {
-    return new Set(sessionDeniedTerms);
+    return new Set();
   }
   try {
     const raw = storage.getItem(DENIED_TERMS_KEY);
@@ -112,7 +122,7 @@ const readDeniedTerms = (): Set<string> => {
     }
     return new Set(parsed.filter((v): v is string => typeof v === "string"));
   } catch {
-    return new Set(sessionDeniedTerms);
+    return new Set();
   }
 };
 
@@ -352,6 +362,11 @@ export const pollEditWatch = async (): Promise<void> => {
       baselineText,
       fieldText,
       existingTerms: collectExistingTerms(),
+      onUnalignable: (tokenCount) =>
+        getLogger().warning(
+          `Edit watch skipped a ${tokenCount} token field: above the ` +
+            `alignment bound, so a correction in it cannot be located`,
+        ),
     });
     if (corrections.length === 0) {
       return;

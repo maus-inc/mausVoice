@@ -58,6 +58,12 @@ const runMatchesAt = (
  * unrelated field turns into a proposed term. Tokens still ignore case, smart
  * apostrophes and whitespace reflow, which is the only drift a target app
  * introduces.
+ *
+ * There is deliberately no length cap here. This is a scan for a fixed token
+ * run, so it stays linear, and a cap would silently switch the whole feature
+ * off in any field longer than the cutoff, with no log and nothing on screen
+ * saying why. Only the quadratic alignment carries a bound, and it reports when
+ * it gives up.
  */
 export const countDictationOccurrences = (
   insertedText: string,
@@ -65,7 +71,7 @@ export const countDictationOccurrences = (
 ): number => {
   const dictatedKeys = alignmentKeys(tokenizeForComparison(insertedText));
   const fieldKeys = alignmentKeys(tokenizeForComparison(fieldText));
-  if (dictatedKeys.length === 0 || fieldKeys.length > MAX_ALIGNED_TOKENS) {
+  if (dictatedKeys.length === 0) {
     return 0;
   }
   let count = 0;
@@ -102,7 +108,7 @@ const alignTokens = (
   const baselineKeys = alignmentKeys(baseline);
   const fieldKeys = alignmentKeys(field);
 
-  for (let row = 1; row <= baseline.length + 1; row += 1) {
+  for (let row = 1; row <= baseline.length; row += 1) {
     for (let column = 1; column < columns; column += 1) {
       const shared =
         baselineKeys[row - 1] === fieldKeys[column - 1]
@@ -199,9 +205,21 @@ const collectRegionGaps = (args: {
   const fieldEnd = upper ? upper[1] : field.length;
   const boundaries: [number, number][] = [...inSpan, [end, fieldEnd]];
 
+  // The anchor below the occurrence only says where the field was when the
+  // dictation landed, not where the dictation itself starts. Anything the user
+  // typed between that anchor and the dictation sits in between, so the leading
+  // run has to begin at the first surviving dictated token instead. Without
+  // this, `alpha beta call Ralph` against `alpha beta Zeta call Ralf` pairs the
+  // dictated `call` against the typed `Zeta`, and the prompt then offers
+  // `Zeta`.
+  const firstInSpan = inSpan[0];
+  const regionStart = firstInSpan
+    ? Math.max(fieldStart, firstInSpan[1] - (firstInSpan[0] - start))
+    : fieldStart;
+
   const gaps: TokenGap[] = [];
   let baselineCursor = start;
-  let fieldCursor = fieldStart;
+  let fieldCursor = regionStart;
   for (const [baselineEdge, fieldEdge] of boundaries) {
     const baselineRun = baseline.slice(baselineCursor, baselineEdge);
     const fieldRun = field.slice(fieldCursor, fieldEdge);
@@ -248,16 +266,21 @@ export const findEditCorrections = (args: {
   baselineText: string;
   fieldText: string;
   existingTerms: string[];
+  /** Called instead of returning silently when the field is too long to align. */
+  onUnalignable?: (tokenCount: number) => void;
 }): string[] => {
   const { insertedText, baselineText, fieldText, existingTerms } = args;
   const dictated = tokenizeForComparison(insertedText);
   const baseline = tokenizeForComparison(baselineText);
   const field = tokenizeForComparison(fieldText);
-  if (
-    dictated.length === 0 ||
-    baseline.length > MAX_ALIGNED_TOKENS ||
-    field.length > MAX_ALIGNED_TOKENS
-  ) {
+  if (dictated.length === 0) {
+    return [];
+  }
+  const longestSide = Math.max(baseline.length, field.length);
+  if (longestSide > MAX_ALIGNED_TOKENS) {
+    // Nothing the user can see will explain the silence, so say so where a
+    // developer can find it.
+    args.onUnalignable?.(longestSide);
     return [];
   }
 

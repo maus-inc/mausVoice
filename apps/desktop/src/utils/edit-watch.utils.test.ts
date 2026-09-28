@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   countDictationOccurrences,
   findEditCorrections,
@@ -6,6 +6,10 @@ import {
 
 const holds = (insertedText: string, fieldText: string): boolean =>
   countDictationOccurrences(insertedText, fieldText) > 0;
+
+/** Comfortably past MAX_ALIGNED_TOKENS, which is 600. */
+const OVERLONG_FILLER = "lorem ipsum dolor sit amet consectetur ".repeat(200);
+const tokenCountOf = (text: string): number => text.trim().split(/\s+/).length;
 
 const find = ({
   insertedText,
@@ -67,6 +71,29 @@ describe("countDictationOccurrences", () => {
     );
     expect(countDictationOccurrences("call Ralph", "nothing here")).toBe(0);
     expect(countDictationOccurrences("", "call Ralph")).toBe(0);
+  });
+
+  it("keeps working in a field far longer than the alignment bound", () => {
+    // The alignment is quadratic and is bounded at 600 tokens. Containment is a
+    // linear scan for a fixed run, so bounding it too would switch the whole
+    // feature off in a long email body or meeting-notes document, silently.
+    const longField = `${OVERLONG_FILLER} call Ralph ${OVERLONG_FILLER}`;
+    expect(tokenCountOf(longField)).toBeGreaterThan(600);
+    expect(countDictationOccurrences("call Ralph", longField)).toBe(1);
+  });
+
+  it("reports a field too long to align instead of failing silently", () => {
+    const onUnalignable = vi.fn();
+    const learned = findEditCorrections({
+      insertedText: "call Ralph",
+      baselineText: `${OVERLONG_FILLER} call Ralph`,
+      fieldText: `${OVERLONG_FILLER} call Ralf`,
+      existingTerms: [],
+      onUnalignable,
+    });
+
+    expect(learned).toEqual([]);
+    expect(onUnalignable).toHaveBeenCalledOnce();
   });
 });
 
@@ -283,6 +310,32 @@ describe("findEditCorrections", () => {
           fieldText: "Completely different opening words here call Ralf",
         }),
       ).toEqual([]);
+    });
+
+    it("never proposes a proper noun the user typed just before the dictation", () => {
+      // The anchor below the dictation says where the field was when the
+      // dictation landed, not where the dictation starts. Anything typed in
+      // between used to be paired against the first dictated token, and the
+      // prompt then offered the typed word instead of the correction.
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "alpha beta call Ralph",
+          fieldText: "alpha beta Zeta call Ralf",
+        }),
+      ).toEqual(["Ralf"]);
+    });
+
+    it("still learns when a dictated word before the correction was deleted", () => {
+      // The leading run is bounded from both sides, so deleting a dictated
+      // token must not drag the text in front of it into the comparison.
+      expect(
+        find({
+          insertedText: "beta call Ralph",
+          baselineText: "alpha beta call Ralph",
+          fieldText: "alpha call Ralf",
+        }),
+      ).toEqual(["Ralf"]);
     });
   });
 
