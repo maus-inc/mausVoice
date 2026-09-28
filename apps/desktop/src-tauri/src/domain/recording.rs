@@ -30,4 +30,8 @@ pub struct RecordingLevelPayload {
 #[derive(Clone, Serialize)]
 pub struct AudioChunkPayload {
     pub samples: Vec<f32>,
+    /// Index of the batch's first sample in the recording. Consumers need this
+    /// to place the batch on an absolute timeline, and to detect a gap rather
+    /// than silently renumbering a discontinuous stream as contiguous.
+    pub offset: u64,
 }

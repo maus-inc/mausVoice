@@ -263,6 +263,10 @@ fn record_loop(
     let mut last_level_emit = Instant::now();
     let mut last_chunk_emit = Instant::now();
     let mut chunk_buffer: Vec<f32> = Vec::new();
+    // Samples already handed to `chunk_callback`, so each dispatch reports the
+    // absolute index of its first sample. The loop is single threaded, so a
+    // plain counter is enough here.
+    let mut emitted_samples: u64 = 0;
 
     let mut read_buf = vec![0u8; READ_CHUNK_FRAMES * std::mem::size_of::<f32>()];
 
@@ -308,8 +312,10 @@ fn record_loop(
             if now.duration_since(last_chunk_emit) >= CHUNK_DISPATCH_INTERVAL {
                 last_chunk_emit = now;
                 if !chunk_buffer.is_empty() {
-                    cb(chunk_buffer.clone());
-                    chunk_buffer.clear();
+                    let offset = emitted_samples;
+                    let batch = std::mem::take(&mut chunk_buffer);
+                    emitted_samples += batch.len() as u64;
+                    cb(batch, offset);
                 }
             }
         }
@@ -318,7 +324,8 @@ fn record_loop(
     // Flush remaining chunk buffer
     if let Some(ref cb) = chunk_callback {
         if !chunk_buffer.is_empty() {
-            cb(chunk_buffer);
+            let batch = std::mem::take(&mut chunk_buffer);
+            cb(batch, emitted_samples);
         }
     }
 

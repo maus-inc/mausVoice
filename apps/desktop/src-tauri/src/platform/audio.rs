@@ -33,6 +33,7 @@ mod cpal_impl {
     use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
     use std::cmp;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
@@ -113,6 +114,7 @@ mod cpal_impl {
         throttle: Duration,
         last_emit: Mutex<Option<Instant>>,
         buffer: Mutex<Vec<f32>>,
+        emitted_samples: AtomicU64,
     }
 
     impl ChunkEmitter {
@@ -122,6 +124,7 @@ mod cpal_impl {
                 throttle: Duration::from_millis(CHUNK_DISPATCH_INTERVAL_MS),
                 last_emit: Mutex::new(None),
                 buffer: Mutex::new(Vec::new()),
+                emitted_samples: AtomicU64::new(0),
             })
         }
 
@@ -153,28 +156,38 @@ mod cpal_impl {
             };
 
             if should_emit {
-                if let Some(chunk) = self.take_buffered_chunk() {
-                    (self.callback)(chunk);
-                }
+                self.dispatch_buffered_chunk();
             }
         }
 
-        fn take_buffered_chunk(&self) -> Option<Vec<f32>> {
-            let mut buffer = self
-                .buffer
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if buffer.is_empty() {
-                None
-            } else {
-                Some(std::mem::take(&mut *buffer))
-            }
+        /// Hand the buffered samples to the callback together with the
+        /// absolute index of their first sample in the recording.
+        ///
+        /// Taking the index and advancing the counter under the same lock the
+        /// buffer is drained with is what makes the index unique. Doing the
+        /// `fetch_add` after releasing the lock would let a second dispatch
+        /// read the pre-advance value and hand out a duplicate index, and a
+        /// duplicate makes the webview treat the stream as discontinuous.
+        fn dispatch_buffered_chunk(&self) {
+            let (chunk, offset) = {
+                let mut buffer = self
+                    .buffer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if buffer.is_empty() {
+                    return;
+                }
+                let chunk = std::mem::take(&mut *buffer);
+                let offset = self.emitted_samples.load(Ordering::Relaxed);
+                self.emitted_samples
+                    .fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                (chunk, offset)
+            };
+            (self.callback)(chunk, offset);
         }
 
         fn flush(&self) {
-            if let Some(chunk) = self.take_buffered_chunk() {
-                (self.callback)(chunk);
-            }
+            self.dispatch_buffered_chunk();
         }
     }
 
@@ -1154,14 +1167,15 @@ mod cpal_impl {
             device_matches_preferred, disambiguated_label, is_preferred_input_device_name,
             ChunkEmitter,
         };
+        use std::collections::HashSet;
         use std::sync::{Arc, Mutex};
 
         #[test]
         fn chunk_emitter_flushes_the_final_partial_chunk() {
-            let chunks = Arc::new(Mutex::new(Vec::<Vec<f32>>::new()));
+            let chunks = Arc::new(Mutex::new(Vec::<(Vec<f32>, u64)>::new()));
             let callback_chunks = chunks.clone();
-            let emitter = ChunkEmitter::new(Arc::new(move |chunk| {
-                callback_chunks.lock().unwrap().push(chunk);
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                callback_chunks.lock().unwrap().push((chunk, offset));
             }));
 
             emitter.emit(&[0.1f32, 0.2f32]);
@@ -1170,7 +1184,82 @@ mod cpal_impl {
 
             assert_eq!(
                 *chunks.lock().unwrap(),
-                vec![vec![0.1f32, 0.2f32], vec![0.3f32]]
+                vec![(vec![0.1f32, 0.2f32], 0), (vec![0.3f32], 2)]
+            );
+        }
+
+        #[test]
+        fn chunk_offsets_stay_contiguous_when_dispatches_are_throttled() {
+            let seen = Arc::new(Mutex::new(Vec::<(usize, u64)>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                recorded.lock().unwrap().push((chunk.len(), offset));
+            }));
+
+            // Five batches arrive inside one throttle window, so the throttle
+            // coalesces them and the first batch leaves immediately. The exact
+            // split is a timing detail, so the contract asserted here is that
+            // the offsets tile the stream: each one starts where the previous
+            // batch ended, whatever the throttle decided.
+            for _ in 0..5 {
+                emitter.emit(&[0.0f32; 128]);
+            }
+            emitter.flush();
+
+            let seen = seen.lock().unwrap();
+            let mut expected_offset = 0u64;
+            for (len, offset) in seen.iter() {
+                assert_eq!(*offset, expected_offset);
+                expected_offset += *len as u64;
+            }
+            assert_eq!(expected_offset, 5 * 128);
+        }
+
+        #[test]
+        fn chunk_offset_keeps_counting_when_a_dispatch_is_skipped() {
+            let seen = Arc::new(Mutex::new(Vec::<(usize, u64)>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |chunk, offset| {
+                recorded.lock().unwrap().push((chunk.len(), offset));
+            }));
+
+            emitter.emit(&[0.0f32; 4]);
+            // An empty batch contributes no samples, so it must not consume an
+            // index either.
+            emitter.emit(&[]);
+            emitter.flush();
+
+            assert_eq!(*seen.lock().unwrap(), vec![(4, 0)]);
+        }
+
+        #[test]
+        fn concurrent_chunk_dispatch_never_reuses_a_starting_index() {
+            let seen = Arc::new(Mutex::new(Vec::<u64>::new()));
+            let recorded = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |_chunk, offset| {
+                recorded.lock().unwrap().push(offset);
+            }));
+
+            let mut threads = Vec::new();
+            for _ in 0..8 {
+                let emitter = emitter.clone();
+                threads.push(std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        emitter.emit(&[0.0f32; 16]);
+                        emitter.flush();
+                    }
+                }));
+            }
+            for thread in threads {
+                thread.join().expect("emitter thread panicked");
+            }
+
+            let seen = seen.lock().unwrap();
+            let unique: HashSet<u64> = seen.iter().copied().collect();
+            assert_eq!(
+                unique.len(),
+                seen.len(),
+                "two dispatches claimed the same starting index"
             );
         }
 

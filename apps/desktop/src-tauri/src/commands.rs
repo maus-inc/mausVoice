@@ -2709,8 +2709,8 @@ pub async fn start_recording(
     });
 
     let chunk_emit_handle = app.clone();
-    let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>| {
-        let payload = AudioChunkPayload { samples };
+    let chunk_emitter: ChunkCallback = Arc::new(move |samples: Vec<f32>, offset: u64| {
+        let payload = AudioChunkPayload { samples, offset };
         if let Err(err) = chunk_emit_handle.emit_to(EventTarget::any(), EVT_AUDIO_CHUNK, payload) {
             log::error!("Failed to emit audio_chunk event: {err}");
         }
