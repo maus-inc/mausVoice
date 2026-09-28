@@ -5,7 +5,7 @@ use gtk::cairo;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
-use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
 // Cairo retains paint errors on the context; the draw callback reports them.
@@ -2141,9 +2141,8 @@ pub(crate) fn over_side_control(
 ) -> bool {
     let (px, py) = pause_button_origin(pill_x, pill_y, pill_h);
     let (cx, cy) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
-    let inside = |ox: f64, oy: f64| {
-        x >= ox && x <= ox + CANCEL_BUTTON_SIZE && y >= oy && y <= oy + CANCEL_BUTTON_SIZE
-    };
+    let inside =
+        |ox: f64, oy: f64| rect_contains(x, y, ox, oy, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
     inside(px, py) || inside(cx, cy)
 }
 

@@ -72,9 +72,31 @@ pub(crate) struct ClickRegion {
     pub(crate) action: ClickAction,
 }
 
+/// Axis-aligned rect containment. Hover pads the pill rect before testing it
+/// and click dispatch tests the unpadded rect, so both live here and share one
+/// edge rule instead of repeating the comparison inline.
+pub(crate) fn rect_contains(px: f64, py: f64, rx: f64, ry: f64, rw: f64, rh: f64) -> bool {
+    px >= rx && px <= rx + rw && py >= ry && py <= ry + rh
+}
+
+/// [`rect_contains`] widened by `pad` on every edge. Only the anticipatory
+/// hover zone may use this: a click that lands in the pad belongs to whatever
+/// window is behind the pill, so click dispatch stays on the unpadded rect.
+pub(crate) fn rect_contains_padded(
+    px: f64,
+    py: f64,
+    rx: f64,
+    ry: f64,
+    rw: f64,
+    rh: f64,
+    pad: f64,
+) -> bool {
+    rect_contains(px, py, rx - pad, ry - pad, rw + 2.0 * pad, rh + 2.0 * pad)
+}
+
 impl ClickRegion {
     pub(crate) fn contains(&self, px: f64, py: f64) -> bool {
-        px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
+        rect_contains(px, py, self.x, self.y, self.w, self.h)
     }
 }
 
