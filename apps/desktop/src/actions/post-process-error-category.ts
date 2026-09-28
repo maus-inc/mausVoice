@@ -82,10 +82,20 @@ export const POST_PROCESS_ERROR_REASONS: Readonly<
   [POST_PROCESS_ERROR_CATEGORY.provider]: PROVIDER_ERROR,
 };
 
-/** Used when a failure carries no category at all, so the toast stays whole. */
-export const UNKNOWN_POST_PROCESS_ERROR_REASON: PostProcessErrorReason = {
-  defaultMessage: "Provider error",
-};
+/**
+ * Used when a failure carries no category at all, so the toast stays whole.
+ *
+ * This must be the same `defineMessage` descriptor as the provider category,
+ * not an object literal written here. The formatjs babel plugin only injects
+ * the `id` it later builds the catalog from into a descriptor it can see at
+ * that call, so a bare literal reaches `formatMessage` with no `id` and
+ * `invariant(!!msgId)` throws there, in production too, before the toast that
+ * was meant to explain the styling failure is ever shown. Reusing the
+ * descriptor keeps `provider_error`, already translated in every catalog, as
+ * the single fallback.
+ */
+export const UNKNOWN_POST_PROCESS_ERROR_REASON: PostProcessErrorReason =
+  PROVIDER_ERROR;
 
 /**
  * The message to render for a stored category. An unrecognized value is

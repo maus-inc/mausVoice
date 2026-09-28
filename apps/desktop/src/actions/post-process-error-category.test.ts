@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { createMessageId } from "../../scripts/formatjs-id.mjs";
+import en from "../i18n/locales/en.json";
 import {
   classifyPostProcessErrorCategory,
   POST_PROCESS_ERROR_CATEGORY,
   POST_PROCESS_ERROR_REASONS,
   postProcessErrorReason,
+  UNKNOWN_POST_PROCESS_ERROR_REASON,
 } from "./post-process-error-category";
 
 /**
@@ -71,19 +74,49 @@ describe("postProcessErrorReason", () => {
     // previous version of the classifier produced. Rendering an unknown value
     // verbatim would put a stale internal string in the toast.
     expect(
-      postProcessErrorReason("Some category removed two releases ago"),
-    ).toEqual({ defaultMessage: "Provider error" });
+      postProcessErrorReason("Some category removed two releases ago")
+        .defaultMessage,
+    ).toBe("Provider error");
   });
 
   it("falls back for a missing category", () => {
-    expect(postProcessErrorReason(null)).toEqual({
-      defaultMessage: "Provider error",
-    });
-    expect(postProcessErrorReason(undefined)).toEqual({
-      defaultMessage: "Provider error",
-    });
-    expect(postProcessErrorReason("")).toEqual({
-      defaultMessage: "Provider error",
-    });
+    expect(postProcessErrorReason(null).defaultMessage).toBe("Provider error");
+    expect(postProcessErrorReason(undefined).defaultMessage).toBe(
+      "Provider error",
+    );
+    expect(postProcessErrorReason("").defaultMessage).toBe("Provider error");
+  });
+});
+
+describe("catalog coverage", () => {
+  /**
+   * Every descriptor the toast can render, in the order the table above plus
+   * the fallback. The fallback is a `defineMessage` descriptor rather than an
+   * object literal precisely so it is one of these; including it here is what
+   * keeps that true.
+   */
+  const descriptors = [
+    ...Object.values(POST_PROCESS_ERROR_REASONS),
+    UNKNOWN_POST_PROCESS_ERROR_REASON,
+  ];
+
+  it("reaches the fallback as a descriptor and not a hand written literal", () => {
+    // Object identity, not equality: a fresh `{ defaultMessage }` literal
+    // compares deep-equal while still carrying no `id`, which is the defect
+    // this test exists to catch.
+    expect(UNKNOWN_POST_PROCESS_ERROR_REASON).toBe(
+      POST_PROCESS_ERROR_REASONS[POST_PROCESS_ERROR_CATEGORY.provider],
+    );
+  });
+
+  it("has an en.json entry for every descriptor", () => {
+    // A descriptor whose id never reached the extractor throws inside
+    // `formatMessage` at render time, so the toast explaining a styling failure
+    // is the thing that breaks. `createMessageId` is the same derivation the
+    // formatjs babel plugin applies, so this is the exact catalog key.
+    const missing = descriptors
+      .map((descriptor) => createMessageId(descriptor.defaultMessage))
+      .filter((id) => !(id in en));
+    expect(missing).toEqual([]);
   });
 });
