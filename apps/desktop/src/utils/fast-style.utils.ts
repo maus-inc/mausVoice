@@ -32,7 +32,7 @@ const truncateGuard = (text: string): string => {
   return text.slice(0, MAX_INPUT_CHARS);
 };
 
-const FILLER_RE = /\b(?:um+|uh+|er+|ah+|hmm+|mm+|mmm+)\b[,\s]*/gi;
+const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 
 // Conservative: only clear multi-word fillers that cannot be content. "like",
 // "basically", "literally", "so", "well" and "actually" must not be deleted
@@ -50,10 +50,8 @@ const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
 // avoid backtracking. Every marker must be comma-delimited on both sides, so
 // ordinary "no" ("I told him no, then we left") and ordinary "I mean" ("the
 // mean of the data, I mean it statistically") are left alone.
-const SELF_CORRECTION_PRECISE_RE = new RegExp(
-  String.raw`[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*`,
-  "gi",
-);
+const SELF_CORRECTION_PRECISE_RE =
+  /[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*/gi;
 
 const CONTRACTION_MAP: Record<string, string> = {
   "don't": "do not",
@@ -98,7 +96,7 @@ const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
   CONTRACTION_MAP,
 ).map(([contraction, expansion]) => {
   const pattern = contraction.replace("'", "'?");
-  return [new RegExp(`\\b${pattern}\\b`, "gi"), expansion];
+  return [new RegExp(String.raw`\b${pattern}\b`, "gi"), expansion];
 });
 
 // Conservative hedging: only clear meta-commentary, not words that change
@@ -314,17 +312,23 @@ const toChat = (raw: string): string => {
   return joined;
 };
 
-const toFormal = (raw: string): string => {
-  const guarded = truncateGuard(raw);
-  let t = toPolished(guarded);
+/** Casual register that has no formal equivalent and is simply dropped. */
+const INFORMAL_RE = /\b(?:gonna|wanna|gotta|kinda|sorta|yeah|yep|nope)\b/gi;
+
+const expandContractions = (text: string): string => {
+  let out = text;
   for (const [re, expansion] of CONTRACTION_RES) {
-    t = t.replace(re, (match) => {
+    out = out.replace(re, (match: string) => {
       const isCapitalized = match.startsWith(match[0].toUpperCase());
       return isCapitalized ? capitalizeFirst(expansion) : expansion;
     });
   }
-  t = t
-    .replace(/\b(?:gonna|wanna|gotta|kinda|sorta|yeah|yep|nope)\b/gi, "")
+  return out;
+};
+
+const toFormal = (raw: string): string => {
+  const t = expandContractions(toPolished(truncateGuard(raw)))
+    .replace(INFORMAL_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
   return fixCapitalizationAndPunctuation(t);
@@ -360,16 +364,17 @@ const toBullets = (raw: string): string => {
   const sentences = splitIntoSentences(t);
   if (sentences.length === 0) return t;
 
+  const stripEdgePunctuation = (text: string): string =>
+    text
+      .trim()
+      .replace(/^[,.;\s]+/, "")
+      .replace(/[,.;\s]+$/, "");
+
   const ideas: string[] = [];
   for (const s of sentences) {
-    if (s.includes(";")) {
-      const parts = s.split(/;\s*/);
-      for (const p of parts) {
-        const trimmed = p.trim().replace(/^[,\s]+|[,\s]+$/g, "");
-        if (trimmed.length > 2) ideas.push(trimmed);
-      }
-    } else {
-      const trimmed = s.trim().replace(/^[,\s]+|[,\s]+$/g, "");
+    const parts = s.includes(";") ? s.split(";") : [s];
+    for (const p of parts) {
+      const trimmed = stripEdgePunctuation(p);
       if (trimmed.length > 2) ideas.push(trimmed);
     }
   }

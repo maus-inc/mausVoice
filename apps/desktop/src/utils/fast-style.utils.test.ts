@@ -303,3 +303,37 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
     expect(out).toContain("- [ ] We need to fix the docs");
   });
 });
+
+describe("filler removal keeps words that merely end in a filler", () => {
+  it("does not eat ordinary words", () => {
+    for (const sentence of [
+      "I am going to the store",
+      "The server returned an error",
+      "She is a member of the team",
+      "I emailed them yesterday",
+      "He came home early",
+    ]) {
+      expect(applyFastStyle(sentence, "default").toLowerCase()).toBe(
+        `${sentence.toLowerCase()}.`,
+      );
+    }
+  });
+
+  it("still removes every spoken filler", () => {
+    for (const filler of [
+      "um",
+      "uh",
+      "umm",
+      "ummm",
+      "hmm",
+      "mm",
+      "mmm",
+      "er",
+      "ah",
+    ]) {
+      const out = applyFastStyle(`${filler} I went to the store`, "default");
+      expect(out.toLowerCase()).not.toMatch(new RegExp(`\\b${filler}\\b`));
+      expect(out.toLowerCase()).toContain("i went to the store");
+    }
+  });
+});
