@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
-  canApplyFastStyleForProvider,
-  measureFastStyle,
 } from "./fast-style.utils";
 
 describe("applyFastStyle fast local transforms", () => {
@@ -121,26 +120,56 @@ describe("applyFastStyle fast local transforms", () => {
     expect(applyFastStyle(raw, "punny")).not.toContain("um");
   });
 
-  it("handles custom tone with category (fallback to polished, no category string matching)", () => {
-    const raw = "I need to buy milk. I need bread. I need eggs";
-    const promptConfig = {
-      kind: "style" as const,
-      stylePrompt: "test",
-      category: "prompt",
-    };
-    const out = applyFastStyle(raw, "custom-1", promptConfig);
-    expect(out.length).toBeGreaterThan(0);
-    // Custom tones fallback to polished to avoid hallucination via free-text category matching
-    expect(out.toLowerCase()).toContain("milk");
+  it("custom tone falls back to polished and never matches a category string", () => {
+    // The fast path is pure string work and cannot interpret a free-form style
+    // prompt. An unknown tone id must produce the polished transform, not a
+    // guess derived from anything about the tone. Pinned by asserting the
+    // result is byte-identical to the polished transform of the same input.
+    const raw = "um so I need to buy milk. I need bread. I need eggs";
+    expect(applyFastStyle(raw, "my-custom-tone")).toBe(
+      applyFastStyle(raw, "default"),
+    );
+    expect(applyFastStyle(raw, "another-unknown")).toBe(
+      applyFastStyle(raw, "default"),
+    );
+    // A tone id that merely looks like a built-in must not be treated as one.
+    expect(applyFastStyle(raw, "prompt")).not.toBe(
+      applyFastStyle(raw, "default"),
+    );
+  });
 
-    const formattingConfig = {
-      kind: "style" as const,
-      stylePrompt: "test",
-      category: "formatting",
-    };
-    const out2 = applyFastStyle(raw, "custom-2", formattingConfig);
-    // Should fallback to polished, not try to infer bullets from category string
-    expect(out2.toLowerCase()).toContain("milk");
+  it("keeps 'I mean' when it is ordinary English, drops it when comma-marked", () => {
+    // Regression: "I mean" is also a verb phrase ("the mean of the data, I
+    // mean it statistically"). Only a comma-delimited "I mean," is a filler.
+    const asVerb = "The mean of the data matters, I mean it statistically";
+    expect(applyFastStyle(asVerb, "default").toLowerCase()).toContain(
+      "i mean it statistically",
+    );
+
+    const asFiller = "It broke, I mean, it broke loudly";
+    expect(applyFastStyle(asFiller, "default").toLowerCase()).not.toContain(
+      "i mean",
+    );
+  });
+
+  it("still removes 'you know' anywhere it appears", () => {
+    const raw = "um so I know you know the answer is out there you know";
+    const out = applyFastStyle(raw, "default").toLowerCase();
+    expect(out).not.toContain("you know");
+    expect(out).toContain("the answer is out there");
+  });
+
+  it("does not eat a clause when 'no' is an ordinary answer", () => {
+    // Regression guard for the self-correction regex: "no" only acts as a
+    // self-correction marker after a comma that follows earlier text, so a
+    // bare "no" must survive.
+    for (const raw of [
+      "I told him no, then we left",
+      "He answered no, yes he did",
+    ]) {
+      const out = applyFastStyle(raw, "default").toLowerCase();
+      expect(out).toContain("no,");
+    }
   });
 
   it("is idempotent", () => {
@@ -150,11 +179,35 @@ describe("applyFastStyle fast local transforms", () => {
     expect(twice).toBe(once);
   });
 
-  it("is fast (<10ms)", () => {
+  it("is fast (median under 5ms on a realistic dictation)", () => {
     const raw =
       "um so I went to the store uh and I bought some milk and bread and eggs and cheese and then I went home";
-    const { durationMs } = measureFastStyle(raw, "bullets");
-    expect(durationMs).toBeLessThan(10);
+    const samples: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const start = performance.now();
+      applyFastStyle(raw, "bullets");
+      samples.push(performance.now() - start);
+    }
+    samples.sort((a, b) => a - b);
+    const median = samples[Math.floor(samples.length / 2)];
+    expect(median).toBeLessThan(5);
+  });
+
+  it("exports the same truncation limit the transforms apply", () => {
+    // Pinned so the caller that warns about truncation cannot drift from the
+    // constant the transform actually uses. The tail marker must not survive.
+    const marker = "TAILMARKER";
+    const justUnder = "a".repeat(
+      FAST_STYLE_MAX_INPUT_CHARS - marker.length - 1,
+    );
+    expect(applyFastStyle(`${justUnder} ${marker}`, "default")).toContain(
+      marker,
+    );
+
+    const overBy = "a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 10);
+    expect(applyFastStyle(`${overBy} ${marker}`, "default")).not.toContain(
+      marker,
+    );
   });
 
   it("preserves meaning (no hallucination)", () => {
@@ -196,33 +249,6 @@ describe("canApplyFastStyle", () => {
     expect(canApplyFastStyle("bullets")).toBe(true);
     expect(canApplyFastStyle("concise")).toBe(true);
     expect(canApplyFastStyle("my-custom")).toBe(true);
-  });
-});
-
-describe("canApplyFastStyleForProvider — provider-agnostic", () => {
-  const providers = [
-    "deepgram",
-    "assemblyai",
-    "elevenlabs",
-    "gladia",
-    "openai",
-    "groq",
-    "azure",
-    "gemini",
-    "speaches",
-    "openai-compatible",
-    "openrouter",
-    "xai",
-    "aldea",
-    "local",
-    null,
-  ];
-
-  it.each(providers)("works for provider %s", (provider) => {
-    expect(canApplyFastStyleForProvider(provider, "default")).toBe(true);
-    expect(canApplyFastStyleForProvider(provider, "email")).toBe(true);
-    expect(canApplyFastStyleForProvider(provider, "bullets")).toBe(true);
-    expect(canApplyFastStyleForProvider(provider, "verbatim")).toBe(false);
   });
 });
 

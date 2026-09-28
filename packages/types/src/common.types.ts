@@ -24,7 +24,15 @@ export type JsonResponse = {
 
 export type TranscriptionMode = "local" | "api";
 
-export type PostProcessingMode = "none" | "api" | "fast";
+/** Post-processing configured by the user. Persisted as a preference. */
+export type PostProcessingMode = "none" | "api";
+
+/**
+ * Post-processing actually performed on one transcription, which is recorded
+ * on the row. It differs from the preference because "fast" is a deterministic
+ * local transform with no LLM call, so it is never a selectable preference.
+ */
+export type PostProcessingRunMode = PostProcessingMode | "fast";
 
 export type AgentMode = PostProcessingMode | "openclaw";
 

@@ -34,18 +34,24 @@ const truncateGuard = (text: string): string => {
 
 const FILLER_RE = /\b(?:um+|uh+|er+|ah+|hmm+|mm+|mmm+)\b[,\s]*/gi;
 
-// Conservative: only clear multi-word fillers. "like", "basically", "literally",
-// "so", "well", "actually" can be content ("I like ice cream", "literally impossible")
-// and must not be deleted unconditionally.
-const EXTRA_FILLER_RE = /(?:^|\s)(?:you know|I mean)\b[,\s]*/gi;
-const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:so|well)\s*,\s*/gi;
+// Conservative: only clear multi-word fillers that cannot be content. "like",
+// "basically", "literally", "so", "well" and "actually" must not be deleted
+// unconditionally ("I like ice cream", "literally impossible").
+// "you know" is a pure discourse filler, so it goes anywhere. "I mean" is also
+// ordinary English ("the mean of the data, I mean it statistically"), so it is
+// only a filler when the speaker commas it off as a discourse marker.
+const EXTRA_FILLER_RE = /(?:^|\s)you know\b[,\s]*/gi;
+const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
+const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
 const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
 
-// Self-correction: "X, actually, Y" -> keep Y. Require comma after marker
-// where ambiguous (no, -> no,). Limit to 60 chars to avoid backtracking.
+// Self-correction: "X, actually, Y" -> keep Y. Limit to 60 chars of lead-in to
+// avoid backtracking. Every marker must be comma-delimited on both sides, so
+// ordinary "no" ("I told him no, then we left") and ordinary "I mean" ("the
+// mean of the data, I mean it statistically") are left alone.
 const SELF_CORRECTION_PRECISE_RE =
-  /[^.!?]{1,60},\s*(?:actually|no,|I mean|or rather)\s*,?\s*/gi;
+  /[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*/gi;
 
 const CONTRACTION_MAP: Record<string, string> = {
   "don't": "do not",
@@ -144,7 +150,7 @@ const removeFillerWords = (text: string, aggressive = false): string => {
   }
   out = out.replace(REPEATED_WORD_RE, "$1");
   out = out.replace(/\s{2,}/g, " ").trim();
-  out = out.replace(/^(?:so|well|yeah|okay|ok)\b[,\s]*/i, "");
+  out = out.replace(SO_WELL_LEADING_RE, "");
   return out;
 };
 
@@ -410,7 +416,6 @@ const toNotes = (raw: string): string => {
 export const applyFastStyle = (
   rawTranscript: string,
   toneId: string | null,
-  _toneConfig?: unknown,
 ): string => {
   const trimmed = rawTranscript.trim();
   if (!trimmed) return trimmed;
@@ -466,28 +471,15 @@ export const applyFastStyle = (
   }
 };
 
+/**
+ * Whether a local transform exists for this tone. Provider-agnostic by design:
+ * the transforms are pure string operations, so every provider gets the same
+ * result for the same input.
+ */
 export const canApplyFastStyle = (toneId: string | null): boolean => {
   if (!toneId) return false;
   if (toneId === VERBATIM_TONE_ID || toneId === "disabled") return false;
   return true;
-};
-
-export const canApplyFastStyleForProvider = (
-  _provider: string | null,
-  toneId: string | null,
-): boolean => {
-  return canApplyFastStyle(toneId);
-};
-
-export const measureFastStyle = (
-  raw: string,
-  toneId: string | null,
-  _toneConfig?: unknown,
-): { result: string; durationMs: number } => {
-  const start = performance.now();
-  const result = applyFastStyle(raw, toneId);
-  const durationMs = performance.now() - start;
-  return { result, durationMs };
 };
 
 export const FAST_STYLE_MAX_INPUT_CHARS = MAX_INPUT_CHARS;
