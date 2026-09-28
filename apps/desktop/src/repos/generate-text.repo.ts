@@ -71,6 +71,48 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
 
+/**
+ * Both models in the Groq fallback chain failed.
+ *
+ * Reporting only the second error made a retired fallback model look exactly
+ * like the configured model failing on its own: the user saw a provider 404
+ * naming a model they never chose, with no sign a second attempt had even run.
+ * This names both models and both causes so the next retirement is visible as
+ * a chain failure rather than a mystery.
+ */
+export class GroqGenerateTextFallbackError extends Error {
+  readonly primaryModel: GenerateTextModel;
+  readonly fallbackModel: GenerateTextModel;
+  readonly primaryCause: unknown;
+  readonly fallbackCause: unknown;
+
+  constructor({
+    primaryModel,
+    fallbackModel,
+    primaryCause,
+    fallbackCause,
+  }: {
+    primaryModel: GenerateTextModel;
+    fallbackModel: GenerateTextModel;
+    primaryCause: unknown;
+    fallbackCause: unknown;
+  }) {
+    const describe = (cause: unknown) =>
+      cause instanceof Error ? cause.message : String(cause);
+    super(
+      `Groq post-processing failed on both models. ` +
+        `Configured model \`${primaryModel}\` failed: ${describe(primaryCause)}. ` +
+        `Fallback model \`${fallbackModel}\` failed: ${describe(fallbackCause)}. ` +
+        `Choose a different post-processing model in Settings.`,
+    );
+    this.name = "GroqGenerateTextFallbackError";
+    this.primaryModel = primaryModel;
+    this.fallbackModel = fallbackModel;
+    this.primaryCause = primaryCause;
+    this.fallbackCause = fallbackCause;
+  }
+}
+
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
@@ -155,6 +197,16 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
         signal: input.signal,
+      }).catch((fallbackCause: unknown) => {
+        // An abort during the second attempt is still the caller's deadline,
+        // not a chain failure, so it is not dressed up as one.
+        if (input.signal?.aborted) throw fallbackCause;
+        throw new GroqGenerateTextFallbackError({
+          primaryModel: this.model,
+          fallbackModel,
+          primaryCause: error,
+          fallbackCause,
+        });
       });
       return { response, model: fallbackModel };
     }

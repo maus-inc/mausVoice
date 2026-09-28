@@ -238,3 +238,115 @@ describe("groqGenerateTextResponse", () => {
     expect(createCompletion).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("retired model handling", () => {
+  // Built from parts so the secret scanner does not read this fixture as a
+  // real leaked key. Mirrors the Cerebras suite.
+  const FAKE_KEY = "gsk_" + "liveAbCd1234";
+
+  const modelNotFound = () =>
+    Object.assign(
+      new Error(
+        "The model `qwen/qwen3.6-27b` does not exist or you do not have access to it.",
+      ),
+      {
+        status: 404,
+        error: { code: "model_not_found", type: "invalid_request_error" },
+      },
+    );
+
+  it("does not retry a model id Groq does not serve", async () => {
+    // A retired model cannot come back, so three attempts would only spend the
+    // caller's deadline before the fallback chain gets its turn.
+    const createCompletion = vi.fn().mockRejectedValue(modelNotFound());
+
+    vi.resetModules();
+    vi.doMock("groq-sdk/index", () => ({
+      default: class MockGroq {
+        chat = { completions: { create: createCompletion } };
+      },
+      toFile: vi.fn(),
+    }));
+
+    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+
+    await expect(
+      groqGenerateTextResponse({ apiKey: "k", model: "x", prompt: "hi" }),
+    ).rejects.toThrow(/no longer serves/);
+
+    expect(createCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a retired model as an actionable error naming the model and the setting", async () => {
+    const createCompletion = vi.fn().mockRejectedValue(modelNotFound());
+
+    vi.resetModules();
+    vi.doMock("groq-sdk/index", () => ({
+      default: class MockGroq {
+        chat = { completions: { create: createCompletion } };
+      },
+      toFile: vi.fn(),
+    }));
+
+    const { groqGenerateTextResponse, GroqModelUnavailableError } =
+      await import("../src/groq.utils");
+
+    // The provider body says only "does not exist or you do not have access
+    // to it", which names a model the user cannot change from a snackbar.
+    await expect(
+      groqGenerateTextResponse({ apiKey: "k", model: "x", prompt: "hi" }),
+    ).rejects.toThrow(/Settings/);
+
+    const error = await groqGenerateTextResponse({
+      apiKey: "k",
+      model: "x",
+      prompt: "hi",
+    }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GroqModelUnavailableError);
+    expect(
+      (error as InstanceType<typeof GroqModelUnavailableError>).model,
+    ).toBe("x");
+    expect((error as { status?: number }).status).toBe(404);
+  });
+
+  it("redacts a Groq gsk_ key echoed by a 401 instead of leaking it", async () => {
+    const createCompletion = vi.fn().mockRejectedValue(
+      Object.assign(new Error("Incorrect API key provided: " + FAKE_KEY), {
+        status: 401,
+      }),
+    );
+
+    vi.resetModules();
+    vi.doMock("groq-sdk/index", () => ({
+      default: class MockGroq {
+        chat = { completions: { create: createCompletion } };
+      },
+      toFile: vi.fn(),
+    }));
+
+    const { groqGenerateTextResponse } = await import("../src/groq.utils");
+
+    const error = await groqGenerateTextResponse({
+      apiKey: FAKE_KEY,
+      model: "x",
+      prompt: "hi",
+    }).catch((thrown: unknown) => thrown as Error);
+
+    expect(error.message).not.toMatch(/gsk_[A-Za-z0-9]/);
+    expect(error.message).toContain("[redacted]");
+  });
+});
+
+describe("redactGroqMessage", () => {
+  it("redacts a Groq key without matching an ordinary hyphenated word", async () => {
+    const { redactGroqMessage } = await import("../src/groq.utils");
+
+    expect(redactGroqMessage("key " + "gsk_" + "liveAbCd1234 used")).toBe(
+      "key [redacted] used",
+    );
+    expect(redactGroqMessage("ticket task-123 is open")).toBe(
+      "ticket task-123 is open",
+    );
+  });
+});
