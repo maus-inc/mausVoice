@@ -52,9 +52,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private startupWarnings: string[] = [];
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    this.cleanup();
-    // A previous recording may have aborted the scope; this one needs a live signal.
-    this.abortScope = new SessionAbortScope();
+    this.resetForRecording();
     this.startupWarnings = [];
 
     try {
@@ -91,7 +89,10 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `[local-session] start failed, transcribing the whole recording (${message})`,
       );
-      this.cleanup();
+      // The recording is still live, it just has no pretranscriber, so the
+      // scope must stay live for the whole-recording request at stop. Tearing
+      // it down here would cancel the one request the user still needs.
+      this.resetForRecording();
     }
   }
 
@@ -112,6 +113,12 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     } finally {
       this.cleanup();
     }
+  }
+
+  /** Tears down the previous recording and gives this one a live abort scope. */
+  private resetForRecording(): void {
+    this.cleanup();
+    this.abortScope = new SessionAbortScope();
   }
 
   cleanup(): void {
