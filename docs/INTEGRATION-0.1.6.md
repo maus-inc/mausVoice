@@ -48,8 +48,10 @@ pnpm --filter @maus-inc/voice-ai test
 pnpm --filter @repo/agent test
 ```
 
-Before push: `pnpm run build`, `pnpm run check-types`, linter. Never edit a test to hide a defect. Bug
+Before push, use the per-package verification commands above as the default gate. Run `pnpm run build` only when the task genuinely requires it and sufficient disk capacity is available. Never edit a test to hide a defect. Bug
 fixes get a regression test.
+
+> **Note on `pnpm --filter desktop test`**: This suite may require provider credentials (e.g., API keys for transcription providers). Skip it in environments where those secrets are unavailable; the check-types and lint gates still apply.
 
 ## SonarCloud
 
