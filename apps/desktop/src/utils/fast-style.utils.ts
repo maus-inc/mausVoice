@@ -364,11 +364,9 @@ const toBullets = (raw: string): string => {
   const sentences = splitIntoSentences(t);
   if (sentences.length === 0) return t;
 
+  const EDGE_PUNCTUATION_RE = /^[,.;\s]+|[,.;\s]+$/g;
   const stripEdgePunctuation = (text: string): string =>
-    text
-      .trim()
-      .replace(/^[,.;\s]+/, "")
-      .replace(/[,.;\s]+$/, "");
+    text.trim().replace(EDGE_PUNCTUATION_RE, "");
 
   const ideas: string[] = [];
   for (const s of sentences) {
