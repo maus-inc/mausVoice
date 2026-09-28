@@ -88,7 +88,10 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
-import { getCancelTranscriptPromptMessage } from "../../utils/transcription-privacy.utils";
+import {
+  getCancelTranscriptPromptMessage,
+  getTranscriptionAudioDisclosure,
+} from "../../utils/transcription-privacy.utils";
 import { sendPillStageText } from "../../utils/overlay.utils";
 import {
   markPipeline,
@@ -1351,11 +1354,15 @@ export const DictationSideEffects = () => {
       cancelPromptTimerRef.current = null;
     }, CANCEL_PROMPT_DURATION);
 
-    // A cloud provider already holds the audio at this point, so the discard is
-    // not local. Local mode keeps the original prompt: nothing leaves the
-    // machine, so naming a provider there would be false.
+    // Only a live-streaming provider already holds the audio at this point, so
+    // only that case changes the wording. A batch provider uploads after
+    // recording stops and local mode never leaves the machine, so both keep the
+    // original prompt rather than claim something was sent.
     void showToast({
-      message: getCancelTranscriptPromptMessage(getAppState(), intl),
+      message: getCancelTranscriptPromptMessage(
+        getTranscriptionAudioDisclosure(getAppState()),
+        intl,
+      ),
       toastType: "info",
       action: "confirm_cancel_transcription",
       duration: CANCEL_PROMPT_DURATION,

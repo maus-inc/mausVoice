@@ -87,9 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "O modo assistente está desativado por padrão. Este é um recurso experimental.",
   "at_least_one_style_must_be_selected": "Pelo menos um estilo deve ser selecionado.",
   "audio": "Áudio",
-  "audio_is_sent_to_provider_while_you_dictate_so_text_can_come": "O áudio é enviado para {provider} enquanto você dita, para que o texto possa voltar imediatamente.",
-  "audio_is_sent_to_your_provider_as_you_speak_not_only_after_y": "O áudio é enviado para o seu provedor enquanto você fala, não só depois de parar. Cancelar não consegue recuperá-lo.",
-  "audio_is_sent_while_you_dictate": "O áudio é enviado enquanto você dita",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "O áudio é enviado para {provider} enquanto você fala, para que o texto possa voltar na hora. O áudio já enviado não pode ser recuperado.",
   "authorized": "Autorizado",
   "auto": "Automático",
   "auto_learn_dictionary": "Aprender dicionário automaticamente",
@@ -937,6 +935,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "Quando ativado, o mausVoice não salvará o histórico de transcrições nem capturas de áudio.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "Quando ativado, o mausVoice iniciará o receptor de múltiplos dispositivos automaticamente ao iniciar, usando a porta do receptor salva.",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "Ao corrigir uma transcrição, adicione automaticamente os nomes e palavras corrigidos ao seu dicionário.",
+  "where_your_dictation_audio_goes": "Para onde vai o áudio da sua ditada",
   "while_active": "Enquanto ativo",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -947,7 +946,6 @@
   "whisper_tiny_77_mb": "Whisper Tiny (77 MB)",
   "windows": "Windows",
   "windows_declined_the_administrator_prompt_mausvoice_will_kee": "O Windows recusou a solicitação de administrador. O mausVoice continuará rodando sem privilégios de administrador; a captura de entrada pode não funcionar em aplicativos executados como administrador.",
-  "with_an_api_provider_selected_mausvoice_streams_your_microph": "Com um provedor de API selecionado, o mausVoice transmite o áudio do seu microfone para o provedor enquanto você fala, para que ele possa devolver o texto imediatamente. Cancelar interrompe a gravação, mas o áudio já enviado não pode ser recuperado. Use um provedor local para manter o áudio neste computador.",
   "word_dictionary": "Dicionário de palavras",
   "words_this_month": "Palavras este mês",
   "words_total": "Total de palavras",
@@ -965,5 +963,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Você está atualmente na versão {version}. O aplicativo será reiniciado após a conclusão da atualização.",
   "you_re_up_to_date": "Você está atualizado.",
   "your_azure_openai_resource_endpoint_url": "URL do endpoint do seu recurso Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Seu sistema operacional está impedindo o mausVoice de modificar arquivos no local de instalação atual. Use o botão de download para obter o instalador mais recente e execute-o para concluir a atualização manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Seu sistema operacional está impedindo o mausVoice de modificar arquivos no local de instalação atual. Use o botão de download para obter o instalador mais recente e execute-o para concluir a atualização manualmente.",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "A sua gravação é enviada para {provider} só depois que você para, então cancelar antes de parar não envia nada."
 }

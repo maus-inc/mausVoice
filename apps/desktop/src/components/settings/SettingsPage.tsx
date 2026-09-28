@@ -104,7 +104,10 @@ import {
   MAX_HANDS_FREE_DELAY_MS,
 } from "../../utils/hands-free-delay.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
-import { getIsCloudTranscriptionSelected } from "../../utils/transcription-privacy.utils";
+import {
+  disclosureIsVisible,
+  getTranscriptionAudioDisclosure,
+} from "../../utils/transcription-privacy.utils";
 import {
   getDetectedSystemLocale,
   getGenerativePrefs,
@@ -115,6 +118,7 @@ import {
 } from "../../utils/user.utils";
 import { PillPlacementSetting } from "./PillPlacementSetting";
 import { UpdateChannelSetting } from "./UpdateChannelSetting";
+import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { UpdateSettingSection } from "./UpdateSettingSection";
 import { SegmentedControl } from "../common/SegmentedControl";
 import {
@@ -461,7 +465,7 @@ export default function SettingsPage() {
     hallucinationFilterEnabled,
     inDictationStyleSwitchingEnabled,
     transcriptionProvider,
-    isCloudTranscriptionSelected,
+    showAudioDisclosure,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -489,7 +493,7 @@ export default function SettingsPage() {
       prefs?.hallucinationFilterEnabled ?? true,
       prefs?.inDictationStyleSwitchingEnabled ?? false,
       transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
-      getIsCloudTranscriptionSelected(state),
+      disclosureIsVisible(getTranscriptionAudioDisclosure(state)),
     ] as const;
   });
   const platform = getPlatform();
@@ -504,7 +508,7 @@ export default function SettingsPage() {
       learn_from_corrections: supportsCorrectionWatch,
       always_run_as_administrator: platform === "windows",
       elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
-      audio_is_sent_while_you_dictate: isCloudTranscriptionSelected,
+      where_your_dictation_audio_goes: showAudioDisclosure,
     }),
     [
       showDictationLimitSetting,
@@ -514,7 +518,7 @@ export default function SettingsPage() {
       supportsCorrectionWatch,
       platform,
       transcriptionProvider,
-      isCloudTranscriptionSelected,
+      showAudioDisclosure,
     ],
   );
 
@@ -1380,18 +1384,16 @@ export default function SettingsPage() {
 
   const privacyData = (
     <Section title={<FormattedMessage defaultMessage="Privacy and data" />}>
-      {isCloudTranscriptionSelected && (
+      {showAudioDisclosure && (
         <SettingAnchor
-          settingKey="audio_is_sent_while_you_dictate"
+          settingKey="where_your_dictation_audio_goes"
           highlight={highlight}
         >
           <SettingSection
             title={
-              <FormattedMessage defaultMessage="Audio is sent while you dictate" />
+              <FormattedMessage defaultMessage="Where your dictation audio goes" />
             }
-            description={
-              <FormattedMessage defaultMessage="With an API provider selected, mausVoice streams your microphone audio to the provider as you speak so it can return text immediately. Cancelling stops the recording, but audio already sent cannot be recalled. Use a local provider to keep audio on this machine." />
-            }
+            description={<AudioTransmissionDisclosure variant="setting" />}
           />
         </SettingAnchor>
       )}

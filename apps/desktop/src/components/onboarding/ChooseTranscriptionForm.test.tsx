@@ -55,7 +55,8 @@ ensureUiHarness();
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const DISCLOSURE = "Audio is sent to your provider as you speak";
+const STREAMING_CLAIM = "as you speak";
+const BATCH_CLAIM = "only after you stop";
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 
@@ -110,24 +111,59 @@ describe("ChooseTranscriptionForm audio transmission disclosure", () => {
     resetState();
   });
 
-  it("discloses streaming to a cloud provider", async () => {
-    selectCloudProvider();
+  it("discloses streaming for a provider that streams while you talk", async () => {
+    selectCloudProvider("assemblyai");
     await renderForm();
-    expect(container.textContent).toContain(DISCLOSURE);
+    expect(container.textContent).toContain(STREAMING_CLAIM);
+    expect(container.textContent).not.toContain(BATCH_CLAIM);
+  });
+
+  it("discloses the upload point for a provider that transcribes in batch", async () => {
+    // Groq dispatches to BatchTranscriptionSession, so nothing is sent while
+    // the user is still talking.
+    selectCloudProvider("groq");
+    await renderForm();
+    expect(container.textContent).toContain(BATCH_CLAIM);
+    expect(container.textContent).not.toContain(STREAMING_CLAIM);
   });
 
   it("says nothing about transmission in local mode", async () => {
     selectLocalProvider();
     await renderForm();
     expect(container.textContent).toContain("provider-panel");
-    expect(container.textContent).not.toContain(DISCLOSURE);
+    expect(container.textContent).not.toContain(STREAMING_CLAIM);
+    expect(container.textContent).not.toContain(BATCH_CLAIM);
   });
 
-  it("does not depend on a key being saved yet", async () => {
+  it("claims nothing while no provider has been chosen", async () => {
+    // The disclosure names the provider, so before a key row is selected there
+    // is nothing to name. Claiming a transmission with no subject would also
+    // have to guess between live streaming and an upload after the stop.
     produceAppState((draft) => {
       draft.settings.aiTranscription.mode = "api";
     });
     await renderForm();
-    expect(container.textContent).toContain(DISCLOSURE);
+    expect(container.textContent).not.toContain(STREAMING_CLAIM);
+    expect(container.textContent).not.toContain(BATCH_CLAIM);
+  });
+
+  it("discloses as soon as the key row is picked, before its value is typed", async () => {
+    // The key value is not what makes a transmission true, the provider is, so
+    // an empty key row must not hide the copy.
+    produceAppState((draft) => {
+      draft.apiKeyById = {
+        "key-1": {
+          id: "key-1",
+          name: "key-1",
+          provider: "assemblyai",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          keyFull: null,
+        },
+      };
+      draft.settings.aiTranscription.mode = "api";
+      draft.settings.aiTranscription.selectedApiKeyId = "key-1";
+    });
+    await renderForm();
+    expect(container.textContent).toContain(STREAMING_CLAIM);
   });
 });

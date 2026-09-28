@@ -87,9 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "Assistant mode는 기본적으로 비활성화되어 있습니다. 이것은 실험적인 새 기능입니다.",
   "at_least_one_style_must_be_selected": "하나 이상의 스타일을 선택해야 합니다.",
   "audio": "오디오",
-  "audio_is_sent_to_provider_while_you_dictate_so_text_can_come": "말하는 동안 오디오가 {provider}에 전송되어 텍스트가 즉시 돌아올 수 있습니다.",
-  "audio_is_sent_to_your_provider_as_you_speak_not_only_after_y": "오디오는 말하는 동안 사용자의 제공업체에게 전송되며, 말을 멈춘 뒤에만 전송되는 것은 아닙니다. 취소해도 되돌릴 수 없습니다.",
-  "audio_is_sent_while_you_dictate": "말하는 동안 오디오가 전송됩니다",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "텍스트가 바로 돌아올 수 있도록 말하는 동안 오디오가 {provider}에 전송됩니다. 이미 전송된 오디오는 되돌릴 수 없습니다.",
   "authorized": "승인됨",
   "auto": "자동",
   "auto_learn_dictionary": "사전 자동 학습",
@@ -937,6 +935,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "활성화하면 mausVoice은 전사 기록이나 오디오 스냅샷을 저장하지 않습니다.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "활성화하면, mausVoice은 저장된 수신 포트를 사용하여 시작 시 멀티 디바이스 수신기를 자동으로 시작합니다.",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "트랜스크립트를 교정할 때 교정된 이름과 단어를 사전에 자동으로 추가합니다.",
+  "where_your_dictation_audio_goes": "음성 입력 오디오가 전송되는 곳",
   "while_active": "활성 중",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -947,7 +946,6 @@
   "whisper_tiny_77_mb": "Whisper Tiny (77 MB)",
   "windows": "윈도우",
   "windows_declined_the_administrator_prompt_mausvoice_will_kee": "Windows에서 관리자 권한 프롬프트를 거부했습니다. mausVoice은 관리자 권한 없이 계속 실행됩니다. 관리자 권한으로 실행되는 앱에서는 입력 캡처가 작동하지 않을 수 있습니다.",
-  "with_an_api_provider_selected_mausvoice_streams_your_microph": "API 제공업체를 선택하면 mausVoice가 말하는 동안 마이크 오디오를 제공업체로 전송하여 즉시 텍스트를 돌려줍니다. 취소를 누르면 녹음이 중지되지만 이미 전송된 오디오는 되돌릴 수 없습니다. 오디오를 이 기기에 남기려면 로컬 제공업체를 사용하세요.",
   "word_dictionary": "단어 사전",
   "words_this_month": "이번 달 단어 수",
   "words_total": "총 단어 수",
@@ -965,5 +963,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "현재 버전 {version}을(를) 사용 중입니다. 업데이트가 완료되면 앱이 다시 시작됩니다.",
   "you_re_up_to_date": "최신 상태입니다.",
   "your_azure_openai_resource_endpoint_url": "Azure OpenAI 리소스 엔드포인트 URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제로 인해 mausVoice가 현재 설치 위치의 파일을 수정할 수 없습니다. 다운로드 버튼으로 최신 설치 파일을 내려받은 뒤 실행하여 업데이트를 수동으로 완료하세요."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "운영 체제로 인해 mausVoice가 현재 설치 위치의 파일을 수정할 수 없습니다. 다운로드 버튼으로 최신 설치 파일을 내려받은 뒤 실행하여 업데이트를 수동으로 완료하세요.",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "녹음은 입력을 멈춘 뒤에만 {provider}에 업로드됩니다. 멈추기 전에 취소하면 아무것도 전송되지 않습니다."
 }

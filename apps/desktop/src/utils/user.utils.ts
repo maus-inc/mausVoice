@@ -261,7 +261,7 @@ export type TranscriptionPrefs =
  * selected key whose provider is not in this set cannot be transcribed and is
  * treated as stale.
  */
-const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
+export const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "groq",
   "openai",
   "aldea",
@@ -276,6 +276,29 @@ const TRANSCRIPTION_CAPABLE_PROVIDERS: Set<ApiKeyProvider> = new Set([
   "xai",
   "openrouter",
 ]);
+
+/**
+ * The transcription provider the user has selected, before any key is resolved.
+ *
+ * The audio-transmission disclosure needs this rather than a resolved
+ * `TranscriptionPrefs`, because onboarding shows the disclosure as soon as API
+ * mode is picked, while the key row is still empty. Returns null when nothing
+ * is selected or the selected key belongs to a provider this build cannot
+ * transcribe, which is the same staleness `getTranscriptionPrefs` falls back
+ * from.
+ */
+export const getSelectedTranscriptionProvider = (
+  state: AppState,
+): ApiKeyProvider | null => {
+  const selectedApiKey = getRec(
+    state.apiKeyById,
+    state.settings.aiTranscription.selectedApiKeyId,
+  );
+  const provider = selectedApiKey?.provider as ApiKeyProvider | undefined;
+  return provider && TRANSCRIPTION_CAPABLE_PROVIDERS.has(provider)
+    ? provider
+    : null;
+};
 
 export const getTranscriptionPrefs = (state: AppState): TranscriptionPrefs => {
   const config = state.settings.aiTranscription;

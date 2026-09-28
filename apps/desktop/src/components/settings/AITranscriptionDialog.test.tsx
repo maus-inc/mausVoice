@@ -31,7 +31,8 @@ ensureUiHarness();
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const FOOTER = "Audio is sent to {provider} while you dictate";
+const STREAMING_CLAIM = "as you speak";
+const BATCH_CLAIM = "only after you stop";
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 
@@ -95,8 +96,18 @@ describe("AITranscriptionDialog audio transmission disclosure", () => {
     // The bare name, never the "API • AssemblyAI" session label.
     // The dialog renders through a portal, so the text lands on the document.
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Audio is sent to AssemblyAI while");
+    expect(text).toContain("Audio is sent to AssemblyAI as you speak");
     expect(text).not.toContain("API • AssemblyAI");
+  });
+
+  it("describes a batch provider as uploading only after the recording stops", async () => {
+    // Groq dispatches to BatchTranscriptionSession, which uploads when
+    // recording stops. The dialog used to promise live streaming here.
+    openDialogWith("groq");
+    await renderDialog();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(BATCH_CLAIM);
+    expect(text).not.toContain(STREAMING_CLAIM);
   });
 
   it("says nothing about transmission in local mode", async () => {
@@ -104,7 +115,7 @@ describe("AITranscriptionDialog audio transmission disclosure", () => {
     await renderDialog();
     const text = document.body.textContent ?? "";
     expect(text).toContain("provider-panel");
-    expect(text).not.toContain(FOOTER);
-    expect(text).not.toContain("while you dictate");
+    expect(text).not.toContain(STREAMING_CLAIM);
+    expect(text).not.toContain(BATCH_CLAIM);
   });
 });

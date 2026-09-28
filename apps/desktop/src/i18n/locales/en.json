@@ -87,9 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "Assistant mode is disabled by default. This is a new experimental feature.",
   "at_least_one_style_must_be_selected": "At least one style must be selected.",
   "audio": "Audio",
-  "audio_is_sent_to_provider_while_you_dictate_so_text_can_come": "Audio is sent to {provider} while you dictate, so text can come back immediately.",
-  "audio_is_sent_to_your_provider_as_you_speak_not_only_after_y": "Audio is sent to your provider as you speak, not only after you stop. Cancelling cannot recall it.",
-  "audio_is_sent_while_you_dictate": "Audio is sent while you dictate",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "Audio is sent to {provider} as you speak, so text can come back immediately. Audio already sent cannot be recalled.",
   "authorized": "Authorized",
   "auto": "Auto",
   "auto_learn_dictionary": "Auto-learn dictionary",
@@ -937,6 +935,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "When enabled, mausVoice will not save transcription history or audio snapshots.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "When enabled, mausVoice will start the multi-device receiver automatically on launch using the saved receiver port.",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "When you correct a transcription, add the corrected names and words to your dictionary automatically.",
+  "where_your_dictation_audio_goes": "Where your dictation audio goes",
   "while_active": "While active",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -947,7 +946,6 @@
   "whisper_tiny_77_mb": "Whisper Tiny (77 MB)",
   "windows": "Windows",
   "windows_declined_the_administrator_prompt_mausvoice_will_kee": "Windows declined the administrator prompt. mausVoice will keep running without administrator privileges; input capture may not work in apps that run as administrator.",
-  "with_an_api_provider_selected_mausvoice_streams_your_microph": "With an API provider selected, mausVoice streams your microphone audio to the provider as you speak so it can return text immediately. Cancelling stops the recording, but audio already sent cannot be recalled. Use a local provider to keep audio on this machine.",
   "word_dictionary": "Word dictionary",
   "words_this_month": "Words this month",
   "words_total": "Words total",
@@ -965,5 +963,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "You're currently on version {version}. The app will restart after the update finishes.",
   "you_re_up_to_date": "You're up to date.",
   "your_azure_openai_resource_endpoint_url": "Your Azure OpenAI resource endpoint URL",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Your operating system is preventing mausVoice from modifying files in its current install location. Use the download button to get the latest installer, then run it to complete the update manually.",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "Your recording is uploaded to {provider} only after you stop, so cancelling before you stop sends nothing."
 }
