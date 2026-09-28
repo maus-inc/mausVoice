@@ -12,6 +12,10 @@ of this stack. **Nothing merges into it, and it is not one of the PRs landed her
 
 Every open PR listed in the merge order below still needs to be rebased and merged into this branch.
 
+When all merge-queue PRs have landed, the `integration/0.1.6-staging` branch is promoted to the
+`0.1.6` release branch via a dedicated promotion PR. That promotion step is a separate process
+and is not part of this landing protocol.
+
 ## Boundaries
 
 - Never merge into `main`.
@@ -23,11 +27,12 @@ Every open PR listed in the merge order below still needs to be rebased and merg
 Merges into one branch are serial. One at a time.
 
 1. Confirm the PR is `MERGEABLE`, CI is green, and no bot finding is unresolved or unclosed.
-2. Rebase the PR branch onto the current tip of `integration/0.1.6-staging`.
-3. Resolve conflicts without discarding already-landed work. If that is not possible, stop and hand back.
-4. Require the rebased PR head to receive fresh green CI and review-bot verification.
-5. Merge with `--no-ff`, message naming the PR.
-6. Confirm CI is green here before starting the next.
+2. Obtain explicit human confirmation naming both source and destination branches.
+3. Rebase the PR branch onto the current tip of `integration/0.1.6-staging`.
+4. Resolve conflicts without discarding already-landed work. If that is not possible, stop and hand back.
+5. Require the rebased PR head to receive fresh green CI and review-bot verification.
+6. Merge with `--no-ff`, message naming the PR.
+7. Confirm CI is green here before starting the next.
 
 ## Resource limits — this machine is small
 
@@ -69,6 +74,6 @@ reflow with `void`.
 ## Review
 
 Every review finding from sourcery-ai, codeant-ai, kilocode, greptile, ahoybuoy, sonarcloud,
-socket-security and deepscan has to be closed before a PR lands here. Answering a finding
-without fixing it or resolving its thread does not count. The per-PR merge order is tracked
-on the integration PR.
+socket-security, deepscan, CodeRabbit and CodeFactor has to be closed before a PR lands here.
+Answering a finding without fixing it or resolving its thread does not count. The per-PR merge
+order is tracked on the integration PR.
