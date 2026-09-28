@@ -3,6 +3,7 @@ import {
   FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
+  measureFastStyleTruncation,
   stripEdgePunctuation,
 } from "./fast-style.utils";
 
@@ -351,6 +352,36 @@ describe("canApplyFastStyle", () => {
     expect(canApplyFastStyle("bullets")).toBe(true);
     expect(canApplyFastStyle("concise")).toBe(true);
     expect(canApplyFastStyle("my-custom")).toBe(true);
+  });
+});
+
+describe("measureFastStyleTruncation", () => {
+  it("reports nothing for input at or under the cap", () => {
+    expect(measureFastStyleTruncation("")).toBeNull();
+    expect(
+      measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS)),
+    ).toBeNull();
+  });
+
+  it("reports the dropped count one character over the cap", () => {
+    expect(
+      measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 1)),
+    ).toEqual({ keptChars: FAST_STYLE_MAX_INPUT_CHARS, droppedChars: 1 });
+  });
+
+  it("reports the full dropped tail, not just that truncation happened", () => {
+    expect(
+      measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 4321)),
+    ).toEqual({ keptChars: FAST_STYLE_MAX_INPUT_CHARS, droppedChars: 4321 });
+  });
+
+  it("agrees with the cap applyFastStyle actually enforces", () => {
+    const raw = "word ".repeat(6000);
+    const truncation = measureFastStyleTruncation(raw);
+    expect(truncation).not.toBeNull();
+    expect(applyFastStyle(raw, "default").length).toBeLessThanOrEqual(
+      FAST_STYLE_MAX_INPUT_CHARS,
+    );
   });
 });
 

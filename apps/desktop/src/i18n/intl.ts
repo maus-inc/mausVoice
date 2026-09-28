@@ -96,8 +96,16 @@ export function getIntl(locale?: Locale) {
   const rawFormat = intl.formatMessage;
   (intl as any).formatMessage = (descriptor: any, values?: any, opts?: any) => {
     try {
+      // An id-less descriptor is not in any catalog, so react-intl cannot
+      // resolve it. Pass it through as the default message. Values must still
+      // be handed to the formatter, otherwise a descriptor carrying ICU
+      // placeholders ships the literal "{count}" to the user.
       if (descriptor && !descriptor.id && descriptor.defaultMessage) {
-        return descriptor.defaultMessage;
+        return rawFormat(
+          { ...descriptor, id: descriptor.defaultMessage },
+          values,
+          opts,
+        );
       }
       return rawFormat(descriptor, values, opts);
     } catch {
