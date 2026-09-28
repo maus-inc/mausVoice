@@ -3,6 +3,7 @@ import {
   FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
+  stripEdgePunctuation,
 } from "./fast-style.utils";
 
 describe("applyFastStyle fast local transforms", () => {
@@ -172,6 +173,49 @@ describe("applyFastStyle fast local transforms", () => {
     }
   });
 
+  it("keeps 'you know' as the subject of the sentence it opens", () => {
+    // Regression: the filler guard used to accept a full stop as an anchor, so
+    // "You know" starting a sentence lost its subject and the tail of that
+    // sentence was welded onto the end of the previous one. A full stop is not
+    // a safe anchor because the words after it are ordinary English.
+    for (const raw of [
+      "It works. You know it works.",
+      "Shipped. You know the deadline.",
+      "Green. You know the drill.",
+    ]) {
+      expect(applyFastStyle(raw, "default")).toBe(raw);
+      // The guard is shared, so every style that calls removeFillerWords with
+      // the aggressive flag is covered by the same fix.
+      expect(applyFastStyle(raw, "bullets")).toContain("You know");
+      expect(applyFastStyle(raw, "notes")).toContain("You know");
+      expect(applyFastStyle(raw, "concise")).toContain("You know");
+    }
+  });
+
+  it("still drops 'you know' when it opens the text or is comma-marked", () => {
+    // The two anchors that survive the fix must keep working, otherwise the
+    // guard is now inert and real fillers ship.
+    expect(applyFastStyle("You know, we should ship it.", "default")).toBe(
+      "We should ship it.",
+    );
+    expect(
+      applyFastStyle("I know the answer is out there, you know", "default"),
+    ).toBe("I know the answer is out there.");
+  });
+
+  it("keeps interrogatives and mid-clause verbs intact", () => {
+    for (const raw of [
+      "Do you know the time?",
+      "Did you know the deadline moved?",
+      "I wonder if you know how the build works",
+      "I know you know the answer.",
+    ]) {
+      expect(applyFastStyle(raw, "default").toLowerCase()).toContain(
+        "you know",
+      );
+    }
+  });
+
   it("prompt keeps every sentence, including late constraints", () => {
     // Regression: the transform used to keep only the first three sentences,
     // which silently dropped a deadline stated later in the dictation.
@@ -328,6 +372,52 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
     expect(out).toContain("- We shipped it");
     expect(out).toContain("- The build is green");
     expect(out).toContain("- [ ] We need to fix the docs");
+  });
+});
+
+describe("bullet edge stripping", () => {
+  it("drops every whitespace character the punctuation class matches", () => {
+    // An earlier version kept an ASCII Set beside the character class and lost
+    // every Unicode whitespace character the class matches. Each entry below is
+    // in the class, so each must come off both ends.
+    const unicodeWhitespace = [
+      "\u00a0",
+      "\u1680",
+      "\u2000",
+      "\u2009",
+      "\u2028",
+      "\u202f",
+      "\u205f",
+      "\u3000",
+      "\ufeff",
+      "\f",
+      "\v",
+    ];
+    for (const ws of unicodeWhitespace) {
+      expect(stripEdgePunctuation(`${ws}Buy milk${ws}`)).toBe("Buy milk");
+    }
+  });
+
+  it("still drops the ASCII punctuation and whitespace it always dropped", () => {
+    for (const ch of [",", ";", ".", " ", "\t", "\n", "\r"]) {
+      expect(stripEdgePunctuation(`${ch}Buy milk${ch}`)).toBe("Buy milk");
+      expect(stripEdgePunctuation(`${ch}${ch}Buy milk${ch}${ch}`)).toBe(
+        "Buy milk",
+      );
+    }
+  });
+
+  it("keeps characters that are not in the class", () => {
+    // A zero width space is not whitespace to the class, so it is content and
+    // must survive rather than being eaten.
+    expect(stripEdgePunctuation("\u200bBuy milk\u200b")).toBe(
+      "\u200bBuy milk\u200b",
+    );
+  });
+
+  it("leaves clean input untouched", () => {
+    expect(stripEdgePunctuation("Buy milk")).toBe("Buy milk");
+    expect(stripEdgePunctuation("")).toBe("");
   });
 });
 
