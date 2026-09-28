@@ -101,7 +101,8 @@ const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(
 
 // Conservative hedging: only clear meta-commentary, not words that change
 // meaning like "rather" in "I would rather not go" or "maybe" as content.
-const HEDGING_RE = /\b(?:I think|I guess|in my opinion|sort of|kind of)\b\s*/gi;
+const HEDGING_RE =
+  /\b(?:I think|I guess|in my opinion|sort of|kind of)\b\s+(\S)/gi;
 
 const REDUNDANT_PHRASES: Array<[RegExp, string]> = [
   [/\bin order to\b/gi, "to"],
@@ -122,6 +123,26 @@ const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z0-9])/g;
 
 const capitalizeFirst = (s: string): string =>
   s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+
+/**
+ * Deletes a phrase and repairs the capital that went with it. The pattern must
+ * consume the first character of the following word into a capture group.
+ *
+ * When the phrase opened a sentence, that character is left lowercase by the
+ * deletion and has to be put back, otherwise the transform emits "it is fine."
+ * mid-paragraph. A phrase removed from the middle of a clause keeps the
+ * following word as the speaker said it, so only a sentence-initial removal is
+ * repaired.
+ */
+const deleteLeadingPhrase = (text: string, phrase: RegExp): string =>
+  text.replace(
+    phrase,
+    (_match: string, after: string, offset: number, whole: string) => {
+      const before = whole.slice(0, offset);
+      const opensSentence = before.length === 0 || /[.!?]\s+$/.test(before);
+      return opensSentence ? capitalizeFirst(after) : after;
+    },
+  );
 
 const ensureSentencePunctuation = (sentence: string): string => {
   const trimmed = sentence.trim();
@@ -264,6 +285,9 @@ const toEmail = (raw: string): string => {
     .trim();
 };
 
+const CHAT_CONNECTIVE_RE =
+  /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
+
 const toChat = (raw: string): string => {
   const guarded = truncateGuard(raw);
   let t = guarded.trim();
@@ -272,15 +296,7 @@ const toChat = (raw: string): string => {
   t = removeFillerWords(t, true);
   const sentences = splitIntoSentences(t);
   const cleaned = sentences
-    .map((s) =>
-      s
-        .replace(
-          /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]*/gi,
-          "",
-        )
-        .trim(),
-    )
-    .filter(Boolean)
+    .map((s) => deleteLeadingPhrase(s, CHAT_CONNECTIVE_RE))
     .map((s) => s.replace(/^[,.\s]+/, "").trim())
     .filter(Boolean);
   let joined = cleaned
@@ -368,7 +384,7 @@ const toConcise = (raw: string): string => {
   t = applySymbolReplacements(t);
   t = fixSelfCorrections(t);
   t = removeFillerWords(t, true);
-  t = t.replace(HEDGING_RE, "");
+  t = deleteLeadingPhrase(t, HEDGING_RE);
   for (const [re, repl] of REDUNDANT_PHRASES) {
     t = t.replace(re, repl);
   }

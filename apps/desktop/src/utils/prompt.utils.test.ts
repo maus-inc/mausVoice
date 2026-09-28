@@ -517,45 +517,29 @@ describe("buildLocalizedTranscriptionPrompt", () => {
     expect(result).not.toContain("dictionaryterm150");
   });
 
-  it("does NOT inject style hints into transcription prompt (best practice: prompt is for glossary bias, not formatting)", () => {
+  it("carries no style instruction, only the glossary", () => {
     const result = buildLocalizedTranscriptionPrompt({
-      entries: { sources: [], replacements: [] },
-      dictationLanguage: "en",
-      state: baseState,
-      toneId: "email",
-    });
-    // Style is handled by deterministic fast-style post-processing, not by Whisper prompt
-    expect(result).not.toContain("Style:");
-    expect(result).not.toContain("email");
-  });
-
-  it("does NOT inject style hint for verbatim (contract)", () => {
-    const result = buildLocalizedTranscriptionPrompt({
-      entries: { sources: [], replacements: [] },
-      dictationLanguage: "en",
-      state: baseState,
-      toneId: "verbatim",
-    });
-    expect(result).not.toContain("Style:");
-  });
-
-  it("ignores toneId and keeps prompt focused on glossary (no hallucination)", () => {
-    const resultWithTone = buildLocalizedTranscriptionPrompt({
-      entries: { sources: ["MyCompany"], replacements: [] },
-      dictationLanguage: "en",
-      state: baseState,
-      toneId: "bullets",
-    });
-    const resultWithoutTone = buildLocalizedTranscriptionPrompt({
       entries: { sources: ["MyCompany"], replacements: [] },
       dictationLanguage: "en",
       state: baseState,
     });
-    // Contract: toneId must be ignored — prompt must be identical with or without tone
-    expect(resultWithTone).toBe(resultWithoutTone);
-    expect(resultWithTone).toContain("MyCompany");
-    expect(resultWithTone).not.toContain("bulleted");
-    expect(resultWithTone).not.toContain("Style:");
+
+    // The recognizer's initial_prompt is a token bias. Style is applied after
+    // transcription by fast-style.utils.ts, so the prompt must stay glossary
+    // only. Pinned structurally: the builder takes no style argument at all, so
+    // there is no way to inject one.
+    expect(result).toContain("MyCompany");
+    expect(result).not.toMatch(/style/i);
+    expect(result).not.toMatch(/\b(email|bullets|formal|notes|concise)\b/i);
+    // Identical output for an empty glossary, so nothing style-shaped hides in
+    // the instruction sentence either.
+    expect(
+      buildLocalizedTranscriptionPrompt({
+        entries: { sources: [], replacements: [] },
+        dictationLanguage: "en",
+        state: baseState,
+      }),
+    ).not.toMatch(/style/i);
   });
 });
 

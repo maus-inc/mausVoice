@@ -273,3 +273,33 @@ describe("baseline vs fast path", () => {
     // This is architectural, not unit-testable here, but documented
   });
 });
+
+describe("sentence-initial phrase removal keeps the next capital", () => {
+  it("chat re-capitalizes after dropping a leading connective", () => {
+    const out = applyFastStyle("Moreover, the system works.", "chat");
+    expect(out).toBe("The system works.");
+  });
+
+  it("concise re-capitalizes after dropping a leading hedge", () => {
+    const out = applyFastStyle("I think it is fine.", "concise");
+    expect(out).toBe("It is fine.");
+  });
+
+  it("does not capitalize a phrase removed from the middle of a clause", () => {
+    const out = applyFastStyle(
+      "We shipped it and I think it is fine.",
+      "concise",
+    );
+    expect(out).toBe("We shipped it and it is fine.");
+  });
+
+  it("notes keeps actions distinguishable from notes via the checkbox", () => {
+    const out = applyFastStyle(
+      "We shipped it. We need to fix the docs. The build is green.",
+      "notes",
+    );
+    expect(out).toContain("- We shipped it");
+    expect(out).toContain("- The build is green");
+    expect(out).toContain("- [ ] We need to fix the docs");
+  });
+});
