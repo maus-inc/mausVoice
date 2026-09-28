@@ -235,8 +235,12 @@ describe("Groq fallback model", () => {
   });
 
   // An account-scoped rejection fails identically on every model, so a second
-  // request chain only delays surfacing the real problem.
-  it.each([400, 401, 402, 403])(
+  // request chain only delays surfacing the real problem. 403 is deliberately
+  // not here: Groq publishes it as an organisation-level
+  // `PermissionDeniedError` with no model-scoped variant, and the one denial
+  // that is model-scoped arrives on a 404, so a 403 is the one status where
+  // leaving the fallback available is the cheaper mistake.
+  it.each([400, 401, 402])(
     "does not try a second model after an account-scoped %i",
     async (status) => {
       const mocked = vi.mocked(groqGenerateTextResponse);
@@ -249,7 +253,7 @@ describe("Groq fallback model", () => {
     },
   );
 
-  it.each([404, 429, 500, 503])(
+  it.each([403, 404, 429, 500, 503])(
     "still tries a second model after a retryable-model %i",
     async (status) => {
       const mocked = vi.mocked(groqGenerateTextResponse);
@@ -291,7 +295,7 @@ describe("Groq fallback model", () => {
     expect(fallbackError.message).toContain("openai/gpt-oss-120b");
   });
 
-  it("tells the user to change the model when a cause is model-scoped", async () => {
+  it("advises changing the model when a cause is model-scoped", async () => {
     const mocked = vi.mocked(groqGenerateTextResponse);
     // The provider body Groq sends for a model it did not serve. It is
     // ambiguous, but the status is what the repo keys the model-scoped
@@ -327,7 +331,7 @@ describe("Groq fallback model", () => {
     );
   });
 
-  it("tells the user to retry when both causes are transient", async () => {
+  it("advises a retry when both causes are transient", async () => {
     const mocked = vi.mocked(groqGenerateTextResponse);
     // A Groq incident returning 503 for both models. No setting change can
     // affect this, so the old unconditional Settings advice pointed at a

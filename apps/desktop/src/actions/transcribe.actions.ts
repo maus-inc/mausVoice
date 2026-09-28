@@ -15,6 +15,7 @@ import type { GenerateTextOutput } from "../repos/generate-text.repo";
 import { TranscribeAudioOutput } from "../repos/transcribe-audio.repo";
 import type { AppState } from "../state/app.state";
 import { getAppState, produceAppState } from "../store";
+import { classifyPostProcessErrorCategory } from "./post-process-error-category";
 import { PostProcessingRunMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
@@ -395,47 +396,6 @@ const applyPostProcessSuccess = (
     metadata.postProcessModel,
   );
   return nextTranscript;
-};
-
-export const classifyPostProcessErrorCategory = (message: string): string => {
-  const lower = message.toLowerCase();
-  if (
-    lower.includes("402") ||
-    lower.includes("payment required") ||
-    lower.includes("quota")
-  ) {
-    return "Quota or payment required (402)";
-  }
-  if (
-    lower.includes("429") ||
-    lower.includes("rate limit") ||
-    lower.includes("too many requests")
-  ) {
-    return "Rate limit exceeded (429)";
-  }
-  if (
-    lower.includes("401") ||
-    lower.includes("403") ||
-    lower.includes("unauthorized") ||
-    lower.includes("forbidden") ||
-    lower.includes("authentication")
-  ) {
-    return "Authentication failed";
-  }
-  if (lower.includes("timeout") || lower.includes("timed out")) {
-    return "Post-processing timed out";
-  }
-  if (lower.includes("abort") || lower.includes("cancelled")) {
-    return "Request aborted";
-  }
-  if (
-    lower.includes("econnrefused") ||
-    lower.includes("network") ||
-    lower.includes("fetch failed")
-  ) {
-    return "Network error";
-  }
-  return "Post-processing provider error";
 };
 
 export const redactTranscriptContent = (

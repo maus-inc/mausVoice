@@ -9,8 +9,13 @@ import type { ChatCompletionMessageParam } from "groq-sdk/resources/chat/complet
 import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
+import {
+  PROVIDER_MODEL_NOT_FOUND_CODE,
+  readProviderCode,
+  readProviderStatus,
+  redactProviderMessage,
+} from "./provider-error.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
-import { redactProviderSecret } from "./provider-redaction.utils";
 import {
   runSdkTranscription,
   TranscriptionSegment,
@@ -48,23 +53,22 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
  * exactly the case a different model can fix. 429 is absent because Groq
  * enforces per-model rate limits, so another model can still succeed.
  *
- * 403 is present, and the reasoning is recorded because the set reads as if it
- * had been assembled without one. Groq's own 404 body is "The model `x` does
- * not exist or you do not have access to it." A per-model access denial is
- * therefore reported as 404, not 403, and it already reaches the fallback
- * through the 404 exemption above. A 403 arrives as the SDK's separate
- * `PermissionDeniedError` for an organisation the key may not use at all,
- * which no second model in the catalog can change. (Groq's status-to-class
- * table, published by groq-typescript, lists 403 as its own class distinct
- * from both 400 and 404.)
+ * 403 is absent for the same reason, and the lookup behind that is recorded
+ * because the omission reads as unexamined otherwise. The question was whether
+ * a model an organisation is not entitled to comes back as 403, because that
+ * case is model-scoped and would then never reach the fallback. Groq's
+ * published SDKs are the reachable source of truth for the status-to-meaning
+ * mapping: groq-typescript and groq-python both give 403 its own class,
+ * `PermissionDeniedError`, with no model-scoped variant, and the only body
+ * that carries Groq's per-model wording, "The model `x` does not exist or you
+ * do not have access to it.", rides on a 404. The string `model_deaccessed`
+ * does not exist in any published Groq artefact. So the access denial this set
+ * has to worry about is the 404 above, which already reaches the fallback, and
+ * a 403 is an organisation-level refusal that no model in the catalog changes.
+ * Keeping 403 here would buy a faster hard failure in exchange for removing the
+ * second attempt from the one case where it could help.
  */
-const ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES = new Set([400, 401, 402, 403]);
-
-const readErrorStatus = (error: unknown): number | null => {
-  if (typeof error !== "object" || error === null) return null;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : null;
-};
+const ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES = new Set([400, 401, 402]);
 
 /**
  * True when the failure is scoped to the account or the request rather than
@@ -72,8 +76,10 @@ const readErrorStatus = (error: unknown): number | null => {
  * cannot succeed.
  */
 export const isGroqAccountScopedError = (error: unknown): boolean => {
-  const status = readErrorStatus(error);
-  return status !== null && ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES.has(status);
+  const status = readProviderStatus(error);
+  return (
+    status !== undefined && ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES.has(status)
+  );
 };
 
 /**
@@ -97,14 +103,21 @@ export class GroqProviderError extends Error {
  * This is terminal for that id but deliberately NOT account-scoped: a
  * different model can still answer, which is exactly what the caller's
  * fallback chain exists to do. What must not happen is the provider's raw body
- * reaching the user, because "The model `x` does not exist or you do not have
- * access to it." names a model they cannot change from inside a snackbar.
+ * being carried forward, because "The model `x` does not exist or you do not
+ * have access to it." reads as a verdict the user cannot act on and as a leak
+ * of provider internals.
  *
  * The wording stays neutral on purpose. Groq's own body cannot tell a retired
- * id from a model the account is not entitled to, and an organisation without
- * entitlement gets a 404, not a 403, so asserting a retirement would
- * misdiagnose a real access failure. The id is named so the chain is
- * diagnosable; the cause is left to the caller to resolve.
+ * id from a model the account is not entitled to, and it reports the access
+ * denial on the same 404, so asserting a retirement would misdiagnose a real
+ * access failure. The id is named so the chain is diagnosable; the cause is
+ * left to the caller to resolve.
+ *
+ * Scope: this is a diagnostic message, not user-facing copy. It reaches the
+ * desktop log through `recordPostProcessFailure`. The user sees one fixed
+ * toast and the classified category beside it, never this text, because the
+ * chain has no way to guarantee the redaction every provider on the chain
+ * applies.
  */
 export class GroqModelUnavailableError extends GroqProviderError {
   readonly model: string;
@@ -126,9 +139,6 @@ const readErrorMessage = (error: unknown): string => {
   return "";
 };
 
-/** Groq reports this as `error.code` on the parsed 404 body. */
-const MODEL_NOT_FOUND_CODE = "model_not_found";
-
 /**
  * Fallback for SDKs and proxies that flatten the body into the message instead
  * of preserving `error.code`.
@@ -143,28 +153,28 @@ const MODEL_NOT_FOUND_MESSAGE =
  */
 export const isGroqModelUnavailableError = (error: unknown): boolean => {
   if (error instanceof GroqModelUnavailableError) return true;
-  if (readErrorStatus(error) !== 404) return false;
+  if (readProviderStatus(error) !== 404) return false;
 
-  const body = (error as { error?: { code?: unknown } }).error;
-  const code = typeof body?.code === "string" ? body.code : null;
-  return code === MODEL_NOT_FOUND_CODE
+  return readProviderCode(error) === PROVIDER_MODEL_NOT_FOUND_CODE
     ? true
     : MODEL_NOT_FOUND_MESSAGE.test(readErrorMessage(error));
 };
 
 /**
  * Replace literal API key and authorization material anywhere in a provider
- * message. Groq issues `gsk_`; the shared shapes (including Cerebras's `csk_`,
- * `sk-` and `sk_`, and the `Bearer` / `Authorization:` / `api_key` forms a
- * proxy can echo) live in `redactProviderSecret`, so a new key prefix fixed for
- * one provider cannot be forgotten in the other. Without `gsk_` a 401 that
- * echoes the supplied key would put the key into logs and into persisted
+ * message.
+ *
+ * This is a named alias of the shared scrubber, not a second implementation.
+ * The shared pattern list is one combined alternation over `gsk`, `csk` and
+ * `sk` followed by `-` or `_`, so it already covers every prefix Groq, Cerebras
+ * and the OpenAI-compatible providers issue, plus the `Bearer`, `Authorization`
+ * and `api_key` forms a proxy can echo. A provider that needs a prefix nobody
+ * issues adds it at the one shared list rather than in a second file, which is
+ * the drift this alias exists to prevent. Without it a 401 that echoes the
+ * supplied key would put the key into logs and into persisted
  * `postProcessError` metadata.
  */
-const GROQ_SECRET_PATTERNS: readonly RegExp[] = [/\bgsk_[a-z0-9_-]+/gi];
-
-export const redactGroqMessage = (message: string): string =>
-  redactProviderSecret(message, GROQ_SECRET_PATTERNS);
+export const redactGroqMessage = redactProviderMessage;
 
 /**
  * A Groq error that names no model-scoped cause. Covers a string throw, a
@@ -217,7 +227,7 @@ export const normalizeGroqError = (error: unknown, model: string): Error => {
     return new GroqModelUnavailableError(model);
   }
 
-  const status = readErrorStatus(error) ?? undefined;
+  const status = readProviderStatus(error);
   const rawMessage =
     error instanceof Error && error.message
       ? error.message

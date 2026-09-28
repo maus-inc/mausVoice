@@ -85,8 +85,13 @@ const isModelScopedCause = (cause: unknown): boolean =>
  *
  * "Choose a different post-processing model in Settings" is only true when at
  * least one cause is model-scoped. On a provider incident returning 503 for
- * both models, no setting can help, so the advice pointed the user at a
- * control that could not change the result.
+ * both models, no setting can help, so the advice pointed at a control that
+ * could not change the result.
+ *
+ * This text is diagnostic, not user-facing copy. It reaches the desktop log
+ * through `recordPostProcessFailure`, and the user sees the classified category
+ * beside the fixed failure toast rather than this sentence, so a model id from
+ * a provider response is never rendered in the interface.
  */
 const describeChainAdvice = (
   primaryCause: unknown,
@@ -102,10 +107,10 @@ const describeChainAdvice = (
  * Both models in the Groq fallback chain failed.
  *
  * Reporting only the second error made an unavailable fallback model look
- * exactly like the configured model failing on its own: the user saw a provider
- * 404 naming a model they never chose, with no sign a second attempt had even
- * run. This names both models and both causes so the next retirement is visible
- * as a chain failure rather than a mystery.
+ * exactly like the configured model failing on its own: the log showed a
+ * provider 404 naming a model the user never chose, with no sign a second
+ * attempt had even run. This names both models and both causes so the next
+ * retirement is visible as a chain failure rather than a mystery.
  */
 export class GroqGenerateTextFallbackError extends Error {
   readonly primaryModel: GenerateTextModel;

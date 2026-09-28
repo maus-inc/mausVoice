@@ -306,6 +306,59 @@ describe("groqGenerateTextResponse", () => {
   });
 });
 
+describe("isGroqAccountScopedError", () => {
+  it("treats 400, 401 and 402 as account-scoped", async () => {
+    const { isGroqAccountScopedError } = await import("../src/groq.utils");
+
+    // A malformed request, a bad key and an exhausted balance fail the same
+    // way on every model, so a second request chain can only add latency.
+    for (const status of [400, 401, 402]) {
+      expect(
+        isGroqAccountScopedError(Object.assign(new Error("x"), { status })),
+      ).toBe(true);
+    }
+  });
+
+  it("treats 403 as model-scoped so a denial still reaches the fallback", async () => {
+    // Groq publishes 403 as its own `PermissionDeniedError` class with no
+    // model-scoped variant, and the per-model wording, "does not exist or you
+    // do not have access to it", rides on a 404. There is no documented code
+    // for a per-model 403. Because a model-scoped denial is the exact case the
+    // fallback exists for, 403 is left out of the account-scoped set: keeping
+    // it would trade a possible recovery for a slightly faster hard failure on
+    // a denial that a second model might still answer.
+    const { isGroqAccountScopedError } = await import("../src/groq.utils");
+
+    expect(
+      isGroqAccountScopedError(
+        Object.assign(new Error("forbidden"), { status: 403 }),
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves the statuses a different model can fix out of the set", async () => {
+    const { isGroqAccountScopedError } = await import("../src/groq.utils");
+
+    // 404 is Groq's model_not_found, 429 is enforced per model, and 5xx is
+    // transient. None of them is fixed by swapping the model id.
+    for (const status of [404, 429, 500, 503]) {
+      expect(
+        isGroqAccountScopedError(Object.assign(new Error("x"), { status })),
+      ).toBe(false);
+    }
+  });
+
+  it("returns false for a value that carries no status", async () => {
+    const { isGroqAccountScopedError } = await import("../src/groq.utils");
+
+    // A network failure, an abort and a bare string throw all reach here. None
+    // of them proves a second model would fail too, so they stay retryable.
+    expect(isGroqAccountScopedError(new Error("socket hang up"))).toBe(false);
+    expect(isGroqAccountScopedError("socket hang up")).toBe(false);
+    expect(isGroqAccountScopedError(null)).toBe(false);
+  });
+});
+
 describe("retired model handling", () => {
   // Every `vi.doMock` in this file is paired with this teardown. Without it the
   // mocked Groq client outlives the block and the next block appended here
@@ -434,6 +487,18 @@ describe("redactGroqMessage", () => {
     expect(redactGroqMessage("csk_" + "liveAbCd1234")).toBe("[redacted]");
     expect(redactGroqMessage("sk-" + "liveAbCd1234")).toBe("[redacted]");
     expect(redactGroqMessage("sk_" + "liveAbCd1234")).toBe("[redacted]");
+  });
+
+  it("redacts the hyphenated form of the Groq prefix", async () => {
+    // Coverage gained by delegating to the shared scrubber rather than
+    // refactoring a local list. The four private patterns this replaced matched
+    // `gsk_`, `csk_`, `sk-` and `sk_` and nothing else, so a `gsk-` token fell
+    // through every one of them and into the log. The shared pattern is a
+    // single alternation over the three prefixes followed by `-` or `_`.
+    const { redactGroqMessage } = await import("../src/groq.utils");
+
+    expect(redactGroqMessage("gsk-" + "liveAbCd1234")).toBe("[redacted]");
+    expect(redactGroqMessage("csk-" + "liveAbCd1234")).toBe("[redacted]");
   });
 
   it("redacts a bare Bearer token a proxy echoed into the body", async () => {

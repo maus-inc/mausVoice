@@ -12,7 +12,10 @@ import {
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
-import { redactProviderSecret } from "./provider-redaction.utils";
+import {
+  readProviderStatus,
+  redactProviderMessage,
+} from "./provider-error.utils";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
 export type CerebrasModel =
@@ -52,27 +55,19 @@ export const isCerebrasTerminalStatus = (status: number): boolean =>
  * Authorization header. Never reveals the key value itself (no length/first
  * characters), so a message like "key csk_ab" redacts the whole token.
  *
- * The shared shapes live in `redactProviderSecret`, and `csk_` is one of them
- * because a wire-compatible deployment can put a Cerebras-shaped token into
- * another provider's error text. Cerebras has no prefix of its own to add.
+ * This is a named alias of the shared scrubber, not a second implementation.
+ * Cerebras issues `csk_` and the shared pattern list already covers it, so
+ * there is nothing provider-specific left to add, and a prefix added for one
+ * provider can no longer be forgotten here.
  */
-export const redactCerebrasMessage = (message: string): string =>
-  redactProviderSecret(message);
-
-const readStatus = (error: unknown): number | undefined => {
-  if (typeof error !== "object" || error === null || !("status" in error)) {
-    return undefined;
-  }
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
-};
+export const redactCerebrasMessage = redactProviderMessage;
 
 /** True when a thrown value carries a non-retryable Cerebras HTTP status. */
 export const isCerebrasTerminalError = (error: unknown): boolean => {
   if (error instanceof CerebrasProviderError && error.status !== undefined) {
     return isCerebrasTerminalStatus(error.status);
   }
-  const status = readStatus(error);
+  const status = readProviderStatus(error);
   return status !== undefined && isCerebrasTerminalStatus(status);
 };
 
