@@ -50,8 +50,10 @@ const REPEATED_WORD_RE = /\b(\w+)\s+\1\b/gi;
 // avoid backtracking. Every marker must be comma-delimited on both sides, so
 // ordinary "no" ("I told him no, then we left") and ordinary "I mean" ("the
 // mean of the data, I mean it statistically") are left alone.
-const SELF_CORRECTION_PRECISE_RE =
-  /[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*/gi;
+const SELF_CORRECTION_PRECISE_RE = new RegExp(
+  String.raw`[^.!?]{1,60},\s*(?:actually,|no,|I mean,|or rather,)\s*`,
+  "gi",
+);
 
 const CONTRACTION_MAP: Record<string, string> = {
   "don't": "do not",
@@ -223,66 +225,71 @@ const toPolished = (raw: string): string => {
   t = removeFillerWords(t, true);
   t = fixCapitalizationAndPunctuation(t);
   t = breakIntoParagraphs(t, 3);
-  t = t.replace(/—/g, "-");
+  t = t.replaceAll("—", "-");
   return t;
 };
 
+const EMAIL_GREETING_RE = /^(?:hi|hello|hey|dear)\b/i;
+const EMAIL_CLOSING_RE =
+  /\b(?:thanks|thank you|best|regards|sincerely|cheers)\b/i;
+
+/**
+ * An opener or sign-off is only lifted out of the body when it is short. A
+ * long opening sentence that merely starts with "Hi" is body, not a greeting.
+ */
+const isShortEnoughToLift = (
+  sentence: string,
+  maxWords: number,
+  maxChars: number,
+): boolean => {
+  const trimmed = sentence.trim();
+  return trimmed.split(/\s+/).length <= maxWords || trimmed.length <= maxChars;
+};
+
+const splitEmailSections = (
+  sentences: string[],
+): { greeting: string; body: string[]; closing: string } => {
+  const body = [...sentences];
+  let greeting = "";
+  let closing = "";
+
+  const first = body.at(0);
+  if (
+    first &&
+    EMAIL_GREETING_RE.test(first) &&
+    isShortEnoughToLift(first, 4, 20)
+  ) {
+    greeting = first;
+    body.shift();
+  }
+
+  const last = body.at(-1);
+  if (last && EMAIL_CLOSING_RE.test(last) && isShortEnoughToLift(last, 5, 25)) {
+    closing = last;
+    body.pop();
+  }
+
+  return { greeting, body, closing };
+};
+
+const joinEmailBlocks = (blocks: string[]): string =>
+  blocks
+    .filter(Boolean)
+    .join("\n\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
 const toEmail = (raw: string): string => {
-  const guarded = truncateGuard(raw);
-  const polished = toPolished(guarded);
+  const polished = toPolished(truncateGuard(raw));
   const sentences = splitIntoSentences(polished);
   if (sentences.length === 0) return polished;
 
-  const greetingRe = /^(?:hi|hello|hey|dear)\b/i;
-  const closingRe = /\b(?:thanks|thank you|best|regards|sincerely|cheers)\b/i;
+  const { greeting, body, closing } = splitEmailSections(sentences);
+  const bodyText =
+    body.length > 0 ? breakIntoParagraphs(body.join(" "), 2) : "";
+  const joined = joinEmailBlocks([greeting, bodyText, closing]);
 
-  let greeting = "";
-  let bodySentences = [...sentences];
-  let closing = "";
-
-  if (sentences.length >= 1 && greetingRe.test(sentences[0])) {
-    const first = sentences[0];
-    const wordCount = first.trim().split(/\s+/).length;
-    if (wordCount <= 4 || first.length <= 20) {
-      greeting = first;
-      bodySentences = sentences.slice(1);
-    }
-  }
-
-  if (
-    bodySentences.length >= 1 &&
-    closingRe.test(bodySentences[bodySentences.length - 1])
-  ) {
-    const last = bodySentences[bodySentences.length - 1];
-    const wordCount = last.trim().split(/\s+/).length;
-    if (wordCount <= 5 || last.length <= 25) {
-      closing = last;
-      bodySentences = bodySentences.slice(0, -1);
-    }
-  }
-
-  const body =
-    bodySentences.length > 0
-      ? breakIntoParagraphs(bodySentences.join(" "), 2)
-      : "";
-
-  const parts: string[] = [];
-  if (greeting) parts.push(greeting);
-  if (body) {
-    if (parts.length > 0) parts.push("", body);
-    else parts.push(body);
-  }
-  if (closing) {
-    if (parts.length > 0) parts.push("", closing);
-    else parts.push(closing);
-  }
-
-  if (parts.length === 0) return body || polished;
-
-  return parts
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return joined || polished;
 };
 
 const CHAT_CONNECTIVE_RE =
@@ -312,7 +319,7 @@ const toFormal = (raw: string): string => {
   let t = toPolished(guarded);
   for (const [re, expansion] of CONTRACTION_RES) {
     t = t.replace(re, (match) => {
-      const isCapitalized = match[0] === match[0].toUpperCase();
+      const isCapitalized = match.startsWith(match[0].toUpperCase());
       return isCapitalized ? capitalizeFirst(expansion) : expansion;
     });
   }
