@@ -22,6 +22,7 @@ import {
   ClaudeGenerateTextRepo,
   DeepseekGenerateTextRepo,
   GeminiGenerateTextRepo,
+  GroqGenerateTextFallbackError,
   GroqGenerateTextRepo,
   OpenAIGenerateTextRepo,
   OpenAICompatibleGenerateTextRepo,
@@ -263,6 +264,52 @@ describe("Groq fallback model", () => {
       expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
     },
   );
+
+  it("names both models and both causes when the fallback also fails", async () => {
+    // Reporting only the second error made a retired fallback look exactly
+    // like the configured model failing alone.
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked
+      .mockRejectedValueOnce(new Error("primary model exploded"))
+      .mockRejectedValueOnce(new Error("fallback model is retired"));
+
+    const repo = new GroqGenerateTextRepo("k", null);
+    const error = await repo
+      .generateText({ prompt: "p" })
+      .catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(GroqGenerateTextFallbackError);
+    const fallbackError = error as InstanceType<
+      typeof GroqGenerateTextFallbackError
+    >;
+    expect(fallbackError.primaryModel).toBe("openai/gpt-oss-20b");
+    expect(fallbackError.fallbackModel).toBe("openai/gpt-oss-120b");
+    expect(fallbackError.message).toContain("primary model exploded");
+    expect(fallbackError.message).toContain("fallback model is retired");
+    expect(fallbackError.message).toContain("openai/gpt-oss-20b");
+    expect(fallbackError.message).toContain("openai/gpt-oss-120b");
+  });
+
+  it("does not report a chain failure when the abort lands on the fallback", async () => {
+    const controller = new AbortController();
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    // The primary fails while the caller is still live, so the chain does
+    // reach the second attempt; the deadline then expires on that attempt.
+    mocked.mockRejectedValueOnce(new Error("primary failed"));
+    mocked.mockImplementationOnce(() => {
+      controller.abort();
+      return Promise.reject(new Error("aborted"));
+    });
+
+    const repo = new GroqGenerateTextRepo("k", null);
+    const error = await repo
+      .generateText({ prompt: "p", signal: controller.signal })
+      .catch((e: unknown) => e);
+
+    // The caller's deadline is not a chain failure and must stay recognizable.
+    expect(error).not.toBeInstanceOf(GroqGenerateTextFallbackError);
+    expect((error as Error).message).toBe("aborted");
+  });
 });
 
 describe("default model fallback when no model is stored", () => {
