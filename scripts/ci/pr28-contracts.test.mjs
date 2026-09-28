@@ -397,7 +397,16 @@ describe("PR28 native placement contracts", () => {
 
   it("has monitor-disconnect recovery on every native platform", () => {
     assert.match(source.gtkPill, /still_connected/);
-    assert.match(source.macPill, /chosen_visible/);
+    // macOS resolves the containing screen into `chosen`, carrying that
+    // screen's visible frame. A display unplugged mid-drag leaves no screen
+    // containing the anchor, so the match arm falls back to the primary
+    // screen's visible frame instead of freezing at stale coordinates.
+    assert.match(source.macPill, /match chosen \{/);
+    assert.match(source.macPill, /None if count > 0 =>/);
+    assert.match(
+      source.macPill,
+      /let visible = screen_visible_frame\(primary\)/,
+    );
     assert.match(source.macPill, /primary/);
     assert.match(source.windowsPill, /MONITOR_DEFAULTTONEAREST/);
   });
@@ -870,10 +879,24 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("resolves GTK crossing from the live physical window position, even before the first save", () => {
+    // The live physical origin is read once in the shared center helper and
+    // consumed by the monitor resolver. Assert both halves so the contract
+    // pins that the seam math uses the applied drag origin, and not which
+    // function the read happens to sit in.
+    const center = source.gtkPill
+      .split("pub(crate) fn x11_pill_center(")[1]
+      .split("fn x11_pill_monitor(")[0];
+    assert.match(center, /state\.x11_drag_applied\.get\(\)/);
+    assert.doesNotMatch(
+      center,
+      /state\.(?:saved_x|saved_y|has_saved_position)/,
+    );
+
     const crossing = source.gtkPill
       .split("fn x11_pill_monitor(")[1]
       .split("fn tick_crossing_frame(")[0];
-    assert.match(crossing, /state\.x11_drag_applied\.get\(\)/);
+    assert.match(crossing, /x11_pill_center\(state, scale\)\?/);
+    assert.match(crossing, /center\.root\?/);
     assert.doesNotMatch(
       crossing,
       /state\.(?:saved_x|saved_y|has_saved_position)/,
@@ -881,7 +904,7 @@ describe("native gesture adapter contracts", () => {
     assert.match(crossing, /x11::monitor_at_physical_point/);
     assert.match(
       source.gtkX11,
-      /let monitor = monitor_at_physical_point\(display, anchor_x, anchor_y\)\?/,
+      /let monitor = monitor_at_physical_point\(display, anchor_x, anchor_y, scale\)\?/,
     );
   });
 
