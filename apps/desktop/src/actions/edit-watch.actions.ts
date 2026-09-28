@@ -4,7 +4,7 @@ import { getIntl } from "../i18n/intl";
 import { getAppState, produceAppState } from "../store";
 import { collectTermValues } from "../utils/app.utils";
 import {
-  baselineHoldsDictation,
+  countDictationOccurrences,
   findEditCorrections,
 } from "../utils/edit-watch.utils";
 import { getLogger } from "../utils/log.utils";
@@ -16,6 +16,12 @@ import { showToast } from "./toast.actions";
 const WATCH_WINDOW_MS = 90_000;
 const DENIED_TERMS_KEY = "mausvoice:auto-learn-denied";
 const MAX_DENIED_TERMS = 50;
+/**
+ * How often the side-effect poll samples the focused field. It has to stay
+ * below EDIT_QUIESCENCE_MS for the quiet window to be reachable; see the note
+ * on that constant. Exported so the component cannot drift away from it.
+ */
+export const EDIT_POLL_MS = 500;
 // The proposal toast is shown for this long. The TTL adds a small grace so a
 // delayed native toast IPC delivery cannot outlive the pending proposal.
 const PROPOSAL_TOAST_DURATION_MS = 10_000;
@@ -24,12 +30,17 @@ const PROPOSAL_TTL_MS = PROPOSAL_TOAST_DURATION_MS + 2_000;
  * How long the focused field must read identically before its text counts as
  * finished. The watcher samples through an accessibility poll instead of
  * keystroke events, so this is a trailing-edge debounce measured against the
- * poll: a sample has to survive one poll unchanged and then still be unchanged
- * once the quiet window has elapsed. Proposing on a mid-edit sample is what
- * produced toasts for half-typed fragments such as "Son" while the user was
- * still typing "Soniya".
+ * poll: a sample has to survive further polls unchanged and only then is it
+ * still unchanged once the quiet window has elapsed. Proposing on a mid-edit
+ * sample is what produced toasts for half-typed fragments such as "Son" while
+ * the user was still typing "Soniya".
+ *
+ * EDIT_POLL_MS has to stay below this for the constant to do any work. A poll
+ * slower than the quiet window can only ever observe samples that are
+ * EDIT_POLL_MS apart, so the window is already satisfied on the second poll and
+ * a user who pauses mid-word is offered a half-typed fragment.
  */
-const EDIT_QUIESCENCE_MS = 1_200;
+export const EDIT_QUIESCENCE_MS = 1_200;
 /**
  * The baseline has to be read while the dictation is still intact, so the
  * capture starts the moment the dictation lands rather than waiting for the
@@ -52,6 +63,18 @@ type WatchSnapshot = {
    * diffs against a snapshot it verified, never against a guess.
    */
   baselineText: string | null;
+  /**
+   * How many times the dictated text was present in `baselineText`. A paste
+   * adds an occurrence, so this is how the capture recognises a baseline taken
+   * before the dictation landed and replaces it with the post-paste read.
+   */
+  baselineOccurrences: number;
+  /**
+   * Terms already offered during this watch. The prompt can be left to time out
+   * without the user ever seeing it, so an expired prompt only suppresses itself
+   * for the rest of the watch. Only an explicit Ignore is remembered beyond it.
+   */
+  proposedTerms: Set<string>;
   /** Last observed field text, and when it was first observed. */
   settledText: string | null;
   settledAt: number;
@@ -64,10 +87,19 @@ let activeWatch: WatchSnapshot | null = null;
 const isFeatureEnabled = (): boolean =>
   getMyUserPreferences(getAppState())?.autoLearnFromEditsEnabled ?? false;
 
+/**
+ * The session copy of the deny list, used only when local storage cannot
+ * answer. Storage is the source of truth wherever it works, so a blocked or
+ * quota-limited origin has nothing to fall back on, and dropping the denial
+ * there would let the same prompt repeat on every poll in exactly the case the
+ * list exists to prevent.
+ */
+let sessionDeniedTerms = new Set<string>();
+
 const readDeniedTerms = (): Set<string> => {
   const storage = getLocalStorage();
   if (!storage) {
-    return new Set();
+    return new Set(sessionDeniedTerms);
   }
   try {
     const raw = storage.getItem(DENIED_TERMS_KEY);
@@ -80,19 +112,20 @@ const readDeniedTerms = (): Set<string> => {
     }
     return new Set(parsed.filter((v): v is string => typeof v === "string"));
   } catch {
-    return new Set();
+    return new Set(sessionDeniedTerms);
   }
 };
 
 const rememberDeniedTerm = (term: string): void => {
+  const key = term.toLowerCase();
+  sessionDeniedTerms = new Set([...sessionDeniedTerms, key]);
   const storage = getLocalStorage();
   if (!storage) {
     return;
   }
-  const key = term.toLowerCase();
-  const denied = readDeniedTerms();
-  denied.add(key);
-  const trimmed = Array.from(denied).slice(-MAX_DENIED_TERMS);
+  const trimmed = Array.from(new Set([...readDeniedTerms(), key])).slice(
+    -MAX_DENIED_TERMS,
+  );
   try {
     storage.setItem(DENIED_TERMS_KEY, JSON.stringify(trimmed));
   } catch (error) {
@@ -114,15 +147,28 @@ const readFieldText = async (): Promise<string | null> => {
 };
 
 /**
- * Reads the focused field until it holds the dictation, and records that
- * snapshot as the baseline later polls diff against. Stops early once the watch
- * is replaced or a baseline exists, and gives up after
- * BASELINE_CAPTURE_ATTEMPTS reads so a field that never reports the dictation
- * cannot keep the loop alive for the whole watch window.
+ * Records the sample as the baseline when it is the first one that can be
+ * trusted, and keeps looking for a later paste.
+ *
+ * A read taken before the dictation lands is indistinguishable from one taken
+ * straight after it by containment alone, so the sample is only latched once
+ * the field is seen to hold the dictated text, and a later sample holding more
+ * copies of it than the latched one means the capture raced the paste and the
+ * baseline moves to that later read. Without the second rule, dictating the
+ * same sentence into the same field twice latches the pre-paste text, and the
+ * correction to the second copy is then read as an edit to unrelated text and
+ * never learned.
+ *
+ * A failed read is expected rather than fatal: the native command rejects on a
+ * timeout, which is the normal outcome while the target app is busy inserting.
+ * The loop spends its remaining attempts instead of ending the capture, because
+ * the settled-poll fallback cannot cover the same gap. It only sees samples
+ * from at least one poll after the field went quiet, by which time a fast
+ * correction has already replaced the dictation.
  */
 const captureBaseline = async (snapshot: WatchSnapshot): Promise<void> => {
   for (let attempt = 0; attempt < BASELINE_CAPTURE_ATTEMPTS; attempt += 1) {
-    if (activeWatch !== snapshot || snapshot.baselineText) {
+    if (activeWatch !== snapshot) {
       return;
     }
 
@@ -131,13 +177,17 @@ const captureBaseline = async (snapshot: WatchSnapshot): Promise<void> => {
       if (activeWatch !== snapshot) {
         return;
       }
-      if (fieldText && baselineHoldsDictation(snapshot.text, fieldText)) {
-        snapshot.baselineText ??= fieldText;
-        return;
+      if (fieldText) {
+        const occurrences = countDictationOccurrences(snapshot.text, fieldText);
+        const isNewerPaste =
+          !snapshot.baselineText || occurrences > snapshot.baselineOccurrences;
+        if (occurrences > 0 && isNewerPaste) {
+          snapshot.baselineText = fieldText;
+          snapshot.baselineOccurrences = occurrences;
+        }
       }
     } catch (error) {
       getLogger().warning(`Edit watch baseline capture failed: ${error}`);
-      return;
     }
 
     await delayed(BASELINE_CAPTURE_INTERVAL_MS);
@@ -162,6 +212,8 @@ export const beginEditWatch = (text: string): void => {
     text: normalized,
     startedAt: Date.now(),
     baselineText: null,
+    baselineOccurrences: 0,
+    proposedTerms: new Set<string>(),
     settledText: null,
     settledAt: 0,
   };
@@ -218,10 +270,12 @@ const resolveBaseline = (
   if (snapshot.baselineText) {
     return snapshot.baselineText;
   }
-  if (!baselineHoldsDictation(snapshot.text, fieldText)) {
+  const occurrences = countDictationOccurrences(snapshot.text, fieldText);
+  if (occurrences === 0) {
     return null;
   }
   snapshot.baselineText = fieldText;
+  snapshot.baselineOccurrences = occurrences;
   return fieldText;
 };
 
@@ -260,10 +314,14 @@ export const pollEditWatch = async (): Promise<void> => {
     if (Date.now() - pending.proposedAt <= PROPOSAL_TTL_MS) {
       return;
     }
-    // Expiry means the user saw the prompt and let it go, which is the same
-    // signal as clicking Ignore. Record it so the next poll cannot offer the
-    // identical term again on a loop.
-    rememberDeniedTerm(pending.term);
+    // The term is already in snapshot.proposedTerms from the poll that raised
+    // the prompt, so expiring it only stops this watch from repeating itself.
+    // It is deliberately not a permanent denial: the toast is delivered on a
+    // queue behind every other toast, so this TTL can fire while the pill is
+    // still on screen, and it fires with nothing at all when the delivery
+    // failed. Writing a lasting denial there would blacklist a term the user
+    // may never have been shown, and would blacklist it before the Add click
+    // landed, so the click would do nothing.
     clearAutoLearnProposal();
   }
 
@@ -300,10 +358,14 @@ export const pollEditWatch = async (): Promise<void> => {
     }
 
     const term = corrections[0];
-    if (readDeniedTerms().has(term.toLowerCase())) {
+    if (
+      snapshot.proposedTerms.has(term) ||
+      readDeniedTerms().has(term.toLowerCase())
+    ) {
       return;
     }
 
+    snapshot.proposedTerms.add(term);
     produceAppState((draft) => {
       draft.autoLearn.proposal = { term, proposedAt: Date.now() };
     });

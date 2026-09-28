@@ -36,7 +36,7 @@ vi.mock("../../hooks/toast.hooks", () => ({
 // before toasts/localStorage are touched. The mock must cover the whole module
 // surface the watcher imports, or a second poll would call into undefined.
 vi.mock("../../utils/edit-watch.utils", () => ({
-  baselineHoldsDictation: () => true,
+  countDictationOccurrences: () => 1,
   findEditCorrections: () => [],
 }));
 

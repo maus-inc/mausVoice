@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EDIT_POLL_MS,
+  EDIT_QUIESCENCE_MS,
   acceptAutoLearnProposal,
   beginEditWatch,
   endEditWatch,
@@ -15,6 +17,9 @@ const state = vi.hoisted(() => ({
   termById: {},
 }));
 const backingStore = vi.hoisted(() => new Map<string, string>());
+// Stands in for a blocked or quota-limited origin, where local storage is
+// present but cannot answer.
+const storageBlocked = vi.hoisted(() => ({ value: false }));
 
 const DENIED_KEY = "mausvoice:auto-learn-denied";
 
@@ -28,15 +33,18 @@ vi.mock("../utils/user.utils", () => ({
 }));
 
 vi.mock("../utils/local-storage.utils", () => ({
-  getLocalStorage: () => ({
-    getItem: (key: string) => backingStore.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      backingStore.set(key, value);
-    },
-    removeItem: (key: string) => {
-      backingStore.delete(key);
-    },
-  }),
+  getLocalStorage: () =>
+    storageBlocked.value
+      ? null
+      : {
+          getItem: (key: string) => backingStore.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            backingStore.set(key, value);
+          },
+          removeItem: (key: string) => {
+            backingStore.delete(key);
+          },
+        },
 }));
 
 vi.mock("../utils/log.utils", () => ({
@@ -88,8 +96,15 @@ const settleBaseline = async (fieldText: string) => {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  // A bare mockReset() leaves the implementation-less mock returning undefined,
+  // and beginEditWatch starts the baseline capture synchronously up to its
+  // first await. Without a safe default every read throws inside that capture,
+  // it dies on attempt 0, and the whole suite passes while the mechanism this
+  // change is about never runs.
   invokeMock.mockReset();
+  invokeMock.mockResolvedValue({ textContent: null });
   backingStore.clear();
+  storageBlocked.value = false;
   state.autoLearn.proposal = null;
 });
 
@@ -104,23 +119,37 @@ describe("edit-watch edit quiescence", () => {
     await settleBaseline("my wife's name is Sonia");
     expect(state.autoLearn.proposal).toBeNull();
 
-    // Each keystroke resets the quiet window, so no half-typed fragment is
-    // ever offered.
+    // Steps at the shipped poll cadence. Each keystroke resets the quiet
+    // window, so no half-typed fragment is ever offered.
     setField("my wife's name is Son");
-    await advanceAndPoll(300);
+    await advanceAndPoll(EDIT_POLL_MS);
     expect(state.autoLearn.proposal).toBeNull();
 
     setField("my wife's name is Soni");
-    await advanceAndPoll(300);
+    await advanceAndPoll(EDIT_POLL_MS);
     expect(state.autoLearn.proposal).toBeNull();
 
     setField("my wife's name is Soniya");
-    await advanceAndPoll(300);
+    await advanceAndPoll(EDIT_POLL_MS);
     expect(state.autoLearn.proposal).toBeNull();
 
-    // The user stopped typing. The finished word is proposed once.
-    await advanceAndPoll(1_300);
+    // Two further polls are still inside the quiet window measured from the
+    // last change, so the finished word keeps waiting.
+    await advanceAndPoll(EDIT_POLL_MS);
+    expect(state.autoLearn.proposal).toBeNull();
+    await advanceAndPoll(EDIT_POLL_MS);
+    expect(state.autoLearn.proposal).toBeNull();
+
+    // The user stopped typing and the window elapsed. Proposed once.
+    await advanceAndPoll(EDIT_POLL_MS);
     expect(state.autoLearn.proposal?.term).toBe("Soniya");
+  });
+
+  it("keeps the quiet window longer than a single poll gap", () => {
+    // The window is only meaningful while the poll is faster than it. With the
+    // poll at or above the window, every second sample would already satisfy
+    // it and a user pausing mid-word would be offered a fragment.
+    expect(EDIT_POLL_MS).toBeLessThan(EDIT_QUIESCENCE_MS);
   });
 
   it("records a changed sample without proposing while inside the quiet window", async () => {
@@ -194,10 +223,66 @@ describe("edit-watch baseline", () => {
 
     expect(state.autoLearn.proposal?.term).toBe("Ralf");
   });
+
+  it("spends the remaining attempts when a baseline read rejects", async () => {
+    // The native command rejects on a timeout, which is the expected failure
+    // while the target app is busy. The settled-poll fallback cannot cover the
+    // same gap, because its first admissible sample arrives at least a poll
+    // after the field went quiet, by which time a fast correction has already
+    // replaced the dictation.
+    invokeMock
+      .mockRejectedValueOnce(new Error("field read timed out"))
+      .mockResolvedValue({ textContent: "call Ralph" });
+
+    beginEditWatch("call Ralph");
+    await vi.advanceTimersByTimeAsync(400);
+
+    setField("call Ralf");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal?.term).toBe("Ralf");
+  });
+
+  it("replaces a pre-paste baseline once the dictation lands", async () => {
+    // The field already holds the dictated text, so the first read latches a
+    // pre-paste baseline. The paste then adds a second copy, and the capture
+    // has to move the baseline onto it or the correction to the new copy is
+    // read as an edit to unrelated text and lost.
+    setField("call Ralph");
+    invokeMock
+      .mockResolvedValueOnce({ textContent: "call Ralph" })
+      .mockResolvedValue({ textContent: "call Ralph call Ralph" });
+
+    beginEditWatch("call Ralph");
+    await vi.advanceTimersByTimeAsync(400);
+
+    setField("call Ralph call Ralf");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal?.term).toBe("Ralf");
+  });
+
+  it("does not mistake a longer unrelated field for the dictation", async () => {
+    // The pre-paste read is the ordinary case: the field does not hold the
+    // dictation yet, so the capture must not latch it as the baseline.
+    setField("Quarterly Review Board meeting");
+    beginEditWatch("call Ralph");
+    await vi.advanceTimersByTimeAsync(400);
+
+    setField("Quarterly Review Board meeting call Ralph");
+    await advanceAndPoll(1_500);
+    setField("Quarterly Review Board meeting call Ralf");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal?.term).toBe("Ralf");
+  });
 });
 
 describe("edit-watch proposal lifecycle", () => {
-  it("remembers a term whose toast expired unanswered instead of looping", async () => {
+  it("stops offering an expired term for the rest of the watch without blacklisting it", async () => {
     beginEditWatch("my wife's name is Sonia");
     await settleBaseline("my wife's name is Sonia");
 
@@ -207,14 +292,46 @@ describe("edit-watch proposal lifecycle", () => {
     expect(state.autoLearn.proposal?.term).toBe("Soniya");
 
     // The pill hid the toast on its own timer: no accept and no reject ever
-    // arrived, so the TTL is the only thing that can clear it.
+    // arrived, so the TTL is the only thing that can clear it. That is not the
+    // same as the user saying no, and the toast may never have been shown at
+    // all, so nothing durable is written here.
     await advanceAndPoll(13_000);
     expect(state.autoLearn.proposal).toBeNull();
-    expect(JSON.parse(backingStore.get(DENIED_KEY) as string)).toContain(
-      "soniya",
-    );
+    expect(backingStore.has(DENIED_KEY)).toBe(false);
 
     // Polling continues, but the identical term is not offered again.
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal).toBeNull();
+
+    // A later dictation is a fresh chance for the same word.
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+    setField("my wife's name is Soniya");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Soniya");
+  });
+
+  it("keeps the denial in memory when local storage cannot answer", async () => {
+    // A blocked or quota-limited origin leaves nowhere to persist, which used
+    // to reinstate the repeat the deny list exists to prevent.
+    storageBlocked.value = true;
+
+    beginEditWatch("call Ralph");
+    await settleBaseline("call Ralph");
+    setField("call Ralf");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Ralf");
+
+    rejectAutoLearnProposal();
+    expect(state.autoLearn.proposal).toBeNull();
+    expect(backingStore.has(DENIED_KEY)).toBe(false);
+
+    // Storage answers again, but it never saw the denial, so only the session
+    // copy is standing between the user and the same prompt on every poll.
+    storageBlocked.value = false;
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
     expect(state.autoLearn.proposal).toBeNull();
@@ -276,6 +393,10 @@ describe("edit-watch proposal lifecycle", () => {
     expect(state.autoLearn.proposal).toBeNull();
 
     // The superseded watch starts over: the first poll only records a sample.
+    // The baseline capture reads the field synchronously inside
+    // beginEditWatch, so the mock is cleared again here to make the assertion
+    // about the poll rather than about that capture.
+    invokeMock.mockClear();
     await pollEditWatch();
     expect(invokeMock).toHaveBeenCalledWith("get_text_field_info");
     expect(state.autoLearn.proposal).toBeNull();

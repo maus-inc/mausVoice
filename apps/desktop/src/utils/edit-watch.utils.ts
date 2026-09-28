@@ -7,53 +7,241 @@ import {
 
 const MAX_EDIT_TOKENS = 8;
 
-const SMART_APOSTROPHE_PATTERN = /[\u2018\u2019]/g;
-const WHITESPACE_PATTERN = /\s+/g;
-
 /**
- * Collapses the differences a target app can introduce between the text
- * mausVoice inserted and the text the accessibility API reports back: smart
- * typography turning straight quotes curly, and reflowed whitespace.
+ * Upper bound on the token count of either side of the comparison. The
+ * alignment below is quadratic, so a field longer than this is not aligned at
+ * all rather than spending a poll's worth of CPU on it. It sits far above any
+ * realistic dictation target: 600 tokens is roughly 450 words.
  */
-const normalizeForContainment = (text: string): string =>
-  text
-    .replace(SMART_APOSTROPHE_PATTERN, "'")
-    .replace(WHITESPACE_PATTERN, " ")
-    .trim()
-    .toLowerCase();
+const MAX_ALIGNED_TOKENS = 600;
+
+const SMART_APOSTROPHE_PATTERN = /[\u2018\u2019]/g;
 
 /**
- * Confirms a field snapshot still holds the dictated text, so the watcher only
- * ever diffs the field it actually dictated into.
+ * The comparison key for a token. Case is folded so a corrected capital is
+ * recognised as the same word, and smart typography is folded so a target app
+ * that turns a straight quote curly does not read as a different word.
+ */
+const alignmentKey = (token: string): string =>
+  token.replace(SMART_APOSTROPHE_PATTERN, "'").toLowerCase();
+
+const alignmentKeys = (tokens: string[]): string[] => tokens.map(alignmentKey);
+
+/** True when the dictated run starts at `offset`. Keys are precomputed. */
+const runMatchesAt = (
+  keys: string[],
+  offset: number,
+  dictatedKeys: string[],
+): boolean =>
+  offset + dictatedKeys.length <= keys.length &&
+  dictatedKeys.every((key, index) => keys[offset + index] === key);
+
+/**
+ * Counts how many times the dictated text occurs in a field.
  *
- * Without this the watcher would diff whatever field happens to be focused
- * later in the 90 second window, and every word of that unrelated field would
- * look like a correction. It also rejects a snapshot taken before the paste
+ * This is the containment gate for a baseline: the watcher only ever diffs a
+ * field that actually received the dictation, so without it the next small edit
+ * in whatever field happens to be focused later in the 90 second window would
+ * read as a correction. It also rejects a snapshot taken before the paste
  * landed or after the user already corrected the dictation, because neither
  * describes the moment the dictation arrived.
+ *
+ * A paste adds an occurrence, so this is also the only signal available for
+ * telling a read taken before the dictation landed from a read taken after it,
+ * and it is what lets a duplicate dictation correct the second copy rather than
+ * the first.
+ *
+ * The match is a run of whole tokens rather than a substring of the raw text.
+ * A character search reports `recall ralphxyz` and `Ralphson` as holding
+ * `call Ralph` and `Ralph`, and a false positive here is not harmless: the
+ * snapshot becomes the baseline and the next small edit anywhere in that
+ * unrelated field turns into a proposed term. Tokens still ignore case, smart
+ * apostrophes and whitespace reflow, which is the only drift a target app
+ * introduces.
  */
-export const baselineHoldsDictation = (
+export const countDictationOccurrences = (
   insertedText: string,
-  baselineText: string,
-): boolean => {
-  const inserted = normalizeForContainment(insertedText);
-  if (!inserted) {
-    return false;
+  fieldText: string,
+): number => {
+  const dictatedKeys = alignmentKeys(tokenizeForComparison(insertedText));
+  const fieldKeys = alignmentKeys(tokenizeForComparison(fieldText));
+  if (dictatedKeys.length === 0 || fieldKeys.length > MAX_ALIGNED_TOKENS) {
+    return 0;
   }
-  return normalizeForContainment(baselineText).includes(inserted);
+  let count = 0;
+  for (
+    let offset = 0;
+    offset <= fieldKeys.length - dictatedKeys.length;
+    offset += 1
+  ) {
+    if (runMatchesAt(fieldKeys, offset, dictatedKeys)) {
+      count += 1;
+    }
+  }
+  return count;
 };
 
 /**
- * Returns the proper-noun terms the user corrected in the focused field.
+ * Aligns the baseline against the current field and returns, for every
+ * baseline token that survived into the field, the field token it matched.
  *
- * The diff runs against the field as it read right after the dictation landed,
- * not against the dictation itself. Document text that was already on screen is
- * then on both sides of the diff and cancels out, so only what the user changed
- * can be proposed. Locating the dictation inside an arbitrary document and
- * diffing that instead let unrelated text be read as the correction.
+ * Matching folds case, so a corrected capital is an aligned pair rather than a
+ * deletion plus an insertion. The table is a longest common subsequence, which
+ * is what makes it safe to read every unmatched token as genuinely new or
+ * genuinely gone: the longest possible set of shared tokens is anchored, and
+ * the gaps between anchors are the only regions the user can have changed.
+ */
+const alignTokens = (
+  baseline: string[],
+  field: string[],
+): Map<number, number> => {
+  const columns = field.length + 1;
+  // The table only ever holds a length and both sides are bounded by
+  // MAX_ALIGNED_TOKENS, so 16 bits is always enough.
+  const lengths = new Uint16Array((baseline.length + 1) * columns);
+  const baselineKeys = alignmentKeys(baseline);
+  const fieldKeys = alignmentKeys(field);
+
+  for (let row = 1; row <= baseline.length + 1; row += 1) {
+    for (let column = 1; column < columns; column += 1) {
+      const shared =
+        baselineKeys[row - 1] === fieldKeys[column - 1]
+          ? lengths[(row - 1) * columns + (column - 1)]! + 1
+          : 0;
+      lengths[row * columns + column] = Math.max(
+        shared,
+        lengths[(row - 1) * columns + column]!,
+        lengths[row * columns + (column - 1)]!,
+      );
+    }
+  }
+
+  const anchors = new Map<number, number>();
+  let row = baseline.length;
+  let column = field.length;
+  while (row > 0 && column > 0) {
+    if (baselineKeys[row - 1] === fieldKeys[column - 1]) {
+      anchors.set(row - 1, column - 1);
+      row -= 1;
+      column -= 1;
+    } else if (
+      lengths[(row - 1) * columns + column]! >=
+      lengths[row * columns + (column - 1)]!
+    ) {
+      row -= 1;
+    } else {
+      column -= 1;
+    }
+  }
+  return anchors;
+};
+
+type TokenGap = { baseline: string[]; field: string[] };
+
+/**
+ * The anchor closest to a boundary of the occurrence: the last one before it,
+ * or the first one at or after it. Selection is by distance on the baseline
+ * side because the map is filled in walk-back order, which runs backwards.
+ */
+const pickNearestAnchor = (
+  anchors: Map<number, number>,
+  boundary: number,
+  side: "lower" | "upper",
+): [number, number] | undefined => {
+  const candidates = [...anchors]
+    .filter(([baselineIndex]) =>
+      side === "lower" ? baselineIndex < boundary : baselineIndex >= boundary,
+    )
+    .sort((left, right) => left[0] - right[0]);
+  return side === "lower" ? candidates.at(-1) : candidates[0];
+};
+
+/**
+ * Splits one dictation occurrence into the runs between its surviving tokens,
+ * paired with the baseline runs those tokens replaced.
  *
- * A correction is a small replacement: at least one token changed on each side,
- * both counts stay small, and fewer tokens were removed than were dictated.
+ * Every gap is bounded on both sides by an aligned token or by a genuine edge
+ * of the field, so a gap can never reach text the user edited outside the
+ * dictation. That is what makes an edit to a heading above the dictation, or a
+ * deletion next to it, unable to decide whether a real correction is learned.
+ *
+ * An aligned pair whose casing changed is emitted as a one-token gap as well.
+ * The diff helpers already treat a token that matches case-insensitively but
+ * not exactly as both added and removed, which is the same shape as a
+ * substitution and is how a capital the recognizer dropped is learned.
+ */
+const collectRegionGaps = (args: {
+  baseline: string[];
+  field: string[];
+  anchors: Map<number, number>;
+  start: number;
+  end: number;
+}): TokenGap[] | null => {
+  const { baseline, field, anchors, start, end } = args;
+  const inSpan = [...anchors]
+    .filter(([baselineIndex]) => baselineIndex >= start && baselineIndex < end)
+    .sort((left, right) => left[0] - right[0]);
+
+  // Without an anchor below or above the occurrence the region has no known
+  // edge on that side, and the text there is not the dictation. Learn nothing
+  // rather than attribute the user's rewrite of the surrounding field to it.
+  // The nearest anchor has to be picked by distance on the baseline side:
+  // `anchors` is filled in walk-back order, which runs from the end backwards.
+  const lower = pickNearestAnchor(anchors, start, "lower");
+  const upper = pickNearestAnchor(anchors, end, "upper");
+  const openBelow = lower === undefined && start > 0;
+  const openAbove = upper === undefined && end < baseline.length;
+  if (openBelow || openAbove) {
+    return null;
+  }
+
+  const fieldStart = lower ? lower[1] + 1 : 0;
+  const fieldEnd = upper ? upper[1] : field.length;
+  const boundaries: [number, number][] = [...inSpan, [end, fieldEnd]];
+
+  const gaps: TokenGap[] = [];
+  let baselineCursor = start;
+  let fieldCursor = fieldStart;
+  for (const [baselineEdge, fieldEdge] of boundaries) {
+    const baselineRun = baseline.slice(baselineCursor, baselineEdge);
+    const fieldRun = field.slice(fieldCursor, fieldEdge);
+    if (baselineRun.length > 0 || fieldRun.length > 0) {
+      gaps.push({ baseline: baselineRun, field: fieldRun });
+    }
+    baselineCursor = baselineEdge + 1;
+    fieldCursor = fieldEdge + 1;
+  }
+
+  for (const [baselineIndex, fieldIndex] of inSpan) {
+    if (baseline[baselineIndex] !== field[fieldIndex]) {
+      gaps.push({
+        baseline: [baseline[baselineIndex]!],
+        field: [field[fieldIndex]!],
+      });
+    }
+  }
+  return gaps;
+};
+
+/**
+ * Returns the proper-noun terms the user corrected inside the dictated text.
+ *
+ * The diff runs against the region the dictation occupies rather than against
+ * the whole field. The baseline is used only to align the two: document text
+ * that was on screen before the dictation anchors to itself and never enters a
+ * gap, so it is outside the comparison by construction rather than by
+ * cancelling out.
+ *
+ * A correction is a small replacement: at least one token changed on each side
+ * and both counts stay small. Replacing at least as much as was dictated means
+ * the user rewrote the dictation instead of correcting it. A one-token
+ * dictation has no partial state, so that guard does not apply to it:
+ * "theory" to "Three" removes the only dictated token and is exactly the case
+ * worth learning.
+ *
+ * Every occurrence of the dictation in the baseline is tried, so a second
+ * dictation of the same text into the same field is learned from the copy the
+ * user actually corrected.
  */
 export const findEditCorrections = (args: {
   insertedText: string;
@@ -62,13 +250,54 @@ export const findEditCorrections = (args: {
   existingTerms: string[];
 }): string[] => {
   const { insertedText, baselineText, fieldText, existingTerms } = args;
-  const insertedTokens = tokenizeForComparison(insertedText);
-  if (insertedTokens.length === 0) {
+  const dictated = tokenizeForComparison(insertedText);
+  const baseline = tokenizeForComparison(baselineText);
+  const field = tokenizeForComparison(fieldText);
+  if (
+    dictated.length === 0 ||
+    baseline.length > MAX_ALIGNED_TOKENS ||
+    field.length > MAX_ALIGNED_TOKENS
+  ) {
     return [];
   }
 
-  const added = computeAddedTokens(baselineText, fieldText);
-  const removed = computeRemovedTokens(baselineText, fieldText);
+  const anchors = alignTokens(baseline, field);
+  const dictatedKeys = alignmentKeys(dictated);
+  const baselineKeys = alignmentKeys(baseline);
+  const lastStart = baseline.length - dictated.length;
+
+  for (let start = 0; start <= lastStart; start += 1) {
+    if (!runMatchesAt(baselineKeys, start, dictatedKeys)) {
+      continue;
+    }
+    const gaps = collectRegionGaps({
+      baseline,
+      field,
+      anchors,
+      start,
+      end: start + dictated.length,
+    });
+    if (gaps) {
+      const learned = collectRegionTerms(gaps, dictated.length, existingTerms);
+      if (learned.length > 0) {
+        return learned;
+      }
+    }
+  }
+  return [];
+};
+
+const collectRegionTerms = (
+  gaps: TokenGap[],
+  dictatedLength: number,
+  existingTerms: string[],
+): string[] => {
+  const added = gaps.flatMap((gap) =>
+    computeAddedTokens(gap.baseline.join(" "), gap.field.join(" ")),
+  );
+  const removed = gaps.flatMap((gap) =>
+    computeRemovedTokens(gap.baseline.join(" "), gap.field.join(" ")),
+  );
 
   // A long list of added tokens means the user rewrote the text.
   if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
@@ -81,10 +310,9 @@ export const findEditCorrections = (args: {
     return [];
   }
 
-  // Replacing at least as much as was dictated is a rewrite. A single-word
-  // dictation is exempt: "theory" -> "Three" is exactly the case worth
-  // learning, and it necessarily removes the only dictated token.
-  if (insertedTokens.length > 1 && removed.length >= insertedTokens.length) {
+  const replacedEverything =
+    dictatedLength > 1 && removed.length >= dictatedLength;
+  if (replacedEverything) {
     return [];
   }
 

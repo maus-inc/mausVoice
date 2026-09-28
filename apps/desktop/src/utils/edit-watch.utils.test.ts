@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  baselineHoldsDictation,
+  countDictationOccurrences,
   findEditCorrections,
 } from "./edit-watch.utils";
+
+const holds = (insertedText: string, fieldText: string): boolean =>
+  countDictationOccurrences(insertedText, fieldText) > 0;
 
 const find = ({
   insertedText,
@@ -17,36 +20,53 @@ const find = ({
 }): string[] =>
   findEditCorrections({ insertedText, baselineText, fieldText, existingTerms });
 
-describe("baselineHoldsDictation", () => {
+describe("countDictationOccurrences as the containment gate", () => {
   it("accepts a field that contains the dictation among other text", () => {
     expect(
-      baselineHoldsDictation(
-        "call Ralph",
-        "first some earlier text then please call Ralph now",
-      ),
+      holds("call Ralph", "first some earlier text then please call Ralph now"),
     ).toBe(true);
   });
 
   it("rejects a field that never received the dictation", () => {
     expect(
-      baselineHoldsDictation(
-        "my wife's name is Sonia",
-        "Totally Unrelated Text Here Today",
-      ),
+      holds("my wife's name is Sonia", "Totally Unrelated Text Here Today"),
     ).toBe(false);
   });
 
   it("ignores case, whitespace reflow and smart apostrophes", () => {
     expect(
-      baselineHoldsDictation(
-        "my wife's name is Sonia",
-        "  My   wife’s   NAME   is   sonia. ",
-      ),
+      holds("my wife's name is Sonia", "  My   wife’s   NAME   is   sonia. "),
     ).toBe(true);
   });
 
   it("rejects an empty dictation", () => {
-    expect(baselineHoldsDictation("", "anything at all")).toBe(false);
+    expect(holds("", "anything at all")).toBe(false);
+  });
+
+  it("does not match across a character or token boundary", () => {
+    // A character search reported all three of these as holding the
+    // dictation, and a false positive here is not harmless: the snapshot
+    // becomes the baseline and the next small edit in that unrelated field
+    // turns into a proposed term.
+    expect(holds("call Ralph", "recall ralphxyz")).toBe(false);
+    expect(holds("Send invoice", "Please resend invoices tomorrow")).toBe(
+      false,
+    );
+    expect(holds("Ralph", "Ralphson")).toBe(false);
+  });
+});
+
+describe("countDictationOccurrences", () => {
+  it("counts each run of the dictated text in a field", () => {
+    expect(countDictationOccurrences("call Ralph", "call Ralph")).toBe(1);
+    expect(
+      countDictationOccurrences("call Ralph", "call Ralph call Ralph"),
+    ).toBe(2);
+    expect(countDictationOccurrences("call Ralph", "say call Ralph now")).toBe(
+      1,
+    );
+    expect(countDictationOccurrences("call Ralph", "nothing here")).toBe(0);
+    expect(countDictationOccurrences("", "call Ralph")).toBe(0);
   });
 });
 
@@ -227,6 +247,75 @@ describe("findEditCorrections", () => {
           insertedText: "meeting tomorrow at ten",
           baselineText: "Quarterly Review Board meeting tomorrow at ten",
           fieldText: "Quarterly Review Board meeting tomorrow at eleven",
+        }),
+      ).toEqual([]);
+    });
+
+    it("never proposes a proper noun the user edited above the dictation", () => {
+      // The user renamed a heading they never dictated. The whole-field diff
+      // learned it; the dictation region does not contain it.
+      expect(
+        find({
+          insertedText: "meeting tomorrow at ten",
+          baselineText: "Quarterly Review Board meeting tomorrow at ten",
+          fieldText: "Quarterly Review Committee meeting tomorrow at ten",
+        }),
+      ).toEqual([]);
+    });
+
+    it("still learns a dictation correction next to an unrelated edit", () => {
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "first some earlier text then please call Ralph now",
+          fieldText: "first some earlier text please call Ralf now",
+        }),
+      ).toEqual(["Ralf"]);
+    });
+
+    it("never learns from a region the user replaced wholesale", () => {
+      // Nothing around the dictation survived, so the region has no known edge
+      // and the surrounding rewrite is not the dictation's business.
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "first some earlier text then please call Ralph now",
+          fieldText: "Completely different opening words here call Ralf",
+        }),
+      ).toEqual([]);
+    });
+  });
+
+  // The dictation is inserted as one block, so dicting the same text into the
+  // same field twice leaves two copies. The correction belongs to the copy the
+  // user touched, not to the first occurrence the diff happens to land on.
+  describe("a dictation repeated in the same field", () => {
+    it("learns a correction to the second copy", () => {
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "call Ralph call Ralph",
+          fieldText: "call Ralph call Ralf",
+        }),
+      ).toEqual(["Ralf"]);
+    });
+
+    it("learns a correction to the first copy", () => {
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "call Ralph call Ralph",
+          fieldText: "call Ralf call Ralph",
+        }),
+      ).toEqual(["Ralf"]);
+    });
+
+    it("proposes nothing when both copies are untouched", () => {
+      expect(
+        find({
+          insertedText: "call Ralph",
+          baselineText: "call Ralph call Ralph",
+          fieldText: "call Ralph call Ralph",
         }),
       ).toEqual([]);
     });
