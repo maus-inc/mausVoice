@@ -364,9 +364,16 @@ const toBullets = (raw: string): string => {
   const sentences = splitIntoSentences(t);
   if (sentences.length === 0) return t;
 
-  const EDGE_PUNCTUATION_RE = /^[,.;\s]+|[,.;\s]+$/g;
-  const stripEdgePunctuation = (text: string): string =>
-    text.trim().replace(EDGE_PUNCTUATION_RE, "");
+  const EDGE_CHARS = new Set([",", ";", ".", " ", "\t", "\n", "\r"]);
+  // Scans inward from both ends. A pair of anchored character-class replaces
+  // does the same job but backtracks, which Sonar flags on this path.
+  const stripEdgePunctuation = (text: string): string => {
+    let start = 0;
+    let end = text.length;
+    while (start < end && EDGE_CHARS.has(text[start])) start += 1;
+    while (end > start && EDGE_CHARS.has(text[end - 1])) end -= 1;
+    return text.slice(start, end);
+  };
 
   const ideas: string[] = [];
   for (const s of sentences) {
