@@ -21,6 +21,7 @@ export type Transcription = {
   postProcessModel?: string | null;
   postProcessProvider?: string | null;
   postProcessFailed?: boolean | null;
+  postProcessFallback?: boolean | null;
   postProcessError?: string | null;
   transcriptionDurationMs?: number | null;
   postprocessDurationMs?: number | null;

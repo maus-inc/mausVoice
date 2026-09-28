@@ -152,11 +152,38 @@ describe("applyFastStyle fast local transforms", () => {
     );
   });
 
-  it("still removes 'you know' anywhere it appears", () => {
-    const raw = "um so I know you know the answer is out there you know";
-    const out = applyFastStyle(raw, "default").toLowerCase();
-    expect(out).not.toContain("you know");
-    expect(out).toContain("the answer is out there");
+  it("removes 'you know' as a discourse marker but keeps it as a verb", () => {
+    // Regression: "I know you know the answer" is two ordinary verbs. Dropping
+    // the inner one turns it into "I know the answer", a different statement.
+    const asVerb = applyFastStyle(
+      "I know you know the answer is out there",
+      "default",
+    ).toLowerCase();
+    expect(asVerb).toContain("i know you know the answer");
+
+    // Comma-delimited or opening, it is a filler and goes.
+    for (const filler of [
+      "I know the answer is out there, you know",
+      "You know, I already fixed it",
+    ]) {
+      expect(applyFastStyle(filler, "default").toLowerCase()).not.toContain(
+        "you know",
+      );
+    }
+  });
+
+  it("prompt keeps every sentence, including late constraints", () => {
+    // Regression: the transform used to keep only the first three sentences,
+    // which silently dropped a deadline stated later in the dictation.
+    // The constraint sits in the fourth sentence, past the old three-sentence
+    // cut, so a regression drops it.
+    const raw =
+      "Can you summarize the Q3 report. Focus on revenue. Compare against Q2. I need it by Friday. Keep it under one page.";
+    const out = applyFastStyle(raw, "prompt");
+    expect(out).toContain("Q3 report");
+    expect(out).toContain("revenue");
+    expect(out).toContain("by Friday");
+    expect(out).toContain("under one page");
   });
 
   it("does not eat a clause when 'no' is an ordinary answer", () => {

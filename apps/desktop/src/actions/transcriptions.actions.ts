@@ -154,6 +154,7 @@ const updateStoredTranscription = async (
     // false = succeeded (set explicitly on the success path).
     postProcessProvider: metadata.postProcessProvider ?? null,
     postProcessFailed: metadata.postProcessFailed ?? null,
+    postProcessFallback: metadata.postProcessFallback ?? null,
     postProcessError: metadata.postProcessError ?? null,
     warnings: warnings.length > 0 ? warnings : null,
     // Durations must be re-read from the fresh run; spreading the old record
@@ -420,6 +421,8 @@ export const importAudioFile = async ({
       postProcessProvider:
         postProcessResult.metadata?.postProcessProvider ?? null,
       postProcessFailed: postProcessResult.metadata?.postProcessFailed ?? null,
+      postProcessFallback:
+        postProcessResult.metadata?.postProcessFallback ?? null,
       postProcessError: postProcessResult.metadata?.postProcessError ?? null,
       warnings: [...transcribeResult.warnings, ...postProcessResult.warnings],
       audio: undefined,

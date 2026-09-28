@@ -37,10 +37,11 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // Conservative: only clear multi-word fillers that cannot be content. "like",
 // "basically", "literally", "so", "well" and "actually" must not be deleted
 // unconditionally ("I like ice cream", "literally impossible").
-// "you know" is a pure discourse filler, so it goes anywhere. "I mean" is also
-// ordinary English ("the mean of the data, I mean it statistically"), so it is
-// only a filler when the speaker commas it off as a discourse marker.
-const EXTRA_FILLER_RE = /(?:^|\s)you know\b[,\s]*/gi;
+// "you know" is a discourse filler only when the speaker commas it off or opens
+// with it. "I know you know the answer" is two ordinary verbs, and dropping the
+// inner one silently rewrites the statement. "I mean" is the same case: "the
+// mean of the data, I mean it statistically" is ordinary English.
+const EXTRA_FILLER_RE = /(?:^|,\s*|\.\s+)you know\b\s*,?\s*/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
@@ -334,24 +335,26 @@ const toFormal = (raw: string): string => {
   return fixCapitalizationAndPunctuation(t);
 };
 
+/** Politeness openers that add nothing once the ask has been extracted. */
+const PROMPT_OPENER_RE = /^(?:hey|hi|hello|so|well|um|uh)\b[,\s]*/i;
+const PROMPT_REQUEST_RE =
+  /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i;
+
 const toPrompt = (raw: string): string => {
   const guarded = truncateGuard(raw);
   let t = guarded.trim();
   t = applySymbolReplacements(t);
   t = fixSelfCorrections(t);
   t = removeFillerWords(t, true);
-  t = t.replace(/^(?:hey|hi|hello|so|well|um|uh)\b[,\s]*/i, "");
-  t = t.replace(
-    /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i,
-    "",
-  );
-  const sentences = splitIntoSentences(t);
-  const limited = sentences.slice(0, 3).join(" ").trim();
-  let out = limited || t;
-  if (!out) return guarded.trim();
-  out = capitalizeFirst(out);
-  if (!/[.!?]$/.test(out)) out += ".";
-  return out;
+  t = t.replace(PROMPT_OPENER_RE, "").replace(PROMPT_REQUEST_RE, "");
+
+  // Every sentence is kept. Condensing the request must not drop a constraint
+  // the speaker stated after the opening, such as a deadline or a format
+  // requirement, so this strips the politeness framing and nothing else.
+  const out = t.trim() || guarded.trim();
+  if (!out) return out;
+  const cased = capitalizeFirst(out);
+  return /[.!?]$/.test(cased) ? cased : `${cased}.`;
 };
 
 const toBullets = (raw: string): string => {
