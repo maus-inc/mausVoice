@@ -185,9 +185,8 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     // catalog `find` matches nothing, the default equals the primary, and the
     // guard would re-raise the original failure as if a fallback had run.
     const supported: readonly string[] = GENERATE_TEXT_MODELS;
-    return supported.find(
-      (candidate) => candidate !== this.model,
-    ) as GenerateTextModel | undefined;
+    return supported.find((candidate) => candidate !== this.model) as
+      GenerateTextModel | undefined;
   }
 
   private async generateWithFallback(input: GenerateTextInput) {
