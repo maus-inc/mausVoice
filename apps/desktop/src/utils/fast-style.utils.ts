@@ -45,7 +45,13 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // as the subject of the second sentence, so anchoring there consumed the
 // subject and welded the two sentences together. Start-of-text and a preceding
 // comma are the only anchors that cannot delete a subject.
-const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*,?\s*/gi;
+// The phrase must also be comma-delimited on the right, or end the transcript.
+// "You know it works." and "He said, you know it works." use "you know" as the
+// subject of a clause, and "You know what I mean." is a filler whose tail is a
+// real clause, so the words after the phrase are what separate the two.
+// End-of-text keeps the trailing marker: "I know the answer is out there, you
+// know" is a filler, and nothing follows it to disagree.
+const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|$)/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 

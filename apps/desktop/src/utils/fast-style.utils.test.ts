@@ -203,6 +203,37 @@ describe("applyFastStyle fast local transforms", () => {
     ).toBe("I know the answer is out there.");
   });
 
+  it("keeps a bare 'you know' that has no comma after it", () => {
+    // Removing the full stop anchor stopped the transform from eating a subject
+    // mid sentence, but the two anchors that stayed still ate one. The guard
+    // only treats the phrase as a filler when a comma follows it or the phrase
+    // ends the transcript. Anything else leaves a clause in front of the words
+    // the pattern would have removed.
+    for (const raw of [
+      "You know it works.",
+      "He said, you know it works.",
+      "You know what I mean.",
+    ]) {
+      expect(applyFastStyle(raw, "default")).toBe(raw);
+      expect(applyFastStyle(raw, "bullets").toLowerCase()).toContain(
+        "you know",
+      );
+      expect(applyFastStyle(raw, "notes").toLowerCase()).toContain("you know");
+      expect(applyFastStyle(raw, "concise")).toBe(raw);
+    }
+  });
+
+  it("drops a 'you know' that is comma-delimited on both sides", () => {
+    for (const filler of [
+      "I know the answer is out there, you know, but we should ship it.",
+      "Well, you know, the deadline moved.",
+    ]) {
+      expect(applyFastStyle(filler, "default").toLowerCase()).not.toContain(
+        "you know",
+      );
+    }
+  });
+
   it("keeps interrogatives and mid-clause verbs intact", () => {
     for (const raw of [
       "Do you know the time?",
