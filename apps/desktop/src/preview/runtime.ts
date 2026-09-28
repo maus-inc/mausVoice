@@ -105,6 +105,7 @@ const toLocalTranscription = (
   postProcessModel: transcription.postProcessModel ?? null,
   postProcessProvider: transcription.postProcessProvider ?? null,
   postProcessFailed: transcription.postProcessFailed ?? null,
+  postProcessFallback: transcription.postProcessFallback ?? null,
   postProcessError: transcription.postProcessError ?? null,
   transcriptionDurationMs: transcription.transcriptionDurationMs ?? null,
   postprocessDurationMs: transcription.postprocessDurationMs ?? null,

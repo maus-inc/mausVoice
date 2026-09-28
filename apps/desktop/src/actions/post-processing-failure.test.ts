@@ -243,11 +243,16 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.transcript.toLowerCase()).not.toContain("um");
     expect(result.metadata.postProcessMode).toBe("fast");
 
-    // The LLM call really did fail, so the failure must stay visible. Before
-    // this was fixed the fallback set postProcessFailed=false and cleared
-    // postProcessError, which hid the 402 from the UI entirely.
-    expect(result.metadata.postProcessFailed).toBe(true);
+    // The failure must stay visible: the provider error is recorded and the
+    // row is marked as a fallback. Before this was fixed the fallback cleared
+    // postProcessError, hiding the 402 entirely.
     expect(result.metadata.postProcessError).toContain("402");
+    expect(result.metadata.postProcessFallback).toBe(true);
+
+    // The transcript must still be delivered. postProcessFailed gates insertion
+    // in the dictation strategy, so a local fallback that produced usable text
+    // must not set it, or the styled output never reaches the active app.
+    expect(result.metadata.postProcessFailed).toBe(false);
 
     // Provider attribution records the user's choice, not the local fallback.
     expect(result.metadata.postProcessProvider).toBe("cerebras");
@@ -255,6 +260,12 @@ describe("postProcessTranscript fast local style", () => {
 
     // No LLM model ran, so the model column must not claim one did.
     expect(result.metadata.postProcessModel).toBeNull();
+    // The recorded duration is the local transform, not the network wait.
+    expect(result.metadata.postprocessDurationMs).toBeLessThan(
+      result.metadata.postprocessDurationMs === null
+        ? Number.POSITIVE_INFINITY
+        : 60_000,
+    );
     expect(result.warnings.join(" ")).toContain("402");
     expect(result.warnings.join(" ")).toContain("Fast local style");
   });
@@ -270,6 +281,28 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.transcript).toBe("um so I went to the store");
     expect(result.metadata.postProcessMode).toBe("api");
     expect(result.metadata.postProcessFailed).toBe(true);
+  });
+
+  it("records no fallback flag when no provider call was made", async () => {
+    const { postProcessTranscript: run } = await import("./transcribe.actions");
+    const repos = await import("../repos");
+    const spy = vi.spyOn(repos, "getGenerateTextRepo").mockReturnValueOnce({
+      repo: null,
+      apiKeyId: null,
+      provider: null,
+      warnings: [],
+    } as unknown as ReturnType<typeof repos.getGenerateTextRepo>);
+
+    const result = await run({
+      rawTranscript: "um so I went to the store",
+      toneId: "default",
+    });
+
+    spy.mockRestore();
+    // The fast path was taken by design, not because a provider failed.
+    expect(result.metadata.postProcessMode).toBe("fast");
+    expect(result.metadata.postProcessFallback).toBeFalsy();
+    expect(result.metadata.postProcessFailed).toBeFalsy();
   });
 
   it("uses the local style when no provider is configured, and reports no model", async () => {

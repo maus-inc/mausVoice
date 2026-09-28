@@ -117,6 +117,12 @@ export type PostProcessMetadata = {
   postprocessDurationMs?: number | null;
   /** True when a post-processing request was attempted and failed. */
   postProcessFailed?: boolean | null;
+  /**
+   * True when post-processing failed and the deterministic local style produced
+   * the output instead. The transcript is still delivered; this marks the row
+   * as degraded so the UI can say so.
+   */
+  postProcessFallback?: boolean | null;
   /** Sanitized, non-secret error message from a failed post-processing request. */
   postProcessError?: string | null;
 };
@@ -518,6 +524,9 @@ const beginPostProcessingRequest = ({
  * postProcessModel. Those record which provider the user chose and which model
  * ran; a local transform used neither, and overwriting them would hide the
  * user's selection on a failed LLM call.
+ *
+ * Returns the styled text and its own duration, or null when the tone has no
+ * local transform or the transform threw.
  */
 const applyFastLocalStyle = ({
   rawTranscript,
@@ -531,7 +540,7 @@ const applyFastLocalStyle = ({
   metadata: PostProcessMetadata;
   warnings: string[];
   reason: "no-llm" | "llm-failed";
-}): string | null => {
+}): { styled: string; fastDurationMs: number } | null => {
   if (!canApplyFastStyle(toneId)) return null;
 
   const startedAt = performance.now();
@@ -545,18 +554,19 @@ const applyFastLocalStyle = ({
     return null;
   }
 
+  const fastDurationMs = Math.round(performance.now() - startedAt);
   metadata.postProcessMode = "fast";
   metadata.postProcessModel = null;
-  metadata.postprocessDurationMs = Math.round(performance.now() - startedAt);
+  metadata.postprocessDurationMs = fastDurationMs;
   if (rawTranscript.length > FAST_STYLE_MAX_INPUT_CHARS) {
     warnings.push(
       `Fast local style kept the first ${FAST_STYLE_MAX_INPUT_CHARS} of ${rawTranscript.length} characters.`,
     );
   }
   getLogger().info(
-    `Fast local style applied for tone=${toneId}, reason=${reason}, in ${metadata.postprocessDurationMs}ms`,
+    `Fast local style applied for tone=${toneId}, reason=${reason}, in ${fastDurationMs}ms`,
   );
-  return styled;
+  return { styled, fastDurationMs };
 };
 
 const runPostProcessingRequest = async ({
@@ -639,14 +649,14 @@ const runPostProcessingRequest = async ({
     // then record the failure. The LLM call really did fail, so
     // postProcessFailed stays true and the error category is kept; only the
     // returned text comes from the local path.
-    const fastStyled = applyFastLocalStyle({
+    const fast = applyFastLocalStyle({
       rawTranscript,
       toneId,
       metadata,
       warnings,
       reason: "llm-failed",
     });
-    if (fastStyled !== null) {
+    if (fast !== null) {
       recordPostProcessFailure(
         error,
         metadata,
@@ -654,10 +664,18 @@ const runPostProcessingRequest = async ({
         postprocessStart,
         rawTranscript,
       );
+      // The local transform produced usable output, so the transcript must
+      // still be delivered. postProcessFailed gates insertion in the dictation
+      // strategy, so leaving it true would send the styled text nowhere and
+      // tell the user styling failed. The provider error is still recorded and
+      // postProcessFallback marks the row as degraded.
+      metadata.postProcessFailed = false;
+      metadata.postProcessFallback = true;
+      metadata.postprocessDurationMs = fast.fastDurationMs;
       warnings.push(
         "Fast local style applied instead of the LLM post-processor.",
       );
-      return fastStyled;
+      return fast.styled;
     }
 
     // No fast fallback: return raw with failure metadata (dead-letter path)
@@ -692,14 +710,14 @@ const applyPostProcessing = async (
     return rawTranscript;
   }
   if (!gen.repo) {
-    const fastStyled = applyFastLocalStyle({
+    const fast = applyFastLocalStyle({
       rawTranscript,
       toneId,
       metadata,
       warnings,
       reason: "no-llm",
     });
-    if (fastStyled !== null) return fastStyled;
+    if (fast !== null) return fast.styled;
     getLogger().info("No post-processing repo configured, skipping");
     metadata.postProcessMode = "none";
     return rawTranscript;
@@ -840,6 +858,7 @@ const buildTranscriptionRecord = ({
   postProcessModel: orNull(input.postProcessMetadata.postProcessModel),
   postProcessProvider: orNull(input.postProcessMetadata.postProcessProvider),
   postProcessFailed: input.postProcessMetadata.postProcessFailed ?? null,
+  postProcessFallback: input.postProcessMetadata.postProcessFallback ?? null,
   postProcessError: orNull(input.postProcessMetadata.postProcessError),
   transcriptionDurationMs: orNull(
     input.transcriptionMetadata.transcriptionDurationMs,

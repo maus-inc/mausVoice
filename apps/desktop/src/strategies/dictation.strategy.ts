@@ -392,6 +392,22 @@ export class DictationStrategy extends BaseStrategy {
         }
       }
 
+      if (postProcessMetadata.postProcessFallback) {
+        // The provider failed but the deterministic local style produced usable
+        // output, so the transcript is still delivered. Warn without blocking.
+        getLogger().warning(
+          "Post-processing provider failed; delivered the local fast style instead",
+        );
+        await showToast({
+          message: getIntl().formatMessage({
+            defaultMessage:
+              "Online styling was unavailable, so the local style was used instead.",
+          }),
+          toastType: "info",
+          duration: 5000,
+        });
+      }
+
       if (postProcessMetadata.postProcessFailed) {
         getLogger().warning(
           "Post-processing failed; preserving the transcript in History without insertion",
