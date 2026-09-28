@@ -28,7 +28,7 @@ export type GenerateTextModel =
  * inside `GENERATE_TEXT_MODELS` so a default-model failure can still fall back
  * to a different live model instead of rethrowing with no second attempt.
  */
-export const GROQ_DEFAULT_GENERATE_TEXT_MODEL: GenerateTextModel =
+export const GROQ_DEFAULT_GENERATE_TEXT_MODEL: (typeof GENERATE_TEXT_MODELS)[number] =
   "openai/gpt-oss-20b";
 
 // Models that support `response_format: { type: "json_schema" }`.
