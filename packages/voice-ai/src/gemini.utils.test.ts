@@ -885,13 +885,11 @@ describe("Gemini Files API edge cases", () => {
   it("handles Buffer offset correctly without copying whole buffer", async () => {
     const base = Buffer.from([0, 0, 1, 2, 3, 0, 0]);
     const sliced = base.subarray(2, 5);
-    const customFetch = vi
-      .fn()
-      .mockResolvedValue(
-        jsonResponse({
-          candidates: [{ content: { parts: [{ text: "hi" }] } }],
-        }),
-      );
+    const customFetch = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: "hi" }] } }],
+      }),
+    );
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
