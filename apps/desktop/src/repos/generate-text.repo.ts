@@ -29,6 +29,7 @@ import {
   groqGenerateTextResponse,
   groqStreamChat,
   isGroqAccountScopedError,
+  isGroqModelUnavailableError,
   OpenAIGenerateTextModel,
   openaiGenerateTextResponse,
   openaiStreamChat,
@@ -72,13 +73,39 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
 }
 
 /**
+ * True when a cause names the model rather than the account or the network, so
+ * choosing a different model could still change the outcome. Mirrors
+ * `isGroqModelUnavailableError`, which is what decides this at the provider.
+ */
+const isModelScopedCause = (cause: unknown): boolean =>
+  isGroqModelUnavailableError(cause);
+
+/**
+ * The closing sentence of a chain failure.
+ *
+ * "Choose a different post-processing model in Settings" is only true when at
+ * least one cause is model-scoped. On a provider incident returning 503 for
+ * both models, no setting can help, so the advice pointed the user at a
+ * control that could not change the result.
+ */
+const describeChainAdvice = (
+  primaryCause: unknown,
+  fallbackCause: unknown,
+): string => {
+  if (isModelScopedCause(primaryCause) || isModelScopedCause(fallbackCause)) {
+    return "Choose a different post-processing model in Settings.";
+  }
+  return "Both models failed for a reason another model would not fix. Retry the request.";
+};
+
+/**
  * Both models in the Groq fallback chain failed.
  *
- * Reporting only the second error made a retired fallback model look exactly
- * like the configured model failing on its own: the user saw a provider 404
- * naming a model they never chose, with no sign a second attempt had even run.
- * This names both models and both causes so the next retirement is visible as
- * a chain failure rather than a mystery.
+ * Reporting only the second error made an unavailable fallback model look
+ * exactly like the configured model failing on its own: the user saw a provider
+ * 404 naming a model they never chose, with no sign a second attempt had even
+ * run. This names both models and both causes so the next retirement is visible
+ * as a chain failure rather than a mystery.
  */
 export class GroqGenerateTextFallbackError extends Error {
   readonly primaryModel: GenerateTextModel;
@@ -103,7 +130,7 @@ export class GroqGenerateTextFallbackError extends Error {
       `Groq post-processing failed on both models. ` +
         `Configured model \`${primaryModel}\` failed: ${describe(primaryCause)}. ` +
         `Fallback model \`${fallbackModel}\` failed: ${describe(fallbackCause)}. ` +
-        `Choose a different post-processing model in Settings.`,
+        describeChainAdvice(primaryCause, fallbackCause),
     );
     this.name = "GroqGenerateTextFallbackError";
     this.primaryModel = primaryModel;
@@ -147,16 +174,24 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     };
   }
 
-  private resolveFallbackModel(): GenerateTextModel {
+  private resolveFallbackModel(): GenerateTextModel | undefined {
     // Pick the first supported Groq model that is not the one that just
     // failed. A default-model failure must still reach a second live model, so
     // the fallback is never the same id as the primary.
+    //
+    // A single-entry catalog resolves to undefined here, and the caller checks
+    // for that before spending a second request. Defaulting the miss to
+    // `this.defaultModel` would hide the case instead: with one entry in the
+    // catalog `find` matches nothing, the default equals the primary, and the
+    // guard would re-raise the original failure as if a fallback had run.
     const supported: readonly string[] = GENERATE_TEXT_MODELS;
-    const alternative = supported.find((candidate) => candidate !== this.model);
-    return (alternative as GenerateTextModel) ?? this.defaultModel;
+    return supported.find(
+      (candidate) => candidate !== this.model,
+    ) as GenerateTextModel | undefined;
   }
 
   private async generateWithFallback(input: GenerateTextInput) {
+    let primaryCause: unknown;
     try {
       const response = await groqGenerateTextResponse({
         apiKey: this.groqApiKey,
@@ -168,48 +203,53 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         signal: input.signal,
       });
       return { response, model: this.model };
-    } catch (error) {
-      // An aborted request must never fall back: the abort is the caller's
-      // deadline decision, not a provider failure worth another attempt.
-      if (input.signal?.aborted) {
-        throw error;
-      }
-
-      // An account-scoped rejection (bad key, no credits, permission denied)
-      // fails identically on every model, so a second request chain only
-      // delays surfacing it.
-      if (isGroqAccountScopedError(error)) {
-        throw error;
-      }
-
-      const fallbackModel = this.resolveFallbackModel();
-      if (fallbackModel === this.model) {
-        // No distinct alternative is available, so a second attempt would
-        // only repeat the same failure.
-        throw error;
-      }
-
-      const response = await groqGenerateTextResponse({
-        apiKey: this.groqApiKey,
-        model: fallbackModel,
-        prompt: input.prompt,
-        system: input.system ?? undefined,
-        jsonResponse: input.jsonResponse,
-        maxTokens: input.maxTokens,
-        signal: input.signal,
-      }).catch((fallbackCause: unknown) => {
-        // An abort during the second attempt is still the caller's deadline,
-        // not a chain failure, so it is not dressed up as one.
-        if (input.signal?.aborted) throw fallbackCause;
-        throw new GroqGenerateTextFallbackError({
-          primaryModel: this.model,
-          fallbackModel,
-          primaryCause: error,
-          fallbackCause,
-        });
-      });
-      return { response, model: fallbackModel };
+    } catch (thrown) {
+      // Captured into a named binding rather than caught as `error`, because
+      // the fallback call below binds its own cause and a catch parameter of
+      // the same name in an enclosing scope would shadow it.
+      primaryCause = thrown;
     }
+
+    // An aborted request must never fall back: the abort is the caller's
+    // deadline decision, not a provider failure worth another attempt.
+    if (input.signal?.aborted) {
+      throw primaryCause;
+    }
+
+    // An account-scoped rejection (bad key, no credits, permission denied)
+    // fails identically on every model, so a second request chain only
+    // delays surfacing it.
+    if (isGroqAccountScopedError(primaryCause)) {
+      throw primaryCause;
+    }
+
+    const fallbackModel = this.resolveFallbackModel();
+    if (fallbackModel === undefined || fallbackModel === this.model) {
+      // No distinct alternative is available, so a second attempt would
+      // only repeat the same failure.
+      throw primaryCause;
+    }
+
+    const response = await groqGenerateTextResponse({
+      apiKey: this.groqApiKey,
+      model: fallbackModel,
+      prompt: input.prompt,
+      system: input.system ?? undefined,
+      jsonResponse: input.jsonResponse,
+      maxTokens: input.maxTokens,
+      signal: input.signal,
+    }).catch((fallbackCause: unknown) => {
+      // An abort during the second attempt is still the caller's deadline,
+      // not a chain failure, so it is not dressed up as one.
+      if (input.signal?.aborted) throw fallbackCause;
+      throw new GroqGenerateTextFallbackError({
+        primaryModel: this.model,
+        fallbackModel,
+        primaryCause,
+        fallbackCause,
+      });
+    });
+    return { response, model: fallbackModel };
   }
 
   async *streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent> {

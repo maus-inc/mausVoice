@@ -10,6 +10,7 @@ import OpenAI, { toFile } from "openai";
 import { openaiCompatibleStreamChat } from "./openai.utils";
 import { parseOpenAICompatibleGenerateTextResponse } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
+import { redactProviderSecret } from "./provider-redaction.utils";
 import {
   runSdkTranscription,
   TranscriptionSegment,
@@ -46,6 +47,16 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
  * 404 is deliberately absent. A 404 from Groq is `model_not_found`, which is
  * exactly the case a different model can fix. 429 is absent because Groq
  * enforces per-model rate limits, so another model can still succeed.
+ *
+ * 403 is present, and the reasoning is recorded because the set reads as if it
+ * had been assembled without one. Groq's own 404 body is "The model `x` does
+ * not exist or you do not have access to it." A per-model access denial is
+ * therefore reported as 404, not 403, and it already reaches the fallback
+ * through the 404 exemption above. A 403 arrives as the SDK's separate
+ * `PermissionDeniedError` for an organisation the key may not use at all,
+ * which no second model in the catalog can change. (Groq's status-to-class
+ * table, published by groq-typescript, lists 403 as its own class distinct
+ * from both 400 and 404.)
  */
 const ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES = new Set([400, 401, 402, 403]);
 
@@ -81,23 +92,27 @@ export class GroqProviderError extends Error {
 }
 
 /**
- * A model id Groq has retired or renamed.
+ * A model id Groq did not serve for this key.
  *
  * This is terminal for that id but deliberately NOT account-scoped: a
  * different model can still answer, which is exactly what the caller's
  * fallback chain exists to do. What must not happen is the provider's raw body
  * reaching the user, because "The model `x` does not exist or you do not have
- * access to it." names a model they cannot change from inside a snackbar. This
- * names the model and points at the setting that holds it, so a future
- * retirement is reported as an action the user can take.
+ * access to it." names a model they cannot change from inside a snackbar.
+ *
+ * The wording stays neutral on purpose. Groq's own body cannot tell a retired
+ * id from a model the account is not entitled to, and an organisation without
+ * entitlement gets a 404, not a 403, so asserting a retirement would
+ * misdiagnose a real access failure. The id is named so the chain is
+ * diagnosable; the cause is left to the caller to resolve.
  */
 export class GroqModelUnavailableError extends GroqProviderError {
   readonly model: string;
 
   constructor(model: string, status = 404) {
     super(
-      `Groq no longer serves the model \`${model}\`, so it can no longer post-process. ` +
-        `The provider has retired or renamed it. Choose a different post-processing model in Settings.`,
+      `Groq did not serve the model \`${model}\` for this key. ` +
+        `It may be retired, renamed, or not enabled for your account.`,
       status,
     );
     this.name = "GroqModelUnavailableError";
@@ -139,33 +154,61 @@ export const isGroqModelUnavailableError = (error: unknown): boolean => {
 
 /**
  * Replace literal API key and authorization material anywhere in a provider
- * message. The pattern list is shared with Cerebras, which needed `csk_`,
- * `sk-` and `sk_`; Groq issues `gsk_`, so without it a 401 that echoes the
- * supplied key would put the key into logs and into persisted
- * `postProcessError` metadata. The leading `\b` keeps ordinary hyphenated
- * words such as `task-123` intact.
+ * message. Groq issues `gsk_`; the shared shapes (including Cerebras's `csk_`,
+ * `sk-` and `sk_`, and the `Bearer` / `Authorization:` / `api_key` forms a
+ * proxy can echo) live in `redactProviderSecret`, so a new key prefix fixed for
+ * one provider cannot be forgotten in the other. Without `gsk_` a 401 that
+ * echoes the supplied key would put the key into logs and into persisted
+ * `postProcessError` metadata.
  */
-const GROQ_SECRET_PATTERNS: RegExp[] = [
-  /\bgsk_[a-z0-9_-]+/gi,
-  /\bcsk_[a-z0-9_-]+/gi,
-  /\bsk-[a-z0-9_-]+/gi,
-  /\bsk_[a-z0-9_-]+/gi,
-  /bearer\s+[a-z0-9._~+/=-]+/gi,
-  /authorization:\s*[^\s;,]+/gi,
-  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
-];
+const GROQ_SECRET_PATTERNS: readonly RegExp[] = [/\bgsk_[a-z0-9_-]+/gi];
 
 export const redactGroqMessage = (message: string): string =>
-  GROQ_SECRET_PATTERNS.reduce(
-    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
-    message,
-  );
+  redactProviderSecret(message, GROQ_SECRET_PATTERNS);
+
+/**
+ * A Groq error that names no model-scoped cause. Covers a string throw, a
+ * throw of an object without a message, and a bare status with no body.
+ *
+ * The status suffix is appended by an early return rather than inside the
+ * caller's conditional, so no expression here both tests a condition and
+ * builds a message from it. The thrown value is stringified rather than
+ * discarded: `normalizeCerebrasError` keeps `String(error)` for the same case,
+ * and a string throw used to degrade to a bare "request failed with status N"
+ * that threw the real cause away.
+ */
+const readNonErrorMessage = (
+  error: unknown,
+  status: number | undefined,
+): string => {
+  const text = redactGroqMessage(String(error));
+  if (status === undefined) return text;
+  return `${text} with status ${status}`;
+};
+
+/**
+ * The error shape a cancelled request takes, decided from the value itself
+ * rather than from the state of the caller's `AbortSignal`.
+ *
+ * `retry` sleeps between attempts and re-checks `isRetryable` after the sleep,
+ * and that predicate reads `signal.aborted`. A deadline that fires during the
+ * sleep makes `retry` rethrow the *original* provider failure, so a signal-only
+ * test cannot tell that failure apart from a real abort and would pass it
+ * through unredacted. A cancelled fetch is instead identifiable by shape: the
+ * DOM abort error (`name === "AbortError"`, and `code === 20` at the fetch
+ * layer) or the SDK's own `APIUserAbortError`.
+ */
+const isAbortErrorShape = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  return name === "AbortError" || name === "APIUserAbortError" || code === 20;
+};
 
 /**
  * Normalize anything a Groq call throws into an error safe to show and store:
- * a retired model becomes a `GroqModelUnavailableError` naming the id, and key
- * material is scrubbed from everything else. Transient failures stay
- * retryable because the status is preserved.
+ * a model Groq did not serve becomes a `GroqModelUnavailableError` naming the
+ * id, and key material is scrubbed from everything else. Transient failures
+ * stay retryable because the status is preserved.
  */
 export const normalizeGroqError = (error: unknown, model: string): Error => {
   if (error instanceof GroqModelUnavailableError) return error;
@@ -178,7 +221,7 @@ export const normalizeGroqError = (error: unknown, model: string): Error => {
   const rawMessage =
     error instanceof Error && error.message
       ? error.message
-      : `request failed${status === undefined ? "" : ` with status ${status}`}`;
+      : readNonErrorMessage(error, status);
 
   return new GroqProviderError(
     `Groq: ${redactGroqMessage(rawMessage)}`,
@@ -329,9 +372,13 @@ export const groqGenerateTextResponse = async ({
       });
     },
   }).catch((error: unknown) => {
-    // An abort is the caller's deadline, not a provider verdict. It is passed
-    // through untouched so callers can still recognize it as an abort.
-    if (signal?.aborted) throw error;
+    // A cancelled request is passed through untouched so callers can still
+    // recognize it as an abort. It is identified by shape, not by
+    // `signal.aborted`: a deadline that fires during the retry sleep makes
+    // `retry` rethrow the original provider failure, and testing the signal
+    // would mistake that failure for an abort and skip redaction, putting a
+    // provider body that echoes the key into the log verbatim.
+    if (isAbortErrorShape(error)) throw error;
     throw normalizeGroqError(error, model);
   });
 };
