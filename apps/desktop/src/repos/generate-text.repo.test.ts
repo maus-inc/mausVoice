@@ -168,10 +168,11 @@ describe("GenerateTextInput.signal forwarding", () => {
     const controller = new AbortController();
     controller.abort();
 
-    // Use the 120b model so this test can only pass through the abort guard.
-    // With the default model the abort and the "no distinct fallback" guards
-    // would be satisfied by the same branch and the test would pass even if
-    // the abort guard were removed.
+    // Pin the primary to 120b so the fallback resolves to 20b. That is not
+    // what makes the test pass: `mockRejectedValueOnce` leaves the second call
+    // resolving undefined, so removing the abort guard makes `response.text`
+    // throw and this expectation fail for either model. The distinct model is
+    // here so the test reads as what it checks, the abort path.
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-120b");
     await expect(
       repo.generateText({ prompt: "p", signal: controller.signal }),
@@ -288,6 +289,67 @@ describe("Groq fallback model", () => {
     expect(fallbackError.message).toContain("fallback model is retired");
     expect(fallbackError.message).toContain("openai/gpt-oss-20b");
     expect(fallbackError.message).toContain("openai/gpt-oss-120b");
+  });
+
+  it("tells the user to change the model when a cause is model-scoped", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    // The provider body Groq sends for a model it did not serve. It is
+    // ambiguous, but the status is what the repo keys the model-scoped
+    // decision on, the same way the provider does.
+    mocked
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error("The model `x` does not exist or you do not have access to it."),
+          { status: 404 },
+        ),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(
+          new Error("The model `y` does not exist or you do not have access to it."),
+          { status: 404 },
+        ),
+      );
+
+    const repo = new GroqGenerateTextRepo("k", null);
+    const error = await repo
+      .generateText({ prompt: "p" })
+      .then(
+        () => {
+          throw new Error("expected the chain to fail");
+        },
+        (e: unknown) => e as Error,
+      );
+
+    expect(error.message).toContain(
+      "Choose a different post-processing model in Settings.",
+    );
+  });
+
+  it("tells the user to retry when both causes are transient", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    // A Groq incident returning 503 for both models. No setting change can
+    // affect this, so the old unconditional Settings advice pointed at a
+    // control that could not help.
+    mocked
+      .mockRejectedValueOnce(
+        Object.assign(new Error("primary 503"), { status: 503 }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("fallback 503"), { status: 503 }),
+      );
+
+    const repo = new GroqGenerateTextRepo("k", null);
+    const error = await repo
+      .generateText({ prompt: "p" })
+      .then(
+        () => {
+          throw new Error("expected the chain to fail");
+        },
+        (e: unknown) => e as Error,
+      );
+
+    expect(error.message).not.toContain("Choose a different post-processing");
+    expect(error.message).toContain("Retry the request.");
   });
 
   it("does not report a chain failure when the abort lands on the fallback", async () => {

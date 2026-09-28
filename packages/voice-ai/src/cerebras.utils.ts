@@ -12,6 +12,7 @@ import {
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
 import type { CustomFetch, DiscoveredModelId } from "./types";
+import { redactProviderSecret } from "./provider-redaction.utils";
 
 export const CEREBRAS_MODELS = ["gpt-oss-120b", "gemma-4-31b"] as const;
 export type CerebrasModel =
@@ -50,21 +51,13 @@ export const isCerebrasTerminalStatus = (status: number): boolean =>
  * ("Incorrect API key provided: csk_..."), and some proxies echo the
  * Authorization header. Never reveals the key value itself (no length/first
  * characters), so a message like "key csk_ab" redacts the whole token.
+ *
+ * The shared shapes live in `redactProviderSecret`, and `csk_` is one of them
+ * because a wire-compatible deployment can put a Cerebras-shaped token into
+ * another provider's error text. Cerebras has no prefix of its own to add.
  */
-const CEREBRAS_SECRET_PATTERNS: RegExp[] = [
-  /\bcsk_[a-z0-9_-]+/gi,
-  /\bsk-[a-z0-9_-]+/gi,
-  /\bsk_[a-z0-9_-]+/gi,
-  /bearer\s+[a-z0-9._~+/=-]+/gi,
-  /authorization:\s*[^\s;,]+/gi,
-  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
-];
-
 export const redactCerebrasMessage = (message: string): string =>
-  CEREBRAS_SECRET_PATTERNS.reduce(
-    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
-    message,
-  );
+  redactProviderSecret(message);
 
 const readStatus = (error: unknown): number | undefined => {
   if (typeof error !== "object" || error === null || !("status" in error)) {
