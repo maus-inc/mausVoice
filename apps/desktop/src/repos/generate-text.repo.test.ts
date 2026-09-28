@@ -238,6 +238,66 @@ describe("default model fallback when no model is stored", () => {
   );
 });
 
+describe("Groq retry model is live and distinct from the primary", () => {
+  // Regression: the fallback was hard-coded to `qwen/qwen3.6-27b`, which Groq
+  // retired on 2026-09-14. Every transient primary failure then surfaced as a
+  // 404 `model_not_found`, so the retry could never recover. A fallback equal
+  // to the primary is the mirror-image bug: the guard does not trip and the
+  // retry re-issues the same request.
+  const primaries = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"] as const;
+
+  const runFallback = async (primary: string) => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockRejectedValueOnce(new Error("transient upstream failure"));
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    await new GroqGenerateTextRepo("k", primary).generateText({ prompt: "p" });
+
+    return mocked.mock.calls.map((call) => call[0]!.model as string);
+  };
+
+  it.each(primaries)(
+    "retries %s with a model the provider still supports",
+    async (primary) => {
+      const [requested, retried] = await runFallback(primary);
+
+      expect(requested).toBe(primary);
+      expect(GENERATE_TEXT_MODELS).toContain(retried);
+    },
+  );
+
+  it.each(primaries)("never retries %s with itself", async (primary) => {
+    const [, retried] = await runFallback(primary);
+
+    expect(retried).not.toBe(primary);
+  });
+
+  it("retries a runtime-discovered model with a declared live model", async () => {
+    // A discovered id is not in the declared list, so the constructor coerces
+    // it to the default production model before the first request. The retry
+    // must still land on a declared, live model.
+    const [requested, retried] = await runFallback("vendor/preview-model");
+
+    expect(GENERATE_TEXT_MODELS).toContain(requested);
+    expect(GENERATE_TEXT_MODELS).toContain(retried);
+    expect(retried).not.toBe(requested);
+  });
+
+  it("does not retry an aborted request", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockRejectedValueOnce(new Error("aborted"));
+
+    const controller = new AbortController();
+    controller.abort();
+    const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
+
+    await expect(
+      repo.generateText({ prompt: "p", signal: controller.signal }),
+    ).rejects.toThrow("aborted");
+    expect(mocked.mock.calls).toHaveLength(1);
+  });
+});
+
 describe("generateText metadata reports the resolved model", () => {
   it("Groq reports the configured model on the happy path", async () => {
     vi.mocked(groqGenerateTextResponse).mockResolvedValue(mockResponse("hi"));
@@ -256,7 +316,7 @@ describe("generateText metadata reports the resolved model", () => {
     const repo = new GroqGenerateTextRepo("k", "openai/gpt-oss-20b");
     const output = await repo.generateText({ prompt: "p" });
 
-    expect(output.metadata?.model).toBe("qwen/qwen3.6-27b");
+    expect(output.metadata?.model).toBe("openai/gpt-oss-120b");
   });
 
   it("OpenAI reports the configured model", async () => {

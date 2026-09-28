@@ -69,10 +69,24 @@ export abstract class BaseGenerateTextRepo extends BaseRepo {
   abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
 }
 
+// The fallback is derived from the live model list rather than hard-coded.
+// Groq retires preview models at short notice (`qwen/qwen3.6-27b` shut down on
+// 2026-09-14), and a retired fallback converts every transient primary failure
+// into a 404, so a retry can never recover. Deriving also guarantees the
+// fallback differs from the primary, otherwise the retry is a no-op.
+const GROQ_FALLBACK_MODEL: GenerateTextModel =
+  GENERATE_TEXT_MODELS[GENERATE_TEXT_MODELS.length - 1];
+
+/** Pick the other declared Groq model so the retry is both live and distinct. */
+const resolveGroqFallbackModel = (
+  model: GenerateTextModel,
+): GenerateTextModel =>
+  model === GROQ_FALLBACK_MODEL ? GENERATE_TEXT_MODELS[0] : GROQ_FALLBACK_MODEL;
+
 export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   private groqApiKey: string;
   private model: GenerateTextModel;
-  private fallbackModel: GenerateTextModel = "qwen/qwen3.6-27b";
+  private fallbackModel: GenerateTextModel;
 
   constructor(apiKey: string, model: string | null) {
     super();
@@ -85,6 +99,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
       model !== null && allowedModels.includes(model)
         ? (model as GenerateTextModel)
         : "openai/gpt-oss-20b";
+    this.fallbackModel = resolveGroqFallbackModel(this.model);
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
