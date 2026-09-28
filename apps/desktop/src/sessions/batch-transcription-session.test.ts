@@ -176,6 +176,65 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     expect(requestedAudio()).toContain(recording.length);
   });
 
+  it("cancels an in-flight span before issuing the whole-recording fallback", async () => {
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+    streamRecording(recording);
+
+    // The first committed span parks until its abort signal fires, the way a
+    // real provider request unwinds on cancellation. It must be released by
+    // the doomed pretranscriber, before the fallback request is issued.
+    let requests = 0;
+    let open = 0;
+    let maxOpen = 0;
+    const order: string[] = [];
+    mocks.transcribeAudio.mockImplementation(async ({ samples, signal }) => {
+      requests += 1;
+      const isSpan = samples.length < recording.length;
+      if (!isSpan) {
+        order.push("whole:open");
+        open += 1;
+        maxOpen = Math.max(maxOpen, open);
+        open -= 1;
+        return transcriptionResult("whole");
+      }
+      order.push("span:open");
+      open += 1;
+      maxOpen = Math.max(maxOpen, open);
+      try {
+        await new Promise((_, reject) => {
+          signal?.addEventListener("abort", () => {
+            order.push("span:aborted");
+            reject(new Error("aborted"));
+          });
+        });
+        return transcriptionResult("span");
+      } finally {
+        open -= 1;
+      }
+    });
+
+    // Let the first committed span reach the provider, so there is a billed
+    // request actually in flight when the user stops.
+    await vi.waitFor(() => expect(order).toContain("span:open"));
+
+    // The live stream diverges from the final recording, so pretranscription
+    // is doomed and the caller must fall back to the whole recording.
+    const diverged = recording.slice();
+    diverged.fill(0.4321, 0, 500);
+
+    const result = await session.finalize({
+      samples: diverged,
+      sampleRate: RATE,
+    });
+
+    // The span was cancelled and had fully unwound before the fallback went
+    // out, so the two never overlap and the user is billed for one of them.
+    expect(order).toEqual(["span:open", "span:aborted", "whole:open"]);
+    expect(maxOpen).toBe(1);
+    expect(result.rawTranscript).toBe("whole");
+  });
+
   it("spends no further request when a cancel lands mid-finalize", async () => {
     const session = new BatchTranscriptionSession();
     await session.onRecordingStart(RATE);

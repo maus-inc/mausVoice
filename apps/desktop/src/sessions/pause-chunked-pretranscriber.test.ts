@@ -161,6 +161,73 @@ describe("PauseChunkedPretranscriber", () => {
     ).resolves.toBeNull();
   });
 
+  it("waits for an in-flight span to settle before falling back, so the caller never pays twice", async () => {
+    const order: string[] = [];
+    const transcribe = vi.fn<ChunkTranscriber>(
+      (_samples, _rate, signal) =>
+        // Parks until the abort arrives, the way a provider request unwinds.
+        // The only way out is the signal the pretranscriber must deliver.
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            order.push("span:aborted");
+            // The provider finishes unwinding a tick after the signal, so
+            // resolving early would mean the span was still billed.
+            setTimeout(() => {
+              order.push("span:settled");
+              reject(new Error("aborted"));
+            }, 0);
+          });
+        }),
+    );
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Let the queued span reach the provider, so a billed request is really
+    // in flight when the user stops.
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalled());
+
+    // The stream diverges from the final recording, so the result is doomed.
+    const doomed = recording.slice();
+    doomed.fill(0.321, 0, 500);
+
+    const result = await target
+      .finish({ samples: doomed, sampleRate: RATE })
+      .then((value) => {
+        order.push("finish:resolved");
+        return value;
+      });
+
+    expect(result).toBeNull();
+    // The span was cancelled and had fully unwound before `finish` returned
+    // null. Resolving earlier is what let the caller's whole-recording request
+    // go out while the discarded span was still billed.
+    expect(order).toEqual(["span:aborted", "span:settled", "finish:resolved"]);
+    // Not disposed, so the session still takes the fallback rather than
+    // treating the recording as cancelled.
+    expect(target.isDisposed).toBe(false);
+  });
+
+  it("proceeds with the fallback when a provider ignores the cancellation signal", async () => {
+    vi.useFakeTimers();
+    try {
+      // A span that neither settles nor rejects, modelling an adapter that
+      // drops the abort signal.
+      const transcribe = vi.fn<ChunkTranscriber>(() => new Promise(() => {}));
+      const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+      feed(target, recording);
+      const doomed = recording.slice();
+      doomed.fill(0.456, 0, 500);
+
+      const fallback = target.finish({ samples: doomed, sampleRate: RATE });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Bounded wait: a hung span must not hold the user's dictation hostage.
+      await expect(fallback).resolves.toBeNull();
+      expect(target.isDisposed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("transcribes spans strictly one at a time and in order", async () => {
     let active = 0;
     let maxActive = 0;
@@ -336,12 +403,13 @@ describe("PauseChunkedPretranscriber", () => {
     target.push(recording.subarray(2_100, 2_200), 2_100);
     expect(target.chunkCount).toBeGreaterThan(0);
 
-    // Only the committed spans run. No tail, because a result that gets
-    // discarded is not worth a billed request.
+    // The gap dooms the result, so nothing is billed for it: not the tail, and
+    // not the committed spans that had not reached the provider yet. They are
+    // cancelled on the way out instead.
     await expect(
       target.finish({ samples: recording, sampleRate: RATE }),
     ).resolves.toBeNull();
-    expect(transcribe).toHaveBeenCalledTimes(target.chunkCount);
+    expect(transcribe).not.toHaveBeenCalled();
   });
 
   it("disables itself on a gap or a chunk without an offset", async () => {
