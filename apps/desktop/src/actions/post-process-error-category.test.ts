@@ -148,15 +148,39 @@ describe("catalog coverage", () => {
       true,
     );
 
+    // Whitespace is stripped before comparing. The record annotation is wrapped
+    // across three lines by the formatter, so an exact-text match on the
+    // single-line form never matches it and the guard silently reads nothing.
+    // The same matcher failing the other way is worse: the day the annotation
+    // does fit on one line, an exact match would start matching and the check
+    // would pass or fail on line breaks alone.
     const isReasonType = (node: ts.TypeNode): boolean => {
-      const text = node.getText(source);
+      const text = node.getText(source).replace(/\s+/g, "");
       return (
         text === "PostProcessErrorReason" ||
-        text === "Readonly<Record<string, PostProcessErrorReason>>"
+        text === "Readonly<Record<string,PostProcessErrorReason>>"
       );
     };
 
+    /**
+     * A reason entry is safe only when it names a category constant and points
+     * at a descriptor identifier. A key written as a bare string drifts from
+     * `POST_PROCESS_ERROR_CATEGORY`, the one place the classifier returns are
+     * defined, and a value written inline is the literal defect above.
+     */
+    const isCategoryKeyedDescriptor = (
+      property: ts.ObjectLiteralElementLike,
+    ): boolean =>
+      ts.isPropertyAssignment(property) &&
+      ts.isComputedPropertyName(property.name) &&
+      ts.isPropertyAccessExpression(property.name.expression) &&
+      property.name.expression.expression.getText(source) ===
+        "POST_PROCESS_ERROR_CATEGORY" &&
+      ts.isIdentifier(property.initializer);
+
     const literals: string[] = [];
+    const unkeyed: string[] = [];
+    let reasonRecords = 0;
     const visit = (node: ts.Node): void => {
       if (
         ts.isVariableDeclaration(node) &&
@@ -166,12 +190,29 @@ describe("catalog coverage", () => {
         ts.isIdentifier(node.name) &&
         ts.isObjectLiteralExpression(node.initializer)
       ) {
-        literals.push(node.name.text);
+        reasonRecords += 1;
+        for (const property of node.initializer.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            ts.isObjectLiteralExpression(property.initializer)
+          ) {
+            literals.push(node.name.text);
+            continue;
+          }
+          if (!isCategoryKeyedDescriptor(property)) {
+            unkeyed.push(node.name.text);
+          }
+        }
       }
       ts.forEachChild(node, visit);
     };
     visit(source);
 
+    // A guard that matches nothing passes. Pin that it read the descriptor
+    // table, so a matcher regression fails here instead of quietly widening
+    // coverage to nothing.
+    expect(reasonRecords).toBeGreaterThan(0);
     expect(literals).toEqual([]);
+    expect(unkeyed).toEqual([]);
   });
 });
