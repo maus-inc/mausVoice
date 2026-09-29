@@ -10,6 +10,7 @@ import {
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
   GEMINI_TRANSCRIPTION_MODELS,
+  isGeminiTranscribeModel,
   gladiaTranscribeAudio,
   type GladiaCustomizations,
   groqTranscribeAudio,
@@ -714,11 +715,22 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private geminiApiKey: string;
   private model: GeminiTranscriptionModel;
+  private readonly customVocabulary: string[];
+  private resolvedModel: GeminiTranscriptionModel | null = null;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customVocabulary: string[] = [],
+  ) {
     super();
     this.geminiApiKey = apiKey;
+    // Default model is GEMINI_TRANSCRIPTION_MODELS[0] (currently
+    // gemini-3.5-transcribe dedicated STT). Previously defaulted to
+    // gemini-2.5-flash general model; bump to dedicated transcribe for
+    // better accuracy and lower cost. Intentional upgrade.
     this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
+    this.customVocabulary = customVocabulary;
   }
 
   protected async transcribeSegment(
@@ -726,22 +738,59 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   ): Promise<TranscribeAudioOutput> {
     const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
-    const { text: transcript } = await geminiTranscribeAudio({
-      apiKey: this.geminiApiKey,
-      model: this.model,
-      blob: wavBuffer,
-      mimeType: "audio/wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-      customFetch: withAbortSignal(secureFetch, input.signal),
-    });
+    const tryTranscribe = async (model: GeminiTranscriptionModel) => {
+      const { text } = await geminiTranscribeAudio({
+        apiKey: this.geminiApiKey,
+        model,
+        blob: wavBuffer,
+        mimeType: "audio/wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+        // Pass explicit array (even empty) to prevent prompt fallback that
+        // would treat localized instructions as vocabulary terms.
+        customVocabulary: this.customVocabulary,
+        transcriptionMode: "verbatim",
+        customFetch: withAbortSignal(secureFetch, input.signal),
+      });
+      return text;
+    };
+
+    // Cache resolved model after first fallback to avoid 403 per segment.
+    const effectiveModel = this.resolvedModel ?? this.model;
+    let transcript: string;
+    let usedModel = effectiveModel;
+    try {
+      transcript = await tryTranscribe(effectiveModel);
+      if (!this.resolvedModel) this.resolvedModel = effectiveModel;
+    } catch (error) {
+      const isTranscribeModel = isGeminiTranscribeModel(effectiveModel);
+      const status =
+        error instanceof Error && "status" in error
+          ? (error as { status?: number }).status
+          : undefined;
+      const isModelAccessError = status === 403 || status === 404;
+      if (isTranscribeModel && isModelAccessError) {
+        const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
+          (m) => !isGeminiTranscribeModel(m),
+        ) as GeminiTranscriptionModel | undefined;
+        if (fallbackModel) {
+          transcript = await tryTranscribe(fallbackModel);
+          usedModel = fallbackModel;
+          this.resolvedModel = fallbackModel;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Gemini",
-        modelSize: this.model,
-        transcriptionMode: "api",
+        modelSize: usedModel,
+        transcriptionMode: "api" as TranscriptionMode,
       },
     };
   }

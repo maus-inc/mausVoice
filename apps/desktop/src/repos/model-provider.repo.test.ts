@@ -98,6 +98,39 @@ describe("provider model discovery", () => {
     );
   });
 
+  it("includes dedicated transcribe model for transcription but not for generation", async () => {
+    pluginFetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              {
+                name: "models/gemini-3.5-transcribe",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-3.5-transcribe-live",
+                supportedGenerationMethods: ["generateContent"],
+              },
+              {
+                name: "models/gemini-3.8-flash",
+                supportedGenerationMethods: ["generateContent"],
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const repo = new GeminiModelProviderRepo();
+
+    await expect(
+      repo.getGenerativeTextModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-3.8-flash"]);
+    await expect(
+      repo.getTranscriptionModels({ apiKey: "gemini-key" }),
+    ).resolves.toEqual(["gemini-3.5-transcribe", "gemini-3.8-flash"]);
+  });
+
   it("separates OpenAI chat and file-transcription models", async () => {
     pluginFetchMock.mockImplementation(() =>
       Promise.resolve(
@@ -188,6 +221,20 @@ describe("provider model discovery", () => {
     await expect(
       new XaiModelProviderRepo().getTranscriptionModels(),
     ).resolves.toEqual([]);
+  });
+
+  it("uses shared isGeminiTranscribeModel predicate for dedicated detection", async () => {
+    // Table-driven: transcribe vs live-transcribe disagreement (finding 6)
+    const { isGeminiTranscribeModel } = await import("@maus-inc/voice-ai");
+    const cases: Array<[string, boolean]> = [
+      ["gemini-3.5-transcribe", true],
+      ["gemini-3.5-transcribe-live", false],
+      ["gemini-2.5-flash", false],
+      ["gemini-3.8-flash", false],
+    ];
+    for (const [model, expected] of cases) {
+      expect(isGeminiTranscribeModel(model)).toBe(expected);
+    }
   });
 
   it("fetches a saved custom catalog while preserving its path prefix", async () => {
