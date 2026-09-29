@@ -5,6 +5,7 @@ import {
   Button,
   CircularProgress,
   Dialog,
+  Divider,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -15,10 +16,16 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import {
+  defineMessages,
+  FormattedMessage,
+  useIntl,
+  type IntlShape,
+} from "react-intl";
 import {
   createApiKey,
   deleteApiKey,
@@ -33,6 +40,7 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { cssEase, duration, easeOutQuint } from "../../styles/motion";
 import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
@@ -438,6 +446,54 @@ const getModelForContext = (
     : (apiKey.postProcessingModel ?? null);
 };
 
+/**
+ * The single description of what the model picker in a given section is for.
+ *
+ * The visible caption and the input's accessible name both read this, so a
+ * translator who rewords the caption in one locale cannot leave the
+ * aria-label holding the old wording, and the message stays defined once.
+ *
+ * defineMessages rather than a plain object because that is the shape
+ * scripts/i18n-extract-with-prune.mjs reads. A descriptor returned from a
+ * helper and spread at the call site is invisible to the extractor, which then
+ * prunes the key and every translation with it. The i18n extraction and catalog
+ * sync checks in CI are what catch that.
+ */
+const modelSetupMessages = defineMessages({
+  transcription: { defaultMessage: "Transcription model" },
+  "post-processing": { defaultMessage: "Post-processing model" },
+});
+
+const modelSetupLabel = (intl: IntlShape, context: ApiKeyListContext): string =>
+  intl.formatMessage(modelSetupMessages[context]);
+
+/**
+ * The model choice is a sub-section of the connection card, so it reads as
+ * one: a full-bleed hairline, then a captioned field group. Rendered only
+ * alongside an actual picker — provider pickers always have controls; the
+ * generic fetch-based picker gates itself below.
+ */
+const ModelSetupSection = ({
+  context,
+  children,
+}: {
+  context: ApiKeyListContext;
+  children: React.ReactNode;
+}) => {
+  const intl = useIntl();
+  return (
+    <>
+      <Divider sx={{ mx: -2 }} />
+      <Stack spacing={1} sx={{ width: "100%", pt: 0.25 }}>
+        <Typography variant="subtitle2">
+          {modelSetupLabel(intl, context)}
+        </Typography>
+        {children}
+      </Stack>
+    </>
+  );
+};
+
 const ModelPickerForProvider = ({
   apiKey,
   context,
@@ -453,7 +509,7 @@ const ModelPickerForProvider = ({
 }) => {
   if (apiKey.provider === "openrouter" && context === "post-processing") {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OpenRouterModelPicker
           apiKeyId={apiKey.id}
           selectedModel={currentModel}
@@ -461,13 +517,13 @@ const ModelPickerForProvider = ({
           disabled={disabled}
         />
         <OpenRouterProviderRouting apiKeyId={apiKey.id} disabled={disabled} />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
   if (apiKey.provider === "ollama" && context === "post-processing") {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OllamaModelPicker
           baseUrl={apiKey.baseUrl ?? null}
           apiKey={apiKey.keyFull}
@@ -475,7 +531,7 @@ const ModelPickerForProvider = ({
           onModelSelect={onModelChange}
           disabled={disabled}
         />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
@@ -484,7 +540,7 @@ const ModelPickerForProvider = ({
     context === "post-processing"
   ) {
     return (
-      <Box onClick={(e) => e.stopPropagation()}>
+      <ModelSetupSection context={context}>
         <OpenAICompatibleModelPicker
           apiKeyId={apiKey.id}
           baseUrl={apiKey.baseUrl ?? null}
@@ -494,7 +550,7 @@ const ModelPickerForProvider = ({
           onModelSelect={onModelChange}
           disabled={disabled}
         />
-      </Box>
+      </ModelSetupSection>
     );
   }
 
@@ -522,6 +578,7 @@ const GenericModelPicker = ({
   onModelChange: (model: string | null) => void;
   disabled: boolean;
 }) => {
+  const intl = useIntl();
   const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -572,7 +629,7 @@ const GenericModelPicker = ({
   if (models.length === 0 && !isLoading) return null;
 
   return (
-    <Box onClick={(e) => e.stopPropagation()}>
+    <ModelSetupSection context={context}>
       <Autocomplete
         freeSolo
         options={models}
@@ -592,11 +649,17 @@ const GenericModelPicker = ({
         renderInput={(params) => (
           <TextField
             {...params}
-            label={<FormattedMessage defaultMessage="Model" />}
             placeholder="Select or type a model"
             slotProps={{
               ...params.slotProps,
-
+              htmlInput: {
+                ...params.slotProps.htmlInput,
+                // The visible subtitle2 caption labels the field group; the
+                // input itself is announced with the same wording. Both read
+                // from modelSetupLabel so a rewording in one locale cannot
+                // leave the accessible name behind.
+                "aria-label": modelSetupLabel(intl, context),
+              },
               input: {
                 ...params.slotProps.input,
                 endAdornment: (
@@ -610,7 +673,7 @@ const GenericModelPicker = ({
           />
         )}
       />
-    </Box>
+    </ModelSetupSection>
   );
 };
 
@@ -638,6 +701,7 @@ const ApiKeyCard = ({
   context: ApiKeyListContext;
 }) => {
   const intl = useIntl();
+  const theme = useTheme();
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
@@ -647,24 +711,16 @@ const ApiKeyCard = ({
   return (
     <Paper
       variant="outlined"
-      onClick={onSelect}
       sx={[
         {
           p: 2,
           borderColor: "divider",
           borderWidth: 1,
-          cursor: "pointer",
-          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
-          // Hover lives here, in one place: a selected card keeps its stroke
-          // (never reverts to an invisible state), an unselected card lights
-          // up with the active border colour.
-          ":hover": {
-            borderColor: selected ? "text.primary" : "action.active",
-          },
           display: "flex",
           flexDirection: "column",
-          gap: 2,
+          gap: 1.5,
           width: "100%",
+          transition: "border-color 0.2s ease, box-shadow 0.2s ease",
         },
         selected && selectedOutlineSx,
       ]}
@@ -672,73 +728,116 @@ const ApiKeyCard = ({
       <Stack
         direction="row"
         sx={{
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "space-between",
-          gap: 2,
+          gap: 1,
           width: "100%",
         }}
       >
-        <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
-          <Stack
-            direction="row"
-            sx={{
-              alignItems: "center",
-              gap: 0.75,
-            }}
-          >
-            <Typography
-              variant="subtitle1"
+        {/* Selection lives on the meta region alone — never on the whole
+            card. A giant Paper click target nested its own buttons and the
+            model input, so taps meant for the field re-selected the key
+            (and nested interactive regions confuse assistive tech). The
+            meta region is a real button sibling to the actions; the model
+            section below is non-interactive container. */}
+        <Box
+          component="button"
+          type="button"
+          aria-pressed={selected}
+          disabled={testing || deleting}
+          onClick={onSelect}
+          sx={{
+            // A native <button> for real semantics: Enter and Space activate
+            // it, Space does not scroll the page, and it participates in form
+            // submission and in the disabled set. The UA button styling is
+            // neutralised below so the element looks like the meta region it
+            // replaces.
+            appearance: "none",
+            display: "block",
+            flex: 1,
+            minWidth: 0,
+            m: -1,
+            p: 1,
+            border: 0,
+            borderRadius: 0.75,
+            background: "none",
+            font: "inherit",
+            color: "inherit",
+            textAlign: "left",
+            cursor: "pointer",
+            transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}`,
+            "&:hover": { bgcolor: "action.hover" },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars?.palette.primary.main ?? theme.palette.primary.main}`,
+              outlineOffset: 2,
+            },
+            "&:disabled": {
+              cursor: "default",
+              bgcolor: "transparent",
+            },
+            "@media (prefers-reduced-motion: reduce)": {
+              transition: "none",
+            },
+          }}
+        >
+          <Stack spacing={0.25}>
+            <Stack
+              direction="row"
               sx={{
-                fontWeight: 600,
+                alignItems: "center",
+                gap: 0.75,
               }}
             >
-              {apiKey.name}
-            </Typography>
-            {selected && (
-              <Check
-                size={16}
-                strokeWidth={1.9}
-                aria-label={intl.formatMessage({ defaultMessage: "Selected" })}
-                style={{ flexShrink: 0 }}
-              />
-            )}
-          </Stack>
-          <Typography
-            variant="body2"
-            sx={{
-              color: "text.secondary",
-            }}
-          >
-            {config.displayName}
-          </Typography>
-          {apiKey.keySuffix ? (
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 600,
+                }}
+              >
+                {apiKey.name}
+              </Typography>
+              {selected && (
+                <Check
+                  size={16}
+                  strokeWidth={1.9}
+                  aria-label={intl.formatMessage({
+                    defaultMessage: "Selected",
+                  })}
+                  style={{ flexShrink: 0 }}
+                />
+              )}
+            </Stack>
             <Typography
               variant="caption"
               sx={{
                 color: "text.secondary",
               }}
             >
-              <FormattedMessage
-                defaultMessage="Ends with {suffix}"
-                values={{ suffix: apiKey.keySuffix }}
-              />
+              {config.displayName}
+              {apiKey.keySuffix ? (
+                <>
+                  {" · "}
+                  <FormattedMessage
+                    defaultMessage="Ends with {suffix}"
+                    values={{ suffix: apiKey.keySuffix }}
+                  />
+                </>
+              ) : null}
             </Typography>
-          ) : null}
-        </Stack>
+          </Stack>
+        </Box>
         <Stack
           direction="row"
           spacing={1}
           sx={{
             alignItems: "center",
+            flexShrink: 0,
           }}
         >
           <Button
             variant="outlined"
             size="small"
-            onClick={(event) => {
-              event.stopPropagation();
-              onTest();
-            }}
+            onClick={onTest}
             disabled={testing || deleting}
           >
             {testing ? (
@@ -751,10 +850,7 @@ const ApiKeyCard = ({
             <span>
               <IconButton
                 size="small"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEdit();
-                }}
+                onClick={onEdit}
                 disabled={deleting || testing}
               >
                 <Pencil size={16} strokeWidth={1.9} />
@@ -766,10 +862,7 @@ const ApiKeyCard = ({
               <IconButton
                 size="small"
                 color="error"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onDelete();
-                }}
+                onClick={onDelete}
                 disabled={deleting || testing}
               >
                 <Trash2 size={16} strokeWidth={1.9} />

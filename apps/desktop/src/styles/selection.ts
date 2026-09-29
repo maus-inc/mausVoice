@@ -30,9 +30,10 @@ import { cssEase, duration, easeOutCubic } from "./motion";
  *   which no override touches, and keeps the outline crisp on top of the
  *   card's own border in both schemes.
  *
- * Hover is intentionally left to the consumer (ApiKeyCard owns it in a single
- * place), so this stays a pure selected-state declaration; the global
- * `:focus-visible` outline in the theme still handles keyboard focus.
+ * Hover is intentionally left to the consumer's own interactive region
+ * (ApiKeyCard keeps it on the selectable meta area), so this stays a pure
+ * selected-state declaration; the global `:focus-visible` outline in the
+ * theme still handles keyboard focus.
  *
  * @param ringWidth thickness of the outline ring in px (default 1).
  */
