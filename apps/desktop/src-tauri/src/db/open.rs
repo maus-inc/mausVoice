@@ -1297,4 +1297,31 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("mausvoice.broken-")));
     }
+
+    // The History list query decodes rows through row_to_transcription, which
+    // reads post_process_fallback. This runs against a real migrated database
+    // on purpose: a test that built its own table out of TRANSCRIPTION_COLUMNS
+    // would still pass if the column had no migration behind it.
+    #[tokio::test]
+    async fn transcription_list_loads_against_the_migrated_schema() {
+        let temp = TempDb::new();
+        let pool = try_open(&temp.path).await.expect("migrate to head");
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp, post_process_fallback)
+             VALUES ('flagged', 'hello', 1, 1), ('legacy', 'hi', 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = crate::db::transcription_queries::fetch_transcriptions(pool, 10, 0)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 2);
+        let flagged = rows.iter().find(|row| row.id == "flagged").unwrap();
+        let legacy = rows.iter().find(|row| row.id == "legacy").unwrap();
+        assert_eq!(flagged.post_process_fallback, Some(true));
+        assert_eq!(legacy.post_process_fallback, None);
+    }
 }
