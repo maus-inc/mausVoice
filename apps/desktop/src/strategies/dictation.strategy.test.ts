@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultPreferences } from "../actions/user.actions";
+import { POST_PROCESS_ERROR_CATEGORY } from "../actions/post-process-error-category";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import type { HandleTranscriptParams } from "../types/strategy.types";
@@ -88,8 +89,16 @@ vi.mock("../i18n/intl", async (importOriginal) => {
   return {
     ...actual,
     getIntl: () => ({
-      formatMessage: (descriptor: { defaultMessage: string }) =>
-        descriptor.defaultMessage,
+      // Interpolates values the way react-intl does, so a test asserting the
+      // rendered string cannot pass against a `{placeholder}` left unfilled.
+      formatMessage: (
+        descriptor: { defaultMessage: string },
+        values?: Record<string, string>,
+      ) =>
+        Object.entries(values ?? {}).reduce(
+          (text, [key, value]) => text.replaceAll(`{${key}}`, String(value)),
+          descriptor.defaultMessage,
+        ),
     }),
   };
 });
@@ -345,10 +354,10 @@ describe("DictationStrategy backlog lifecycle", () => {
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
       transcript: "fallback raw text",
-      warnings: ["402 payment required"],
+      warnings: [POST_PROCESS_ERROR_CATEGORY.quotaOrPayment],
       metadata: {
         postProcessFailed: true,
-        postProcessError: "402 payment required",
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
       },
     });
     const { showToast } = await import("../actions/toast.actions");
@@ -368,7 +377,8 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(routeTranscriptOutputMock).not.toHaveBeenCalled();
     expect(showToast).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Styling failed. The raw transcript is saved in History.",
+        message:
+          "Styling failed: Quota or payment required. The raw transcript is saved in History.",
         toastType: "error",
       }),
     );
@@ -376,7 +386,7 @@ describe("DictationStrategy backlog lifecycle", () => {
       transcript: "fallback raw text",
       postProcessMetadata: {
         postProcessFailed: true,
-        postProcessError: "402 payment required",
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
       },
     });
   });
@@ -469,15 +479,73 @@ describe("DictationStrategy backlog lifecycle", () => {
     expect(result.sanitizedTranscript).toBe("original text");
   });
 
+  it("shows the classified reason and no provider text when a model is retired", async () => {
+    // The provider message for a retired Groq model names the model id, both
+    // models in the chain, and both provider causes. It is diagnostic text and
+    // it stays in the log. What the user reads is the fixed category the
+    // classifier derives from it, so no provider-controlled string and no
+    // model id is ever rendered in the interface.
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "fallback raw text",
+      warnings: [POST_PROCESS_ERROR_CATEGORY.provider],
+      metadata: {
+        postProcessFailed: true,
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.provider,
+      },
+    });
+
+    const { showToast } = await import("../actions/toast.actions");
+
+    await new DictationStrategy().handleTranscript({
+      rawTranscript: "fallback raw text",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
+    const toast = vi.mocked(showToast).mock.calls[0]![0];
+    expect(toast.message).toBe(
+      "Styling failed: Provider error. The raw transcript is saved in History.",
+    );
+    expect(toast.message).not.toContain("gpt-oss");
+    expect(toast.message).not.toContain("{reason}");
+  });
+
+  it("falls back to a fixed reason when the failure carried no category", async () => {
+    // A failure that never reached `recordPostProcessFailure` leaves the field
+    // null. The toast must still render a complete sentence rather than
+    // printing an empty reason or a leftover placeholder.
+    const { postProcessTranscript } =
+      await import("../actions/transcribe.actions");
+    vi.mocked(postProcessTranscript).mockResolvedValueOnce({
+      transcript: "fallback raw text",
+      warnings: [],
+      metadata: { postProcessFailed: true, postProcessError: null },
+    });
+
+    const { showToast } = await import("../actions/toast.actions");
+
+    await new DictationStrategy().handleTranscript({
+      rawTranscript: "fallback raw text",
+      toneId: "custom-tone",
+      currentApp: null,
+    } as never);
+
+    expect(vi.mocked(showToast).mock.calls[0]![0].message).toBe(
+      "Styling failed: Provider error. The raw transcript is saved in History.",
+    );
+  });
+
   it("blocks insertion and shows error toast when post-processing fails", async () => {
     const { postProcessTranscript } =
       await import("../actions/transcribe.actions");
     vi.mocked(postProcessTranscript).mockResolvedValueOnce({
       transcript: "fallback raw text",
-      warnings: ["402 payment required"],
+      warnings: [POST_PROCESS_ERROR_CATEGORY.quotaOrPayment],
       metadata: {
         postProcessFailed: true,
-        postProcessError: "402 payment required",
+        postProcessError: POST_PROCESS_ERROR_CATEGORY.quotaOrPayment,
       },
     });
 
