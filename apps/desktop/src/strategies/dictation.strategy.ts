@@ -3,6 +3,7 @@ import type { Nullable } from "@maus-inc/types";
 import { showErrorSnackbar, showSnackbar } from "../actions/app.actions";
 import { tryRegisterCurrentAppTarget } from "../actions/app-target.actions";
 import { getIntl } from "../i18n/intl";
+import { postProcessErrorReason } from "../actions/post-process-error-category";
 import { showToast } from "../actions/toast.actions";
 import {
   postProcessTranscript,
@@ -412,11 +413,23 @@ export class DictationStrategy extends BaseStrategy {
         getLogger().warning(
           "Post-processing failed; preserving the transcript in History without insertion",
         );
+        // The reason is the classified category, resolved to a localized
+        // message. The provider's own message is not rendered: only the Groq
+        // and Cerebras paths scrub credential material, and the Groq chain text
+        // names a model id the provider chose, so the full detail stays in the
+        // log. This string is the same one persisted on the transcription row,
+        // so a user who opens History reads the same words.
+        const reason = postProcessErrorReason(
+          postProcessMetadata.postProcessError,
+        );
         await showToast({
-          message: getIntl().formatMessage({
-            defaultMessage:
-              "Styling failed. The raw transcript is saved in History.",
-          }),
+          message: getIntl().formatMessage(
+            {
+              defaultMessage:
+                "Styling failed: {reason}. The raw transcript is saved in History.",
+            },
+            { reason: getIntl().formatMessage(reason) },
+          ),
           toastType: "error",
           duration: 8000,
           action: "open_transcriptions",

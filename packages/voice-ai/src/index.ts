@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./provider-error.utils";
 export * from "./claude.utils";
 export * from "./groq.utils";
 export * from "./openai.utils";
