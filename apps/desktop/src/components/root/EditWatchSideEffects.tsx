@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import {
+  EDIT_POLL_MS,
   acceptAutoLearnProposal,
   endEditWatch,
   pollEditWatch,
@@ -9,8 +10,6 @@ import { useIntervalAsync } from "../../hooks/helper.hooks";
 import { useToastAction } from "../../hooks/toast.hooks";
 import { useAppStore } from "../../store";
 import { getMyUserPreferences } from "../../utils/user.utils";
-
-const POLL_INTERVAL_MS = 1500;
 
 /**
  * Drives the background correction watcher: polls the focused text field
@@ -34,7 +33,7 @@ export const EditWatchSideEffects = () => {
   // shut the side-effect tree down.
   useEffect(() => () => endEditWatch(), []);
 
-  useIntervalAsync(POLL_INTERVAL_MS, async () => {
+  useIntervalAsync(EDIT_POLL_MS, async () => {
     await pollEditWatch();
   }, [enabled]);
 
