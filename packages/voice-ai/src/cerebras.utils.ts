@@ -85,11 +85,7 @@ export const normalizeCerebrasError = (error: unknown): Error => {
     return error;
   }
 
-  const status =
-    typeof error === "object" && error !== null && "status" in error
-      ? (error as { status?: unknown }).status
-      : undefined;
-  const numericStatus = typeof status === "number" ? status : undefined;
+  const numericStatus = readProviderStatus(error);
 
   if (numericStatus === 402) {
     return new CerebrasProviderError(
