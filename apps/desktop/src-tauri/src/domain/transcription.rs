@@ -52,6 +52,11 @@ pub struct Transcription {
     /// request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_process_error: Option<String>,
+    /// True when post-processing failed and local fast styling produced the
+    /// stored transcript instead. Persisted so the row still reads as
+    /// degraded after a save/load cycle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_process_fallback: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcription_duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]

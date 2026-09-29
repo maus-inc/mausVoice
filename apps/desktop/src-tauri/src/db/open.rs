@@ -939,6 +939,36 @@ mod tests {
         .await
         .unwrap();
 
+        // post_process_fallback is the marker for a row saved after
+        // post-processing failed and local fast styling took over. It has to
+        // survive a round trip or the row reads as clean after a reload.
+        let fallback_null =
+            sqlx::query("SELECT post_process_fallback FROM transcriptions WHERE id = 'legacy'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            fallback_null
+                .try_get::<Option<i64>, _>("post_process_fallback")
+                .unwrap(),
+            None
+        );
+        sqlx::query("UPDATE transcriptions SET post_process_fallback = 1 WHERE id = 'new'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fallback_read =
+            sqlx::query("SELECT post_process_fallback FROM transcriptions WHERE id = 'new'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            fallback_read
+                .try_get::<Option<bool>, _>("post_process_fallback")
+                .unwrap(),
+            Some(true)
+        );
+
         // interaction_feedback_volume materialized on the pre-upgrade profile.
         let volume = sqlx::query(
             "SELECT interaction_feedback_volume FROM user_profiles WHERE id = 'legacy-user'",

@@ -1355,7 +1355,13 @@ postProcessFailed?: boolean | null;
  * Sanitized, non-secret error message from a failed post-processing
  * request.
  */
-postProcessError?: string | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
+postProcessError?: string | null; 
+/**
+ * True when post-processing failed and local fast styling produced the
+ * stored transcript instead. Persisted so the row still reads as
+ * degraded after a save/load cycle.
+ */
+postProcessFallback?: boolean | null; transcriptionDurationMs?: number | null; postprocessDurationMs?: number | null; warnings?: string[] | null; remoteStatus?: string | null; remoteDeviceId?: string | null }
 export type TranscriptionAudioData = { 
 /**
  * Little-endian signed 16-bit mono PCM. The IPC serializer still carries

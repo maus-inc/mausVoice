@@ -40,6 +40,7 @@ fn row_to_transcription(row: SqliteRow) -> Result<Transcription, sqlx::Error> {
         post_process_model: row.try_get::<Option<String>, _>("post_process_model")?,
         post_process_provider: row.try_get::<Option<String>, _>("post_process_provider")?,
         post_process_failed: row.try_get::<Option<bool>, _>("post_process_failed")?,
+        post_process_fallback: row.try_get::<Option<bool>, _>("post_process_fallback")?,
         post_process_error: row.try_get::<Option<String>, _>("post_process_error")?,
         transcription_duration_ms: row.try_get::<Option<i64>, _>("transcription_duration_ms")?,
         postprocess_duration_ms: row.try_get::<Option<i64>, _>("postprocess_duration_ms")?,
@@ -79,9 +80,10 @@ pub async fn insert_transcription(
              postprocess_duration_ms,
              warnings_json,
              remote_status,
-             remote_device_id
+             remote_device_id,
+             post_process_fallback
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
     )
     .bind(&transcription.id)
     .bind(&transcription.transcript)
@@ -113,6 +115,7 @@ pub async fn insert_transcription(
     .bind(serialize_warnings(&transcription.warnings))
     .bind(transcription.remote_status.as_deref())
     .bind(transcription.remote_device_id.as_deref())
+    .bind(transcription.post_process_fallback)
     .execute(&pool)
     .await?;
 
@@ -197,7 +200,8 @@ pub async fn update_transcription(
              postprocess_duration_ms = ?22,
              warnings_json = ?23,
              remote_status = ?24,
-             remote_device_id = ?25
+             remote_device_id = ?25,
+             post_process_fallback = ?26
          WHERE id = ?1",
     )
     .bind(&transcription.id)
@@ -230,6 +234,7 @@ pub async fn update_transcription(
     .bind(serialize_warnings(&transcription.warnings))
     .bind(transcription.remote_status.as_deref())
     .bind(transcription.remote_device_id.as_deref())
+    .bind(transcription.post_process_fallback)
     .execute(&pool)
     .await?;
 
@@ -258,7 +263,8 @@ pub async fn update_transcription(
                 postprocess_duration_ms,
                 warnings_json,
                 remote_status,
-                remote_device_id
+                remote_device_id,
+                post_process_fallback
          FROM transcriptions
          WHERE id = ?1",
     )

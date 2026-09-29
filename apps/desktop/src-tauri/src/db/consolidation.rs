@@ -42,6 +42,7 @@ const TABLES: &[TableFields] = &[
             "post_process_failed",
             "post_process_error",
             "post_process_model",
+            "post_process_fallback",
         ],
     },
     TableFields {

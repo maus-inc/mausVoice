@@ -146,6 +146,10 @@ pub const APP_TARGET_INSERTION_METHOD_MIGRATION_SQL: &str =
 /// channel column, folded into one migration.
 pub const CONSOLIDATED_V0_1_6_MIGRATION_SQL: &str =
     include_str!("migrations/069_consolidated_v0_1_6_schema.sql");
+/// Persists `post_process_fallback`, the row-level marker for a transcription
+/// that was saved after post-processing failed and local fast styling took over.
+pub const POST_PROCESS_FALLBACK_MIGRATION_SQL: &str =
+    include_str!("migrations/070_post_process_fallback.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -564,6 +568,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 69,
             description: "consolidated_v0_1_6_schema",
             sql: CONSOLIDATED_V0_1_6_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 70,
+            description: "post_process_fallback",
+            sql: POST_PROCESS_FALLBACK_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]
