@@ -200,17 +200,31 @@ const unwrapSingleObject = (
     : record;
 };
 
-const readEdits = (value: unknown): TranscriptionEdit[] => {
+/**
+ * `dropped` counts the entries that named no usable `find` text, so no edit
+ * could be read from them. They are counted rather than discarded because a
+ * reply the provider mangled is a failure to report, and a count is the only
+ * way the resolver can tell it apart from a model that chose to change nothing.
+ */
+type ReadEdits = {
+  edits: TranscriptionEdit[];
+  dropped: number;
+};
+
+const readEdits = (value: unknown): ReadEdits => {
   if (!Array.isArray(value)) {
-    return [];
+    return { edits: [], dropped: 0 };
   }
   const edits: TranscriptionEdit[] = [];
+  let dropped = 0;
   for (const entry of value) {
     if (typeof entry !== "object" || entry === null) {
+      dropped += 1;
       continue;
     }
     const { find, replace } = entry as { find?: unknown; replace?: unknown };
     if (typeof find !== "string") {
+      dropped += 1;
       continue;
     }
     edits.push({
@@ -218,7 +232,7 @@ const readEdits = (value: unknown): TranscriptionEdit[] => {
       replace: typeof replace === "string" ? replace : null,
     });
   }
-  return edits;
+  return { edits, dropped };
 };
 
 /**
@@ -231,19 +245,28 @@ const readEdits = (value: unknown): TranscriptionEdit[] => {
  *
  * `editsDeclared` separates a reply that carried an edit list, even an empty
  * one, from a reply with no list at all. Only the first means the model looked
- * at the transcript and chose to change nothing.
+ * at the transcript and chose to change nothing. `dropped` counts the entries
+ * in that list that carried no usable `find` text, so a list the provider
+ * mangled stays distinguishable from an empty one.
  */
 const readProcessedTranscriptionResponse = (
   parsed: unknown,
-): { edits: TranscriptionEdit[]; editsDeclared: boolean; result: string } => {
+): {
+  edits: TranscriptionEdit[];
+  editsDeclared: boolean;
+  dropped: number;
+  result: string;
+} => {
   const record =
     typeof parsed === "object" && parsed !== null
       ? (parsed as Record<string, unknown>)
       : {};
   const source = hasResponseKeys(record) ? record : unwrapSingleObject(record);
+  const { edits, dropped } = readEdits(source.edits);
   return {
-    edits: readEdits(source.edits),
+    edits,
     editsDeclared: Array.isArray(source.edits),
+    dropped,
     result: typeof source.result === "string" ? source.result : "",
   };
 };
@@ -254,11 +277,13 @@ export type ProcessedTranscriptionResolution =
       status: "unusable";
       /**
        * "unparseable" means the reply was not JSON at all; "empty" means the
-       * reply parsed but carried no text. Production falls back to the raw
+       * reply parsed but carried no text; "unreadable-edits" means it declared
+       * an edit list the reply's shape did not let us read, so the model asked
+       * for a change we could not act on. Production falls back to the raw
        * transcript either way, while the style preview shows the model's own
        * words for "unparseable" so a prose answer stays visible.
        */
-      reason: "empty" | "unparseable";
+      reason: "empty" | "unparseable" | "unreadable-edits";
       warning: string;
     };
 
@@ -274,7 +299,9 @@ export type ProcessedTranscriptionResolution =
  * style dialog. An empty transcript resolves to itself without a warning:
  * there is nothing to clean, and warning about an empty reply to empty input
  * would be noise. So does a reply carrying an empty edit list, which is how
- * the model answers when the tone already matches the speaker.
+ * the model answers when the tone already matches the speaker. A list we
+ * could not read is neither of those: the model asked for a change that is
+ * now lost, so it is reported as unusable rather than passed off as clean.
  */
 export const resolveProcessedTranscription = (
   reply: string,
@@ -298,7 +325,7 @@ export const resolveProcessedTranscription = (
     };
   }
 
-  const { edits, editsDeclared, result } =
+  const { edits, editsDeclared, dropped, result } =
     readProcessedTranscriptionResponse(parsed);
   const rewritten = result.trim();
 
@@ -307,6 +334,11 @@ export const resolveProcessedTranscription = (
     // A rewrite the model sent alongside unusable edits still covers them, so
     // only a reply that applied nothing without a rewrite has skips to report.
     if (application.applied > 0 || rewritten.length === 0) {
+      // Entries the reply did not let us read are counted with the ones that
+      // did not match, so the totals describe every entry the model sent and
+      // an unread one cannot vanish from the report.
+      const declared = edits.length + dropped;
+      const skipped = application.skipped + dropped;
       // The cap can drop edits before they are ever matched, so the warning
       // names the matching rule instead of claiming every skip was a miss.
       const capNote =
@@ -317,8 +349,8 @@ export const resolveProcessedTranscription = (
         status: "cleaned",
         transcript: application.text,
         warning:
-          application.skipped > 0
-            ? `Applied ${application.applied} of ${edits.length} post-processing edits; ${application.skipped} could not be applied (an edit only applies when its replacement is a string and its find text matches the transcript exactly once, on the edges of a word).${capNote}`
+          skipped > 0
+            ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
             : null,
       };
     }
@@ -328,7 +360,19 @@ export const resolveProcessedTranscription = (
     return { status: "cleaned", transcript: rewritten, warning: null };
   }
 
-  if (transcript.trim().length === 0 || editsDeclared) {
+  if (transcript.trim().length === 0) {
+    return { status: "cleaned", transcript, warning: null };
+  }
+
+  if (editsDeclared) {
+    if (dropped > 0) {
+      return {
+        status: "unusable",
+        reason: "unreadable-edits",
+        warning:
+          "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+      };
+    }
     return { status: "cleaned", transcript, warning: null };
   }
 

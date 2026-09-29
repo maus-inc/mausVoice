@@ -475,12 +475,12 @@ describe("applyTranscriptionEdits", () => {
 });
 
 describe("resolveProcessedTranscription", () => {
-  // The warning names both reasons an edit cannot apply, so a skipped edit is
-  // never a silent no-op.
-  const ONE_EDIT_SKIPPED =
-    "Applied 0 of 1 post-processing edits; 1 could not be applied (an edit only applies when its replacement is a string and its find text matches the transcript exactly once, on the edges of a word).";
-  const ONE_OF_TWO_EDITS_SKIPPED =
-    "Applied 1 of 2 post-processing edits; 1 could not be applied (an edit only applies when its replacement is a string and its find text matches the transcript exactly once, on the edges of a word).";
+  // The warning names every reason an edit cannot apply, so no skipped or
+  // unread entry is a silent no-op.
+  const SKIP_RULE =
+    " (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).";
+  const ONE_EDIT_SKIPPED = `Applied 0 of 1 post-processing edits; 1 could not be applied${SKIP_RULE}`;
+  const ONE_OF_TWO_EDITS_SKIPPED = `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`;
 
   it("applies edits and reports skipped ones as a warning", () => {
     const resolution = resolveProcessedTranscription(
@@ -669,6 +669,79 @@ describe("resolveProcessedTranscription", () => {
     expect(resolution).toEqual({
       status: "cleaned",
       transcript: "I finished the report today",
+      warning: null,
+    });
+  });
+
+  it("reports a reply whose edit list could not be read at all", () => {
+    // The reply declared an edit, so the model asked for a change. Reading the
+    // entry away and calling the result a clean no-op told the user nothing
+    // while the change they asked for was lost.
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [{ find: 42, replace: "x" }], result: "" }),
+      "I will send the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+    });
+  });
+
+  it.each([
+    ["a non-string find", { find: 42, replace: "x" }],
+    ["a missing find", { replace: "x" }],
+    ["a null entry", null],
+    ["a bare string", "gonna"],
+  ])("reports an edit list holding %s", (_label, entry) => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [entry], result: "" }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unreadable-edits",
+    });
+  });
+
+  it("counts an unread entry beside the ones it did apply", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: 42, replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+    );
+
+    // The totals describe every entry the model sent, so the unread one is
+    // reported rather than quietly missing from the count.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to ship",
+      warning: `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`,
+    });
+  });
+
+  it("keeps the rewrite when the edit list beside it could not be read", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [{ find: 42, replace: "x" }],
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    // The rewrite carries the text the unread edit asked for, so there is
+    // nothing left to report.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "We are going to ship.",
       warning: null,
     });
   });
