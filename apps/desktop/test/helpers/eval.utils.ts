@@ -9,9 +9,9 @@ import {
   buildPostProcessingPrompt,
   buildSystemPostProcessingTonePrompt,
   PostProcessingPromptInput,
-  PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-  PROCESSED_TRANSCRIPTION_SCHEMA,
+  PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
 } from "../../src/utils/prompt.utils";
+import { resolveProcessedTranscription } from "../../src/utils/ai.utils";
 import {
   getDefaultSystemTones,
   StyleToneConfig,
@@ -120,15 +120,15 @@ export const postProcess = async ({
     system: ppSystem,
     prompt: ppPrompt,
     signal,
-    jsonResponse: {
-      name: "transcription_cleaning",
-      description: "JSON response with the processed transcription",
-      schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
-    },
+    jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   });
 
-  const parsed = PROCESSED_TRANSCRIPTION_SCHEMA.parse(JSON.parse(output.text));
-  return parsed.result;
+  // Score what production would deliver, edits included, so an eval failure
+  // points at the real pipeline rather than at an eval-only parser.
+  const resolution = resolveProcessedTranscription(output.text, transcription);
+  return resolution.status === "cleaned"
+    ? resolution.transcript
+    : transcription;
 };
 
 export const toneFromPrompt = (promptTemplate: string): StyleToneConfig => ({

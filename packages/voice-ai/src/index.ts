@@ -17,3 +17,4 @@ export * from "./speaches.utils";
 export * from "./xai.utils";
 export * from "./gladia.utils";
 export * from "./query-params.utils";
+export * from "./reasoning.utils";

@@ -19,10 +19,7 @@ import { classifyPostProcessErrorCategory } from "./post-process-error-category"
 import { PostProcessingRunMode, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
 import { StopRecordingResponse } from "../types/transcription-session.types";
-import {
-  parsePostProcessingJson,
-  unwrapNestedLlmResponse,
-} from "../utils/ai.utils";
+import { resolveProcessedTranscription } from "../utils/ai.utils";
 import { createId } from "../utils/id.utils";
 import {
   isEphemeralSessionActive,
@@ -50,7 +47,6 @@ import {
   PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
   POST_PROCESS_MAX_TOKENS,
-  PROCESSED_TRANSCRIPTION_SCHEMA,
 } from "../utils/prompt.utils";
 import {
   applyHallucinationFiltering,
@@ -286,37 +282,20 @@ export const transcribeAudio = async ({
 };
 
 /**
- * Parse and validate the LLM's JSON post-processing response. Returns the
- * cleaned transcript on success, or the raw transcript plus a warning on
- * any parse/validation failure.
+ * Resolve the LLM's post-processing reply into the transcript to deliver.
+ * Edits the model returns are applied against the raw transcript and
+ * validated (see `resolveProcessedTranscription`); anything unusable falls
+ * back to the raw transcript with a warning attached to the row.
  */
-const parseProcessedTranscript = (
-  raw: string,
-  fallback: string,
+const resolvePostProcessedTranscript = (
+  reply: string,
+  rawTranscript: string,
 ): { transcript: string; warning: string | null } => {
-  try {
-    const parsed = unwrapNestedLlmResponse(
-      parsePostProcessingJson(raw) as Record<string, unknown>,
-      "processedTranscription",
-    );
-    const validationResult = PROCESSED_TRANSCRIPTION_SCHEMA.safeParse(parsed);
-    if (!validationResult.success) {
-      return {
-        transcript: fallback,
-        warning: `Post-processing response validation failed: ${validationResult.error.message}`,
-      };
-    }
-    return { transcript: validationResult.data.result.trim(), warning: null };
-  } catch (e) {
-    const message = unknownToMessage(e);
-    const truncationHint = /Unterminated string/i.test(message)
-      ? " The model output may have been truncated at its token limit."
-      : "";
-    return {
-      transcript: fallback,
-      warning: `Failed to parse post-processing response: ${message}.${truncationHint}`,
-    };
+  const resolution = resolveProcessedTranscription(reply, rawTranscript);
+  if (resolution.status === "cleaned") {
+    return { transcript: resolution.transcript, warning: resolution.warning };
   }
+  return { transcript: rawTranscript, warning: resolution.warning };
 };
 
 type RunPostProcessingRequestArgs = {
@@ -381,7 +360,7 @@ const applyPostProcessSuccess = (
   );
   getLogger().verbose("LLM raw output length:", genOutput.text.length);
 
-  const parseResult = parseProcessedTranscript(
+  const parseResult = resolvePostProcessedTranscript(
     genOutput.text,
     processedTranscript,
   );

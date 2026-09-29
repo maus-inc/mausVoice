@@ -72,7 +72,8 @@ describe("style preview provider contract", () => {
         maxTokens: 600,
         jsonResponse: {
           name: "transcription_cleaning",
-          description: "JSON response with the processed transcription",
+          description:
+            "JSON response with the edits that clean the transcription, or a full cleaned transcription in result",
           schema: PROCESSED_TRANSCRIPTION_JSON_SCHEMA,
         },
       }),

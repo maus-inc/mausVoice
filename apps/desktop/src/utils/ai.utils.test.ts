@@ -1,101 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { unwrapNestedLlmResponse, extractJsonFromMarkdown } from "./ai.utils";
-
-describe("unwrapNestedLlmResponse", () => {
-  it("should return original object when value is already a string", () => {
-    const input = { processedTranscription: "Hello world" };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "Hello world" });
-  });
-
-  it("should unwrap nested response when LLM wraps in schema name", () => {
-    const input = {
-      processedTranscription: {
-        type: "transcription_cleaning",
-        processedTranscription: "Hello world",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "Hello world" });
-  });
-
-  it("should preserve other fields when unwrapping", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: "Hello world",
-      },
-      otherField: "preserved",
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({
-      processedTranscription: "Hello world",
-      otherField: "preserved",
-    });
-  });
-
-  it("should not unwrap when nested value is not a string", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: 123,
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual(input);
-  });
-
-  it("should not unwrap arrays", () => {
-    const input = {
-      items: ["a", "b", "c"],
-    };
-    const result = unwrapNestedLlmResponse(input, "items");
-    expect(result).toEqual(input);
-  });
-
-  it("should handle null values", () => {
-    const input = { processedTranscription: null };
-    const result = unwrapNestedLlmResponse(
-      input as Record<string, unknown>,
-      "processedTranscription",
-    );
-    expect(result).toEqual({ processedTranscription: null });
-  });
-
-  it("should handle undefined values", () => {
-    const input = { processedTranscription: undefined };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: undefined });
-  });
-
-  it("should not unwrap when key does not exist in nested object", () => {
-    const input = {
-      processedTranscription: {
-        someOtherKey: "value",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual(input);
-  });
-
-  it("should work with different key names", () => {
-    const input = {
-      result: {
-        result: "extracted value",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "result");
-    expect(result).toEqual({ result: "extracted value" });
-  });
-
-  it("should handle empty string values", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: "",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "" });
-  });
-});
+import {
+  applyTranscriptionEdits,
+  extractJsonFromMarkdown,
+  MAX_TRANSCRIPTION_EDITS,
+  resolveProcessedTranscription,
+} from "./ai.utils";
 
 describe("extractJsonFromMarkdown", () => {
   describe("Standard JSON Code Blocks", () => {
@@ -426,5 +335,218 @@ Example 2:
       const result = extractJsonFromMarkdown(input);
       expect(result).toContain('{"text": "value with \\');
     });
+  });
+});
+
+describe("applyTranscriptionEdits", () => {
+  it("applies edits in order against the evolving text", () => {
+    const result = applyTranscriptionEdits("um so we should ah ship it", [
+      { find: "um ", replace: "" },
+      { find: " ah", replace: "" },
+      { find: "ship it", replace: "ship it Friday" },
+    ]);
+
+    expect(result).toEqual({
+      text: "so we should ship it Friday",
+      applied: 3,
+      skipped: 0,
+    });
+  });
+
+  it("skips edits whose find text is absent or ambiguous", () => {
+    const transcript = "the cat sat on the mat, the cat";
+    const result = applyTranscriptionEdits(transcript, [
+      { find: "cat", replace: "dog" },
+      { find: "the mat", replace: "the rug" },
+      { find: "not in the transcript", replace: "x" },
+    ]);
+
+    // "cat" appears twice, so replacing either occurrence could corrupt the
+    // dictation; only the unique match is applied.
+    expect(result.text).toBe("the cat sat on the rug, the cat");
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toBe(2);
+  });
+
+  it("skips an empty find instead of looping", () => {
+    const result = applyTranscriptionEdits("hello", [
+      { find: "", replace: "x" },
+    ]);
+
+    expect(result).toMatchObject({ text: "hello", applied: 0, skipped: 1 });
+  });
+
+  it("caps the number of edits it will apply", () => {
+    const edits = Array.from({ length: MAX_TRANSCRIPTION_EDITS + 2 }, () => ({
+      find: "a",
+      replace: "a",
+    }));
+
+    const result = applyTranscriptionEdits("a b c", edits);
+
+    expect(result.applied).toBe(MAX_TRANSCRIPTION_EDITS);
+    expect(result.skipped).toBe(2);
+  });
+});
+
+describe("resolveProcessedTranscription", () => {
+  it("applies edits and reports skipped ones as a warning", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "missing phrase", replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to ship",
+      warning:
+        "Applied 1 of 2 post-processing edits; 1 could not be applied (an edit only applies when its text matches the transcript exactly once).",
+    });
+  });
+
+  it("notes the edit cap when a reply exceeds it", () => {
+    const edits = Array.from(
+      { length: MAX_TRANSCRIPTION_EDITS + 1 },
+      (_, index) => ({ find: `w${index}`, replace: `w${index}` }),
+    );
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits, result: "" }),
+      "w0 w1",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "cleaned",
+      transcript: "w0 w1",
+    });
+    if (resolution.status === "cleaned") {
+      expect(resolution.warning).toContain(
+        `Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`,
+      );
+    }
+  });
+
+  it("keeps the rewrite when no edit matched", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [{ find: "not present", replace: "x" }],
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    // The rewrite covers the skipped edit, so there is nothing to warn about:
+    // the cleaned text was still produced.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "We are going to ship.",
+      warning: null,
+    });
+  });
+
+  it("unwraps one level of schema-name nesting", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        transcription_cleaning: {
+          edits: [{ find: "raw", replace: "cleaned" }],
+          result: "",
+        },
+      }),
+      "raw text",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "cleaned text",
+      warning: null,
+    });
+  });
+
+  it("tolerates a non-string replacement from JSON object mode", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [{ find: "uh ", replace: null }] }),
+      "uh so anyway",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "cleaned",
+      transcript: "so anyway",
+    });
+  });
+
+  it("reports a reply with no usable text", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "   " }),
+      "raw text",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "empty",
+      warning:
+        "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+    });
+  });
+
+  it("treats an empty transcript as clean instead of failed", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "" }),
+      "   ",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "   ",
+      warning: null,
+    });
+  });
+
+  it("keeps the raw transcript when a truncated edit list cannot be repaired", () => {
+    // The reply stops mid-edit, so no complete edit survived. The resolver
+    // must not guess at partial edits: the raw transcript wins with a warning.
+    const resolution = resolveProcessedTranscription(
+      '{"edits":[{"find":"um ","replace":""},{"find":"gonna","replace":"going t',
+      "um we are gonna ship it",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
+    });
+  });
+
+  it("still resolves a reply that only misses its closing brace", () => {
+    const resolution = resolveProcessedTranscription(
+      '{"edits":[],"result":"going to ship it"',
+      "we are gonna ship it",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "going to ship it",
+      warning: null,
+    });
+  });
+
+  it("flags a non-JSON reply as unparseable", () => {
+    const resolution = resolveProcessedTranscription(
+      "Sure! Here is the cleaned text:",
+      "raw text",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
+    });
+    if (resolution.status === "unusable") {
+      expect(resolution.warning).toContain(
+        "Failed to parse post-processing response",
+      );
+    }
   });
 });

@@ -64,3 +64,45 @@ describe("cerebrasGenerateTextResponse error contract", () => {
     expect((error as CerebrasProviderError).status).toBe(402);
   });
 });
+
+describe("cerebrasGenerateTextResponse reasoning controls", () => {
+  afterEach(resetOpenAIChatCreateMock);
+
+  const runRequest = async (model: string) => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
+      usage: { total_tokens: 5 },
+    });
+    mockOpenAIChatCreate(create);
+
+    const { cerebrasGenerateTextResponse } =
+      await import("../src/cerebras.utils");
+    await cerebrasGenerateTextResponse({
+      apiKey: "test-key",
+      model,
+      prompt: "hi",
+    });
+
+    return create.mock.calls[0][0] as Record<string, unknown>;
+  };
+
+  it("asks gpt-oss-120b for low-effort reasoning with the channel hidden", async () => {
+    // gpt-oss-120b defaults to medium effort and reasoning tokens are charged
+    // against the same completion budget as the JSON reply.
+    const params = await runRequest("gpt-oss-120b");
+
+    expect(params).toMatchObject({
+      reasoning_effort: "low",
+      reasoning_format: "hidden",
+    });
+  });
+
+  it("sends no reasoning params for gemma-4-31b", async () => {
+    // Cerebras rejects reasoning_format on models without a reasoning
+    // channel; the params must stay off the request entirely.
+    const params = await runRequest("gemma-4-31b");
+
+    expect(params).not.toHaveProperty("reasoning_effort");
+    expect(params).not.toHaveProperty("reasoning_format");
+  });
+});
