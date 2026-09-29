@@ -80,3 +80,10 @@ export const emphasisTransition: Transition = {
 };
 
 export const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
+
+/**
+ * Matches a pointer that cannot hover, which on every current platform means a
+ * touch screen. Any control whose only affordance is a :hover state has to
+ * carry a resting state under this query, or it is invisible on touch.
+ */
+export const noHoverQuery = "(hover: none)";

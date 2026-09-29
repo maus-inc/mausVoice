@@ -1,6 +1,7 @@
 import { Box, Button, Typography, type TypographyProps } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { noHoverQuery } from "../../styles/motion";
 
 type TypographyWithMoreProps = TypographyProps & {
   maxLines?: number;
@@ -159,6 +160,21 @@ export function TypographyWithMore({
         const textSecondary =
           theme.vars?.palette.text.secondary ?? theme.palette.text.secondary;
 
+        // The revealed state for the inline control, and for the out-of-flow
+        // chip. Declared once each and reused by :hover, :focus-visible and the
+        // no-hover media query, so a change to one reaches the others.
+        const inlineReveal = {
+          color: textPrimary,
+          textDecorationColor: "currentColor",
+          backgroundColor:
+            theme.vars?.palette.level0 ?? theme.palette.background.paper,
+        };
+        const chipReveal = {
+          color: textPrimary,
+          backgroundColor:
+            theme.vars?.palette.level2 ?? theme.palette.action.hover,
+        };
+
         return {
           px: 0,
           minWidth: 0,
@@ -166,7 +182,10 @@ export function TypographyWithMore({
           lineHeight: lineHeightResolved,
           textTransform: "none",
           // De-emphasized at rest so the disclosure control never competes
-          // with the content; it strengthens on hover instead.
+          // with the content. The affordance is revealed on hover, on
+          // keyboard focus, and at rest wherever there is no hover to trigger
+          // it. `reveal` below is the single definition of that state, so the
+          // three paths cannot drift apart.
           fontWeight: theme.typography.fontWeightMedium,
           color: textSecondary,
           textDecoration: "underline",
@@ -182,7 +201,7 @@ export function TypographyWithMore({
                 py: 0,
                 borderRadius: 999,
                 // This background doubles as the truncation fade. Keep it
-                // painted on hover (a repaint would double-tone the mask)
+                // painted on reveal (a repaint would double-tone the mask)
                 // and signal interactivity with color + underline instead —
                 // the link affordance for in-flow text toggles.
                 backgroundColor:
@@ -190,13 +209,13 @@ export function TypographyWithMore({
                 boxShadow: `-12px 0 12px ${
                   theme.vars?.palette.level0 ?? theme.palette.background.paper
                 }`,
-                "&:hover": {
-                  color: textPrimary,
-                  textDecorationColor: "currentColor",
-                  backgroundColor:
-                    theme.vars?.palette.level0 ??
-                    theme.palette.background.paper,
-                },
+                "&:hover": inlineReveal,
+                "&:focus-visible": inlineReveal,
+                // A pointer that cannot hover never fires :hover, so on touch
+                // the underline is the only thing telling the user this is a
+                // control. Paint it at rest there rather than leaving a
+                // truncated transcript with no affordance at all.
+                [`@media ${noHoverQuery}`]: inlineReveal,
               }
             : {
                 // Ghost chip for the out-of-flow toggle: comfortable padding
@@ -208,11 +227,11 @@ export function TypographyWithMore({
                 px: 1,
                 py: 0.25,
                 borderRadius: 0.75,
-                "&:hover": {
-                  color: textPrimary,
-                  backgroundColor:
-                    theme.vars?.palette.level2 ?? theme.palette.action.hover,
-                },
+                "&:hover": chipReveal,
+                "&:focus-visible": chipReveal,
+                // Same reasoning as the inline variant: the chip's surface
+                // tier is its affordance, and a touch device never hovers.
+                [`@media ${noHoverQuery}`]: chipReveal,
                 "&:active": {
                   backgroundColor:
                     theme.vars?.palette.level3 ?? theme.palette.action.selected,

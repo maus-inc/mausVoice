@@ -23,6 +23,7 @@ import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useMemo } from "react";
 import { useIntl } from "react-intl";
+import { cssEase, duration, easeOutQuint } from "../../styles/motion";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   scheduleTranscriptionDelete,
@@ -263,7 +264,7 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
           px: 1,
           py: 0.5,
           borderRadius: 1,
-          transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+          transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}`,
           "&:hover": { bgcolor: "action.hover" },
           "@media (prefers-reduced-motion: reduce)": {
             transition: "none",

@@ -36,6 +36,30 @@ const hoverRulesFor = (el: Element): string => {
   return rules.join("\n");
 };
 
+/**
+ * The element's own CSS for a selector state. `state` is a fragment of the
+ * selector, so ":focus-visible" matches a pseudo-class selector. A media
+ * condition is different: emotion emits it around the rule, so
+ * "@media (hover: none)" is matched as a prefix instead.
+ */
+const stateRulesFor = (el: Element, state: string): string => {
+  const text = styleText();
+  const rules: string[] = [];
+  for (const cls of el.classList) {
+    const pattern = state.startsWith("@media")
+      ? // Emotion emits a media condition around the rule it guards:
+        // @media (hover: none){.cls{...}}, so the condition precedes the class.
+        // \s* absorbs the space emotion puts after the colon.
+        `${state.replace(/[()]/g, (c) => `\\${c}`).replace(/\\:\\s*/, ":\\\\s*")}\\{\\.${cls}\\{[^}]*\\}`
+      : // A pseudo-class hangs off the class's own selector.
+        `\\.${cls}[^{}]*${state}[^{}]*\\{[^}]*\\}`;
+    for (const match of text.matchAll(new RegExp(pattern, "g"))) {
+      rules.push(match[0]);
+    }
+  }
+  return rules.join("\n");
+};
+
 let root: Root | undefined;
 let container: HTMLDivElement;
 let scrollHeightDescriptor: PropertyDescriptor | undefined;
@@ -151,5 +175,53 @@ describe("TypographyWithMore disclosure toggle", () => {
     );
     expect(bgs[bgs.length - 1]).toContain("var(--app-palette-level2");
     expect(hover).not.toContain("text-decoration-color:currentColor");
+  });
+
+  it("reveals the affordance on keyboard focus, not hover alone", async () => {
+    await render();
+    const button = toggleButton()!;
+
+    // A pointer user gets a state change on hover. A keyboard user tabbing to
+    // the control used to see it stay de-emphasised, because the underline was
+    // hover-only. The revealed state has to be identical on both.
+    const focus = stateRulesFor(button, ":focus-visible");
+    expect(focus).toContain("text-decoration-color:currentColor");
+    const focusColors = [...focus.matchAll(/[;{]color:([^;}]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(focusColors[focusColors.length - 1]).toContain(
+      "var(--app-palette-text-primary",
+    );
+  });
+
+  it("paints the affordance at rest where there is no hover to trigger it", async () => {
+    await render();
+    const button = toggleButton()!;
+
+    // A touch device never fires :hover, so a hover-only underline left a
+    // truncated transcript with no affordance at all. The no-hover query
+    // carries the same revealed state.
+    const touch = stateRulesFor(button, "@media (hover: none)");
+    expect(touch).toContain("text-decoration-color:currentColor");
+  });
+
+  it("gives the block toggle a focus state and a touch state too", async () => {
+    await render();
+    await act(async () => {
+      toggleButton()?.click();
+    });
+    const button = toggleButton()!;
+
+    const focus = stateRulesFor(button, ":focus-visible");
+    const focusBgs = [...focus.matchAll(/background-color:([^;}]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(focusBgs[focusBgs.length - 1]).toContain("var(--app-palette-level2");
+
+    const touch = stateRulesFor(button, "@media (hover: none)");
+    const touchBgs = [...touch.matchAll(/background-color:([^;}]+)/g)].map(
+      (m) => m[1],
+    );
+    expect(touchBgs[touchBgs.length - 1]).toContain("var(--app-palette-level2");
   });
 });

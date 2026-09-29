@@ -70,7 +70,10 @@ export const SonnerToaster = () => {
             border: `${hairline.light(0.06)} !important`,
             borderRadius: "8px !important",
             fontWeight: `${theme.typography.fontWeightMedium} !important`,
-            transition: `background-color ${duration.exit}s !important`,
+            // A hover repaint, so it takes the fast duration like the other
+            // surfaces here. duration.exit times a dismissal and is the wrong
+            // token for a pointer state.
+            transition: `background-color ${duration.fast}s !important`,
             "&:hover": {
               background: `${theme.vars.palette.level3} !important`,
             },

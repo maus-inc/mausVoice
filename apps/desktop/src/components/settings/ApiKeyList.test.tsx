@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   getTranscriptionModels: vi.fn(async () => [] as string[]),
   getGenerativeTextModels: vi.fn(async () => [] as string[]),
   onChange: vi.fn(),
+  holdTest: false,
+  releaseTest: null as null | (() => void),
 }));
 
 vi.mock("../../actions/api-key.actions", () => ({
@@ -68,6 +70,31 @@ vi.mock("./OpenAICompatibleModelPicker", () => ({
   OpenAICompatibleModelPicker: () =>
     createElement("div", { "data-picker": "openai-compatible" }),
 }));
+
+// Wraps the real config so most tests keep the real behaviour, and the
+// mid-test test can hold testIntegration open to observe a card in flight.
+vi.mock("./api-key-provider-config", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./api-key-provider-config")>();
+  return {
+    ...actual,
+    getProviderFormConfig: (
+      provider: Parameters<typeof actual.getProviderFormConfig>[0],
+      context: Parameters<typeof actual.getProviderFormConfig>[1],
+    ) => {
+      const config = actual.getProviderFormConfig(provider, context);
+      if (!mocks.holdTest) return config;
+      return {
+        ...config,
+        testIntegration: () =>
+          new Promise<boolean>((resolve) => {
+            mocks.releaseTest?.();
+            mocks.releaseTest = () => resolve(false);
+          }),
+      };
+    },
+  };
+});
 
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import {
@@ -172,7 +199,12 @@ describe("ApiKeyList", () => {
     ];
     expect(regions).toHaveLength(2);
     for (const region of regions) {
-      expect(region.getAttribute("role")).toBe("button");
+      // A real <button type="button">, not a div with role="button". Enter and
+      // Space activation, Space not scrolling the page, and form participation
+      // come from the element, so there is no keydown handler to keep in sync.
+      expect(region.tagName).toBe("BUTTON");
+      expect(region.getAttribute("type")).toBe("button");
+      expect(region.getAttribute("role")).toBeNull();
       // WCAG 4.1.2: an interactive container must not nest other
       // interactive controls — the regression this redesign fixed.
       expect(
@@ -191,35 +223,65 @@ describe("ApiKeyList", () => {
     );
   });
 
-  it("selects on Enter and Space from the keyboard, and only from the meta region", async () => {
+  it("activates the selection region through the native button, and only there", async () => {
     seedApiKeys([groqKey, openRouterKey]);
     await renderList("post-processing", "key-groq");
     mocks.onChange.mockClear();
 
+    // Keyboard activation is the browser's job for a native button, which is
+    // why the element is one. jsdom does not implement the Enter and Space
+    // default actions, so the assertion is on the element that gets them
+    // rather than on a hand-rolled keydown handler.
     const region = metaButton("OpenRouter key");
+    expect(region.tagName).toBe("BUTTON");
     await act(async () => {
-      region.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-      );
-    });
-    expect(mocks.onChange).toHaveBeenCalledWith("key-openrouter");
-
-    mocks.onChange.mockClear();
-    await act(async () => {
-      region.dispatchEvent(
-        new KeyboardEvent("keydown", { key: " ", bubbles: true }),
-      );
+      region.click();
     });
     expect(mocks.onChange).toHaveBeenCalledWith("key-openrouter");
 
     // The Test button is a sibling, never inside the selection region, so a
     // tap meant for the field cluster cannot re-select the key.
-    mocks.onChange.mockClear();
     const testButton = [
       ...document.querySelectorAll<HTMLButtonElement>("button"),
     ].find((b) => b.textContent?.trim() === "Test");
     expect(testButton).toBeDefined();
     expect(testButton!.closest("[aria-pressed]")).toBeNull();
+  });
+
+  it("disables the selection region while the card is mid-test", async () => {
+    seedApiKeys([groqKey]);
+    await renderList("post-processing", "key-groq");
+
+    expect(metaButton("Groq key").hasAttribute("disabled")).toBe(false);
+
+    // Hold the integration test open so the card is observably in flight.
+    mocks.holdTest = true;
+
+    const testButton = [
+      ...document.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.trim() === "Test");
+    await act(async () => {
+      testButton!.click();
+    });
+    await flush();
+
+    // The action buttons are disabled here, so the selection region has to be
+    // too, or a card whose test is in flight still toggles the active key.
+    const region = metaButton("Groq key") as HTMLButtonElement;
+    expect(region.disabled).toBe(true);
+
+    mocks.onChange.mockClear();
+    region.click();
+    expect(mocks.onChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      mocks.releaseTest?.();
+    });
+    await flush();
+    mocks.holdTest = false;
+    mocks.releaseTest = null;
+
+    expect(metaButton("Groq key").hasAttribute("disabled")).toBe(false);
   });
 
   it("captions the model section so the input has a real label", async () => {

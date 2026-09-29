@@ -16,10 +16,16 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useTheme,
 } from "@mui/material";
 import { API_KEY_PROVIDERS, type ApiKeyProvider } from "@maus-inc/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import {
+  defineMessages,
+  FormattedMessage,
+  useIntl,
+  type IntlShape,
+} from "react-intl";
 import {
   createApiKey,
   deleteApiKey,
@@ -34,6 +40,7 @@ import {
 import { useAppStore } from "../../store";
 import { getModelProviderRepo } from "../../repos";
 import type { FetchModelsOptions } from "../../repos/model-provider.repo";
+import { cssEase, duration, easeOutQuint } from "../../styles/motion";
 import { selectedOutlineSx } from "../../styles/selection";
 import { getProviderFormConfig } from "./api-key-provider-config";
 import { OllamaModelPicker } from "./OllamaModelPicker";
@@ -439,12 +446,26 @@ const getModelForContext = (
     : (apiKey.postProcessingModel ?? null);
 };
 
-const modelSetupLabel = (context: ApiKeyListContext): React.ReactNode =>
-  context === "transcription" ? (
-    <FormattedMessage defaultMessage="Transcription model" />
-  ) : (
-    <FormattedMessage defaultMessage="Post-processing model" />
-  );
+/**
+ * The single description of what the model picker in a given section is for.
+ *
+ * The visible caption and the input's accessible name both read this, so a
+ * translator who rewords the caption in one locale cannot leave the
+ * aria-label holding the old wording, and the message stays defined once.
+ *
+ * defineMessages rather than a plain object because that is the shape
+ * scripts/i18n-extract-with-prune.mjs reads. A descriptor returned from a
+ * helper and spread at the call site is invisible to the extractor, which then
+ * prunes the key and every translation with it. The i18n extraction and catalog
+ * sync checks in CI are what catch that.
+ */
+const modelSetupMessages = defineMessages({
+  transcription: { defaultMessage: "Transcription model" },
+  "post-processing": { defaultMessage: "Post-processing model" },
+});
+
+const modelSetupLabel = (intl: IntlShape, context: ApiKeyListContext): string =>
+  intl.formatMessage(modelSetupMessages[context]);
 
 /**
  * The model choice is a sub-section of the connection card, so it reads as
@@ -458,15 +479,20 @@ const ModelSetupSection = ({
 }: {
   context: ApiKeyListContext;
   children: React.ReactNode;
-}) => (
-  <>
-    <Divider sx={{ mx: -2 }} />
-    <Stack spacing={1} sx={{ width: "100%", pt: 0.25 }}>
-      <Typography variant="subtitle2">{modelSetupLabel(context)}</Typography>
-      {children}
-    </Stack>
-  </>
-);
+}) => {
+  const intl = useIntl();
+  return (
+    <>
+      <Divider sx={{ mx: -2 }} />
+      <Stack spacing={1} sx={{ width: "100%", pt: 0.25 }}>
+        <Typography variant="subtitle2">
+          {modelSetupLabel(intl, context)}
+        </Typography>
+        {children}
+      </Stack>
+    </>
+  );
+};
 
 const ModelPickerForProvider = ({
   apiKey,
@@ -629,12 +655,10 @@ const GenericModelPicker = ({
               htmlInput: {
                 ...params.slotProps.htmlInput,
                 // The visible subtitle2 caption labels the field group; the
-                // input itself is announced with the same wording.
-                "aria-label": intl.formatMessage(
-                  context === "transcription"
-                    ? { defaultMessage: "Transcription model" }
-                    : { defaultMessage: "Post-processing model" },
-                ),
+                // input itself is announced with the same wording. Both read
+                // from modelSetupLabel so a rewording in one locale cannot
+                // leave the accessible name behind.
+                "aria-label": modelSetupLabel(intl, context),
               },
               input: {
                 ...params.slotProps.input,
@@ -677,18 +701,12 @@ const ApiKeyCard = ({
   context: ApiKeyListContext;
 }) => {
   const intl = useIntl();
+  const theme = useTheme();
   const config = useMemo(
     () => getProviderFormConfig(apiKey.provider, context),
     [apiKey.provider, context],
   );
   const currentModel = getModelForContext(apiKey, context);
-
-  const handleSelectKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onSelect();
-    }
-  };
 
   return (
     <Paper
@@ -723,20 +741,40 @@ const ApiKeyCard = ({
             meta region is a real button sibling to the actions; the model
             section below is non-interactive container. */}
         <Box
-          role="button"
-          tabIndex={0}
+          component="button"
+          type="button"
           aria-pressed={selected}
+          disabled={testing || deleting}
           onClick={onSelect}
-          onKeyDown={handleSelectKeyDown}
           sx={{
+            // A native <button> for real semantics: Enter and Space activate
+            // it, Space does not scroll the page, and it participates in form
+            // submission and in the disabled set. The UA button styling is
+            // neutralised below so the element looks like the meta region it
+            // replaces.
+            appearance: "none",
+            display: "block",
             flex: 1,
             minWidth: 0,
             m: -1,
             p: 1,
+            border: 0,
             borderRadius: 0.75,
+            background: "none",
+            font: "inherit",
+            color: "inherit",
+            textAlign: "left",
             cursor: "pointer",
-            transition: "background-color 150ms cubic-bezier(0.23, 1, 0.32, 1)",
+            transition: `background-color ${duration.fast * 1000}ms ${cssEase(easeOutQuint)}`,
             "&:hover": { bgcolor: "action.hover" },
+            "&:focus-visible": {
+              outline: `2px solid ${theme.vars?.palette.primary.main ?? theme.palette.primary.main}`,
+              outlineOffset: 2,
+            },
+            "&:disabled": {
+              cursor: "default",
+              bgcolor: "transparent",
+            },
             "@media (prefers-reduced-motion: reduce)": {
               transition: "none",
             },
