@@ -23,7 +23,12 @@ import { getRec } from "@maus-inc/utilities";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useMemo } from "react";
 import { useIntl } from "react-intl";
-import { cssEase, duration, easeOutQuint } from "../../styles/motion";
+import {
+  cssEase,
+  duration,
+  easeOutQuint,
+  reducedMotionQuery,
+} from "../../styles/motion";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
   scheduleTranscriptionDelete,
@@ -40,7 +45,6 @@ import {
   useContextMenu,
   type ContextMenuItem,
 } from "../common/ContextMenu";
-import { reducedMotionQuery } from "../../styles/motion";
 import { getActiveRemoteTarget } from "../../utils/device.utils";
 import { TypographyWithMore } from "../common/TypographyWithMore";
 import { AudioPlayerPill } from "./AudioPlayerPill";
