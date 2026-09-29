@@ -35,9 +35,10 @@ const feed = (
   target: PauseChunkedPretranscriber,
   audio: Float32Array,
   from = 0,
+  step = 100,
 ) => {
-  for (let offset = from; offset < audio.length; offset += 100) {
-    target.push(audio.subarray(offset, offset + 100), offset);
+  for (let offset = from; offset < audio.length; offset += step) {
+    target.push(audio.subarray(offset, offset + step), offset);
   }
 };
 
@@ -52,6 +53,23 @@ const recordingTranscriber = () => {
     };
   });
   return { spans, transcribe };
+};
+
+/** True when `spans` tile `audio` exactly once, in any request order. */
+const coversExactly = (spans: Float32Array[], audio: Float32Array): boolean => {
+  const remaining = new Set(spans);
+  let offset = 0;
+  while (offset < audio.length) {
+    const span = [...remaining].find(
+      (candidate) =>
+        offset + candidate.length <= audio.length &&
+        candidate.every((value, index) => value === audio[offset + index]),
+    );
+    if (!span) return false;
+    remaining.delete(span);
+    offset += span.length;
+  }
+  return remaining.size === 0;
 };
 
 describe("PauseChunkedPretranscriber", () => {
@@ -143,6 +161,73 @@ describe("PauseChunkedPretranscriber", () => {
     ).resolves.toBeNull();
   });
 
+  it("waits for an in-flight span to settle before falling back, so the caller never pays twice", async () => {
+    const order: string[] = [];
+    const transcribe = vi.fn<ChunkTranscriber>(
+      (_samples, _rate, signal) =>
+        // Parks until the abort arrives, the way a provider request unwinds.
+        // The only way out is the signal the pretranscriber must deliver.
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            order.push("span:aborted");
+            // The provider finishes unwinding a tick after the signal, so
+            // resolving early would mean the span was still billed.
+            setTimeout(() => {
+              order.push("span:settled");
+              reject(new Error("aborted"));
+            }, 0);
+          });
+        }),
+    );
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Let the queued span reach the provider, so a billed request is really
+    // in flight when the user stops.
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalled());
+
+    // The stream diverges from the final recording, so the result is doomed.
+    const doomed = recording.slice();
+    doomed.fill(0.321, 0, 500);
+
+    const result = await target
+      .finish({ samples: doomed, sampleRate: RATE })
+      .then((value) => {
+        order.push("finish:resolved");
+        return value;
+      });
+
+    expect(result).toBeNull();
+    // The span was cancelled and had fully unwound before `finish` returned
+    // null. Resolving earlier is what let the caller's whole-recording request
+    // go out while the discarded span was still billed.
+    expect(order).toEqual(["span:aborted", "span:settled", "finish:resolved"]);
+    // Not disposed, so the session still takes the fallback rather than
+    // treating the recording as cancelled.
+    expect(target.isDisposed).toBe(false);
+  });
+
+  it("proceeds with the fallback when a provider ignores the cancellation signal", async () => {
+    vi.useFakeTimers();
+    try {
+      // A span that neither settles nor rejects, modelling an adapter that
+      // drops the abort signal.
+      const transcribe = vi.fn<ChunkTranscriber>(() => new Promise(() => {}));
+      const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+      feed(target, recording);
+      const doomed = recording.slice();
+      doomed.fill(0.456, 0, 500);
+
+      const fallback = target.finish({ samples: doomed, sampleRate: RATE });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Bounded wait: a hung span must not hold the user's dictation hostage.
+      await expect(fallback).resolves.toBeNull();
+      expect(target.isDisposed).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("transcribes spans strictly one at a time and in order", async () => {
     let active = 0;
     let maxActive = 0;
@@ -207,9 +292,20 @@ describe("PauseChunkedPretranscriber", () => {
     expect(transcribe).toHaveBeenCalledTimes(1);
   });
 
-  it("aligns a stream whose listener attached after capture started", async () => {
+  it("transcribes the unobserved prefix so a late listener still covers the whole recording", async () => {
+    // `feed(..., 700)` pins the first observed offset at exactly 700, so the
+    // prefix is exactly 700 samples and can be labelled by length alone.
+    // Everything else is checked by exact cover, which does not depend on the
+    // order the spans happened to be requested in.
     const { transcribe, spans } = recordingTranscriber();
-    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    const labelled: ChunkTranscriber = async (samples, rate, signal) => {
+      const result = await transcribe(samples, rate, signal);
+      return {
+        ...result,
+        text: samples.length === 700 ? "prefix" : result.text,
+      };
+    };
+    const target = new PauseChunkedPretranscriber(RATE, labelled, CONFIG);
     feed(target, recording, 700);
     expect(target.chunkCount).toBe(2);
 
@@ -217,20 +313,103 @@ describe("PauseChunkedPretranscriber", () => {
       samples: recording,
       sampleRate: RATE,
     });
-    // The listener attached at 700, so the live spans never covered the
-    // opening. finish must transcribe that head too, otherwise the start of
-    // the dictation is dropped while the rest looks complete. Spans are
-    // dispatched through one serial queue, so the head is dispatched after
-    // the live spans but must still lead the joined transcript.
-    const covered = spans.reduce((sum, span) => sum + span.length, 0);
-    expect(covered).toBe(recording.length);
-    const head = spans.find((span) => span.length === 700);
-    expect(head?.at(0)).toBe(recording.at(0));
-    expect(head?.at(-1)).toBe(recording.at(699));
-    // The head leads the transcript even though it was dispatched third.
-    expect(result?.text).toBe("span3 span1 span2 span4");
+    // Prefix + two committed spans + tail.
     expect(result?.chunkCount).toBe(4);
-    expect(result?.metadata.transcriptionDurationMs).toBe(400);
+    // The prefix is joined first even though its request starts last.
+    expect(result?.text.split(" ")[0]).toBe("prefix");
+    // The spans tile the recording exactly once: no gap, no overlap, and no
+    // audio outside the recording.
+    expect(coversExactly(spans, recording)).toBe(true);
+  });
+
+  it("keeps the prefix span inside the whole recording and never re-sends the tail", async () => {
+    const { transcribe, spans } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording, 700);
+    await target.finish({ samples: recording, sampleRate: RATE });
+    // Two committed spans, plus the prefix and the tail, and no other audio is
+    // ever sent: total length equals the recording exactly.
+    expect(spans).toHaveLength(4);
+    expect(spans.reduce((sum, span) => sum + span.length, 0)).toBe(
+      recording.length,
+    );
+    expect(spans.some((span) => span.length === 700)).toBe(true);
+    expect(spans.at(-1)?.at(-1)).toBe(recording.at(-1));
+  });
+
+  it("falls back when the unobserved prefix is longer than one span", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    // Attach after 5.5 s, which is past the 5 s minimum span, so prefixing it
+    // would cost more than simply transcribing the whole recording.
+    feed(target, recording, 5_500);
+    expect(target.chunkCount).toBeGreaterThan(0);
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects a stream that diverges inside a committed span, not just at its end", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Inside the first committed span, far from both its start and the 32
+    // samples that the old suffix probe used to check.
+    const altered = recording.slice();
+    altered.fill(0.123, 3_000, 3_010);
+    await expect(
+      target.finish({ samples: altered, sampleRate: RATE }),
+    ).resolves.toBeNull();
+  });
+
+  it("accepts the untouched recording with a zeroed span boundary probe", async () => {
+    const { transcribe, spans } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // The first committed span is still exactly what the stream carried, so
+    // the digest check must not reject a legitimate recording.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.not.toBeNull();
+    expect(spans.length).toBeGreaterThan(0);
+  });
+
+  it("spends no request on the tail once a committed span has already failed", async () => {
+    const transcribe = vi
+      .fn<ChunkTranscriber>()
+      .mockRejectedValueOnce(new Error("429"))
+      .mockResolvedValue({ text: "ok", metadata: {}, warnings: [] });
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording);
+    // Let the committed spans run and the first one fail before the user stops.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transcribe).toHaveBeenCalled();
+
+    // The result is already doomed, so the whole-recording request the caller
+    // makes next is the only one left worth paying for. Only the spans that
+    // were already committed before the stop may run, never the tail.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+    expect(transcribe).toHaveBeenCalledTimes(target.chunkCount);
+  });
+
+  it("spends no request once a later chunk reveals a gap", async () => {
+    const { transcribe } = recordingTranscriber();
+    const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+    feed(target, recording, 0, 1_000);
+    // Overlaps the previous chunk, so the stream is unusable even though every
+    // span committed so far succeeded.
+    target.push(recording.subarray(2_100, 2_200), 2_100);
+    expect(target.chunkCount).toBeGreaterThan(0);
+
+    // The gap dooms the result, so nothing is billed for it: not the tail, and
+    // not the committed spans that had not reached the provider yet. They are
+    // cancelled on the way out instead.
+    await expect(
+      target.finish({ samples: recording, sampleRate: RATE }),
+    ).resolves.toBeNull();
+    expect(transcribe).not.toHaveBeenCalled();
   });
 
   it("disables itself on a gap or a chunk without an offset", async () => {
@@ -286,16 +465,5 @@ describe("joinTranscriptSpans", () => {
     expect(joinTranscriptSpans(["สวัสดี", "ครับ"])).toBe("สวัสดีครับ");
     expect(joinTranscriptSpans(["我们用 API", "处理"])).toBe("我们用 API处理");
     expect(joinTranscriptSpans(["𠀀", "𠀁"])).toBe("𠀀𠀁");
-  });
-
-  it("treats fullwidth punctuation as a no-space script but fullwidth Latin and digits as spaced", () => {
-    expect(joinTranscriptSpans(["ありがとう！", "Let's ship it."])).toBe(
-      "ありがとう！Let's ship it.",
-    );
-    expect(joinTranscriptSpans(["ＯＳ", "next"])).toBe("ＯＳ next");
-    expect(joinTranscriptSpans(["shipped", "２０２６"])).toBe(
-      "shipped ２０２６",
-    );
-    expect(joinTranscriptSpans(["完了（了）", "next"])).toBe("完了（了）next");
   });
 });

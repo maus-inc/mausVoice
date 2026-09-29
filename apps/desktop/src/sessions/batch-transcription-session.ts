@@ -14,6 +14,7 @@ import {
   type PauseChunkingConfig,
   type PretranscriptionResult,
 } from "./pause-chunked-pretranscriber";
+import { SessionAbortScope } from "./session-abort-scope";
 
 /**
  * Cloud requests are billed and rate limited per call (Groq bills a 10 s
@@ -52,11 +53,12 @@ export const createActionPretranscriber = (
 ): PauseChunkedPretranscriber =>
   new PauseChunkedPretranscriber(
     sampleRate,
-    async (samples, rate) => {
+    async (samples, rate, signal) => {
       const result = await transcribeAudio({
         samples,
         sampleRate: rate,
         hallucinationFilterEnabled,
+        signal,
       });
       return {
         text: selectText(result),
@@ -77,11 +79,16 @@ export const logPretranscription = (
   );
 };
 
-const EMPTY_RESULT: TranscriptionSessionResult = {
+/**
+ * Returned instead of a transcript when there is nothing to send or the run
+ * was cancelled. Built fresh per call so a caller mutating the result cannot
+ * reach another caller's object.
+ */
+const emptyResult = (): TranscriptionSessionResult => ({
   rawTranscript: null,
   metadata: {},
   warnings: [],
-};
+});
 
 /**
  * Batch transcription session. Audio is transcribed with one request after
@@ -91,9 +98,11 @@ const EMPTY_RESULT: TranscriptionSessionResult = {
  */
 export class BatchTranscriptionSession implements TranscriptionSession {
   private pretranscriber: PauseChunkedPretranscriber | null = null;
+  /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
+  private abortScope = new SessionAbortScope();
 
   async onRecordingStart(sampleRate: number): Promise<void> {
-    this.cleanup();
+    this.resetForRecording();
     this.pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
       selectText: (result) => result.rawTranscript,
@@ -118,14 +127,23 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       const pretranscribed = await this.finishPretranscription(audio);
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
-      if (pretranscriber?.isDisposed) return EMPTY_RESULT;
+      if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
+        return emptyResult();
+      }
       return await this.transcribeWholeRecording(audio, options);
     } finally {
       this.cleanup();
     }
   }
 
+  /** Tears down the previous recording and gives this one a live abort scope. */
+  private resetForRecording(): void {
+    this.cleanup();
+    this.abortScope = new SessionAbortScope();
+  }
+
   cleanup(): void {
+    this.abortScope.abort();
     this.pretranscriber?.dispose();
     this.pretranscriber = null;
   }
@@ -170,7 +188,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       getLogger().warning(
         `Batch session: skipping transcription (rate=${rate}, samples=${payloadSamples.length})`,
       );
-      return EMPTY_RESULT;
+      return emptyResult();
     }
 
     const warnings: string[] = [];
@@ -183,6 +201,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
         samples: payloadSamples,
         sampleRate: rate,
         toneId: options?.toneId ?? null,
+        signal: this.abortScope.signal,
       });
 
       getLogger().info(
@@ -194,6 +213,14 @@ export class BatchTranscriptionSession implements TranscriptionSession {
         warnings: [...warnings, ...result.warnings],
       };
     } catch (error) {
+      // A discard aborts the request on purpose. That is not a failure, so it
+      // must not reach the user as "Transcription failed".
+      if (this.abortScope.isAborted) {
+        getLogger().info(
+          "Batch transcription cancelled: the dictation was discarded",
+        );
+        return emptyResult();
+      }
       getLogger().error(`Failed to transcribe audio: ${error}`);
       const message = String(error);
       if (message) {
