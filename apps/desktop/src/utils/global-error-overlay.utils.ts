@@ -90,7 +90,10 @@ export const shouldPaintFatalRejection = (): boolean => !appHasMounted();
 // plain `Event`, not an `ErrorEvent`: `event.error` is null and
 // `event.message` is undefined. Their `target` is the element, so read the
 // failing URL from there to give a useful message.
-const describeWindowError = (event: ErrorEvent): string => {
+// Exported so the pre-bundle copy of this message in index.html can be checked
+// against the live string here, rather than against source text that could hold
+// a stale duplicate.
+export const describeWindowError = (event: ErrorEvent): string => {
   const target = event.target as EventTarget | null;
   if (isFatalResourceTarget(target)) {
     const url =
@@ -98,7 +101,7 @@ const describeWindowError = (event: ErrorEvent): string => {
       target instanceof HTMLScriptElement
         ? target.src
         : (target as HTMLLinkElement).href;
-    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.`;
+    return `Failed to load resource: ${url || "(unknown URL)"}\n\nThe asset could not be loaded. Tauri v2 serves the app from tauri://localhost (http://tauri.localhost on Windows) and answers unknown paths with index.html, so a URL that resolves to the wrong place comes back as HTML and the module is rejected on its MIME type.`;
   }
   const message = event.message ?? "";
   return event.error != null ? describe(event.error) : message;
@@ -106,8 +109,8 @@ const describeWindowError = (event: ErrorEvent): string => {
 
 // Installed as early as possible so that any failure while the React tree
 // mounts (or before it mounts) is shown on screen instead of a blank white
-// window. The built frontend can fail to execute under Tauri's asset:
-// protocol (e.g. module/CORS load failures) with no visible error otherwise.
+// window. The built frontend can fail to execute (e.g. module load failures)
+// with no visible error otherwise.
 //
 // After React has mounted, runtime errors and unhandled rejections must not
 // cover a working UI with the fatal overlay. Image/media load failures also

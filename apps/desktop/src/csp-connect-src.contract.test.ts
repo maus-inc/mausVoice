@@ -87,6 +87,9 @@ const NON_CONNECT_HOSTS = new Map<string, string>([
   ["maus-inc.github.io", "openUrl link + OpenRouter HTTP-Referer header value"],
   // <iframe> embeds are governed by frame-src, asserted separately below.
   ["www.youtube.com", "iframe embed — validated against frame-src"],
+  // Never fetched by the webview: doc links, XML namespaces, and the fatal
+  // error overlay's copy of the custom protocol origin.
+  ["tauri.localhost", "fatal-error overlay text naming the app's own origin"],
   // Documentation-only strings.
   ["firebase.google.com", "doc comment URL"],
   ["api-docs.deepseek.com", "doc comment URL"],

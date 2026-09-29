@@ -16,6 +16,14 @@ export function Keycap({ sx, children, ...props }: KeycapProps) {
         (theme) => ({
           minWidth: 22,
           minHeight: 22,
+          // A keycap's own invariant: its box is never narrower than its label,
+          // so text can never spill past the painted cap. minWidth replaces the
+          // flexbox automatic minimum size, which is what makes this needed at
+          // all. HotkeyBadge's flexWrap is what makes the invariant hold for
+          // today's consumers, since line breaking uses hypothetical sizes and
+          // never compresses a line. This keeps it true regardless, because a
+          // caller can override that wrap through HotkeyBadge's sx.
+          flexShrink: 0,
           px: 0.75,
           py: 0.25,
           borderRadius: 0.5,

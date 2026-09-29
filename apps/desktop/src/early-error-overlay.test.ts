@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { describeWindowError } from "./utils/global-error-overlay.utils";
 
 const indexHtml = readFileSync(
   new URL("../index.html", import.meta.url),
@@ -83,6 +84,10 @@ const installEarlyOverlay = (rootChildren: unknown[] = []) => {
 
   return { nodes, listeners };
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("early error overlay", () => {
   it("is present in index.html before the module entry", () => {
@@ -185,6 +190,41 @@ describe("early error overlay", () => {
     });
 
     expect(nodes.has("maus-global-error-overlay")).toBe(false);
+  });
+
+  // The same asset-failure sentence lives in the bundle handler and in the
+  // pre-bundle handler in index.html. The index.html copy is the one that runs
+  // when the bundle never loads at all, so the two must not drift. Both sides
+  // are compared on the strings the code actually produces, not on source text,
+  // so wrapping a literal across lines cannot break this.
+  it("keeps the index.html asset message in sync with the bundle handler", () => {
+    // isFatalResourceTarget reads these off the global scope on every call, so
+    // publishing the local fakes is all it takes to reach the resource branch
+    // in the node environment this suite runs in.
+    vi.stubGlobal("HTMLScriptElement", HTMLScriptElement);
+    vi.stubGlobal("HTMLLinkElement", HTMLLinkElement);
+
+    // No root children: that is the pre-mount state the fatal overlay needs.
+    const { nodes, listeners } = installEarlyOverlay();
+    const script = new HTMLScriptElement();
+    script.src = "http://tauri.localhost/assets/index.js";
+
+    listeners.error[0]({ target: script });
+    const fromIndexHtml =
+      nodes.get("maus-global-error-overlay")?.textContent ?? "";
+
+    const fromBundle = describeWindowError({
+      target: script,
+    } as unknown as ErrorEvent);
+
+    // Asserted before slicing. Without this, dropping the shared sentence from
+    // the bundle handler makes indexOf return -1, and slice(1) would yield a
+    // non-empty string that is present in both, so the check would pass after
+    // losing the exact text it exists to protect.
+    expect(fromBundle).toContain("\n\n");
+    const shared = fromBundle.slice(fromBundle.indexOf("\n\n") + 2);
+    expect(shared.length).toBeGreaterThan(80);
+    expect(fromIndexHtml).toContain(shared);
   });
 
   it("does not paint a fatal rejection overlay after React has mounted", () => {

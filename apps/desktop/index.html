@@ -89,10 +89,11 @@
     </script>
     <script data-early-error>
       // Early error safety net. Runs before any generated <link>/<script>
-      // tags, so a failed asset load or a vendor-chunk throw under Tauri's
-      // asset: protocol paints this overlay instead of a blank window. The
-      // full handler in src/utils/global-error-overlay.utils.ts takes over
-      // once the bundle loads.
+      // tags, so a failed asset load or a vendor-chunk throw paints this
+      // overlay instead of a blank white window. The full handler in
+      // src/utils/global-error-overlay.utils.ts takes over once the bundle
+      // loads. Keep the asset message below in sync with that file: this copy
+      // is the one that actually runs when the bundle itself never loads.
       (function () {
         var OVERLAY_ID = "maus-global-error-overlay";
         function paint(heading, detail) {
@@ -148,8 +149,7 @@
           ) {
             return;
           }
-          var isAsset =
-            target instanceof HTMLScriptElement || isStylesheet;
+          var isAsset = target instanceof HTMLScriptElement || isStylesheet;
           if (isAsset) {
             var url =
               target instanceof HTMLScriptElement ? target.src : target.href;
@@ -157,7 +157,7 @@
               "mausVoice failed to start",
               "Failed to load resource: " +
                 (url || "(unknown URL)") +
-                "\n\nThe frontend asset could not be fetched. Under Tauri's asset: protocol this is usually a CORS or path issue — check the built index.html asset URLs.",
+                "\n\nThe asset could not be loaded. Tauri v2 serves the app from tauri://localhost (http://tauri.localhost on Windows) and answers unknown paths with index.html, so a URL that resolves to the wrong place comes back as HTML and the module is rejected on its MIME type.",
             );
             return;
           }

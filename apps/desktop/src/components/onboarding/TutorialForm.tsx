@@ -63,7 +63,9 @@ const PAGE_COUNT = 2;
 /**
  * The notes/email demo card mimics a third-party app window: white card with a
  * grey header strip. `overlay` is rendered inside the relative container so
- * absolutely-positioned tooltips keep anchoring to the card.
+ * absolutely-positioned tooltips keep anchoring to the card. The bottom padding
+ * is the strip the tooltip occupies, which is what keeps it from reaching the
+ * step dots below; BouncyTooltip is bottom-anchored into it.
  */
 const TutorialWindow = ({
   header,

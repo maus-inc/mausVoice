@@ -23,7 +23,21 @@ pub(crate) fn machine_id() -> Option<&'static str> {
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn run_and_read_stdout(program: &str, args: &[&str]) -> Option<String> {
     use std::process::Command;
-    let out = Command::new(program).args(args).output().ok()?;
+    let mut command = Command::new(program);
+    command.args(args);
+
+    // The release binary is a GUI-subsystem app, so it owns no console. A
+    // console-subsystem child started without CREATE_NO_WINDOW is allocated a
+    // new one, which flashes a terminal window on screen. This arm is Windows
+    // only; the macOS path compiles it out.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let out = command.output().ok()?;
     if !out.status.success() {
         return None;
     }
