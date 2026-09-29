@@ -85,10 +85,15 @@ export const isLikelyTruncatedJson = (raw: string): boolean => {
 export const MAX_TRANSCRIPTION_EDITS = 200;
 
 export type TranscriptionEdit = {
-  /** Text copied from the raw transcript. Must match exactly once. */
+  /** Text copied from the raw transcript. Must match exactly once, on word edges. */
   find: string;
-  /** Replacement text. An empty string deletes the match. */
-  replace: string;
+  /**
+   * Replacement text. An empty string deletes the match. `null` marks an edit
+   * the model sent without usable replacement text, which is skipped and
+   * counted rather than applied: the prompt reserves the empty string for a
+   * deletion, so a missing key is not one the model asked for.
+   */
+  replace: string | null;
 };
 
 export type TranscriptionEditApplication = {
@@ -98,14 +103,47 @@ export type TranscriptionEditApplication = {
 };
 
 /**
+ * ASCII word characters, used to spot a `find` that matches a fragment of a
+ * word. The class is deliberately ASCII-only: a script written without spaces
+ * has no character adjacency that marks a word edge, and treating one as a
+ * violation would reject every edit in that script.
+ */
+const WORD_CHARACTER = /\w/;
+const LEADING_NON_WORD = /^\W+/;
+const TRAILING_NON_WORD = /\W+$/;
+
+const isWordCharacter = (character: string | undefined): boolean =>
+  character !== undefined && WORD_CHARACTER.test(character);
+
+/**
+ * True when the word characters inside `find` run against the middle of a word
+ * in `text`, so applying the edit would splice a word in half. Punctuation and
+ * spaces at either end of `find` are ignored because the prompt asks the model
+ * to copy the surrounding space when deleting a word, which puts the match on
+ * a boundary that is not one.
+ */
+const splitsWord = (text: string, find: string, index: number): boolean => {
+  const leading = find.match(LEADING_NON_WORD)?.[0].length ?? 0;
+  const trailing = find.match(TRAILING_NON_WORD)?.[0].length ?? 0;
+  const start = index + leading;
+  const end = index + find.length - trailing;
+  if (start >= end) {
+    // Nothing but punctuation, so the match cannot land inside a word.
+    return false;
+  }
+  return isWordCharacter(text[start - 1]) || isWordCharacter(text[end]);
+};
+
+/**
  * Applies cleanup edits to the raw transcript.
  *
  * Every edit must match the working text exactly once at the moment it is
- * applied. A missing or ambiguous match is skipped rather than guessed at,
- * because rewriting the wrong occurrence silently corrupts the dictation,
- * while leaving the model's edit unapplied only means that phrase stays as
- * dictated. Edits that do apply are kept, so a reply with one bad entry still
- * improves the rest of the text.
+ * applied, and on the edges of a word. A missing or ambiguous match, a match
+ * inside a word, and a missing replacement are all skipped rather than guessed
+ * at, because rewriting the wrong span silently corrupts the dictation, while
+ * leaving the model's edit unapplied only means that phrase stays as dictated.
+ * Edits that do apply are kept, so a reply with one bad entry still improves
+ * the rest of the text.
  */
 export const applyTranscriptionEdits = (
   transcript: string,
@@ -117,8 +155,16 @@ export const applyTranscriptionEdits = (
   let skipped = edits.length - accepted.length;
 
   for (const edit of accepted) {
+    if (edit.replace === null) {
+      skipped += 1;
+      continue;
+    }
     const index = edit.find.length > 0 ? text.indexOf(edit.find) : -1;
-    if (index === -1 || index !== text.lastIndexOf(edit.find)) {
+    if (
+      index === -1 ||
+      index !== text.lastIndexOf(edit.find) ||
+      splitsWord(text, edit.find, index)
+    ) {
       skipped += 1;
       continue;
     }
@@ -167,7 +213,10 @@ const readEdits = (value: unknown): TranscriptionEdit[] => {
     if (typeof find !== "string") {
       continue;
     }
-    edits.push({ find, replace: typeof replace === "string" ? replace : "" });
+    edits.push({
+      find,
+      replace: typeof replace === "string" ? replace : null,
+    });
   }
   return edits;
 };
@@ -179,10 +228,14 @@ const readEdits = (value: unknown): TranscriptionEdit[] => {
  * edits). Reading is deliberately permissive and never throws: the fallback
  * decision belongs to `resolveProcessedTranscription`, which needs to tell
  * "the model sent nothing usable" apart from "the model violated the schema".
+ *
+ * `editsDeclared` separates a reply that carried an edit list, even an empty
+ * one, from a reply with no list at all. Only the first means the model looked
+ * at the transcript and chose to change nothing.
  */
 const readProcessedTranscriptionResponse = (
   parsed: unknown,
-): { edits: TranscriptionEdit[]; result: string } => {
+): { edits: TranscriptionEdit[]; editsDeclared: boolean; result: string } => {
   const record =
     typeof parsed === "object" && parsed !== null
       ? (parsed as Record<string, unknown>)
@@ -190,6 +243,7 @@ const readProcessedTranscriptionResponse = (
   const source = hasResponseKeys(record) ? record : unwrapSingleObject(record);
   return {
     edits: readEdits(source.edits),
+    editsDeclared: Array.isArray(source.edits),
     result: typeof source.result === "string" ? source.result : "",
   };
 };
@@ -219,7 +273,8 @@ export type ProcessedTranscriptionResolution =
  * can pass the raw transcript for production and a preview sample for the
  * style dialog. An empty transcript resolves to itself without a warning:
  * there is nothing to clean, and warning about an empty reply to empty input
- * would be noise.
+ * would be noise. So does a reply carrying an empty edit list, which is how
+ * the model answers when the tone already matches the speaker.
  */
 export const resolveProcessedTranscription = (
   reply: string,
@@ -243,10 +298,15 @@ export const resolveProcessedTranscription = (
     };
   }
 
-  const { edits, result } = readProcessedTranscriptionResponse(parsed);
+  const { edits, editsDeclared, result } =
+    readProcessedTranscriptionResponse(parsed);
+  const rewritten = result.trim();
+
   if (edits.length > 0) {
     const application = applyTranscriptionEdits(transcript, edits);
-    if (application.applied > 0) {
+    // A rewrite the model sent alongside unusable edits still covers them, so
+    // only a reply that applied nothing without a rewrite has skips to report.
+    if (application.applied > 0 || rewritten.length === 0) {
       // The cap can drop edits before they are ever matched, so the warning
       // names the matching rule instead of claiming every skip was a miss.
       const capNote =
@@ -258,18 +318,17 @@ export const resolveProcessedTranscription = (
         transcript: application.text,
         warning:
           application.skipped > 0
-            ? `Applied ${application.applied} of ${edits.length} post-processing edits; ${application.skipped} could not be applied (an edit only applies when its text matches the transcript exactly once).${capNote}`
+            ? `Applied ${application.applied} of ${edits.length} post-processing edits; ${application.skipped} could not be applied (an edit only applies when its replacement is a string and its find text matches the transcript exactly once, on the edges of a word).${capNote}`
             : null,
       };
     }
   }
 
-  const rewritten = result.trim();
   if (rewritten.length > 0) {
     return { status: "cleaned", transcript: rewritten, warning: null };
   }
 
-  if (transcript.trim().length === 0) {
+  if (transcript.trim().length === 0 || editsDeclared) {
     return { status: "cleaned", transcript, warning: null };
   }
 
