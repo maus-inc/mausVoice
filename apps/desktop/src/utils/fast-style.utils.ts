@@ -32,6 +32,21 @@ const truncateGuard = (text: string): string => {
   return text.slice(0, MAX_INPUT_CHARS);
 };
 
+/**
+ * The one place that decides whether fast styling dropped characters. Callers
+ * that report truncation to the user must ask here rather than re-deriving the
+ * cap, so the reported number can never drift from the applied one.
+ */
+export const measureFastStyleTruncation = (
+  raw: string,
+): { keptChars: number; droppedChars: number } | null => {
+  if (raw.length <= MAX_INPUT_CHARS) return null;
+  return {
+    keptChars: MAX_INPUT_CHARS,
+    droppedChars: raw.length - MAX_INPUT_CHARS,
+  };
+};
+
 const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 
 // Conservative: only clear multi-word fillers that cannot be content. "like",

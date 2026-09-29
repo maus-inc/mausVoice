@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 
@@ -224,6 +224,13 @@ describe("postProcessTranscript fast local style", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
+  afterEach(() => {
+    // The provider-less cases install a spy on getGenerateTextRepo. Without an
+    // explicit restore it leaks into the next test and the fast-fallback case
+    // would silently exercise the provider-less path instead.
+    vi.restoreAllMocks();
+  });
+
   it("degrades to the local style on a provider failure without erasing the failure signal", async () => {
     class Cerebras402 extends Error {
       status = 402;
@@ -326,9 +333,12 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.transcript).toContain("- ");
   });
 
-  it("warns when the local style had to drop the tail of a long dictation", async () => {
+  it("records the dropped count on the no-provider fast path", async () => {
     const { FAST_STYLE_MAX_INPUT_CHARS } =
       await import("../utils/fast-style.utils");
+    const overCap = "dictation word ".repeat(2000);
+    expect(overCap.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+
     const { postProcessTranscript: run } = await import("./transcribe.actions");
     const repos = await import("../repos");
     const spy = vi.spyOn(repos, "getGenerateTextRepo").mockReturnValueOnce({
@@ -339,13 +349,51 @@ describe("postProcessTranscript fast local style", () => {
     } as unknown as ReturnType<typeof repos.getGenerateTextRepo>);
 
     const result = await run({
-      rawTranscript: "a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 500),
+      rawTranscript: overCap,
       toneId: "default",
     });
 
     spy.mockRestore();
-    expect(result.warnings.join(" ")).toContain(
-      String(FAST_STYLE_MAX_INPUT_CHARS),
+    expect(result.metadata.postProcessMode).toBe("fast");
+    expect(result.metadata.fastStyleTruncatedChars).toBe(
+      overCap.length - FAST_STYLE_MAX_INPUT_CHARS,
     );
+    expect(result.warnings.join(" ")).toContain("left unstyled");
+    expect(result.warnings.join(" ")).toContain(
+      String(overCap.length - FAST_STYLE_MAX_INPUT_CHARS),
+    );
+  });
+
+  it("records the dropped count on the fast fallback path after a provider failure", async () => {
+    const { FAST_STYLE_MAX_INPUT_CHARS } =
+      await import("../utils/fast-style.utils");
+    const overCap = "dictation word ".repeat(2000);
+    genRepo.generateText.mockRejectedValueOnce(new Error("provider down"));
+
+    const result = await postProcessTranscript({
+      rawTranscript: overCap,
+      toneId: "default",
+    });
+
+    // Assert the fallback really ran, so this case cannot pass by way of the
+    // provider-less branch.
+    expect(result.metadata.postProcessFallback).toBe(true);
+    expect(result.metadata.postProcessMode).toBe("fast");
+    expect(result.metadata.fastStyleTruncatedChars).toBe(
+      overCap.length - FAST_STYLE_MAX_INPUT_CHARS,
+    );
+    expect(result.warnings.join(" ")).toContain("left unstyled");
+  });
+
+  it("reports no truncation for input under the cap", async () => {
+    genRepo.generateText.mockRejectedValueOnce(new Error("provider down"));
+
+    const result = await postProcessTranscript({
+      rawTranscript: "a short dictation",
+      toneId: "default",
+    });
+
+    expect(result.metadata.fastStyleTruncatedChars).toBeUndefined();
+    expect(result.warnings.join(" ")).not.toContain("left unstyled");
   });
 });

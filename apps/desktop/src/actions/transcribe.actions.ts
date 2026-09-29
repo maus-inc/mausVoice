@@ -63,10 +63,11 @@ import {
   loadMyEffectiveDictationLanguage,
 } from "../utils/user.utils";
 import {
-  FAST_STYLE_MAX_INPUT_CHARS,
+  measureFastStyleTruncation,
   applyFastStyle,
   canApplyFastStyle,
 } from "../utils/fast-style.utils";
+import { getIntl } from "../i18n/intl";
 import { showErrorSnackbar } from "./app.actions";
 import { addWordsToCurrentUser } from "./user.actions";
 
@@ -126,6 +127,13 @@ export type PostProcessMetadata = {
   postProcessFallback?: boolean | null;
   /** Sanitized, non-secret error message from a failed post-processing request. */
   postProcessError?: string | null;
+  /**
+   * Characters the fast local style path dropped from the end of an
+   * over-length dictation, or null when nothing was dropped. The durable
+   * record is the localized warning in `warnings`; this is the in-memory
+   * signal the post-processing callers branch on.
+   */
+  fastStyleTruncatedChars?: number | null;
 };
 
 export type PostProcessResult = {
@@ -474,6 +482,34 @@ const beginPostProcessingRequest = ({
 };
 
 /**
+ * Record that fast local styling dropped characters. Both fast-style call paths
+ * route through here so the user-facing warning cannot drift from the cap that
+ * actually truncated the text, and so neither path can truncate silently.
+ */
+const recordFastStyleTruncation = (
+  rawTranscript: string,
+  context: string,
+  metadata: PostProcessMetadata,
+  warnings: string[],
+): void => {
+  const truncation = measureFastStyleTruncation(rawTranscript);
+  if (!truncation) return;
+  getLogger().warning(
+    `Fast style dropped ${truncation.droppedChars} chars for ${context} (kept ${truncation.keptChars} of ${rawTranscript.length})`,
+  );
+  metadata.fastStyleTruncatedChars = truncation.droppedChars;
+  warnings.push(
+    getIntl().formatMessage(
+      {
+        defaultMessage:
+          "Dictation was longer than fast styling allows. {droppedChars} characters at the end were left unstyled. The full text is saved in History.",
+      },
+      { droppedChars: truncation.droppedChars },
+    ),
+  );
+};
+
+/**
  * Deterministic local styling, shared by both fast paths: no LLM configured,
  * and the LLM path falling back after a provider failure. Records mode,
  * duration and any truncation, then returns the styled text, or null when the
@@ -518,11 +554,12 @@ const applyFastLocalStyle = ({
   metadata.postProcessMode = "fast";
   metadata.postProcessModel = null;
   metadata.postprocessDurationMs = fastDurationMs;
-  if (rawTranscript.length > FAST_STYLE_MAX_INPUT_CHARS) {
-    warnings.push(
-      `Fast local style kept the first ${FAST_STYLE_MAX_INPUT_CHARS} of ${rawTranscript.length} characters.`,
-    );
-  }
+  recordFastStyleTruncation(
+    rawTranscript,
+    `fast style tone=${toneId} reason=${reason}`,
+    metadata,
+    warnings,
+  );
   getLogger().info(
     `Fast local style applied for tone=${toneId}, reason=${reason}, in ${fastDurationMs}ms`,
   );
