@@ -19,11 +19,7 @@ import {
   redactProviderMessage,
 } from "./provider-error.utils";
 import { buildGptOssReasoningParams } from "./reasoning.utils";
-import type {
-  CustomFetch,
-  DiscoveredModelId,
-  ReasoningEffort,
-} from "./types";
+import type { CustomFetch, DiscoveredModelId, ReasoningEffort } from "./types";
 import {
   runSdkTranscription,
   TranscriptionSegment,

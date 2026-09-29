@@ -62,21 +62,18 @@ describe("groqGenerateTextResponse retries", () => {
   const reject = (status: number) =>
     Object.assign(new Error(`status ${status}`), { status });
 
-  it.each([401, 402])(
-    "does not retry a rejected key (%i)",
-    async (status) => {
-      createChatCompletion.mockRejectedValue(reject(status));
+  it.each([401, 402])("does not retry a rejected key (%i)", async (status) => {
+    createChatCompletion.mockRejectedValue(reject(status));
 
-      await expect(
-        groqGenerateTextResponse({
-          apiKey: "gsk_test",
-          model: "openai/gpt-oss-20b",
-          prompt: "p",
-        }),
-      ).rejects.toMatchObject({ status });
-      expect(createChatCompletion).toHaveBeenCalledTimes(1);
-    },
-  );
+    await expect(
+      groqGenerateTextResponse({
+        apiKey: "gsk_test",
+        model: "openai/gpt-oss-20b",
+        prompt: "p",
+      }),
+    ).rejects.toMatchObject({ status });
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+  });
 
   it("lets a 403 reach the model fallback instead of failing hard", async () => {
     // Groq has no documented code for a model-scoped 403, and a denial the
