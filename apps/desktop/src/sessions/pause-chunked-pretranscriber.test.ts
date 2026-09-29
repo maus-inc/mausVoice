@@ -111,6 +111,31 @@ describe("PauseChunkedPretranscriber", () => {
     );
   });
 
+  it("cuts_committed_by_a_pause_scale_with_its_length", async () => {
+    // The cost of cutting at a pause is one billed span per cut, so the rate is
+    // worth pinning. An ordinary pause buys exactly one cut: `commit` clears
+    // `silentRunStart`, so the run has to re-accumulate `minPauseMs` before
+    // another can fire. A silence longer than the minimum chunk keeps satisfying
+    // `cut >= minChunkSec` and bills roughly one span per minimum chunk.
+    //
+    // Measured at minChunkSec 5, minPauseMs 300. An earlier review claimed a long
+    // silence still produced only one extra span; these numbers are the reason
+    // that claim is not what the code does.
+    const countFor = async (pauseSec: number): Promise<number> => {
+      const { transcribe } = recordingTranscriber();
+      const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
+      feed(target, concat(segment(6, true, 1), segment(pauseSec, false, 2)));
+      const chunks = target.chunkCount;
+      await target.dispose();
+      return chunks;
+    };
+
+    expect(await countFor(0.6)).toBe(1);
+    expect(await countFor(5)).toBe(1);
+    expect(await countFor(30)).toBe(5);
+    expect(await countFor(60)).toBe(11);
+  });
+
   it("never cuts continuous speech and defers short recordings to the caller", async () => {
     const { transcribe } = recordingTranscriber();
     const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);

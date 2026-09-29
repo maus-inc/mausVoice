@@ -309,8 +309,24 @@ export class PauseChunkedPretranscriber {
       if (this.isSilent(rms)) {
         this.silentRunStart ??= frameStart;
         const runLength = frameEnd - this.silentRunStart;
+        // The seam goes at the midpoint of the run so neither speech edge sits
+        // on it: the speech before is at least half a run long, and the speech
+        // after is whatever follows the silence.
         const cut = this.silentRunStart + Math.floor(runLength / 2);
         if (runLength >= this.minPauseSamples && cut >= this.minChunkSamples) {
+          // A pause does force a cut, which is the point of this class: it is
+          // what bounds the wait after the user stops. The cost is one extra
+          // billed span per cut, so it is worth being precise about the rate.
+          // An ordinary pause produces exactly one, because `commit` clears
+          // `silentRunStart` and the run has to re-accumulate `minPauseSamples`
+          // before another can fire. A silence longer than the minimum chunk is
+          // different: `cut >= minChunkSamples` is satisfied again every
+          // `minChunkSec` of it, so a long silence bills roughly one span per
+          // minimum chunk. Measured at minChunkSec 5, minPauseMs 300: a 0.6 s
+          // pause commits 1 span, 5 s commits 1, 30 s commits 5, 60 s commits
+          // 11. `cuts_committed_by_a_pause_scale_with_its_length` pins that, so
+          // a change to the arithmetic cannot quietly make silence more
+          // expensive.
           this.commit(cut);
         }
       } else {

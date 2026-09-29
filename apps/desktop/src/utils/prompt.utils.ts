@@ -770,8 +770,23 @@ Process the transcript according to the instructions.
 // POST_PROCESS_REASONING_EFFORT); the headroom also covers models that reason
 // at their default effort. A fixed 600-token cap truncated long dictations.
 const POST_PROCESS_REASONING_HEADROOM_TOKENS = 1024;
-// Every request, however short, now asks for at least this many output
-// tokens (previously 600). Providers bill generated tokens, not the cap.
+// Every request, however short, asks for at least this many output tokens
+// (previously 600).
+//
+// This is a correctness floor, not a cost knob, which is why it is not made
+// provider-conditional. A short dictation still has to cover the same reasoning
+// tokens as a long one before the JSON answer starts, and 600 was not enough for
+// a reasoning model to get there, so the answer was truncated on exactly the
+// inputs where the user said least. Self-hosted endpoints (Ollama,
+// OpenAI-compatible, Speaches) are charged per token by nobody, so the argument
+// that makes the floor cheap on a hosted provider does not apply to them, but the
+// floor is not expensive there either: `max_tokens` is a ceiling the server
+// reserves lazily and generation stops at the end of the answer regardless.
+// Dropping it for a local endpoint would buy no measurable speed and would put
+// local reasoning models back at the truncation this value exists to prevent.
+//
+// The cost side is the sibling comment's: providers bill generated tokens, not
+// the cap.
 const POST_PROCESS_MIN_OUTPUT_TOKENS = 2048;
 // Bounds cost. The budget saturates past about 2,400 estimated transcript
 // tokens (roughly 9,500 characters, or 11 to 14 minutes of speech). A longer

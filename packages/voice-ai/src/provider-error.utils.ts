@@ -57,7 +57,14 @@ const PROVIDER_SECRET_PATTERNS: RegExp[] = [
   /\b(?:gsk|csk|sk)[-_][a-z0-9_-]+/gi,
   /bearer\s+[a-z0-9._~+/=-]+/gi,
   /authorization:\s*[^\s;,]+/gi,
-  /api[_-]?key[:=]\s*[a-z0-9._~+/=-]+/gi,
+  // The optional quote before the separator is what makes a JSON body work.
+  // Without it the label has to be followed straight by `:` or `=`, so
+  // `{"api_key":"..."}` never reached this pattern at all, and a key whose
+  // prefix the lines above do not know went into the log whole. The value's
+  // own quote is optional for the same reason: `api_key = "..."` is as
+  // ordinary as the JSON form. Only the value is secret, and the whole match
+  // including the label is replaced, so nothing is left to identify the key.
+  /api[_-]?key["']?\s*[:=]\s*["']?\s*[a-z0-9._~+/=-]+/gi,
 ];
 
 /**
