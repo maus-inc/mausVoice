@@ -229,6 +229,49 @@ describe("i18n catalogs", () => {
     ).toEqual([]);
   });
 
+  it("names the transcript as text in ko, not as captured audio", () => {
+    // The Korean catalog carried two spellings of one concept. 녹음 내용 reads as
+    // the original *audio*, which is not what these messages are about, and
+    // 트랜스크립트 was a third spelling of the same thing. The catalog already
+    // said 텍스트 for the text in copy_transcript, delete_transcript and
+    // final_transcript_unavailable, so that is the word these now use too.
+    //
+    // Asserted against the English rather than as a fixed key list, so a new
+    // message that mistranslates "transcript" the same way fails here rather
+    // than waiting for a native reader to notice.
+    const locales = loadLocales();
+    const english = locales[manifest.defaultLocale]!;
+    const korean = locales.ko!;
+    const audioWording = /녹음\s*내용|트랜스크립트/;
+
+    const mistranslated = Object.keys(english).filter((key) => {
+      const source = english[key] ?? "";
+      const translation = korean[key];
+      return (
+        /transcript/i.test(source) &&
+        typeof translation === "string" &&
+        audioWording.test(translation)
+      );
+    });
+
+    expect(
+      mistranslated,
+      "these ko messages say transcript with a word that means captured audio",
+    ).toEqual([]);
+
+    // And the four that carried it are covered, so the guard above cannot pass
+    // by those keys falling out of the catalog.
+    for (const key of [
+      "could_not_open_the_review_window_your_transcript_was_saved_t",
+      "review_expired_the_transcript_is_kept_in_your_history",
+      "styling_failed_reason_the_raw_transcript_is_saved_in_history",
+      "could_not_copy_the_transcript_it_is_saved_in_your_history",
+    ]) {
+      expect(korean[key], `ko:${key} must exist`).toBeTypeOf("string");
+      expect(korean[key], `ko:${key}`).not.toMatch(audioWording);
+    }
+  });
+
   it("translates failed-transcription audio controls in every locale", () => {
     const locales = loadLocales();
     const keyedEnglish = locales[manifest.defaultLocale]!;

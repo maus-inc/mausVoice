@@ -43,11 +43,13 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     expect(result).toContain("English");
   });
 
-  it("includes the shared humanize skill in every system prompt", () => {
+  it("keeps the shared humanize skill out of the system prompt", () => {
+    // The skill rides on the cached prefix of the user message, so repeating
+    // it here sent it twice in every request.
     const result = buildSystemPostProcessingTonePrompt(
       makeInput({ kind: "style", stylePrompt: "Be concise" }),
     );
-    expect(result).toContain(HUMANIZE_SKILL_TEXT);
+    expect(result).not.toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("appends structured style guidance when it is present", () => {
@@ -75,7 +77,7 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     );
     expect(result).toContain("You are a custom assistant for the enterprise.");
     expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
-    expect(result).toContain(HUMANIZE_SKILL_TEXT);
+    expect(result).not.toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("substitutes variables in template system prompt", () => {
@@ -92,7 +94,7 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     );
     expect(result).toContain("You assist Bob with transcripts in Français.");
     expect(result).toContain(GLOSSARY_EXACT_SPELLING_INSTRUCTION);
-    expect(result).toContain(HUMANIZE_SKILL_TEXT);
+    expect(result).not.toContain(HUMANIZE_SKILL_TEXT);
   });
 
   it("falls back to default when template config has no systemPromptTemplate", () => {
@@ -104,6 +106,31 @@ describe("buildSystemPostProcessingTonePrompt", () => {
     );
     expect(result).toContain("Clean up the provided transcript");
     expect(result).toContain("English");
+  });
+
+  it("sends the humanize skill exactly once across both halves of a request", () => {
+    // Both callers, transcribe.actions.ts and tone-preview.actions.ts, pass
+    // these two results as `system` and `prompt` to the same generateText
+    // call, so the skill must appear in one of them and not both. Counting
+    // "contains" on either half alone cannot catch a duplicate.
+    const inputs = [
+      makeInput({ kind: "style", stylePrompt: "Be formal" }),
+      makeInput({
+        kind: "template",
+        promptTemplate: "Process: <transcript/>",
+        systemPromptTemplate: "You are a custom assistant for the enterprise.",
+      }),
+    ];
+
+    for (const input of inputs) {
+      const system = buildSystemPostProcessingTonePrompt(input);
+      const prompt = buildPostProcessingPrompt(input);
+      const occurrences = [system, prompt].reduce(
+        (total, part) => total + part.split(HUMANIZE_SKILL_TEXT).length - 1,
+        0,
+      );
+      expect(occurrences).toBe(1);
+    }
   });
 
   it("includes the glossary exact-spelling instruction in the style system prompt", () => {

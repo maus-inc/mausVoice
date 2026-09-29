@@ -83,9 +83,18 @@ const COMMANDS: SpokenCommand[] = [
   insert(["period"], ".", {
     attachLeft: true,
     clauseFinal: true,
-    // Mid-sentence uses ("the sprint period ends") fail `clauseFinal`. These
-    // cover a compound noun that ends the sentence ("until the notice
-    // period."), where position cannot tell it apart. Not exhaustive.
+    // `clauseFinal` above is the only mid-sentence guard: "the sprint period
+    // ends" fails it, so the deny-list never runs there. This list covers the
+    // one case `clauseFinal` cannot see, a compound noun built on "period" at
+    // the end of a dictation ("until the notice period."), where the missing
+    // next token makes the position ambiguous.
+    //
+    // The head noun is always "period", so these modifiers are a closed,
+    // reviewable set rather than an open class of English. Add one when a
+    // compound noun built on "period" is missing from this list, not when a
+    // sentence is mispunctuated. A modifier nobody thought of still gets a
+    // full stop. That is a visible cosmetic error, not silent data loss,
+    // which is why this list is kept instead of replaced by a heuristic.
     blockedPredecessors: [
       ["time"],
       ["trial"],
@@ -105,6 +114,17 @@ const COMMANDS: SpokenCommand[] = [
       ["warranty"],
       ["vesting"],
       ["blackout"],
+      ["semester"],
+      ["sprint"],
+      ["quarter"],
+      ["observation"],
+      ["registration"],
+      ["exercise"],
+      ["correction"],
+      ["hold"],
+      ["embargo"],
+      ["deprecation"],
+      ["beta"],
     ],
   }),
   insert(["colon"], ":", { attachLeft: true, blockedFollowers: [["cancer"]] }),

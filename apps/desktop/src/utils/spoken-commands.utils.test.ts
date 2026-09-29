@@ -154,6 +154,29 @@ describe("applySpokenCommands", () => {
     "The sprint period ends Friday.",
     "The observation period lasted six weeks.",
     "We extended the notice period.",
+    // One per deny-list entry added for the `period` command, so the list
+    // cannot rot entry by entry: a modifier removed from
+    // `blockedPredecessors` fails the case that names it.
+    //
+    // Each one ends on the command word. That is the only position where the
+    // deny-list runs at all: `clauseFinal` rejects a mid-sentence "period", so a
+    // case that continues past it would pass whether or not the entry existed,
+    // and would be testing the wrong gate.
+    "The semester period",
+    "We had a sprint period",
+    // The pre-existing case for this modifier continues past the command word,
+    // so `clauseFinal` rejects it and the deny-list never runs. Without an
+    // end-position case the entry could be deleted and the suite would not
+    // notice.
+    "The observation period",
+    "The quarter period",
+    "The registration period",
+    "The exercise period",
+    "The correction period",
+    "We are in a hold period",
+    "The embargo period",
+    "The deprecation period",
+    "The beta period",
     "We're launching a new line today.",
     "Can you read the next line for me?",
     "Put a comma after the name.",

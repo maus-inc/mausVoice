@@ -12,9 +12,6 @@ import { ToneConfig } from "./tone.utils";
 import { getMyUserName } from "./user.utils";
 import { HUMANIZE_SKILL_TEXT } from "./humanize.utils";
 
-const appendHumanizeSkill = (base: string): string =>
-  `${base.trim()}\n\n${HUMANIZE_SKILL_TEXT}`;
-
 const sanitizeGlossaryValue = (value: string): string =>
   // oxlint-disable-next-line no-control-regex
   value.replace(/\0/g, "").replace(/\s+/g, " ").trim();
@@ -435,6 +432,9 @@ const appendStructuredStyleGuidance = (
   return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
 };
 
+// The humanize skill is not repeated here. It rides on the cached prefix of
+// the user message instead, which `buildPostProcessingPrompt` builds, and
+// putting it in both halves of the request sent it twice for no benefit.
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
@@ -444,9 +444,8 @@ export const buildSystemPostProcessingTonePrompt = (
       buildPostProcessingTemplateVars(input),
     );
     return (
-      appendHumanizeSkill(
-        appendStructuredStyleGuidance(systemPrompt, input.tone),
-      ) + `\n\n${buildGlossaryGuidance(input.glossary)}`
+      appendStructuredStyleGuidance(systemPrompt, input.tone) +
+      `\n\n${buildGlossaryGuidance(input.glossary)}`
     );
   }
 
@@ -461,11 +460,9 @@ The result must be in the ${languageName} language.
 ${buildGlossaryGuidance(input.glossary)}
 `;
 
-  return appendHumanizeSkill(
-    applyTemplateVars(
-      fullPrompt.trim(),
-      buildPostProcessingTemplateVars(input),
-    ),
+  return applyTemplateVars(
+    fullPrompt.trim(),
+    buildPostProcessingTemplateVars(input),
   );
 };
 
