@@ -41,7 +41,17 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // with it. "I know you know the answer" is two ordinary verbs, and dropping the
 // inner one silently rewrites the statement. "I mean" is the same case: "the
 // mean of the data, I mean it statistically" is ordinary English.
-const EXTRA_FILLER_RE = /(?:^|,\s*|\.\s+)you know\b\s*,?\s*/gi;
+// A full stop is not an anchor. "It works. You know it works." uses "you know"
+// as the subject of the second sentence, so anchoring there consumed the
+// subject and welded the two sentences together. Start-of-text and a preceding
+// comma are the only anchors that cannot delete a subject.
+// The phrase must also be comma-delimited on the right, or end the transcript.
+// "You know it works." and "He said, you know it works." use "you know" as the
+// subject of a clause, and "You know what I mean." is a filler whose tail is a
+// real clause, so the words after the phrase are what separate the two.
+// End-of-text keeps the trailing marker: "I know the answer is out there, you
+// know" is a filler, and nothing follows it to disagree.
+const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|$)/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 
@@ -357,6 +367,28 @@ const toPrompt = (raw: string): string => {
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;
 };
 
+const EDGE_PUNCTUATION_RE = /[,.;\s]/;
+
+/**
+ * Scans inward from both ends and drops the punctuation and whitespace there. A
+ * pair of anchored character-class replaces does the same job but backtracks,
+ * which Sonar flags on this path.
+ *
+ * The single character class is the source of truth. An earlier version kept a
+ * Set of ASCII literals next to it, which quietly dropped every Unicode
+ * whitespace character from the class, including no-break space, thin space and
+ * ideographic space. Deriving the predicate from the class removes the way the
+ * two could drift apart again.
+ */
+export const stripEdgePunctuation = (text: string): string => {
+  if (!EDGE_PUNCTUATION_RE.test(text)) return text;
+  let start = 0;
+  let end = text.length;
+  while (start < end && EDGE_PUNCTUATION_RE.test(text[start])) start += 1;
+  while (end > start && EDGE_PUNCTUATION_RE.test(text[end - 1])) end -= 1;
+  return text.slice(start, end);
+};
+
 const toBullets = (raw: string): string => {
   const guarded = truncateGuard(raw);
   let t = guarded.trim();
@@ -366,17 +398,6 @@ const toBullets = (raw: string): string => {
 
   const sentences = splitIntoSentences(t);
   if (sentences.length === 0) return t;
-
-  const EDGE_CHARS = new Set([",", ";", ".", " ", "\t", "\n", "\r"]);
-  // Scans inward from both ends. A pair of anchored character-class replaces
-  // does the same job but backtracks, which Sonar flags on this path.
-  const stripEdgePunctuation = (text: string): string => {
-    let start = 0;
-    let end = text.length;
-    while (start < end && EDGE_CHARS.has(text[start])) start += 1;
-    while (end > start && EDGE_CHARS.has(text[end - 1])) end -= 1;
-    return text.slice(start, end);
-  };
 
   const ideas: string[] = [];
   for (const s of sentences) {
