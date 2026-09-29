@@ -5,22 +5,19 @@
  * malformed request with a 4xx. Retrying those spends quota and delay for a
  * result that cannot change, and the raw SDK error is a JSON blob naming a
  * model the user has no way to act on. Each provider keeps its own wording, but
- * the status set, the status and code readers, the secret scrubbing, and the
- * error type they build are written once here so a new provider inherits the
- * behavior instead of copying it.
+ * the status and code readers and the secret scrubbing are written once here so
+ * a new provider inherits the behavior instead of copying it.
+ *
+ * Which statuses are worth not retrying is deliberately not here. It is not a
+ * property of HTTP: a status that is terminal for one model is model-scoped for
+ * another, so a shared set silently becomes the policy every provider adopts and
+ * each one then has to argue with it. Groq's own reasoning for its set, which
+ * excludes both 403 and 404, is recorded at `ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES`
+ * in `groq.utils.ts`, and the same reasoning does not hold for every provider.
  */
 
 /** The provider error code for a request naming a model it does not serve. */
 export const PROVIDER_MODEL_NOT_FOUND_CODE = "model_not_found";
-
-/** True when a status must not be retried (billing, auth, bad request). */
-export const isProviderTerminalStatus = (status: number): boolean =>
-  status === 400 ||
-  status === 401 ||
-  status === 402 ||
-  status === 403 ||
-  status === 404 ||
-  status === 422;
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null
@@ -73,31 +70,3 @@ export const redactProviderMessage = (message: string): string =>
     (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
     message,
   );
-
-/**
- * A provider failure that has been given an actionable message. `status` and
- * `code` are carried so a caller can branch without parsing the message. The
- * API key, the authorization header, and the raw request body are never
- * attached.
- */
-export class ProviderError extends Error {
-  readonly status?: number;
-  readonly code?: string;
-
-  constructor(
-    message: string,
-    options: { status?: number; code?: string } = {},
-  ) {
-    super(message);
-    this.name = "ProviderError";
-    this.status = options.status;
-    this.code = options.code;
-  }
-}
-
-/** True when a thrown value carries a non-retryable provider HTTP status. */
-export const isProviderTerminalError = (error: unknown): boolean => {
-  const status =
-    error instanceof ProviderError ? error.status : readProviderStatus(error);
-  return status !== undefined && isProviderTerminalStatus(status);
-};
