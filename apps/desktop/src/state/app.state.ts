@@ -78,6 +78,7 @@ export type AssistantInputMode = "voice" | "type";
 export type AppState = {
   initialized: boolean;
   auth: Nullable<AuthUser>;
+  authSessionNonce: number;
   keysHeld: string[];
   isRecordingHotkey: boolean;
   activeRecordingMode: Nullable<RecordingMode>;
@@ -184,6 +185,7 @@ export const INITIAL_APP_STATE: AppState = {
   },
   hotkeyById: {},
   auth: null,
+  authSessionNonce: 0,
   confettiCounter: 0,
   keysHeld: [],
   initialized: false,

@@ -20,6 +20,9 @@ export type LocalState = {
   completedPrerequisites: string[];
   /** Page to resume on restart. Cleared when onboarding finishes. */
   onboardingResumePage: OnboardingPageKey | null;
+  onboardingNameDraft: string;
+  onboardingNameDraftUserId: string | null;
+  onboardingSessionUserId: string | null;
   /** Per-provider pipeline timing medians, keyed by transcription mode. */
   providerTiming: Record<string, TimingAggregate>;
 };
@@ -39,5 +42,8 @@ export const INITIAL_LOCAL_STATE: LocalState = {
   dismissedTipIds: [],
   completedPrerequisites: [],
   onboardingResumePage: null,
+  onboardingNameDraft: "",
+  onboardingNameDraftUserId: null,
+  onboardingSessionUserId: null,
   providerTiming: {},
 };
