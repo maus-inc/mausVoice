@@ -378,6 +378,89 @@ describe("applyTranscriptionEdits", () => {
     expect(result).toMatchObject({ text: "hello", applied: 0, skipped: 1 });
   });
 
+  it("skips a find that lands inside a word", () => {
+    // "can" is unique here, but it is the head of "cannot". Applying it would
+    // splice the dictation into "couldnot" with nothing to show for it.
+    const result = applyTranscriptionEdits("I cannot attend the meeting", [
+      { find: "can", replace: "could" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "I cannot attend the meeting",
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("skips a find that starts or ends inside a word", () => {
+    const transcript = "he could not come";
+    const result = applyTranscriptionEdits(transcript, [
+      // Starts inside "could".
+      { find: "ould", replace: "might" },
+      // Starts on a boundary but ends inside "could".
+      { find: "co", replace: "will" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: transcript,
+      applied: 0,
+      skipped: 2,
+    });
+  });
+
+  it("applies a find that spans whole words", () => {
+    const result = applyTranscriptionEdits("he could not come", [
+      { find: "could", replace: "can" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "he can not come",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("applies a find that carries a leading space or trailing punctuation", () => {
+    // The prompt tells the model to include the surrounding space in "find"
+    // when deleting a word, so a match that ends on punctuation is a normal
+    // request and not a mid-word one.
+    const result = applyTranscriptionEdits("the cat sat on the mat, ok", [
+      { find: " the mat,", replace: " the rug," },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "the cat sat on the rug, ok",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("skips an edit that arrived without replacement text", () => {
+    // A missing "replace" is not a deletion the model asked for. Reading it
+    // as one removes the dictated text and leaves the user with no warning.
+    const result = applyTranscriptionEdits("the meeting is at noon", [
+      { find: "the meeting", replace: null },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "the meeting is at noon",
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("still deletes text when the model sends an empty replacement", () => {
+    const result = applyTranscriptionEdits("the meeting is at noon", [
+      { find: "the meeting ", replace: "" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "is at noon",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
   it("caps the number of edits it will apply", () => {
     const edits = Array.from({ length: MAX_TRANSCRIPTION_EDITS + 2 }, () => ({
       find: "a",
@@ -392,6 +475,13 @@ describe("applyTranscriptionEdits", () => {
 });
 
 describe("resolveProcessedTranscription", () => {
+  // The warning names every reason an edit cannot apply, so no skipped or
+  // unread entry is a silent no-op.
+  const SKIP_RULE =
+    " (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).";
+  const ONE_EDIT_SKIPPED = `Applied 0 of 1 post-processing edits; 1 could not be applied${SKIP_RULE}`;
+  const ONE_OF_TWO_EDITS_SKIPPED = `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`;
+
   it("applies edits and reports skipped ones as a warning", () => {
     const resolution = resolveProcessedTranscription(
       JSON.stringify({
@@ -407,8 +497,7 @@ describe("resolveProcessedTranscription", () => {
     expect(resolution).toEqual({
       status: "cleaned",
       transcript: "we are going to ship",
-      warning:
-        "Applied 1 of 2 post-processing edits; 1 could not be applied (an edit only applies when its text matches the transcript exactly once).",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
     });
   });
 
@@ -469,21 +558,81 @@ describe("resolveProcessedTranscription", () => {
     });
   });
 
-  it("tolerates a non-string replacement from JSON object mode", () => {
+  it.each(["null", "42", "true", "{}"])(
+    "skips an edit whose replacement is not a string: %s",
+    (replace) => {
+      const resolution = resolveProcessedTranscription(
+        JSON.stringify({
+          edits: [{ find: "uh ", replace: JSON.parse(replace) }],
+        }),
+        "uh so anyway",
+      );
+
+      // A non-string replacement is a provider dropping the key, not the model
+      // asking to delete "uh ", so the edit is skipped and counted. Reading it
+      // as a deletion used to remove the word and report a clean success.
+      expect(resolution).toEqual({
+        status: "cleaned",
+        transcript: "uh so anyway",
+        warning: ONE_EDIT_SKIPPED,
+      });
+    },
+  );
+
+  it("keeps the transcript when an edit arrives without a replacement", () => {
     const resolution = resolveProcessedTranscription(
-      JSON.stringify({ edits: [{ find: "uh ", replace: null }] }),
-      "uh so anyway",
+      JSON.stringify({ edits: [{ find: "the meeting" }], result: "" }),
+      "the meeting is at noon",
     );
 
-    expect(resolution).toMatchObject({
+    expect(resolution).toEqual({
       status: "cleaned",
-      transcript: "so anyway",
+      transcript: "the meeting is at noon",
+      warning: ONE_EDIT_SKIPPED,
     });
   });
 
-  it("reports a reply with no usable text", () => {
+  it("applies the valid edits of a reply that also carries an unusable one", () => {
     const resolution = resolveProcessedTranscription(
-      JSON.stringify({ edits: [], result: "   " }),
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "the meeting" },
+        ],
+        result: "",
+      }),
+      "we are gonna join the meeting",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to join the meeting",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("skips a mid-word find and applies the whole-word edit beside it", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "can", replace: "could" },
+          { find: "tomorrow", replace: "next week" },
+        ],
+        result: "",
+      }),
+      "I cannot attend the meeting tomorrow",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I cannot attend the meeting next week",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("reports a reply that carries neither an edit list nor a rewrite", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ result: "" }),
       "raw text",
     );
 
@@ -492,6 +641,108 @@ describe("resolveProcessedTranscription", () => {
       reason: "empty",
       warning:
         "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+    });
+  });
+
+  it("treats a no-change reply as clean instead of failed", () => {
+    // Both keys are required by the schema, so this is the answer the model
+    // gives when the tone already matches the speaker. Calling it a failure
+    // blamed the model's token limit for a correct dictation.
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "" }),
+      "I finished the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I finished the report today",
+      warning: null,
+    });
+  });
+
+  it("treats a no-change reply with a blank result as clean too", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "   " }),
+      "I finished the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I finished the report today",
+      warning: null,
+    });
+  });
+
+  it("reports a reply whose edit list could not be read at all", () => {
+    // The reply declared an edit, so the model asked for a change. Reading the
+    // entry away and calling the result a clean no-op told the user nothing
+    // while the change they asked for was lost.
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [{ find: 42, replace: "x" }], result: "" }),
+      "I will send the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+    });
+  });
+
+  it.each([
+    ["a non-string find", { find: 42, replace: "x" }],
+    ["a missing find", { replace: "x" }],
+    ["a null entry", null],
+    ["a bare string", "gonna"],
+  ])("reports an edit list holding %s", (_label, entry) => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [entry], result: "" }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unreadable-edits",
+    });
+  });
+
+  it("counts an unread entry beside the ones it did apply", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: 42, replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+    );
+
+    // The totals describe every entry the model sent, so the unread one is
+    // reported rather than quietly missing from the count.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to ship",
+      warning: `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`,
+    });
+  });
+
+  it("keeps the rewrite when the edit list beside it could not be read", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [{ find: 42, replace: "x" }],
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    // The rewrite carries the text the unread edit asked for, so there is
+    // nothing left to report.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "We are going to ship.",
+      warning: null,
     });
   });
 
