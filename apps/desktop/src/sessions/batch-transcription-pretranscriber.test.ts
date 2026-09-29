@@ -99,6 +99,33 @@ describe("BatchTranscriptionSession pause pretranscription", () => {
     expect(result.rawTranscript).toBe("whole");
   });
 
+  it("passes the chosen tone to the whole-recording request", async () => {
+    // The listener never fires, so this is the path that transcribes the whole
+    // recording. finalize takes a toneId, and dropping it here meant a batch
+    // dictation was always transcribed with no style even when the user picked
+    // one.
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+
+    await session.finalize(
+      { samples: CUTTABLE, sampleRate: RATE },
+      { toneId: "bullets" },
+    );
+
+    expect(mocks.transcribeAudio).toHaveBeenCalledOnce();
+    expect(mocks.transcribeAudio.mock.calls[0][0].toneId).toBe("bullets");
+  });
+
+  it("transcribes with no tone when the caller passes none", async () => {
+    const session = new BatchTranscriptionSession();
+    await session.onRecordingStart(RATE);
+
+    await session.finalize({ samples: CUTTABLE, sampleRate: RATE });
+
+    expect(mocks.transcribeAudio).toHaveBeenCalledOnce();
+    expect(mocks.transcribeAudio.mock.calls[0][0].toneId).toBeNull();
+  });
+
   it("transcribes the whole recording when a span request fails", async () => {
     mocks.transcribeAudio.mockRejectedValueOnce(new Error("rate limited"));
     const session = new BatchTranscriptionSession();

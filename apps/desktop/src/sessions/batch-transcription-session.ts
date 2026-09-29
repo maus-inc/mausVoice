@@ -119,7 +119,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: don't pay for a whole-recording request nobody reads.
       if (pretranscriber?.isDisposed) return EMPTY_RESULT;
-      return await this.transcribeWholeRecording(audio);
+      return await this.transcribeWholeRecording(audio, options);
     } finally {
       this.cleanup();
     }
@@ -161,6 +161,7 @@ export class BatchTranscriptionSession implements TranscriptionSession {
 
   private async transcribeWholeRecording(
     audio: StopRecordingResponse,
+    options?: { toneId?: string | null },
   ): Promise<TranscriptionSessionResult> {
     const payloadSamples = audio.samples ?? [];
     const rate = audio.sampleRate;
