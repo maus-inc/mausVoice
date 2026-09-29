@@ -960,10 +960,14 @@ mod input_region_tests {
     /// as long as the tooltip still fits. The pad values themselves are
     /// pinned once, in the crate that owns them, by
     /// `hover_pad_constants_are_sane` in rust_pill_shared.
+    ///
+    /// There is deliberately no assertion that TOOLTIP_GAP equals
+    /// PLACEMENT_GAP. TOOLTIP_GAP is defined as PLACEMENT_GAP, so comparing the
+    /// two is `assert_eq!(x, x)`: it passed on every platform and would keep
+    /// passing if either side were renamed to something else entirely. The
+    /// alias needs no defending, because nothing assigns to a `const`.
     #[test]
     fn tooltip_gap_plus_height_fits_within_hover_pad() {
-        // TOOLTIP_GAP re-exports PLACEMENT_GAP; keep the alias honest.
-        assert_eq!(TOOLTIP_GAP, rust_pill_shared::placement::PLACEMENT_GAP);
         let pad = rust_pill_shared::hover::HOVER_EXIT_PAD;
         assert!(
             TOOLTIP_GAP + TOOLTIP_HEIGHT <= pad,

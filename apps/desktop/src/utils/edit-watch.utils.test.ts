@@ -171,6 +171,38 @@ describe("findEditCorrections", () => {
     ).toEqual(["Ralf"]);
   });
 
+  it("does not learn a word the user typed inside the dictation", () => {
+    // The case the `regionStart` comment in edit-watch.utils.ts used to name:
+    // `alpha beta call Ralph` against `alpha beta Zeta call Ralf` pairs the
+    // dictated `call` against the typed `Zeta`, and the prompt then offers
+    // `Zeta`. It did not, in fact, need `regionStart` to reach that outcome and
+    // it did not avoid it either: `collectRegionTerms` summed the added and
+    // removed tokens over the whole region, so the insertion rode along on the
+    // real correction further along. The pairing is per gap now, so `Zeta` is
+    // an insertion with nothing to replace and is not learned.
+    expect(
+      find({
+        insertedText: "alpha beta call Ralph",
+        baselineText: "alpha beta call Ralph",
+        fieldText: "alpha beta Zeta call Ralf",
+      }),
+    ).toEqual(["Ralf"]);
+
+    // The insertion alone learns nothing either, with or without a correction
+    // somewhere else in the same field.
+    expect(
+      find({
+        insertedText: "alpha beta call Ralph",
+        baselineText: "alpha beta call Ralph",
+        fieldText: "alpha beta Zeta call Ralph",
+      }),
+    ).toEqual([]);
+
+    // `Ralf` in the first case is the real correction in the same region, and it
+    // is still learned. The per-gap pairing drops the insertion; it does not drop
+    // the replacement that sits beside it.
+  });
+
   it("returns nothing when the text is unchanged", () => {
     expect(
       find({

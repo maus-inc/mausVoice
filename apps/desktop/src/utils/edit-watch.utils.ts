@@ -209,9 +209,13 @@ const collectRegionGaps = (args: {
   // dictation landed, not where the dictation itself starts. Anything the user
   // typed between that anchor and the dictation sits in between, so the leading
   // run has to begin at the first surviving dictated token instead. Without
-  // this, `alpha beta call Ralph` against `alpha beta Zeta call Ralf` pairs the
-  // dictated `call` against the typed `Zeta`, and the prompt then offers
-  // `Zeta`.
+  // this, a replacement of the first dictated word beside text the user typed
+  // pairs that word against the typed text, and the prompt then offers the
+  // typed text as the correction.
+  //
+  // This is about replacements. Text typed *inside* the dictation without
+  // replacing anything is a different gap, with an empty baseline run, and
+  // `collectRegionTerms` is what keeps it from being learned.
   const firstInSpan = inSpan[0];
   const regionStart = firstInSpan
     ? Math.max(fieldStart, firstInSpan[1] - (firstInSpan[0] - start))
@@ -315,12 +319,33 @@ const collectRegionTerms = (
   dictatedLength: number,
   existingTerms: string[],
 ): string[] => {
-  const added = gaps.flatMap((gap) =>
-    computeAddedTokens(gap.baseline.join(" "), gap.field.join(" ")),
-  );
-  const removed = gaps.flatMap((gap) =>
-    computeRemovedTokens(gap.baseline.join(" "), gap.field.join(" ")),
-  );
+  // Added and removed are counted per gap, not across the region. A gap is a
+  // replacement bounded by aligned tokens, so it is the only place where an
+  // addition and a removal can be the same edit. Summing the two sides over the
+  // whole region let an insertion anywhere in it ride along on a correction
+  // somewhere else: type "Zeta" between "beta" and "call" and correct "Ralph" to
+  // "Ralf", and "Zeta" was learned as if the recognizer had produced it. The
+  // comment on `regionStart` describes that harm; this is what prevents it.
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const gap of gaps) {
+    const gapAdded = computeAddedTokens(
+      gap.baseline.join(" "),
+      gap.field.join(" "),
+    );
+    if (gapAdded.length === 0) {
+      continue;
+    }
+    const gapRemoved = computeRemovedTokens(
+      gap.baseline.join(" "),
+      gap.field.join(" "),
+    );
+    if (gapRemoved.length === 0) {
+      continue;
+    }
+    added.push(...gapAdded);
+    removed.push(...gapRemoved);
+  }
 
   // A long list of added tokens means the user rewrote the text.
   if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
