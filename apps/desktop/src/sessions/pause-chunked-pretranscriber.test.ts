@@ -217,11 +217,20 @@ describe("PauseChunkedPretranscriber", () => {
       samples: recording,
       sampleRate: RATE,
     });
+    // The listener attached at 700, so the live spans never covered the
+    // opening. finish must transcribe that head too, otherwise the start of
+    // the dictation is dropped while the rest looks complete. Spans are
+    // dispatched through one serial queue, so the head is dispatched after
+    // the live spans but must still lead the joined transcript.
     const covered = spans.reduce((sum, span) => sum + span.length, 0);
-    expect(covered).toBe(recording.length - 700);
-    expect(spans.at(-1)?.at(-1)).toBe(recording.at(-1));
-    expect(result?.chunkCount).toBe(3);
-    expect(result?.metadata.transcriptionDurationMs).toBe(300);
+    expect(covered).toBe(recording.length);
+    const head = spans.find((span) => span.length === 700);
+    expect(head?.at(0)).toBe(recording.at(0));
+    expect(head?.at(-1)).toBe(recording.at(699));
+    // The head leads the transcript even though it was dispatched third.
+    expect(result?.text).toBe("span3 span1 span2 span4");
+    expect(result?.chunkCount).toBe(4);
+    expect(result?.metadata.transcriptionDurationMs).toBe(400);
   });
 
   it("disables itself on a gap or a chunk without an offset", async () => {

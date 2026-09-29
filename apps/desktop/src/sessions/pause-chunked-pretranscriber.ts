@@ -98,6 +98,10 @@ type CommittedChunk = {
  * whole-recording request (no cut happened, a span failed, or the live
  * stream does not match the final recording). The caller then transcribes
  * the full recording exactly as before.
+ *
+ * The listener may attach after capture starts. Audio before the first live
+ * chunk is transcribed as a leading span at `finish` so no part of the
+ * recording is skipped.
  */
 export class PauseChunkedPretranscriber {
   private buffer = new Float32Array(0);
@@ -173,13 +177,23 @@ export class PauseChunkedPretranscriber {
     const start = this.streamStart ?? 0;
     if (!this.matchesCommittedAudio(samples, start)) return null;
 
+    // The listener can attach after capture starts, so the first live chunk
+    // may land at a non-zero offset. Everything before it is in the final
+    // recording but no live span covers it, so transcribe it as a leading
+    // span. Without this the opening of the dictation is dropped while the
+    // rest looks complete, and the caller has no signal to fall back.
+    const head = start > 0 ? samples.subarray(0, start) : null;
+    const headResult =
+      head !== null && head.length > 0 ? this.enqueue(head.slice()) : null;
     const tail = samples.subarray(start + this.committedOffset);
     const tailResult = tail.length > 0 ? this.enqueue(tail.slice()) : null;
     let chunks: PretranscribedChunk[];
     try {
-      chunks = await Promise.all(
-        tailResult ? [...this.results, tailResult] : this.results,
-      );
+      chunks = await Promise.all([
+        ...(headResult ? [headResult] : []),
+        ...this.results,
+        ...(tailResult ? [tailResult] : []),
+      ]);
     } catch {
       return null;
     }
