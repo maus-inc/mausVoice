@@ -2,6 +2,33 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 
 use crate::domain::{Transcription, TranscriptionAudioSnapshot};
 
+const TRANSCRIPTION_COLUMNS: &str = "id,
+                transcript,
+                timestamp,
+                audio_path,
+                audio_duration_ms,
+                model_size,
+                inference_device,
+                raw_transcript,
+                sanitized_transcript,
+                transcription_prompt,
+                post_process_prompt,
+                transcription_api_key_id,
+                post_process_api_key_id,
+                transcription_mode,
+                post_process_mode,
+                post_process_device,
+                post_process_model,
+                post_process_provider,
+                post_process_failed,
+                post_process_error,
+                transcription_duration_ms,
+                postprocess_duration_ms,
+                warnings_json,
+                remote_status,
+                remote_device_id,
+                post_process_fallback";
+
 fn serialize_warnings(warnings: &Option<Vec<String>>) -> Option<String> {
     warnings
         .as_ref()
@@ -127,36 +154,12 @@ pub async fn fetch_transcriptions(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<Transcription>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT id,
-                transcript,
-                timestamp,
-                audio_path,
-                audio_duration_ms,
-                model_size,
-                inference_device,
-                raw_transcript,
-                sanitized_transcript,
-                transcription_prompt,
-                post_process_prompt,
-                transcription_api_key_id,
-                post_process_api_key_id,
-                transcription_mode,
-                post_process_mode,
-                post_process_device,
-                post_process_model,
-                post_process_provider,
-                post_process_failed,
-                post_process_error,
-                transcription_duration_ms,
-                postprocess_duration_ms,
-                warnings_json,
-                remote_status,
-                remote_device_id
+    let rows = sqlx::query(&format!(
+        "SELECT {TRANSCRIPTION_COLUMNS}
          FROM transcriptions
          ORDER BY timestamp DESC
-         LIMIT ?1 OFFSET ?2",
-    )
+         LIMIT ?1 OFFSET ?2"
+    ))
     .bind(limit as i64)
     .bind(offset as i64)
     .fetch_all(&pool)
@@ -238,36 +241,11 @@ pub async fn update_transcription(
     .execute(&pool)
     .await?;
 
-    let row = sqlx::query(
-        "SELECT id,
-                transcript,
-                timestamp,
-                audio_path,
-                audio_duration_ms,
-                model_size,
-                inference_device,
-                raw_transcript,
-                sanitized_transcript,
-                transcription_prompt,
-                post_process_prompt,
-                transcription_api_key_id,
-                post_process_api_key_id,
-                transcription_mode,
-                post_process_mode,
-                post_process_device,
-                post_process_model,
-                post_process_provider,
-                post_process_failed,
-                post_process_error,
-                transcription_duration_ms,
-                postprocess_duration_ms,
-                warnings_json,
-                remote_status,
-                remote_device_id,
-                post_process_fallback
+    let row = sqlx::query(&format!(
+        "SELECT {TRANSCRIPTION_COLUMNS}
          FROM transcriptions
-         WHERE id = ?1",
-    )
+         WHERE id = ?1"
+    ))
     .bind(&transcription.id)
     .fetch_optional(&pool)
     .await?
@@ -286,4 +264,60 @@ pub async fn delete_transcription(pool: SqlitePool, id: &str) -> Result<(), sqlx
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fetch_transcriptions, TRANSCRIPTION_COLUMNS};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    async fn transcription_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(&format!(
+            "CREATE TABLE transcriptions ({TRANSCRIPTION_COLUMNS})"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn fetch_transcriptions_selects_every_column_the_row_mapper_reads() {
+        let pool = transcription_pool().await;
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp, post_process_fallback)
+             VALUES ('only', 'hello', 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = fetch_transcriptions(pool, 10, 0).await.unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "only");
+        assert_eq!(rows[0].post_process_fallback, Some(true));
+    }
+
+    #[tokio::test]
+    async fn fetch_transcriptions_reads_a_null_fallback_on_a_legacy_row() {
+        let pool = transcription_pool().await;
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp)
+             VALUES ('legacy', 'hello', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = fetch_transcriptions(pool, 10, 0).await.unwrap();
+
+        assert_eq!(rows[0].post_process_fallback, None);
+    }
 }
