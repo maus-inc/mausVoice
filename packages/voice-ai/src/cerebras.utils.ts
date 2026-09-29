@@ -9,10 +9,15 @@ import { openaiCompatibleStreamChat } from "./openai.utils";
 import {
   buildJsonObjectPrompt,
   buildOpenAICompatibleMessages,
+  buildReasoningEffortParams,
   parseOpenAICompatibleGenerateTextResponse,
 } from "./openai-compatible-generate.utils";
 import { buildGptOssReasoningParams } from "./reasoning.utils";
-import type { CustomFetch, DiscoveredModelId } from "./types";
+import type {
+  CustomFetch,
+  DiscoveredModelId,
+  ReasoningEffort,
+} from "./types";
 import {
   readProviderStatus,
   redactProviderMessage,
@@ -136,6 +141,7 @@ export type CerebrasGenerateTextArgs = {
   prompt: string;
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  reasoningEffort?: ReasoningEffort;
   customFetch?: CustomFetch;
   signal?: AbortSignal;
 };
@@ -152,6 +158,7 @@ export const cerebrasGenerateTextResponse = async ({
   prompt,
   jsonResponse,
   maxTokens,
+  reasoningEffort,
   customFetch,
   signal,
 }: CerebrasGenerateTextArgs): Promise<CerebrasGenerateResponseOutput> => {
@@ -180,6 +187,7 @@ export const cerebrasGenerateTextResponse = async ({
         model,
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
+        ...buildReasoningEffortParams(model, reasoningEffort),
         top_p: 1,
         // Same GPT-OSS reasoning policy as the Groq adapter, which keeps the
         // medium-effort default from eating the JSON reply's token budget. Cerebras

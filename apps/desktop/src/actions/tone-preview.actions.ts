@@ -7,7 +7,8 @@ import {
   collectDictionaryEntries,
   type PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
-  POST_PROCESS_MAX_TOKENS,
+  getPostProcessMaxTokens,
+  POST_PROCESS_REASONING_EFFORT,
 } from "../utils/prompt.utils";
 import {
   getMyUserName,
@@ -73,8 +74,9 @@ export const previewToneStyle = async (
   }
 
   const state = getAppState();
+  const transcript = boundPreviewSample(sampleText);
   const input: PostProcessingPromptInput = {
-    transcript: boundPreviewSample(sampleText),
+    transcript,
     userName: getMyUserName(state),
     dictationLanguage: await loadMyEffectiveDictationLanguage(state),
     tone: {
@@ -92,7 +94,8 @@ export const previewToneStyle = async (
     prompt: buildPostProcessingPrompt(input),
     signal,
     jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
-    maxTokens: POST_PROCESS_MAX_TOKENS,
+    maxTokens: getPostProcessMaxTokens(transcript),
+    reasoningEffort: POST_PROCESS_REASONING_EFFORT,
   });
   return unwrapResultJson(output.text, input.transcript);
 };

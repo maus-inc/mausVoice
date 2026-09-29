@@ -110,3 +110,17 @@ export const analyzeSilence = (
     peak < SILENCE_PEAK_THRESHOLD;
   return { silent, rms, peak, maxWindowRms };
 };
+
+/**
+ * The quietest 300 ms window energy still treated as speech. Matches the
+ * local Whisper silence gate (`SILENCE_RMS_THRESHOLD` in
+ * `packages/rust_transcription`), which is set low enough to keep a soft
+ * "yes" at the end of a long pause. Room tone sits well below it.
+ */
+export const SPEECH_FLOOR_RMS = 0.0025;
+
+/** True when some 300 ms window reaches the speech floor. */
+export const hasSpeechEnergy = (
+  samples: AudioSamples,
+  sampleRate: number,
+): boolean => maxWindowedRms(samples, sampleRate) >= SPEECH_FLOOR_RMS;

@@ -11,6 +11,7 @@ import {
   DEEPGRAM_KEYTERM_BUDGET,
   estimateTokenCount,
   ELEVENLABS_BATCH_KEYTERMS_BUDGET,
+  getPostProcessMaxTokens,
   ELEVENLABS_REALTIME_KEYTERMS_BUDGET,
   GLOSSARY_EXACT_SPELLING_INSTRUCTION,
   GLOSSARY_PROMPT_BUDGET,
@@ -397,6 +398,28 @@ describe("estimateTokenCount", () => {
   it("counts emoji at a token each and combining marks at zero", () => {
     expect(estimateTokenCount("🎉🎉")).toBe(2);
     expect(estimateTokenCount("e\u0301")).toBe(0.25);
+  });
+});
+
+describe("getPostProcessMaxTokens", () => {
+  it("gives short transcripts room for reasoning plus the JSON answer", () => {
+    expect(getPostProcessMaxTokens("")).toBe(getPostProcessMaxTokens("hi"));
+    expect(getPostProcessMaxTokens("hi")).toBeGreaterThan(600);
+  });
+
+  it("grows with the transcript so long dictations are not cut off", () => {
+    const shortBudget = getPostProcessMaxTokens("word ".repeat(200));
+    const longTranscript = "word ".repeat(1200);
+    const longBudget = getPostProcessMaxTokens(longTranscript);
+    expect(longBudget).toBeGreaterThan(shortBudget);
+    expect(longBudget).toBeGreaterThan(estimateTokenCount(longTranscript) * 2);
+  });
+
+  it("stays bounded for very long transcripts", () => {
+    const huge = getPostProcessMaxTokens("word ".repeat(50_000));
+    expect(huge).toBe(8192);
+    expect(getPostProcessMaxTokens("word ".repeat(100_000))).toBe(huge);
+    expect(getPostProcessMaxTokens("")).toBe(2048);
   });
 });
 

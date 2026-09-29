@@ -397,3 +397,116 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.warnings.join(" ")).not.toContain("left unstyled");
   });
 });
+
+describe("postProcessTranscript output budget", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps the full raw transcript when the model output was cut off", async () => {
+    const rawTranscript =
+      "we agreed to push the beta to october because the payment integration is not ready";
+    const complete = JSON.stringify({
+      result:
+        "We agreed to push the beta to October because the payment integration is not ready.",
+    });
+    genRepo.generateText.mockResolvedValueOnce({
+      text: complete.slice(0, Math.floor(complete.length * 0.6)),
+    });
+
+    const result = await postProcessTranscript({ rawTranscript, toneId: null });
+
+    expect(result.transcript).toBe(rawTranscript);
+    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+  });
+
+  it("hints at truncation for a fenced reply cut off before its closing fence", async () => {
+    const rawTranscript = "we agreed to push the beta to october";
+    genRepo.generateText.mockResolvedValueOnce({
+      text: '```json\n{"result":"We agreed to push the beta',
+    });
+
+    const result = await postProcessTranscript({ rawTranscript, toneId: null });
+
+    expect(result.transcript).toBe(rawTranscript);
+    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+  });
+
+  it("sizes the budget from the transcript and asks for low reasoning effort", async () => {
+    genRepo.generateText.mockResolvedValue({
+      text: JSON.stringify({ result: "ok" }),
+    });
+
+    await postProcessTranscript({ rawTranscript: "short", toneId: null });
+    await postProcessTranscript({
+      rawTranscript: "word ".repeat(2000),
+      toneId: null,
+    });
+
+    const [shortCall, longCall] = genRepo.generateText.mock.calls.map(
+      ([input]) => input as { maxTokens: number; reasoningEffort?: string },
+    );
+    // The budget is sized from the transcript, with a 2048 floor that leaves
+    // room for hidden reasoning. The old fixed 600 cap was what truncated long
+    // dictations in the first place, so the floor is pinned rather than a
+    // loose "greater than" that would pass again at any low number.
+    expect(shortCall.maxTokens).toBe(2048);
+    expect(longCall.maxTokens).toBeGreaterThan(shortCall.maxTokens);
+    expect(shortCall.reasoningEffort).toBe("low");
+    expect(longCall.reasoningEffort).toBe("low");
+  });
+
+  it("keeps the full raw transcript when the model output was cut off", async () => {
+    const rawTranscript =
+      "we agreed to push the beta to october because the payment integration is not ready";
+    const complete = JSON.stringify({
+      result:
+        "We agreed to push the beta to October because the payment integration is not ready.",
+    });
+    genRepo.generateText.mockResolvedValueOnce({
+      text: complete.slice(0, Math.floor(complete.length * 0.6)),
+    });
+
+    const result = await postProcessTranscript({ rawTranscript, toneId: null });
+
+    expect(result.transcript).toBe(rawTranscript);
+    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+  });
+
+  it("hints at truncation for a fenced reply cut off before its closing fence", async () => {
+    const rawTranscript = "we agreed to push the beta to october";
+    genRepo.generateText.mockResolvedValueOnce({
+      text: '```json\n{"result":"We agreed to push the beta',
+    });
+
+    const result = await postProcessTranscript({ rawTranscript, toneId: null });
+
+    expect(result.transcript).toBe(rawTranscript);
+    expect(result.warnings.join(" ")).toContain("truncated at its token limit");
+  });
+
+  it("sizes the budget from the transcript and asks for low reasoning effort", async () => {
+    genRepo.generateText.mockResolvedValue({
+      text: JSON.stringify({ result: "ok" }),
+    });
+
+    await postProcessTranscript({ rawTranscript: "short", toneId: null });
+    await postProcessTranscript({
+      rawTranscript: "word ".repeat(2000),
+      toneId: null,
+    });
+
+    const [shortCall, longCall] = genRepo.generateText.mock.calls.map(
+      ([input]) => input as { maxTokens: number; reasoningEffort?: string },
+    );
+    expect(shortCall.maxTokens).toBeGreaterThan(600);
+    expect(longCall.maxTokens).toBeGreaterThan(shortCall.maxTokens);
+    expect(shortCall.reasoningEffort).toBe("low");
+    expect(longCall.reasoningEffort).toBe("low");
+  });
+});

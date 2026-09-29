@@ -38,6 +38,7 @@ import {
   OPENROUTER_DEFAULT_MODEL,
   openrouterGenerateTextResponse,
   openrouterStreamChat,
+  ReasoningEffort,
 } from "@maus-inc/voice-ai";
 import { secureFetch } from "../utils/secure-fetch.utils";
 import { PostProcessingMode } from "../types/ai.types";
@@ -48,6 +49,8 @@ export type GenerateTextInput = {
   prompt: string;
   jsonResponse?: JsonResponse;
   maxTokens?: number;
+  /** Honored only by providers and models that accept an effort level. */
+  reasoningEffort?: ReasoningEffort;
   /**
    * Cancellation handle for the underlying provider request. Threaded through
    * every provider so a timed out post-processing call stops consuming quota
@@ -221,6 +224,7 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
         system: input.system ?? undefined,
         jsonResponse: input.jsonResponse,
         maxTokens: input.maxTokens,
+        reasoningEffort: input.reasoningEffort,
         signal: input.signal,
       });
       return { ok: true, response };
@@ -642,6 +646,7 @@ export class CerebrasGenerateTextRepo extends BaseGenerateTextRepo {
       system: input.system ?? undefined,
       jsonResponse: input.jsonResponse,
       maxTokens: input.maxTokens,
+      reasoningEffort: input.reasoningEffort,
       signal: input.signal,
     });
 

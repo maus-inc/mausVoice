@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyTranscriptionEdits,
   extractJsonFromMarkdown,
+  isLikelyTruncatedJson,
   MAX_TRANSCRIPTION_EDITS,
+  parsePostProcessingJson,
   resolveProcessedTranscription,
 } from "./ai.utils";
 
@@ -520,16 +522,18 @@ describe("resolveProcessedTranscription", () => {
     });
   });
 
-  it("still resolves a reply that only misses its closing brace", () => {
+  it("keeps the raw transcript when a reply is only missing its closing brace", () => {
+    // Repairing a cut-off reply once turned it into a shorter transcript that
+    // was pasted as a success, silently dropping the end of the dictation.
+    // A reply that does not parse keeps the full raw transcript instead.
     const resolution = resolveProcessedTranscription(
       '{"edits":[],"result":"going to ship it"',
       "we are gonna ship it",
     );
 
-    expect(resolution).toEqual({
-      status: "cleaned",
-      transcript: "going to ship it",
-      warning: null,
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
     });
   });
 
@@ -548,5 +552,49 @@ describe("resolveProcessedTranscription", () => {
         "Failed to parse post-processing response",
       );
     }
+  });
+});
+
+describe("parsePostProcessingJson", () => {
+  it("parses complete JSON, including fenced blocks", () => {
+    expect(parsePostProcessingJson('{"result":"Hello."}')).toEqual({
+      result: "Hello.",
+    });
+    expect(parsePostProcessingJson('```json\n{"result":"Hi"}\n```')).toEqual({
+      result: "Hi",
+    });
+  });
+
+  it("rejects output cut off at the token limit instead of shortening it", () => {
+    expect(() =>
+      parsePostProcessingJson('{"result":"We agreed to push the beta to'),
+    ).toThrow(SyntaxError);
+    expect(() => parsePostProcessingJson('{"result":"Done."')).toThrow(
+      SyntaxError,
+    );
+  });
+});
+
+describe("isLikelyTruncatedJson", () => {
+  it.each([
+    '{"result":"We agreed to push the beta to',
+    '```json\n{"result":"We agreed to push',
+    '  {"result":"Done."  ',
+    '{"result":"He said }',
+    '{"result":"Use {braces} and \\"quotes\\" like }',
+    '{"result":{"text":"Done."}',
+  ])("flags an object that never closes: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(true);
+  });
+
+  it.each([
+    '{"result":"Done."}',
+    '```json\n{"result":"Done."}\n```',
+    "Sure, here is the cleaned text.",
+    '{"result":"He said }"}',
+    '{"result":"Done."} trailing words',
+    "",
+  ])("does not flag complete JSON or prose: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(false);
   });
 });

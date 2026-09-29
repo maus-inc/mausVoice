@@ -46,7 +46,8 @@ import {
   collectDictionaryEntries,
   PostProcessingPromptInput,
   PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
-  POST_PROCESS_MAX_TOKENS,
+  getPostProcessMaxTokens,
+  POST_PROCESS_REASONING_EFFORT,
 } from "../utils/prompt.utils";
 import {
   applyHallucinationFiltering,
@@ -599,9 +600,8 @@ const runPostProcessingRequest = async ({
 
   const postprocessStart = performance.now();
   getLogger().verbose("Calling LLM for post-processing");
-  getLogger().verbose(
-    `Post-processing budget: maxTokens=${POST_PROCESS_MAX_TOKENS}`,
-  );
+  const maxTokens = getPostProcessMaxTokens(rawTranscript);
+  getLogger().verbose(`Post-processing budget: maxTokens=${maxTokens}`);
   const postProcessAbort = new AbortController();
   try {
     const genOutput = await withTimeout(
@@ -609,7 +609,8 @@ const runPostProcessingRequest = async ({
         system,
         prompt,
         jsonResponse: PROCESSED_TRANSCRIPTION_JSON_RESPONSE,
-        maxTokens: POST_PROCESS_MAX_TOKENS,
+        maxTokens,
+        reasoningEffort: POST_PROCESS_REASONING_EFFORT,
         signal: postProcessAbort.signal,
       }),
       POST_PROCESS_TIMEOUT_MS,

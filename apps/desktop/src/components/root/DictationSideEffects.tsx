@@ -1182,6 +1182,7 @@ export const DictationSideEffects = () => {
 
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
+      const attempt = ++recordingOperationRef.current;
       const state = getAppState();
       const mode = args.mode;
       const language = args.language || getMyPrimaryDictationLanguage(state);
@@ -1207,6 +1208,12 @@ export const DictationSideEffects = () => {
         !state.local.disableAutoStyleLoading
       ) {
         await loadManualStyleForCurrentApp();
+        if (recordingOperationRef.current !== attempt) {
+          getLogger().warning(
+            "Recording start was aborted or replaced while loading the style",
+          );
+          return;
+        }
       }
 
       // Seed the start snapshot after app-based style load. It is the
@@ -1283,6 +1290,17 @@ export const DictationSideEffects = () => {
         );
         isPausedRef.current = false;
         nativeStartOwnerRef.current = operationId;
+        // Give the session its audio_chunk subscription before the microphone
+        // opens. Tauri does not replay events, so anything captured while the
+        // sidecar is still loading would otherwise be lost, which is the first
+        // words of the dictation. A session that takes no live audio resolves
+        // immediately, and a failure here is not fatal: the session falls back
+        // to transcribing the whole recording at stop.
+        await session.onBeforeRecordingStart?.();
+        if (!isCurrentStart()) {
+          session.cleanup();
+          return;
+        }
         const [, startRecordingResult] = await Promise.all([
           strategy.setPhase("recording"),
           invoke<StartRecordingResponse>("start_recording", {

@@ -39,6 +39,8 @@ import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
 import {
   gateSilentSegments,
+  markSilentSegmentAudio,
+  toTranscriptionSegments,
   type TranscriptionSegment,
 } from "../utils/hallucination.utils";
 import {
@@ -182,6 +184,27 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   }
 
   /**
+   * Transcribes one chunk and, when filtering, measures the chunk's own audio
+   * under its segments so the silence gate can see confident hallucinations.
+   */
+  private async transcribeChunk(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const output = await this.transcribeSegment(input);
+    if (!input.hallucinationFilterEnabled) {
+      return output;
+    }
+    return {
+      ...output,
+      segments: markSilentSegmentAudio(
+        output.segments,
+        input.samples,
+        input.sampleRate,
+      ),
+    };
+  }
+
+  /**
    * Transcribes audio, automatically splitting long audio into segments
    * and merging the results.
    */
@@ -224,7 +247,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
 
     // If audio fits in a single segment, transcribe directly
     if (floatSamples.length <= segmentSampleCount) {
-      return this.transcribeSegment({
+      return this.transcribeChunk({
         samples: floatSamples,
         sampleRate: input.sampleRate,
         prompt: input.prompt,
@@ -255,7 +278,7 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       ) {
         return { text: "", metadata: null };
       }
-      return this.transcribeSegment({
+      return this.transcribeChunk({
         samples: segmentSamples,
         sampleRate: input.sampleRate,
         prompt: input.prompt,
@@ -385,10 +408,7 @@ export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -425,10 +445,7 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -874,10 +891,7 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 
     return {
       text: transcript,
-      segments: segments?.map((segment) => ({
-        text: segment.text,
-        noSpeechProb: segment.noSpeechProb,
-      })),
+      segments,
       metadata: {
         inferenceDevice: "API • OpenAI Compatible",
         modelSize: this.model,
