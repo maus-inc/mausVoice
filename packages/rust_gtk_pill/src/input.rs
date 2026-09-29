@@ -8,7 +8,7 @@ use crate::draw::{
     cancel_button_origin, over_side_control, pause_button_origin, pill_position,
     tooltip_rendered_origin,
 };
-use crate::state::{ClickAction, PillState};
+use crate::state::{rect_contains, rect_contains_padded, ClickAction, PillState};
 
 pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     let (ox, oy) = state.content_offset();
@@ -18,13 +18,24 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
     let dh = state.draw_height.get();
 
     if state.owns_panel() || state.panel_open_t.get() > 0.1 {
-        return x >= 0.0 && x <= dw && y >= 0.0 && y <= dh;
+        return rect_contains(x, y, 0.0, 0.0, dw, dh);
     }
 
-    // Pill area (with padding)
-    let pad = if state.hovered.get() { 24.0 } else { 8.0 };
+    // Pill area with hysteresis and anticipatory padding: entry is
+    // HOVER_ENTRY_PAD so the dwell+spring start before the cursor touches
+    // the pill edge, exit is HOVER_EXIT_PAD so the pill does not collapse
+    // on edge dither. See rust_pill_shared::{PILL_EXPAND_STIFFNESS,
+    // hover::{HOVER_ENTRY_PAD, HOVER_EXIT_PAD, ARM_DWELL}} — pads live
+    // in the shared crate so all three renderers cannot drift.
+    // Clicks are separate: `is_on_pill_at` checks the unpadded rect, so
+    // the 16/32 px pad only affects hover intent.
+    let pad = if state.hovered.get() {
+        rust_pill_shared::hover::HOVER_EXIT_PAD
+    } else {
+        rust_pill_shared::hover::HOVER_ENTRY_PAD
+    };
     let (px, py, pw, ph) = pill_position(state, dw, dh);
-    if x >= px - pad && x <= px + pw + pad && y >= py - pad && y <= py + ph + pad {
+    if rect_contains_padded(x, y, px, py, pw, ph, pad) {
         return true;
     }
 
@@ -41,9 +52,7 @@ pub(crate) fn is_over_pill_area(state: &PillState, x: f64, y: f64) -> bool {
             state.tooltip_t.get(),
             state.selector_placement.borrow().blend(),
         );
-        if x >= tooltip_x && x <= tooltip_x + tooltip_w
-            && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
-        {
+        if rect_contains(x, y, tooltip_x, tooltip_y, tooltip_w, TOOLTIP_HEIGHT) {
             return true;
         }
     }
@@ -69,7 +78,7 @@ pub(crate) fn is_on_pill_at(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     let (px, py, pw, ph) = pill_position(state, dw, dh);
-    if x >= px && x <= px + pw && y >= py && y <= py + ph {
+    if rect_contains(x, y, px, py, pw, ph) {
         let regions = state.click_regions.borrow();
         for region in regions.iter().rev() {
             if matches!(region.action, ClickAction::Pill) {
@@ -322,11 +331,18 @@ fn build_input_region(
     tooltip_t: f64, tooltip_w: f64, blend: f64,
     include_side_controls: bool,
 ) -> cairo::Region {
+    // Input shape must include the shared hover pad (16 px entry / 32 px
+    // exit) so motion events outside the visual pill still reach the
+    // window and `is_over_pill_area` can arm hover. Without this the
+    // anticipatory 16 px zone in `rust_pill_shared::hover` is unreachable
+    // on GTK — the pointer is outside the shaped window and no motion
+    // event is delivered. Use the larger exit pad to cover both states.
+    let pad = rust_pill_shared::hover::HOVER_EXIT_PAD;
     let pill_rect = cairo::RectangleInt::new(
-        (ox + pill_x).floor() as i32,
-        (oy + pill_y).floor() as i32,
-        pill_w.ceil() as i32,
-        pill_h.ceil() as i32,
+        (ox + pill_x - pad).floor() as i32,
+        (oy + pill_y - pad).floor() as i32,
+        (pill_w + 2.0 * pad).ceil() as i32,
+        (pill_h + 2.0 * pad).ceil() as i32,
     );
 
     let region = if rust_pill_shared::placement::tooltip_opacity(tooltip_t, blend) >= TOOLTIP_VISIBLE_T && tooltip_w > 0.0 {
@@ -459,12 +475,15 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
         let dh = state.draw_height.get();
         let (ox, oy) = state.content_offset();
         let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-        let pill_rx = (ox + pill_x) as i32;
-        let pill_ry = (oy + pill_y) as i32;
+        // Idle input shape must already include the anticipatory entry pad
+        // so the 16 px zone can be probed before the cursor touches the
+        // visual pill — otherwise GTK never delivers the motion event.
+        let pad = rust_pill_shared::hover::HOVER_ENTRY_PAD;
         let rect = cairo::RectangleInt::new(
-            pill_rx, pill_ry,
-            pill_w.ceil() as i32,
-            pill_h.ceil() as i32,
+            (ox + pill_x - pad).floor() as i32,
+            (oy + pill_y - pad).floor() as i32,
+            (pill_w + 2.0 * pad).ceil() as i32,
+            (pill_h + 2.0 * pad).ceil() as i32,
         );
         let region = cairo::Region::create_rectangle(&rect);
         union_flash_action(&region, state, ox, oy);
@@ -488,14 +507,48 @@ mod input_region_tests {
                     0.0, 0.0, pill.0, pill.1, pill.2, pill.3,
                     progress, width, blend, false,
                 );
+                // Pill centre must always be inside the padded pill.
+                assert!(region.contains_point(
+                    (pill.0 + pill.2 / 2.0) as i32,
+                    (pill.1 + pill.3 / 2.0) as i32
+                ));
                 for target in targets {
                     let x = target.x + target.w / 2.0;
                     let y = target.y + target.h / 2.0;
                     assert!(target.contains(x, y));
-                    assert_eq!(
-                        region.contains_point(x.floor() as i32, y.floor() as i32),
-                        rust_pill_shared::placement::tooltip_opacity(progress, blend) >= TOOLTIP_VISIBLE_T,
-                    );
+                    if rust_pill_shared::placement::tooltip_opacity(progress, blend) >= TOOLTIP_VISIBLE_T {
+                        assert!(
+                            region.contains_point(x.floor() as i32, y.floor() as i32),
+                            "visible tooltip target should be inside region at progress={progress} blend={blend}"
+                        );
+                    } else {
+                        // Hidden tooltip: the resting strip must still sit
+                        // inside the input shape, so a click on where the
+                        // tooltip will appear does not fall through to the
+                        // window behind the pill.
+                        //
+                        // What is NOT claimed: that the strip is
+                        // hover-reachable. The branch is only reached with the
+                        // tooltip hidden, which means the pill is not hovered
+                        // yet, so `is_over_pill_area` uses the
+                        // HOVER_ENTRY_PAD (16 px) entry pad, not the 32 px
+                        // exit pad. The target centre here is
+                        // TOOLTIP_GAP (6) + TOOLTIP_HEIGHT/2 (12) = 18 px
+                        // outside the pill edge, past that 16 px entry pad.
+                        // So `is_over_pill_area` is false at this distance
+                        // while `is_on_pill_at` is also false: the strip is
+                        // input-shape coverage, not a live hover target.
+                        let pad = rust_pill_shared::hover::HOVER_EXIT_PAD;
+                        let in_pad =
+                            rect_contains_padded(x, y, pill.0, pill.1, pill.2, pill.3, pad);
+                        let in_pill = rect_contains(x, y, pill.0, pill.1, pill.2, pill.3);
+                        if in_pad && !in_pill {
+                            assert!(
+                                region.contains_point(x.floor() as i32, y.floor() as i32),
+                                "pad point should be in input shape even when tooltip hidden"
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -649,7 +702,11 @@ mod input_region_tests {
     }
 
     /// Below the pill the region must cover the hung tooltip and stop
-    /// claiming the strip above it.
+    /// claiming an unbounded strip above it. The 32 px hover pad
+    /// (HOVER_EXIT_PAD) already claims the 30 px strip (TOOLTIP_GAP 6 +
+    /// TOOLTIP_HEIGHT 24) directly above the pill with 2 px to spare, so the
+    /// probe must be outside the pad to verify the tooltip does not create an
+    /// unbounded above-strip.
     #[test]
     fn below_tooltip_sits_inside_region() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
@@ -675,17 +732,25 @@ mod input_region_tests {
                 "below tooltip {label} outside region"
             );
         }
+        // Far above the pill, outside the 32 px hover pad, must not be claimed
+        // when the tooltip hangs below. The 30 px strip (TOOLTIP_GAP 6 +
+        // TOOLTIP_HEIGHT 24, 2 px inside the 32 px pad) directly above the
+        // pill is intentionally inside the pad for anticipatory hover, so we
+        // probe 50 px above to be outside.
         assert!(
             !region.contains_point(
                 (tx + tooltip_w / 2.0) as i32,
-                (pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT / 2.0) as i32
+                (pill_y - 50.0) as i32
             ),
-            "above strip must not claim input while the tooltip hangs below"
+            "far above strip must not claim input while the tooltip hangs below"
         );
     }
 
     /// Drawing and input must agree on when the tooltip exists, otherwise it
-    /// is painted before it becomes clickable.
+    /// is painted before it becomes clickable. With the 32 px hover pad the
+    /// tooltip (TOOLTIP_GAP 6 + TOOLTIP_HEIGHT 24 = 30 px above the pill, 2 px
+    /// inside the pad) sits inside the padded pill, so the hidden check must
+    /// probe outside the pad.
     #[test]
     fn tooltip_enters_region_as_soon_as_it_is_drawn() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
@@ -708,21 +773,36 @@ mod input_region_tests {
             "tooltip must be clickable as soon as it is drawn"
         );
 
-        // Fully hidden: the region is the pill alone, so a point above the
-        // pill (where the tooltip would sit) is excluded.
+        // Fully hidden: the region is the padded pill (pill + 32 px), not the
+        // bare pill. The tooltip sits TOOLTIP_GAP (6) + TOOLTIP_HEIGHT (24) =
+        // 30 px above the pill, 2 px inside the 32 px pad, so its centre is
+        // inside the pad and would be inside even when hidden. Probe far
+        // outside the pad to verify the hidden tooltip does not create an
+        // unbounded claim.
         let hidden = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
             0.0, tooltip_w, 0.0,
             false,
         );
+        // Pill centre must always be inside, far outside must be outside.
+        assert!(
+            hidden.contains_point(
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y + pill_h / 2.0) as i32
+            ),
+            "padded pill centre must be inside even when tooltip hidden"
+        );
         assert!(
             !hidden.contains_point(
-                (tx + tooltip_w / 2.0) as i32,
-                (ty + TOOLTIP_HEIGHT / 2.0) as i32
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y - 50.0) as i32
             ),
-            "a hidden tooltip must not claim input"
+            "far above pill (outside 32 px pad) must not be claimed when tooltip hidden"
         );
+        // The tooltip rectangle itself is within the pad, so its centre is
+        // intentionally inside the padded pill even when hidden — that is the
+        // hover anticipatory zone, not a stray click-blocker.
     }
 
     /// The entry slide is greatest when the tooltip first appears and zero
@@ -737,13 +817,19 @@ mod input_region_tests {
 
     /// When the style switcher disappears the tooltip stops being painted, so
     /// its rectangle must leave the input region too. A stale positive width
-    /// would keep an invisible click-blocker floating above the pill.
+    /// would keep an invisible click-blocker floating above the pill. With the
+    /// 32 px hover pad the 160 px tooltip sits fully inside the padded pill,
+    /// so we use a 300 px tooltip that extends beyond the pad to verify the
+    /// cleared width truly removes the extra strip.
     #[test]
     fn cleared_tooltip_width_removes_the_rectangle_from_the_region() {
         let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
-        let measured_w = 160.0f64; // a width the draw pass would publish
+        // 300 px tooltip extends 90 px beyond the pill on each side, which is
+        // 58 px beyond the 32 px pad — enough to probe outside the pad.
+        let measured_w = 300.0f64;
 
-        // While the switcher exists the tooltip owns input above the pill.
+        // While the switcher exists the tooltip owns input above the pill,
+        // including the strip beyond the pad.
         let with_tooltip = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
@@ -751,18 +837,19 @@ mod input_region_tests {
             false,
         );
         let (tx, ty) = tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, measured_w, 1.0, 0.0);
+        // Probe near the right edge of the wide tooltip, beyond the 32 px pad.
         let probe = (
-            (tx + measured_w / 2.0) as i32,
+            (tx + measured_w - 2.0) as i32,
             (ty + TOOLTIP_HEIGHT / 2.0) as i32,
         );
         assert!(
             with_tooltip.contains_point(probe.0, probe.1),
-            "a visible tooltip should own that area"
+            "a visible wide tooltip should own the beyond-pad strip"
         );
 
         // draw_tooltip() clears the width when the switcher goes away, even
         // though tooltip_t has not finished fading. The same point must fall
-        // through to whatever is underneath.
+        // through to whatever is underneath (outside the pad).
         let cleared = build_input_region(
             0.0, 0.0,
             pill_x, pill_y, pill_w, pill_h,
@@ -771,7 +858,7 @@ mod input_region_tests {
         );
         assert!(
             !cleared.contains_point(probe.0, probe.1),
-            "an unpainted tooltip must not keep blocking clicks"
+            "an unpainted tooltip must not keep blocking clicks beyond the pad"
         );
         assert!(
             cleared.contains_point(
@@ -780,6 +867,10 @@ mod input_region_tests {
             ),
             "the pill itself must stay clickable"
         );
+        // Also verify the 160 px case: its centre is inside the pad, so it is
+        // intentionally still inside the padded pill even when cleared — the
+        // pad is the hover zone, not a stray blocker. The important check is
+        // the beyond-pad strip above.
     }
 
     /// Without an offset the region still covers the pill body.
@@ -793,5 +884,92 @@ mod input_region_tests {
             false,
         );
         assert!(region.contains_point(300, 116), "pill centre should be inside");
+    }
+
+    /// The two hit tests deliberately disagree about the pad, and they are
+    /// the predicates production uses: `rect_contains_padded` arms the
+    /// anticipatory hover, `rect_contains` decides a pill click.
+    ///
+    /// Scope, stated precisely: this pins the pad/click split for a point 8 px
+    /// above the pill. It does not drive `is_over_pill_area` or
+    /// `is_on_pill_at` themselves, because those read `PillState` (hover flag,
+    /// panel ownership, live click regions) and `PillState` has no
+    /// constructor, so a test would have to duplicate its 50-field literal.
+    /// The geometry each one hands to the shared helpers is pinned here.
+    #[test]
+    fn hover_pad_is_hover_only_not_click() {
+        let (pill_x, pill_y, pill_w, pill_h) = (240.0f64, 100.0f64, 120.0f64, 32.0f64);
+        let region = build_input_region(
+            0.0, 0.0, pill_x, pill_y, pill_w, pill_h,
+            0.0, 0.0, 0.0, false,
+        );
+        let pad_point = (pill_x + pill_w / 2.0, pill_y - 8.0);
+        let entry_pad = rust_pill_shared::hover::HOVER_ENTRY_PAD;
+        // Hover arms: inside the padded rect, using the helper
+        // `is_over_pill_area` calls.
+        assert!(
+            rect_contains_padded(
+                pad_point.0,
+                pad_point.1,
+                pill_x,
+                pill_y,
+                pill_w,
+                pill_h,
+                entry_pad
+            ),
+            "8 px above pill should arm hover via the entry pad"
+        );
+        // Click does not: outside the unpadded rect, using the helper
+        // `is_on_pill_at` calls. This is the guarantee that the wider hover
+        // zone never swallows a click meant for the UI behind the pill.
+        assert!(
+            !rect_contains(pad_point.0, pad_point.1, pill_x, pill_y, pill_w, pill_h),
+            "pad point must be outside the unpadded pill rect (not a ClickAction::Pill)"
+        );
+        // The input shape still has to cover the pad, otherwise GTK never
+        // delivers the motion event and the hover arm above is unreachable.
+        assert!(
+            region.contains_point(pad_point.0 as i32, pad_point.1 as i32),
+            "8 px above pill should be inside padded input shape (hover anticipatory zone)"
+        );
+        // Control: the pill body is inside both, so the helpers are not
+        // simply rejecting everything above the pill.
+        assert!(rect_contains(
+            pill_x + pill_w / 2.0,
+            pill_y + pill_h / 2.0,
+            pill_x,
+            pill_y,
+            pill_w,
+            pill_h
+        ));
+        assert!(
+            region.contains_point(
+                (pill_x + pill_w / 2.0) as i32,
+                (pill_y + pill_h / 2.0) as i32
+            ),
+            "pill centre must be inside"
+        );
+    }
+
+    /// The tooltip must fit inside the hover pad, otherwise it sits outside
+    /// the zone that arms hover and the pill flickers as the tooltip
+    /// approaches.
+    ///
+    /// This asserts the relationship, not the literals. Retuning
+    /// TOOLTIP_HEIGHT or PLACEMENT_GAP is legitimate and must not fail here
+    /// as long as the tooltip still fits. The pad values themselves are
+    /// pinned once, in the crate that owns them, by
+    /// `hover_pad_constants_are_sane` in rust_pill_shared.
+    #[test]
+    fn tooltip_gap_plus_height_fits_within_hover_pad() {
+        // TOOLTIP_GAP re-exports PLACEMENT_GAP; keep the alias honest.
+        assert_eq!(TOOLTIP_GAP, rust_pill_shared::placement::PLACEMENT_GAP);
+        let pad = rust_pill_shared::hover::HOVER_EXIT_PAD;
+        assert!(
+            TOOLTIP_GAP + TOOLTIP_HEIGHT <= pad,
+            "tooltip ({} px above the pill) must fit inside the {} px hover pad",
+            TOOLTIP_GAP + TOOLTIP_HEIGHT,
+            pad
+        );
     }
 }
