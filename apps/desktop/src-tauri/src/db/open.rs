@@ -1308,7 +1308,7 @@ mod tests {
         let pool = try_open(&temp.path).await.expect("migrate to head");
         sqlx::query(
             "INSERT INTO transcriptions (id, transcript, timestamp, post_process_fallback)
-             VALUES ('flagged', 'hello', 1, 1), ('legacy', 'hi', 2)",
+             VALUES ('flagged', 'hello', 1, 1), ('legacy', 'hi', 2, NULL)",
         )
         .execute(&pool)
         .await
