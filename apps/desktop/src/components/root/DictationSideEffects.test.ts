@@ -7,7 +7,7 @@ const { navigateMock, surfaceMainWindowMock, warningMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../router", () => ({
-  browserRouter: { navigate: navigateMock },
+  getBrowserRouter: () => ({ navigate: navigateMock }),
 }));
 vi.mock("../../hooks/tauri.hooks", () => ({
   useTauriListen: () => {},
