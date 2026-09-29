@@ -535,13 +535,37 @@ export const applyFastStyle = (
         break;
     }
 
-    // Custom tones: fast path cannot interpret free-form prompt, fallback to polished
-    // to avoid hallucination. LLM path will handle custom prompts when configured.
-    return toPolished(guarded);
+    // Custom tones reach here only when a caller skipped canApplyFastStyle.
+    // A free-form prompt cannot be honoured locally, so return the input
+    // unchanged rather than silently picking a different style.
+    return guarded;
   } catch {
     return rawTranscript;
   }
 };
+
+/**
+ * The tones `applyFastStyle` has a real transform for. A custom tone carries a
+ * free-form prompt, so applying some other tone's transform would hand the user
+ * a style they did not pick, and the more aggressive transforms can drop words.
+ * `canApplyFastStyle` gates on this set so a custom tone takes the raw path
+ * instead.
+ */
+const FAST_STYLE_TONE_IDS: ReadonlySet<string> = new Set([
+  POLISHED_TONE_ID,
+  EMAIL_TONE_ID,
+  CHAT_TONE_ID,
+  FORMAL_TONE_ID,
+  PROMPT_TONE_ID,
+  BULLETS_TONE_ID,
+  CONCISE_TONE_ID,
+  NOTES_TONE_ID,
+  "light",
+  "casual",
+  "business",
+  "formal",
+  "punny",
+]);
 
 /**
  * Whether a local transform exists for this tone. Provider-agnostic by design:
@@ -550,8 +574,7 @@ export const applyFastStyle = (
  */
 export const canApplyFastStyle = (toneId: string | null): boolean => {
   if (!toneId) return false;
-  if (toneId === VERBATIM_TONE_ID || toneId === "disabled") return false;
-  return true;
+  return FAST_STYLE_TONE_IDS.has(toneId);
 };
 
 export const FAST_STYLE_MAX_INPUT_CHARS = MAX_INPUT_CHARS;

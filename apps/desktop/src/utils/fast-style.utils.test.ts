@@ -108,10 +108,13 @@ describe("applyFastStyle fast local transforms", () => {
     expect(applyFastStyle("   ", "bullets")).toBe("");
   });
 
-  it("custom tone falls back to polished", () => {
+  it("custom tone is left untouched rather than restyled", () => {
+    // A custom tone carries a free-form prompt the fast path cannot read, and
+    // the aggressive transforms can drop words. Handing the user a different
+    // style than the one they picked is worse than handing back the input, so
+    // an unknown tone id must not be rewritten at all.
     const raw = "um so I went to the store";
-    const out = applyFastStyle(raw, "my-custom-tone");
-    expect(out.toLowerCase()).not.toContain("um");
+    expect(applyFastStyle(raw, "my-custom-tone")).toBe(raw);
   });
 
   it("deprecated tones map to modern equivalents", () => {
@@ -122,18 +125,14 @@ describe("applyFastStyle fast local transforms", () => {
     expect(applyFastStyle(raw, "punny")).not.toContain("um");
   });
 
-  it("custom tone falls back to polished and never matches a category string", () => {
+  it("custom tone is never rewritten and never matches a category string", () => {
     // The fast path is pure string work and cannot interpret a free-form style
-    // prompt. An unknown tone id must produce the polished transform, not a
-    // guess derived from anything about the tone. Pinned by asserting the
-    // result is byte-identical to the polished transform of the same input.
+    // prompt. An unknown tone id must return its input untouched, not a guess
+    // borrowed from a built-in tone. Pinned by asserting the result is
+    // byte-identical to the input, and different from every real transform.
     const raw = "um so I need to buy milk. I need bread. I need eggs";
-    expect(applyFastStyle(raw, "my-custom-tone")).toBe(
-      applyFastStyle(raw, "default"),
-    );
-    expect(applyFastStyle(raw, "another-unknown")).toBe(
-      applyFastStyle(raw, "default"),
-    );
+    expect(applyFastStyle(raw, "my-custom-tone")).toBe(raw);
+    expect(applyFastStyle(raw, "another-unknown")).toBe(raw);
     // A tone id that merely looks like a built-in must not be treated as one.
     expect(applyFastStyle(raw, "prompt")).not.toBe(
       applyFastStyle(raw, "default"),
@@ -346,12 +345,14 @@ describe("canApplyFastStyle", () => {
     expect(canApplyFastStyle("disabled")).toBe(false);
   });
 
-  it("returns true for all other tones", () => {
+  it("returns true only for tones that have a local transform", () => {
     expect(canApplyFastStyle("default")).toBe(true);
     expect(canApplyFastStyle("email")).toBe(true);
     expect(canApplyFastStyle("bullets")).toBe(true);
     expect(canApplyFastStyle("concise")).toBe(true);
-    expect(canApplyFastStyle("my-custom")).toBe(true);
+    // A custom tone has no local transform. Claiming one would hand the user a
+    // style they did not pick.
+    expect(canApplyFastStyle("my-custom")).toBe(false);
   });
 });
 
