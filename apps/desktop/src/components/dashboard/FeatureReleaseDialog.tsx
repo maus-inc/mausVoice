@@ -15,7 +15,10 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { showConfetti } from "../../actions/app.actions";
 import { markFeatureSeen } from "../../actions/user.actions";
 import { useAppStore } from "../../store";
-import { CURRENT_FEATURE_DATE } from "../../utils/feature.utils";
+import {
+  CURRENT_FEATURE_DATE,
+  shouldShowFeatureReleaseDialog,
+} from "../../utils/feature.utils";
 import {
   AGENT_DICTATE_HOTKEY,
   getHotkeyCombosForAction,
@@ -307,11 +310,11 @@ export const FeatureReleaseDialog = () => {
   const [pageIndex, setPageIndex] = useState(0);
 
   const pageCount = isCommunity ? 4 : 3;
-  const open =
-    isOnboarded &&
-    !!userCreatedAt &&
-    userCreatedAt < CURRENT_FEATURE_DATE &&
-    (!featureSeenAt || featureSeenAt < CURRENT_FEATURE_DATE);
+  const open = shouldShowFeatureReleaseDialog({
+    isOnboarded,
+    userCreatedAt,
+    featureSeenAt,
+  });
 
   useEffect(() => {
     if (open && !hasConfettiFired.current) {

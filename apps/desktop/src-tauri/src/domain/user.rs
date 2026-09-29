@@ -48,6 +48,16 @@ pub struct User {
     pub streak_recorded_at: Option<String>,
     #[serde(default)]
     pub referral_source: Option<String>,
+    /// When the profile row was first written. `None` for rows that predate
+    /// migration 89; the TS repo decides how to report those. Declared last so
+    /// the positional `?N` binds in `upsert_user` keep reading in the order the
+    /// struct has always used.
+    #[serde(default)]
+    pub created_at: Option<String>,
+    /// When the user completed onboarding. Independent of `created_at`: a
+    /// profile is created on the first name step, onboarding finishes later.
+    #[serde(default)]
+    pub onboarded_at: Option<String>,
 }
 
 const fn default_play_interaction_chime() -> bool {

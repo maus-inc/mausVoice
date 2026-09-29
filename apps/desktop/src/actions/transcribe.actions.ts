@@ -291,16 +291,31 @@ export const transcribeAudio = async ({
  * Edits the model returns are applied against the raw transcript and
  * validated (see `resolveProcessedTranscription`); anything unusable falls
  * back to the raw transcript with a warning attached to the row.
+ *
+ * `unusable` is reported rather than folded into `warning` because the two
+ * mean different things to the caller. A warning rides on text that was
+ * delivered; an unusable reply means the provider answered with something that
+ * produced no styling at all, so the transcript about to be stored is the raw
+ * ASR. Retranscription keeps the row's existing polished text in that case
+ * instead of overwriting it, and it can only do that if it is told.
  */
 const resolvePostProcessedTranscript = (
   reply: string,
   rawTranscript: string,
-): { transcript: string; warning: string | null } => {
+): { transcript: string; warning: string | null; unusable: boolean } => {
   const resolution = resolveProcessedTranscription(reply, rawTranscript);
   if (resolution.status === "cleaned") {
-    return { transcript: resolution.transcript, warning: resolution.warning };
+    return {
+      transcript: resolution.transcript,
+      warning: resolution.warning,
+      unusable: false,
+    };
   }
-  return { transcript: rawTranscript, warning: resolution.warning };
+  return {
+    transcript: rawTranscript,
+    warning: resolution.warning,
+    unusable: true,
+  };
 };
 
 type RunPostProcessingRequestArgs = {
@@ -375,6 +390,14 @@ const applyPostProcessSuccess = (
     warnings.push(parseResult.warning);
   } else {
     getLogger().verbose("Processed transcript length:", nextTranscript.length);
+  }
+  if (parseResult.unusable) {
+    // The request succeeded, so `postProcessFailed` stays false and the reason
+    // it was dropped rides on `warnings`. The row still has to be marked
+    // degraded: the transcript being stored is the raw ASR, and a caller that
+    // only reads the failure sentinel would treat this as a finished
+    // retranscription and overwrite text the user already had polished.
+    metadata.postProcessFallback = true;
   }
 
   metadata.postProcessMode =
@@ -990,13 +1013,26 @@ export const storeTranscription = async (
   const storedTranscription = await persistTranscription(transcription);
   if (!storedTranscription) {
     if (audioSnapshot) {
-      await purgeStaleAudioSnapshots();
+      // Housekeeping, deliberately not awaited. The pill goes idle as soon as
+      // the transcript is inserted, so it accepts clicks while the stop path is
+      // still unwinding; a click in that gap is taken natively and then dropped.
+      // A sweep that hangs would hold the session locked for as long as it
+      // takes, so it runs on its own and the row is already durable.
+      void purgeStaleAudioSnapshots();
     }
     return { transcription: null, wordCount: 0 };
   }
 
-  await recordUsageWords(wordsAdded);
-  await purgeStaleAudioSnapshots();
+  // Usage metering and the audio retention sweep are housekeeping, not the save
+  // the user is waiting on. The pill is already told to go idle by the time we
+  // get here, so it looks clickable, but this session stays locked until the
+  // stop path returns. Awaiting two slow calls here held that lock across a
+  // queued profile write and a disk scan, so a click landing in that gap was
+  // accepted by the pill and then dropped by the app. Both calls own their error
+  // handling, and both are safe to land late: a missed word count is one
+  // dictation of statistics, and a missed sweep runs again on the next one.
+  void recordUsageWords(wordsAdded);
+  void purgeStaleAudioSnapshots();
 
   markPipeline(input.trace, "persisted");
   const summary = summarizePipeline(input.trace);

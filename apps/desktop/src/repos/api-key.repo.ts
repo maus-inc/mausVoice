@@ -12,7 +12,7 @@ type LocalApiKey = {
   keyFull?: string | null;
   transcriptionModel?: string | null;
   postProcessingModel?: string | null;
-  openrouterConfig?: string | null;
+  openRouterConfig?: string | null;
   baseUrl?: string | null;
   azureRegion?: string | null;
   includeV1Path?: boolean | null;
@@ -39,7 +39,7 @@ const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
   keyFull: apiKey.keyFull ?? null,
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
-  openRouterConfig: parseOpenRouterConfig(apiKey.openrouterConfig),
+  openRouterConfig: parseOpenRouterConfig(apiKey.openRouterConfig),
   baseUrl: apiKey.baseUrl ?? null,
   azureRegion: apiKey.azureRegion ?? null,
   includeV1Path: apiKey.includeV1Path ?? null,

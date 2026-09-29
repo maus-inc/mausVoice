@@ -1,12 +1,104 @@
 import { Nullable, User } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
 import { nowIso } from "../utils/date.utils";
+import { getLocalStorage } from "../utils/local-storage.utils";
 import { orFalse, orNull, orUndefined, orValue } from "../utils/nullable.utils";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { BaseRepo } from "./base.repo";
 
-const getOnboardedAt = (isOnboarded: boolean): string | null =>
-  isOnboarded ? nowIso() : null;
+/**
+ * `createdAt` and `onboardedAt` used to be `new Date().toISOString()` at every
+ * read, because no column backed them. A value that moves on every read is not
+ * a timestamp: it pinned the release-dialog gate shut forever and reported a
+ * tenure of zero days to analytics. Migration 89 persists the real instants, and
+ * these two write-once localStorage anchors carry the value across the upgrade
+ * for anyone who already had a profile row.
+ */
+const ACCOUNT_CREATED_AT_KEY = "mausvoice:account-created-at";
+const ONBOARDED_AT_KEY = "mausvoice:onboarded-at";
+
+/**
+ * A legacy profile predates both the column and the anchor, so its age is
+ * genuinely unknown. Epoch is the honest answer for display: it is a real
+ * lower bound, it never drifts, and it keeps the release dialog reachable for
+ * exactly the pre-existing users it was written for. It is a floor, not an
+ * observation, so it must never be stored; a save that persisted it would make
+ * the account report a 1970 creation date forever and would lock the anchor so
+ * a real instant arriving later could never take effect. `onboardedAt` has no
+ * such filler at all, so it stays `null` and analytics reports "unknown"
+ * instead of inventing an onboarding date.
+ */
+const UNKNOWN_CREATED_AT = new Date(0).toISOString();
+
+const isTimestamp = (value: unknown): value is string =>
+  typeof value === "string" && Number.isFinite(Date.parse(value));
+
+/**
+ * The epoch floor stands for "unknown", so a value equal to it is never a real
+ * observation wherever it came from: the column, the anchor, or a user object
+ * a previous read already rounded down to the floor.
+ */
+const isKnownInstant = (value: unknown): value is string =>
+  isTimestamp(value) && value !== UNKNOWN_CREATED_AT;
+
+const readTimestampAnchor = (key: string): string | null => {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return null;
+  }
+  try {
+    const raw = storage.getItem(key);
+    if (raw == null) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    return isTimestamp(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeTimestampAnchorOnce = (key: string, value: string): void => {
+  if (readTimestampAnchor(key) != null) {
+    return;
+  }
+  const storage = getLocalStorage();
+  if (!storage) {
+    return;
+  }
+  try {
+    storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // A full or unavailable localStorage must not break loading the user.
+  }
+};
+
+/**
+ * The newest real instant observed for `createdAt`: the column first, then the
+ * anchor. Null when neither holds one, which means the value is still unknown
+ * and `UNKNOWN_CREATED_AT` is the only honest thing to show.
+ */
+const observedCreatedAt = (
+  persisted: string | null | undefined,
+): string | null => {
+  if (isKnownInstant(persisted)) {
+    return persisted;
+  }
+  const anchored = readTimestampAnchor(ACCOUNT_CREATED_AT_KEY);
+  return isKnownInstant(anchored) ? anchored : null;
+};
+
+const resolveCreatedAt = (persisted: string | null | undefined): string =>
+  observedCreatedAt(persisted) ?? UNKNOWN_CREATED_AT;
+
+const resolveOnboardedAt = (
+  persisted: string | null | undefined,
+): string | null => {
+  if (isTimestamp(persisted)) {
+    return persisted;
+  }
+  return readTimestampAnchor(ONBOARDED_AT_KEY);
+};
 
 const parseActiveToneIds = (
   activeToneIds: string | null | undefined,
@@ -48,6 +140,8 @@ type LocalUser = {
   streak?: number | null;
   streakRecordedAt?: string | null;
   referralSource?: string | null;
+  createdAt?: string | null;
+  onboardedAt?: string | null;
 };
 
 const fromLocalUser = (localUser: LocalUser): User => {
@@ -60,14 +154,14 @@ const fromLocalUser = (localUser: LocalUser): User => {
 
   return {
     id: localUser.id,
-    createdAt: nowIso(),
+    createdAt: resolveCreatedAt(localUser.createdAt),
     updatedAt: nowIso(),
     name: localUser.name,
     bio: bio || null,
     company: orNull(localUser.company),
     title: orNull(localUser.title),
     onboarded: isOnboarded,
-    onboardedAt: getOnboardedAt(isOnboarded),
+    onboardedAt: resolveOnboardedAt(localUser.onboardedAt),
     timezone: null,
     preferredMicrophone: orNull(localUser.preferredMicrophone),
     preferredLanguage: orNull(localUser.preferredLanguage),
@@ -87,29 +181,49 @@ const fromLocalUser = (localUser: LocalUser): User => {
   };
 };
 
-export const toLocalUser = (user: User): LocalUser => ({
-  id: LOCAL_USER_ID,
-  name: user.name,
-  bio: user.bio ?? "",
-  company: user.company ?? null,
-  title: user.title ?? null,
-  onboarded: user.onboarded,
-  preferredMicrophone: user.preferredMicrophone ?? null,
-  preferredLanguage: user.preferredLanguage ?? null,
-  wordsThisMonth: user.wordsThisMonth,
-  wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
-  wordsTotal: user.wordsTotal,
-  playInteractionChime: user.playInteractionChime,
-  interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
-  hasFinishedTutorial: user.hasFinishedTutorial,
-  cohort: user.cohort ?? null,
-  stylingMode: user.stylingMode ?? null,
-  selectedToneId: user.selectedToneId ?? null,
-  activeToneIds: user.activeToneIds ? JSON.stringify(user.activeToneIds) : null,
-  streak: user.streak ?? null,
-  streakRecordedAt: user.streakRecordedAt ?? null,
-  referralSource: user.referralSource ?? null,
-});
+export const toLocalUser = (user: User): LocalUser => {
+  // The save is what makes the timestamp durable: a real instant (column, then
+  // anchor) is written to SQLite and, the first time one is known, also planted
+  // as the anchor so a later read can still recover it if the row is lost. An
+  // unknown `createdAt` is written as null, never as the epoch floor, so a real
+  // instant arriving later still wins.
+  const observed = observedCreatedAt(user.createdAt);
+  const onboardedAt = resolveOnboardedAt(user.onboardedAt);
+  if (observed != null) {
+    writeTimestampAnchorOnce(ACCOUNT_CREATED_AT_KEY, observed);
+  }
+  if (onboardedAt != null) {
+    writeTimestampAnchorOnce(ONBOARDED_AT_KEY, onboardedAt);
+  }
+
+  return {
+    id: LOCAL_USER_ID,
+    name: user.name,
+    bio: user.bio ?? "",
+    company: user.company ?? null,
+    title: user.title ?? null,
+    onboarded: user.onboarded,
+    preferredMicrophone: user.preferredMicrophone ?? null,
+    preferredLanguage: user.preferredLanguage ?? null,
+    wordsThisMonth: user.wordsThisMonth,
+    wordsThisMonthMonth: user.wordsThisMonthMonth ?? null,
+    wordsTotal: user.wordsTotal,
+    playInteractionChime: user.playInteractionChime,
+    interactionFeedbackVolume: user.interactionFeedbackVolume ?? null,
+    hasFinishedTutorial: user.hasFinishedTutorial,
+    cohort: user.cohort ?? null,
+    stylingMode: user.stylingMode ?? null,
+    selectedToneId: user.selectedToneId ?? null,
+    activeToneIds: user.activeToneIds
+      ? JSON.stringify(user.activeToneIds)
+      : null,
+    streak: user.streak ?? null,
+    streakRecordedAt: user.streakRecordedAt ?? null,
+    referralSource: user.referralSource ?? null,
+    createdAt: observed,
+    onboardedAt,
+  };
+};
 
 export abstract class BaseUserRepo extends BaseRepo {
   abstract setMyUser(user: User): Promise<User>;

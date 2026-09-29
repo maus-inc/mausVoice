@@ -1,4 +1,4 @@
-import { countWords, retry } from "@maus-inc/utilities";
+import { HttpError, countWords, retry } from "@maus-inc/utilities";
 import type { CustomFetch } from "./types";
 
 const XAI_BASE_URL = "https://api.x.ai/v1";
@@ -24,10 +24,12 @@ export const xaiTestIntegration = async ({
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(
+    throw new HttpError(
+      response.status,
       detail
         ? `xAI responded ${response.status}: ${detail}`
         : `xAI responded with status ${response.status}`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
   return true;
@@ -79,8 +81,10 @@ export const xaiTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `xAI STT request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 
@@ -126,8 +130,10 @@ export const xaiGenerateSpeech = async ({
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(
+    throw new HttpError(
+      response.status,
       `xAI TTS request failed with status ${response.status}: ${errorText}`,
+      { retryAfter: response.headers.get("retry-after") },
     );
   }
 

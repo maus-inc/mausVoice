@@ -154,7 +154,7 @@ jobs:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         shell: bash
         run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --lib
+          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --locked --lib
       - name: Check published package export contracts
         run: node --test scripts/ci/package-exports.test.mjs
       - name: Test check-bindings tracked-file guard

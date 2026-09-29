@@ -150,6 +150,18 @@ pub const CONSOLIDATED_V0_1_6_MIGRATION_SQL: &str =
 /// that was saved after post-processing failed and local fast styling took over.
 pub const POST_PROCESS_FALLBACK_MIGRATION_SQL: &str =
     include_str!("migrations/070_post_process_fallback.sql");
+/// `user_profiles.created_at` / `onboarded_at`, the real account-creation and
+/// onboarding instants the TS `User` type promises. Until this step they were
+/// fabricated at every read, which pinned the release-dialog gate shut and
+/// reported a tenure of zero days to analytics.
+///
+/// The version is 89, not 70: versions 71-88 are the retirement window for the
+/// steps the 0.1.6 consolidation folded into 69 (see `db::open`), and some of
+/// them genuinely shipped on intermediate builds. Any number inside that window
+/// would be checksum-compared against those databases and a mismatch quarantines
+/// the user's file. 89 sits above the window, so it is a plain forward step.
+pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
+    include_str!("migrations/089_user_profile_timestamps.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -574,6 +586,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 70,
             description: "post_process_fallback",
             sql: POST_PROCESS_FALLBACK_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 89,
+            description: "add_user_profile_timestamps",
+            sql: USER_PROFILE_TIMESTAMPS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

@@ -1,4 +1,4 @@
-import { countWords, retry } from "@maus-inc/utilities";
+import { HttpError, countWords, retry } from "@maus-inc/utilities";
 import { appendQueryParamValues } from "./query-params.utils";
 import type { CustomFetch } from "./types";
 
@@ -108,8 +108,10 @@ export const deepgramTranscribeAudio = async ({
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "Unknown error");
-        throw new Error(
+        throw new HttpError(
+          response.status,
           `Deepgram transcription request failed with status ${response.status}: ${errorText}`,
+          { retryAfter: response.headers.get("retry-after") },
         );
       }
 

@@ -1,5 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+type GladiaWsRetry = {
+  maxAttemptsPerConnection: number;
+  maxConnections: number;
+  closeCodes: unknown[];
+};
+
+/** The merged-options shape the real `GladiaClient` keeps private. */
+type GladiaClientOptionsView = {
+  options: {
+    apiKey?: string;
+    wsRetry: GladiaWsRetry;
+  };
+};
+
+/** What a caller passes: only the fields it wants to override. */
+type GladiaClientInput = {
+  apiKey?: string;
+  wsRetry?: Partial<GladiaWsRetry>;
+};
+
 type Listener = (payload: unknown) => void;
 
 const importWithLiveSdkMock = async ({
@@ -46,6 +66,7 @@ const importWithLiveSdkMock = async ({
   const startSession = vi.fn(() => fakeSession);
   const deleteSession = vi.fn().mockResolvedValue(deleteResult);
   const clientOptions: unknown[] = [];
+  const mergedClientOptions: GladiaClientOptionsView[] = [];
   const liveV2 = vi.fn(() => ({
     startSession,
     delete: deleteSession,
@@ -54,9 +75,25 @@ const importWithLiveSdkMock = async ({
   vi.resetModules();
   vi.doMock("@gladiaio/sdk", () => ({
     GladiaClient: class MockGladiaClient {
-      constructor(options: unknown) {
-        clientOptions.push(options);
+      // The production code writes the close-code list onto the merged options
+      // after the constructor, so the mock has to carry the same merged shape
+      // the real client exposes.
+      options: GladiaClientOptionsView["options"];
+
+      constructor(input: GladiaClientInput) {
+        clientOptions.push(input);
+        this.options = {
+          ...input,
+          wsRetry: {
+            maxAttemptsPerConnection: 5,
+            maxConnections: 0,
+            closeCodes: [],
+            ...input.wsRetry,
+          },
+        };
+        mergedClientOptions.push(this);
       }
+
       liveV2 = liveV2;
     },
   }));
@@ -69,6 +106,7 @@ const importWithLiveSdkMock = async ({
     startSession,
     deleteSession,
     clientOptions,
+    mergedClientOptions,
   };
 };
 
@@ -101,6 +139,7 @@ describe("createGladiaStreamingSession", () => {
       startSession,
       deleteSession,
       clientOptions,
+      mergedClientOptions,
     } = await importWithLiveSdkMock();
     const onFinalSegment = vi.fn();
     const onReady = vi.fn();
@@ -118,8 +157,18 @@ describe("createGladiaStreamingSession", () => {
     expect(clientOptions[0]).toMatchObject({
       apiKey: "key",
       httpRetry: { maxAttempts: 3 },
-      wsRetry: { maxAttemptsPerConnection: 3, maxConnections: 4 },
+      // maxConnections is the whole point: the SDK charges every reconnect
+      // against it for the entire session, so a finite budget killed the live
+      // session on its fourth drop.
+      wsRetry: { maxAttemptsPerConnection: 3, maxConnections: 0 },
     });
+    // The close-code list is written after the constructor merge, never
+    // through it, so it must be an array on the merged block the WebSocket
+    // client actually receives.
+    expect(mergedClientOptions[0]!.options.wsRetry.closeCodes).toEqual([
+      [1002, 4399],
+      [4500, 9999],
+    ]);
     expect(startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         model: "solaria-1",
@@ -181,6 +230,32 @@ describe("createGladiaStreamingSession", () => {
     expect(fakeSession.sendAudio).toHaveBeenCalledOnce();
     expect(deleteSession).toHaveBeenCalledOnce();
     expect(deleteSession).toHaveBeenCalledWith("live-1");
+  });
+
+  it("stays quiet on the first connect and warns once per flapping socket", async () => {
+    const { createGladiaStreamingSession, emit } =
+      await importWithLiveSdkMock();
+    const onConnectionInterrupted = vi.fn();
+    const session = createGladiaStreamingSession({
+      apiKey: "key",
+      sampleRate: 16000,
+      language: "auto",
+      onConnectionInterrupted,
+    });
+    const reconnectWarning = "Gladia live connection dropped; reconnecting.";
+
+    // attempt 1 is the initial connect, not a recovery.
+    emit("connecting", { attempt: 1 });
+    expect(onConnectionInterrupted).toHaveBeenCalledOnce();
+    expect(session.getWarnings()).not.toContain(reconnectWarning);
+
+    emit("connecting", { attempt: 2 });
+    emit("connecting", { attempt: 3 });
+    emit("connecting", { attempt: 4 });
+    expect(onConnectionInterrupted).toHaveBeenCalledTimes(4);
+    expect(
+      session.getWarnings().filter((warning) => warning === reconnectWarning),
+    ).toHaveLength(1);
   });
 
   it("rejects malformed messages and bounds provider warning growth", async () => {

@@ -5,6 +5,7 @@ import {
   debug as tauriDebug,
   attachConsole,
 } from "@tauri-apps/plugin-log";
+import { redactObjectSync } from "./redaction.utils";
 type Logger = {
   info(...args: unknown[]): void;
   warning(...args: unknown[]): void;
@@ -40,13 +41,51 @@ export const redactQueryParamValues = (
   }
 };
 
+/**
+ * Stands in for an object argument when masking faults. The value is withheld
+ * because the masker stopped part way through and cannot say which of its
+ * fields were sensitive, and the line is still written so the caller sees the
+ * failure instead of losing the record. A logger must not throw either, since
+ * that would take down the error the caller was trying to report.
+ */
+const REDACTION_FAILED = "[redaction-failed]";
+
+/**
+ * A primitive and null are rendered as they stand. Every other value is masked,
+ * a top level array included, so a sensitive key at any depth inside one is
+ * masked by the same rules that already reach an array nested in a record.
+ * A value that renders itself through toJSON stays a leaf, and the traversal
+ * resolves and redacts that rendered form rather than walking own properties.
+ */
+const isMaskable = (value: unknown): value is object => {
+  return value !== null && typeof value === "object";
+};
+
+const serializeForLog = (value: unknown): string => {
+  // JSON.stringify of the raw value is the pre-existing gate for a throwing
+  // toJSON and for a circular graph. It has to run before the masker, which
+  // reads own enumerable properties only and would otherwise turn a hostile
+  // shape into an empty object that then gets logged.
+  const raw = JSON.stringify(value);
+  if (!isMaskable(value)) return raw;
+  try {
+    // redactObjectSync types its argument as a record, the shape a caller
+    // hands it most often. Its traversal reaches an array through the same
+    // branch and returns the shape it was given, so a top level array still
+    // renders as a JSON array and the assertion matches how the call runs.
+    return JSON.stringify(redactObjectSync(value as Record<string, unknown>));
+  } catch {
+    return REDACTION_FAILED;
+  }
+};
+
 const stringify = (args: unknown[]): string =>
   args
     .map((arg) => {
       if (typeof arg === "string") return arg;
       if (arg instanceof Error) return arg.stack ?? arg.message;
       try {
-        return JSON.stringify(arg);
+        return serializeForLog(arg);
       } catch {
         return String(arg);
       }

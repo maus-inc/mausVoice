@@ -561,8 +561,7 @@ mod tests {
         let input_len = (1_usize << 54) + 1;
         let output_len = resampled_output_len(input_len, 16_000, 16_001)
             .expect("this count is representable on a 64-bit target");
-        let expected =
-            (((input_len as u128 * 16_001) + 15_999) / 16_000) as usize;
+        let expected = (input_len as u128 * 16_001).div_ceil(16_000) as usize;
         assert_eq!(output_len, expected);
     }
 
@@ -580,7 +579,7 @@ mod tests {
         // through and relabeled as the target rate. Include identity requests:
         // their fast path must not bypass the same header validation.
         for &rate in &[1_000u32, 100u32, 1_000_000u32, u32::MAX] {
-            let samples = vec![0.0_f32; 16];
+            let samples = [0.0_f32; 16];
             for &(source_rate, target_rate) in &[(rate, 16_000), (rate, rate)] {
                 for input in [&samples[..], &[]] {
                     let err = resample_to_rate(input, source_rate, target_rate).unwrap_err();

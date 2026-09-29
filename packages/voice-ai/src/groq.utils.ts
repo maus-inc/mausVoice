@@ -338,11 +338,23 @@ export const groqGenerateTextResponse = async ({
     // on the same key cannot succeed. So is a retired model id: it cannot come
     // back, so retrying it only spends the caller's deadline before the
     // fallback chain gets its turn.
+    //
+    // The helper treats a 4xx as terminal before it consults `isRetryable`, and
+    // that default is wrong here: Groq serves no documented code for a
+    // model-scoped 403, so a denial the fallback model can still answer is
+    // exactly the case the chain exists for. Opting out of the blanket 4xx
+    // rejection hands the whole decision back to `isRetryable` above, which
+    // already refuses the statuses that genuinely cannot clear (400/401/402
+    // account-scoped, and a model id Groq does not serve).
+    retryTerminalStatuses: true,
     retries: 3,
     isRetryable: (error) =>
       !signal?.aborted &&
       !isGroqAccountScopedError(error) &&
       !isGroqModelUnavailableError(error),
+    // An abort during the wait is honoured: `retry` hands the signal to its
+    // own wait, so a cancelled caller stops there instead of sitting it out.
+    signal,
     fn: async () => {
       const client = createClient(apiKey, customFetch);
 
@@ -405,6 +417,14 @@ export const groqGenerateTextResponse = async ({
     // would mistake that failure for an abort and skip redaction, putting a
     // provider body that echoes the key into the log verbatim.
     if (isAbortErrorShape(error)) throw error;
+    // A cancel that lands during the wait between attempts arrives as the
+    // caller's own reason, because `retry` rethrows `signal.reason` verbatim.
+    // That value must reach the caller unchanged or a cancelled dictation looks
+    // like a provider fault. Identity is the only safe test for it: reading
+    // `signal.aborted` alone would also pass a real provider failure that
+    // happened to be in flight when the caller cancelled, and that one carries
+    // a body which can echo the key into the log unredacted.
+    if (signal?.aborted && signal.reason === error) throw error;
     throw normalizeGroqError(error, model);
   });
 };

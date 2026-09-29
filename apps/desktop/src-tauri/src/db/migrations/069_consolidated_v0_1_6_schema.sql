@@ -1,16 +1,21 @@
 -- 069: Consolidate every post-0.1.5 schema change into the first migration
 -- after the 0.1.5 release step (0.1.5 shipped through migration 68).
 --
--- Former individual migrations now folded in here:
+-- Former individual migrations now folded in here. Every number below is a
+-- step some ref in this repository carried, and the list is the same 16
+-- versions RETIRED_CONSOLIDATION_ERA_VERSIONS retires on open. No step is
+-- claimed for 070, 080 or 088, which no ref ever used.
 --   071 remove_cloud_modes (data rewrite), 072 drop is_enterprise,
 --   073 pill_reset_monitor_strategy, 074 always_request_admin_on_startup,
---   075 tone structured fields, 076 feature preferences,
---   077 spoken_commands_enabled, 078 post-process attribution columns,
---   079 interaction_feedback_volume, 081 preserve_audio_on_failure,
---   082 api_keys.transcription_path, 083 pill_placement + hands_free_delay,
---   084 auto_learn_dictionary, 085 auto_learn_from_edits,
---   086 transcription post-process model, 087 eleven_labs_keyterms_enabled,
---   088 expansion_flags, plus the 0.1.6 update_channel preference column.
+--   075 expansion_flags, tone structured fields, or
+--   preserve_audio_on_failure (three refs gave a different step the number
+--   075), 076 feature preferences, 077 spoken_commands_enabled,
+--   078 post-process attribution columns, 079 interaction_feedback_volume,
+--   081 preserve_audio_on_failure, 082 api_keys.transcription_path,
+--   083 pill_placement + hands_free_delay, 084 auto_learn_dictionary,
+--   085 auto_learn_from_edits, 086 transcription post-process model,
+--   087 eleven_labs_keyterms_enabled, plus the 0.1.6 update_channel
+--   preference column.
 --
 -- SQLite has no ADD COLUMN IF NOT EXISTS, and databases written by
 -- intermediate superfix builds already applied some of the steps above

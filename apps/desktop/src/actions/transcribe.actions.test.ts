@@ -245,6 +245,35 @@ describe("storeTranscription audio retention", () => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
+  it("does not hold the stop path open on usage metering or the audio sweep", async () => {
+    // The pill is told to go idle as soon as the transcript is inserted, so it
+    // accepts clicks while the stop path is still unwinding. A click in that
+    // gap is accepted natively and then dropped, so the save must not wait on
+    // housekeeping: a hung retention sweep or a profile write queued behind
+    // other work would otherwise hold the session locked for as long as they
+    // take. This fails on the previous code, which awaited both.
+    setPrefs({});
+    invokeMock.mockResolvedValue({
+      filePath: "/tmp/audio.wav",
+      durationMs: 100,
+    });
+    // `once` so a hang cannot leak into a later block: nothing else resets
+    // `addWordsMock`, and a module mock stays pending for the rest of the file.
+    purgeStaleAudioMock.mockImplementationOnce(
+      () => new Promise<string[]>(() => {}),
+    );
+    addWordsMock.mockImplementationOnce(() => new Promise<void>(() => {}));
+
+    const settled = await Promise.race([
+      storeTranscription(buildInput()).then(() => "settled" as const),
+      new Promise<"hung">((resolve) => {
+        setTimeout(() => resolve("hung"), 250);
+      }),
+    ]);
+
+    expect(settled).toBe("settled");
+  });
+
   it.each([Infinity, -Infinity])(
     "rejects a non-finite sample rate (%s) before persistence",
     async (sampleRate) => {

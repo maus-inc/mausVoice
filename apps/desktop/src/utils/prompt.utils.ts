@@ -839,6 +839,18 @@ const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
     "Ordered edits that turn the raw transcript into the cleaned text. Use the fewest edits that express the required changes.",
   );
 
+/**
+ * Warning raised when a cleanup response reached that budget and was cut off
+ * mid-object. The salvaged fragment is never used as the transcript, so this
+ * copy only has to state what happened to the reply, which stays true for both
+ * consumers: dictation pastes the complete raw transcript it already holds,
+ * while a retranscription keeps the row's previous text. It is a plain string
+ * because it is stored on the transcription row beside the other
+ * post-processing warnings, none of which are localized.
+ */
+export const POST_PROCESS_TRUNCATED_WARNING =
+  "The styling response was cut off at the model's output limit, so its partial reply was discarded.";
+
 export const PROCESSED_TRANSCRIPTION_SCHEMA = z.object({
   edits: PROCESSED_TRANSCRIPTION_EDITS_SCHEMA,
   result: z
