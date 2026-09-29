@@ -330,14 +330,18 @@ export class GladiaTranscriptAccumulator {
   }
 
   setAuthoritativeText(text: string): void {
-    const normalizedText = text.trim();
-    if (normalizedText) {
-      this.authoritativeText = normalizedText;
-    }
+    // Recorded even when empty. A provider can retract a segment it sent
+    // earlier, and silence is the correct text for a recording it says said
+    // nothing; dropping the empty value left the earlier segments in place and
+    // returned stale words for a stream that had been corrected to none.
+    this.authoritativeText = text.trim();
   }
 
   getFinalText(): string {
-    if (this.authoritativeText) {
+    // `!== null` rather than truthiness: an authoritative empty transcript is a
+    // decision, and falling through to the segments would resurrect the text it
+    // just replaced.
+    if (this.authoritativeText !== null) {
       return this.authoritativeText;
     }
     return this.order
@@ -355,6 +359,12 @@ export class GladiaTranscriptAccumulator {
     const finalText = this.getFinalText();
     if (finalText) {
       return finalText;
+    }
+    // An authoritative transcript that came back empty is the provider's answer,
+    // so the raw segments are not a better guess to fall back on: they are the
+    // text it just corrected. Only an absent one leaves the segments standing.
+    if (this.authoritativeText !== null) {
+      return "";
     }
     return this.order
       .map((id) => this.segments.get(id)?.text ?? "")

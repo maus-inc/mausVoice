@@ -391,6 +391,221 @@ describe("runAgent supersession (one live loop per conversation)", () => {
   });
 });
 
+describe("runAgent replay filter and unfinished tool turns", () => {
+  it("leaves out a tool turn whose result has not landed yet", async () => {
+    // `isStreaming` is cleared at the first `tool-call-start`, which is before
+    // any of that turn's tool results are persisted. Replaying on that flag
+    // alone hands the next run a half-finished assistant turn, tool calls
+    // included, with no matching `tool` message behind it. A message is safe to
+    // replay only once it has stopped streaming *and* every tool call it
+    // declared has come back done.
+    // `loopRunMock` is shared across this file's suites, and the argument under
+    // test is the first call's, so the earlier suites' calls have to go.
+    loopRunMock.mockClear();
+    getChatMessageRepoCreateMock.mockClear();
+    loggerMock.verbose.mockClear();
+
+    const chatMessageById: Record<string, unknown> = {
+      // A finished turn: streamed, one tool call, that call done. Replayable.
+      "m-done": {
+        id: "m-done",
+        role: "assistant",
+        content: "finished turn",
+        metadata: {
+          type: undefined,
+          toolCalls: [{ id: "call-done", name: "noop", arguments: "{}" }],
+        },
+      },
+      "r-done": {
+        id: "r-done",
+        role: "system",
+        content: "result for the finished call",
+        metadata: { type: "tool-result", toolCallId: "call-done" },
+      },
+      // A turn caught mid-tool: not streaming, but its call has not come back.
+      "m-pending": {
+        id: "m-pending",
+        role: "assistant",
+        content: "half a turn",
+        metadata: {
+          toolCalls: [{ id: "call-pending", name: "noop", arguments: "{}" }],
+        },
+      },
+    };
+    const live = {
+      chatMessageById,
+      chatMessageIdsByConversationId: {
+        "c-4": ["m-done", "r-done", "m-pending"],
+      },
+      agentStateByConversationId: {},
+      toolInfoById: {},
+      streamingMessageById: {
+        // `isStreaming` already false: the first tool call started.
+        "m-pending": {
+          isStreaming: false,
+          toolCalls: [
+            { toolCallId: "call-pending", toolName: "noop", done: false },
+          ],
+        },
+      },
+    };
+    getAppStateMock.mockReturnValue(live);
+    produceAppStateMock.mockImplementation(() => undefined);
+    humanizeScrubMock.mockImplementation((text: string) => text);
+    setupAgentMocks();
+    getChatMessageRepoCreateMock.mockResolvedValue({});
+
+    loopRunMock.mockImplementation(() =>
+      agentLoopRun([{ type: "finish", reason: "stop" }]),
+    );
+
+    const { runAgent } = await import("./run-agent");
+    await runAgent("c-4", {
+      agentType: "chat",
+      systemPrompt: "",
+      getToolFilter: () => () => true,
+      maxIterations: 4,
+    });
+
+    const sent = loopRunMock.mock.calls[0]?.[0] as Array<{
+      role: string;
+      content?: string;
+      toolCallId?: string;
+    }>;
+    const contents = sent.map((m) => m.content);
+
+    expect(contents).toContain("finished turn");
+    expect(
+      contents,
+      "a tool call with no result yet was replayed into the next run",
+    ).not.toContain("half a turn");
+    // And the finished call's result is still there, so the filter is not simply
+    // dropping every tool turn.
+    expect(
+      sent.some((m) => m.role === "tool" && m.toolCallId === "call-done"),
+    ).toBe(true);
+    // No `tool` message exists for the pending call, so none may be invented.
+    expect(sent.some((m) => m.toolCallId === "call-pending")).toBe(false);
+  });
+});
+
+describe("runAgent supersession while a tool result is being written", () => {
+  it("takes the tool result back out when the replacement run takes over mid-write", async () => {
+    // The window is the await inside the tool-result write: a second run for the
+    // same conversation registers while the first run's write is in flight, so
+    // the context the replacement snapshotted cannot contain that result. Left
+    // committed it becomes a `tool` message whose `tool_calls` entry no live
+    // turn declares, which the next run rehydrates and providers reject. Both
+    // edges are checked, so the row is removed again from the store and state.
+    const chatMessageById: Record<string, unknown> = {};
+    const chatMessageIdsByConversationId: Record<string, string[]> = {
+      "c-3": [],
+    };
+    const live = {
+      chatMessageById,
+      chatMessageIdsByConversationId,
+      agentStateByConversationId: {},
+      toolInfoById: {},
+      streamingMessageById: {} as Record<string, unknown>,
+    };
+    // Earlier suites in this file leave calls on the shared hoisted mocks, and
+    // the wait below counts them, so start from zero rather than from whatever
+    // the previous test left behind.
+    getChatMessageRepoCreateMock.mockClear();
+    loggerMock.verbose.mockClear();
+    getAppStateMock.mockReturnValue(live);
+    produceAppStateMock.mockImplementation(() => undefined);
+    humanizeScrubMock.mockImplementation((text: string) => text);
+    setupAgentMocks();
+
+    const deleteChatMessagesMock = vi.fn().mockResolvedValue(undefined);
+    getChatMessageRepoMock.mockReturnValue({
+      createChatMessage: (...args: unknown[]) =>
+        getChatMessageRepoCreateMock(...args),
+      deleteChatMessages: (...args: unknown[]) =>
+        deleteChatMessagesMock(...args),
+    });
+
+    // The write is parked here, which is the whole point: run1 is inside
+    // `createChatMessage` when run2 registers.
+    let releaseWrite: () => void = () => undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    getChatMessageRepoCreateMock.mockImplementation(async (message) => {
+      await writeGate;
+      return message;
+    });
+
+    let call = 0;
+    loopRunMock.mockImplementation(function (this: {
+      abort: ReturnType<typeof vi.fn>;
+    }) {
+      call += 1;
+      if (call === 1) {
+        return agentLoopRun([
+          { type: "iteration-start", iteration: 0 },
+          {
+            type: "tool-call-start",
+            toolCallId: "t-9",
+            toolName: "noop",
+            args: {},
+          },
+          {
+            type: "tool-call-result",
+            toolCallId: "t-9",
+            toolName: "noop",
+            result: "ok",
+            isError: false,
+          },
+          { type: "finish", reason: "stop" },
+        ]);
+      }
+      async function* second() {
+        yield { type: "iteration-start", iteration: 0 };
+        yield { type: "finish", reason: "stop" };
+      }
+      return second();
+    });
+
+    const { runAgent } = await import("./run-agent");
+    const config = {
+      agentType: "chat",
+      systemPrompt: "",
+      getToolFilter: () => () => true,
+      maxIterations: 4,
+    };
+
+    const run1 = runAgent("c-3", config);
+    // Wait until run1 is genuinely inside the write, not merely started.
+    await vi.waitFor(() =>
+      expect(getChatMessageRepoCreateMock).toHaveBeenCalledTimes(1),
+    );
+
+    const run2 = runAgent("c-3", config);
+    releaseWrite();
+
+    await run1;
+    await run2;
+
+    // The write was issued, then withdrawn, and the id it used is the one removed.
+    const issued = getChatMessageRepoCreateMock.mock.calls[0]?.[0] as {
+      id: string;
+    };
+    expect(issued).toBeDefined();
+    // The mock stands in for the repository method, which `deleteChatMessages`
+    // calls with the id list alone; the conversation id is only used to prune
+    // state.
+    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued.id]);
+
+    const verbose = loggerMock.verbose.mock.calls.map((c) => String(c[0]));
+    expect(
+      verbose.some((m) => m.includes("Rolled back tool-result persist")),
+      "the rollback was not reported",
+    ).toBe(true);
+  });
+});
+
 describe("runAgent immutable-state lifecycle", () => {
   let live: AppState;
   const config = {

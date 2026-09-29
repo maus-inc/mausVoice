@@ -477,7 +477,12 @@ class PreviewRuntime {
       case "paired_remote_device_list":
         return [];
       case "paired_remote_device_upsert":
-        return clone(asRecord(args.device));
+        // `paired-remote-device.repo.ts` sends `{ args: params }` and
+        // `paired_remote_device_upsert` binds a parameter of that name, so the
+        // device fields live under `args.args`. Reading `args.device` produced
+        // undefined, and the pairing page in the browser preview could not show
+        // the device it had just saved.
+        return clone(asRecord(args.args));
       case "paired_remote_device_delete":
         return undefined;
       case "remote_receiver_status":

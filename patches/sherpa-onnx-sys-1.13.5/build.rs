@@ -321,12 +321,23 @@ fn archive_name(
             format!("sherpa-onnx-v{version}-win-x64-shared-MT-Release-lib.tar.bz2")
         }
         // Android: one archive with all ABIs under jniLibs/{abi}/.
-        (
-            LinkMode::Static | LinkMode::Shared,
-            "android",
-            "aarch64" | "arm" | "x86" | "x86_64",
-        ) => {
+        (LinkMode::Shared, "android", "aarch64" | "arm" | "x86" | "x86_64") => {
             format!("sherpa-onnx-v{version}-android.tar.bz2")
+        }
+        // The Android archive holds shared objects only, under jniLibs/{abi}/.
+        // There is no static Android release to resolve against, so a static
+        // request is refused here rather than answered with a directory of
+        // `.so` files: `emit_static_link_directives` would go on to ask the
+        // linker for twelve `static=` archives that are not there, and the
+        // failure would read as a missing library rather than as a request this
+        // build cannot serve.
+        (LinkMode::Static, "android", _) => {
+            return Err(format!(
+                "sherpa-onnx prebuilt libs for target_os=\"android\" ship shared objects \
+                 only (jniLibs/{{abi}}), so the `static` feature cannot be linked there. \
+                 Request `shared` for the android target instead of `static`."
+            )
+            .into())
         }
         _ => return Err(format!(
             "Unsupported target for sherpa-onnx prebuilt libs: os={target_os}, arch={target_arch}"

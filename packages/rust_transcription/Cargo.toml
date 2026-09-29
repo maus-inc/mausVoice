@@ -42,8 +42,15 @@ canary-rs = { version = "=0.2.0", default-features = false, features = ["cpu", "
 # SenseVoice offline ASR and the optional VAD implementation used by the
 # silence gate. The crate downloads matching native libraries at build time
 # unless SHERPA_ONNX_LIB_DIR is supplied by the release build.
-[target.'cfg(not(target_os = "windows"))'.dependencies]
+[target.'cfg(not(any(target_os = "windows", target_os = "android")))'.dependencies]
 sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["static"] }
+
+# Android is excluded above because the prebuilt Android archive holds shared
+# objects under jniLibs/{abi} and has no static counterpart, so the static link
+# directives the build script emits could not resolve. Shared is also the mode
+# its Android link path is written for.
+[target.'cfg(target_os = "android")'.dependencies]
+sherpa-onnx = { version = "=1.13.5", default-features = false, features = ["shared"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # The shipped Windows sherpa archive is built with the static MSVC runtime

@@ -52,12 +52,8 @@ import { SettingSection } from "../common/SettingSection";
 
 const ReceiverStatusDetails = ({
   receiverStatus,
-  onCopyInvite,
-  onImportInvite,
 }: {
   receiverStatus: RemoteReceiverStatus;
-  onCopyInvite: () => void;
-  onImportInvite: () => void;
 }) => {
   const lastDeliveryTimeLabel = receiverStatus.lastDeliveryAt
     ? new Date(receiverStatus.lastDeliveryAt).toLocaleString()
@@ -189,27 +185,6 @@ const ReceiverStatusDetails = ({
           <FormattedMessage defaultMessage="The last target window was active, but no editable text field was focused. Click back into the destination text field on the receiver machine before sending text." />
         </Typography>
       )}
-      <Typography
-        variant="caption"
-        sx={{
-          color: "text.secondary",
-        }}
-      >
-        <FormattedMessage defaultMessage="Use Copy invite on the receiver machine, then Import invite on the sender machine. Manual trusted-device entry still works as a fallback." />
-      </Typography>
-      <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={onCopyInvite}
-          disabled={!receiverStatus.enabled}
-        >
-          <FormattedMessage defaultMessage="Copy invite" />
-        </Button>
-        <Button size="small" variant="outlined" onClick={onImportInvite}>
-          <FormattedMessage defaultMessage="Import invite" />
-        </Button>
-      </Stack>
     </Stack>
   );
 };
@@ -787,9 +762,11 @@ const usePairDialogState = (
       const existing = pairedDevices.find(
         (device) => device.id === (editingDeviceId ?? deviceId),
       );
-      if (editingDeviceId && editingDeviceId !== deviceId) {
-        await deletePairedRemoteDevice(editingDeviceId);
-      }
+      // Write the new pairing before retiring the old id, not after. Deleting
+      // first meant a save that failed left the device unpaired with nothing to
+      // recover: the secret it needed lived only in the row that had just been
+      // removed. In this order the worst a failure can leave behind is a stale
+      // extra pairing, which the list can show and the user can delete.
       await upsertPairedRemoteDevice({
         id: deviceId,
         name,
@@ -801,6 +778,9 @@ const usePairDialogState = (
         lastKnownAddress: requiresAddress ? address : null,
         trusted: existing?.trusted ?? true,
       });
+      if (editingDeviceId && editingDeviceId !== deviceId) {
+        await deletePairedRemoteDevice(editingDeviceId);
+      }
       closePairDialog();
     } catch (error) {
       showErrorSnackbar(error);
@@ -932,6 +912,33 @@ const ReceiverSettingsSection = ({
         }
       />
 
+      {/* Outside the receiver-enabled gate on purpose. A sender imports an
+          invite from the machine that *does* receive, and gating these on this
+          machine's own receiver meant a sender could never reach the button.
+          Copying does need the local receiver running, so that one button
+          carries the condition itself. */}
+      <Typography
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        <FormattedMessage defaultMessage="Use Copy invite on the receiver machine, then Import invite on the sender machine. Manual trusted-device entry still works as a fallback." />
+      </Typography>
+      <Stack direction="row" spacing={1} sx={{ pt: 0.5 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onCopyInvite}
+          disabled={!(receiverStatus?.enabled ?? false)}
+        >
+          <FormattedMessage defaultMessage="Copy invite" />
+        </Button>
+        <Button size="small" variant="outlined" onClick={onImportInvite}>
+          <FormattedMessage defaultMessage="Import invite" />
+        </Button>
+      </Stack>
+
       {(receiverStatus?.enabled ?? false) && (
         <>
           <SettingSection
@@ -985,11 +992,7 @@ const ReceiverSettingsSection = ({
           />
 
           {receiverStatus && (
-            <ReceiverStatusDetails
-              receiverStatus={receiverStatus}
-              onCopyInvite={onCopyInvite}
-              onImportInvite={onImportInvite}
-            />
+            <ReceiverStatusDetails receiverStatus={receiverStatus} />
           )}
         </>
       )}

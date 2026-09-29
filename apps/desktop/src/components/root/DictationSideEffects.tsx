@@ -522,19 +522,38 @@ export const DictationSideEffects = () => {
     }
   }, []);
 
-  const dimSystemVolume = useCallback(async () => {
-    const dimLevel = getAppState().userPrefs?.dictationAudioDim ?? 1.0;
-    if (dimLevel >= 1.0) return;
+  const dimSystemVolume = useCallback(
+    async (operationId: number) => {
+      const dimLevel = getAppState().userPrefs?.dictationAudioDim ?? 1.0;
+      if (dimLevel >= 1.0) return;
 
-    try {
-      const currentVolume = await invoke<number>("get_system_volume");
-      preDictationVolumeRef.current = currentVolume;
-      const dimmedVolume = currentVolume * dimLevel;
-      await invoke("set_system_volume", { volume: dimmedVolume });
-    } catch (e) {
-      getLogger().verbose(`Failed to dim system volume: ${e}`);
-    }
-  }, []);
+      try {
+        const currentVolume = await invoke<number>("get_system_volume");
+        // Stopping can land while this read is in flight. The volume to restore
+        // is only known once it returns, so a stop in that window has nothing to
+        // put back and the dim would then apply with no restore ever following
+        // it, leaving system audio dimmed for the rest of the session.
+        if (operationId !== recordingOperationRef.current) {
+          getLogger().verbose(
+            "Skipping volume dim: a newer recording took over before it applied",
+          );
+          return;
+        }
+        preDictationVolumeRef.current = currentVolume;
+        const dimmedVolume = currentVolume * dimLevel;
+        await invoke("set_system_volume", { volume: dimmedVolume });
+        // And a stop that lands while the write is in flight is honoured here,
+        // for the same reason: the dim has now taken effect and nothing else
+        // will take it back.
+        if (operationId !== recordingOperationRef.current) {
+          restoreSystemVolume();
+        }
+      } catch (e) {
+        getLogger().verbose(`Failed to dim system volume: ${e}`);
+      }
+    },
+    [restoreSystemVolume],
+  );
 
   const clearUserRecordingTimers = useCallback(() => {
     if (recordingWarningTimerRef.current) {
@@ -1356,7 +1375,7 @@ export const DictationSideEffects = () => {
         // Keep the user-configured active-audio timers at their established
         // start point after session initialization succeeds.
         startUserRecordingTimers();
-        dimSystemVolume();
+        dimSystemVolume(operationId);
       } catch (error) {
         if (operationId !== recordingOperationRef.current) {
           getLogger().warning(

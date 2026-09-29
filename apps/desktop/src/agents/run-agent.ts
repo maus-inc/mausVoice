@@ -15,7 +15,7 @@ import {
   isLogBreakingControl,
   unknownToMessage,
 } from "@maus-inc/utilities";
-import { createChatMessage } from "../actions/chat.actions";
+import { createChatMessage, deleteChatMessages } from "../actions/chat.actions";
 import {
   executeTool,
   getToolPermissionStatus,
@@ -343,8 +343,19 @@ export async function runAgent(
               conversationId,
               toolCallId: event.toolCallId,
             },
-            () =>
-              createChatMessage({
+            async () => {
+              // This result belongs to a tool call the replacement run's context
+              // does not contain, so it must not outlive the run that produced
+              // it. Both edges of the write are checked, because the await in
+              // between is exactly where a second run for this conversation
+              // takes over.
+              if (activeLoops.get(conversationId) !== loop) {
+                getLogger().verbose(
+                  "Skipped tool-result persist: a newer run superseded this one",
+                );
+                return;
+              }
+              const saved = await createChatMessage({
                 id: crypto.randomUUID(),
                 conversationId,
                 role: "system",
@@ -357,7 +368,19 @@ export async function runAgent(
                   toolName: event.toolName,
                   ...(reason && { reason }),
                 },
-              }),
+              });
+              if (activeLoops.get(conversationId) !== loop) {
+                // Committed after the takeover. Left in place it is a `tool`
+                // message whose `tool_calls` entry no live turn declares, and
+                // the next run rehydrates precisely that. Take it back out of
+                // the store and of state, which lands where the check above
+                // would have.
+                getLogger().verbose(
+                  "Rolled back tool-result persist: a newer run superseded this one",
+                );
+                await deleteChatMessages(conversationId, [saved.id]);
+              }
+            },
           );
           updateRunState((draft) => {
             if (currentMessageId) {
@@ -822,7 +845,16 @@ function buildConversationMessages(conversationId: string): LlmMessage[] {
   const messages: LlmMessage[] = [];
 
   for (const id of messageIds) {
-    if (state.streamingMessageById[id]?.isStreaming) {
+    const streaming = state.streamingMessageById[id];
+    // `isStreaming` is cleared at the first `tool-call-start`, which is before
+    // any of that turn's tool results are persisted. Replaying on that flag
+    // alone hands a replacement run a half-finished assistant turn, tool calls
+    // included, with none of the matching `tool` messages behind it. A message is
+    // safe to replay only once it has stopped streaming *and* every tool call it
+    // declared has come back done.
+    const hasUnfinishedToolCall =
+      streaming?.toolCalls?.some((toolCall) => !toolCall.done) ?? false;
+    if (streaming?.isStreaming || hasUnfinishedToolCall) {
       continue;
     }
     const msg = state.chatMessageById[id];

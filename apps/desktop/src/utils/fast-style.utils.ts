@@ -267,7 +267,12 @@ const isShortEnoughToLift = (
   maxChars: number,
 ): boolean => {
   const trimmed = sentence.trim();
-  return trimmed.split(/\s+/).length <= maxWords || trimmed.length <= maxChars;
+  // Both limits, not either. A four-word opener that runs to several hundred
+  // characters is a body sentence, and a two-word line that runs long is a
+  // subject line rather than a greeting: `||` let each through on the strength of
+  // the limit it happened to satisfy, which is the opposite of a short-greeting
+  // limit.
+  return trimmed.split(/\s+/).length <= maxWords && trimmed.length <= maxChars;
 };
 
 const splitEmailSections = (

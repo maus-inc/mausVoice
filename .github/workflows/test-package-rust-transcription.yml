@@ -4,7 +4,9 @@ on:
   push:
       paths:
         - "scripts/ci/run-with-diagnostics.sh"
+        - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
         - "packages/rust_transcription/**"
+        - "patches/sherpa-onnx-sys-1.13.5/**"
         - "rust-toolchain.toml"
         - ".github/workflows/test-package-rust-transcription.yml"
   workflow_dispatch:
@@ -38,6 +40,12 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Check the sherpa-onnx link mode against the Android archive
+        # Node-only, so it is placed before the toolchain and matrix work and
+        # fails in seconds rather than after a cargo build. The android archive
+        # ships shared objects only; a static request there cannot be linked, and
+        # the failure it used to produce read like a missing library.
+        run: node --test scripts/ci/sherpa-onnx-link-mode.test.mjs
       - name: Checkout source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install Rust toolchain

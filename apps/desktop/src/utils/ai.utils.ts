@@ -303,6 +303,65 @@ export type ProcessedTranscriptionResolution =
  * could not read is neither of those: the model asked for a change that is
  * now lost, so it is reported as unusable rather than passed off as clean.
  */
+/**
+ * The edits branch of `resolveProcessedTranscription`, split out so the order of
+ * preference reads as a list rather than as nesting. Returns null when the
+ * edits do not decide the outcome, which is the one case where a rewrite the
+ * model sent alongside them is the better text and the edits only need
+ * reporting.
+ */
+const resolveAppliedEdits = (
+  transcript: string,
+  edits: TranscriptionEdit[],
+  dropped: number,
+  rewritten: string,
+): ProcessedTranscriptionResolution | null => {
+  const application = applyTranscriptionEdits(transcript, edits);
+  const decides = application.applied > 0 || rewritten.length === 0;
+  if (!decides) {
+    return null;
+  }
+  // Entries the reply did not let us read are counted with the ones that did
+  // not match, so the totals describe every entry the model sent and an unread
+  // one cannot vanish from the report.
+  const declared = edits.length + dropped;
+  const skipped = application.skipped + dropped;
+  // The cap can drop edits before they are ever matched, so the warning names
+  // the matching rule instead of claiming every skip was a miss.
+  const capNote =
+    edits.length > MAX_TRANSCRIPTION_EDITS
+      ? ` Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`
+      : "";
+  return {
+    status: "cleaned",
+    transcript: application.text,
+    warning:
+      skipped > 0
+        ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
+        : null,
+  };
+};
+
+/**
+ * The reply declared an edit list. A list we could read is a model that asked
+ * for a change we agreed with; a list we could not read is a change that is now
+ * lost, which is reported rather than passed off as clean.
+ */
+const resolveDeclaredEdits = (
+  transcript: string,
+  dropped: number,
+): ProcessedTranscriptionResolution => {
+  if (dropped > 0) {
+    return {
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+    };
+  }
+  return { status: "cleaned", transcript, warning: null };
+};
+
 export const resolveProcessedTranscription = (
   reply: string,
   transcript: string,
@@ -315,7 +374,8 @@ export const resolveProcessedTranscription = (
     // model's token limit rather than malformed, and the two need different
     // remedies: a bigger output budget, not a retry. Saying so is the only
     // signal the user gets, because the parse error alone reads like noise.
-    const truncationHint = isLikelyTruncatedJson(reply)
+    const truncated = isLikelyTruncatedJson(reply);
+    const truncationHint = truncated
       ? " The model output may have been truncated at its token limit."
       : "";
     return {
@@ -330,29 +390,9 @@ export const resolveProcessedTranscription = (
   const rewritten = result.trim();
 
   if (edits.length > 0) {
-    const application = applyTranscriptionEdits(transcript, edits);
-    // A rewrite the model sent alongside unusable edits still covers them, so
-    // only a reply that applied nothing without a rewrite has skips to report.
-    if (application.applied > 0 || rewritten.length === 0) {
-      // Entries the reply did not let us read are counted with the ones that
-      // did not match, so the totals describe every entry the model sent and
-      // an unread one cannot vanish from the report.
-      const declared = edits.length + dropped;
-      const skipped = application.skipped + dropped;
-      // The cap can drop edits before they are ever matched, so the warning
-      // names the matching rule instead of claiming every skip was a miss.
-      const capNote =
-        edits.length > MAX_TRANSCRIPTION_EDITS
-          ? ` Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`
-          : "";
-      return {
-        status: "cleaned",
-        transcript: application.text,
-        warning:
-          skipped > 0
-            ? `Applied ${application.applied} of ${declared} post-processing edits; ${skipped} could not be applied (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).${capNote}`
-            : null,
-      };
+    const applied = resolveAppliedEdits(transcript, edits, dropped, rewritten);
+    if (applied) {
+      return applied;
     }
   }
 
@@ -365,15 +405,7 @@ export const resolveProcessedTranscription = (
   }
 
   if (editsDeclared) {
-    if (dropped > 0) {
-      return {
-        status: "unusable",
-        reason: "unreadable-edits",
-        warning:
-          "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
-      };
-    }
-    return { status: "cleaned", transcript, warning: null };
+    return resolveDeclaredEdits(transcript, dropped);
   }
 
   return {

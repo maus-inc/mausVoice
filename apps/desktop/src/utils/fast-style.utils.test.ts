@@ -59,6 +59,37 @@ describe("applyFastStyle fast local transforms", () => {
     // Should not split into greeting + body when it's actually one long sentence
   });
 
+  it("lifts a greeting only when it satisfies both the word and character limit", () => {
+    // The two limits are 4 words and 20 characters for an opener, 5 and 25 for a
+    // sign-off, and both have to hold. With `||` an opener that satisfied only
+    // the word count was hoisted anyway: this one is four words but 25
+    // characters, so it breaks the character limit and is body, not a greeting.
+    const openerOverTheCharLimit =
+      "Hi, good morning everyone. I wanted to follow up on the roadmap. Thanks.";
+    const kept = applyFastStyle(openerOverTheCharLimit, "email");
+    // The opener stayed with the body instead of being split onto its own line.
+    expect(kept.startsWith("Hi, good morning everyone. I wanted to follow up"));
+    expect(kept).not.toBe(
+      "Hi, good morning everyone.\n\nI wanted to follow up on the roadmap.\n\nThanks.",
+    );
+    // The sign-off is within both limits, so it is still lifted.
+    expect(kept.endsWith("Thanks."));
+
+    // A short opener is still lifted, so the conjunction did not disable it.
+    const shortOpener = applyFastStyle(
+      "Hi. I wanted to follow up. Thanks.",
+      "email",
+    );
+    expect(shortOpener).toBe("Hi.\n\nI wanted to follow up.\n\nThanks.");
+
+    // And the sign-off is guarded the same way: over 25 characters, on one word
+    // count, is body rather than a sign-off.
+    const longSignOff =
+      "We should talk about the quarterly numbers. Please let me know what you think.";
+    const signOffKept = applyFastStyle(longSignOff, "email");
+    expect(signOffKept).toContain("Please let me know what you think");
+  });
+
   it("concise removes hedging and shortens (conservative, no meaning change)", () => {
     const raw = "I think maybe we should sort of consider going to the park";
     const out = applyFastStyle(raw, "concise");

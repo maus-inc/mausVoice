@@ -92,7 +92,6 @@ import {
   setStylingMode,
 } from "../../actions/user.actions";
 import { logOnRejection } from "../../utils/promise.utils";
-import { isMacOS, isWindows } from "../../utils/env.utils";
 import {
   getEffectiveDictationLimitMinutes,
   MAX_DICTATION_LIMIT_MINUTES,
@@ -488,7 +487,12 @@ export default function SettingsPage() {
     ] as const;
   });
   const platform = getPlatform();
-  const supportsCorrectionWatch = isMacOS() || isWindows();
+  // Read the same snapshot as the rest of this file. `isMacOS`/`isWindows` test
+  // the raw platform name ("darwin", "win32") while `getPlatform` maps it to
+  // "macos"/"windows", so the pair never matched on either desktop platform and
+  // the correction-watch setting was hidden on both.
+  const supportsCorrectionWatch =
+    platform === "macos" || platform === "windows";
   // Rendering, search and deep links consume the same availability snapshot.
   const availability = useMemo<SettingAvailability>(
     () => ({

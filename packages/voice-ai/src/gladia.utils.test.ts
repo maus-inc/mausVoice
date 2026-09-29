@@ -103,6 +103,30 @@ describe("GladiaTranscriptAccumulator", () => {
     expect(accumulator.getFinalText()).toBe("Hello world.");
   });
 
+  it("honours an empty authoritative transcript instead of the earlier segments", () => {
+    // A provider can retract what it sent: the utterance was noise, or a
+    // correction pass decided the recording said nothing. Keeping the earlier
+    // segments in that case returns words the provider just withdrew, which is
+    // the one thing an authoritative transcript exists to prevent.
+    const accumulator = new GladiaTranscriptAccumulator();
+    accumulator.update("one", "this was noise", true);
+    accumulator.update("two", "neither was this", true);
+    expect(accumulator.getFinalText()).toBe("this was noise neither was this");
+
+    accumulator.setAuthoritativeText("   ");
+
+    expect(accumulator.getFinalText()).toBe("");
+    // The best-effort path is the last resort, and it must not resurrect what
+    // the provider retracted either.
+    expect(accumulator.getBestEffortText()).toBe("");
+  });
+
+  it("still falls back to the segments when no authoritative text arrived", () => {
+    const accumulator = new GladiaTranscriptAccumulator();
+    accumulator.update("one", "only segment", true);
+    expect(accumulator.getFinalText()).toBe("only segment");
+  });
+
   it("returns partial text only through the explicit best-effort path", () => {
     const accumulator = new GladiaTranscriptAccumulator();
     accumulator.update("one", "unfinished", false);

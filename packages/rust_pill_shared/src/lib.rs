@@ -142,14 +142,20 @@ pub const MAX_REVIEW_PREVIEW_LINES: usize = 60;
 /// Ensures that huge inputs (e.g. long audio imports or transcripts)
 /// do not cause unbounded text layout, wrapping, or allocation overhead on every frame.
 pub fn bound_review_preview_text(full_text: &str) -> (String, bool) {
-    if full_text.len() <= MAX_REVIEW_PREVIEW_CHARS {
+    // `str::len` is bytes. The budget is documented in characters, so a CJK or
+    // emoji transcript was cut to a third of it (or less) before any of the
+    // whitespace trimming below: 3000 bytes of Japanese is about 1000
+    // characters. Measure in characters and take the byte offset of the
+    // character boundary instead, which is the same number of decisions without
+    // the unit mismatch.
+    if full_text.chars().count() <= MAX_REVIEW_PREVIEW_CHARS {
         return (full_text.to_string(), false);
     }
 
-    let mut end = MAX_REVIEW_PREVIEW_CHARS;
-    while !full_text.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
+    let end = full_text
+        .char_indices()
+        .nth(MAX_REVIEW_PREVIEW_CHARS)
+        .map_or(full_text.len(), |(byte_index, _)| byte_index);
 
     let slice = &full_text[..end];
     let cut_pos = slice.rfind(char::is_whitespace).unwrap_or(end);
@@ -1978,7 +1984,9 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(truncated);
-        assert!(preview.len() <= MAX_REVIEW_PREVIEW_CHARS + 60);
+        // In characters: the budget is a character budget, and a byte assertion
+        // would pass for a preview that kept a fraction of it.
+        assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
         assert!(preview.contains("Full transcript preserved"));
         assert!(elapsed.as_millis() < 50, "Bounding huge text must be nearly instantaneous");
     }
@@ -1988,6 +1996,43 @@ mod tests {
         let emoji_text = "🎙️✨⚡🦀".repeat(1000);
         let (preview, truncated) = bound_review_preview_text(&emoji_text);
         assert!(truncated);
-        assert!(preview.len() <= MAX_REVIEW_PREVIEW_CHARS + 60);
+        assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
+    }
+
+    #[test]
+    fn review_preview_bounding_spends_the_budget_in_characters_not_bytes() {
+        // The budget is documented in characters, so a multibyte transcript has
+        // to get all of it. Measuring `str::len` spent 3000 *bytes* instead,
+        // which for this text is about 700 characters: a CJK or emoji transcript
+        // lost two thirds of the preview it was allowed.
+        let text = "🎙️✨⚡🦀".repeat(1000); // 4_000 characters, ~17_000 bytes
+        assert!(
+            text.len() > MAX_REVIEW_PREVIEW_CHARS * 4,
+            "the fixture must be over budget in both units to be meaningful"
+        );
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(truncated);
+
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert!(
+            shown.chars().count() >= MAX_REVIEW_PREVIEW_CHARS - 4,
+            "preview kept {} characters of a {MAX_REVIEW_PREVIEW_CHARS} character budget",
+            shown.chars().count()
+        );
+    }
+
+    #[test]
+    fn review_preview_bounding_leaves_multibyte_text_at_the_budget_intact() {
+        // A transcript exactly on the budget must not be truncated at all, which
+        // a byte comparison got wrong in the other direction: 3000 CJK
+        // characters are 9000 bytes, so the byte check truncated text that
+        // fitted the documented limit.
+        let text = "あ".repeat(MAX_REVIEW_PREVIEW_CHARS);
+        assert!(text.len() > MAX_REVIEW_PREVIEW_CHARS);
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(!truncated, "text exactly on the character budget was truncated");
+        assert_eq!(preview, text);
     }
 }

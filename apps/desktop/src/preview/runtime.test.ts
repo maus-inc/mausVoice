@@ -295,6 +295,31 @@ describe("browser preview transport", () => {
     expect(await invokePreviewCommand("get_version")).toBe("0.1.6-preview");
   });
 
+  it("echoes back the pairing payload the real command receives", async () => {
+    // `paired-remote-device.repo.ts` sends the device fields as the command's
+    // `args` payload, and `paired_remote_device_upsert` binds that same name.
+    // The preview read `args.device`, so it always produced undefined and the
+    // pairing page in the browser preview could not show the device it had just
+    // saved.
+    const device = {
+      id: "device-7",
+      name: "Studio",
+      platform: "darwin",
+      role: "receiver",
+      sharedSecret: "secret",
+      pairedAt: "2026-01-01T00:00:00.000Z",
+      lastSeenAt: null,
+      lastKnownAddress: "192.168.1.25:43123",
+      trusted: true,
+    };
+
+    const echoed = await invokePreviewCommand<
+      Record<string, unknown> | undefined
+    >("paired_remote_device_upsert", { args: device });
+
+    expect(echoed).toMatchObject({ id: "device-7", name: "Studio" });
+  });
+
   it("does not silently emulate unsupported privileged operations", async () => {
     await expect(invokePreviewCommand("simulate_type")).rejects.toMatchObject({
       name: "PreviewOperationError",

@@ -493,37 +493,67 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
     }
   });
 
+/** How many times the state endpoint is asked before the upload is abandoned. */
+const FILE_POLL_ATTEMPTS = 10;
+
+/** Gap between two state polls while the upload finishes. */
+const FILE_POLL_INTERVAL_MS = 100;
+
+/** What one poll of the upload's state endpoint decided. */
+type FilePollOutcome = "active" | "pending";
+
+/**
+ * One poll of an upload's state endpoint, with the failure policy attached.
+ *
+ * A 4xx is permanent, so it is rethrown rather than polled through silently: a
+ * key that cannot read the file will not read it in 100ms either, and swallowing
+ * it would turn a real error into a generic "never became ACTIVE" ten tries
+ * later. Anything else is the endpoint being briefly unavailable while the
+ * upload finishes, which is what the next attempt is for.
+ */
+const pollGeminiFileState = async (
+  fileUri: string,
+  apiKey: string,
+  customFetch: CustomFetch,
+  signal?: AbortSignal,
+): Promise<FilePollOutcome> => {
+  if (signal?.aborted) {
+    throw new DOMException("aborted", "AbortError");
+  }
+  try {
+    const state = await fetchGeminiFileState(
+      fileUri,
+      apiKey,
+      customFetch,
+      signal,
+    );
+    return state === "ACTIVE" ? "active" : "pending";
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    if (error instanceof GeminiHttpError && error.status < 500) {
+      throw error;
+    }
+    return "pending";
+  }
+};
+
 const waitForGeminiFileActive = async (
   fileUri: string,
   apiKey: string,
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<void> => {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    if (signal?.aborted) {
-      throw new DOMException("aborted", "AbortError");
-    }
-    try {
-      const state = await fetchGeminiFileState(
-        fileUri,
-        apiKey,
-        customFetch,
-        signal,
-      );
-      if (state === "ACTIVE") return;
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      if (error instanceof GeminiHttpError && error.status < 500) {
-        // 4xx on state endpoint is permanent – don't keep polling silently.
-        throw error;
-      }
-    }
-    try {
-      await delay(100, signal);
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      throw error;
-    }
+  for (let attempt = 0; attempt < FILE_POLL_ATTEMPTS; attempt++) {
+    const outcome = await pollGeminiFileState(
+      fileUri,
+      apiKey,
+      customFetch,
+      signal,
+    );
+    if (outcome === "active") return;
+    // A cancel during the wait rejects here with the caller's reason, so the
+    // poll loop stops on the signal rather than sitting out the last interval.
+    await delay(FILE_POLL_INTERVAL_MS, signal);
   }
   throw new Error("Gemini file did not become ACTIVE after polling");
 };
