@@ -10,10 +10,6 @@ vi.mock("../utils/log.utils", () => ({
   }),
 }));
 
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => vi.fn()),
-}));
-
 const createdSockets: FakeWebSocket[] = [];
 
 class FakeWebSocket {

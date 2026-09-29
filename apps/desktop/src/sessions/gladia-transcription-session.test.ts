@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  audioListener: null as
-    ((event: { payload: { samples: number[] } }) => void) | null,
-  unlisten: vi.fn(),
-  deferListen: false,
-  resolveListen: null as (() => void) | null,
   sendAudio: vi.fn(),
   finalize: vi.fn().mockResolvedValue("final transcript"),
   cleanup: vi.fn(),
@@ -16,23 +11,6 @@ const mocks = vi.hoisted(() => ({
     onConnectionInterrupted?: () => void;
     onFinalSegment?: (segment: string) => void;
   },
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(
-    async (
-      _event: string,
-      listener: (event: { payload: { samples: number[] } }) => void,
-    ) => {
-      mocks.audioListener = listener;
-      if (mocks.deferListen) {
-        return new Promise<typeof mocks.unlisten>((resolve) => {
-          mocks.resolveListen = () => resolve(mocks.unlisten);
-        });
-      }
-      return mocks.unlisten;
-    },
-  ),
 }));
 
 vi.mock("@maus-inc/voice-ai", () => ({
@@ -65,11 +43,7 @@ vi.mock("../utils/prompt.utils", () => ({
 import { GladiaTranscriptionSession } from "./gladia-transcription-session";
 
 beforeEach(() => {
-  mocks.audioListener = null;
   mocks.sessionOptions = null;
-  mocks.deferListen = false;
-  mocks.resolveListen = null;
-  mocks.unlisten.mockClear();
   mocks.sendAudio.mockClear();
   mocks.finalize.mockClear();
   mocks.cleanup.mockClear();
@@ -89,10 +63,7 @@ describe("GladiaTranscriptionSession", () => {
     session.setInterimResultCallback(onSegment);
 
     await session.onRecordingStart(16000);
-    expect(mocks.audioListener).not.toBeNull();
-    mocks.audioListener?.({
-      payload: { samples: Array.from({ length: 320 }, () => 0.25) },
-    });
+    session.writeAudioChunk(new Float32Array(320).fill(0.25));
     expect(mocks.sendAudio).not.toHaveBeenCalled();
 
     mocks.sessionOptions?.onReady?.();
@@ -100,9 +71,7 @@ describe("GladiaTranscriptionSession", () => {
     expect(mocks.sendAudio.mock.calls[0]?.[0]).toBeInstanceOf(ArrayBuffer);
 
     mocks.sessionOptions?.onConnectionInterrupted?.();
-    mocks.audioListener?.({
-      payload: { samples: Array.from({ length: 320 }, () => 0.25) },
-    });
+    session.writeAudioChunk(new Float32Array(320).fill(0.25));
     expect(mocks.sendAudio).toHaveBeenCalledOnce();
     mocks.sessionOptions?.onReady?.();
     expect(mocks.sendAudio).toHaveBeenCalledTimes(2);
@@ -154,9 +123,7 @@ describe("GladiaTranscriptionSession", () => {
     await session.onRecordingStart(16000);
     mocks.sessionOptions?.onReady?.();
     mocks.sessionOptions?.onConnectionInterrupted?.();
-    mocks.audioListener?.({
-      payload: { samples: Array.from({ length: 320 }, () => 0.25) },
-    });
+    session.writeAudioChunk(new Float32Array(320).fill(0.25));
     expect(mocks.sendAudio).not.toHaveBeenCalled();
 
     await session.finalize({
@@ -169,27 +136,12 @@ describe("GladiaTranscriptionSession", () => {
     expect(mocks.cleanup).toHaveBeenCalledOnce();
   });
 
-  it("removes a listener that resolves after cleanup without starting the SDK", async () => {
-    mocks.deferListen = true;
-    const session = new GladiaTranscriptionSession("key", null);
-    const startPromise = session.onRecordingStart(16000);
-    await vi.waitFor(() => expect(mocks.audioListener).not.toBeNull());
-
-    session.cleanup();
-    mocks.resolveListen?.();
-    await startPromise;
-
-    expect(mocks.unlisten).toHaveBeenCalledOnce();
-    expect(mocks.createSession).not.toHaveBeenCalled();
-  });
-
-  it("cleans listeners, buffers, and the SDK session idempotently", async () => {
+  it("cleans buffers and the SDK session idempotently", async () => {
     const session = new GladiaTranscriptionSession("key", null);
     await session.onRecordingStart(16000);
     session.cleanup();
     session.cleanup();
 
-    expect(mocks.unlisten).toHaveBeenCalledOnce();
     expect(mocks.cleanup).toHaveBeenCalledOnce();
   });
 });

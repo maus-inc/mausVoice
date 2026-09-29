@@ -181,7 +181,10 @@ impl SavedClipboard {
 }
 
 pub type LevelCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
-pub type ChunkCallback = Arc<dyn Fn(Vec<f32>) + Send + Sync>;
+/// Receives a batch of samples plus the absolute index of the batch's first
+/// sample in the recording, so consumers can place audio on an absolute
+/// timeline instead of assuming every batch is contiguous.
+pub type ChunkCallback = Arc<dyn Fn(Vec<f32>, u64) + Send + Sync>;
 
 pub trait Recorder: Send + Sync {
     fn start(

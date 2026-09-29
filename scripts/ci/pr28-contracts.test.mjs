@@ -39,6 +39,12 @@ const source = Object.fromEntries(
     ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
     ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
     ["windowsGfx", "packages/rust_windows_pill/src/gfx.rs"],
+    ["recording", "apps/desktop/src-tauri/src/domain/recording.rs"],
+    ["audioChunks", "apps/desktop/src/sessions/audio-chunk-events.ts"],
+    [
+      "intake",
+      "apps/desktop/src/components/root/dictation-recording-intake.ts",
+    ],
     ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
     ["docsWorkflow", ".github/workflows/test-docs.yml"],
     ["index", "index.html"],
@@ -1076,5 +1082,31 @@ describe("macOS saved-position scope", () => {
       .split("export const getComposerWindowPosition")[0];
     assert.match(desktopCache, /cachedPillRect = rect/);
     assert.doesNotMatch(desktopCache, /localStorage|invoke\(|writeFile/);
+  });
+});
+
+describe("PR28 live audio chunk contract", () => {
+  it("sends the sample offset the webview requires to accept a chunk", () => {
+    // The webview discards any chunk whose offset is missing, because it
+    // cannot prove the stream is contiguous. That makes the native payload's
+    // `offset` field load bearing for whether live audio reaches a session at
+    // all, so the field and the emitter that fills it are both pinned here.
+    const payload = source.recording
+      .split("pub struct AudioChunkPayload {")[1]
+      .split("}")[0];
+    assert.match(payload, /pub offset: u64/);
+
+    assert.match(source.commands, /AudioChunkPayload \{ samples, offset \}/);
+    assert.match(source.commands, /move \|samples: Vec<f32>, offset: u64\|/);
+  });
+
+  it("keeps the native and webview chunk contracts in step", () => {
+    // `offset` is optional in the webview type so an older native build
+    // degrades to a dropped chunk rather than a crash. The intake path must
+    // therefore still guard on it, or the "optional" default silently
+    // discards every chunk on a build that never sends one.
+    assert.match(source.audioChunks, /offset\?: number/);
+    assert.match(source.audioChunks, /payload\.offset \?\? null/);
+    assert.match(source.intake, /if \(offset === null\)/);
   });
 });

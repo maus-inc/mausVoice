@@ -1,22 +1,18 @@
 import { getAppState } from "../store";
-import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   ASSEMBLYAI_STREAMING_KEYTERMS_BUDGET,
   buildProviderVocabulary,
   collectDictionaryEntries,
 } from "../utils/prompt.utils";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 import { createTranscriptAccumulator } from "./transcript-accumulator.utils";
-import {
-  createAudioChunkBuffer,
-  createReceivedChunkLogger,
-} from "./transcription-stream.utils";
+import { createAudioChunkBuffer } from "./transcription-stream.utils";
 
 type AssemblyAIStreamingSession = {
   finalize: () => Promise<string>;
   cleanup: () => void;
+  writeAudioChunk: (chunk: Float32Array) => void;
 };
 
 const LOGGER_PREFIX = "AssemblyAI WebSocket";
@@ -37,10 +33,8 @@ export const startAssemblyAIStreaming = async (
   getLogger().info(`[${LOGGER_PREFIX}] Starting with sample rate:`, sampleRate);
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
-    let unlisten: UnlistenFn | null = null;
     let isFinalized = false;
     const transcriptState = createTranscriptAccumulator();
-    const receivedLogger = createReceivedChunkLogger(LOGGER_PREFIX);
 
     const buffer = createAudioChunkBuffer(() => ws, {
       sampleRate,
@@ -53,11 +47,23 @@ export const startAssemblyAIStreaming = async (
 
     const getText = () => transcriptState.text();
 
-    const cleanup = () => {
-      if (unlisten) {
-        unlisten();
-        unlisten = null;
+    const writeAudioChunk = (chunk: Float32Array) => {
+      if (isFinalized) return;
+      try {
+        // Always queue the chunk, even while the socket is still connecting.
+        // flush() is a no-op until the socket is OPEN and onopen drains the
+        // backlog, so speech captured during connect is not lost.
+        buffer.push(chunk);
+        buffer.flush(false);
+      } catch (error) {
+        getLogger().error(
+          `[${LOGGER_PREFIX}] Error sending audio chunk:`,
+          error,
+        );
       }
+    };
+
+    const cleanup = () => {
       if (ws && ws.readyState !== WebSocket.CLOSED) {
         ws.close();
         ws = null;
@@ -140,40 +146,9 @@ export const startAssemblyAIStreaming = async (
 
     ws.onopen = async () => {
       getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
-
-      try {
-        getLogger().info(
-          `[${LOGGER_PREFIX}] Setting up audio_chunk listener...`,
-        );
-        unlisten = await listen<{ samples: number[] }>(
-          "audio_chunk",
-          (event) => {
-            receivedLogger.record(event.payload.samples.length);
-            if (ws && ws.readyState === WebSocket.OPEN && !isFinalized) {
-              try {
-                const typedChunk = ensureFloat32Array(event.payload.samples);
-                buffer.push(typedChunk);
-                buffer.flush(false);
-              } catch (error) {
-                getLogger().error(
-                  `[${LOGGER_PREFIX}] Error sending audio chunk:`,
-                  error,
-                );
-              }
-            }
-          },
-        );
-
-        getLogger().info(`[${LOGGER_PREFIX}] Session ready, listener attached`);
-        resolve({ finalize, cleanup });
-      } catch (error) {
-        getLogger().error(
-          `[${LOGGER_PREFIX}] Error setting up listener:`,
-          error,
-        );
-        cleanup();
-        reject(error);
-      }
+      buffer.flush(false);
+      getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+      resolve({ finalize, cleanup, writeAudioChunk });
     };
 
     ws.onmessage = (event) => {

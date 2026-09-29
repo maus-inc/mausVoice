@@ -1,7 +1,5 @@
 import { createAzureStreamingSession } from "@maus-inc/voice-ai";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import { ensureFloat32Array } from "../utils/audio.utils";
 import { getLogger } from "../utils/log.utils";
 import {
   AZURE_PHRASE_LIST_BUDGET,
@@ -14,8 +12,6 @@ import { BaseApiTranscriptionSession } from "./base-api-transcription-session";
 export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
   private readonly subscriptionKey: string;
   private readonly region: string;
-  private unlisten: UnlistenFn | null = null;
-  private receivedChunkCount = 0;
 
   constructor(subscriptionKey: string, region: string) {
     super({
@@ -52,44 +48,10 @@ export class AzureTranscriptionSession extends BaseApiTranscriptionSession {
         phrases,
       });
 
-      this.unlisten = await listen<{ samples: number[] }>(
-        "audio_chunk",
-        (event) => {
-          this.receivedChunkCount++;
-          if (
-            this.receivedChunkCount <= 3 ||
-            this.receivedChunkCount % 10 === 0
-          ) {
-            getLogger().verbose(
-              `[Azure] Received chunk #${this.receivedChunkCount}, samples:`,
-              event.payload.samples.length,
-            );
-          }
-
-          if (this.streamSession?.writeAudioChunk) {
-            try {
-              const typedChunk = ensureFloat32Array(event.payload.samples);
-
-              this.streamSession.writeAudioChunk(typedChunk);
-            } catch (error) {
-              getLogger().error("[Azure] Error writing audio chunk:", error);
-            }
-          }
-        },
-      );
-
       getLogger().verbose("[Azure] Streaming session started successfully");
     } catch (error) {
       getLogger().error("[Azure] Failed to start streaming:", error);
     }
-  }
-
-  cleanup(): void {
-    if (this.unlisten) {
-      this.unlisten();
-      this.unlisten = null;
-    }
-    super.cleanup();
   }
 
   supportsStreaming(): boolean {

@@ -4,9 +4,7 @@ import {
   type GladiaStreamingSession,
   normalizeGladiaModel,
 } from "@maus-inc/voice-ai";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getAppState } from "../store";
-import { ensureFloat32Array } from "../utils/audio.utils";
 import type {
   StopRecordingResponse,
   TranscriptionSession,
@@ -43,7 +41,6 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   private session: GladiaStreamingSession | null = null;
   private pump: AudioChunkPump | null = null;
   private resampler: StreamingResampler | null = null;
-  private unlisten: UnlistenFn | null = null;
   private startupPromise: Promise<void> | null = null;
   private interimCallback: ((segment: string) => void) | null = null;
   private readonly warnings: string[] = [];
@@ -117,34 +114,6 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       },
     });
 
-    const unlisten = await listen<{ samples: number[] }>(
-      "audio_chunk",
-      (event) => {
-        if (generation !== this.generation || this.finalized) {
-          return;
-        }
-        try {
-          const input = ensureFloat32Array(event.payload.samples);
-          const output = this.resampler?.process(input) ?? input;
-          if (output.length > 0) {
-            this.pump?.pushSamples(output);
-            this.pump?.flushPendingSamples();
-          }
-        } catch (error) {
-          this.addWarning(
-            `Gladia audio buffering failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      },
-    );
-    if (generation !== this.generation || this.finalized) {
-      unlisten();
-      return;
-    }
-    this.unlisten = unlisten;
-
     this.startupPromise = (async () => {
       try {
         const state = getAppState();
@@ -189,6 +158,23 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       }
     })();
     await this.startupPromise;
+  }
+
+  writeAudioChunk(input: Float32Array): void {
+    if (this.finalized || !this.resampler) return;
+    try {
+      const output = this.resampler?.process(input) ?? input;
+      if (output.length > 0) {
+        this.pump?.pushSamples(output);
+        this.pump?.flushPendingSamples();
+      }
+    } catch (error) {
+      this.addWarning(
+        `Gladia audio buffering failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async finalize(
@@ -266,8 +252,6 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
   cleanup(): void {
     this.generation++;
     this.finalized = true;
-    this.unlisten?.();
-    this.unlisten = null;
     this.session?.cleanup();
     this.session = null;
     this.readyResolve?.();

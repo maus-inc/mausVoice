@@ -31,6 +31,10 @@ export abstract class BaseApiTranscriptionSession implements TranscriptionSessio
   abstract onRecordingStart(sampleRate: number): Promise<void>;
   abstract supportsStreaming(): boolean;
 
+  writeAudioChunk(chunk: Float32Array): void {
+    this.streamSession?.writeAudioChunk?.(chunk);
+  }
+
   cleanup(): void {
     if (this.streamSession) {
       this.streamSession.cleanup();
