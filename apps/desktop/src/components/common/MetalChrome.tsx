@@ -15,14 +15,8 @@ export const METAL_CHROME_RESCUED_CLASS = "mv-metal-chrome--rescued";
  */
 export const METAL_CHROME_RESCUE_DELAY_MS = 1500;
 
-const findWrapper = (id: string): HTMLElement | null => {
-  for (const el of document.querySelectorAll<HTMLElement>(
-    `[${METAL_CHROME_ATTR}]`,
-  )) {
-    if (el.getAttribute(METAL_CHROME_ATTR) === id) return el;
-  }
-  return null;
-};
+const findWrapper = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[${METAL_CHROME_ATTR}="${id}"]`);
 
 /**
  * metal-fx keeps its wrapper at inline `visibility: hidden` until the WebGL
@@ -40,24 +34,71 @@ const useFirstFrameRescue = (id: string): boolean => {
   const [rescued, setRescued] = useState(false);
 
   useEffect(() => {
+    let stopped = false;
+    let detach: (() => void) | undefined;
+
+    // Takes ownership of a wrapper that exists now: watches its inline
+    // visibility and keeps one rescue timer armed for as long as the wrapper
+    // is hidden.
+    const attach = (el: HTMLElement) => {
+      const isHidden = () => el.style.visibility === "hidden";
+
+      let timer = 0;
+      const arm = () => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          if (isHidden()) setRescued(true);
+        }, METAL_CHROME_RESCUE_DELAY_MS);
+      };
+
+      let hidden = isHidden();
+      const observer = new MutationObserver(() => {
+        const nowHidden = isHidden();
+        // metal-fx revealed the wrapper (first frame, possibly late), so hand
+        // control straight back to it.
+        if (!nowHidden) {
+          hidden = false;
+          setRescued(false);
+          return;
+        }
+        // Hidden again after a reveal is a lost WebGL context or a GPU reset.
+        // The timer that armed the first rescue is long spent, so a new one is
+        // needed or the control stays invisible and unclickable.
+        if (!hidden) {
+          hidden = true;
+          arm();
+        }
+      });
+      observer.observe(el, { attributes: true, attributeFilter: ["style"] });
+      arm();
+
+      detach = () => {
+        window.clearTimeout(timer);
+        observer.disconnect();
+      };
+    };
+
     const el = findWrapper(id);
-    if (!el) return;
-    const isHidden = () => el.style.visibility === "hidden";
-
-    // If the library reveals the wrapper later (slow first frame), hand
-    // control straight back to it.
-    const observer = new MutationObserver(() => {
-      if (!isHidden()) setRescued(false);
-    });
-    observer.observe(el, { attributes: true, attributeFilter: ["style"] });
-
-    const timer = window.setTimeout(() => {
-      if (isHidden()) setRescued(true);
-    }, METAL_CHROME_RESCUE_DELAY_MS);
+    if (el) {
+      attach(el);
+    } else {
+      // metal-fx can render its wrapper after this effect runs. A missing
+      // wrapper is a first state, not a failure, so wait for the insertion
+      // instead of giving up on a lookup that only got asked once.
+      const pending = new MutationObserver(() => {
+        if (stopped) return;
+        const found = findWrapper(id);
+        if (!found) return;
+        pending.disconnect();
+        attach(found);
+      });
+      pending.observe(document.body, { childList: true, subtree: true });
+      detach = () => pending.disconnect();
+    }
 
     return () => {
-      window.clearTimeout(timer);
-      observer.disconnect();
+      stopped = true;
+      detach?.();
     };
   }, [id]);
 
