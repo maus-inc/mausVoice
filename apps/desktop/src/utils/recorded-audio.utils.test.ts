@@ -50,9 +50,54 @@ describe("decodeStopRecordingPayload", () => {
     expect(decodeStopRecordingPayload(new ArrayBuffer(2)).sampleRate).toBe(0);
   });
 
-  it("passes object payloads from the preview runtime through unchanged", () => {
+  it("decodes object payloads from the preview runtime", () => {
     const payload = { samples: [0.1, 0.2], sampleRate: 16_000 };
-    expect(decodeStopRecordingPayload(payload)).toBe(payload);
+    const decoded = decodeStopRecordingPayload(payload);
+    // Compared against f32-rounded values, because the decoder returns a
+    // Float32Array and 0.1 is not representable in one.
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.1, 0.2])),
+    );
+    expect(decoded.sampleRate).toBe(16_000);
+  });
+
+  it("copies a Float32Array so the caller cannot write back into the payload", () => {
+    const samples = new Float32Array([0.5]);
+    const decoded = decodeStopRecordingPayload({ samples, sampleRate: 16_000 });
+    decoded.samples[0] = 99;
+    expect(samples[0]).toBe(0.5);
+  });
+
+  it.each([
+    ["null", null],
+    ["a string", "nope"],
+    ["a number", 7],
+    ["a plain object", {}],
+    // Array-like but not an array: `Float32Array.from` would have produced
+    // `[NaN, NaN]` here, which is a recording of the wrong shape rather than an
+    // obvious failure.
+    ["an array-like object", { length: 2 }],
+  ])("rejects a samples field that is %s", (_label, samples) => {
+    // `{ samples: null }` is the shape that mattered: the decoder used to cast
+    // any object with a `samples` key, so this came back typed as a recording
+    // with null samples, and the first `.length` on it threw inside the stop
+    // handler's try block. A native stop that had already succeeded became
+    // "Failed to stop recording" and a null audio result.
+    const decoded = decodeStopRecordingPayload({ samples, sampleRate: 16_000 });
+    expect(decoded.samples).toHaveLength(0);
+    expect(decoded.sampleRate).toBe(0);
+  });
+
+  it.each([
+    ["a missing sampleRate", { samples: [0.1] }],
+    ["a string sampleRate", { samples: [0.1], sampleRate: "16000" }],
+    ["NaN", { samples: [0.1], sampleRate: Number.NaN }],
+  ])("decodes to an empty recording for %s", (_label, payload) => {
+    const decoded = decodeStopRecordingPayload(payload);
+    expect(decoded.sampleRate).toBe(0);
+    expect(Array.from(decoded.samples)).toEqual(
+      Array.from(new Float32Array([0.1])),
+    );
   });
 });
 

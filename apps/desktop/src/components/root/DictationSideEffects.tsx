@@ -817,7 +817,7 @@ export const DictationSideEffects = () => {
           invokeStopRecording(),
         ]);
         getLogger().verbose(
-          `Recording stopped (samples=${outAudio.samples.length})`,
+          `Recording stopped (samples=${outAudio?.samples?.length ?? 0})`,
         );
         return outAudio;
       } catch (error) {
@@ -1319,7 +1319,20 @@ export const DictationSideEffects = () => {
         // words of the dictation. A session that takes no live audio resolves
         // immediately, and a failure here is not fatal: the session falls back
         // to transcribing the whole recording at stop.
-        await session.onBeforeRecordingStart?.();
+        //
+        // The catch is what makes that last sentence true. The hook is optional
+        // and newly added to the interface, so an implementation is free to
+        // throw from it; without a guard here that rejection landed in the outer
+        // catch, which aborted the recording and showed "Recording failed" for a
+        // start that had not begun. It only behaved because the one local
+        // implementation happens to swallow its own errors.
+        try {
+          await session.onBeforeRecordingStart?.();
+        } catch (error) {
+          getLogger().warning(
+            `Pre-capture session setup failed, continuing without it: ${error}`,
+          );
+        }
         if (!isCurrentStart()) {
           session.cleanup();
           return;
