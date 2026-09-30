@@ -355,13 +355,14 @@ describe("postProcessTranscript fast local style", () => {
 
     spy.mockRestore();
     expect(result.metadata.postProcessMode).toBe("fast");
-    expect(result.metadata.fastStyleTruncatedChars).toBe(
-      overCap.length - FAST_STYLE_MAX_INPUT_CHARS,
-    );
+    // Measured against the trimmed length, because that is the string
+    // `applyFastStyle` truncates. This input ends in a space, so the two differ
+    // by one and the reported number has to be the count of characters that were
+    // actually dropped rather than the raw length.
+    const dropped = overCap.trim().length - FAST_STYLE_MAX_INPUT_CHARS;
+    expect(result.metadata.fastStyleTruncatedChars).toBe(dropped);
     expect(result.warnings.join(" ")).toContain("left unstyled");
-    expect(result.warnings.join(" ")).toContain(
-      String(overCap.length - FAST_STYLE_MAX_INPUT_CHARS),
-    );
+    expect(result.warnings.join(" ")).toContain(String(dropped));
   });
 
   it("records the dropped count on the fast fallback path after a provider failure", async () => {
@@ -379,8 +380,9 @@ describe("postProcessTranscript fast local style", () => {
     // provider-less branch.
     expect(result.metadata.postProcessFallback).toBe(true);
     expect(result.metadata.postProcessMode).toBe("fast");
+    // Trimmed, for the same reason as the no-provider case above.
     expect(result.metadata.fastStyleTruncatedChars).toBe(
-      overCap.length - FAST_STYLE_MAX_INPUT_CHARS,
+      overCap.trim().length - FAST_STYLE_MAX_INPUT_CHARS,
     );
     expect(result.warnings.join(" ")).toContain("left unstyled");
   });
