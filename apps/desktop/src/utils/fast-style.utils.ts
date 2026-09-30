@@ -72,9 +72,15 @@ const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 // "You know it works." and "He said, you know it works." use "you know" as the
 // subject of a clause, and "You know what I mean." is a filler whose tail is a
 // real clause, so the words after the phrase are what separate the two.
-// End-of-text keeps the trailing marker: "I know the answer is out there, you
-// know" is a filler, and nothing follows it to disagree.
-const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|$)/gi;
+// End-of-text or a full stop keeps the trailing marker: "I know the answer is
+// out there, you know" and "I know the answer, you know." are both fillers, and
+// nothing follows them to disagree.
+// The tail accepts sentence-final punctuation as well as a comma or the end of
+// the text, because "I know the answer, you know." ends the sentence there just
+// as "..., you know" does. Only punctuation that closes the phrase counts: the
+// word after the marker still has to be nothing, a comma, or end of text, so
+// "He said, you know it works." keeps its "you know" as the subject.
+const EXTRA_FILLER_RE = /(?:^|,\s*)you know\b\s*(?:,\s*|[.!?]+|$)/gi;
 const EXTRA_FILLER_COMMA_RE = /(?:^|\s)(?:I mean|so|well)\s*,\s*/gi;
 const SO_WELL_LEADING_RE = /^(?:so|well|yeah|okay|ok)\b[,\s]*/i;
 

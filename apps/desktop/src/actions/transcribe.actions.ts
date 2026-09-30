@@ -508,6 +508,12 @@ const recordFastStyleTruncation = (
   warnings.push(
     getIntl().formatMessage(
       {
+        // Without an explicit id the descriptor cannot resolve: `intl.ts` falls
+        // back to using the English default message as the id, and the catalogs
+        // key on the id the extractor generates from that message, so the lookup
+        // missed and every locale got the English warning. The translations were
+        // already there, under the id below.
+        id: "dictation_was_longer_than_fast_styling_allows_droppedchars_c",
         defaultMessage:
           "Dictation was longer than fast styling allows. {droppedChars} characters at the end were left unstyled. The full text is saved in History.",
       },

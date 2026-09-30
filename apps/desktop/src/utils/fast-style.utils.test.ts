@@ -219,6 +219,23 @@ describe("applyFastStyle fast local transforms", () => {
     }
   });
 
+  it("removes a trailing 'you know' closed by a full stop", () => {
+    // "..., you know" was already treated as a filler at end of text, but
+    // "..., you know." was not, because the tail only accepted a comma or the
+    // end of the string. A full stop closes the phrase just as well.
+    const styled = applyFastStyle("I know the answer, you know.", "default");
+    expect(styled.toLowerCase()).not.toContain("you know");
+  });
+
+  it.each([
+    ["a question mark", "I know the answer, you know?"],
+    ["an exclamation mark", "I know the answer, you know!"],
+  ])("removes a trailing 'you know' closed by %s", (_label, raw) => {
+    expect(applyFastStyle(raw, "default").toLowerCase()).not.toContain(
+      "you know",
+    );
+  });
+
   it("keeps 'you know' as the subject of the sentence it opens", () => {
     // Regression: the filler guard used to accept a full stop as an anchor, so
     // "You know" starting a sentence lost its subject and the tail of that
