@@ -399,6 +399,75 @@ describe("postProcessFinalizedTranscript", () => {
     expect(order).toEqual(["handleTranscript", "idle", "store", "refresh"]);
   });
 
+  it("does not store a transcript the review already persisted", async () => {
+    // The review callback wrote the row, so storing here would be a second
+    // transcription of the same utterance.
+    const { input, storeTranscriptionFn } = buildInput();
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(async () => ({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+        historyOwner: "review" as const,
+      })),
+    };
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+  });
+
+  it("does not store a transcript the review left on the pill to retry from", async () => {
+    // The failure toast told the user the transcript is still on the pill to
+    // retry from. Storing it here anyway would contradict that and leave the
+    // retry writing a duplicate row.
+    const { input, storeTranscriptionFn } = buildInput();
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(async () => ({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+        historyOwner: "pill" as const,
+      })),
+    };
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).not.toHaveBeenCalled();
+  });
+
+  it("stores a transcript the strategy left unowned", async () => {
+    // The no-review path: nothing was written, so this is the only write.
+    const { input, storeTranscriptionFn } = buildInput();
+    input.strategy = {
+      ...input.strategy,
+      handleTranscript: vi.fn(async () => ({
+        shouldContinue: false,
+        transcript: "hello world",
+        sanitizedTranscript: "hello world",
+        postProcessMetadata: {},
+        postProcessWarnings: [],
+        remoteStatus: null,
+        remoteDeviceId: null,
+        historyOwner: "stop-path" as const,
+      })),
+    };
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(storeTranscriptionFn).toHaveBeenCalledTimes(1);
+  });
+
   it("propagates a post-processing failure without sending idle or persisting", async () => {
     const {
       input,

@@ -14,6 +14,7 @@ import type { OverlayPhase } from "../types/overlay.types";
 import type {
   HandleTranscriptParams,
   HandleTranscriptResult,
+  HistoryOwner,
   StrategyValidationError,
 } from "../types/strategy.types";
 import { getLogger } from "../utils/log.utils";
@@ -368,7 +369,7 @@ export class DictationStrategy extends BaseStrategy {
     let postProcessMetadata: PostProcessMetadata = {};
     let postProcessWarnings: string[] = [];
     let remoteStatus: "sent" | null = null;
-    let historyPersisted = false;
+    let historyOwner: HistoryOwner = "stop-path";
     const remoteDeviceId = this.getActiveRemoteTargetDeviceId();
 
     try {
@@ -458,12 +459,17 @@ export class DictationStrategy extends BaseStrategy {
             // persist now so the exact edit becomes durable as soon as it lands.
             transcript = result.deliveredText;
             if (args.persistReviewedTranscript) {
-              historyPersisted = await args.persistReviewedTranscript({
+              // A failure leaves the transcript on the pill, which the toast
+              // tells the user to retry from, so the row is the pill's from here
+              // either way. Only the distinction decides who may write it.
+              historyOwner = (await args.persistReviewedTranscript({
                 transcript,
                 sanitizedTranscript,
                 postProcessMetadata,
                 postProcessWarnings,
-              });
+              }))
+                ? "review"
+                : "pill";
             }
           }
           if (result.remote && result.delivered) {
@@ -504,7 +510,7 @@ export class DictationStrategy extends BaseStrategy {
       postProcessWarnings,
       remoteStatus,
       remoteDeviceId: remoteStatus ? remoteDeviceId : null,
-      historyPersisted,
+      historyOwner,
     };
   }
 

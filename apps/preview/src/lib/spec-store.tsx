@@ -210,12 +210,16 @@ export const PaletteOverrideStyle = () => {
   const css = useMemo(() => {
     const { light, dark } = collectPaletteDecls(overrides);
     if (light.length === 0 && dark.length === 0) return "";
-    // Broad selectors: MUI's configured colorSchemeSelector is the
-    // `data-mui-color-scheme` attribute; cover :root + attribute forms so the
-    // override wins regardless of which node carries the scheme.
+    // MUI emits the light scheme on `:root, [data-mui-color-scheme="light"]`
+    // and the dark scheme on `[data-mui-color-scheme="dark"]` alone, all at
+    // the same specificity, so the two are separated purely by source order —
+    // and this <style> mounts after MUI's sheet. A bare `:root` here therefore
+    // outranks the dark scheme in dark mode, so exclude the node that carries
+    // it. `:root` alone still covers the pre-attribute first paint, where the
+    // dark block does not match either.
     return [
       light.length > 0
-        ? `:root, [data-mui-color-scheme="light"], html[data-mui-color-scheme="light"] body { ${light.join(" ")} }`
+        ? `:root:not([data-mui-color-scheme="dark"]), [data-mui-color-scheme="light"], html[data-mui-color-scheme="light"] body { ${light.join(" ")} }`
         : "",
       dark.length > 0
         ? `[data-mui-color-scheme="dark"], html[data-mui-color-scheme="dark"] body { ${dark.join(" ")} }`

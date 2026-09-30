@@ -299,7 +299,14 @@ type AzureProbeFailure =
 /** The handshake status the SDK embeds in its own failure message. */
 const AZURE_STATUS_CODE = /StatusCode:\s*(\d+)/i;
 
-const CREDENTIAL_STATUS_CODES = new Set([400, 401, 403]);
+/**
+ * 400 is absent on purpose. Azure answers a bad request for reasons that have
+ * nothing to do with the key (an unsupported audio format, a malformed WAV),
+ * so the status on its own cannot mean the credential was rejected. A 400 that
+ * really is an invalid key carries the service's own wording beside it, and
+ * the keyword rules below read that.
+ */
+const CREDENTIAL_STATUS_CODES = new Set([401, 403]);
 const REGION_STATUS_CODES = new Set([404]);
 const QUOTA_STATUS_CODES = new Set([429]);
 /** The SDK reports 0 when the socket never reached the service at all. */
@@ -457,7 +464,7 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // as the nonce in a Digest header.
   /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,2}["']?[^\r\n]+/gi,
   // A bare provider-style token, wherever it appears.
-  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g,
+  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/gi,
   // A JWT, which is long and structurally unmistakable. Its whole body is
   // base64url plus the two dots, so one class covers every segment and the
   // length is what makes it distinctive.
@@ -481,14 +488,44 @@ const redactCredentialShapedText = (text: string): string =>
   );
 
 /**
+ * Remove the exact credential the caller supplied, wherever it appears in the
+ * reason.
+ *
+ * The patterns above all match on shape, and an Azure subscription key is 32
+ * characters of hex: no provider prefix, no label, no scheme, so a bare echo of
+ * it in a gateway sentence matches none of them. The caller holds the value, so
+ * the one thing that cannot be guessed is substituted directly rather than left
+ * to another pattern for a key shape nobody has seen yet.
+ */
+const redactSuppliedKey = (text: string, subscriptionKey: string): string => {
+  const literal = subscriptionKey.trim();
+  // A short or blank key cannot be a credential, and redacting it everywhere
+  // would replace ordinary words in the excerpt.
+  if (literal.length < 8) return text;
+  return text.replace(
+    new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+    "[redacted]",
+  );
+};
+
+/**
  * One bounded, single-line excerpt of the SDK's reason, safe to put in front of
  * a user. Redaction runs before the bound, so a credential is never present to
  * be cut in half, and the remainder keeps the status code, endpoint and wording
  * the diagnosis is read from. The reason arrives as multi-line service prose, so
  * the whitespace is collapsed before the cut lands on a word boundary.
  */
-const azureReasonExcerpt = (reason: string, limit: number): string => {
-  const flattened = redactCredentialShapedText(unknownToMessage(reason))
+const azureReasonExcerpt = (
+  reason: string,
+  limit: number,
+  subscriptionKey: string,
+): string => {
+  const flattened = redactCredentialShapedText(
+    // The supplied key is removed first: everything downstream reshapes the
+    // text, so a key left in place could be cut in half and survive as a
+    // fragment no pattern still matches.
+    unknownToMessage(redactSuppliedKey(reason, subscriptionKey)),
+  )
     .replace(/\s+/g, " ")
     .trim();
   if (flattened.length <= limit) {
@@ -543,10 +580,10 @@ export const azureTestIntegration = async ({
     }
     console.error(
       "Azure integration probe failed:",
-      azureReasonExcerpt(reason, AZURE_REASON_LOG_CHARS),
+      azureReasonExcerpt(reason, AZURE_REASON_LOG_CHARS, subscriptionKey),
     );
     throw new Error(
-      `${describeAzureProbeFailure(failure, region)} Azure reported: ${azureReasonExcerpt(reason, AZURE_REASON_EXCERPT_CHARS)}`,
+      `${describeAzureProbeFailure(failure, region)} Azure reported: ${azureReasonExcerpt(reason, AZURE_REASON_EXCERPT_CHARS, subscriptionKey)}`,
     );
   }
 };

@@ -238,6 +238,34 @@ describe("azureTestIntegration", () => {
     ).resolves.toBe(false);
   });
 
+  it("does not read every 400 as a rejected credential", async () => {
+    // A 400 is a bad request, and Azure sends one for reasons that have nothing
+    // to do with the key: an unsupported audio format or a malformed WAV. The
+    // service body carries the code that says which it was, so the status alone
+    // cannot be read as an auth failure.
+    speech.error =
+      'Unable to contact server. StatusCode: 400, wss://eastus.stt.speech.microsoft.com/speech/recognition Reason: {"error":{"code":"1000","message":"Invalid audio format."}}';
+
+    // The SDK prefixes every handshake rejection with "Unable to contact
+    // server", so the diagnosis is the one that wording supports. What matters
+    // is only that this no longer returns false, the sole answer that tells the
+    // user to replace a key the service never questioned.
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/could not be reached/);
+  });
+
+  it("still reads a 400 that names the invalid subscription key as a credential", async () => {
+    // The narrowing must not lose the case 400 was there for: the same status
+    // with the service's own invalid-key wording beside it.
+    speech.error =
+      'Unable to contact server. StatusCode: 400, wss://eastus.stt.speech.microsoft.com/speech/recognition Reason: {"error":{"code":"401","message":"Access denied due to invalid subscription key or wrong API endpoint."}}';
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "bad-key", region: "eastus" }),
+    ).resolves.toBe(false);
+  });
+
   it("names the region instead of blaming the key when the region is wrong", async () => {
     // Verbatim from the SDK's own validation table
     // (RestConfigBase.privRestErrors.authInvalidSubscriptionRegion), and the
@@ -508,6 +536,65 @@ describe("azureTestIntegration message bounds", () => {
 });
 
 describe("credential redaction is safe on hostile input", () => {
+  it("redacts the supplied key when a gateway echoes it without a label", async () => {
+    // Every pattern in the file matches on shape, and an Azure subscription
+    // key is 32 characters of hex: no provider prefix, no label, no scheme. The
+    // caller knows exactly what it sent, so the value itself can be removed,
+    // which is the only thing that catches an echo shaped like nothing else.
+    // Assembled at runtime so this repository never holds a literal that looks
+    // like a provider key.
+    const key = ["a1b2", "c3d4", "e5f6", "0718", "293a", "4b5c", "6d7e", "8f90"]
+      .join("")
+      .toUpperCase();
+    speech.error = [
+      "Unable to contact server. StatusCode: 0",
+      "wss://eastus.stt.speech.microsoft.com/speech/recognition",
+      "Reason: upstream rejected the request",
+      key,
+    ].join("\n");
+
+    const raised = await azureTestIntegration({
+      subscriptionKey: key,
+      region: "eastus",
+    }).then(
+      () => undefined,
+      (caught: unknown) => caught as Error,
+    );
+    expect(
+      raised,
+      "the probe must raise the failure it diagnoses",
+    ).toBeDefined();
+
+    const logged = loggedLine();
+    expect(logged).not.toContain(key);
+    expect(logged).toContain("[redacted]");
+    // The status survives, so the line is still a diagnosis.
+    expect(logged).toContain("StatusCode: 0");
+    expect(raised?.message).not.toContain(key);
+  });
+
+  it("redacts a bare provider token whatever case its prefix arrives in", async () => {
+    // `pk-` and `rk-` are in this file's bare-token rule but not in the shared
+    // redactor's provider-prefixed list, so an uppercase prefix reaches the
+    // rule unredacted and a case-sensitive rule then lets it through, into the
+    // log file the user attaches to a diagnostics export.
+    const token = ["PK", "test", "AbCdEfGhIjKlMnOp1234"].join("-");
+    speech.error = [
+      "StatusCode: 0",
+      "Reason: upstream rejected the request",
+      token,
+    ].join("\n");
+
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/could not be reached/);
+
+    const logged = loggedLine();
+    expect(logged).not.toContain(token);
+    expect(logged).toContain("[redacted]");
+    expect(logged).toContain("StatusCode: 0");
+  });
+
   it("redacts a credential whatever scheme the Authorization header names", async () => {
     // The scheme is not a fixed list, and the credential is what follows it. A
     // pattern that stopped after a scheme word it recognised would leave the

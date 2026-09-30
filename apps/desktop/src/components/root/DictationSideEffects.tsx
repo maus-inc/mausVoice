@@ -51,6 +51,7 @@ import {
   stopNativeRecordingForAbort,
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
+import { createSystemVolumeDim } from "./dictation-volume-dim";
 import type {
   OverlayPhase,
   OverlayResolvePermissionPayload,
@@ -338,8 +339,14 @@ export const postProcessFinalizedTranscript = async (
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
   await input.sendIdle();
+  // "stop-path" is the default: a strategy that never went through review
+  // persisted nothing, so this is the only place the row gets written. A
+  // review that reported an owner already wrote it, or is holding it on the
+  // pill after a failure it told the user to retry from. Writing here in that
+  // last case would contradict the toast and duplicate the row on the retry.
   const willStore =
-    strategy.shouldStoreTranscript() && !result.historyPersisted;
+    strategy.shouldStoreTranscript() &&
+    (result.historyOwner ?? "stop-path") === "stop-path";
   if (willStore) {
     getLogger().verbose("Storing transcription");
     await input.storeTranscriptionFn({
@@ -567,47 +574,13 @@ export const DictationSideEffects = () => {
     [additionalLanguageEntries, revealPillForActivityIfHidden],
   );
 
-  const restoreSystemVolume = useCallback(() => {
-    const savedVolume = preDictationVolumeRef.current;
-    preDictationVolumeRef.current = null;
-    if (savedVolume !== null) {
-      invoke("set_system_volume", { volume: savedVolume }).catch((e) =>
-        getLogger().verbose(`Failed to restore system volume: ${e}`),
-      );
-    }
-  }, []);
-
-  const dimSystemVolume = useCallback(
-    async (operationId: number) => {
-      const dimLevel = getAppState().userPrefs?.dictationAudioDim ?? 1.0;
-      if (dimLevel >= 1.0) return;
-
-      try {
-        const currentVolume = await invoke<number>("get_system_volume");
-        // Stopping can land while this read is in flight. The volume to restore
-        // is only known once it returns, so a stop in that window has nothing to
-        // put back and the dim would then apply with no restore ever following
-        // it, leaving system audio dimmed for the rest of the session.
-        if (operationId !== recordingOperationRef.current) {
-          getLogger().verbose(
-            "Skipping volume dim: a newer recording took over before it applied",
-          );
-          return;
-        }
-        preDictationVolumeRef.current = currentVolume;
-        const dimmedVolume = currentVolume * dimLevel;
-        await invoke("set_system_volume", { volume: dimmedVolume });
-        // And a stop that lands while the write is in flight is honoured here,
-        // for the same reason: the dim has now taken effect and nothing else
-        // will take it back.
-        if (operationId !== recordingOperationRef.current) {
-          restoreSystemVolume();
-        }
-      } catch (e) {
-        getLogger().verbose(`Failed to dim system volume: ${e}`);
-      }
-    },
-    [restoreSystemVolume],
+  const systemVolumeDim = useMemo(
+    () =>
+      createSystemVolumeDim({
+        preDimVolumeRef: preDictationVolumeRef,
+        getDimLevel: () => getAppState().userPrefs?.dictationAudioDim ?? 1.0,
+      }),
+    [],
   );
 
   const clearUserRecordingTimers = useCallback(() => {
@@ -644,14 +617,14 @@ export const DictationSideEffects = () => {
       // Invalidate the operation token first so an in-flight start tail cannot
       // arm timers or dim the volume after teardown.
       recordingOperationRef.current += 1;
-      restoreSystemVolume();
+      systemVolumeDim.endRecording();
       releaseRecordingResources({
         audioChunkUnlistenRef,
         sessionRef,
         strategyRef,
       });
     };
-  }, []);
+  }, [systemVolumeDim]);
 
   const clearCancelPromptTimer = useCallback(() => {
     if (cancelPromptTimerRef.current) {
@@ -771,17 +744,17 @@ export const DictationSideEffects = () => {
   const abortRecording = useCallback(
     async (message?: AbortMessage) => {
       const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
-      // Capture and release the native-start claim. A newer start that claims
-      // ownership after this point owns the stream, so this abort must not
-      // stop it; a still-pending abort only stops the stream it was tearing down.
+      // Invalidate the operation token first, so an in-flight start tail cannot
+      // act on a recording that is over, and end the dim, so a volume write
+      // already in flight cannot apply after this returns.
       recordingOperationRef.current += 1;
+      systemVolumeDim.endRecording();
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
       );
       clearRecordingTimers();
       clearCancelPromptTimer();
       hardResetHotkeyState();
-      restoreSystemVolume();
       releaseAudioIntake(ownedAudioChunkUnlisten);
       // Before the `sendPhaseToPill` await, and with no await of its own between
       // taking the claim and releasing the stream. See
@@ -835,8 +808,8 @@ export const DictationSideEffects = () => {
       clearUtteranceToneSnapshots,
       hardResetHotkeyState,
       releaseAudioIntake,
-      restoreSystemVolume,
       sendPhaseToPill,
+      systemVolumeDim,
       intl,
     ],
   );
@@ -1061,7 +1034,13 @@ export const DictationSideEffects = () => {
     const ownedAudioChunkUnlisten = audioChunkUnlistenRef.current;
     getLogger().info("Stopping recording");
     clearRecordingTimers();
-    restoreSystemVolume();
+    // The recording is over from here, so the dim is ended now rather than after
+    // transcription finishes below. A dim this recording started can still be in
+    // flight: it reads the system volume and writes the dimmed one, and a stop
+    // landing between the two has nothing to put back. Ending the dim here is
+    // what makes that dim give up, so it cannot apply after the stop with no
+    // restore following it.
+    systemVolumeDim.endRecording();
 
     try {
       const { audio, context } = await captureStopRecordingInfo();
@@ -1096,8 +1075,8 @@ export const DictationSideEffects = () => {
     clearRecordingTimers,
     clearUtteranceToneSnapshots,
     finalizeAndPostProcess,
-    restoreSystemVolume,
     sendPhaseToPill,
+    systemVolumeDim,
     intl,
   ]);
 
@@ -1149,7 +1128,9 @@ export const DictationSideEffects = () => {
       }
     } finally {
       // Invalidate the operation token so an in-flight start tail can never arm
-      // timers or dim the volume after this recording has already ended.
+      // timers for this recording now that it has ended. The dim is not guarded
+      // by this token: it retired at the top of `stopRecordingRaw`, where a stop
+      // becomes a stop rather than waiting for transcription first.
       recordingOperationRef.current += 1;
       // Timers must be cleared even when the transcribe chain fails or the
       // watchdog fires, so no stale auto-stop can fire into the next session.
@@ -1546,9 +1527,10 @@ export const DictationSideEffects = () => {
         // activation controller serialises activate before deactivate, so
         // awaiting here would put the volume round trips in front of the stop
         // that the user's key release triggers, keeping the microphone open past
-        // release. `dimSystemVolume` guards itself on `operationId`, so an abort
-        // landing mid-dim is still handled without awaiting.
-        void dimSystemVolume(operationId);
+        // release. The dim retires itself on its own operation id, and every stop
+        // path ends it before awaiting anything, so a stop landing mid-dim is
+        // handled without awaiting.
+        void systemVolumeDim.dim(operationId);
       } catch (error) {
         handleStartFailure(error, activeSession, operationId);
       }
@@ -1557,13 +1539,13 @@ export const DictationSideEffects = () => {
       abortRecording,
       clearRecordingState,
       clearRecordingTimers,
-      dimSystemVolume,
       handleStartFailure,
       prepareAutoStyle,
       hardResetHotkeyState,
       intl,
       startProviderRecordingTimers,
       startUserRecordingTimers,
+      systemVolumeDim,
     ],
   );
 
@@ -1808,9 +1790,9 @@ export const DictationSideEffects = () => {
 
     // Stop the microphone/transcription without tearing down the assistant panel
     recordingOperationRef.current += 1;
+    systemVolumeDim.endRecording();
     clearRecordingTimers();
     hardResetHotkeyState();
-    restoreSystemVolume();
     releaseAudioIntake();
     invoke<void>("set_phase", { phase: "idle" }).catch(console.error);
     invoke("stop_recording").catch((e) =>

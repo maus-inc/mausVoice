@@ -319,8 +319,40 @@ describe("DictationStrategy backlog lifecycle", () => {
     );
     expect(result).toMatchObject({
       transcript: "edited in the pill",
-      historyPersisted: true,
+      historyOwner: "review",
     });
+  });
+
+  it("reports the review as the row's owner when its persistence failed", async () => {
+    // The failure toast tells the user the transcript is still on the pill to
+    // retry from, so the row is the pill's. Reporting it as unowned would let
+    // the stop path write it too, and the retry would duplicate it.
+    const persistReviewedTranscript = vi.fn().mockResolvedValue(false);
+    routeTranscriptOutputMock.mockResolvedValueOnce({
+      delivered: true,
+      remote: false,
+      deliveredText: "edited in the pill",
+    });
+
+    const result = await new DictationStrategy().handleTranscript(
+      createHandleTranscriptParams({
+        processedTranscript: "clean transcript",
+        persistReviewedTranscript,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      transcript: "edited in the pill",
+      historyOwner: "pill",
+    });
+  });
+
+  it("leaves the row to the stop path when no review edit was made", async () => {
+    const result = await new DictationStrategy().handleTranscript(
+      createHandleTranscriptParams({ processedTranscript: "clean transcript" }),
+    );
+
+    expect(result).toMatchObject({ historyOwner: "stop-path" });
   });
 
   it("uses the text inserted after review as the History transcript", async () => {

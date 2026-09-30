@@ -85,6 +85,86 @@ describe("secureFetch", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it("refuses a later redirect hop that downgrades HTTPS to plain HTTP", async () => {
+    pluginFetchMock
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "http://attacker.example/collect" },
+        }),
+      );
+
+    await expect(
+      secureFetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: "Bearer secret" },
+      }),
+    ).rejects.toThrow(
+      "Refusing redirect from HTTPS to insecure protocol: http:",
+    );
+    // Two hops were requested, not one: the downgrade hid behind the second
+    // hop, so a fix that only validated the first redirect still fails here.
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks plugin-http to follow no redirects itself on every hop", async () => {
+    pluginFetchMock.mockResolvedValue(new Response("ok"));
+
+    await secureFetch("https://api.openai.com/v1/models");
+
+    // plugin-http ignores RequestInit.redirect and forwards only
+    // maxRedirections to reqwest, so a hop is only observable — and therefore
+    // only checkable — when that value is 0.
+    expect(
+      pluginFetchMock.mock.calls.map(([, options]) => options?.maxRedirections),
+    ).toEqual([0]);
+  });
+
+  it("follows every hop of an all-HTTPS chain instead of returning hop one", async () => {
+    pluginFetchMock
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://api.openai.com/v1/hop-3" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("ok"));
+
+    const response = await secureFetch("https://api.openai.com/v1/models");
+
+    expect(await response.text()).toBe("ok");
+    expect(pluginFetchMock.mock.calls.map(([input]) => input)).toEqual([
+      "https://api.openai.com/v1/models",
+      "https://api.openai.com/v1/hop-2",
+      "https://api.openai.com/v1/hop-3",
+    ]);
+  });
+
+  it("stops a redirect cycle instead of following it without bound", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/loop" },
+      }),
+    );
+
+    await expect(
+      secureFetch("https://api.openai.com/v1/models"),
+    ).rejects.toThrow(/redirect/i);
+    expect(pluginFetchMock.mock.calls.length).toBeLessThanOrEqual(21);
+  });
+
   it("preserves every byte value in a private-network response body", async () => {
     const bytes = Uint8Array.from({ length: 256 }, (_, index) => index);
     invokeMock.mockResolvedValue({

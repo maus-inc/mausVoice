@@ -58,6 +58,61 @@ describe("countDictationOccurrences as the containment gate", () => {
     );
     expect(holds("Ralph", "Ralphson")).toBe(false);
   });
+
+  // A dictation whose tokens repeat ("very very good") matches itself at
+  // overlapping offsets, so the scan counts one run per matching offset rather
+  // than per copy. That is deliberate: the count is a containment signal and a
+  // paste-detection delta, never a tally of copies to subtract, and a copy is
+  // only ever told apart by the count rising. Deduplicating overlapping runs
+  // would make a self-overlapping dictation report the same count before and
+  // after its own paste landed, so the baseline would stay on the pre-paste read
+  // and the correction to the pasted copy would never be learned.
+  describe("a dictation that matches itself at overlapping offsets", () => {
+    it("still gates on containment rather than on the number of copies", () => {
+      expect(holds("very very good", "some notes very very good here")).toBe(
+        true,
+      );
+      expect(holds("very very good", "very good very good")).toBe(false);
+    });
+
+    it("counts the overlapping runs so a paste raises the count", () => {
+      // "very very good" matches at offsets 0 and 1 of the pasted field.
+      const beforePaste = countDictationOccurrences(
+        "very very good",
+        "notes very very good",
+      );
+      const afterPaste = countDictationOccurrences(
+        "very very good",
+        "notes very very good very very good",
+      );
+
+      expect(beforePaste).toBeGreaterThan(0);
+      expect(afterPaste).toBeGreaterThan(beforePaste);
+    });
+
+    it("learns a correction to a self-overlapping dictation's only copy", () => {
+      // The overlap must not make the pre-existing copy look like a paste, and
+      // it must not stop the pasted copy from being compared. Only a proper
+      // noun is learnable, so the correction capitalizes.
+      expect(
+        find({
+          insertedText: "call Ralph very very good",
+          baselineText: "call Ralph very very good",
+          fieldText: "call Ralph very very Great",
+        }),
+      ).toEqual(["Great"]);
+    });
+
+    it("does not learn from a self-overlapping dictation the field never got", () => {
+      expect(
+        find({
+          insertedText: "very very good",
+          baselineText: "Draft note very very good",
+          fieldText: "DRAFT note very very good",
+        }),
+      ).toEqual([]);
+    });
+  });
 });
 
 describe("countDictationOccurrences", () => {

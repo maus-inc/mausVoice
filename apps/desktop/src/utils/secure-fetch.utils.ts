@@ -40,6 +40,9 @@ const MAX_PRIVATE_HTTP_REQUEST_BYTES = 128 * 1024 * 1024;
 const privateHttpRequestLimitError = (): RangeError =>
   new RangeError("Private-network request body exceeds the 128 MiB limit");
 
+// The Fetch standard's redirect limit, so a hand-walked chain cannot loop.
+const MAX_HTTPS_REDIRECTS = 20;
+
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 
@@ -279,6 +282,50 @@ const invokeHttpRequest = async (
 };
 
 /**
+ * Walk an HTTPS redirect chain one hop at a time, refusing any hop that leaves
+ * HTTPS. The chain has to be walked here rather than handed back to
+ * plugin-http: the plugin ignores `RequestInit.redirect` and forwards only
+ * `maxRedirections` to reqwest, and its capability scope is checked against
+ * the *first* URL only. So every hop asks for zero redirects, which is what
+ * makes each hop observable and therefore checkable, and a later
+ * HTTPS → HTTP hop is refused instead of replaying the caller's headers —
+ * Authorization included — in clear text.
+ */
+const followHttpsRedirects = async (
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  startUrl: URL,
+): Promise<Response> => {
+  let current: RequestInfo | URL = input;
+  let currentUrl = startUrl;
+  for (let hop = 0; hop <= MAX_HTTPS_REDIRECTS; hop += 1) {
+    const response = await tauriFetch(current, {
+      ...init,
+      maxRedirections: 0,
+    });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    // A 3xx with no Location cannot be followed, so surface it as-is rather
+    // than re-issuing the same request against a server that would answer
+    // identically.
+    if (!location) return response;
+    const targetUrl = new URL(location, currentUrl);
+    if (targetUrl.protocol !== "https:") {
+      throw new TypeError(
+        `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
+      );
+    }
+    current = targetUrl.href;
+    currentUrl = targetUrl;
+  }
+  // The Fetch standard caps redirect chains at 20 hops; a cycle would
+  // otherwise spin here forever.
+  throw new TypeError(
+    `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
+  );
+};
+
+/**
  * Fetch through the plugin for curated HTTPS providers, but route plaintext
  * user-configured endpoints through a Rust command that parses hosts as real IP
  * addresses and accepts only loopback/RFC1918/unique-local/.local targets on
@@ -316,21 +363,7 @@ export const secureFetch: typeof globalThis.fetch = async (input, init) => {
     if (redirectMode === "manual" || redirectMode === "error") {
       return tauriFetch(input, { ...init, redirect: redirectMode });
     }
-    const response = await tauriFetch(input, { ...init, redirect: "manual" });
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (location) {
-        const targetUrl = new URL(location, url);
-        if (targetUrl.protocol !== "https:") {
-          throw new TypeError(
-            `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
-          );
-        }
-        return tauriFetch(targetUrl.href, init);
-      }
-      return tauriFetch(input, init);
-    }
-    return response;
+    return followHttpsRedirects(input, init, url);
   }
   // Reject unsupported schemes (e.g. file:, data:) rather than forwarding
   // them to plugin-http which may interpret them unexpectedly.
