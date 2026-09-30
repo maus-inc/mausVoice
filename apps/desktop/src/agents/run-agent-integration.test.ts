@@ -474,8 +474,15 @@ describe("runAgent replay filter and unfinished tool turns", () => {
           toolCallId?: string;
         }>
       | undefined;
-    expect(sent, "the agent never reached the provider loop").toBeDefined();
-    const contents = sent!.map((m) => m.content);
+    // A real narrowing rather than `expect(...).toBeDefined()` plus `!`. The
+    // assertion does not narrow the type, so the `!` it needed was a claim the
+    // compiler could not check, and DeepScan reported the access as a null
+    // dereference on exactly that basis. Throwing narrows for real, keeps the
+    // failure message, and drops four `!` assertions from this file.
+    if (!sent) {
+      throw new Error("the agent never reached the provider loop");
+    }
+    const contents = sent.map((m) => m.content);
 
     expect(contents).toContain("finished turn");
     expect(
@@ -485,10 +492,10 @@ describe("runAgent replay filter and unfinished tool turns", () => {
     // And the finished call's result is still there, so the filter is not simply
     // dropping every tool turn.
     expect(
-      sent!.some((m) => m.role === "tool" && m.toolCallId === "call-done"),
+      sent.some((m) => m.role === "tool" && m.toolCallId === "call-done"),
     ).toBe(true);
     // No `tool` message exists for the pending call, so none may be invented.
-    expect(sent!.some((m) => m.toolCallId === "call-pending")).toBe(false);
+    expect(sent.some((m) => m.toolCallId === "call-pending")).toBe(false);
   });
 });
 
@@ -594,11 +601,16 @@ describe("runAgent supersession while a tool result is being written", () => {
     // The write was issued, then withdrawn, and the id it used is the one removed.
     const issued = getChatMessageRepoCreateMock.mock.calls[0]?.[0] as
       { id: string } | undefined;
-    expect(issued, "no tool result was persisted").toBeDefined();
+    // Real narrowing for the same reason as the `sent` binding above: an
+    // assertion cannot satisfy a nullability check, so the `!` it needed was
+    // itself what DeepScan flagged.
+    if (!issued) {
+      throw new Error("no tool result was persisted");
+    }
     // The mock stands in for the repository method, which `deleteChatMessages`
     // calls with the id list alone; the conversation id is only used to prune
     // state.
-    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued!.id]);
+    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued.id]);
 
     const verbose = loggerMock.verbose.mock.calls.map((c) => String(c[0]));
     expect(
