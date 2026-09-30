@@ -89,11 +89,17 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   async onBeforeRecordingStart(): Promise<void> {
     this.cleanup();
     try {
-      // Prepare the model before subscribing. A cold start or a download then
-      // happens while the chunks are already buffered, instead of stalling
-      // capture and losing the opening words.
-      await this.warmModel(getAppState().settings.aiTranscription);
+      // Subscribe first, then prepare the model. The order is the whole point:
+      // the caller is still holding the microphone shut at this point, so
+      // anything awaited before the subscription is registered is time in which
+      // the user can speak and nothing can be captured. Warming first meant a
+      // first-run model download -- up to MODEL_DOWNLOAD_TIMEOUT_MS, 45 minutes
+      // -- sat in front of `start_recording`, so the hotkey looked dead for the
+      // whole of it and every word spoken was lost. Subscribing first is what
+      // makes the comment true: the download now happens while chunks are
+      // already landing in the startup buffer.
       await this.startListening();
+      await this.warmModel(getAppState().settings.aiTranscription);
     } catch (error) {
       getLogger().warning(
         `[local-stream-session] early audio subscription failed (${this.toErrorMessage(error)})`,
@@ -189,6 +195,19 @@ export class LocalTranscriptionSession implements TranscriptionSession {
     audio: StopRecordingResponse,
   ): Promise<TranscriptionSessionResult> {
     const warnings = [...this.startupWarnings];
+    // A user-initiated discard must not come back looking like a failure.
+    // `handleEmptyTranscriptionResult` treats a null transcript *with* warnings
+    // as a transcription failure: it shows "Transcription failed. Your recording
+    // is saved so you can retry." and stores a junk history row for a dictation
+    // the user threw away on purpose. `startupWarnings` is non-empty whenever
+    // the model warm failed or the startup buffer overflowed, so a cancel
+    // during finalize reproduced that for no reason the user caused.
+    // `BatchTranscriptionSession` returns exactly this on its abort path.
+    const discarded = (): TranscriptionSessionResult => ({
+      rawTranscript: null,
+      metadata: {},
+      warnings: [],
+    });
     const pretranscriber = this.pretranscriber;
 
     try {
@@ -196,9 +215,9 @@ export class LocalTranscriptionSession implements TranscriptionSession {
       if (pretranscribed) return pretranscribed;
       // Cancelled mid-finalize: the session is already torn down.
       if (pretranscriber?.isDisposed || this.abortScope.isAborted) {
-        return { rawTranscript: null, metadata: {}, warnings };
+        return discarded();
       }
-      return await this.transcribeWholeRecording(audio, warnings);
+      return await this.transcribeWholeRecording(audio, warnings, discarded);
     } finally {
       this.cleanup();
     }
@@ -262,7 +281,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
 
   private async startListening(): Promise<void> {
     this.unlisten = await listenToAudioChunks((samples, offset) =>
-      this.handleAudioChunk(samples, offset ?? 0),
+      this.handleAudioChunk(samples, offset),
     );
   }
 
@@ -271,8 +290,20 @@ export class LocalTranscriptionSession implements TranscriptionSession {
    * pretranscriber once it exists, and into the startup buffer before that, so
    * the words captured while the sidecar was still loading are not lost.
    */
-  private handleAudioChunk(samples: number[], offset: number): void {
+  private handleAudioChunk(samples: number[], offset: number | null): void {
     if (!samples.length) return;
+    // A null offset is how the stream says it is no longer contiguous:
+    // `PauseChunkedPretranscriber.push` disables pretranscription for the
+    // recording, and `dictation-recording-intake` drops the chunk. Coercing it
+    // to 0 anchored `streamStart` at the first sample on a guess, so a stream
+    // whose opening chunk had no offset was aligned against the final recording
+    // instead of being rejected. Same decision as the intake path, same wording.
+    if (offset === null) {
+      getLogger().warning(
+        "[local-session] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
+      );
+      return;
+    }
     if (this.pretranscriber) {
       this.pretranscriber.push(samples, offset);
       return;
@@ -283,6 +314,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   private async transcribeWholeRecording(
     audio: StopRecordingResponse,
     warnings: string[],
+    discarded: () => TranscriptionSessionResult,
   ): Promise<TranscriptionSessionResult> {
     const payloadSamples = audio.samples ?? [];
     const rate = audio.sampleRate;
@@ -327,14 +359,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
         getLogger().info(
           "[local-session] transcription cancelled: the dictation was discarded",
         );
-        return {
-          rawTranscript: null,
-          metadata: {
-            transcriptionMode: "local",
-            transcriptionPrompt: this.context?.prompt ?? null,
-          },
-          warnings,
-        };
+        return discarded();
       }
       throw error;
     }

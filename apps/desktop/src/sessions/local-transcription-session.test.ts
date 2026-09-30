@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   unlisten: vi.fn(),
   listen: vi.fn(),
   order: [] as string[],
+  loggerWarning: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
@@ -38,7 +39,7 @@ vi.mock("../utils/prompt.utils", () => ({
 vi.mock("../utils/log.utils", () => ({
   getLogger: () => ({
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: mocks.loggerWarning,
     error: vi.fn(),
     verbose: vi.fn(),
   }),
@@ -91,6 +92,20 @@ const streamRecording = (audio: Float32Array, from = 0) => {
   for (let offset = from; offset < audio.length; offset += 100) {
     emit(Array.from(audio.subarray(offset, offset + 100)), offset);
   }
+};
+
+/** Same listener, but able to emit the missing-offset shape. */
+const chunkListenerAllowingMissingOffset = (): ((
+  samples: number[],
+  offset: number | null,
+) => void) => {
+  const handler = mocks.listen.mock.calls.at(-1)?.[1] as
+    | ((event: {
+        payload: { samples: number[]; offset: number | null };
+      }) => void)
+    | undefined;
+  if (!handler) throw new Error("no audio_chunk listener was registered");
+  return (samples, offset) => handler({ payload: { samples, offset } });
 };
 
 const spanResult = (samples: Float32Array) => ({
@@ -175,6 +190,68 @@ describe("LocalTranscriptionSession pretranscription wiring", () => {
 
     expect(mocks.downloadModel).toHaveBeenCalledTimes(1);
     expect(mocks.order).toEqual(["getModelStatus", "downloadModel", "listen"]);
+  });
+
+  it("subscribes before it prepares the model, so a download never holds the mic shut", async () => {
+    // The caller is still holding the microphone closed across this hook, so
+    // anything awaited before the subscription is registered is time the user
+    // can speak into nothing. A first-run download is up to 45 minutes, which
+    // made the hotkey look dead for the whole of it. Subscribing first is what
+    // makes "the download happens while the user is still speaking" true.
+    const session = new LocalTranscriptionSession();
+    await session.onBeforeRecordingStart();
+
+    expect(mocks.order[0]).toBe("listen");
+    expect(mocks.order).toEqual(["listen", "getModelStatus"]);
+  });
+
+  it("downloads a missing model after subscribing, not before", async () => {
+    modelStatus = { downloaded: false, valid: false };
+    const session = new LocalTranscriptionSession();
+    await session.onBeforeRecordingStart();
+
+    expect(mocks.downloadModel).toHaveBeenCalledTimes(1);
+    expect(mocks.order).toEqual(["listen", "getModelStatus", "downloadModel"]);
+  });
+
+  it("drops a chunk with no offset instead of treating it as sample zero", async () => {
+    // `offset === null` is how the stream reports that it is no longer
+    // contiguous. Anchoring it at 0 instead would align the whole stream
+    // against a guess. `dictation-recording-intake` drops the same chunk.
+    const session = new LocalTranscriptionSession();
+    await session.onBeforeRecordingStart();
+    mocks.loggerWarning.mockClear();
+
+    const emit = chunkListenerAllowingMissingOffset();
+    emit([0.1, 0.2, 0.3], null);
+
+    expect(mocks.loggerWarning).toHaveBeenCalledWith(
+      expect.stringContaining("no sample offset"),
+    );
+    // Nothing was transcribed off the back of it.
+    expect(mocks.transcribeAudio).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a user discard into a failure when startup had warned", async () => {
+    // A warm failure records a startup warning, and a cancel during finalize
+    // then returned that warning alongside a null transcript.
+    // `handleEmptyTranscriptionResult` reads exactly that pair as a failure:
+    // "Transcription failed. Your recording is saved so you can retry." plus a
+    // junk history row, for a dictation the user threw away on purpose.
+    mocks.getModelStatus.mockImplementation(async () => {
+      throw new Error("sidecar offline");
+    });
+    const session = new LocalTranscriptionSession();
+    await session.onRecordingStart(RATE);
+    session.cleanup();
+
+    const result = await session.finalize({
+      samples: new Float32Array([0.1, 0.2]),
+      sampleRate: RATE,
+    });
+
+    expect(result.rawTranscript).toBeNull();
+    expect(result.warnings).toEqual([]);
   });
 
   it("transcribes each span once and never the whole recording", async () => {
