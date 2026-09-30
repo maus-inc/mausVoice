@@ -184,6 +184,46 @@ describe("GenerateTextInput.signal forwarding", () => {
   });
 });
 
+describe("Groq runtime-discovered models", () => {
+  // Regression: the constructor tested membership against the two-id
+  // `GENERATE_TEXT_MODELS` literal while a comment claimed it used a widened
+  // list. The picker is populated from the live catalog, so every discovered
+  // model the user could select was discarded here and every request silently
+  // went to the default instead.
+  it("uses a catalog-discovered model the user selected", async () => {
+    const mocked = vi.mocked(groqGenerateTextResponse);
+    mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+    const repo = new GroqGenerateTextRepo("k", "qwen/qwen3-32b");
+    await repo.generateText({ prompt: "p" });
+
+    expect(mocked).toHaveBeenCalledTimes(1);
+    expect(mocked.mock.calls[0]![0]!.model).toBe("qwen/qwen3-32b");
+  });
+
+  // The catalog also serves models that cannot answer a generation request.
+  // Those must still fall back rather than being sent verbatim.
+  it.each([
+    "whisper-large-v3",
+    "meta-llama/llama-guard-3-8b",
+    "llama-guard-3-1b",
+    "meta-llama/prompt-guard-2-86m",
+  ])(
+    "falls back to the default for the non-generative model %s",
+    async (modelId) => {
+      const mocked = vi.mocked(groqGenerateTextResponse);
+      mocked.mockResolvedValueOnce(mockResponse("hi"));
+
+      const repo = new GroqGenerateTextRepo("k", modelId);
+      await repo.generateText({ prompt: "p" });
+
+      expect(mocked.mock.calls[0]![0]!.model).toBe(
+        GROQ_DEFAULT_GENERATE_TEXT_MODEL,
+      );
+    },
+  );
+});
+
 describe("Groq fallback model", () => {
   // Regression: the Groq fallback used to point at a retired id, so a primary
   // failure turned into a hard 404 instead of a working second attempt.

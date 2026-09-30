@@ -649,7 +649,13 @@ export const AppSideEffects = () => {
     if (!canRunPostElevationInit(elevationReady, authReady)) {
       return;
     }
-    await refreshCurrentUser();
+    // `setInitReady` is what lets the onboarding page render at all
+    // (OnboardingPage returns null until `initialized`). Without this guard a
+    // single failed refresh leaves the user on a permanently blank screen with
+    // no recovery, because nothing else writes `initReady` back to true.
+    await refreshCurrentUser().catch((error: unknown) => {
+      getLogger().error(`Failed to load the current user: ${error}`);
+    });
     setInitReady(true);
   }, [authReady, elevationReady]);
 

@@ -3,7 +3,11 @@ const MAX_REDACT_DEPTH = 8;
 const REDACTED = "[redacted]";
 
 const BEARER_TOKEN = /\bBearer\s+\S+/gi;
-const PROVIDER_KEY_PREFIX = /\b(?:csk_|gsk_|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
+// `csk-` in addition to `csk_`: Cerebras issues the hyphenated form too, and
+// the `sk-` alternative cannot stand in for it because there is no word
+// boundary between the leading `c` and the `s`.
+const PROVIDER_KEY_PREFIX =
+  /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
 const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|password|passwd|pwd|credential|secret)\b"?`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
@@ -21,6 +25,12 @@ const LABELED_SECRET_BARE = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*([^\s,;]+)`,
   "gi",
 );
+// A labelled scheme carries a second token after it, so matching the label
+// alone redacted the word `Basic` and left the credential beside it in clear
+// text (`Authorization: Basic <credential>` -> `Authorization:[redacted]
+// <credential>`). Consume the scheme and its credential together, or drop both.
+const AUTHORIZATION_SCHEME =
+  /\b(authorization|proxy-authorization)\s*:\s*(?:(bearer|basic|token)\s+)?(\S+)?/gi;
 const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {
   ")": "(",
   "]": "[",
@@ -101,6 +111,22 @@ const splitTrailingClosers = (value: string): [string, string] => {
 
 const redactSensitiveTokens = (message: string): string =>
   message
+    // Before the labelled passes: those match the `authorization` label and
+    // would otherwise consume only the scheme word, leaving the credential
+    // beside it. A bare value with no scheme is left to the placeholder
+    // handling below, so `authorization: missing` still reads as prose.
+    .replace(
+      AUTHORIZATION_SCHEME,
+      (match, header: string, scheme: string | undefined, value?: string) => {
+        if (scheme === undefined) {
+          // No scheme token, so this is a plain labelled value such as
+          // `authorization: missing`; defer to the passes that understand
+          // placeholder values.
+          return match;
+        }
+        return `${header}: ${scheme} ${REDACTED}`;
+      },
+    )
     .replace(BEARER_TOKEN, "Bearer [redacted]")
     .replace(PROVIDER_KEY_PREFIX, REDACTED)
     .replace(LABELED_SECRET_QUOTED, "$1$2[redacted]")

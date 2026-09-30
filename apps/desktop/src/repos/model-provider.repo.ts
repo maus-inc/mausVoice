@@ -13,6 +13,7 @@ import {
   OPENAI_GENERATE_TEXT_MODELS,
   OPENAI_TRANSCRIPTION_MODELS,
   TRANSCRIPTION_MODELS,
+  isGroqGenerativeModelId,
 } from "@maus-inc/voice-ai";
 import {
   createOpenAICompatibleFetch,
@@ -109,12 +110,6 @@ function isWhisperModel(modelId: string): boolean {
   return modelId.includes("whisper");
 }
 
-function isGroqGenerativeModel(modelId: string): boolean {
-  return !["orpheus", "prompt-guard", "safeguard", "whisper"].some((marker) =>
-    modelId.includes(marker),
-  );
-}
-
 function isOpenAITranscriptionModel(modelId: string): boolean {
   return (
     modelId === "whisper-1" ||
@@ -200,7 +195,7 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     options: FetchModelsOptions,
   ): Promise<string[]> {
     const fetched = await this.fetchModels(options);
-    const models = fetched.filter(isGroqGenerativeModel);
+    const models = fetched.filter(isGroqGenerativeModelId);
     return models.length > 0 ? models : [...GENERATE_TEXT_MODELS];
   }
 

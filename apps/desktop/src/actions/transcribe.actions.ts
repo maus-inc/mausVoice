@@ -537,7 +537,7 @@ const recordFastStyleTruncation = (
  * Returns the styled text and its own duration, or null when the tone has no
  * local transform or the transform threw.
  */
-const applyFastLocalStyle = ({
+export const applyFastLocalStyle = ({
   rawTranscript,
   toneId,
   metadata,
@@ -559,6 +559,20 @@ const applyFastLocalStyle = ({
   } catch (error) {
     getLogger().warning(
       `Fast local style failed for tone=${toneId}, reason=${reason}: ${error}`,
+    );
+    return null;
+  }
+
+  // Several transforms are subtractive rather than rewriting — the filler,
+  // informal and contraction passes all delete matches. Filler-only input such
+  // as "um uh er" therefore comes back empty, and returning that would hand the
+  // caller a blank utterance: nothing is inserted, and because
+  // `postProcessFailed` is untouched on this path no failure is reported either,
+  // so the dictation disappears without a word. Treat an empty transform as "no
+  // local style available" and let the caller fall back to the raw transcript.
+  if (styled.trim().length === 0) {
+    getLogger().warning(
+      `Fast local style produced no output for tone=${toneId}, reason=${reason}; falling back to the raw transcript`,
     );
     return null;
   }

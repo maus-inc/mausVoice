@@ -31,6 +31,7 @@ import {
   GroqGenerateResponseOutput,
   groqStreamChat,
   isGroqAccountScopedError,
+  isGroqGenerativeModelId,
   isGroqModelUnavailableError,
   OpenAIGenerateTextModel,
   openaiGenerateTextResponse,
@@ -161,12 +162,21 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.groqApiKey = apiKey;
-    // Membership test runs against the widened list because
-    // `GenerateTextModel` also carries runtime-discovered model ids, which
-    // are not in the literal `GENERATE_TEXT_MODELS` tuple.
-    const allowedModels: readonly string[] = GENERATE_TEXT_MODELS;
+    // The comment above used to claim this test ran against a widened list that
+    // included runtime-discovered models. It never did: `GENERATE_TEXT_MODELS`
+    // is the two-id literal, while the picker is populated from the live
+    // catalog (every fetched id passing `isGroqGenerativeModel`). So every
+    // discovered model the user could pick was silently discarded here and each
+    // request went to the default instead.
+    //
+    // A discovered id is now honoured, and an id that is in neither list is
+    // still rejected so a stale or hand-edited preference cannot be sent
+    // verbatim.
+    const known =
+      model !== null &&
+      (GENERATE_TEXT_MODELS as readonly string[]).includes(model);
     this.model =
-      model !== null && allowedModels.includes(model)
+      model !== null && (known || isGroqGenerativeModelId(model))
         ? (model as GenerateTextModel)
         : this.defaultModel;
   }

@@ -34,6 +34,33 @@ export type GenerateTextModel =
   (typeof GENERATE_TEXT_MODELS)[number] | DiscoveredModelId;
 
 /**
+ * Whether a model id discovered from the live Groq catalog can be used for
+ * generation.
+ *
+ * Groq serves transcription, prompt-guard and safeguard models from the same
+ * `/models` endpoint, so a catalog fetch returns ids that cannot answer a
+ * generation request. This is a deny-list rather than an allow-list on purpose:
+ * the catalog changes without notice, and refusing to accept a newly published
+ * text model would break post-processing for users the moment Groq ships one.
+ *
+ * The picker and the post-processing repo must agree on this. When they did not,
+ * a model the user had chosen from the catalog was discarded by the repo and
+ * every request silently went to the default instead.
+ */
+export const isGroqGenerativeModelId = (modelId: string): boolean =>
+  ![
+    // Audio and safety models Groq serves from the same `/models` endpoint.
+    "orpheus",
+    "whisper",
+    // Groq's published guard models are `meta-llama/llama-guard-*`; the
+    // older `prompt-guard`/`safeguard` aliases are kept for older ids. Matching
+    // on "guard" is what actually covers the current naming — the two aliases
+    // alone let a guard model through, and a guard model cannot answer a
+    // generation request.
+    "guard",
+  ].some((marker) => modelId.includes(marker));
+
+/**
  * Model the Groq repo selects when the user has not chosen one. It must stay
  * inside `GENERATE_TEXT_MODELS` so a default-model failure can still fall back
  * to a different live model instead of rethrowing with no second attempt.

@@ -22,6 +22,34 @@ describe("unknownToMessage", () => {
     expect(unknownToMessage("gsk_" + "abcdefghijklmnop")).toBe("[redacted]");
   });
 
+  it("redacts the hyphenated csk- form", () => {
+    // Cerebras issues both `csk_` and `csk-`. The `sk-` alternative could not
+    // stand in for the hyphenated form because there is no word boundary
+    // between the leading `c` and the `s`, so the key passed through whole.
+    expect(unknownToMessage("csk-" + "live_abcdefghijk")).toBe("[redacted]");
+    expect(unknownToMessage("gsk-" + "abcdefghijklmnop")).toBe("[redacted]");
+  });
+
+  it("redacts the credential of a labelled authorization scheme", () => {
+    // The label pattern matched `authorization:` and consumed only the next
+    // token, so `Basic` was redacted and the credential beside it was not.
+    const basic = unknownToMessage("Authorization: Basic dXNlcjpwYXNzd29yZA==");
+    expect(basic).not.toContain("dXNlcjpwYXNzd29yZA==");
+
+    const token = unknownToMessage("authorization: token abc123def456");
+    expect(token).not.toContain("abc123def456");
+
+    // A gateway echoing the header is exactly the case this covers.
+    const echoed = unknownToMessage("proxy-authorization: Basic Zm9vOmJhcg==");
+    expect(echoed).not.toContain("Zm9vOmJhcg==");
+  });
+
+  it("leaves the word authorization alone when it is not a header", () => {
+    expect(unknownToMessage("the authorization was denied")).toBe(
+      "the authorization was denied",
+    );
+  });
+
   it("redacts labeled api keys in both assignment and JSON forms", () => {
     expect(unknownToMessage("api_key=supersecretvalue")).toBe(
       "api_key=[redacted]",
