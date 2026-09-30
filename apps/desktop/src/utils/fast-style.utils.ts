@@ -40,10 +40,18 @@ const truncateGuard = (text: string): string => {
 export const measureFastStyleTruncation = (
   raw: string,
 ): { keptChars: number; droppedChars: number } | null => {
-  if (raw.length <= MAX_INPUT_CHARS) return null;
+  // Trimmed first, because that is the string `applyFastStyle` truncates. It
+  // guards on `rawTranscript.trim()` and slices that, so measuring the untrimmed
+  // string reported a truncation that never happened: a dictation over the cap
+  // only because of leading or trailing whitespace, whose trimmed form is under
+  // it, styled completely while the user was told N characters had been left
+  // unstyled, with that N persisted on the history row. `trim()` only ever
+  // shortens, so measuring the trimmed form can never over-report either.
+  const trimmed = raw.trim();
+  if (trimmed.length <= MAX_INPUT_CHARS) return null;
   return {
     keptChars: MAX_INPUT_CHARS,
-    droppedChars: raw.length - MAX_INPUT_CHARS,
+    droppedChars: trimmed.length - MAX_INPUT_CHARS,
   };
 };
 
@@ -527,22 +535,10 @@ export const applyFastStyle = (
         break;
     }
 
-    switch (toneId) {
-      case "light":
-      case "casual":
-      case "business":
-        return toPolished(guarded);
-      case "formal":
-        return toFormal(guarded);
-      case "punny":
-        return toPolished(guarded);
-      default:
-        break;
-    }
-
-    // Custom tones reach here only when a caller skipped canApplyFastStyle.
-    // A free-form prompt cannot be honoured locally, so return the input
-    // unchanged rather than silently picking a different style.
+    // Custom and deprecated tones reach here only when a caller skipped
+    // canApplyFastStyle. A free-form prompt cannot be honoured locally, and a
+    // deprecated tone has no transform that matches what it promised, so return
+    // the input unchanged rather than silently picking a different style.
     return guarded;
   } catch {
     return rawTranscript;
@@ -555,6 +551,16 @@ export const applyFastStyle = (
  * a style they did not pick, and the more aggressive transforms can drop words.
  * `canApplyFastStyle` gates on this set so a custom tone takes the raw path
  * instead.
+ *
+ * The deprecated `light`, `casual`, `business` and `punny` used to be listed
+ * here and dispatched to `toPolished`. That is the same substitution this set
+ * exists to prevent: the user picked a style, got Polished, and lost whatever
+ * `toPolished` strips as filler. `punny` cannot be honoured locally at all --
+ * its prompt asks for jokes, and `toPolished` produces plain prose. They are
+ * not listed now, so they take the raw path. A tone persisted by an older build
+ * stays selectable and reaches the provider with its real prompt, which is
+ * closer to what the user asked for than a local transform that discards words.
+ * `formal` needs no entry beyond `FORMAL_TONE_ID`, which is the same string.
  */
 const FAST_STYLE_TONE_IDS: ReadonlySet<string> = new Set([
   POLISHED_TONE_ID,
@@ -565,11 +571,6 @@ const FAST_STYLE_TONE_IDS: ReadonlySet<string> = new Set([
   BULLETS_TONE_ID,
   CONCISE_TONE_ID,
   NOTES_TONE_ID,
-  "light",
-  "casual",
-  "business",
-  "formal",
-  "punny",
 ]);
 
 /**

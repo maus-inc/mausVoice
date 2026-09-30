@@ -148,12 +148,27 @@ describe("applyFastStyle fast local transforms", () => {
     expect(applyFastStyle(raw, "my-custom-tone")).toBe(raw);
   });
 
-  it("deprecated tones map to modern equivalents", () => {
+  it("does not answer a deprecated tone with a different tone's transform", () => {
+    // These used to be gated in as having a local transform and dispatched to
+    // `toPolished`, which is the substitution `canApplyFastStyle` exists to
+    // prevent: the user picked a style, got Polished, and lost what `toPolished`
+    // strips as filler. `punny` is the clearest case -- its prompt asks for
+    // jokes, and no local string operation produces them. A tone persisted by an
+    // older build stays selectable, so the raw path has to be what it takes.
     const raw = "um so I went to the store";
-    expect(applyFastStyle(raw, "light")).not.toContain("um");
-    expect(applyFastStyle(raw, "casual")).not.toContain("um");
-    expect(applyFastStyle(raw, "business")).not.toContain("um");
-    expect(applyFastStyle(raw, "punny")).not.toContain("um");
+    for (const toneId of ["light", "casual", "business", "punny"]) {
+      expect(canApplyFastStyle(toneId)).toBe(false);
+      expect(applyFastStyle(raw, toneId)).toBe(raw);
+    }
+  });
+
+  it("still has a real transform for formal, which is not a guess", () => {
+    // `formal` is a deprecated id that happens to be exactly `FORMAL_TONE_ID`,
+    // so it keeps its own transform rather than taking the raw path.
+    expect(canApplyFastStyle("formal")).toBe(true);
+    expect(applyFastStyle("um so I went to the store", "formal")).not.toBe(
+      "um so I went to the store",
+    );
   });
 
   it("custom tone is never rewritten and never matches a category string", () => {
@@ -405,6 +420,32 @@ describe("measureFastStyleTruncation", () => {
     expect(
       measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 4321)),
     ).toEqual({ keptChars: FAST_STYLE_MAX_INPUT_CHARS, droppedChars: 4321 });
+  });
+
+  it("reports nothing when only surrounding whitespace puts the input over", () => {
+    // `applyFastStyle` guards on `rawTranscript.trim()` and slices that, so a
+    // dictation whose raw form is over the cap only because of padding styles
+    // completely. Reporting a truncation here told the user N characters had
+    // been left unstyled, and persisted that N on the history row, for a
+    // truncation that never happened.
+    // Body one under the cap, and enough padding to push the raw form over it:
+    // 14999 trimmed is under 15000, 15001 raw is not.
+    const body = "w".repeat(FAST_STYLE_MAX_INPUT_CHARS - 1);
+    const raw = `  ${body} `;
+    expect(body.length).toBeLessThanOrEqual(FAST_STYLE_MAX_INPUT_CHARS);
+    expect(raw.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+    expect(measureFastStyleTruncation(raw)).toBeNull();
+  });
+
+  it("still reports a real truncation that happens to have whitespace", () => {
+    // A genuine overrun, with the same padding on top. The padding must not be
+    // counted as dropped, and must not stop the real truncation being reported.
+    const body = "w".repeat(FAST_STYLE_MAX_INPUT_CHARS + 500);
+    const raw = ` ${body} `;
+    expect(measureFastStyleTruncation(raw)).toEqual({
+      keptChars: FAST_STYLE_MAX_INPUT_CHARS,
+      droppedChars: 500,
+    });
   });
 
   it("agrees with the cap applyFastStyle actually enforces", () => {
