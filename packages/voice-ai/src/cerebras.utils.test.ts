@@ -194,4 +194,47 @@ describe("cerebrasGenerateTextResponse reasoning effort", () => {
       expect(body?.reasoning_effort).toBe(expected);
     },
   );
+
+  it.each(["medium", "high"] as const)(
+    "honours a caller effort of %s rather than the package default",
+    async (effort) => {
+      // `buildGptOssReasoningParams` hardcodes `reasoning_effort` to the package
+      // default, so spreading it after `buildReasoningEffortParams` discarded
+      // whatever the caller asked for. The table above could not see it because
+      // it only ever passed "low", which is the default anyway.
+      createChatCompletion.mockReset();
+      createChatCompletion.mockResolvedValueOnce({
+        choices: [{ message: { content: "ok" } }],
+      });
+
+      await cerebrasGenerateTextResponse({
+        apiKey: "csk_test",
+        model: "gpt-oss-120b",
+        prompt: "hello",
+        reasoningEffort: effort,
+      });
+
+      const [body] = createChatCompletion.mock.calls[0] ?? [];
+      expect(body?.reasoning_effort).toBe(effort);
+      // The rest of the gpt-oss policy still applies.
+      expect(body?.reasoning_format).toBe("hidden");
+    },
+  );
+
+  it("keeps the gpt-oss default when the caller passes no effort", async () => {
+    createChatCompletion.mockReset();
+    createChatCompletion.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+    });
+
+    await cerebrasGenerateTextResponse({
+      apiKey: "csk_test",
+      model: "gpt-oss-120b",
+      prompt: "hello",
+    });
+
+    const [body] = createChatCompletion.mock.calls[0] ?? [];
+    expect(body?.reasoning_effort).toBe("low");
+    expect(body?.reasoning_format).toBe("hidden");
+  });
 });

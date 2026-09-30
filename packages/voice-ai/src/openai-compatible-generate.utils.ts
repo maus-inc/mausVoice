@@ -5,9 +5,8 @@ import {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
 import { contentToString } from "./transcription.utils";
+import { isGptOssReasoningModel } from "./reasoning.utils";
 import type { ReasoningEffort } from "./types";
-
-const GPT_OSS_MODEL = /(^|\/)gpt-oss-/;
 
 /**
  * Request fields that set the reasoning effort. Only the gpt-oss family
@@ -18,7 +17,7 @@ export const buildReasoningEffortParams = (
   model: string,
   effort: ReasoningEffort | undefined,
 ): { reasoning_effort?: ReasoningEffort } =>
-  effort && GPT_OSS_MODEL.test(model) ? { reasoning_effort: effort } : {};
+  effort && isGptOssReasoningModel(model) ? { reasoning_effort: effort } : {};
 
 export type OpenAICompatibleGenerateTextOptions = {
   messages?: ChatCompletionMessageParam[];

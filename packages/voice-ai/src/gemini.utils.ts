@@ -103,7 +103,23 @@ const geminiModelPath = (model: string): string => {
  * rate limit or server failure. Extends the shared `HttpError` so every
  * provider in this package reports failures with the same shape.
  */
-export class GeminiHttpError extends HttpError {
+export /**
+ * The upload reached a terminal FAILED state.
+ *
+ * Its own type so `pollGeminiFileState` can tell it apart from a transient
+ * endpoint failure. Without that distinction FAILED was caught by the
+ * "anything else is the endpoint being briefly unavailable" branch and polled
+ * through until the attempts ran out, so a file the provider had already given
+ * up on was retried for the whole budget before reporting a generic timeout.
+ */
+class GeminiFileProcessingError extends Error {
+  constructor() {
+    super("Gemini file processing failed");
+    this.name = "GeminiFileProcessingError";
+  }
+}
+
+class GeminiHttpError extends HttpError {
   constructor(status: number, detail: string, retryAfter?: string | null) {
     super(
       status,
@@ -310,33 +326,51 @@ const normalizeGeminiLanguageCode = (lang: string): string => {
   return map[lower] ?? trimmed;
 };
 
-const parsePromptToCustomVocabulary = (
-  prompt: string,
-): string[] | undefined => {
-  if (!prompt) return undefined;
-  const trimmed = prompt.trim();
-  if (trimmed.length === 0) return undefined;
-  if (
-    trimmed.length > 500 &&
-    !trimmed.includes(",") &&
-    !trimmed.includes(";") &&
-    !trimmed.includes("\n")
-  ) {
-    return undefined;
-  }
-  const parts = trimmed
-    .split(/[,;\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => s.slice(0, 100));
-  if (parts.length === 0) return undefined;
-  return parts.slice(0, 1000);
-};
-
 const ensureOk = async (response: Response): Promise<void> => {
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new GeminiHttpError(response.status, detail);
+  }
+};
+
+/**
+ * Hosts the Files API is allowed to hand us a URL for.
+ *
+ * In production, only googleapis.com and storage.googleapis.com are expected.
+ * `upload.example.com` is allowed for tests.
+ */
+const GEMINI_ALLOWED_HOSTS = [
+  "generativelanguage.googleapis.com",
+  "storage.googleapis.com",
+  "upload.example.com",
+];
+
+const isAllowedGeminiHost = (hostname: string): boolean =>
+  GEMINI_ALLOWED_HOSTS.some(
+    (host) => hostname === host || hostname.endsWith("." + host),
+  );
+
+/**
+ * Reject a URL the Files API pointed us at.
+ *
+ * `strict` is for the URLs we attach the API key to. The upload URL is not one
+ * of them -- it is a signed resumable-upload target and carries no credential --
+ * so an unexpected host there is logged and allowed through for
+ * forward-compatibility, with the scheme still enforced.
+ */
+const assertGeminiUrl = (url: string, strict: boolean): void => {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Refusing non-HTTPS Gemini URL: ${parsed.protocol}`);
+  }
+  if (!isAllowedGeminiHost(parsed.hostname)) {
+    if (strict) {
+      throw new Error(
+        `Refusing to send the Gemini API key to unexpected host ${parsed.hostname}`,
+      );
+    }
+    // Log but don't block for forward-compatibility; real enforcement is in secureFetch capability.
+    console.warn(`Gemini Files API: unexpected upload host ${parsed.hostname}`);
   }
 };
 
@@ -351,27 +385,7 @@ const getUploadUrl = (response: Response): string => {
     throw new Error("Gemini Files API did not return an upload URL");
   }
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:") {
-      throw new Error(`Refusing non-HTTPS upload URL: ${parsed.protocol}`);
-    }
-    const allowedHosts = [
-      "generativelanguage.googleapis.com",
-      "storage.googleapis.com",
-      "upload.example.com",
-    ];
-    // In production, only googleapis.com and storage.googleapis.com are expected.
-    // Allow upload.example.com for tests.
-    if (
-      !allowedHosts.some(
-        (h) => parsed.hostname === h || parsed.hostname.endsWith("." + h),
-      )
-    ) {
-      // Log but don't block for forward-compatibility; real enforcement is in secureFetch capability.
-      console.warn(
-        `Gemini Files API: unexpected upload host ${parsed.hostname}`,
-      );
-    }
+    assertGeminiUrl(url, false);
   } catch (e) {
     if (e instanceof Error && e.message.includes("Refusing")) throw e;
     // If URL parsing fails, treat as invalid and fallback.
@@ -429,6 +443,13 @@ const uploadGeminiFile = async (
     throw new Error(
       "Gemini Files API upload succeeded but returned no file URI",
     );
+  // This one is checked, and hard-blocked, because both consumers below attach
+  // `x-goog-api-key` to it: `deleteGeminiFile` and `fetchGeminiFileState` each
+  // send the Gemini credential to whatever host this string names. The upload
+  // URL gets the same check but only warns, because that request carries no key.
+  // A URI that is not a Gemini host is a failed upload, not a reason to post the
+  // user's credential somewhere else.
+  assertGeminiUrl(uri, true);
   return {
     uri,
     mimeType: payload.file?.mimeType ?? payload.file?.mime_type ?? mimeType,
@@ -473,7 +494,7 @@ const fetchGeminiFileState = async (
     // Unrecognised shape: treat as PROCESSING to keep polling, not ACTIVE.
     return "PROCESSING";
   }
-  if (state === "FAILED") throw new Error("Gemini file processing failed");
+  if (state === "FAILED") throw new GeminiFileProcessingError();
   return state;
 };
 
@@ -493,11 +514,32 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
     }
   });
 
-/** How many times the state endpoint is asked before the upload is abandoned. */
-const FILE_POLL_ATTEMPTS = 10;
+/**
+ * How the state endpoint is polled while the upload finishes.
+ *
+ * These used to be ten attempts at a fixed 100 ms, so the whole wait was about
+ * one second plus request round trips. Gemini's Files API routinely needs longer
+ * than that to process a real recording, so the loop exhausted and threw, and
+ * `tryUploadWithFallback` turned that into an inlineData request. The fallback
+ * cannot recover a recording over the inline request size limit, so the dictation
+ * failed with no visible cause.
+ *
+ * Now it backs off, and the total wait is bounded by a deadline rather than by
+ * the attempt count, because what matters is how long the file is allowed to
+ * become ready. The attempt cap still applies so a state endpoint that answers
+ * instantly and never reaches ACTIVE cannot spin.
+ */
+const FILE_POLL_MAX_ATTEMPTS = 30;
+const FILE_POLL_INITIAL_INTERVAL_MS = 100;
+const FILE_POLL_MAX_INTERVAL_MS = 2_000;
+const FILE_POLL_DEADLINE_MS = 30_000;
 
-/** Gap between two state polls while the upload finishes. */
-const FILE_POLL_INTERVAL_MS = 100;
+/** Backoff for `attempt`, doubling from the initial gap up to the cap. */
+const filePollInterval = (attempt: number): number =>
+  Math.min(
+    FILE_POLL_INITIAL_INTERVAL_MS * 2 ** attempt,
+    FILE_POLL_MAX_INTERVAL_MS,
+  );
 
 /** What one poll of the upload's state endpoint decided. */
 type FilePollOutcome = "active" | "pending";
@@ -530,6 +572,7 @@ const pollGeminiFileState = async (
     return state === "ACTIVE" ? "active" : "pending";
   } catch (error) {
     if (signal?.aborted) throw error;
+    if (error instanceof GeminiFileProcessingError) throw error;
     if (error instanceof GeminiHttpError && error.status < 500) {
       throw error;
     }
@@ -543,7 +586,9 @@ const waitForGeminiFileActive = async (
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<void> => {
-  for (let attempt = 0; attempt < FILE_POLL_ATTEMPTS; attempt++) {
+  const startedAt = Date.now();
+  for (let attempt = 0; attempt < FILE_POLL_MAX_ATTEMPTS; attempt++) {
+    if (Date.now() - startedAt >= FILE_POLL_DEADLINE_MS) break;
     const outcome = await pollGeminiFileState(
       fileUri,
       apiKey,
@@ -553,9 +598,13 @@ const waitForGeminiFileActive = async (
     if (outcome === "active") return;
     // A cancel during the wait rejects here with the caller's reason, so the
     // poll loop stops on the signal rather than sitting out the last interval.
-    await delay(FILE_POLL_INTERVAL_MS, signal);
+    await delay(filePollInterval(attempt), signal);
   }
-  throw new Error("Gemini file did not become ACTIVE after polling");
+  throw new Error(
+    `Gemini file did not become ACTIVE within ${
+      FILE_POLL_DEADLINE_MS / 1_000
+    }s of polling`,
+  );
 };
 
 type AudioTranscriptionConfig = {
@@ -629,16 +678,6 @@ const resolveVocabularyForDedicated = (
     return customVocabulary.length > 0 ? customVocabulary : undefined;
   }
   return undefined;
-};
-
-const resolveVocabulary = (
-  customVocabulary: string[] | undefined,
-  prompt: string | undefined,
-): string[] | undefined => {
-  if (customVocabulary !== undefined) {
-    return customVocabulary.length > 0 ? customVocabulary : undefined;
-  }
-  return prompt ? parsePromptToCustomVocabulary(prompt) : undefined;
 };
 
 export type GeminiTranscriptionArgs = {

@@ -696,6 +696,74 @@ describe("Gemini Files API edge cases", () => {
     ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
   });
 
+  it("keeps polling long enough for a slow Files API to finish", async () => {
+    // The budget used to be ten attempts at a fixed 100ms, so a file that needed
+    // more than about a second to process was abandoned and the dictation fell
+    // back to inlineData, which cannot recover an over-sized recording.
+    vi.useFakeTimers();
+    try {
+      let polls = 0;
+      const customFetch = vi
+        .fn()
+        .mockImplementation((url: string, init?: RequestInit) => {
+          if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+            return Promise.resolve(
+              new Response(JSON.stringify({}), {
+                status: 200,
+                headers: {
+                  "x-goog-upload-url": "https://upload.example.com/resumable",
+                },
+              }),
+            );
+          }
+          if (url.includes("upload.example.com")) {
+            return Promise.resolve(
+              jsonResponse({
+                file: {
+                  uri: "https://generativelanguage.googleapis.com/v1beta/files/slow",
+                  mimeType: "audio/wav",
+                },
+              }),
+            );
+          }
+          if (url.includes("/v1beta/files/slow") && init?.method === "GET") {
+            polls += 1;
+            // Still processing after 20 polls, which is well past what the old
+            // ten fixed attempts could ever have waited for.
+            return Promise.resolve(
+              jsonResponse({ state: polls <= 20 ? "PROCESSING" : "ACTIVE" }),
+            );
+          }
+          if (url.includes("/v1beta/files/slow") && init?.method === "DELETE") {
+            return Promise.resolve(new Response(null, { status: 200 }));
+          }
+          return Promise.resolve(
+            jsonResponse({
+              candidates: [{ content: { parts: [{ text: "slow but ok" }] } }],
+            }),
+          );
+        });
+
+      const pending = geminiTranscribeAudio({
+        apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      });
+      for (let step = 0; step < 100; step += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+
+      await expect(pending).resolves.toEqual({
+        text: "slow but ok",
+        wordsUsed: 3,
+      });
+      expect(polls).toBeGreaterThan(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("throws on FAILED file state", async () => {
     const customFetch = vi
       .fn()
@@ -778,15 +846,27 @@ describe("Gemini Files API edge cases", () => {
           }),
         );
       });
-    await expect(
-      geminiTranscribeAudio({
+    // Fake clock, because giving up now means spending the whole 30s budget
+    // rather than ten fixed 100ms attempts.
+    vi.useFakeTimers();
+    try {
+      const pending = geminiTranscribeAudio({
         apiKey: "k",
         model: "gemini-3.5-transcribe",
         blob: new Uint8Array([1, 2, 3]).buffer,
         customFetch,
-      }),
-    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
-  }, 10000);
+      });
+      for (let step = 0; step < 200; step += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      await expect(pending).resolves.toEqual({
+        text: "fallback",
+        wordsUsed: 1,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("aborts during polling when signal is aborted", async () => {
     const controller = new AbortController();
@@ -863,6 +943,116 @@ describe("Gemini Files API edge cases", () => {
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+  });
+
+  it("refuses to send the API key to a file URI outside Gemini", async () => {
+    // `deleteGeminiFile` and `fetchGeminiFileState` both attach `x-goog-api-key`
+    // to the URI the upload response handed back. That URI came out of a
+    // response body with no host check, while the upload URL next to it was
+    // validated, so a wrong or tampered URI received the user's credential.
+    // Rejecting it turns a failed upload into the existing inlineData fallback
+    // instead of a credential leak.
+    const foreign = "https://evil.example.org/v1beta/files/stolen";
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({ file: { uri: foreign, mimeType: "audio/wav" } }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "fallback" }] } }],
+          }),
+        );
+      });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "secret-key",
+        model: "gemini-3.5-transcribe",
+        blob: new Uint8Array([1, 2, 3]).buffer,
+        customFetch,
+      }),
+    ).resolves.toEqual({ text: "fallback", wordsUsed: 1 });
+
+    // The foreign host was never contacted at all, and the credential only ever
+    // went to a Gemini host. (The inlineData fallback does legitimately carry
+    // the key, so the check is per host rather than a blanket "never".)
+    const allowed = [
+      "generativelanguage.googleapis.com",
+      "storage.googleapis.com",
+      "upload.example.com",
+    ];
+    for (const [url, init] of customFetch.mock.calls) {
+      const target = new URL(String(url));
+      expect(target.hostname).not.toBe("evil.example.org");
+      const carriedKey = Boolean(
+        (init?.headers as Record<string, string> | undefined)?.[
+          "x-goog-api-key"
+        ],
+      );
+      if (carriedKey) {
+        expect(
+          allowed.some(
+            (host) =>
+              target.hostname === host || target.hostname.endsWith("." + host),
+          ),
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("refuses a non-HTTPS file URI", async () => {
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "http://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "fallback" }] } }],
+          }),
+        );
+      });
+
+    await expect(
+      geminiTranscribeAudio({
+        apiKey: "secret-key",
         model: "gemini-3.5-transcribe",
         blob: new Uint8Array([1, 2, 3]).buffer,
         customFetch,

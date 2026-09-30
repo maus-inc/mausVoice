@@ -187,7 +187,6 @@ export const cerebrasGenerateTextResponse = async ({
         model,
         temperature: 1,
         max_tokens: maxTokens ?? 1024,
-        ...buildReasoningEffortParams(model, reasoningEffort),
         top_p: 1,
         // Same GPT-OSS reasoning policy as the Groq adapter, which keeps the
         // medium-effort default from eating the JSON reply's token budget. Cerebras
@@ -195,7 +194,14 @@ export const cerebrasGenerateTextResponse = async ({
         // Python-SDK typing workaround: `extra_body` is merged into the
         // top-level request body, and the JavaScript SDK forwards unknown
         // top-level params the same way.
+        //
+        // Spread before `buildReasoningEffortParams`, matching Groq. The order
+        // matters: `buildGptOssReasoningParams` hardcodes `reasoning_effort` to
+        // the package default, so spreading it second discarded the caller's
+        // `reasoningEffort` on this provider. That was invisible only because
+        // every caller happened to pass the same value the default holds.
         ...buildGptOssReasoningParams(model),
+        ...buildReasoningEffortParams(model, reasoningEffort),
         response_format: jsonResponse ? { type: "json_object" } : undefined,
       };
       const response = await client.chat.completions.create(
