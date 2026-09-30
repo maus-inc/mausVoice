@@ -729,14 +729,64 @@ describe("buildPostProcessingPrompt cache shape", () => {
     ).toBe(true);
   });
 
-  it("states the edit-list contract in the prompt", () => {
+  it("keeps the edit-list contract out of the message that holds the transcript", () => {
+    // The contract is in the system prompt now. It used to be prepended here,
+    // which bought no prefix caching -- the system prompt is already the
+    // dictation-independent half -- and put the rule below the dictated text in
+    // the same message. A dictation reading `</transcript>` and then
+    // counter-instructions could outweigh the rule it was supposed to obey.
     const prompt = buildPostProcessingPrompt(styleInput("clean me up"));
 
-    expect(prompt).toContain('"edits"');
-    expect(prompt).toContain('"find"');
-    expect(prompt).toContain('"replace"');
-    expect(prompt).toContain('"result"');
-    expect(prompt).not.toContain("Respond with JSON only");
+    expect(prompt).not.toContain('"edits"');
+    expect(prompt).not.toContain('"find"');
+    expect(prompt).not.toContain('"result"');
+    // The humanize skill still rides on the cached prefix of this message.
+    expect(prompt).toContain("transcript");
+  });
+});
+
+describe("output format guidance placement", () => {
+  const CONTRACT_MARKERS = ['"edits"', '"find"', '"replace"', '"result"'];
+
+  it("states the edit-list contract in the system prompt", () => {
+    const input = makeInput(
+      { kind: "style", stylePrompt: "Be formal" },
+      { transcript: "clean me up" },
+    );
+    const system = buildSystemPostProcessingTonePrompt(input);
+    for (const marker of CONTRACT_MARKERS) {
+      expect(system).toContain(marker);
+    }
+    expect(system).not.toContain("Respond with JSON only");
+    expect(buildPostProcessingPrompt(input)).not.toContain('"edits"');
+  });
+
+  it("states it for a template tone too, not only the default branch", () => {
+    const system = buildSystemPostProcessingTonePrompt(
+      makeInput(
+        { kind: "template", promptTemplate: "Do the thing to <transcript/>" },
+        { transcript: "clean me up" },
+      ),
+    );
+    for (const marker of CONTRACT_MARKERS) {
+      expect(system).toContain(marker);
+    }
+  });
+
+  it("sends the contract exactly once per request", () => {
+    // It was in both halves for a while, which sent the rule twice for no
+    // benefit. Now it is in one place, and the user message holds only the
+    // humanize skill and the transcript.
+    const input = makeInput(
+      { kind: "style", stylePrompt: "Be formal" },
+      { transcript: "clean me up" },
+    );
+    const system = buildSystemPostProcessingTonePrompt(input);
+    const user = buildPostProcessingPrompt(input);
+    const inSystem = CONTRACT_MARKERS.filter((m) => system.includes(m)).length;
+    const inUser = CONTRACT_MARKERS.filter((m) => user.includes(m)).length;
+    expect(inSystem).toBe(CONTRACT_MARKERS.length);
+    expect(inUser).toBe(0);
   });
 });
 

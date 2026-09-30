@@ -435,6 +435,20 @@ const appendStructuredStyleGuidance = (
 // The humanize skill is not repeated here. It rides on the cached prefix of
 // the user message instead, which `buildPostProcessingPrompt` builds, and
 // putting it in both halves of the request sent it twice for no benefit.
+//
+// The output contract is the opposite case and lives here. It used to ride on
+// the user message with the humanize skill, which bought no prefix caching --
+// the system prompt is already the dictation-independent half -- and cost the
+// property that made it a contract at all. System instructions outrank user
+// content, and `buildPostProcessingPrompt` puts dictated text in the user
+// message, so a dictation reading `</transcript>` followed by counter-
+// instructions arrived after the rule it was meant to obey and could outweigh
+// it. The impact was bounded to a lost cleanup pass, because the strict-parse
+// fallback keeps the raw transcript, but the rule is now above the text it
+// governs rather than beside it.
+const withOutputFormatGuidance = (systemPrompt: string): string =>
+  `${systemPrompt}\n\n${POST_PROCESS_OUTPUT_FORMAT_GUIDANCE}`;
+
 export const buildSystemPostProcessingTonePrompt = (
   input: PostProcessingPromptInput,
 ): string => {
@@ -443,9 +457,9 @@ export const buildSystemPostProcessingTonePrompt = (
       input.tone.systemPromptTemplate,
       buildPostProcessingTemplateVars(input),
     );
-    return (
+    return withOutputFormatGuidance(
       appendStructuredStyleGuidance(systemPrompt, input.tone) +
-      `\n\n${buildGlossaryGuidance(input.glossary)}`
+        `\n\n${buildGlossaryGuidance(input.glossary)}`,
     );
   }
 
@@ -460,9 +474,11 @@ The result must be in the ${languageName} language.
 ${buildGlossaryGuidance(input.glossary)}
 `;
 
-  return applyTemplateVars(
-    fullPrompt.trim(),
-    buildPostProcessingTemplateVars(input),
+  return withOutputFormatGuidance(
+    applyTemplateVars(
+      fullPrompt.trim(),
+      buildPostProcessingTemplateVars(input),
+    ),
   );
 };
 
@@ -761,7 +777,10 @@ Process the transcript according to the instructions.
   // automatically and exempts cached tokens from its rate limits. The
   // transcript stays the last variable input of the style prompt; a tone
   // template decides on its own where its `<transcript/>` token sits.
-  return `${HUMANIZE_SKILL_TEXT}\n\n${POST_PROCESS_OUTPUT_FORMAT_GUIDANCE}\n\n${body.trim()}`;
+  //
+  // The output contract is not here. It is in the system prompt, where dictated
+  // text cannot outrank it -- see `withOutputFormatGuidance`.
+  return `${HUMANIZE_SKILL_TEXT}\n\n${body.trim()}`;
 };
 
 // Reasoning models (gpt-oss, gpt-5, Gemini thinking) spend hidden reasoning
