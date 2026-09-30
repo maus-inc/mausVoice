@@ -273,7 +273,13 @@ describe("createPhaseBookkeeper", () => {
 });
 
 describe("postProcessFinalizedTranscript", () => {
-  const buildInput = (options: { store?: boolean; agent?: boolean } = {}) => {
+  const buildInput = (
+    options: {
+      store?: boolean;
+      agent?: boolean;
+      droppedChars?: number;
+    } = {},
+  ) => {
     const order: string[] = [];
     const handleTranscript = vi.fn<
       PostTranscriptInput["strategy"]["handleTranscript"]
@@ -283,7 +289,10 @@ describe("postProcessFinalizedTranscript", () => {
         shouldContinue: false,
         transcript: "hello world",
         sanitizedTranscript: "hello world",
-        postProcessMetadata: {},
+        postProcessMetadata:
+          options.droppedChars === undefined
+            ? {}
+            : { fastStyleTruncatedChars: options.droppedChars },
         postProcessWarnings: [],
         remoteStatus: null,
         remoteDeviceId: null,
@@ -305,6 +314,15 @@ describe("postProcessFinalizedTranscript", () => {
     const refreshMember = vi.fn(() => {
       order.push("refresh");
     });
+    const showToast = vi.fn(
+      async (_options: {
+        message: string;
+        toastType: "info" | "error";
+        duration?: number;
+      }) => {
+        order.push("toast");
+      },
+    );
     const input: PostTranscriptInput = {
       audio: { samples: new Float32Array([0.1, 0.2]), sampleRate: 16000 },
       a11yInfo: null,
@@ -324,6 +342,7 @@ describe("postProcessFinalizedTranscript", () => {
       sendIdle,
       storeTranscriptionFn,
       refreshMember,
+      showToast,
     };
     return {
       input,
@@ -332,8 +351,43 @@ describe("postProcessFinalizedTranscript", () => {
       sendIdle,
       storeTranscriptionFn,
       refreshMember,
+      showToast,
     };
   };
+
+  it("tells the user when fast styling dropped the end of a long dictation", async () => {
+    // The warning used to be recorded on the row and nowhere else, so the user
+    // received incomplete text with no notice during dictation at all.
+    const { input, showToast } = buildInput({ droppedChars: 42 });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = showToast.mock.calls[0]?.[0];
+    expect(call?.toastType).toBe("info");
+    // The row is stored here, so promising History is accurate.
+    expect(call?.message).toContain("History");
+  });
+
+  it("does not promise History when the row is not stored", async () => {
+    // Incognito mode skips storage, so the untruncated ending exists nowhere.
+    // The same message would send the user looking for text that was never
+    // written.
+    const { input, showToast } = buildInput({ store: false, droppedChars: 42 });
+
+    await postProcessFinalizedTranscript(input);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const call = showToast.mock.calls[0]?.[0];
+    expect(call?.message).not.toContain("History");
+    expect(call?.message).toContain("42");
+  });
+
+  it("stays quiet when nothing was truncated", async () => {
+    const { input, showToast } = buildInput();
+    await postProcessFinalizedTranscript(input);
+    expect(showToast).not.toHaveBeenCalled();
+  });
 
   it("sends idle after handleTranscript and before storeTranscription", async () => {
     const { input, order, handleTranscript, storeTranscriptionFn } =

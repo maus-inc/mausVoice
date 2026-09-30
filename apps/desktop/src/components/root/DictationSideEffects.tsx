@@ -17,6 +17,7 @@ import {
 } from "../../actions/chat.actions";
 import { refreshMember } from "../../actions/member.actions";
 import { dismissToast, runToast, showToast } from "../../actions/toast.actions";
+import { getIntl } from "../../i18n/intl";
 import { applyInDictationStyleSwitch } from "../../actions/tone.actions";
 import {
   resolveToolPermission,
@@ -289,6 +290,12 @@ export type PostTranscriptInput = {
   sendIdle: () => Promise<void>;
   storeTranscriptionFn: typeof storeTranscription;
   refreshMember: () => void;
+  /** Informational surface for warnings the user has to know about mid-flow. */
+  showToast: (options: {
+    message: string;
+    toastType: "info" | "error";
+    duration?: number;
+  }) => Promise<void> | void;
   /** Review-before-insert persistence hook; forwarded to the strategy. */
   persistReviewedTranscript?: (
     input: ReviewedTranscriptPersistenceInput,
@@ -331,7 +338,9 @@ export const postProcessFinalizedTranscript = async (
     `Post-processing complete: transcript=${transcript ? `${transcript.length} chars` : "empty"}, warnings=${postProcessWarnings.length}`,
   );
   await input.sendIdle();
-  if (strategy.shouldStoreTranscript() && !result.historyPersisted) {
+  const willStore =
+    strategy.shouldStoreTranscript() && !result.historyPersisted;
+  if (willStore) {
     getLogger().verbose("Storing transcription");
     await input.storeTranscriptionFn({
       audio: input.audio,
@@ -347,6 +356,47 @@ export const postProcessFinalizedTranscript = async (
     });
   }
   input.refreshMember();
+
+  // Fast styling caps its input, so a long dictation reaches the destination
+  // with its ending unstyled. The warning was recorded on the row and nothing
+  // else, so the user got incomplete text with no notice during dictation. It
+  // is raised here rather than in the action because surfacing it is a UI
+  // concern, and this is where both facts it depends on are known.
+  const droppedChars = postProcessMetadata?.fastStyleTruncatedChars;
+  if (typeof droppedChars === "number" && droppedChars > 0) {
+    // The wording differs because the promise does. With the row stored, the
+    // untruncated raw text is in History and the user can recover the ending;
+    // in incognito nothing is stored at all, so promising History would be a lie.
+    // Deliberately different wording from the warning recorded on the History row.
+    // This project derives message ids from a content hash, so reusing that
+    // sentence here is an id collision and the extractor refuses it. The two are
+    // also different surfaces: that one is a stored record, this one is a live
+    // notification, and a transient toast does not need to read like a log line.
+    //
+    // Two calls rather than one call with a conditional descriptor, because the
+    // extractor needs `id` and `defaultMessage` as string literals in the
+    // argument and cannot follow a ternary.
+    const message = willStore
+      ? getIntl().formatMessage(
+          {
+            defaultMessage:
+              "Fast styling left the last {droppedChars} characters of that dictation unstyled. The unstyled ending is in History.",
+          },
+          { droppedChars },
+        )
+      : getIntl().formatMessage(
+          {
+            defaultMessage:
+              "That dictation outran fast styling, so its last {droppedChars} characters were left unstyled, and incognito mode is on, so that ending was not saved.",
+          },
+          { droppedChars },
+        );
+    await input.showToast({
+      message,
+      toastType: "info",
+      duration: 8_000,
+    });
+  }
   return {
     shouldContinue: result.shouldContinue,
   };
@@ -911,6 +961,7 @@ export const DictationSideEffects = () => {
         sendIdle: () => sendPhaseToPill("idle"),
         storeTranscriptionFn: storeTranscription,
         refreshMember,
+        showToast,
         persistReviewedTranscript,
         trace: pipelineTraceRef.current,
       });
