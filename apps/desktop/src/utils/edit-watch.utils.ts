@@ -345,7 +345,8 @@ const collectRegionTerms = (
   // "Ralf", and "Zeta" was learned as if the recognizer had produced it. The
   // comment on `regionStart` describes that harm; this is what prevents it.
   const added: string[] = [];
-  const removed: string[] = [];
+  // Only ever read as a count, so it is tracked as one rather than built.
+  let removedCount = 0;
   for (const gap of gaps) {
     const gapAdded = computeAddedTokens(
       gap.baseline.join(" "),
@@ -362,7 +363,7 @@ const collectRegionTerms = (
       continue;
     }
     added.push(...gapAdded);
-    removed.push(...gapRemoved);
+    removedCount += gapRemoved.length;
   }
 
   // A long list of added tokens means the user rewrote the text.
@@ -372,12 +373,12 @@ const collectRegionTerms = (
 
   // A pure insertion is the user adding their own words, not correcting the
   // dictation, and a long removal is a rewrite.
-  if (removed.length === 0 || removed.length > MAX_EDIT_TOKENS) {
+  if (removedCount === 0 || removedCount > MAX_EDIT_TOKENS) {
     return [];
   }
 
   const replacedEverything =
-    dictatedLength > 1 && removed.length >= dictatedLength;
+    dictatedLength > 1 && removedCount >= dictatedLength;
   if (replacedEverything) {
     return [];
   }

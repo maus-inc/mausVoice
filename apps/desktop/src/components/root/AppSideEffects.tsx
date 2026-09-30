@@ -852,14 +852,20 @@ export const AppSideEffects = () => {
 
   useToastAction(async (payload) => {
     if (payload.action === "open_agent_settings") {
-      surfaceMainWindow();
+      // `surfaceMainWindow` swallows its own errors and coalesces concurrent
+      // calls, so there is nothing to await or recover from here: surfacing is a
+      // side effect, and the dialog state below must not wait on the IPC.
+      void surfaceMainWindow();
       produceAppState((draft) => {
         draft.settings.agentModeDialogOpen = true;
       });
     } else if (payload.action === "surface_window") {
-      surfaceMainWindow();
+      void surfaceMainWindow();
     } else if (payload.action === "open_transcriptions") {
-      surfaceMainWindow();
+      // `getBrowserRouter()` lazily builds the router and is documented as safe
+      // before Router mounts, so navigating does not depend on the window being
+      // up; the try/catch is the guard for a router that still cannot navigate.
+      void surfaceMainWindow();
       try {
         getBrowserRouter().navigate("/dashboard/transcriptions");
       } catch (error) {
@@ -872,8 +878,13 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-install-update", () => {
     if (!isMainWindow) return;
-    surfaceMainWindow();
-    installAvailableUpdate();
+    // Fire-and-forget by design: the listener body never returns, so a rejection
+    // cannot reach an error handler anyway. The `.catch` just keeps a failed
+    // install from surfacing as an unhandled rejection.
+    void surfaceMainWindow();
+    void installAvailableUpdate().catch((error: unknown) => {
+      getLogger().error(`Failed to start update install: ${error}`);
+    });
   });
 
   useTauriListen<void>("tray-copy-last-transcript", async () => {

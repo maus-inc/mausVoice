@@ -819,11 +819,13 @@ export const DictationSideEffects = () => {
 
       if (message) {
         playAlertSound();
-        showToast({
-          message: String(message.body),
-          toastType: "error",
-          duration: 8_000,
-        });
+        runToast(
+          showToast({
+            message: String(message.body),
+            toastType: "error",
+            duration: 8_000,
+          }),
+        );
       }
     },
     [
@@ -871,13 +873,15 @@ export const DictationSideEffects = () => {
         return outAudio;
       } catch (error) {
         getLogger().error(`Failed to stop recording: ${error}`);
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Failed to stop recording",
+        runToast(
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Failed to stop recording",
+            }),
+            toastType: "error",
+            duration: 8_000,
           }),
-          toastType: "error",
-          duration: 8_000,
-        });
+        );
         return null;
       }
     });
@@ -1186,13 +1190,15 @@ export const DictationSideEffects = () => {
         getLogger().warning(
           `Recording duration warning (${dictationLimitMinutes} min limit)`,
         );
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording will stop in 60 seconds",
+        runToast(
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Recording will stop in 60 seconds",
+            }),
+            toastType: "info",
+            duration: 5_000,
           }),
-          toastType: "info",
-          duration: 5_000,
-        });
+        );
       }, warningDurationMs);
     }
 
@@ -1201,13 +1207,15 @@ export const DictationSideEffects = () => {
         getLogger().warning(
           `Recording auto-stopped (${dictationLimitMinutes} min limit)`,
         );
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording stopped: duration limit reached",
+        runToast(
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage: "Recording stopped: duration limit reached",
+            }),
+            toastType: "info",
+            duration: 5_000,
           }),
-          toastType: "info",
-          duration: 5_000,
-        });
+        );
         stopRecording();
       }, autoStopDurationMs);
     }
@@ -1229,27 +1237,33 @@ export const DictationSideEffects = () => {
         getLogger().warning(
           `Provider recording duration warning (${providerLimitMs} ms limit)`,
         );
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Provider limit: recording will stop in 60 seconds",
+        runToast(
+          showToast({
+            message: intl.formatMessage({
+              defaultMessage:
+                "Provider limit: recording will stop in 60 seconds",
+            }),
+            toastType: "info",
+            duration: 5_000,
           }),
-          toastType: "info",
-          duration: 5_000,
-        });
+        );
       }, warningDurationMs);
     }
     providerAutoStopTimerRef.current = setTimeout(() => {
       getLogger().warning(
         `Recording auto-stopped at provider limit (${providerLimitMs} ms)`,
       );
-      showToast({
-        message: intl.formatMessage({
-          defaultMessage: "Recording stopped: provider duration limit reached",
+      runToast(
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage:
+              "Recording stopped: provider duration limit reached",
+          }),
+          toastType: "info",
+          duration: 5_000,
         }),
-        toastType: "info",
-        duration: 5_000,
-      });
-      stopRecording();
+      );
+      void stopRecording();
     }, autoStopDurationMs);
   }, [clearProviderRecordingTimers, intl, stopRecording]);
 
@@ -1314,7 +1328,10 @@ export const DictationSideEffects = () => {
         strategyRef.current = null;
       }
       clearRecordingState();
-      abortRecording();
+      // This handler is sync and cannot await, but the call still has to be
+      // marked discarded so it is not a floating promise. `abortRecording`
+      // guards its own awaits, so nothing here can reject.
+      void abortRecording();
 
       hardResetHotkeyState();
       clearRecordingTimers();
@@ -1324,13 +1341,15 @@ export const DictationSideEffects = () => {
         ),
       );
 
-      showToast({
-        message: intl.formatMessage({
-          defaultMessage: "Recording failed",
+      runToast(
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage: "Recording failed",
+          }),
+          toastType: "error",
+          duration: 8_000,
         }),
-        toastType: "error",
-        duration: 8_000,
-      });
+      );
     },
     [
       abortRecording,
@@ -1523,7 +1542,13 @@ export const DictationSideEffects = () => {
         // Keep the user-configured active-audio timers at their established
         // start point after session initialization succeeds.
         startUserRecordingTimers();
-        dimSystemVolume(operationId);
+        // Fire-and-forget. `startRecording` is an onActivate handler and the
+        // activation controller serialises activate before deactivate, so
+        // awaiting here would put the volume round trips in front of the stop
+        // that the user's key release triggers, keeping the microphone open past
+        // release. `dimSystemVolume` guards itself on `operationId`, so an abort
+        // landing mid-dim is still handled without awaiting.
+        void dimSystemVolume(operationId);
       } catch (error) {
         handleStartFailure(error, activeSession, operationId);
       }
@@ -1860,13 +1885,17 @@ export const DictationSideEffects = () => {
       clearUserRecordingTimers();
       // Keep the voice field fully open and slide the style bar in via paused phase.
       await strategyRef.current.setPhase("paused");
-      showToast({
-        message: intl.formatMessage({
-          defaultMessage: "Dictation paused",
+      // Fire-and-forget: a toast that fails to render is not a failure to pause,
+      // and awaiting it here would report one as "Failed to pause dictation".
+      runToast(
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage: "Dictation paused",
+          }),
+          toastType: "info",
+          duration: 2_000,
         }),
-        toastType: "info",
-        duration: 2_000,
-      });
+      );
     } catch (error) {
       getLogger().error(`Failed to pause dictation: ${error}`);
     }
@@ -1887,13 +1916,17 @@ export const DictationSideEffects = () => {
       startUserRecordingTimers();
     } catch (error) {
       getLogger().error(`Failed to resume dictation: ${error}`);
-      showToast({
-        message: intl.formatMessage({
-          defaultMessage: "Could not resume dictation",
+      // Fire-and-forget, and deliberately not awaited inside the catch: a toast
+      // that cannot render must not turn into a second "failed to resume" error.
+      runToast(
+        showToast({
+          message: intl.formatMessage({
+            defaultMessage: "Could not resume dictation",
+          }),
+          toastType: "error",
+          duration: 5_000,
         }),
-        toastType: "error",
-        duration: 5_000,
-      });
+      );
     }
   }, [intl, startUserRecordingTimers]);
 

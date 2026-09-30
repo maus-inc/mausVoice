@@ -467,12 +467,15 @@ describe("runAgent replay filter and unfinished tool turns", () => {
       maxIterations: 4,
     });
 
-    const sent = loopRunMock.mock.calls[0]?.[0] as Array<{
-      role: string;
-      content?: string;
-      toolCallId?: string;
-    }>;
-    const contents = sent.map((m) => m.content);
+    const sent = loopRunMock.mock.calls[0]?.[0] as
+      | Array<{
+          role: string;
+          content?: string;
+          toolCallId?: string;
+        }>
+      | undefined;
+    expect(sent, "the agent never reached the provider loop").toBeDefined();
+    const contents = sent!.map((m) => m.content);
 
     expect(contents).toContain("finished turn");
     expect(
@@ -482,10 +485,10 @@ describe("runAgent replay filter and unfinished tool turns", () => {
     // And the finished call's result is still there, so the filter is not simply
     // dropping every tool turn.
     expect(
-      sent.some((m) => m.role === "tool" && m.toolCallId === "call-done"),
+      sent!.some((m) => m.role === "tool" && m.toolCallId === "call-done"),
     ).toBe(true);
     // No `tool` message exists for the pending call, so none may be invented.
-    expect(sent.some((m) => m.toolCallId === "call-pending")).toBe(false);
+    expect(sent!.some((m) => m.toolCallId === "call-pending")).toBe(false);
   });
 });
 
@@ -589,14 +592,13 @@ describe("runAgent supersession while a tool result is being written", () => {
     await run2;
 
     // The write was issued, then withdrawn, and the id it used is the one removed.
-    const issued = getChatMessageRepoCreateMock.mock.calls[0]?.[0] as {
-      id: string;
-    };
-    expect(issued).toBeDefined();
+    const issued = getChatMessageRepoCreateMock.mock.calls[0]?.[0] as
+      { id: string } | undefined;
+    expect(issued, "no tool result was persisted").toBeDefined();
     // The mock stands in for the repository method, which `deleteChatMessages`
     // calls with the id list alone; the conversation id is only used to prune
     // state.
-    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued.id]);
+    expect(deleteChatMessagesMock).toHaveBeenCalledWith([issued!.id]);
 
     const verbose = loggerMock.verbose.mock.calls.map((c) => String(c[0]));
     expect(

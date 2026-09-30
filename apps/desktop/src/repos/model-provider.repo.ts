@@ -391,7 +391,9 @@ export class GeminiModelProviderRepo extends BaseModelProviderRepo {
         );
         return [];
       }
-      const filtered = (payload.models ?? [])
+      // `payload.models` is proven non-empty by the guard above, so the `?? []`
+      // fallback here is dead.
+      const filtered = payload.models
         .filter((m) =>
           (m.supportedGenerationMethods ?? []).includes("generateContent"),
         )
