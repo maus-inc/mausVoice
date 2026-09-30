@@ -709,7 +709,6 @@ const tryUploadWithFallback = async (args: {
   signal?: AbortSignal;
 }): Promise<{ uri?: string; mimeType: string }> => {
   let uploadedUri: string | undefined;
-  let uploadedMimeType = args.mimeType;
   try {
     const uploaded = await uploadGeminiFile(
       args.apiKey,
@@ -719,7 +718,6 @@ const tryUploadWithFallback = async (args: {
       args.signal,
     );
     uploadedUri = uploaded.uri;
-    uploadedMimeType = uploaded.mimeType;
     await waitForGeminiFileActive(
       uploaded.uri,
       args.apiKey,
