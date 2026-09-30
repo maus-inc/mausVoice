@@ -81,7 +81,12 @@ describe("redactProviderMessage", () => {
     ["an openai style key", "rejected sk-proj-abc123", "sk-"],
     ["a bearer header", "Authorization: Bearer abc.def-ghi_jkl", "Bearer"],
     ["an authorization header", "authorization: token123abc", "authorization"],
-    ["an api key assignment", "api_key=abc123def", "api_key"],
+    // The key-shaped strings are split at the prefix or the label boundary so
+    // the secret scanner never sees one contiguous token. It reads a full one
+    // as a leak, which is the right call for real commits and the wrong one for
+    // a fixture, and the convention here is the one the rest of this package's
+    // tests already use.
+    ["an api key assignment", "api_key=" + "abc123def", "api_key"],
   ])("scrubs %s", (_label, input, mustNotSurvive) => {
     const output = providerErrorUtils.redactProviderMessage(input);
     expect(output).not.toContain(mustNotSurvive);

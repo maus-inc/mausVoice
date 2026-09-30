@@ -4,3 +4,11 @@
 # [allowlist].paths (node_modules / dist / target), which Gitleaks actually
 # honors. Leave this file empty (or with fingerprints only) so it does not
 # silently mask real findings.
+#
+# One entry, and it is a test fixture rather than a secret. The F13 redaction case
+# needs an `api_key=<value>` string to assert on, and gitleaks reads that shape as
+# `generic-api-key` on sight. The literal is split at the label boundary in the
+# working tree, but the commit that first introduced it is still inside the pull
+# request's range and the range scan reads every commit in that range, so the
+# finding comes back from history however the current tree is written.
+generic-api-key:f4a3d740f750313e25fd549246fe2bbf7eeef83b:agent@paperclip.ing:packages/voice-ai/src/provider-error.utils.test.ts:115
