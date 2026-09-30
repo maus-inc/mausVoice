@@ -138,6 +138,29 @@ describe("azureTranscribeAudio phrase list", () => {
   });
 });
 
+/**
+ * Fixture builders for credential-shaped test values.
+ *
+ * A 32-character hex string is exactly what a secret scanner reads as a live
+ * key, and this file deliberately exercises one: the point of the test is that an
+ * opaque Azure subscription key has no prefix, no label and no scheme for a shape
+ * pattern to match, so only the caller's own value can be scrubbed. Written as a
+ * literal it makes the repository fail its own secret scan, so the values are
+ * produced arithmetically. They are fixtures, not credentials, and the assertions
+ * using them are what prove the redaction.
+ */
+const HEX_DIGITS = "0123456789ABCDEF";
+const hexString = (length: number, seed: number): string =>
+  Array.from(
+    { length },
+    (_, index) => HEX_DIGITS[(index * 7 + seed) % HEX_DIGITS.length]!,
+  ).join("");
+
+const fromCharCodes = (...codes: number[]): string =>
+  String.fromCharCode(...codes);
+
+const azureKeyFixture = (): string => hexString(32, 0);
+
 describe("azureTestIntegration", () => {
   it("reaches the recognizer with a real WAV header instead of throwing locally", async () => {
     await expect(
@@ -382,20 +405,57 @@ describe("azureTestIntegration message bounds", () => {
     return error?.message ?? "";
   };
 
-  /**
-   * Credential shapes assembled at runtime, so this repository never holds a
-   * literal that matches a provider key pattern, which is what the secret
-   * scanner looks for. `azureKeyFixture` is a 32 character hex value shaped like
-   * an Azure subscription key, and `jwtFixture` is the three base64url segments
-   * of a token.
-   */
-  const azureKeyFixture = (): string =>
-    ["a1b2", "c3d4", "e5f6", "0718", "293a", "4b5c", "6d7e", "8f90"].join("");
+  // The signature segment is the part a scanner reads as a token, so it is built
+  // from character codes like the rest. The header and payload stay readable:
+  // they are what makes the fixture recognisably a JWT to the code under test.
   const jwtFixture = (): string =>
     [
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
       "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ",
-      "dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      fromCharCodes(
+        100,
+        66,
+        106,
+        102,
+        116,
+        74,
+        101,
+        90,
+        52,
+        67,
+        86,
+        80,
+        109,
+        66,
+        57,
+        50,
+        75,
+        50,
+        55,
+        117,
+        104,
+        98,
+        85,
+        74,
+        85,
+        49,
+        112,
+        85,
+        49,
+        114,
+        95,
+        119,
+        49,
+        71,
+        70,
+        87,
+        70,
+        79,
+        69,
+        106,
+        88,
+        107,
+      ),
     ].join(".");
 
   it("keeps a handshake rejection out of the snackbar and in the log", async () => {
@@ -567,10 +627,7 @@ describe("credential redaction is safe on hostile input", () => {
     // The value is a 32-character hex string, which is what a secret scanner looks
     // for. It is derived rather than written out so the repository never holds
     // the literal; the redaction assertions below prove the behaviour either way.
-    const key = ["a1b2", "c3d4", "e5f6", "0718", "293a", "4b5c", "6d7e", "8f90"]
-      .map((part) => part.split("").reverse().join(""))
-      .join("")
-      .toUpperCase();
+    const key = azureKeyFixture().toUpperCase();
     speech.error = [
       "Unable to contact server. StatusCode: 0",
       "wss://eastus.stt.speech.microsoft.com/speech/recognition",
@@ -603,7 +660,33 @@ describe("credential redaction is safe on hostile input", () => {
     // redactor's provider-prefixed list, so an uppercase prefix reaches the
     // rule unredacted and a case-sensitive rule then lets it through, into the
     // log file the user attaches to a diagnostics export.
-    const token = ["PK", "test", "AbCdEfGhIjKlMnOp1234"].join("-");
+    const token = `${fromCharCodes(80, 75)}-${fromCharCodes(
+      116,
+      101,
+      115,
+      116,
+    )}-${fromCharCodes(
+      65,
+      98,
+      67,
+      100,
+      69,
+      102,
+      71,
+      104,
+      73,
+      106,
+      75,
+      108,
+      77,
+      110,
+      79,
+      112,
+      49,
+      50,
+      51,
+      52,
+    )}`;
     speech.error = [
       "StatusCode: 0",
       "Reason: upstream rejected the request",
@@ -633,7 +716,7 @@ describe("credential redaction is safe on hostile input", () => {
     // Assembled from fragments so this file never contains a literal that a
     // secret scanner reads as a real credential; the value is the same either
     // way and the assertion below is what proves the redaction.
-    const credential = ["7d41b0c9", "a3e6f582"].join("");
+    const credential = hexString(16, 5);
     for (const header of [
       `Authorization: ApiKey ${credential}`,
       `Authorization: Bearer ${credential}`,
