@@ -42,9 +42,35 @@ export class TonePreviewNoProviderError extends Error {
 }
 
 /**
+ * The provider answered, but the answer held no previewable text.
+ *
+ * A separate error from a transport failure because the two need different
+ * words: here the request worked and the model returned something unusable, so
+ * retrying is unlikely to help and the style itself may be the problem.
+ *
+ * The wizard renders a localized "Preview failed." title and this message as the
+ * detail, so it carries the explanation.
+ */
+export class TonePreviewUnusableError extends Error {
+  constructor(reason: "empty" | "unreadable-edits") {
+    super(
+      reason === "empty"
+        ? "The provider returned an empty result, so there is nothing to preview. The style may be asking for something the provider cannot produce for a short sample."
+        : "The provider returned edits that could not be applied and no replacement text, so there is nothing to preview. A style that rewrites the whole sample rather than editing it cannot be previewed this way.",
+    );
+    this.name = "TonePreviewUnusableError";
+  }
+}
+
+/**
  * The preview shows the cleaned text when the model produced a usable reply
  * and the model's own words otherwise, so a style that answers in plain text
  * still shows up in the dialog instead of the unedited sample.
+ *
+ * A reply that parsed but yielded nothing usable throws rather than returning
+ * an empty string. The caller marks the preview done on any resolved value, so
+ * an empty string left the user looking at a blank box labelled as a successful
+ * preview, with no indication the style had produced nothing at all.
  */
 const unwrapResultJson = (raw: string, sample: string): string => {
   const resolution = resolveProcessedTranscription(raw, sample);
@@ -52,8 +78,11 @@ const unwrapResultJson = (raw: string, sample: string): string => {
     return resolution.transcript;
   }
   // A reply that never parsed is shown verbatim: a style that answers in prose
-  // is still worth previewing. A parsed reply with no text previews as empty.
-  return resolution.reason === "unparseable" ? raw.trim() : "";
+  // is still worth previewing.
+  if (resolution.reason === "unparseable") {
+    return raw.trim();
+  }
+  throw new TonePreviewUnusableError(resolution.reason);
 };
 
 /**

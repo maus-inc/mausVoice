@@ -20,6 +20,7 @@ vi.mock("../utils/user.utils", async (importOriginal) => ({
 import {
   MAX_PREVIEW_SAMPLE_LEN,
   previewToneStyle,
+  TonePreviewUnusableError,
 } from "./tone-preview.actions";
 
 beforeEach(() => {
@@ -51,7 +52,6 @@ describe("style preview provider contract", () => {
     ['{"result":"Styled sample"}', "Styled sample"],
     ['```json\n{"result":"Styled sample"}\n```', "Styled sample"],
     ['`{"result":"Styled sample"}`', "Styled sample"],
-    ['{"result":""}', ""],
     ["  Plain provider output  ", "Plain provider output"],
   ])("parses provider output %s", async (text, expected) => {
     generate.mockResolvedValueOnce({ text });
@@ -62,6 +62,49 @@ describe("style preview provider contract", () => {
         new AbortController().signal,
       ),
     ).toBe(expected);
+  });
+
+  it("fails loudly when the provider returns nothing usable", async () => {
+    // Returning an empty string let the caller mark the preview done, so the
+    // user saw a blank box presented as a successful preview, with no
+    // explanation at all. A reply that parsed but carried no `edits` key and no
+    // `result` text is a failure the dialog has to be able to say something
+    // about -- usually a reply truncated at the token limit.
+    generate.mockResolvedValueOnce({ text: '{"result":""}' });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).rejects.toBeInstanceOf(TonePreviewUnusableError);
+  });
+
+  it("previews the unchanged sample when the provider declares no edits", async () => {
+    // Distinct from the case above: an `edits` key that is present but empty is
+    // the model saying it changed nothing, so the sample itself is the correct
+    // preview. Only a reply with no `edits` key at all is unusable.
+    generate.mockResolvedValueOnce({ text: '{"edits":[],"result":""}' });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).resolves.toBe("sample");
+  });
+
+  it("still previews a reply that never parsed, shown verbatim", async () => {
+    // A style that answers in prose rather than JSON is worth previewing, so
+    // this stays a success. Only a reply that parsed into nothing usable fails.
+    generate.mockResolvedValueOnce({ text: "Sure, here it is: styled sample" });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).resolves.toBe("Sure, here it is: styled sample");
   });
 
   it("requests the same response schema as production and forwards cancellation", async () => {
