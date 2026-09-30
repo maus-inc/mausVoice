@@ -678,20 +678,21 @@ mod tests {
         let temp = TempDb::new();
         let path = &temp.path;
         let pool = try_open(path).await.expect("initial migrate");
-        // A crash between the runner writing `success = false` and committing
-        // leaves a real ledger row flipped, so update one rather than inventing
-        // a version this build does not ship.
+        // One row, not all of them: a crash mid-migration leaves exactly the step
+        // it was on flipped, and the code reads the lowest such version.
         let expected_version: i64 =
             sqlx::query_scalar("SELECT MIN(version) FROM _sqlx_migrations")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let affected = sqlx::query("UPDATE _sqlx_migrations SET success = false")
-            .execute(&pool)
-            .await
-            .unwrap()
-            .rows_affected();
-        assert!(affected > 0, "the fixture needs at least one migrated row");
+        let affected =
+            sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = ?1")
+                .bind(expected_version)
+                .execute(&pool)
+                .await
+                .unwrap()
+                .rows_affected();
+        assert_eq!(affected, 1, "exactly the fixture row must be flipped");
         pool.close().await;
 
         // A crash mid-migration leaves `success = false` behind. The file is
@@ -704,9 +705,12 @@ mod tests {
             .expect_err("a failed migration row must not be opened silently")
             .to_string();
 
+        // The exact phrase the code builds. Asserting on the bare number would
+        // pass for any message containing that digit, and every version here is
+        // small enough that any message contains one.
         assert!(
-            error.contains(&expected_version.to_string()),
-            "the failing version {expected_version} must be named so it can be looked up: {error}"
+            error.contains(&format!("migration {expected_version} previously failed")),
+            "the failing version must be named so it can be looked up: {error}"
         );
         assert!(
             error.contains("needs recovery"),

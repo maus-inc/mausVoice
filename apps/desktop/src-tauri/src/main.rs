@@ -46,6 +46,13 @@ fn main() {
 
     let app_result = std::panic::catch_unwind(|| desktop_lib::app::run(tauri::generate_context!()));
 
+    // A database that cannot be opened is raised inside Tauri's setup hook,
+    // which turns a setup `Err` into a panic carrying the message, so that is the
+    // arm that has to recognise it. The `Ok(Err(..))` arm below still matches on
+    // the same phrase because a runtime can return the error directly, but the
+    // panic arm is the one that carries it today.
+    const DATABASE_OPEN_FAILURE: &str = "could not open the database";
+
     match app_result {
         Ok(result) => {
             if let Err(err) = result {
@@ -53,11 +60,11 @@ fn main() {
                 eprintln!("[startup] ERROR: Tauri runtime failure: {err}");
 
                 // Provide context-specific guidance
-                if err_str.contains("could not open the database") {
+                if err_str.contains(DATABASE_OPEN_FAILURE) {
                     // The path is in the message. The app cannot start without
-                    // its database and nothing here can repair it, so say where
-                    // the file is and stop — advising deletion would throw away
-                    // transcriptions, keys and preferences.
+                    // its database and nothing here can repair it, so say so —
+                    // advising deletion would throw away the transcriptions, keys
+                    // and preferences the file holds.
                     eprintln!(
                         "[startup] The database could not be opened. Its contents have been left in place."
                     );
@@ -78,23 +85,21 @@ fn main() {
         }
         Err(panic_info) => {
             eprintln!("[startup] PANIC: Application panicked during startup!");
-            if let Some(s) = panic_info.downcast_ref::<&str>() {
-                eprintln!("[startup] Panic message: {s}");
-            } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                eprintln!("[startup] Panic message: {s}");
-            } else {
-                eprintln!("[startup] Panic message: <unknown>");
-            }
-            // A database that cannot be opened takes the app down during setup,
-            // and the GPU hint below is wrong for it.
-            let panicked = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                *s
+            // Downcast once: the payload is printed and inspected from the same
+            // value, so the two cannot disagree about what it was.
+            let panicked: &str = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                s
             } else if let Some(s) = panic_info.downcast_ref::<String>() {
                 s.as_str()
             } else {
                 ""
             };
-            if panicked.contains("could not open the database") {
+            if panicked.is_empty() {
+                eprintln!("[startup] Panic message: <unknown>");
+            } else {
+                eprintln!("[startup] Panic message: {panicked}");
+            }
+            if panicked.contains(DATABASE_OPEN_FAILURE) {
                 eprintln!(
                     "[startup] The database could not be opened. Its contents have been left in place."
                 );
