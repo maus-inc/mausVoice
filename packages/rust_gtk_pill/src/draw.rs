@@ -540,9 +540,18 @@ fn draw_loading(
     if let Some(stage) = state.stage_text.borrow().as_deref() {
         cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(12.0);
-        let ext = cr.text_extents(stage).unwrap();
-        let tx = rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing();
-        let ty = ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing();
+        // Cairo only fails to measure when the font backend is already in an
+        // error state. Anchor the label at the pill centre instead of
+        // unwrapping: this runs inside the drawing area's draw callback, where
+        // unwinding out of the signal trampoline aborts the process rather
+        // than just skipping the frame.
+        let (tx, ty) = match cr.text_extents(stage) {
+            Ok(ext) => (
+                rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing(),
+                ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing(),
+            ),
+            Err(_) => (rx + pill_w / 2.0, ry + pill_h / 2.0),
+        };
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
         cr.move_to(tx, ty);
         let _ = cr.show_text(stage);

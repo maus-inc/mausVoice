@@ -133,6 +133,10 @@ pub(crate) fn submit_entry(state: &PillState) -> bool {
         Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
         None => ipc::send(&OutMessage::TypedMessage { text }),
     }
+    // Cleared unconditionally: ipc::send returns no result, so a failed write
+    // means the desktop pipe is already gone and nothing would consume a retry
+    // — and this runs in the entry's activate handler, where blocking to retry
+    // would stall the main loop.
     *state.entry_text.borrow_mut() = String::new();
     true
 }

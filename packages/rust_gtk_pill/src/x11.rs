@@ -127,6 +127,11 @@ pub(crate) fn persist_drop_position(
     )?;
 
     move_toplevel(window, drop_x, drop_y);
+    // Publish the origin before building the geometry: pill_geometry resolves
+    // the monitor from x11_drag_applied, which otherwise still holds the origin
+    // this drop just replaced, so a drop that crossed a seam would report the
+    // previous monitor's work area next to the new rect.
+    state.x11_drag_applied.set((drop_x, drop_y));
     state.saved_x.set(drop_x as f64);
     state.saved_y.set(drop_y as f64);
     state.has_saved_position.set(true);
