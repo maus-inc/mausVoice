@@ -870,13 +870,20 @@ export const AppSideEffects = () => {
     } else if (payload.action === "open_transcriptions") {
       // `getBrowserRouter()` lazily builds the router and is documented as safe
       // before Router mounts, so navigating does not depend on the window being
-      // up; the try/catch is the guard for a router that still cannot navigate.
+      // up. `navigate` returns a promise that a synchronous try/catch cannot
+      // catch, so the rejection is handled on the promise itself.
       void surfaceMainWindow();
       try {
-        getBrowserRouter().navigate("/dashboard/transcriptions");
+        void getBrowserRouter()
+          .navigate("/dashboard/transcriptions")
+          .catch((error: unknown) => {
+            getLogger().warning(
+              `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
       } catch (error) {
         getLogger().warning(
-          `Failed to navigate to transcriptions: ${error instanceof Error ? error.message : String(error)}`,
+          `Failed to build the router: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -884,9 +891,9 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-install-update", () => {
     if (!isMainWindow) return;
-    // Fire-and-forget by design: the listener body never returns, so a rejection
-    // cannot reach an error handler anyway. The `.catch` just keeps a failed
-    // install from surfacing as an unhandled rejection.
+    // Fire-and-forget: the listener body is not async, so it never receives the
+    // promise from `installAvailableUpdate`. The `.catch` is what keeps a failed
+    // install from becoming an unhandled rejection.
     void surfaceMainWindow();
     void installAvailableUpdate().catch((error: unknown) => {
       getLogger().error(`Failed to start update install: ${error}`);

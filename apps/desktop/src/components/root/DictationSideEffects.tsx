@@ -1216,7 +1216,7 @@ export const DictationSideEffects = () => {
             duration: 5_000,
           }),
         );
-        stopRecording();
+        void stopRecording();
       }, autoStopDurationMs);
     }
   }, [clearUserRecordingTimers, intl, stopRecording]);
@@ -1638,7 +1638,7 @@ export const DictationSideEffects = () => {
     if (cancelPromptTimerRef.current) {
       clearCancelPromptTimer();
       runToast(dismissToast());
-      abortRecording();
+      void abortRecording();
       return;
     }
 
@@ -1780,9 +1780,16 @@ export const DictationSideEffects = () => {
       const id = conversationId ?? getAppState().pillConversationId;
       if (id) {
         void loadChatMessages(id);
-        getBrowserRouter().navigate(
-          `/dashboard/chats?id=${encodeURIComponent(id)}`,
-        );
+        // `navigate` returns a promise; a rejection here would otherwise be
+        // unhandled, so it is caught on the promise rather than by a surrounding
+        // try/catch that cannot see it.
+        await getBrowserRouter()
+          .navigate(`/dashboard/chats?id=${encodeURIComponent(id)}`)
+          .catch((error: unknown) => {
+            getLogger().warning(
+              `Failed to navigate to the conversation: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
       }
       await surfaceMainWindow();
       await abortRecording();
@@ -1932,7 +1939,7 @@ export const DictationSideEffects = () => {
 
   useTauriListen<void>("cancel-dictation", () => {
     if (!isMainWindow) return;
-    abortRecording();
+    void abortRecording();
   });
 
   useTauriListen<void>("pause-dictation", () => {
