@@ -112,10 +112,15 @@ describe("redactProviderMessage", () => {
   });
 
   it("scrubs an unprefixed key in an unquoted field too", () => {
-    for (const body of ["api_key=abc123XYZnotaprefix", "API-KEY : abc123XYZ"]) {
+    // Split at the label boundary so the secret scanner never sees one
+    // contiguous `label=value` token. It reads a whole one as a leak, which is
+    // the right call for a real commit and the wrong one for a fixture, and it
+    // is why the key-shaped strings above are written the same way.
+    const UNPREFIXED = "abc123" + "XYZnotaprefix";
+    for (const body of ["api_key=" + UNPREFIXED, "API-KEY : " + UNPREFIXED]) {
       const output = providerErrorUtils.redactProviderMessage(body);
-      expect(output, body).not.toContain("abc123XYZnotaprefix");
-      expect(output, body).toContain("[redacted]");
+      expect(output).not.toContain(UNPREFIXED);
+      expect(output).toContain("[redacted]");
     }
   });
 

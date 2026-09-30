@@ -1322,13 +1322,21 @@ mod tests {
 
     #[tokio::test]
     async fn unretired_consolidation_era_numbers_surface_as_a_downgrade() {
-        // 070, 080 and 088 are the three numbers in the 070 to 088 range that
-        // no ref in this repository ever used. A ledger row for one of them is
-        // not a folded consolidation step, so it must be surfaced and left in
-        // place. Hard-deleting it would hide a database written by a release
-        // this build knows nothing about, which is what widening the retired
-        // list back to a range would do.
-        for version in [70_i64, 80, 88] {
+        // 080 and 088 are the numbers in the 070 to 088 range that no ref has
+        // used. A ledger row for one of them is not a folded consolidation
+        // step, so it must be surfaced and left in place. Hard-deleting it
+        // would hide a database written by a release this build knows nothing
+        // about, which is what widening the retired list back to a range would
+        // do.
+        //
+        // 070 is not in this list any more. It was the third unused number when
+        // the list was written, and this build now spends it on the
+        // post_process_fallback step, so a row for it is a real configured
+        // migration that gets applied rather than a downgrade to surface. If
+        // that step is ever folded into the consolidation step instead, 070
+        // belongs in RETIRED_CONSOLIDATION_ERA_VERSIONS and this loop goes back
+        // to three.
+        for version in [80_i64, 88] {
             let temp = TempDb::new();
             let path = &temp.path;
             let pool = try_open(path).await.expect("initial migrate");
