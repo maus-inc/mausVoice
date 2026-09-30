@@ -135,6 +135,54 @@ describe("withAbortSignal", () => {
     expect(pending()).toBe(0);
   });
 
+  it("stays cancellable while the body is being read", async () => {
+    // `fetch` resolves on headers, so disposing when it settles detached both
+    // listeners while the caller was still reading. Every provider reads the
+    // body afterwards with `await response.json()`, so a discard during that
+    // read no longer reached the request and the upload kept running.
+    hideAny();
+    const request = new AbortController();
+    const caller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const base = vi.fn<typeof fetch>(async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Response("{}");
+    });
+
+    // Both signals present, so the manual linking branch is the one under test.
+    const response = await withAbortSignal(base, caller.signal)(
+      "https://x.test",
+      { signal: request.signal },
+    );
+    expect(requestSignal?.aborted).toBe(false);
+
+    caller.abort();
+
+    // The combined signal can only become aborted through a live listener.
+    expect(requestSignal?.aborted).toBe(true);
+    // Still readable afterwards, so the response was not replaced by an error.
+    await expect(response.json()).resolves.toEqual({});
+  });
+
+  it("detaches both inputs once the body has been read", async () => {
+    hideAny();
+    const request = new AbortController();
+    const caller = new AbortController();
+    const base = vi.fn<typeof fetch>(async () => new Response("{}"));
+
+    const pending = liveListenerCount(caller.signal);
+    const response = await withAbortSignal(base, caller.signal)(
+      "https://x.test",
+      { signal: request.signal },
+    );
+    // Still linked, which is the point: not disposed on headers.
+    expect(pending()).toBe(1);
+
+    await response.json();
+
+    expect(pending()).toBe(0);
+  });
+
   it("detaches the caller's listeners when the request rejects", async () => {
     hideAny();
     const base = vi.fn<typeof fetch>(async () => {
