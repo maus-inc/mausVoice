@@ -100,13 +100,23 @@ export const UNKNOWN_POST_PROCESS_ERROR_REASON: PostProcessErrorReason =
 /**
  * The message to render for a stored category. An unrecognized value is
  * possible because the field is read back from the database, which may hold a
- * category written by an older build.
+ * category written by an older build, and the remote server's own metadata is
+ * stored on the same row.
+ *
+ * `Object.hasOwn` is load bearing, not defensive noise. `POST_PROCESS_ERROR_REASONS` is an object
+ * literal, so a plain `POST_PROCESS_ERROR_REASONS[category]` on the string
+ * `"constructor"` returns the inherited `Object` constructor rather than
+ * undefined. That value is truthy, so the `||` never falls through to the
+ * fallback, and the function returns a function where its declared return type
+ * is a message descriptor. The caller passes it straight to `formatMessage`,
+ * which throws on a missing `id` before the toast is ever shown.
  */
 export const postProcessErrorReason = (
   category: string | null | undefined,
 ): PostProcessErrorReason =>
-  (category && POST_PROCESS_ERROR_REASONS[category]) ||
-  UNKNOWN_POST_PROCESS_ERROR_REASON;
+  (category && Object.hasOwn(POST_PROCESS_ERROR_REASONS, category)
+    ? POST_PROCESS_ERROR_REASONS[category]
+    : undefined) || UNKNOWN_POST_PROCESS_ERROR_REASON;
 
 /**
  * Reduce any provider message to one of the fixed categories above.

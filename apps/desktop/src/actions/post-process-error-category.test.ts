@@ -89,6 +89,44 @@ describe("postProcessErrorReason", () => {
     );
     expect(postProcessErrorReason("").defaultMessage).toBe("Provider error");
   });
+
+  it.each([
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toLocaleString",
+    "__proto__",
+  ])("falls back for the inherited key %s", (key) => {
+    // These are the names `POST_PROCESS_ERROR_REASONS` inherits from
+    // `Object.prototype`. A plain `[category]` lookup returns the inherited
+    // member, which is truthy, so the `||` never reaches the fallback and the
+    // function hands back a function where a message descriptor is declared.
+    // The caller passes that to `formatMessage`, which throws on a missing id
+    // and takes the styling-failure toast down with it.
+    expect(postProcessErrorReason(key)).toBe(UNKNOWN_POST_PROCESS_ERROR_REASON);
+  });
+
+  it("returns a descriptor and never a function, for any stored string", () => {
+    // The property the defect turns on: the declared return type holds for
+    // every input, not just for the inputs that happen not to collide with the
+    // prototype.
+    for (const value of [
+      POST_PROCESS_ERROR_CATEGORY.network,
+      "constructor",
+      "toString",
+      "some string an older build wrote",
+    ]) {
+      const reason: unknown = postProcessErrorReason(value);
+      expect(typeof reason).toBe("object");
+      expect(reason).not.toBeNull();
+      expect(
+        typeof (reason as { defaultMessage?: unknown }).defaultMessage,
+      ).toBe("string");
+    }
+  });
 });
 
 describe("catalog coverage", () => {
