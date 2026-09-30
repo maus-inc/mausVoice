@@ -305,6 +305,12 @@ const AZURE_STATUS_CODE = /StatusCode:\s*(\d+)/i;
  * so the status on its own cannot mean the credential was rejected. A 400 that
  * really is an invalid key carries the service's own wording beside it, and
  * the keyword rules below read that.
+ *
+ * There is deliberately no catch-all for the statuses left over. A 3xx, 4xx or
+ * 5xx that reached the service is evidence about the request, not about the
+ * key, and the keyword rules below already give the ones that carry a specific
+ * wording their own bucket. The rest fall through to "unknown", which tells the
+ * user the key could not be confirmed without inventing a cause.
  */
 const CREDENTIAL_STATUS_CODES = new Set([401, 403]);
 const REGION_STATUS_CODES = new Set([404]);
@@ -344,8 +350,8 @@ const BLANK_KEY_PATTERN =
  */
 const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
   const statusCode = AZURE_STATUS_CODE.exec(reason)?.[1];
-  if (statusCode !== undefined) {
-    const status = Number(statusCode);
+  const status = statusCode === undefined ? undefined : Number(statusCode);
+  if (status !== undefined) {
     if (CREDENTIAL_STATUS_CODES.has(status)) return "credential";
     if (REGION_STATUS_CODES.has(status)) return "region";
     if (QUOTA_STATUS_CODES.has(status)) return "quota";
@@ -368,7 +374,17 @@ const classifyAzureProbeFailure = (reason: string): AzureProbeFailure => {
   if (matchesAny(reason, [/\bquota\b/i, /exhausted/i, /rate limit/i])) {
     return "quota";
   }
+  // The transport rules only decide whether the service was reached at all,
+  // and only a reason with no status can say it did not answer. Every handshake
+  // rejection is prefixed with "Unable to contact server" whatever the service
+  // replied, so on a 400 or a 500 that wording is the SDK's own boilerplate:
+  // reading it as unreachability tells the user to check a network, proxy and
+  // firewall that all worked. Such a reason lands in "unknown", which is what
+  // the status supports — Azure reached the service, and the service could not
+  // be read as confirming the key. Status 0 never reaches here: the table above
+  // already called it unreachable.
   if (
+    status === undefined &&
     matchesAny(reason, [
       /unable to contact/i,
       /\bnetwork\b/i,

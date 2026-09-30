@@ -26,11 +26,54 @@ const streamFromChunks = (chunks: Uint8Array[]): ReadableStream<Uint8Array> =>
     },
   });
 
+/**
+ * One hop as plugin-http was asked to send it. The headers are copied at call
+ * time rather than held by reference, because a chain strips credentials from a
+ * single Headers object as it walks: a reference read after the chain finished
+ * would report the last hop's state for every hop in it.
+ */
+type Hop = {
+  url: string;
+  method?: string;
+  body?: unknown;
+  headers: Record<string, string>;
+};
+
+/** The hops the `serveHops` helper recorded for the request under test. */
+let hops: Hop[] = [];
+
 describe("secureFetch", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     pluginFetchMock.mockReset();
+    hops = [];
   });
+
+  /** Answer each hop in turn and record what it was asked to send. */
+  const serveHops = (responses: readonly Response[]): void => {
+    const queue = [...responses];
+    pluginFetchMock.mockImplementation((input: unknown, init?: RequestInit) => {
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((value, name) => {
+        headers[name] = value;
+      });
+      hops.push({
+        url: String(input),
+        method: init?.method,
+        body: init?.body,
+        headers,
+      });
+      const next = queue.shift();
+      if (!next) throw new Error(`unexpected hop to ${String(input)}`);
+      return Promise.resolve(next);
+    });
+  };
+
+  const hop = (index: number): Hop => {
+    const recorded = hops[index];
+    expect(recorded, `hop ${index} must have been requested`).toBeDefined();
+    return recorded as Hop;
+  };
 
   it("frames chunks separated at non-Base64 boundaries as one body", async () => {
     const original = Uint8Array.from([0, 1, 2, 253, 254, 255, 17]);
@@ -163,6 +206,102 @@ describe("secureFetch", () => {
       secureFetch("https://api.openai.com/v1/models"),
     ).rejects.toThrow(/redirect/i);
     expect(pluginFetchMock.mock.calls.length).toBeLessThanOrEqual(21);
+  });
+
+  it("drops the credential when a redirect hop crosses origins", async () => {
+    // The Fetch standard deletes `Authorization` when a redirect leaves the
+    // origin the request was issued to, and `secureFetch` is declared as
+    // `typeof globalThis.fetch`, so a caller passing a bearer token relies on
+    // that. Replaying the caller's headers on the hop would hand the token to
+    // whatever host the first response chose.
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://attacker.example/collect" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: "Bearer secret",
+        Cookie: "session=secret",
+        "x-request-id": "req-1",
+      },
+    });
+
+    expect(hop(0).headers).toMatchObject({ authorization: "Bearer secret" });
+    const second = hop(1);
+    expect(second.url).toBe("https://attacker.example/collect");
+    expect(second.headers).not.toHaveProperty("authorization");
+    expect(second.headers).not.toHaveProperty("cookie");
+    // Only the credentials that identify the caller to that origin go.
+    expect(second.headers["x-request-id"]).toBe("req-1");
+  });
+
+  it("keeps the credential on a redirect hop that stays on the same origin", async () => {
+    // The rule is origin-scoped, not a blanket strip: a provider redirecting
+    // between its own paths must not force the caller to re-authenticate.
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: "Bearer secret" },
+    });
+
+    expect(hop(1).headers).toMatchObject({ authorization: "Bearer secret" });
+  });
+
+  it("turns a 302 POST into a bodyless GET instead of replaying the body", async () => {
+    // The standard downgrades a POST to a GET and drops its body on 301, 302
+    // and 303. Replaying it unchanged re-sends a request the origin has already
+    // said it will not accept.
+    serveHops([
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    expect(hop(1).method).toBe("GET");
+    expect(hop(1).body ?? null).toBeNull();
+    // A Content-Type describing a body that is no longer sent misleads the next
+    // server about the request.
+    expect(hop(1).headers).not.toHaveProperty("content-type");
+  });
+
+  it("replays the method and body unchanged on a 307", async () => {
+    // 307/308 are the explicit "same method, same body" redirect statuses, so
+    // the rewrite above must not touch them.
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    expect(hop(1).method).toBe("POST");
+    expect(hop(1).body).toBe('{"model":"gpt-4o"}');
+    expect(hop(1).headers["content-type"]).toBe("application/json");
   });
 
   it("preserves every byte value in a private-network response body", async () => {

@@ -1,5 +1,6 @@
 use gtk::cairo;
 use gtk::gdk;
+use std::cell::RefCell;
 
 use crate::ipc::{self, OutMessage, Phase};
 
@@ -119,26 +120,52 @@ pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<S
 /// Otherwise it is a message for the assistant. An empty entry sends nothing,
 /// because there is nothing to insert or say.
 ///
-/// Returns true when something was sent, so the caller can clear the platform
-/// text control only then.
+/// Returns true when the message actually reached the desktop, so the caller
+/// clears the platform text control only then. A failed write leaves the text
+/// in the entry: the pipe it would be re-sent on is the one that just failed,
+/// so the entry is the only remaining copy.
 pub(crate) fn submit_entry(state: &PillState) -> bool {
+    submit_entry_inner(
+        &state.entry_text,
+        state.pending_review_id().as_deref(),
+        ipc::send,
+    )
+}
+
+/// The body of [`submit_entry`], with the entry and the sink as parameters so
+/// the decision can be tested without a `PillState` (which has no constructor)
+/// or a live desktop pipe.
+fn submit_entry_inner(
+    entry_text: &RefCell<String>,
+    review_id: Option<&str>,
+    send: impl FnOnce(&OutMessage) -> bool,
+) -> bool {
     // Send the text exactly as the user left it. Spacing at either end can be
     // deliberate when the transcript lands in a document, so trimming is only
     // ever used to decide whether there is anything to send.
-    let text = state.entry_text.borrow().clone();
+    let text = entry_text.borrow().clone();
     if text.trim().is_empty() {
         return false;
     }
-    match state.pending_review_id() {
-        Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
-        None => ipc::send(&OutMessage::TypedMessage { text }),
+    let msg = match review_id {
+        Some(review_id) => OutMessage::ReviewDecision {
+            review_id: review_id.to_string(),
+            action: "insert".to_string(),
+            text: Some(text),
+        },
+        None => OutMessage::TypedMessage { text },
+    };
+    // Cleared only when the desktop actually received it. This runs in the
+    // entry's activate handler, so there is no retry here: a failed write
+    // means the pipe is gone and nothing would consume one. That is exactly
+    // why the text must stay — the one copy the user has cannot be re-sent
+    // down a pipe that has just failed, so clearing it destroys it outright.
+    if send(&msg) {
+        *entry_text.borrow_mut() = String::new();
+        true
+    } else {
+        false
     }
-    // Cleared unconditionally: ipc::send returns no result, so a failed write
-    // means the desktop pipe is already gone and nothing would consume a retry
-    // — and this runs in the entry's activate handler, where blocking to retry
-    // would stall the main loop.
-    *state.entry_text.borrow_mut() = String::new();
-    true
 }
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
@@ -193,8 +220,12 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         .as_ref()
                         .map(|review| review.id.clone());
                     match review_id {
-                        Some(review_id) => send_review_decision(&review_id, "cancel", None),
-                        None => ipc::send(&OutMessage::AssistantClose),
+                        Some(review_id) => {
+                            send_review_decision(&review_id, "cancel", None);
+                        }
+                        None => {
+                            ipc::send(&OutMessage::AssistantClose);
+                        }
                     }
                 }
                 ClickAction::ReviewInsert(id) => {
@@ -214,7 +245,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     let text = state.entry_text.borrow().clone();
                     send_review_decision(id, "edit", Some(text));
                 }
-                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
+                ClickAction::ReviewCancel(id) => {
+                    send_review_decision(id, "cancel", None);
+                }
                 ClickAction::OpenInNew => {
                     let review_id = state
                         .assistant_review
@@ -421,9 +454,11 @@ fn union_flash_action(
     state: &PillState,
     ox: f64, oy: f64,
 ) {
-    if (state.flash_action.borrow().is_none() && state.flash_reject_action.borrow().is_none())
-        || state.flash_t.get() < 0.5
-    {
+    if !rust_pill_shared::flash_banner_is_clickable(
+        state.flash_action.borrow().is_some(),
+        state.flash_reject_action.borrow().is_some(),
+        state.flash_t.get(),
+    ) {
         return;
     }
     // Use the click regions registered by draw code for exact coordinates
@@ -492,6 +527,90 @@ pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
         let region = cairo::Region::create_rectangle(&rect);
         union_flash_action(&region, state, ox, oy);
         gdk_window.input_shape_combine_region(&region, 0, 0);
+    }
+}
+
+#[cfg(test)]
+mod entry_submit_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    /// The entry is the user's only copy of what they typed. Clearing it after
+    /// a write that never reached the desktop destroys text that cannot be
+    /// recovered and cannot be re-sent, because the pipe it would be re-sent
+    /// on is the one that just failed.
+    #[test]
+    fn a_failed_submit_keeps_the_entry_text() {
+        let entry = RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry, None, |_| false);
+        assert!(!sent, "a failed write is not a send");
+        assert_eq!(
+            entry.borrow().as_str(),
+            "a typed message",
+            "the entry must survive a write the desktop never received"
+        );
+    }
+
+    #[test]
+    fn a_failed_review_submit_keeps_the_edited_transcript() {
+        let entry = RefCell::new("an edited transcript".to_string());
+        let sent = submit_entry_inner(&entry, Some("review-7"), |_| false);
+        assert!(!sent);
+        assert_eq!(entry.borrow().as_str(), "an edited transcript");
+    }
+
+    #[test]
+    fn a_successful_submit_clears_the_entry() {
+        let entry = RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry, None, |_| true);
+        assert!(sent);
+        assert!(entry.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_empty_entry_sends_nothing_and_is_never_cleared() {
+        for text in ["", "   ", "\n\t "] {
+            let entry = RefCell::new(text.to_string());
+            let sent = submit_entry_inner(&entry, None, |_| true);
+            assert!(!sent, "whitespace-only entry {text:?} must not be sent");
+            assert_eq!(entry.borrow().as_str(), text);
+        }
+    }
+
+    /// The two sends carry different messages, and both must travel the text
+    /// exactly as the user left it — surrounding spacing can be deliberate
+    /// when the transcript lands in a document.
+    #[test]
+    fn a_review_submit_sends_an_insert_decision_carrying_the_text() {
+        let entry = RefCell::new("  spaced transcript  ".to_string());
+        let sent_json = RefCell::new(None);
+        let sent = submit_entry_inner(&entry, Some("review-9"), |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(
+                r#"{"type":"review_decision","review_id":"review-9","action":"insert","text":"  spaced transcript  "}"#
+            )
+        );
+        assert!(entry.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_plain_submit_sends_a_typed_message() {
+        let entry = RefCell::new("hello".to_string());
+        let sent_json = RefCell::new(None);
+        let sent = submit_entry_inner(&entry, None, |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(r#"{"type":"typed_message","text":"hello"}"#)
+        );
     }
 }
 

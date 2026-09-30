@@ -43,6 +43,114 @@ const privateHttpRequestLimitError = (): RangeError =>
 // The Fetch standard's redirect limit, so a hand-walked chain cannot loop.
 const MAX_HTTPS_REDIRECTS = 20;
 
+// The Fetch standard deletes these from the header list when a redirect leaves
+// the origin the request was issued to (the "CORS non-wildcard request-header
+// name" list, plus the cookie header). `Authorization` is the one callers rely
+// on: `secureFetch` is typed as `typeof globalThis.fetch`, so a caller that
+// passes a bearer token is entitled to the standard's cross-origin strip.
+const CROSS_ORIGIN_STRIPPED_HEADERS = ["authorization", "cookie"];
+// Headers that describe a body. A 301/302/303 rewrite discards the body, and a
+// Content-Type or Content-Length that outlives it describes a request that is
+// no longer being sent.
+const BODY_HEADERS = ["content-length", "content-type"];
+
+/** The caller's headers for hop one, whether they arrived as `init` or on a Request. */
+const requestHeaders = (
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): Headers => {
+  const headers = new Headers(
+    input instanceof Request ? input.headers : undefined,
+  );
+  if (init?.headers) {
+    new Headers(init.headers).forEach((value, name) => {
+      headers.set(name, value);
+    });
+  }
+  return headers;
+};
+
+/** The caller's method for hop one; `init` wins over a Request, as in `fetch`. */
+const requestMethod = (
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+): string => init?.method ?? (input instanceof Request ? input.method : "GET");
+
+/**
+ * Walk an HTTPS redirect chain one hop at a time, refusing any hop that leaves
+ * HTTPS. The chain has to be walked here rather than handed back to
+ * plugin-http: the plugin ignores `RequestInit.redirect` and forwards only
+ * `maxRedirections` to reqwest, and its capability scope is checked against
+ * the *first* URL only. So every hop asks for zero redirects, which is what
+ * makes each hop observable and therefore checkable, and a later
+ * HTTPS → HTTP hop is refused instead of replaying the caller's headers —
+ * Authorization included — in clear text.
+ *
+ * Each hop therefore carries its own headers and method rather than the
+ * caller's `init` replayed verbatim. The standard rewrites both as a chain is
+ * followed, and a hand-walked chain that skipped those rewrites would be the
+ * weaker of the two implementations it stands in for.
+ */
+const followHttpsRedirects = async (
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  startUrl: URL,
+): Promise<Response> => {
+  const headers = requestHeaders(input, init);
+  let method = requestMethod(input, init);
+  // `undefined` means the caller gave no body in `init`, so a Request input
+  // keeps supplying its own; `null` means the body has been discarded.
+  let body = init?.body;
+  let current: RequestInfo | URL = input;
+  let currentUrl = startUrl;
+  for (let hop = 0; hop <= MAX_HTTPS_REDIRECTS; hop += 1) {
+    const response = await tauriFetch(current, {
+      ...init,
+      method,
+      headers,
+      body,
+      maxRedirections: 0,
+    });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    // A 3xx with no Location cannot be followed, so surface it as-is rather
+    // than re-issuing the same request against a server that would answer
+    // identically.
+    if (!location) return response;
+    const targetUrl = new URL(location, currentUrl);
+    if (targetUrl.protocol !== "https:") {
+      throw new TypeError(
+        `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
+      );
+    }
+    // Compare against the URL this hop was sent to, so the strip applies from
+    // the first hop that changes origin and not from the last.
+    if (targetUrl.origin !== currentUrl.origin) {
+      for (const name of CROSS_ORIGIN_STRIPPED_HEADERS) headers.delete(name);
+    }
+    // HTTP-redirect fetch: a 301 or 302 downgrades a POST to a GET, and a 303
+    // does the same for every method but GET and HEAD, discarding the body in
+    // both cases. 307 and 308 keep the method and body by definition.
+    const uppercase = method.toUpperCase();
+    if (
+      ((response.status === 301 || response.status === 302) &&
+        uppercase === "POST") ||
+      (response.status === 303 && uppercase !== "GET" && uppercase !== "HEAD")
+    ) {
+      method = "GET";
+      body = null;
+      for (const name of BODY_HEADERS) headers.delete(name);
+    }
+    current = targetUrl.href;
+    currentUrl = targetUrl;
+  }
+  // The Fetch standard caps redirect chains at 20 hops; a cycle would
+  // otherwise spin here forever.
+  throw new TypeError(
+    `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
+  );
+};
+
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 
@@ -279,50 +387,6 @@ const invokeHttpRequest = async (
     status: response.status,
     headers: response.headers,
   });
-};
-
-/**
- * Walk an HTTPS redirect chain one hop at a time, refusing any hop that leaves
- * HTTPS. The chain has to be walked here rather than handed back to
- * plugin-http: the plugin ignores `RequestInit.redirect` and forwards only
- * `maxRedirections` to reqwest, and its capability scope is checked against
- * the *first* URL only. So every hop asks for zero redirects, which is what
- * makes each hop observable and therefore checkable, and a later
- * HTTPS → HTTP hop is refused instead of replaying the caller's headers —
- * Authorization included — in clear text.
- */
-const followHttpsRedirects = async (
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  startUrl: URL,
-): Promise<Response> => {
-  let current: RequestInfo | URL = input;
-  let currentUrl = startUrl;
-  for (let hop = 0; hop <= MAX_HTTPS_REDIRECTS; hop += 1) {
-    const response = await tauriFetch(current, {
-      ...init,
-      maxRedirections: 0,
-    });
-    if (response.status < 300 || response.status >= 400) return response;
-    const location = response.headers.get("location");
-    // A 3xx with no Location cannot be followed, so surface it as-is rather
-    // than re-issuing the same request against a server that would answer
-    // identically.
-    if (!location) return response;
-    const targetUrl = new URL(location, currentUrl);
-    if (targetUrl.protocol !== "https:") {
-      throw new TypeError(
-        `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
-      );
-    }
-    current = targetUrl.href;
-    currentUrl = targetUrl;
-  }
-  // The Fetch standard caps redirect chains at 20 hops; a cycle would
-  // otherwise spin here forever.
-  throw new TypeError(
-    `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
-  );
 };
 
 /**

@@ -247,9 +247,23 @@ describe("azureTestIntegration", () => {
       'Unable to contact server. StatusCode: 400, wss://eastus.stt.speech.microsoft.com/speech/recognition Reason: {"error":{"code":"1000","message":"Invalid audio format."}}';
 
     // The SDK prefixes every handshake rejection with "Unable to contact
-    // server", so the diagnosis is the one that wording supports. What matters
-    // is only that this no longer returns false, the sole answer that tells the
-    // user to replace a key the service never questioned.
+    // server", so that wording says nothing about whether the service was
+    // reached — here it answered with a 400. Reporting this as unreachable
+    // would send the user to check a network, proxy and firewall that all
+    // worked. What the probe can honestly say is that it could not confirm the
+    // key from this reason.
+    await expect(
+      azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+    ).rejects.toThrow(/could not confirm the key/);
+  });
+
+  it("still names a transport failure that carries no status as unreachable", async () => {
+    // The counterpart to the test above: with no status to say the service
+    // answered, the network wording is the only evidence there is, and the
+    // user is told to look at the network.
+    speech.error =
+      "Unable to contact server. getaddrinfo ENOTFOUND stt.speech.microsoft.com";
+
     await expect(
       azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
     ).rejects.toThrow(/could not be reached/);

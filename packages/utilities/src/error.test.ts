@@ -121,6 +121,24 @@ describe("unknownToMessage labeled-secret edge cases", () => {
     expect(unknownToMessage("refresh_token=none")).toBe("refresh_token=none");
   });
 
+  it("keeps a placeholder value that follows an authorization scheme word", () => {
+    // A scheme word in front of a placeholder is still prose: `authorization:
+    // token missing` says the header is absent, which is a diagnosis. The
+    // scheme pass must defer to the placeholder handling the same way it does
+    // for `authorization: missing`, instead of redacting a descriptive value.
+    expect(unknownToMessage("authorization: token missing")).toBe(
+      "authorization: token missing",
+    );
+    expect(unknownToMessage("proxy-authorization: basic expired")).toBe(
+      "proxy-authorization: basic expired",
+    );
+    // The scheme word itself is never a credential, so the deferral must not
+    // become a hole: a real value after it is still redacted.
+    expect(unknownToMessage("authorization: token abc123def456")).not.toContain(
+      "abc123def456",
+    );
+  });
+
   it("redacts boolean and other non-descriptive values after a secret label", () => {
     expect(unknownToMessage("api_key=true")).toBe("api_key=[redacted]");
     expect(unknownToMessage("authorization=false")).toBe(

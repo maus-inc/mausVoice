@@ -17,20 +17,28 @@ const LABELED_SECRET_QUOTED = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*${QUOTED_SECRET_VALUE}`,
   "gi",
 );
+// The scheme words, shared by the two labelled passes so the one that redacts
+// and the one that judges a placeholder cannot drift apart.
+const AUTHORIZATION_SCHEMES = "bearer|basic|token";
 // The bare value runs to the next whitespace/`,`/`;`. Closing brackets
 // that belong to the surrounding text (`{api_key=abc}`) are split off
 // afterwards by `splitTrailingClosers`, so a value that contains its own
-// balanced pair (`api_key=some(value)`) is still redacted in full.
+// balanced pair (`api_key=some(value)`) is still redacted in full. An
+// authorization scheme word is stepped over rather than read as the value, so
+// `authorization: token missing` is judged on `missing`; the scheme word is the
+// label's syntax, not a credential.
 const LABELED_SECRET_BARE = new RegExp(
-  String.raw`${SECRET_LABEL}\s*([:=])\s*([^\s,;]+)`,
+  String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEMES})\s+)?([^\s,;]+)`,
   "gi",
 );
 // A labelled scheme carries a second token after it, so matching the label
 // alone redacted the word `Basic` and left the credential beside it in clear
 // text (`Authorization: Basic <credential>` -> `Authorization:[redacted]
 // <credential>`). Consume the scheme and its credential together, or drop both.
-const AUTHORIZATION_SCHEME =
-  /\b(authorization|proxy-authorization)\s*:\s*(?:(bearer|basic|token)\s+)?(\S+)?/gi;
+const AUTHORIZATION_SCHEME = new RegExp(
+  String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEMES})\s+)?(\S+)?`,
+  "gi",
+);
 const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {
   ")": "(",
   "]": "[",
@@ -57,6 +65,9 @@ const PLACEHOLDER_VALUES = new Set([
   "none",
   "empty",
 ]);
+
+const describesField = (value: string): boolean =>
+  PLACEHOLDER_VALUES.has(value.toLowerCase());
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -124,6 +135,13 @@ const redactSensitiveTokens = (message: string): string =>
           // placeholder values.
           return match;
         }
+        if (value !== undefined && describesField(value)) {
+          // `authorization: token missing` describes the field in front of the
+          // scheme, so defer rather than redact a value the caller needs to
+          // read. LABELED_SECRET_BARE steps over the scheme word to judge the
+          // word behind it, so this text survives both passes.
+          return match;
+        }
         return `${header}: ${scheme} ${REDACTED}`;
       },
     )
@@ -134,7 +152,7 @@ const redactSensitiveTokens = (message: string): string =>
       LABELED_SECRET_BARE,
       (match, label: string, sep: string, rawValue: string) => {
         const [value, tail] = splitTrailingClosers(rawValue);
-        return PLACEHOLDER_VALUES.has(value.toLowerCase())
+        return describesField(value)
           ? match
           : `${label}${sep}${REDACTED}${tail}`;
       },

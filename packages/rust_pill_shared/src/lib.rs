@@ -138,27 +138,47 @@ pub const fn should_show_pill(
 pub const MAX_REVIEW_PREVIEW_CHARS: usize = 3000;
 pub const MAX_REVIEW_PREVIEW_LINES: usize = 60;
 
+/// How far back the word-boundary trim may reach for whitespace.
+///
+/// Trimming exists so the preview does not end mid-word. It must not become a
+/// second way to lose the budget: `rfind` over the whole window found the last
+/// whitespace anywhere in it, so a transcript with one space near the top (a
+/// long URL, a hash, CJK text) trimmed thousands of characters away and
+/// rendered an almost-empty card. A word longer than this is not worth
+/// truncating the preview for.
+const REVIEW_PREVIEW_TRIM_WINDOW: usize = 64;
+
 /// Prepare a bounded slice of review text for rendering.
 /// Ensures that huge inputs (e.g. long audio imports or transcripts)
 /// do not cause unbounded text layout, wrapping, or allocation overhead on every frame.
 pub fn bound_review_preview_text(full_text: &str) -> (String, bool) {
-    // `str::len` is bytes. The budget is documented in characters, so a CJK or
-    // emoji transcript was cut to a third of it (or less) before any of the
-    // whitespace trimming below: 3000 bytes of Japanese is about 1000
-    // characters. Measure in characters and take the byte offset of the
-    // character boundary instead, which is the same number of decisions without
-    // the unit mismatch.
-    if full_text.chars().count() <= MAX_REVIEW_PREVIEW_CHARS {
-        return (full_text.to_string(), false);
-    }
-
-    let end = full_text
+    // The budget is documented in characters, so it is measured in characters:
+    // `str::len` is bytes, and 3000 bytes of Japanese is about 1000
+    // characters.
+    //
+    // One scan, and it stops at the budget. `chars().count()` walked the whole
+    // transcript just to compare against the limit, so every rendered frame
+    // cost time proportional to the full text; `char_indices().nth` returns
+    // `None` exactly when the text fits, which is the same comparison without
+    // the scan. `None` also means there is no byte offset to cut at.
+    let Some(end) = full_text
         .char_indices()
         .nth(MAX_REVIEW_PREVIEW_CHARS)
-        .map_or(full_text.len(), |(byte_index, _)| byte_index);
+        .map(|(byte_index, _)| byte_index)
+    else {
+        return (full_text.to_string(), false);
+    };
 
-    let slice = &full_text[..end];
-    let cut_pos = slice.rfind(char::is_whitespace).unwrap_or(end);
+    // Trim back to a word boundary, but only within a short window: a
+    // transcript can be one long unbroken run, and giving up the whole budget
+    // to find whitespace defeats the point of having one.
+    let cut_pos = full_text[..end]
+        .char_indices()
+        .rev()
+        .take(REVIEW_PREVIEW_TRIM_WINDOW)
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(end, |(byte_index, _)| byte_index);
+
     let mut preview = full_text[..cut_pos].to_string();
     preview.push_str("\n… [Full transcript preserved for insert]");
     (preview, true)
@@ -827,6 +847,23 @@ pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_reveal
     } else {
         0.0
     }
+}
+
+/// Whether a toast's buttons should take clicks at the given banner opacity.
+///
+/// A toast may carry an accept button, a reject button, or both. Each is drawn
+/// from its own label, so a toast with only a reject button still paints a
+/// button and registers a click region for it; hit testing that looks at the
+/// accept action alone leaves that button drawn but dead. Both flags matter, so
+/// the decision is shared rather than re-derived per platform and drifting
+/// again.
+///
+/// The banner is held inert until it has mostly faded in, so a click cannot
+/// fire an action for a button the user has not seen yet. A toast with no
+/// buttons at all is not clickable: there is nothing to hit, and claiming
+/// input would swallow clicks meant for the pill behind it.
+pub const fn flash_banner_is_clickable(has_action: bool, has_reject: bool, banner_t: f64) -> bool {
+    (has_action || has_reject) && banner_t >= 0.5
 }
 
 /// Latch that forces the style tooltip to fade the moment a take starts,
@@ -1877,6 +1914,42 @@ mod tests {
         assert_eq!(flash_banner_target(true, true, false), 1.0);
     }
 
+    /// A toast can offer a reject button with no accept button. The draw code
+    /// paints and registers the reject button from the reject label alone, so
+    /// hit testing has to accept that toast as interactive too. macOS gated
+    /// the hit test on `flash_action` alone, so the drawn reject button sat
+    /// there and could not be clicked.
+    #[test]
+    fn a_reject_only_toast_is_clickable() {
+        assert!(
+            flash_banner_is_clickable(false, true, 1.0),
+            "a toast with only a reject button draws that button, so it must be hit-testable"
+        );
+    }
+
+    #[test]
+    fn an_accept_only_toast_is_clickable() {
+        assert!(flash_banner_is_clickable(true, false, 1.0));
+        assert!(flash_banner_is_clickable(true, true, 1.0));
+    }
+
+    #[test]
+    fn a_toast_with_no_buttons_is_not_clickable() {
+        // An informational banner (retranscribing) draws no buttons, so it must
+        // not claim input: the click would fall through to the pill behind it.
+        assert!(!flash_banner_is_clickable(false, false, 1.0));
+    }
+
+    #[test]
+    fn a_toast_is_only_clickable_once_it_has_mostly_faded_in() {
+        // Both platforms hold the buttons inert until the banner is mostly
+        // drawn, so a click during the scale-in does not fire an action for a
+        // button the user has not seen yet.
+        assert!(!flash_banner_is_clickable(true, true, 0.49));
+        assert!(flash_banner_is_clickable(true, true, 0.5));
+        assert!(flash_banner_is_clickable(false, true, 0.5));
+    }
+
     #[test]
     fn flash_banner_stays_hidden_when_not_visible() {
         assert_eq!(flash_banner_target(false, false, false), 0.0);
@@ -2034,5 +2107,57 @@ mod tests {
         let (preview, truncated) = bound_review_preview_text(&text);
         assert!(!truncated, "text exactly on the character budget was truncated");
         assert_eq!(preview, text);
+    }
+
+    #[test]
+    fn review_preview_bounding_keeps_the_budget_when_whitespace_is_sparse() {
+        // The trim back to a word boundary searched the whole 3000-character
+        // window for the last whitespace, so a transcript that mentions a word
+        // once near the top and then runs on kept 2 characters of a
+        // 3000-character budget. Long unbroken runs — a URL, a hash, a CJK
+        // sentence — are exactly where the budget exists to bound layout, so
+        // the trim may only give back a character or two, never the window.
+        let text = format!("{} {}", "Hi", "あ".repeat(MAX_REVIEW_PREVIEW_CHARS * 2));
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(truncated);
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert!(
+            shown.chars().count() >= MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW,
+            "preview kept {} characters of a {MAX_REVIEW_PREVIEW_CHARS} character budget",
+            shown.chars().count()
+        );
+    }
+
+    #[test]
+    fn review_preview_bounding_cost_does_not_grow_with_the_transcript() {
+        // The preview is bounded on the render path, once per drawn frame, so
+        // `chars().count()` walking the entire transcript made every frame
+        // linear in the full text size. Measured as a ratio against a
+        // barely-over-budget input, which is the same work either way, so the
+        // assertion does not depend on how fast the machine is.
+        fn fastest_bound(text: &str) -> std::time::Duration {
+            let mut fastest = std::time::Duration::MAX;
+            for _ in 0..3 {
+                let start = std::time::Instant::now();
+                std::hint::black_box(bound_review_preview_text(text));
+                fastest = fastest.min(start.elapsed());
+            }
+            fastest
+        }
+
+        let barely_over = "word ".repeat(MAX_REVIEW_PREVIEW_CHARS / 5 + 2);
+        let huge = "word ".repeat(2_000_000); // 10M characters
+        assert!(
+            barely_over.chars().count() > MAX_REVIEW_PREVIEW_CHARS,
+            "the baseline must itself be over budget or it would return early"
+        );
+        let (baseline, huge_cost) = (fastest_bound(&barely_over), fastest_bound(&huge));
+        assert!(
+            huge_cost < baseline * 4,
+            "bounding 10M characters took {huge_cost:?} against {baseline:?} for a barely-over-budget \
+             transcript: the cost still scales with the input"
+        );
     }
 }

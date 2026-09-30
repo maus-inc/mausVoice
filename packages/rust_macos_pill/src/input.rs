@@ -6,7 +6,17 @@ use crate::gfx;
 use crate::state::{ClickAction, PillState};
 
 fn has_flash_action_at(state: &PillState, x: f64, y: f64) -> bool {
-    if state.flash_action.borrow().is_none() || state.flash_t.get() < 0.5 {
+    // A toast can carry a reject button with no accept button, and the draw
+    // code paints and registers that button from the reject label alone. This
+    // used to require `flash_action`, which left a reject-only toast's drawn
+    // button unclickable: the banner was there, the region was registered, and
+    // `hit_test` refused the point. The shared predicate takes either button,
+    // so macOS cannot drift from the platforms that got this right.
+    if !rust_pill_shared::flash_banner_is_clickable(
+        state.flash_action.borrow().is_some(),
+        state.flash_reject_action.borrow().is_some(),
+        state.flash_t.get(),
+    ) {
         return false;
     }
     // Check against the actual click regions registered by the draw code,

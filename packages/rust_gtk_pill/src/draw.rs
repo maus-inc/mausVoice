@@ -541,20 +541,21 @@ fn draw_loading(
         cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(12.0);
         // Cairo only fails to measure when the font backend is already in an
-        // error state. Anchor the label at the pill centre instead of
-        // unwrapping: this runs inside the drawing area's draw callback, where
-        // unwinding out of the signal trampoline aborts the process rather
-        // than just skipping the frame.
-        let (tx, ty) = match cr.text_extents(stage) {
-            Ok(ext) => (
+        // error state, so there is no origin worth falling back to: the Ok arm
+        // below hands move_to a left edge and a baseline, not a centre point,
+        // and the pill centre would draw the label from the middle of the word
+        // on the pill's mid-line. Skip the label for this frame instead. This
+        // also keeps the failure inside the drawing area's draw callback, where
+        // unwinding out of the signal trampoline aborts the process rather than
+        // just skipping the frame.
+        if let Ok(ext) = cr.text_extents(stage) {
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+            cr.move_to(
                 rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing(),
                 ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing(),
-            ),
-            Err(_) => (rx + pill_w / 2.0, ry + pill_h / 2.0),
-        };
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
-        cr.move_to(tx, ty);
-        let _ = cr.show_text(stage);
+            );
+            let _ = cr.show_text(stage);
+        }
         cr.restore().ok();
 
         draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);

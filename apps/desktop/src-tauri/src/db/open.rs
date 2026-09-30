@@ -28,21 +28,44 @@ impl OpenError {
     }
 }
 
+/// Whether an open failure means the file itself is damaged, as opposed to the
+/// migration ledger disagreeing with this build.
+///
+/// Only the file-level signals belong here. A checksum mismatch or a leftover
+/// `success = false` row means the *ledger* cannot be reconciled, and the file
+/// is still perfectly readable: quarantining it would move a user's
+/// transcriptions, keys and preferences aside and open an empty database in
+/// their place, with nothing to tell them it happened. Those surface as a
+/// repairable error instead.
+///
+/// Matched against the whole error chain, not just the top-level display: a
+/// SQLite corruption code is often only present on the source error.
 pub fn is_integrity_failure(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
-    normalized.contains("previously applied but has been modified")
-        || normalized.contains("previously failed; database needs recovery")
-        || normalized.contains("database disk image is malformed")
+    normalized.contains("database disk image is malformed")
         || normalized.contains("file is not a database")
         || normalized.contains("sqlite_corrupt")
         || normalized.contains("sqlite_notadb")
-        || normalized.contains("not a database")
+        || normalized.contains("sqlite_full")
 }
 
-fn classify_sqlx(context: &str, err: impl std::fmt::Display) -> OpenError {
+/// Classify a SQLite failure as file damage or something else.
+///
+/// SQLite reports its corruption codes on the error *source*, not on the
+/// top-level display, so matching only `err.to_string()` classified a genuinely
+/// corrupt file as `Other` and left the user with a raw error instead of the
+/// quarantine-and-recover path.
+fn classify_sqlx(context: &str, err: impl std::error::Error) -> OpenError {
     let detail = err.to_string();
+    let mut chain = detail.clone();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        chain.push(' ');
+        chain.push_str(&inner.to_string());
+        source = inner.source();
+    }
     let message = format!("{context}: {detail}");
-    if is_integrity_failure(&detail) || is_integrity_failure(&message) {
+    if is_integrity_failure(&chain) || is_integrity_failure(&message) {
         OpenError::Integrity(message)
     } else {
         OpenError::Other(message)
@@ -182,19 +205,49 @@ async fn retire_consolidated_migrations(
 /// version here is now a deliberate edit and can never be a side effect of
 /// widening a number.
 ///
-/// The list is exactly what `git log --all --diff-filter=A --name-only` shows
-/// for `src/db/migrations/`, which is a `NNN_*.sql` file for every entry here
-/// and nothing for 070, 080 or 088. A ledger row for one of those three is
-/// therefore never retired and still surfaces as a downgrade. The header of
+/// The list is every `NNN_*.sql` file that a build recorded under
+/// `_sqlx_migrations` between 069 and 089 and that 069 folds in, and nothing
+/// for 070, 080 or 088. A ledger row for one of those three is therefore never
+/// retired and still surfaces as a downgrade. The header of
 /// `migrations/069_consolidated_v0_1_6_schema.sql` names the same 16 steps,
 /// `expansion_flags` included, because that column arrived on the 075 step
 /// rather than on a step of its own.
+///
+/// Retirement matches on `(version, description)`, not on the number alone.
+/// Other long-lived lines reuse these numbers for unrelated schemas — 076 is
+/// `feature_preferences` on one and `meetings` on another, 077/078/079 likewise
+/// — and those databases hold real rows. Retiring by number would delete the
+/// ledger record of what happened to their file, so a later merge from one of
+/// those branches would re-run its migration: `CREATE TABLE IF NOT EXISTS`
+/// would hide that, and any `ALTER TABLE` would hard-fail the open. The
+/// description is the part that says which migration a row actually recorded,
+/// and it is already stored on every row.
+///
+/// `expansion_flags` is the one entry that reached a released build under
+/// three different names, so it is matched on the name this build shipped;
+/// `075_preserve_audio_on_failure` and `075_tone_structured_fields` are listed
+/// in the same header as never-released steps.
 /// `consolidated_intermediate_migration_rows_are_retired` below exercises the
 /// retirement path, and
 /// `unretired_consolidation_era_numbers_surface_as_a_downgrade` covers the
 /// three gaps.
-const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[i64] = &[
-    71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84, 85, 86, 87,
+const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[(i64, &str)] = &[
+    (71, "remove_cloud_modes"),
+    (72, "drop_is_enterprise"),
+    (73, "pill_reset_monitor_strategy"),
+    (74, "always_request_admin_on_startup"),
+    (75, "expansion_flags"),
+    (76, "api_key_transcription_path"),
+    (77, "pill_placement_and_hands_free_delay"),
+    (78, "post_process_attribution"),
+    (79, "interaction_feedback_volume"),
+    (81, "preserve_audio_on_failure"),
+    (82, "api_key_transcription_path"),
+    (83, "pill_placement_and_hands_free_delay"),
+    (84, "auto_learn_dictionary"),
+    (85, "auto_learn_from_edits"),
+    (86, "transcription_post_process_model"),
+    (87, "eleven_labs_keyterms_enabled"),
 ];
 
 async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
@@ -219,20 +272,28 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     .await
     .map_err(|err| classify_sqlx("read failed migrations", err))?;
     if let Some(version) = failed {
-        return Err(OpenError::Integrity(format!(
-            "migration {version} previously failed; database needs recovery"
+        // `Other`, not `Integrity`: the file is readable, this build just cannot
+        // say how far it got. `Integrity` quarantines, which would move a
+        // working database aside for a ledger disagreement.
+        return Err(OpenError::Other(format!(
+            "migration {version} previously failed; the database needs recovery before it can be opened"
         )));
     }
 
-    let applied = sqlx::query("SELECT version, checksum FROM _sqlx_migrations ORDER BY version")
-        .fetch_all(pool)
-        .await
-        .map_err(|err| classify_sqlx("read applied migrations", err))?;
+    let applied = sqlx::query(
+        "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|err| classify_sqlx("read applied migrations", err))?;
 
     let mut applied_checksums = std::collections::HashMap::new();
+    let mut applied_descriptions = std::collections::HashMap::new();
     for row in applied {
         let version: i64 = row.get("version");
+        let description: String = row.get("description");
         let checksum: Vec<u8> = row.get("checksum");
+        applied_descriptions.insert(version, description);
         applied_checksums.insert(version, checksum);
     }
 
@@ -253,7 +314,18 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
             // other unconfigured version keeps the strict behavior: a database
             // from a genuinely newer release must surface loudly, not be
             // rewritten underneath it.
-            if RETIRED_CONSOLIDATION_ERA_VERSIONS.contains(version) {
+            // Match the description too. The number alone is ambiguous: other
+            // long-lived branches put unrelated migrations at 076-079, and
+            // retiring one of those rows would erase the record of a schema
+            // this build knows nothing about.
+            let description = applied_descriptions
+                .get(version)
+                .map(String::as_str)
+                .unwrap_or_default();
+            if RETIRED_CONSOLIDATION_ERA_VERSIONS
+                .iter()
+                .any(|(retired, name)| retired == version && *name == description)
+            {
                 retired.push(*version);
                 continue;
             }
@@ -279,8 +351,13 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         let expected = migration_checksum(migration.sql);
         if let Some(stored) = applied_checksums.get(&version) {
             if stored.as_slice() != expected.as_slice() {
-                return Err(OpenError::Integrity(format!(
-                    "migration {version} ({}) was previously applied but has been modified",
+                // A modified migration file is a disagreement about what this
+                // build's history should have been, not damage to the database.
+                // Quarantining here would discard a perfectly readable file and
+                // open an empty one in its place, so this surfaces for repair.
+                return Err(OpenError::Other(format!(
+                    "migration {version} ({}) was previously applied but has been modified; \
+                     the database is readable but its history does not match this build",
                     migration.description
                 )));
             }

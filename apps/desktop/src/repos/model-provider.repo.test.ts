@@ -28,6 +28,21 @@ describe("provider model discovery", () => {
     pluginFetchMock.mockReset();
   });
 
+  /**
+   * The headers of one request to plugin-http, as a plain object. `secureFetch`
+   * walks a redirect chain a hop at a time and rewrites the headers per hop, so
+   * a hop is handed a `Headers` rather than the caller's own object: the names
+   * arrive lower-cased, as the fetch standard lower-cases them, and the
+   * assertions below read the content rather than the container.
+   */
+  const sentHeaders = (call: number): Record<string, string> =>
+    Object.fromEntries(
+      new Headers(
+        (pluginFetchMock.mock.calls[call]?.[1] as RequestInit | undefined)
+          ?.headers,
+      ).entries(),
+    );
+
   it("uses Groq's live model catalog instead of a hard-coded LLM list", async () => {
     pluginFetchMock.mockImplementation(() =>
       Promise.resolve(
@@ -53,10 +68,9 @@ describe("provider model discovery", () => {
     ]);
     expect(pluginFetchMock).toHaveBeenCalledWith(
       "https://api.groq.com/openai/v1/models",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer gsk_test" },
-      }),
+      expect.objectContaining({ method: "GET" }),
     );
+    expect(sentHeaders(0)).toMatchObject({ authorization: "Bearer gsk_test" });
   });
 
   it("accepts current Gemini text models while excluding specialized catalogs", async () => {
@@ -92,10 +106,9 @@ describe("provider model discovery", () => {
     ).resolves.toEqual(["gemini-future-flash"]);
     expect(pluginFetchMock).toHaveBeenCalledWith(
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-      expect.objectContaining({
-        headers: { "x-goog-api-key": "gemini-key" },
-      }),
+      expect.objectContaining({ method: "GET" }),
     );
+    expect(sentHeaders(0)).toMatchObject({ "x-goog-api-key": "gemini-key" });
   });
 
   it("includes dedicated transcribe model for transcription but not for generation", async () => {
@@ -173,10 +186,11 @@ describe("provider model discovery", () => {
     ).resolves.toEqual(["openai/whisper-1", "openai/whisper-large-v3"]);
     expect(pluginFetchMock).toHaveBeenCalledWith(
       "https://openrouter.ai/api/v1/models?output_modalities=transcription",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer openrouter-key" },
-      }),
+      expect.objectContaining({ method: "GET" }),
     );
+    expect(sentHeaders(0)).toMatchObject({
+      authorization: "Bearer openrouter-key",
+    });
   });
 
   it("logs provider HTTP failures before using a fallback catalog", async () => {

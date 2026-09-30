@@ -206,11 +206,24 @@ pub enum OutMessage {
     },
 }
 
-pub fn send(msg: &OutMessage) {
+/// Send one message to the desktop process over stdout.
+///
+/// Returns whether the bytes were actually handed to the pipe. A write to a
+/// desktop process that has exited fails with EPIPE, and callers that would
+/// otherwise discard the user's text — the entry clearing itself on submit —
+/// need that to decide whether the message really landed. The write itself is
+/// still non-blocking from the caller's perspective: this is a single small
+/// write to a pipe that is drained by the desktop, and a failure returns
+/// immediately rather than retrying, so it is safe on the GTK main loop.
+pub fn send(msg: &OutMessage) -> bool {
     let mut stdout = io::stdout().lock();
-    let _ = serde_json::to_writer(&mut stdout, msg);
-    let _ = stdout.write_all(b"\n");
-    let _ = stdout.flush();
+    if serde_json::to_writer(&mut stdout, msg).is_err() {
+        return false;
+    }
+    if stdout.write_all(b"\n").is_err() {
+        return false;
+    }
+    stdout.flush().is_ok()
 }
 
 pub fn start_stdin_reader(sender: Sender<InMessage>) {

@@ -50,15 +50,31 @@ export const readRepoSource = (file: string): string =>
  * braces do not balance, so a test that relies on this reports the reason
  * rather than a confusing assertion further down.
  */
-export const extractRustBlock = (source: string, marker: string): string => {
-  const start = source.indexOf(marker);
+/**
+ * The body of the first Rust block matching any of `markers`.
+ *
+ * Several call sites assert a contract against whichever function currently
+ * holds the logic — the GTK pill factors it into a helper so it can be tested
+ * with an injected send — so a single marker is not always enough.
+ */
+export const extractRustBlock = (
+  source: string,
+  ...markers: string[]
+): string => {
+  const start = markers.reduce<number>((found, marker) => {
+    if (found !== -1) {
+      return found;
+    }
+    const index = source.indexOf(marker);
+    return index === -1 ? found : index;
+  }, -1);
   if (start === -1) {
-    throw new Error(`Marker not found in source: ${marker}`);
+    throw new Error(`Marker not found in source: ${markers.join(" | ")}`);
   }
 
   const open = source.indexOf("{", start);
   if (open === -1) {
-    throw new Error(`No block follows the marker: ${marker}`);
+    throw new Error(`No block follows the marker: ${markers.join(" | ")}`);
   }
 
   let depth = 0;
@@ -69,5 +85,5 @@ export const extractRustBlock = (source: string, marker: string): string => {
       if (depth === 0) return source.slice(start, i + 1);
     }
   }
-  throw new Error(`Unbalanced braces after the marker: ${marker}`);
+  throw new Error(`Unbalanced braces after the marker: ${markers.join(" | ")}`);
 };

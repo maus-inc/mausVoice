@@ -2,17 +2,27 @@ name: Test Package Rust Transcription
 
 on:
   push:
-      paths:
-        - "scripts/ci/run-with-diagnostics.sh"
-        - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
-        - "packages/rust_transcription/**"
-        - "patches/sherpa-onnx-sys-1.13.5/**"
-        - "rust-toolchain.toml"
-        - ".github/workflows/test-package-rust-transcription.yml"
+    paths:
+      - "scripts/ci/run-with-diagnostics.sh"
+      - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
+      - "packages/rust_transcription/**"
+      - "patches/sherpa-onnx-sys-1.13.5/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-package-rust-transcription.yml"
+  # The Rust transcription package has no other automated test coverage, so a
+  # pull request that touches it needs the gate too. This workflow used to fire
+  # on pushes only, which meant a reviewer looking at the checks saw nothing for
+  # the package and reasonably concluded it was covered elsewhere.
+  pull_request:
+    paths:
+      - "scripts/ci/run-with-diagnostics.sh"
+      - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
+      - "packages/rust_transcription/**"
+      - "patches/sherpa-onnx-sys-1.13.5/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-package-rust-transcription.yml"
   workflow_dispatch:
 
-# These workflows run on branch pushes or manual requests, not PR events.
-# Cancel superseded runs for the same branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,14 +50,17 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Check the sherpa-onnx link mode against the Android archive
-        # Node-only, so it is placed before the toolchain and matrix work and
-        # fails in seconds rather than after a cargo build. The android archive
+        # Node-only and it reads a file from the checkout, so it runs after
+        # `Checkout source` and before the toolchain and matrix work: it still
+        # fails in seconds rather than after a cargo build. This step used to
+        # run first, where `scripts/ci/` did not exist yet, so the job failed on
+        # every leg and the rest of the steps were skipped. The android archive
         # ships shared objects only; a static request there cannot be linked, and
         # the failure it used to produce read like a missing library.
         run: node --test scripts/ci/sherpa-onnx-link-mode.test.mjs
-      - name: Checkout source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - name: Cache cargo

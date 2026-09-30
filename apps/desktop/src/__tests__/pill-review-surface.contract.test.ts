@@ -68,14 +68,32 @@ describe("native pill review surface", () => {
     "sends the entry text as typed on $platform",
     ({ crate }) => {
       const input = readRepoSource(`${crate}/src/input.rs`);
-      const submit = extractRustBlock(input, "pub(crate) fn submit_entry(");
+      // The GTK pill factors the decision out so it can be tested against an
+      // injected `send`, so the contract is asserted against whichever function
+      // holds the logic rather than against a fixed name.
+      const submit = extractRustBlock(
+        input,
+        "fn submit_entry_inner(",
+        "pub(crate) fn submit_entry(",
+      );
 
-      expect(submit).toContain("state.entry_text.borrow().clone()");
+      expect(submit).toContain("entry_text.borrow().clone()");
       // Trimming is only allowed to answer "is there anything to send".
       expect(submit).not.toContain("borrow().trim().to_string()");
       expect(submit).toContain("text.trim().is_empty()");
     },
   );
+
+  it("clears the GTK entry text only when the desktop received it", () => {
+    const input = readRepoSource("packages/rust_gtk_pill/src/input.rs");
+    const submit = extractRustBlock(input, "fn submit_entry_inner(");
+
+    // A failed write means the pipe is gone, so the one copy of the user's text
+    // must survive: clearing it would destroy a transcript nothing can re-send.
+    expect(submit).toMatch(
+      /if send\(&msg\) \{\s*\*entry_text\.borrow_mut\(\) = String::new\(\);/,
+    );
+  });
 
   it("keeps the Windows entry text when nothing was sent", () => {
     const pill = readRepoSource("packages/rust_windows_pill/src/pill.rs");
