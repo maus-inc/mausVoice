@@ -47,6 +47,7 @@ import {
   forwardAudioChunk,
   isRecordingStartCurrent,
   releaseRecordingResources,
+  stopNativeRecordingForAbort,
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
 import type {
@@ -723,8 +724,6 @@ export const DictationSideEffects = () => {
       // Capture and release the native-start claim. A newer start that claims
       // ownership after this point owns the stream, so this abort must not
       // stop it; a still-pending abort only stops the stream it was tearing down.
-      const abortedNativeOwner = nativeStartOwnerRef.current;
-      nativeStartOwnerRef.current = null;
       recordingOperationRef.current += 1;
       getLogger().info(
         `Aborting recording (hasSession=${!!sessionRef.current}, hasStrategy=${!!strategyRef.current}${message ? `, reason=${String(message.body).slice(0, 120)}` : ""})`,
@@ -734,18 +733,18 @@ export const DictationSideEffects = () => {
       hardResetHotkeyState();
       restoreSystemVolume();
       releaseAudioIntake(ownedAudioChunkUnlisten);
+      // Before the `sendPhaseToPill` await, and with no await of its own between
+      // taking the claim and releasing the stream. See
+      // `stopNativeRecordingForAbort` for the race that ordering closes: an abort
+      // suspending on the pill let a rapid restart call `start_recording` against
+      // a still-live stream, and neither the abort nor the superseded start then
+      // stopped it, so the restart inherited the old capture.
+      //
+      // A second `stop_recording` can still arrive from the superseded start's own
+      // cleanup. That is already tolerated: the invoke is caught and logged.
+      const stopNative = stopNativeRecordingForAbort(nativeStartOwnerRef);
       await sendPhaseToPill("idle");
-      // Only stop native capture when no newer start has claimed ownership
-      // since this abort began. Otherwise this abort would kill the stream a
-      // rapid restart just opened.
-      const newerStartOwnsNative =
-        nativeStartOwnerRef.current !== null &&
-        nativeStartOwnerRef.current !== abortedNativeOwner;
-      if (!newerStartOwnsNative) {
-        invoke("stop_recording").catch((e) =>
-          getLogger().verbose(`stop_recording failed during abort: ${e}`),
-        );
-      }
+      await stopNative;
 
       // Deterministic cleanup: clear the refs first so no other path can
       // reach the session mid-cleanup, then guard each cleanup call.

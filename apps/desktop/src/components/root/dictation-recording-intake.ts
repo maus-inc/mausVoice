@@ -133,6 +133,38 @@ export const stopOwnedNativeStart = async (
 };
 
 /**
+ * Releases the native-start claim and stops capture, unconditionally.
+ *
+ * This is the abort path, and it is deliberately the opposite of
+ * `stopOwnedNativeStart`: an abort always stops the stream it was tearing down.
+ *
+ * The claim is taken and the stop is issued with no `await` between them, which
+ * is the point. The abort used to release the claim, then await the pill's idle
+ * phase, and only then decide whether a newer start had taken ownership. A
+ * restart landing inside that window called `start_recording` while the old
+ * stream was still live -- native reports an already-active recorder as success,
+ * so the restart silently inherited the old capture instead of opening the
+ * microphone it asked for -- and then the abort skipped its stop while the
+ * superseded start's own `stopOwnedNativeStart` also declined, because the ref no
+ * longer held its id. Nothing stopped the stream and the user recorded
+ * continuously from the wrong input.
+ *
+ * With no await in between, nothing else can run between taking the claim and
+ * releasing the stream, and a restart that begins afterwards calls
+ * `start_recording` against a stopped recorder.
+ */
+export const stopNativeRecordingForAbort = (ownerRef: {
+  current: number | null;
+}): Promise<void> => {
+  ownerRef.current = null;
+  return invoke("stop_recording")
+    .then(() => undefined)
+    .catch((error) => {
+      getLogger().verbose(`stop_recording failed during abort: ${error}`);
+    });
+};
+
+/**
  * Interim segments arrive from the provider for the recording that is still
  * open. A segment produced by a superseded start is dropped instead of being
  * styled into the live selection.

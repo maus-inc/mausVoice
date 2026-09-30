@@ -55,6 +55,7 @@ import {
   forwardAudioChunk,
   isRecordingStartCurrent,
   releaseRecordingResources,
+  stopNativeRecordingForAbort,
   stopOwnedNativeStart,
 } from "./dictation-recording-intake";
 
@@ -377,6 +378,38 @@ describe("native capture ownership", () => {
     await stopOwnedNativeStart(ownerRef, 3);
     expect(mocks.invoke).not.toHaveBeenCalled();
     expect(ownerRef.current).toBe(4);
+  });
+
+  it("stops on abort even when a restart has already claimed ownership", async () => {
+    // The P1. An abort landing while the microphone was still opening used to
+    // release the claim, await the pill's idle phase, and only then skip its stop
+    // because a restart had claimed in the meantime. That restart had already
+    // called `start_recording` against the still-live stream, and native reports
+    // an already-active recorder as success, so it inherited the old capture
+    // instead of opening the microphone it asked for -- while the superseded
+    // start's own `stopOwnedNativeStart` also declined, because the ref no longer
+    // held its id. Nothing stopped the stream.
+    const ownerRef = { current: 4 as number | null };
+    await stopNativeRecordingForAbort(ownerRef);
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+    expect(ownerRef.current).toBeNull();
+  });
+
+  it("stops on abort when the claim was already released", async () => {
+    // The abort takes the claim itself, so the ref is normally null by the time
+    // the stop is issued. It must stop in that state too.
+    const ownerRef = { current: null as number | null };
+    await stopNativeRecordingForAbort(ownerRef);
+    expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+  });
+
+  it("swallows a stop failure so an abort cannot reject", async () => {
+    mocks.invoke.mockRejectedValueOnce(new Error("no recorder"));
+    const ownerRef = { current: 3 as number | null };
+    await expect(
+      stopNativeRecordingForAbort(ownerRef),
+    ).resolves.toBeUndefined();
+    expect(ownerRef.current).toBeNull();
   });
 
   it("stops the stream once when two starts report in for one owner", async () => {
