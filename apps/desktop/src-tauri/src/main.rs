@@ -53,7 +53,15 @@ fn main() {
                 eprintln!("[startup] ERROR: Tauri runtime failure: {err}");
 
                 // Provide context-specific guidance
-                if err_str.contains("migration") {
+                if err_str.contains("could not open the database") {
+                    // The path is in the message. The app cannot start without
+                    // its database and nothing here can repair it, so say where
+                    // the file is and stop — advising deletion would throw away
+                    // transcriptions, keys and preferences.
+                    eprintln!(
+                        "[startup] The database could not be opened. Its contents have been left in place."
+                    );
+                } else if err_str.contains("migration") {
                     eprintln!("[startup] This is a database migration issue.");
                     eprintln!("[startup] Try deleting the app database and restarting.");
                 } else if err_str.contains("vulkan")
@@ -77,9 +85,24 @@ fn main() {
             } else {
                 eprintln!("[startup] Panic message: <unknown>");
             }
-            eprintln!(
-                "[startup] If this is GPU-related, switch local transcription to CPU in Settings."
-            );
+            // A database that cannot be opened takes the app down during setup,
+            // and the GPU hint below is wrong for it.
+            let panicked = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                *s
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                ""
+            };
+            if panicked.contains("could not open the database") {
+                eprintln!(
+                    "[startup] The database could not be opened. Its contents have been left in place."
+                );
+            } else {
+                eprintln!(
+                    "[startup] If this is GPU-related, switch local transcription to CPU in Settings."
+                );
+            }
             std::process::exit(1);
         }
     }

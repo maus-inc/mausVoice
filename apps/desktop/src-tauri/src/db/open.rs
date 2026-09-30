@@ -545,17 +545,20 @@ mod tests {
 
     #[test]
     fn integrity_classifier_does_not_treat_locks_as_corruption() {
-        // A ledger disagreement is not damage to the file, so neither of these
-        // may classify as `Integrity`: quarantining on them would move a
-        // readable database aside and open an empty one in its place.
+        // The first two are the exact strings the two repairable paths build, so
+        // this fails if anyone re-adds a needle that matches them — which is how
+        // both used to be quarantined. The rest are the file-level signals and
+        // the near misses beside them.
         assert!(!is_integrity_failure(
-            "migration 1 (create_users_table) was previously applied but has been modified"
+            "migration 70 (create_users_table) was previously applied but has been modified; \
+             the database is readable but its history does not match this build"
         ));
         assert!(!is_integrity_failure(
-            "migration 3 (add_meetings) previously failed; the database needs recovery"
+            "migration 70 previously failed; the database needs recovery before it can be opened"
         ));
         assert!(is_integrity_failure("database disk image is malformed"));
         assert!(is_integrity_failure("file is not a database"));
+        assert!(is_integrity_failure("(code: 11) database disk image is malformed"));
         assert!(!is_integrity_failure("database is locked"));
         assert!(!is_integrity_failure("migration 77 failed: syntax error"));
     }
@@ -668,6 +671,61 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with("mausvoice.broken-")));
+    }
+
+    #[tokio::test]
+    async fn a_failed_migration_row_surfaces_and_keeps_the_database() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let pool = try_open(path).await.expect("initial migrate");
+        // A crash between the runner writing `success = false` and committing
+        // leaves a real ledger row flipped, so update one rather than inventing
+        // a version this build does not ship.
+        let expected_version: i64 =
+            sqlx::query_scalar("SELECT MIN(version) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let affected = sqlx::query("UPDATE _sqlx_migrations SET success = false")
+            .execute(&pool)
+            .await
+            .unwrap()
+            .rows_affected();
+        assert!(affected > 0, "the fixture needs at least one migrated row");
+        pool.close().await;
+
+        // A crash mid-migration leaves `success = false` behind. The file is
+        // perfectly readable; this build simply cannot say how far it got. It
+        // used to be treated as corruption, which quarantined the database and
+        // opened an empty one in its place — losing every transcription, key and
+        // preference with nothing said.
+        let error = open_app_database(path)
+            .await
+            .expect_err("a failed migration row must not be opened silently")
+            .to_string();
+
+        assert!(
+            error.contains(&expected_version.to_string()),
+            "the failing version {expected_version} must be named so it can be looked up: {error}"
+        );
+        assert!(
+            error.contains("needs recovery"),
+            "the message must say the row is recoverable: {error}"
+        );
+        assert!(
+            path.exists(),
+            "the database file must be left where it was"
+        );
+        assert!(
+            !std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "a readable database must not be quarantined"
+        );
     }
 
     #[tokio::test]

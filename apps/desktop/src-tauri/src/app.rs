@@ -218,8 +218,14 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             }
         })
         .setup(|app| {
-            std::panic::set_hook(Box::new(|info| {
+            // Chained rather than replaced. The previous hook wrote only to the log
+            // file, and a setup failure exits without a console on Windows and
+            // when launched from Finder or a desktop entry, so the reason was
+            // invisible everywhere except a log nothing points the user at.
+            let previous_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
                 log::error!("PANIC: {info}");
+                previous_hook(info);
             }));
 
             log::info!("Starting application setup...");
@@ -257,8 +263,17 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                     .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })?
             };
 
+            // The path belongs in the failure. A database that cannot be opened leaves the
+            // app unable to start, so this error is the only account of what
+            // happened, and without the path neither the log nor a crash report
+            // says which file to look at.
             let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
-                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+                .map_err(|err| -> Box<dyn std::error::Error> {
+                    let message =
+                        format!("could not open the database at {}: {err}", db_path.display());
+                    log::error!("{message}");
+                    message.into()
+                })?;
 
             app.manage(crate::state::OptionKeyDatabase::new(pool.clone()));
             app.manage(crate::state::OverlayState::new());
