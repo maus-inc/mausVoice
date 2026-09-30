@@ -1253,6 +1253,93 @@ export const DictationSideEffects = () => {
     }, autoStopDurationMs);
   }, [clearProviderRecordingTimers, intl, stopRecording]);
 
+  /**
+   * Loads the app's manual style before the utterance is seeded, when the
+   * preference allows it.
+   *
+   * Returns false when a newer start or an abort took over while the load was in
+   * flight, which is the caller's signal to stop: continuing would seed a tone
+   * snapshot for a recording that is no longer current.
+   */
+  const prepareAutoStyle = useCallback(
+    async (
+      mode: RecordingMode,
+      state: ReturnType<typeof getAppState>,
+      attempt: number,
+    ): Promise<boolean> => {
+      if (
+        mode !== "dictate" ||
+        state.onboarding.dictationOverrideEnabled ||
+        state.local.disableAutoStyleLoading
+      ) {
+        return true;
+      }
+      await loadManualStyleForCurrentApp();
+      if (recordingOperationRef.current !== attempt) {
+        getLogger().warning(
+          "Recording start was aborted or replaced while loading the style",
+        );
+        return false;
+      }
+      return true;
+    },
+    [],
+  );
+
+  /**
+   * Unwinds a start that threw.
+   *
+   * Extracted from `startRecording` because this block is almost entirely
+   * branches, and inlining it here was what pushed the function over the
+   * cognitive-complexity limit. The behaviour is unchanged.
+   */
+  const handleStartFailure = useCallback(
+    (
+      error: unknown,
+      activeSession: TranscriptionSession | null,
+      operationId: number,
+    ): void => {
+      if (operationId !== recordingOperationRef.current) {
+        getLogger().warning(
+          "Start failed after a newer recording took over; ignoring stale failure",
+        );
+        activeSession?.cleanup();
+        return;
+      }
+      getLogger().error(`Failed to start recording: ${error}`);
+
+      activeSession?.cleanup();
+      if (sessionRef.current === activeSession) {
+        sessionRef.current = null;
+        strategyRef.current = null;
+      }
+      clearRecordingState();
+      abortRecording();
+
+      hardResetHotkeyState();
+      clearRecordingTimers();
+      invoke("stop_recording").catch((e) =>
+        getLogger().verbose(
+          `stop_recording failed during error handling: ${e}`,
+        ),
+      );
+
+      showToast({
+        message: intl.formatMessage({
+          defaultMessage: "Recording failed",
+        }),
+        toastType: "error",
+        duration: 8_000,
+      });
+    },
+    [
+      abortRecording,
+      clearRecordingState,
+      clearRecordingTimers,
+      hardResetHotkeyState,
+    ],
+  );
+
   const startRecording = useCallback(
     async (args: { mode: RecordingMode; language?: string | null }) => {
       const attempt = ++recordingOperationRef.current;
@@ -1275,18 +1362,12 @@ export const DictationSideEffects = () => {
         return;
       }
 
-      if (
-        mode === "dictate" &&
-        !state.onboarding.dictationOverrideEnabled &&
-        !state.local.disableAutoStyleLoading
-      ) {
-        await loadManualStyleForCurrentApp();
-        if (recordingOperationRef.current !== attempt) {
-          getLogger().warning(
-            "Recording start was aborted or replaced while loading the style",
-          );
-          return;
-        }
+      // Extracted with the rest of the start-failure handling: another nested
+      // branch set that was counting against `startRecording`'s cognitive
+      // complexity. False means a newer start took over while the style loaded,
+      // so the caller must stop.
+      if (!(await prepareAutoStyle(mode, state, attempt))) {
+        return;
       }
 
       // Seed the start snapshot after app-based style load. It is the
@@ -1444,38 +1525,7 @@ export const DictationSideEffects = () => {
         startUserRecordingTimers();
         dimSystemVolume(operationId);
       } catch (error) {
-        if (operationId !== recordingOperationRef.current) {
-          getLogger().warning(
-            "Start failed after a newer recording took over; ignoring stale failure",
-          );
-          activeSession?.cleanup();
-          return;
-        }
-        getLogger().error(`Failed to start recording: ${error}`);
-
-        activeSession?.cleanup();
-        if (sessionRef.current === activeSession) {
-          sessionRef.current = null;
-          strategyRef.current = null;
-        }
-        clearRecordingState();
-        abortRecording();
-
-        hardResetHotkeyState();
-        clearRecordingTimers();
-        invoke("stop_recording").catch((e) =>
-          getLogger().verbose(
-            `stop_recording failed during error handling: ${e}`,
-          ),
-        );
-
-        showToast({
-          message: intl.formatMessage({
-            defaultMessage: "Recording failed",
-          }),
-          toastType: "error",
-          duration: 8_000,
-        });
+        handleStartFailure(error, activeSession, operationId);
       }
     },
     [
@@ -1483,6 +1533,8 @@ export const DictationSideEffects = () => {
       clearRecordingState,
       clearRecordingTimers,
       dimSystemVolume,
+      handleStartFailure,
+      prepareAutoStyle,
       hardResetHotkeyState,
       intl,
       startProviderRecordingTimers,

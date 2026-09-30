@@ -1,6 +1,7 @@
-import { readProviderStatus } from "./provider-error.utils";
-
-export { readProviderStatus };
+// Re-exported rather than re-declared: this module is a second public path to the
+// reader that already lives in provider-error.utils, and `export ... from` keeps
+// it one binding instead of an import paired with a separate export.
+export { readProviderStatus } from "./provider-error.utils";
 
 /**
  * Auth and billing failures belong to the API key, so neither a retry nor
