@@ -84,6 +84,13 @@ type WatchSnapshot = {
   unalignableReported: boolean;
   /** Last observed field text, and when it was first observed. */
   settledText: string | null;
+  /**
+   * The field text the correction scan last ran against. The scan is the
+   * expensive part of a poll -- it tokenizes both sides and runs the alignment --
+   * and the field does not change between ticks once the user stops typing, so
+   * remembering it turns a settled idle field into a comparison instead.
+   */
+  lastCorrectedFieldText: string | null;
   settledAt: number;
 };
 
@@ -104,6 +111,27 @@ const isFeatureEnabled = (): boolean =>
  * already turned down, never suppress something new.
  */
 let sessionDeniedTerms = new Set<string>();
+
+/**
+ * The last proposal this watch expired on its TTL, and when.
+ *
+ * `proposedAt` is stamped before the toast is handed to the delivery queue, and
+ * that queue is serialised behind every other toast, so the TTL can expire while
+ * the pill is still on screen. The click then arrives to find no proposal and
+ * `acceptAutoLearnProposal` returned without adding anything, so a user who saw
+ * the prompt and answered it got silence.
+ *
+ * Re-offering the term instead would be worse: the same watch would ask again
+ * about a word the user had already been prompted for, and the existing
+ * `proposedTerms` set exists to prevent exactly that. Holding the lapsed term
+ * for one toast duration instead honours the click without re-asking, and lets
+ * it expire on its own so it cannot accept a click from a later, unrelated
+ * prompt.
+ */
+let recentlyLapsedProposal: { term: string; at: number } | null = null;
+
+/** How long a lapsed proposal still honours a click. */
+const LAPSED_PROPOSAL_GRACE_MS = PROPOSAL_TOAST_DURATION_MS;
 
 const readDeniedTerms = (): Set<string> => {
   const stored = readStoredDeniedTerms();
@@ -135,7 +163,12 @@ const readStoredDeniedTerms = (): Set<string> => {
 
 const rememberDeniedTerm = (term: string): void => {
   const key = term.toLowerCase();
-  sessionDeniedTerms = new Set([...sessionDeniedTerms, key]);
+  // Bounded the same way the durable copy is. `MAX_DENIED_TERMS` only trimmed
+  // what went to local storage, so this set grew for the life of the session
+  // even after the persisted list had rotated the entry out.
+  sessionDeniedTerms = new Set(
+    [...sessionDeniedTerms, key].slice(-MAX_DENIED_TERMS),
+  );
   const storage = getLocalStorage();
   if (!storage) {
     return;
@@ -233,6 +266,7 @@ export const beginEditWatch = (text: string): void => {
     proposedTerms: new Set<string>(),
     unalignableReported: false,
     settledText: null,
+    lastCorrectedFieldText: null,
     settledAt: 0,
   };
   activeWatch = snapshot;
@@ -332,14 +366,18 @@ export const pollEditWatch = async (): Promise<void> => {
     if (Date.now() - pending.proposedAt <= PROPOSAL_TTL_MS) {
       return;
     }
-    // The term is already in snapshot.proposedTerms from the poll that raised
-    // the prompt, so expiring it only stops this watch from repeating itself.
-    // It is deliberately not a permanent denial: the toast is delivered on a
-    // queue behind every other toast, so this TTL can fire while the pill is
-    // still on screen, and it fires with nothing at all when the delivery
-    // failed. Writing a lasting denial there would blacklist a term the user
-    // may never have been shown, and would blacklist it before the Add click
-    // landed, so the click would do nothing.
+    // Deliberately not a permanent denial: the toast is delivered on a queue
+    // behind every other toast, so this TTL can fire while the pill is still on
+    // screen, and it fires with nothing at all when the delivery failed. Writing
+    // a lasting denial there would blacklist a term the user may never have been
+    // shown.
+    //
+    //
+    // The term stays in `snapshot.proposedTerms`, so this dictation does not nag
+    // about it again. What it must not do is lose a click that was already on its
+    // way -- see `lapsedProposal`.
+    const lapsed = { term: pending.term, at: Date.now() };
+    recentlyLapsedProposal = lapsed;
     clearAutoLearnProposal();
   }
 
@@ -359,6 +397,17 @@ export const pollEditWatch = async (): Promise<void> => {
     if (!hasSettled(snapshot, fieldText)) {
       return;
     }
+
+    // `hasSettled` reports true forever once the field stops changing, and
+    // nothing downstream short-circuits on that, so every 500 ms tick re-tokenized
+    // both sides and re-ran `alignTokens` -- up to 601 by 601 cells, 180 times
+    // over a three minute watch, for an idle user. `proposedTerms` and
+    // `unalignableReported` only suppressed work after that computation. The
+    // inputs are identical when the text has not moved, so the result is too.
+    if (snapshot.lastCorrectedFieldText === fieldText) {
+      return;
+    }
+    snapshot.lastCorrectedFieldText = fieldText;
 
     const baselineText = resolveBaseline(snapshot, fieldText);
     if (!baselineText) {
@@ -385,11 +434,18 @@ export const pollEditWatch = async (): Promise<void> => {
       return;
     }
 
-    const term = corrections[0];
-    if (
-      snapshot.proposedTerms.has(term) ||
-      readDeniedTerms().has(term.toLowerCase())
-    ) {
+    // The first gap in the field is not always the first one worth offering.
+    // `proposedTerms` and the denial set both persist for the rest of the watch,
+    // so taking `corrections[0]` unconditionally meant that a single offered or
+    // ignored correction at the start of a field suppressed every later
+    // correction in that same field for as long as the dictation ran.
+    const denied = readDeniedTerms();
+    const term = corrections.find(
+      (candidate) =>
+        !snapshot.proposedTerms.has(candidate) &&
+        !denied.has(candidate.toLowerCase()),
+    );
+    if (!term) {
       return;
     }
 
@@ -406,10 +462,21 @@ export const pollEditWatch = async (): Promise<void> => {
 export const acceptAutoLearnProposal = async (): Promise<void> => {
   const proposal = getAppState().autoLearn.proposal;
   if (!proposal) {
+    // The TTL expired while the click was still in flight. The user answered a
+    // prompt they could see, so honour it rather than dropping it silently --
+    // but only inside the grace window, so a stray click cannot accept a term
+    // from a prompt that ended long ago.
+    const lapsed = recentlyLapsedProposal;
+    if (!lapsed || Date.now() - lapsed.at > LAPSED_PROPOSAL_GRACE_MS) {
+      return;
+    }
+    recentlyLapsedProposal = null;
+    await createGlossaryTerms([lapsed.term]);
     return;
   }
 
   const { term } = proposal;
+  recentlyLapsedProposal = null;
   clearAutoLearnProposal();
   await createGlossaryTerms([term]);
 };

@@ -318,6 +318,32 @@ describe("edit-watch proposal lifecycle", () => {
     expect(state.autoLearn.proposal?.term).toBe("Soniya");
   });
 
+  it("still proposes a later correction after one has already been offered", async () => {
+    // A poll that finds the field unchanged can skip the alignment, because the
+    // inputs are identical and so is the answer. This pins the other half of
+    // that: a memo keyed on anything other than the field text would let the
+    // first correction suppress every one after it.
+    //
+    // The words here are unique to this test, because the rejection below is
+    // remembered in the session denial set and would otherwise suppress the
+    // same correction in the tests that follow.
+    beginEditWatch("email Torvald and Zsofia");
+    await settleBaseline("email Torvald and Zsofia");
+
+    setField("email Torvaldd and Zsofia");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Torvaldd");
+    rejectAutoLearnProposal();
+    expect(state.autoLearn.proposal).toBeNull();
+
+    // Same watch, a different correction further along the field.
+    setField("email Torvaldd and Zsofiaa");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Zsofiaa");
+  });
+
   it("keeps the denial in memory when local storage cannot answer", async () => {
     // A blocked or quota-limited origin leaves nowhere to persist, which would
     // otherwise reinstate the repeat the deny list exists to prevent. A word
@@ -474,5 +500,55 @@ describe("edit-watch proposal lifecycle", () => {
 
     expect(createGlossaryTerms).toHaveBeenCalledWith(["Ralf"]);
     expect(state.autoLearn.proposal).toBeNull();
+  });
+
+  it("honours an Add click that lands after the proposal expired", async () => {
+    // `proposedAt` is stamped before the toast goes onto the serialised delivery
+    // queue, so the TTL can fire while the pill is still on screen. The click
+    // then arrived to find no proposal and nothing was added, so a user who saw
+    // the prompt and answered it got silence -- and `proposedTerms` meant the
+    // correction was never offered again either.
+    const { createGlossaryTerms } = await import("./dictionary.actions");
+    const unique = "Quillon";
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+
+    setField(`my wife's name is ${unique}`);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe(unique);
+
+    // The pill's own timer runs out with no accept and no reject.
+    await advanceAndPoll(13_000);
+    expect(state.autoLearn.proposal).toBeNull();
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+
+    // The user clicks Add on a prompt they can still see.
+    await acceptAutoLearnProposal();
+
+    expect(createGlossaryTerms).toHaveBeenCalledWith([unique]);
+  });
+
+  it("does not honour a click long after the proposal lapsed", async () => {
+    // The grace window exists so a stray click cannot accept a term from a
+    // prompt that ended long ago.
+    const { createGlossaryTerms } = await import("./dictionary.actions");
+    const unique = "Quillory";
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+
+    setField(`my wife's name is ${unique}`);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe(unique);
+    await advanceAndPoll(13_000);
+    expect(state.autoLearn.proposal).toBeNull();
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+
+    // Well past the grace window.
+    await advanceAndPoll(60_000);
+    await acceptAutoLearnProposal();
+
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
   });
 });

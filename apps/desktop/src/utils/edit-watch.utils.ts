@@ -27,6 +27,21 @@ const alignmentKey = (token: string): string =>
 
 const alignmentKeys = (tokens: string[]): string[] => tokens.map(alignmentKey);
 
+/**
+ * Key for deciding whether an aligned token was actually *changed*.
+ *
+ * Unlike `alignmentKey` this keeps the case, because a case-only difference is
+ * the whole point for a proper noun: dictating "mausvoice" and seeing "MausVoice"
+ * in the field is a correction the user is teaching. It folds only smart
+ * typography, which no user means to correct -- a target app that curly-quotes
+ * the dictation has not been edited. Comparing raw reported those as gaps, and
+ * because `consumeOriginalToken` keys on the lowercased raw token, a curly
+ * quote counted as both added and removed; past eight of them the occurrence
+ * caps rejected the entire correction.
+ */
+const changedTokenKey = (token: string): string =>
+  token.replace(SMART_APOSTROPHE_PATTERN, "'");
+
 /** True when the dictated run starts at `offset`. Keys are precomputed. */
 const runMatchesAt = (
   keys: string[],
@@ -235,7 +250,10 @@ const collectRegionGaps = (args: {
   }
 
   for (const [baselineIndex, fieldIndex] of inSpan) {
-    if (baseline[baselineIndex] !== field[fieldIndex]) {
+    if (
+      changedTokenKey(baseline[baselineIndex]!) !==
+      changedTokenKey(field[fieldIndex]!)
+    ) {
       gaps.push({
         baseline: [baseline[baselineIndex]!],
         field: [field[fieldIndex]!],

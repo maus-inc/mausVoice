@@ -161,6 +161,37 @@ describe("findEditCorrections", () => {
     ).toEqual(["Google"]);
   });
 
+  it("does not read a curly quote as a correction", () => {
+    // The target app curly-quoted the proper noun on its own. That is not the
+    // user editing anything, so it must not be offered as a term to learn. The
+    // comparison folded nothing at all, so the quote was seen as both added and
+    // removed -- and because `consumeOriginalToken` keys on the lowercased raw
+    // token, the term came out as the curly-quoted spelling.
+    //
+    // The token has to be a capitalised proper noun to reach the term list at
+    // all, which is why this is not written with a lowercase word.
+    expect(
+      find({
+        insertedText: "i work at O'Reilly media",
+        baselineText: "i work at O'Reilly media",
+        fieldText: "i work at O\u2019Reilly media",
+      }),
+    ).toEqual([]);
+  });
+
+  it("still reads a corrected apostrophe as a correction", () => {
+    // The fold is deliberately narrow: only U+2018 and U+2019 are treated as the
+    // same character. A backtick where the dictation had nothing is a real edit,
+    // and it must still be offered.
+    expect(
+      find({
+        insertedText: "i work at OReilly media",
+        baselineText: "i work at OReilly media",
+        fieldText: "i work at O`Reilly media",
+      }),
+    ).not.toEqual([]);
+  });
+
   it("handles a correction at the very end of a long field", () => {
     expect(
       find({
