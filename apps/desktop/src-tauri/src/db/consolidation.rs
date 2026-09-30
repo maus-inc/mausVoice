@@ -10,6 +10,18 @@ struct TableFields {
 
 // Only fields introduced by the folded migrations need saving. The original
 // migration already copies stable columns and intentionally rewrites cloud modes.
+//
+// Every field here has to be a column of 069's own target schema, because that is
+// the table the value is written back into.
+// `every_saved_field_is_a_column_of_the_consolidated_schema` below enforces it.
+// `post_process_fallback` used to sit in the `transcriptions` list and is the
+// reason that test exists: 070 adds it, 070 runs after 069, and
+// `save_existing_fields` filters the list down to the columns that exist when the
+// snapshot is taken, so the entry could never carry anything. It would have been
+// worse than dead if the column were ever present while 069 was still pending --
+// the projection would have taken it, 069 would have rebuilt the table without
+// it, and the restore would have failed the whole 069 transaction and left the
+// database unable to open.
 const TABLES: &[TableFields] = &[
     TableFields {
         table: "user_preferences",
@@ -42,7 +54,6 @@ const TABLES: &[TableFields] = &[
             "post_process_failed",
             "post_process_error",
             "post_process_model",
-            "post_process_fallback",
         ],
     },
     TableFields {
@@ -153,4 +164,92 @@ pub(super) async fn apply(transaction: &mut Transaction<'_, Sqlite>) -> Result<(
         restore_fields(connection, &fields).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONSOLIDATED_V0_1_6_MIGRATION_SQL, TABLES};
+
+    /// A saved field is written back into the table that 069 just rebuilt, so it
+    /// has to be one of that table's columns. Anything else is either silently
+    /// dropped at snapshot time or, if the column happens to exist, turns the
+    /// restore into a failed 069 transaction.
+    ///
+    /// 069 creates each table as `<table>_v016` and renames it, so the lookup
+    /// follows the rename rather than assuming the final name.
+    #[test]
+    fn every_saved_field_is_a_column_of_the_consolidated_schema() {
+        for table in TABLES {
+            let columns = consolidated_columns(table.table);
+            assert!(
+                !columns.is_empty(),
+                "069's schema does not define table `{}` at all, so none of {:?} can be saved",
+                table.table,
+                table.fields
+            );
+            for field in table.fields {
+                assert!(
+                    columns.iter().any(|column| column == field),
+                    "{}.{} is saved and restored across 069, but 069's schema does not create it. \
+                     A field added by a migration later than 069 can never survive this step: \
+                     `save_existing_fields` filters it out while the column is absent, and \
+                     `restore_fields` would fail the whole 069 transaction against a table that \
+                     069 rebuilt without it if the column were ever present.",
+                    table.table,
+                    field
+                );
+            }
+        }
+    }
+
+    /// Column names for `table` in 069's schema, from the `CREATE TABLE` body.
+    fn consolidated_columns(table: &str) -> Vec<String> {
+        // Both the `<table>_v016` form and a plain `CREATE TABLE <table>` are
+        // accepted so a future 069 rewrite does not turn this into a false
+        // failure when it stops using the rename dance.
+        let create_start = format!("CREATE TABLE {table}_v016 (");
+        let plain_start = format!("CREATE TABLE {table} (");
+        let body_start = CONSOLIDATED_V0_1_6_MIGRATION_SQL
+            .find(&create_start)
+            .map(|at| at + create_start.len())
+            .or_else(|| {
+                CONSOLIDATED_V0_1_6_MIGRATION_SQL
+                    .find(&plain_start)
+                    .map(|at| at + plain_start.len())
+            });
+        let Some(body_start) = body_start else {
+            return Vec::new();
+        };
+        let body = &CONSOLIDATED_V0_1_6_MIGRATION_SQL[body_start..];
+        let Some(body_end) = body.find(");") else {
+            return Vec::new();
+        };
+
+        body[..body_end]
+            .split(',')
+            .filter_map(|entry| {
+                // Every entry here begins with a newline, because the body starts
+                // right after `(` and each column is on its own line. Taking the
+                // first line as-is gets that empty line rather than the column,
+                // so the first non-empty line is the one that names it.
+                let name = entry
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or_default()
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default();
+                // A bare `name` is a column; a table constraint is uppercase and
+                // carries keywords, so it is skipped rather than matched.
+                if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    return None;
+                }
+                if name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    return None;
+                }
+                Some(name.to_owned())
+            })
+            .collect()
+    }
 }

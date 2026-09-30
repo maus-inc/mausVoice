@@ -185,19 +185,47 @@ fn download_prebuilt_libs(
     let extracted_dir = cache_root.join(archive_stem);
     let lib_dir = extracted_dir.join("lib");
 
-    if lib_dir.is_dir() {
-        return Ok(lib_dir);
-    }
-
+    let archive_path = cache_root.join(&archive_name);
     // Android archives use jniLibs/{abi}/ instead of lib/. Check both.
     let android_lib_dir = extracted_dir.join("jniLibs").join(android_abi(target_arch));
-    if android_lib_dir.is_dir() {
-        return Ok(android_lib_dir);
+    let cached_dir = if lib_dir.is_dir() {
+        Some(&lib_dir)
+    } else if android_lib_dir.is_dir() {
+        Some(&android_lib_dir)
+    } else {
+        None
+    };
+
+    // A cache hit is only a hit if it can be verified. Returning the extracted
+    // directory on its existence handed the linker whatever was in it, and the
+    // pinned digest below never ran on that path at all, so a cache that had
+    // been altered after extraction linked without ever being checked. The
+    // archive is the thing the digest covers, so it is what has to be present
+    // for a cache hit to mean anything.
+    if let Some(dir) = cached_dir {
+        if archive_path.is_file() {
+            // A mismatch is a hard failure, not something to re-download over:
+            // `verify_archive_digest` has already deleted the archive, and a
+            // tampered cache is exactly the case that must not be papered over.
+            verify_archive_digest(&archive_path, &archive_name)?;
+            eprintln!(
+                "Using verified cached sherpa-onnx libs at {}",
+                dir.display()
+            );
+            return Ok(dir.clone());
+        }
+        // The archive is gone but the extracted tree is still here, so nothing
+        // about that tree can be traced to a pinned digest. Drop it and fetch
+        // the archive again rather than link against an unverifiable directory.
+        eprintln!(
+            "Discarding unverifiable cached sherpa-onnx libs at {}: the archive it came from is missing",
+            extracted_dir.display()
+        );
+        let _ = fs::remove_dir_all(&extracted_dir);
     }
 
     fs::create_dir_all(&cache_root)?;
 
-    let archive_path = cache_root.join(&archive_name);
     if !archive_path.is_file() {
         if let Some(local_archive_dir) = env::var_os("SHERPA_ONNX_ARCHIVE_DIR") {
             let local_archive_path = PathBuf::from(local_archive_dir).join(&archive_name);

@@ -109,6 +109,50 @@ describe("sherpa-onnx link mode on android", () => {
     );
   });
 
+  it("does not return an extracted cache it cannot verify", () => {
+    const buildRs = readFileSync(BUILD_RS, "utf8");
+    const start = buildRs.indexOf("fn download_prebuilt_libs(");
+    assert.ok(start > -1, "download_prebuilt_libs was not found");
+    const nextFn = buildRs.indexOf("\nfn ", start + 1);
+    const body = buildRs.slice(start, nextFn > -1 ? nextFn : buildRs.length);
+
+    // The pinned digest is only ever checked on the download path, so a cache
+    // hit that returned the extracted directory on its existence alone linked
+    // whatever was in it: the archive's digest never ran, and a tree altered
+    // after extraction went straight to the linker.
+    //
+    // Both cache-hit outcomes have to be covered, because either alone leaves a
+    // hole. Archive present: it has to be verified, and the return has to come
+    // after that verification. Archive absent: the extracted tree cannot be
+    // traced to any digest, so it has to be discarded rather than linked.
+    const hitStart = body.indexOf("if let Some(dir) = cached_dir");
+    assert.ok(hitStart > -1, "there is no cache-hit branch to gate on verification");
+    const hit = body.slice(hitStart, body.indexOf("\n    }", hitStart));
+
+    // Verification, and the return that follows it, have to be inside the branch
+    // that tests for the archive actually being there. Written out as one
+    // expression because splitting it into two `indexOf` comparisons would still
+    // pass if the condition guarding them were changed to something always false.
+    assert.match(
+      hit,
+      /if archive_path\.is_file\(\)\s*\{[\s\S]{0,400}?verify_archive_digest\([\s\S]{0,400}?return Ok\(/,
+      "the verified path is not: test for the archive, verify it, then return the directory",
+    );
+
+    assert.match(
+      hit,
+      /remove_dir_all\(&extracted_dir\)/,
+      "an extracted tree with no archive to verify it against is not discarded",
+    );
+
+    // And the bare existence check must not be able to return on its own.
+    assert.doesNotMatch(
+      body,
+      /if lib_dir\.is_dir\(\)\s*\{\s*return Ok\(lib_dir\);/,
+      "the extracted directory is still returned on existence alone",
+    );
+  });
+
   it("answers a static request on android with a refusal, not an archive", () => {
     const buildRs = readFileSync(BUILD_RS, "utf8");
     const start = buildRs.indexOf("fn archive_name(");
