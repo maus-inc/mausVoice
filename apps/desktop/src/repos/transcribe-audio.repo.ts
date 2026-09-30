@@ -776,6 +776,9 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     const effectiveModel = this.resolvedModel ?? this.model;
     let transcript: string;
     let usedModel = effectiveModel;
+    // Only ever non-empty when the fallback below changed the model, so the
+    // common path returns exactly the shape it returned before.
+    const warnings: string[] = [];
     try {
       transcript = await tryTranscribe(effectiveModel);
       if (!this.resolvedModel) this.resolvedModel = effectiveModel;
@@ -794,6 +797,17 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
           transcript = await tryTranscribe(fallbackModel);
           usedModel = fallbackModel;
           this.resolvedModel = fallbackModel;
+          // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated
+          // `-transcribe` id, so this find always lands on a general model --
+          // and `transcribeWithGeneralModel` accepts neither `customVocabulary`
+          // nor `transcriptionMode`. The dictionary the user configured was
+          // therefore dropped for the rest of the recording, with no entry in
+          // `warnings` and so nothing on the history row. There is no second
+          // transcribe model to fall back to, so the fallback stays and reports
+          // itself.
+          warnings.push(
+            `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`,
+          );
         } else {
           throw error;
         }
@@ -809,6 +823,7 @@ export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
         modelSize: usedModel,
         transcriptionMode: "api" as TranscriptionMode,
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 }

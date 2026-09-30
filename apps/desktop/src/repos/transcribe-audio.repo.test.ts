@@ -525,6 +525,46 @@ describe("DeepgramTranscribeAudioRepo", () => {
   });
 });
 
+describe("getTranscribeAudioRepo Gemini vocabulary gate", () => {
+  const geminiState = (model: string | undefined) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "gemini-key";
+    state.apiKeyById["gemini-key"] = {
+      id: "gemini-key",
+      name: "Gemini",
+      provider: "gemini",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "gem-key",
+      transcriptionModel: model,
+    };
+    return state;
+  };
+
+  it("says so when the chosen general model cannot take the dictionary", () => {
+    // `getTranscriptionModels` offers general Gemini models as valid choices,
+    // and only a dedicated `-transcribe` model accepts `customVocabulary`. The
+    // gate used to disagree with the picker, so picking a general model sent no
+    // vocabulary and said nothing about it.
+    setAppState(geminiState("gemini-3.8-flash"), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).toContain("dictionary");
+    expect(warnings.join(" ")).toContain("gemini-3.8-flash");
+  });
+
+  it("stays quiet for a dedicated transcribe model", () => {
+    setAppState(geminiState("gemini-3.5-transcribe"), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).not.toContain("does not accept dictionary");
+  });
+
+  it("stays quiet when no model is pinned, since the default is a transcribe model", () => {
+    setAppState(geminiState(undefined), true);
+    const { warnings } = getTranscribeAudioRepo();
+    expect(warnings.join(" ")).not.toContain("does not accept dictionary");
+  });
+});
+
 describe("GladiaTranscribeAudioRepo", () => {
   it("is selected with Gladia's supported model", () => {
     const state = structuredClone(INITIAL_APP_STATE);
@@ -1154,6 +1194,62 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     // Second call should use non-transcribe model
     const secondModel = (geminiMock.mock.calls[1]?.[0] as any)?.model;
     expect(secondModel).not.toContain("-transcribe");
+  });
+
+  it("warns that the 403 fallback dropped the dictionary", async () => {
+    // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated `-transcribe`
+    // id, so the fallback find always lands on a general model, and
+    // `transcribeWithGeneralModel` accepts neither `customVocabulary` nor
+    // `transcriptionMode`. The user's dictionary was dropped for the rest of
+    // the recording with no entry in `warnings` and so nothing on the history
+    // row. There is no second transcribe model to fall back to, so the
+    // fallback stays and has to report itself.
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
+    geminiMock.mockImplementationOnce(() => {
+      const err = new Error("forbidden") as Error & { status?: number };
+      (err as any).status = 403;
+      return Promise.reject(err);
+    });
+    geminiMock.mockImplementationOnce(() =>
+      Promise.resolve({ text: "fallback ok", wordsUsed: 2 }),
+    );
+
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.5-transcribe", [
+      "mausvoice",
+    ]);
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings?.[0]).toContain("dictionary");
+    expect(result.warnings?.[0]).toContain("gemini-3.5-transcribe");
+    // The dictionary really was configured, so this is a loss and not a no-op.
+    expect((geminiMock.mock.calls[0]?.[0] as any)?.customVocabulary).toEqual([
+      "mausvoice",
+    ]);
+  });
+
+  it("returns no warnings when the model did not change", async () => {
+    const { GeminiTranscribeAudioRepo } =
+      await import("./transcribe-audio.repo");
+    const geminiMock = vi
+      .spyOn(voiceAi, "geminiTranscribeAudio")
+      .mockImplementation(() => Promise.resolve({ text: "ok", wordsUsed: 1 }));
+
+    const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.5-transcribe", [
+      "mausvoice",
+    ]);
+    const result = await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    expect(geminiMock).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toBeUndefined();
   });
 
   it("caches fallback model and does not re-probe on next segment", async () => {

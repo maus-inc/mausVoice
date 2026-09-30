@@ -489,13 +489,28 @@ export const getTranscribeAudioRepo = (): TranscribeAudioRepoOutput => {
       break;
     }
     case "gemini": {
-      const isTranscribeModel =
+      // Only a dedicated `-transcribe` model accepts a custom vocabulary:
+      // `geminiTranscribeAudio` routes a general model to
+      // `transcribeWithGeneralModel`, which takes neither `customVocabulary`
+      // nor `transcriptionMode`.
+      //
+      // `getTranscriptionModels` offers general Gemini models as valid
+      // transcription choices, so this gate used to disagree with the picker:
+      // a user who picked one got an empty vocabulary and nothing said about it.
+      // The warning is what makes the difference visible, and the action layer
+      // already propagates `prefs.warnings` onto the history row.
+      const honoursVocabulary =
         !prefs.transcriptionModel ||
         isGeminiTranscribeModel(prefs.transcriptionModel);
+      if (!honoursVocabulary) {
+        prefs.warnings.push(
+          `${prefs.transcriptionModel} does not accept dictionary terms, so the custom vocabulary was not sent with this dictation. Choose a dedicated transcribe model to have it applied.`,
+        );
+      }
       repo = new GeminiTranscribeAudioRepo(
         prefs.apiKeyValue,
         prefs.transcriptionModel,
-        isTranscribeModel
+        honoursVocabulary
           ? providerVocabulary(
               GEMINI_CUSTOM_VOCABULARY_BUDGET,
               "Gemini",
