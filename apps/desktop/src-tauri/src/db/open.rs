@@ -46,7 +46,6 @@ pub fn is_integrity_failure(message: &str) -> bool {
         || normalized.contains("file is not a database")
         || normalized.contains("sqlite_corrupt")
         || normalized.contains("sqlite_notadb")
-        || normalized.contains("sqlite_full")
 }
 
 /// Classify a SQLite failure as file damage or something else.
@@ -223,10 +222,16 @@ async fn retire_consolidated_migrations(
 /// description is the part that says which migration a row actually recorded,
 /// and it is already stored on every row.
 ///
-/// `expansion_flags` is the one entry that reached a released build under
-/// three different names, so it is matched on the name this build shipped;
-/// `075_preserve_audio_on_failure` and `075_tone_structured_fields` are listed
-/// in the same header as never-released steps.
+/// A name that no build shipped is deliberately absent: `075_preserve_audio_on_failure`,
+/// `075_tone_structured_fields` and `077_spoken_commands_and_hallucination` appear
+/// only on long-lived branches and the 069 header lists them as never released, so a
+/// ledger row carrying one of those has not come from a real install. A database
+/// that does surface as a downgrade in that case is the fail-safe outcome.
+///
+/// That does make the upgrade path stricter for anyone who ran a branch build
+/// under a colliding name: those databases now report "likely created by a newer
+/// version" rather than upgrading silently. Surfacing beats deleting their ledger
+/// rows, but it is a behaviour change worth knowing about before 0.1.6 ships.
 /// `consolidated_intermediate_migration_rows_are_retired` below exercises the
 /// retirement path, and
 /// `unretired_consolidation_era_numbers_surface_as_a_downgrade` covers the
@@ -441,11 +446,16 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
     Ok(())
 }
 
-/// Open the app database, applying migrations. Integrity failures (checksum
-/// mismatch, a half-applied migration, or a corrupt file) quarantine the
-/// broken file and open a fresh database. Transient errors such as a lock or
-/// a permission failure, a buggy new migration, and a database written by a
-/// newer version of the app are returned as-is, leaving the file untouched.
+/// Open the app database, applying migrations.
+///
+/// Only file-level damage (a corrupt or non-SQLite file) quarantines the broken
+/// file and opens a fresh database. A ledger disagreement — a checksum mismatch,
+/// a leftover `success = false` row, or a version this build does not ship — is
+/// returned as-is with the file left in place, as are transient errors such as a
+/// lock or a permission failure and a buggy new migration. Quarantining any of
+/// those would move a perfectly readable database holding the user's
+/// transcriptions, keys and preferences aside and open an empty one in its
+/// place, discarding the data without saying so.
 pub async fn open_app_database(path: &Path) -> Result<SqlitePool, String> {
     match try_open(path).await {
         Ok(pool) => Ok(pool),
@@ -535,12 +545,35 @@ mod tests {
 
     #[test]
     fn integrity_classifier_does_not_treat_locks_as_corruption() {
-        assert!(is_integrity_failure(
+        // A ledger disagreement is not damage to the file, so neither of these
+        // may classify as `Integrity`: quarantining on them would move a
+        // readable database aside and open an empty one in its place.
+        assert!(!is_integrity_failure(
             "migration 1 (create_users_table) was previously applied but has been modified"
         ));
+        assert!(!is_integrity_failure(
+            "migration 3 (add_meetings) previously failed; the database needs recovery"
+        ));
         assert!(is_integrity_failure("database disk image is malformed"));
+        assert!(is_integrity_failure("file is not a database"));
         assert!(!is_integrity_failure("database is locked"));
         assert!(!is_integrity_failure("migration 77 failed: syntax error"));
+    }
+
+    #[test]
+    fn a_full_disk_is_not_classified_as_file_damage() {
+        // SQLITE_FULL is a condition of the filesystem, not of the file: the
+        // database is intact and the user's data is still in it. Quarantining
+        // a full disk would delete a working database and leave an empty one,
+        // and would do it again on the fresh file, so this must surface as a
+        // repairable error. This is the string sqlx actually produces —
+        // `SqliteError` renders as `(code: <int>) <message>` and exposes only
+        // the numeric extended result code, never the `SQLITE_FULL` symbol.
+        let sqlx_full = "migration 89 (user_profile_timestamps): (code: 13) database or disk is full";
+        assert!(!is_integrity_failure(sqlx_full));
+        assert!(!is_integrity_failure(
+            "record migration: (code: 13) database or disk is full"
+        ));
     }
 
     #[test]
@@ -806,48 +839,91 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checksum_mismatch_is_recovered_with_a_fresh_database() {
+    async fn checksum_mismatch_surfaces_for_repair_and_leaves_the_database_in_place() {
+        // A migration file that no longer matches the checksum recorded in the
+        // ledger is a disagreement about this build's history, not damage to the
+        // database. The file is still perfectly readable, so the open must fail
+        // loudly and leave it alone. Quarantining here would move the user's
+        // transcriptions, keys and preferences aside and open an empty database
+        // in their place without telling them, so this asserts the opposite:
+        // the error surfaces, nothing is quarantined, and the data survives.
         let temp = TempDb::new();
         let path = &temp.path;
         let pool = try_open(path).await.expect("initial migrate");
+        sqlx::query(
+            "INSERT INTO transcriptions (id, transcript, timestamp)
+             VALUES ('keep-me', 'do not lose this', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("UPDATE _sqlx_migrations SET checksum = x'deadbeef' WHERE version = 1")
             .execute(&pool)
             .await
             .unwrap();
         pool.close().await;
 
-        let recovered = open_app_database(path)
+        let error = open_app_database(path)
             .await
-            .expect("recovery should open a fresh database");
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&recovered)
-            .await
-            .unwrap();
-        assert_eq!(count, migrations().len() as i64);
-        recovered.close().await;
-        assert!(std::fs::read_dir(&temp.dir)
-            .unwrap()
-            .flatten()
-            .any(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("mausvoice.broken-")));
+            .expect_err("a checksum mismatch must surface, not be papered over");
+        assert!(
+            error.contains("was previously applied but has been modified")
+                && error.contains("readable"),
+            "the mismatch must be surfaced for repair, got: {error}"
+        );
+
+        assert!(
+            path.exists(),
+            "the original database file must be left in place for repair"
+        );
+        assert!(
+            std::fs::read_dir(&temp.dir)
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("mausvoice.broken-")),
+            "a ledger disagreement must never quarantine the database"
+        );
+
+        // The schema and the user's data are all still there, and the ledger row
+        // is untouched, so the mismatch is diagnosable and repairable in place.
+        let check = connect_pool(path).await.expect("the file is still openable");
+        let transcript: String =
+            sqlx::query_scalar("SELECT transcript FROM transcriptions WHERE id = 'keep-me'")
+                .fetch_one(&check)
+                .await
+                .unwrap();
+        assert_eq!(
+            transcript, "do not lose this",
+            "the user's data must survive a surfaced mismatch"
+        );
+        let recorded: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 1 AND checksum = x'deadbeef'",
+        )
+        .fetch_one(&check)
+        .await
+        .unwrap();
+        assert_eq!(
+            recorded, 1,
+            "the mismatched ledger row must be left in place, not deleted or rewritten"
+        );
+        check.close().await;
     }
 
     #[tokio::test]
     async fn delete_quarantined_databases_removes_all_broken_archives() {
         let temp = TempDb::new();
         let path = &temp.path;
-        let pool = try_open(path).await.expect("initial migrate");
-        sqlx::query("UPDATE _sqlx_migrations SET checksum = x'deadbeef' WHERE version = 1")
-            .execute(&pool)
-            .await
-            .unwrap();
-        pool.close().await;
+        // Genuine file-level damage, which is the only thing that quarantines
+        // now. A ledger disagreement surfaces for repair and leaves the file in
+        // place, so it would never produce an archive for this to delete.
+        std::fs::write(path, b"this is not a sqlite database").unwrap();
 
         let recovered = open_app_database(path)
             .await
-            .expect("recovery creates broken archive");
+            .expect("a corrupt file quarantines and reopens");
         recovered.close().await;
 
         assert!(
@@ -1339,7 +1415,12 @@ mod tests {
             .await
             .unwrap();
         let error = apply_migrations(&pool).await.expect_err("invalid checksum");
-        assert!(matches!(error, OpenError::Integrity(_)));
+        // `Other`, not `Integrity`: the file is readable and only the ledger
+        // disagrees, so this must be repairable in place rather than quarantined.
+        assert!(
+            matches!(error, OpenError::Other(_)),
+            "a checksum mismatch is not file damage, got: {error:?}"
+        );
         let versions: Vec<i64> = sqlx::query_scalar(
             "SELECT version FROM _sqlx_migrations WHERE version IN (69, 75, 87) ORDER BY version",
         )
@@ -1355,15 +1436,17 @@ mod tests {
         // Databases written by intermediate builds recorded the individual
         // migrations (71-87) that the 0.1.6 release folded into step 69.
         // Those rows must retire silently on open — not surface as a
-        // downgrade and not quarantine the file.
+        // downgrade and not quarantine the file. The descriptions are the
+        // names those steps actually shipped under, because retirement matches
+        // on `(version, description)`.
         let temp = TempDb::new();
         let path = &temp.path;
         let pool = try_open(path).await.expect("initial migrate");
         sqlx::query(
             "INSERT INTO _sqlx_migrations
              (version, description, success, checksum, execution_time)
-             VALUES (75, 'add_tone_structured_fields', true, x'deadbeef', 0),
-                    (87, 'add_eleven_labs_keyterms_enabled', true, x'feedface', 0)",
+             VALUES (75, 'expansion_flags', true, x'deadbeef', 0),
+                    (87, 'eleven_labs_keyterms_enabled', true, x'feedface', 0)",
         )
         .execute(&pool)
         .await
@@ -1459,6 +1542,117 @@ mod tests {
                         .starts_with("mausvoice.broken-")),
                 "surfacing version {version} must never quarantine the database"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn colliding_consolidation_era_number_with_a_foreign_description_is_not_retired() {
+        // This is the whole point of keying retirement on (version, description)
+        // rather than on the number alone. Other long-lived branches in this
+        // repository reuse 076-079 for unrelated schemas — git history carries
+        // `076_api_key_transcription_path`, `076_feature_preferences` and
+        // `076_meetings`, and likewise `077_spoken_commands_enabled`,
+        // `077_webhooks`, `078_snippets` and `079_translations` — and those
+        // databases hold real rows. Retiring one of those rows by number would
+        // delete the ledger record of what happened to a database holding real
+        // meetings, webhook, snippet or translation rows, and any `ALTER TABLE`
+        // in the folded-in step would then hard-fail the open.
+        //
+        // So for each of those numbers: a foreign description must surface as a
+        // downgrade with the row left in place, while the description this build
+        // actually retired must still retire silently, proving the tuple match
+        // did not narrow retirement by accident.
+        let collisions = [
+            (76_i64, "api_key_transcription_path", "meetings"),
+            (77, "pill_placement_and_hands_free_delay", "webhooks"),
+            (78, "post_process_attribution", "snippets"),
+            (79, "interaction_feedback_volume", "translations"),
+        ];
+
+        for (version, retired_description, foreign_description) in collisions {
+            let temp = TempDb::new();
+            let path = &temp.path;
+            let pool = try_open(path).await.expect("initial migrate");
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?1, ?2, true, x'deadbeef', 0)",
+            )
+            .bind(version)
+            .bind(foreign_description)
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+
+            let error = open_app_database(path)
+                .await
+                .expect_err("a colliding version must not be retired by number alone");
+            assert!(
+                error.contains(&format!("migration {version} is recorded"))
+                    && error.contains("not in the current migration set"),
+                "version {version} ({foreign_description}) must surface as a downgrade, got: {error}"
+            );
+            assert!(
+                !error.contains("has been modified"),
+                "version {version} ({foreign_description}) must be surfaced as a downgrade, \
+                 not mistaken for a checksum mismatch: {error}"
+            );
+
+            let check = connect_pool(path).await.expect("reconnect");
+            let survivors: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1 AND description = ?2",
+            )
+            .bind(version)
+            .bind(foreign_description)
+            .fetch_one(&check)
+            .await
+            .unwrap();
+            assert_eq!(
+                survivors, 1,
+                "the row for version {version} ({foreign_description}) must survive, not be deleted"
+            );
+            check.close().await;
+            assert!(
+                std::fs::read_dir(&temp.dir)
+                    .unwrap()
+                    .flatten()
+                    .all(|entry| !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("mausvoice.broken-")),
+                "surfacing version {version} ({foreign_description}) must never quarantine the database"
+            );
+
+            let temp = TempDb::new();
+            let path = &temp.path;
+            let pool = try_open(path).await.expect("initial migrate");
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?1, ?2, true, x'deadbeef', 0)",
+            )
+            .bind(version)
+            .bind(retired_description)
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+
+            let reopened = open_app_database(path)
+                .await
+                .expect("the genuinely retired description still retires cleanly");
+            let ghosts: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1")
+                    .bind(version)
+                    .fetch_one(&reopened)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                ghosts, 0,
+                "version {version} ({retired_description}) is a folded consolidation step and must retire"
+            );
+            reopened.close().await;
         }
     }
 

@@ -52,6 +52,11 @@ ALTER TABLE api_keys ADD COLUMN transcription_path TEXT;
 INSERT INTO api_keys (id, name, provider, created_at, salt, key_hash, key_ciphertext, transcription_path)
 VALUES ('existing-key', 'Existing key', 'openai', 123, 'fixture-salt', 'fixture-hash', 'fixture-ciphertext', '/custom/transcribe');
 
+-- The descriptions must be the names these steps actually shipped under, since
+-- retirement matches on (version, description). 075 is `expansion_flags` and 087
+-- is `eleven_labs_keyterms_enabled`; `add_tone_structured_fields` and
+-- `add_eleven_labs_keyterms_enabled` were never the recorded descriptions and
+-- are correctly not retired.
 INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-VALUES (75, 'add_tone_structured_fields', 1, x'deadbeef', 0),
-       (87, 'add_eleven_labs_keyterms_enabled', 1, x'feedface', 0);
+VALUES (75, 'expansion_flags', 1, x'deadbeef', 0),
+       (87, 'eleven_labs_keyterms_enabled', 1, x'feedface', 0);
