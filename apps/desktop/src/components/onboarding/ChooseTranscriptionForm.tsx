@@ -6,6 +6,7 @@ import { trackButtonClick } from "../../utils/analytics.utils";
 import { isMacOS } from "../../utils/env.utils";
 import remoteImage from "../../assets/2-remote.png";
 import { AITranscriptionConfiguration } from "../settings/AITranscriptionConfiguration";
+import { AudioTransmissionDisclosure } from "../settings/AudioTransmissionDisclosure";
 import {
   BackButton,
   DualPaneLayout,
@@ -18,7 +19,6 @@ export const ChooseTranscriptionForm = () => {
   const { mode, selectedApiKeyId } = useAppStore(
     (state) => state.settings.aiTranscription,
   );
-
   const canContinue = mode === "api" ? Boolean(selectedApiKeyId) : true;
 
   const handleContinue = () => {
@@ -45,6 +45,8 @@ export const ChooseTranscriptionForm = () => {
         />
 
         <AITranscriptionConfiguration />
+
+        <AudioTransmissionDisclosure />
       </Stack>
     </OnboardingFormLayout>
   );

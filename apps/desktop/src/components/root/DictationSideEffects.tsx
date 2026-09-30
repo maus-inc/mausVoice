@@ -97,6 +97,10 @@ import {
   SWITCH_WRITING_STYLE_FORWARD_HOTKEY,
 } from "../../utils/keyboard.utils";
 import { getLogger } from "../../utils/log.utils";
+import {
+  getCancelTranscriptPromptMessage,
+  getTranscriptionAudioDisclosure,
+} from "../../utils/transcription-privacy.utils";
 import { sendPillStageText } from "../../utils/overlay.utils";
 import {
   markPipeline,
@@ -1503,10 +1507,15 @@ export const DictationSideEffects = () => {
       cancelPromptTimerRef.current = null;
     }, CANCEL_PROMPT_DURATION);
 
+    // Only a live-streaming provider already holds the audio at this point, so
+    // only that case changes the wording. A batch provider uploads after
+    // recording stops and local mode never leaves the machine, so both keep the
+    // original prompt rather than claim something was sent.
     void showToast({
-      message: intl.formatMessage({
-        defaultMessage: "Press cancel again to discard transcript",
-      }),
+      message: getCancelTranscriptPromptMessage(
+        getTranscriptionAudioDisclosure(getAppState()),
+        intl,
+      ),
       toastType: "info",
       action: "confirm_cancel_transcription",
       duration: CANCEL_PROMPT_DURATION,

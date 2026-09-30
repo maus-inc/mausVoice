@@ -104,6 +104,10 @@ import {
 } from "../../utils/hands-free-delay.utils";
 import { getEffectiveStylingMode } from "../../utils/feature.utils";
 import {
+  disclosureIsVisible,
+  getTranscriptionAudioDisclosure,
+} from "../../utils/transcription-privacy.utils";
+import {
   getDetectedSystemLocale,
   getGenerativePrefs,
   getMyUser,
@@ -113,6 +117,7 @@ import {
 } from "../../utils/user.utils";
 import { PillPlacementSetting } from "./PillPlacementSetting";
 import { UpdateChannelSetting } from "./UpdateChannelSetting";
+import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { UpdateSettingSection } from "./UpdateSettingSection";
 import { SegmentedControl } from "../common/SegmentedControl";
 import {
@@ -457,6 +462,7 @@ export default function SettingsPage() {
     hallucinationFilterEnabled,
     inDictationStyleSwitchingEnabled,
     transcriptionProvider,
+    showAudioDisclosure,
   ] = useAppStore((state) => {
     const prefs = getMyUserPreferences(state);
     const transcriptionPrefs = getTranscriptionPrefs(state);
@@ -484,6 +490,7 @@ export default function SettingsPage() {
       prefs?.hallucinationFilterEnabled ?? true,
       prefs?.inDictationStyleSwitchingEnabled ?? false,
       transcriptionPrefs.mode === "api" ? transcriptionPrefs.provider : null,
+      disclosureIsVisible(getTranscriptionAudioDisclosure(state)),
     ] as const;
   });
   const platform = getPlatform();
@@ -503,6 +510,7 @@ export default function SettingsPage() {
       learn_from_corrections: supportsCorrectionWatch,
       always_run_as_administrator: platform === "windows",
       elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
+      where_your_dictation_audio_goes: showAudioDisclosure,
     }),
     [
       showDictationLimitSetting,
@@ -512,6 +520,7 @@ export default function SettingsPage() {
       supportsCorrectionWatch,
       platform,
       transcriptionProvider,
+      showAudioDisclosure,
     ],
   );
 
@@ -1377,6 +1386,19 @@ export default function SettingsPage() {
 
   const privacyData = (
     <Section title={<FormattedMessage defaultMessage="Privacy and data" />}>
+      {showAudioDisclosure && (
+        <SettingAnchor
+          settingKey="where_your_dictation_audio_goes"
+          highlight={highlight}
+        >
+          <SettingSection
+            title={
+              <FormattedMessage defaultMessage="Where your dictation audio goes" />
+            }
+            description={<AudioTransmissionDisclosure variant="setting" />}
+          />
+        </SettingAnchor>
+      )}
       <SettingAnchor settingKey="incognito_mode" highlight={highlight}>
         <SettingSection
           title={<FormattedMessage defaultMessage="Incognito mode" />}

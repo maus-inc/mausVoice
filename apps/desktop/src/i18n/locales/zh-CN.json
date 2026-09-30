@@ -87,6 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "Assistant 模式默认已禁用。这是一个新的实验性功能。",
   "at_least_one_style_must_be_selected": "至少必须选择一种风格。",
   "audio": "音频",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "说话时音频会发送到 {provider}，以便文本立即返回。已发送的音频无法收回。",
   "authentication_failed": "认证失败",
   "authorized": "已授权",
   "auto": "自动",
@@ -601,6 +602,7 @@
   "preferred_microphone": "首选麦克风",
   "preserve_audio_on_failure": "失败时保留音频",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "按住快捷键，然后开始说话。松开后，您的语音将被转换为文字。",
+  "press_cancel_again_to_discard_audio_already_sent_to_provider": "再次按取消键以丢弃。已发送给 {provider} 的音频无法收回。",
   "press_cancel_again_to_discard_transcript": "再次按取消键以丢弃转录",
   "press_hotkeys_and_say_something_like_write_an_email_to_bob_a": "按下 {hotkeys}，然后说类似“给 Bob 写一封关于他鞋子的邮件”。",
   "press_this_key_combination_to_start_assistant_mode": "按下此键组合以启动助手模式。",
@@ -951,6 +953,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "启用后，mausVoice 将不会保存转录历史或音频快照。",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "启用后，mausVoice 将在启动时使用已保存的接收端口自动启动多设备接收器。",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "更正转录时，自动将更正后的名称和词语添加到词典。",
+  "where_your_dictation_audio_goes": "听写音频的去向",
   "while_active": "激活时",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -977,5 +980,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "您目前使用的是版本 {version}。应用程序将在更新完成后重启。",
   "you_re_up_to_date": "已是最新版本。",
   "your_azure_openai_resource_endpoint_url": "您的 Azure OpenAI 资源端点网址(Endpoint URL)",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "操作系统正在阻止 mausVoice 修改其当前安装位置中的文件。请使用下载按钮获取最新安装程序，然后运行它以手动完成更新。"
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "操作系统正在阻止 mausVoice 修改其当前安装位置中的文件。请使用下载按钮获取最新安装程序，然后运行它以手动完成更新。",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "录音只会在你停止之后上传到 {provider}，因此在停止之前取消不会发送任何内容。"
 }

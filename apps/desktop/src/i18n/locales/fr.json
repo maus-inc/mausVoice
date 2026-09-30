@@ -87,6 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "Le mode assistant est désactivé par défaut. Il s’agit d’une fonctionnalité expérimentale.",
   "at_least_one_style_must_be_selected": "Au moins un style doit être sélectionné.",
   "audio": "Audio",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "L’audio est envoyé à {provider} pendant que vous parlez, afin que le texte puisse revenir immédiatement. L’audio déjà envoyé ne peut pas être récupéré.",
   "authentication_failed": "Échec de l'authentification",
   "authorized": "Autorisé",
   "auto": "Auto",
@@ -601,6 +602,7 @@
   "preferred_microphone": "Microphone préféré",
   "preserve_audio_on_failure": "Conserver l’audio en cas d’échec",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "Appuyez et maintenez votre raccourci, puis commencez à parler. Lorsque vous relâchez la touche, votre discours sera converti en texte.",
+  "press_cancel_again_to_discard_audio_already_sent_to_provider": "Appuyez à nouveau sur Annuler pour supprimer. L’audio déjà envoyé à {provider} ne peut pas être récupéré.",
   "press_cancel_again_to_discard_transcript": "Appuyez à nouveau sur Annuler pour supprimer la transcription",
   "press_hotkeys_and_say_something_like_write_an_email_to_bob_a": "Appuyez sur {hotkeys} et dites quelque chose comme « Écris un e-mail à Bob à propos de ses chaussures ».",
   "press_this_key_combination_to_start_assistant_mode": "Appuyez sur cette combinaison de touches pour démarrer le mode assistant.",
@@ -951,6 +953,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "Lorsqu'il est activé, mausVoice ne sauvegardera pas l'historique des transcriptions ni les instantanés audio.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "Lorsqu'il est activé, mausVoice démarrera automatiquement le récepteur multi-appareils au lancement en utilisant le port du récepteur enregistré.",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "Lorsque vous corrigez une transcription, ajoutez automatiquement les noms et mots corrigés à votre dictionnaire.",
+  "where_your_dictation_audio_goes": "Où va l’audio de votre dictée",
   "while_active": "Lorsqu'actif",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -977,5 +980,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Vous utilisez actuellement la version {version}. L'application redémarrera une fois la mise à jour terminée.",
   "you_re_up_to_date": "Vous êtes à jour.",
   "your_azure_openai_resource_endpoint_url": "URL du point de terminaison de votre ressource Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "Votre système d'exploitation empêche mausVoice de modifier des fichiers dans son emplacement d'installation actuel. Utilisez le bouton de téléchargement pour obtenir le dernier installateur, puis exécutez-le pour terminer la mise à jour manuellement."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "Votre système d'exploitation empêche mausVoice de modifier des fichiers dans son emplacement d'installation actuel. Utilisez le bouton de téléchargement pour obtenir le dernier installateur, puis exécutez-le pour terminer la mise à jour manuellement.",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "Votre enregistrement est envoyé à {provider} seulement après votre arrêt, donc annuler avant de vous arrêter n’envoie rien."
 }

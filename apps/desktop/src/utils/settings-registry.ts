@@ -83,6 +83,14 @@ export const SETTING_ENTRIES: SettingEntry[] = [
     style_hotkeys: ["style keys"],
   }),
   ...settingsForSection("privacy-data", {
+    where_your_dictation_audio_goes: [
+      "audio",
+      "audio sent",
+      "microphone upload",
+      "provider",
+      "recording upload",
+      "streaming",
+    ],
     incognito_mode: ["private", "incognito", "no history"],
     include_incognito_in_stats: ["stats", "usage"],
     preserve_audio_on_failure: ["failed audio", "replay", "snapshot"],

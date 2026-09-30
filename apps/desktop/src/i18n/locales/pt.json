@@ -87,6 +87,7 @@
   "assistant_mode_is_disabled_by_default_this_is_a_new_experime": "O modo assistente está desativado por defeito. Esta é uma funcionalidade experimental.",
   "at_least_one_style_must_be_selected": "É necessário selecionar pelo menos um estilo.",
   "audio": "Áudio",
+  "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back": "O áudio é enviado para {provider} enquanto fala, para que o texto possa voltar de imediato. O áudio já enviado não pode ser recuperado.",
   "authentication_failed": "Falha na autenticação",
   "authorized": "Autorizado",
   "auto": "Automático",
@@ -601,6 +602,7 @@
   "preferred_microphone": "Microfone preferido",
   "preserve_audio_on_failure": "Manter o áudio em caso de falha",
   "press_and_hold_your_hotkey_then_start_talking_when_you_relea": "Prima e mantenha premida a sua tecla de atalho, depois comece a falar. Quando libertar a tecla, a sua fala será convertida em texto.",
+  "press_cancel_again_to_discard_audio_already_sent_to_provider": "Prima Cancelar novamente para descartar. O áudio já enviado para {provider} não pode ser recuperado.",
   "press_cancel_again_to_discard_transcript": "Prima Cancelar novamente para descartar a transcrição",
   "press_hotkeys_and_say_something_like_write_an_email_to_bob_a": "Prima {hotkeys} e diga algo como 'Escreve um email ao João sobre os sapatos dele'.",
   "press_this_key_combination_to_start_assistant_mode": "Prima esta combinação de teclas para iniciar o modo assistente.",
@@ -951,6 +953,7 @@
   "when_enabled_mausvoice_will_not_save_transcription_history_o": "Quando ativado, o mausVoice não guardará o histórico de transcrições nem as capturas de áudio.",
   "when_enabled_mausvoice_will_start_the_multi_device_receiver": "Quando ativado, o mausVoice iniciará automaticamente o recetor multi‑dispositivo ao arrancar, usando a porta do recetor guardada.",
   "when_you_correct_a_transcription_add_the_corrected_names_and": "Ao corrigir uma transcrição, adicione automaticamente os nomes e palavras corrigidos ao seu dicionário.",
+  "where_your_dictation_audio_goes": "Para onde vai o áudio do ditado",
   "while_active": "Enquanto ativo",
   "whisper_base_148_mb": "Whisper Base (148 MB)",
   "whisper_large_v3_3_1_gb": "Whisper Large v3 (3.1 GB)",
@@ -977,5 +980,6 @@
   "you_re_currently_on_version_version_the_app_will_restart_aft": "Você está atualmente na versão {version}. O aplicativo será reiniciado após a conclusão da atualização.",
   "you_re_up_to_date": "Está atualizado.",
   "your_azure_openai_resource_endpoint_url": "URL do endpoint do seu recurso Azure OpenAI",
-  "your_operating_system_is_preventing_mausvoice_from_modifying": "O sistema operativo está a impedir que o mausVoice modifique ficheiros na localização de instalação atual. Utilize o botão de transferência para obter o instalador mais recente e execute-o para concluir a atualização manualmente."
+  "your_operating_system_is_preventing_mausvoice_from_modifying": "O sistema operativo está a impedir que o mausVoice modifique ficheiros na localização de instalação atual. Utilize o botão de transferência para obter o instalador mais recente e execute-o para concluir a atualização manualmente.",
+  "your_recording_is_uploaded_to_provider_only_after_you_stop_s": "A sua gravação é enviada para {provider} só depois de parar, por isso cancelar antes de parar não envia nada."
 }
