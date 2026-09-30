@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   deferListen: false,
   resolveListen: null as (() => void) | null,
   listenCalls: 0,
+  rejectListen: false,
   invoke: vi.fn().mockResolvedValue(undefined),
   errorMock: vi.fn(),
   warningMock: vi.fn(),
@@ -29,6 +30,9 @@ vi.mock("@tauri-apps/api/event", () => ({
       if (event !== "audio_chunk") throw new Error(`unexpected ${event}`);
       mocks.listenCalls += 1;
       mocks.chunkListener = listener;
+      if (mocks.rejectListen) {
+        throw new Error("no audio chunk stream");
+      }
       if (mocks.deferListen) {
         return new Promise<typeof mocks.unlisten>((resolve) => {
           mocks.resolveListen = () => resolve(mocks.unlisten);
@@ -108,6 +112,25 @@ describe("audio intake ownership", () => {
       noOverflow,
     );
     expect(mocks.listenCalls).toBe(1);
+  });
+
+  it("falls back to the whole recording when the subscription fails", async () => {
+    // A subscription that cannot be established is a missing optimisation, not a
+    // broken dictation. Letting this reject reached the outer start-failure
+    // handler and reported "Recording failed" for a recording that was fine.
+    mocks.rejectListen = true;
+    try {
+      const intake = await attachSessionAudioIntake(
+        sessionWith(vi.fn()),
+        () => true,
+        () => true,
+        noOverflow,
+      );
+      expect(intake.unlisten).toBeNull();
+      expect(intake.current).toBe(true);
+    } finally {
+      mocks.rejectListen = false;
+    }
   });
 
   it("skips registration for a session that takes no live audio", async () => {

@@ -73,41 +73,55 @@ export const attachSessionAudioIntake = async (
   let lastForwardedOffset: number | null = null;
   let hasLoggedTrim = false;
 
-  const unlisten = await listenToAudioChunks((samples, offset) => {
-    if (!isCurrent()) return;
-    if (offset === null) {
-      getLogger().warning(
-        "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
-      );
-      return;
-    }
-    const chunk = ensureFloat32Array(samples);
-    if (chunk.length === 0) return;
-    receivedChunkCount += 1;
-    receivedSampleCount += chunk.length;
-    if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
-      getLogger().verbose(
-        `[Dictation] Received chunk #${receivedChunkCount} (total ${receivedSampleCount} samples)`,
-      );
-    }
-    if (lastForwardedOffset !== null && offset !== lastForwardedOffset + 1) {
-      getLogger().warning(
-        `[Dictation] Audio offset gap: expected ${lastForwardedOffset + 1}, got ${offset}`,
-      );
-    }
-    lastForwardedOffset = offset + chunk.length - 1;
-    if (!shouldForwardLive()) {
-      buffer.push(chunk, offset);
-      if (buffer.overflowed() && !hasLoggedTrim) {
-        hasLoggedTrim = true;
+  // A subscription that cannot be established is not a reason to fail the
+  // recording. The caller tolerates a null `unlisten`: the startup buffer still
+  // works and the session falls back to the whole-recording path, which is
+  // slower but loses nothing. Letting this reject instead reached the outer
+  // start-failure handler and showed "Recording failed" for a dictation that was
+  // perfectly fine.
+  let unlisten: (() => void) | null;
+  try {
+    unlisten = await listenToAudioChunks((samples, offset) => {
+      if (!isCurrent()) return;
+      if (offset === null) {
         getLogger().warning(
-          "[Dictation] Startup audio buffer overflowed; later chunks will be dropped until the session is ready",
+          "[Dictation] Dropped audio_chunk with no sample offset; the recording stream is no longer contiguous",
+        );
+        return;
+      }
+      const chunk = ensureFloat32Array(samples);
+      if (chunk.length === 0) return;
+      receivedChunkCount += 1;
+      receivedSampleCount += chunk.length;
+      if (receivedChunkCount <= 3 || receivedChunkCount % 10 === 0) {
+        getLogger().verbose(
+          `[Dictation] Received chunk #${receivedChunkCount} (total ${receivedSampleCount} samples)`,
         );
       }
-    } else {
-      forwardAudioChunk(session, chunk, offset);
-    }
-  });
+      if (lastForwardedOffset !== null && offset !== lastForwardedOffset + 1) {
+        getLogger().warning(
+          `[Dictation] Audio offset gap: expected ${lastForwardedOffset + 1}, got ${offset}`,
+        );
+      }
+      lastForwardedOffset = offset + chunk.length - 1;
+      if (!shouldForwardLive()) {
+        buffer.push(chunk, offset);
+        if (buffer.overflowed() && !hasLoggedTrim) {
+          hasLoggedTrim = true;
+          getLogger().warning(
+            "[Dictation] Startup audio buffer overflowed; later chunks will be dropped until the session is ready",
+          );
+        }
+      } else {
+        forwardAudioChunk(session, chunk, offset);
+      }
+    });
+  } catch (error) {
+    getLogger().warning(
+      `Could not subscribe to the audio chunk stream; falling back to the whole recording: ${error}`,
+    );
+    return { buffer, unlisten: null, current: isCurrent() };
+  }
 
   if (!isCurrent()) {
     unlisten();
