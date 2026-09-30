@@ -103,14 +103,20 @@ export type TranscriptionEditApplication = {
 };
 
 /**
- * ASCII word characters, used to spot a `find` that matches a fragment of a
- * word. The class is deliberately ASCII-only: a script written without spaces
- * has no character adjacency that marks a word edge, and treating one as a
- * violation would reject every edit in that script.
+ * A letter or digit in any script, used to spot a `find` that matches a fragment
+ * of a word.
+ *
+ * `\w` alone would be wrong here in both directions. It is ASCII, so an edit
+ * replacing the start of `café` or `Grüße` passed the adjacency check and
+ * spliced the word. Restricting the check to letters and digits rather than
+ * treating every non-ASCII character as punctuation is what fixes that: the
+ * rationale for ASCII-only was always about scripts written without spaces,
+ * and those remain unaffected because their characters are letters, so two of
+ * them adjacent is still inside one word.
  */
-const WORD_CHARACTER = /\w/;
-const LEADING_NON_WORD = /^\W+/;
-const TRAILING_NON_WORD = /\W+$/;
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+const LEADING_NON_WORD = /^[^\p{L}\p{N}]+/u;
+const TRAILING_NON_WORD = /[^\p{L}\p{N}]+$/u;
 
 const isWordCharacter = (character: string | undefined): boolean =>
   character !== undefined && WORD_CHARACTER.test(character);

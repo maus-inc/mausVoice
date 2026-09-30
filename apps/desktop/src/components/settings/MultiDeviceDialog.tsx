@@ -601,7 +601,9 @@ const useSenderSettings = ({
   const intl = useIntl();
   const [testBusy, setTestBusy] = useState(false);
 
-  const handleToggleRemoteOutput = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleToggleRemoteOutput = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
     const enabled = event.target.checked;
     if (enabled && !remoteTargetDeviceId) {
       const firstReceiver =
@@ -610,10 +612,16 @@ const useSenderSettings = ({
         showErrorSnackbar("Pair a receiver first.");
         return;
       }
-      logOnRejection(
-        setRemoteTargetDeviceId(firstReceiver.id),
-        "multi-device settings: setRemoteTargetDeviceId",
-      );
+      // Sequencing matters here. Enabling the output and naming its target are
+      // one decision, and doing them independently meant a rejected target
+      // write still left the switch on, so dictation audio broadcast to nothing
+      // with no indication that anything was wrong.
+      try {
+        await setRemoteTargetDeviceId(firstReceiver.id);
+      } catch (error) {
+        showErrorSnackbar(error);
+        return;
+      }
     }
     logOnRejection(
       setRemoteOutputEnabled(enabled),

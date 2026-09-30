@@ -124,3 +124,9 @@ HANDOFF.md
 
 # Ephemeral local review/tool caches
 /.cache/
+
+# Harvested pull-request review artifacts. These are working notes for a
+# consolidation pass: the durable record is the disposition comment on the PR
+# itself, not a copy of the raw threads in the release tree.
+reports/pr*/
+.prompts/

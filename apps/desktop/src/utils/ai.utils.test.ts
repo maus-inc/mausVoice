@@ -408,6 +408,35 @@ describe("applyTranscriptionEdits", () => {
     });
   });
 
+  it("treats accented and non-latin letters as word characters", () => {
+    // `\w` is ASCII, so a find that landed inside `café` passed the adjacency
+    // check and left `Xé`. Letter-and-digit classification is what a word edge
+    // means in every script that has edges.
+    const transcript = "I had a café there";
+    const result = applyTranscriptionEdits(transcript, [
+      // Ends inside "café".
+      { find: "caf", replace: "X" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: transcript,
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("still applies an edit whose find is a whole accented word", () => {
+    const result = applyTranscriptionEdits("I had a café there", [
+      { find: "café", replace: "tea" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "I had a tea there",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
   it("applies a find that spans whole words", () => {
     const result = applyTranscriptionEdits("he could not come", [
       { find: "could", replace: "can" },

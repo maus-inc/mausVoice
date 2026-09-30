@@ -41,8 +41,10 @@ on:
         default: ""
         type: string
 
-permissions:
-  contents: write
+# Every job below declares the permissions it needs. There is deliberately no
+# workflow-level grant: one that defaults to `contents: write` would hand write
+# access to any job added later without an explicit `permissions:` block, which
+# is the opposite of the intent when each job narrows to read.
 
 concurrency:
   group: release-mausvoice

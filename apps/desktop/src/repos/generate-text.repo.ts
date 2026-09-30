@@ -165,13 +165,14 @@ export class GroqGenerateTextRepo extends BaseGenerateTextRepo {
     // The comment above used to claim this test ran against a widened list that
     // included runtime-discovered models. It never did: `GENERATE_TEXT_MODELS`
     // is the two-id literal, while the picker is populated from the live
-    // catalog (every fetched id passing `isGroqGenerativeModel`). So every
-    // discovered model the user could pick was silently discarded here and each
-    // request went to the default instead.
+    // catalog. So every discovered model the user could pick was silently
+    // discarded here and each request went to the default instead.
     //
-    // A discovered id is now honoured, and an id that is in neither list is
-    // still rejected so a stale or hand-edited preference cannot be sent
-    // verbatim.
+    // A discovered id is now honoured. An id matching neither the literal list
+    // nor the catalog's generative filter still falls back to the default; the
+    // filter is a deny-list, so an id that merely avoids its markers would be
+    // accepted. Sending an unknown id is recoverable — Groq answers with a model
+    // error — whereas pinning every request to the default is not.
     const known =
       model !== null &&
       (GENERATE_TEXT_MODELS as readonly string[]).includes(model);
