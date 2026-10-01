@@ -128,7 +128,12 @@ let sessionDeniedTerms = new Set<string>();
  * it expire on its own so it cannot accept a click from a later, unrelated
  * prompt.
  */
-let recentlyLapsedProposal: { term: string; at: number } | null = null;
+let recentlyLapsedProposal: {
+  term: string;
+  at: number;
+  /** The watch the proposal came from, so a later one cannot claim the click. */
+  watch: WatchSnapshot | null;
+} | null = null;
 
 /** How long a lapsed proposal still honours a click. */
 const LAPSED_PROPOSAL_GRACE_MS = PROPOSAL_TOAST_DURATION_MS;
@@ -384,7 +389,7 @@ export const pollEditWatch = async (): Promise<void> => {
     // The term stays in `snapshot.proposedTerms`, so this dictation does not nag
     // about it again. What it must not do is lose a click that was already on its
     // way -- see `lapsedProposal`.
-    const lapsed = { term: pending.term, at: Date.now() };
+    const lapsed = { term: pending.term, at: Date.now(), watch: snapshot };
     recentlyLapsedProposal = lapsed;
     clearAutoLearnProposal();
   }
@@ -476,6 +481,14 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
     // from a prompt that ended long ago.
     const lapsed = recentlyLapsedProposal;
     if (!lapsed || Date.now() - lapsed.at > LAPSED_PROPOSAL_GRACE_MS) {
+      return;
+    }
+    // The held term belongs to the watch that proposed it. If a different
+    // watch is running now, this click belongs to a prompt from that later
+    // dictation and must not add this one's term to the dictionary; the grace
+    // window exists to cover a late click on the same prompt, not to carry a
+    // term across dictations.
+    if (lapsed.watch !== activeWatch) {
       return;
     }
     recentlyLapsedProposal = null;

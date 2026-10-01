@@ -555,6 +555,39 @@ describe("edit-watch proposal lifecycle", () => {
     expect(createGlossaryTerms).toHaveBeenCalledWith([unique]);
   });
 
+  it("does not carry a lapsed term across into a later watch", async () => {
+    // The held term belongs to the watch that proposed it. A click that arrives
+    // after a new dictation has started belongs to that later prompt, and when
+    // the later watch has nothing to propose the click falls through to the held
+    // term -- which would otherwise add the earlier watch's correction to the
+    // dictionary for a prompt the user never answered.
+    const { createGlossaryTerms } = await import("./dictionary.actions");
+    const earlier = "Quilander";
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+    setField(`my wife's name is ${earlier}`);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe(earlier);
+
+    // The pill's timer runs out with no answer.
+    await advanceAndPoll(13_000);
+    expect(state.autoLearn.proposal).toBeNull();
+
+    // A new dictation starts and has nothing to correct, so no proposal is
+    // pending when the old toast's click lands.
+    beginEditWatch("my wife's name is Marisol");
+    await settleBaseline("my wife's name is Marisol");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal).toBeNull();
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+
+    await acceptAutoLearnProposal();
+
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+  });
+
   it("does not honour a click long after the proposal lapsed", async () => {
     // The grace window exists so a stray click cannot accept a term from a
     // prompt that ended long ago.
