@@ -631,8 +631,14 @@ fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f
     let text_idle = rust_pill_shared::LABEL_IDLE_TEXT;
     let text_drag = rust_pill_shared::LABEL_DRAG_TEXT;
 
-    let ext_idle = cr.text_extents(text_idle).unwrap();
-    let ext_drag = cr.text_extents(text_drag).unwrap();
+    // `text_extents` errors only when the font backend is already in an error
+    // state, in which case nothing else this frame will draw either. Unwrapping
+    // would unwind out of the drawing area's draw signal and abort the process
+    // rather than skip one label, so both labels are skipped instead.
+    let (ext_idle, ext_drag) = match (cr.text_extents(text_idle), cr.text_extents(text_drag)) {
+        (Ok(idle), Ok(drag)) => (idle, drag),
+        _ => return,
+    };
     let base_y = ry + (pill_h - ext_idle.height()) / 2.0 - ext_idle.y_bearing();
 
     let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
@@ -765,7 +771,10 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(12.0);
-    let text_extents = cr.text_extents(&style_name).unwrap();
+    // Skip the tooltip rather than unwrap: see the note in `draw_idle_label`.
+    let Ok(text_extents) = cr.text_extents(&style_name) else {
+        return;
+    };
     let text_w = text_extents.width().clamp(20.0, 100.0);
 
     let chevron_area = 20.0;
@@ -1315,7 +1324,9 @@ fn draw_compact_content(
     cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(18.0);
-    let extents = cr.text_extents(text).unwrap();
+    let Ok(extents) = cr.text_extents(text) else {
+        return;
+    };
     let tx = panel_x + (panel_w - extents.width()) / 2.0 - extents.x_bearing();
     let ty = panel_y + (content_height - extents.height()) / 2.0 - extents.y_bearing();
     cr.move_to(tx, ty);
@@ -1478,7 +1489,12 @@ fn draw_thinking_text(
     let text = "Thinking";
     cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
     cr.set_font_size(14.0);
-    let extents = cr.text_extents(text).unwrap();
+    // The returned height is what the caller lays out after. A font that cannot
+    // be measured draws nothing, so reporting zero is the honest answer and keeps
+    // the caller's arithmetic from being handed a number nothing was drawn at.
+    let Ok(extents) = cr.text_extents(text) else {
+        return 0.0;
+    };
 
     let shimmer = state.shimmer_phase.get();
     let text_y = y + 14.0;
@@ -1649,9 +1665,13 @@ fn draw_permission_card(
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
         cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
         cr.set_font_size(11.0);
-        let ext = cr.text_extents(label).unwrap();
-        cr.move_to(btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(), btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing());
-        let _ = cr.show_text(label);
+        // The label is skipped rather than unwrapped, but the button is still
+        // registered as a click region: a font that cannot be measured leaves the
+        // geometry correct and denying or allowing must keep working.
+        if let Ok(ext) = cr.text_extents(label) {
+            cr.move_to(btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(), btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing());
+            let _ = cr.show_text(label);
+        }
 
         let action = match 2 - i {
             0 => ClickAction::PermissionDeny(perm.id.clone()),
@@ -1679,15 +1699,18 @@ fn draw_user_prompt_preview(
     let max_w = panel_w * 0.5;
     let mut display = prompt.to_string();
     loop {
-        let ext = cr.text_extents(&display).unwrap();
-        if ext.width() <= max_w || display.len() < 4 {
-            break;
+        match cr.text_extents(&display) {
+            Ok(ext) if ext.width() <= max_w || display.len() < 4 => break,
+            Ok(_) => {}
+            Err(_) => return,
         }
         display.truncate(display.len() - 4);
         display.push('…');
     }
 
-    let ext = cr.text_extents(&display).unwrap();
+    let Ok(ext) = cr.text_extents(&display) else {
+        return;
+    };
     let tx = panel_x + panel_w - PANEL_HEADER_OFFSET_RIGHT - ext.width() - ext.x_bearing();
     let ty = panel_y + PANEL_HEADER_OFFSET_TOP + HEADER_BUTTON_SIZE / 2.0 - ext.height() / 2.0 - ext.y_bearing();
     cr.move_to(tx, ty);

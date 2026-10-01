@@ -315,6 +315,32 @@ describe("capVocabularyTerms", () => {
     expect(capped).toEqual(["a", "b"]);
     expect(truncated).toBe(false);
   });
+
+  // AssemblyAI's word_boost rejects the whole body above 1,000 words. Counting
+  // entries cannot express that: a thousand two-word phrases is a thousand
+  // entries and two thousand words, so the payload was over the limit while the
+  // entry and character budgets both looked satisfied.
+  it("caps on total words when the provider's limit is in words", () => {
+    const twoWords = Array.from({ length: 10 }, (_, i) => `alpha${i} beta${i}`);
+    const { terms: capped, truncated } = capVocabularyTerms(twoWords, {
+      maxEntries: 1_000,
+      maxCharacters: 10_000,
+      maxWords: 5,
+    });
+    // Five words fit, so two two-word terms and not the third.
+    expect(capped).toEqual(["alpha0 beta0", "alpha1 beta1"]);
+    expect(truncated).toBe(true);
+  });
+
+  it("leaves an unlimited word budget alone", () => {
+    const phrases = ["one two", "three four", "five six"];
+    const { terms: capped, truncated } = capVocabularyTerms(phrases, {
+      maxEntries: 10,
+      maxCharacters: 100,
+    });
+    expect(capped).toEqual(phrases);
+    expect(truncated).toBe(false);
+  });
 });
 
 describe("isGlossaryPromptTruncated", () => {

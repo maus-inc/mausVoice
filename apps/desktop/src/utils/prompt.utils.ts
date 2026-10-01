@@ -84,6 +84,13 @@ export type VocabularyBudget = {
   /** Providers that cap phrase length in words skip longer phrases. */
   maxWordsPerTerm?: number;
   /**
+   * Providers that cap the payload in total words reject the whole request
+   * above it, and counting entries cannot express that: a thousand two-word
+   * terms is a thousand entries and two thousand words. When set, capping also
+   * stops once the accumulated word count passes this value.
+   */
+  maxWords?: number;
+  /**
    * Providers that enforce a token ceiling (not a character ceiling) reject
    * the whole payload above it. When set, capping also stops once the
    * estimated token cost passes this value, so CJK- or emoji-heavy terms
@@ -194,6 +201,7 @@ export const capVocabularyTerms = (
   const capped: string[] = [];
   let characters = 0;
   let estimatedTokens = 0;
+  let words = 0;
   let truncated = false;
 
   const wordCount = (term: string) => term.split(/\s+/).filter(Boolean).length;
@@ -215,6 +223,7 @@ export const capVocabularyTerms = (
     if (
       capped.length >= budget.maxEntries ||
       characters + separator + length > budget.maxCharacters ||
+      words + wordCount(trimmed) > (budget.maxWords ?? Infinity) ||
       estimatedTokens + separatorTokens + termTokens >
         (budget.maxEstimatedTokens ?? Infinity)
     ) {
@@ -223,6 +232,7 @@ export const capVocabularyTerms = (
     }
     capped.push(trimmed);
     characters += separator + length;
+    words += wordCount(trimmed);
     estimatedTokens += separatorTokens + termTokens;
   }
 
@@ -658,6 +668,10 @@ export const DEEPGRAM_KEYTERM_BUDGET: VocabularyBudget = {
 export const ASSEMBLYAI_WORD_BOOST_BUDGET: VocabularyBudget = {
   maxEntries: 1_000,
   maxCharacters: 10_000,
+  // The 1,000-word ceiling is the provider's, counted in words. `maxEntries`
+  // alone would admit a thousand two-word phrases and be rejected by the API,
+  // so both caps are set and the tighter one binds.
+  maxWords: 1_000,
 };
 
 // AssemblyAI streaming `keyterms_prompt`: a maximum of 100 keyterms per
