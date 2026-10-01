@@ -6,9 +6,11 @@ const SEP: &str = "::";
 /// Every `user_preferences` column, in the order `upsert_user_preferences`
 /// binds its `?N` placeholders.
 ///
-/// The writer's column list, the writer's `ON CONFLICT` assignments and the
-/// reader's SELECT are all derived from this one list, so a column cannot be
-/// written by one statement and forgotten by the others.
+/// The writer's column list, its `VALUES` placeholder list, its `ON CONFLICT`
+/// assignments and the reader's SELECT are all derived from this one list, so a
+/// column cannot be written by one statement and forgotten by the others. The
+/// `.bind()` chain is the one thing that cannot be: it is typed field by field,
+/// so [`upsert_binds_every_column`] is the test that holds it to this list.
 const USER_PREFERENCES_COLUMNS: &[&str] = &[
     "user_id",
     "transcription_mode",
@@ -81,6 +83,15 @@ fn user_preferences_column_list() -> String {
     USER_PREFERENCES_COLUMNS.join(",\n             ")
 }
 
+/// `?1, ?2, ...` for every column, so the placeholder count cannot drift away
+/// from [`USER_PREFERENCES_COLUMNS`] the way a hand-written list would.
+fn user_preferences_placeholder_list() -> String {
+    (1..=USER_PREFERENCES_COLUMNS.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn user_preferences_conflict_assignments() -> String {
     let mut assignments = String::new();
     for column in USER_PREFERENCES_COLUMNS {
@@ -119,10 +130,11 @@ pub async fn upsert_user_preferences(
 ) -> Result<UserPreferences, sqlx::Error> {
     sqlx::query(&format!(
         "INSERT INTO user_preferences ({})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)
+             VALUES ({})
          ON CONFLICT(user_id) DO UPDATE SET
             {}",
         user_preferences_column_list(),
+        user_preferences_placeholder_list(),
         user_preferences_conflict_assignments(),
     ))
     .bind(&preferences.user_id)
@@ -535,6 +547,41 @@ mod tests {
     }
 
     #[test]
+    /// The `.bind()` chain cannot be generated from a column list, so this is
+    /// what holds it to one. SQLite reports a bind count that exceeds the
+    /// placeholder count as an error, and one that falls short writes a
+    /// neighbour's value into the wrong column instead of failing. Counting the
+    /// binds in this file's own source is blunt, but it is the only check that
+    /// fails when a column is added without a matching bind.
+    #[test]
+    fn upsert_binds_every_column() {
+        let source = include_str!("preferences_queries.rs");
+        let upsert = source
+            .split("pub async fn upsert_user_preferences")
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .expect("upsert_user_preferences is in this file");
+        let binds = upsert.matches(".bind(").count();
+        assert_eq!(
+            binds,
+            USER_PREFERENCES_COLUMNS.len(),
+            "each column needs exactly one bind, in the list's order",
+        );
+        assert_eq!(
+            user_preferences_placeholder_list()
+                .split(", ")
+                .count(),
+            USER_PREFERENCES_COLUMNS.len(),
+        );
+        assert_eq!(
+            user_preferences_conflict_assignments()
+                .split(",\n            ")
+                .count(),
+            USER_PREFERENCES_COLUMNS.len() - 1,
+            "every column but the conflict key is assigned",
+        );
+    }
+
     fn expansion_flags_update_sql_targets_only_the_flag_column() {
         let sql = expansion_flags_update_sql();
         assert!(sql.contains("SET expansion_flags = ?1"));

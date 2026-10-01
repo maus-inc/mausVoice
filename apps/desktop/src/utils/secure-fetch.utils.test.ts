@@ -427,6 +427,88 @@ describe("secureFetch", () => {
     expect(pluginFetchMock).toHaveBeenCalledTimes(1);
   });
 
+  // The 3xx range is wider than the set of redirects. A 304 is the answer to a
+  // conditional request and carries no request to re-issue, so treating every
+  // 3xx as a redirect turns a cache hit into an endless revalidation loop
+  // whenever a proxy adds a Location header.
+  it.each([304, 305, 306])(
+    "returns a %s as-is instead of following it as a redirect",
+    async (status) => {
+      const expected = new Response(null, {
+        status,
+        headers: { location: "https://api.openai.com/v1/elsewhere" },
+      });
+      pluginFetchMock.mockResolvedValue(expected);
+
+      await expect(
+        secureFetch("https://api.openai.com/v1/models", {
+          headers: { Authorization: "Bearer secret" },
+        }),
+      ).resolves.toBe(expected);
+      expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // A `Request` input carries its body on the object, not in `init`, so a 307
+  // that kept the method replayed the next hop with no body at all.
+  it("replays a Request input's body on a 307", async () => {
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    const request = new Request("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    await secureFetch(request);
+
+    expect(hop(1).method).toBe("POST");
+    expect(hop(1).body).toBeInstanceOf(ArrayBuffer);
+    expect(new TextDecoder().decode(hop(1).body as ArrayBuffer)).toBe(
+      '{"model":"gpt-4o"}',
+    );
+  });
+
+  it("still downgrades a Request input's 302 POST to a bodyless GET", async () => {
+    serveHops([
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch(
+      new Request("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"model":"gpt-4o"}',
+      }),
+    );
+
+    expect(hop(1).method).toBe("GET");
+    expect(hop(1).body ?? null).toBeNull();
+  });
+
+  it("does not read a Request input's body when no hop needs it", async () => {
+    serveHops([new Response("ok")]);
+
+    await secureFetch(
+      new Request("https://api.openai.com/v1/models", {
+        method: "POST",
+        body: '{"unused":true}',
+      }),
+    );
+
+    expect(hop(0).body).toBeUndefined();
+  });
+
   it("preserves every byte value in a private-network response body", async () => {
     const bytes = Uint8Array.from({ length: 256 }, (_, index) => index);
     invokeMock.mockResolvedValue({

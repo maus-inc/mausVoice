@@ -25,6 +25,7 @@ import {
   DICTATION_LANGUAGES,
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
+  toSelectableDictationLanguage,
 } from "../../utils/language.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
@@ -73,12 +74,14 @@ export const RetranscribeDialog = () => {
 
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
-    useState<string>(defaultLanguage);
+    useState<DictationLanguageCode>(
+      toSelectableDictationLanguage(defaultLanguage),
+    );
 
   useEffect(() => {
     if (open) {
       setSelectedToneId(tones[0]?.id ?? null);
-      setSelectedLanguage(defaultLanguage);
+      setSelectedLanguage(toSelectableDictationLanguage(defaultLanguage));
     }
   }, [open, defaultLanguage, tones]);
 

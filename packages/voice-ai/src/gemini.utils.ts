@@ -270,9 +270,9 @@ export const isGeminiTranscribeModel = (model: string): boolean =>
   model.includes("-transcribe") && !model.includes("-live");
 
 /**
- * The extension the Files API uses to pick a container. Anything that is not
- * recognised as mp3 or ogg is sent as wav, which is what this has always done;
- * Gemini re-derives the real type from the uploaded bytes.
+ * The extension that goes into the uploaded file's `display_name`. Gemini stores
+ * the container from the `mimeType` the request declares, not from this label, so
+ * an unrecognised type is labelled wav purely to keep the name readable.
  */
 const uploadExtension = (mimeType: string): string => {
   if (mimeType.includes("mp3")) {
@@ -288,14 +288,9 @@ const arrayBufferToBase64 = (
   buffer: ArrayBuffer | Uint8Array | Buffer,
 ): string => {
   // A Buffer is a Uint8Array, so a sliced Buffer passes through untouched and
-  // keeps its offset and length; wrapping one instead would copy the same bytes
-  // into a fresh allocation for no gain. Everything else that reaches here at
-  // runtime is an ArrayBuffer, which wraps directly. The two former branches
-  // built identical views, so the second is gone rather than duplicated.
-  const bytes =
-    buffer instanceof Uint8Array
-      ? buffer
-      : new Uint8Array(buffer as ArrayBuffer);
+  // keeps its offset and length rather than being copied into a fresh
+  // allocation.
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   if (typeof Buffer !== "undefined" && typeof Buffer.from === "function") {
     return Buffer.from(
       bytes.buffer,

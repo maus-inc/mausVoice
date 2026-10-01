@@ -60,6 +60,21 @@ describe("retry", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  // `retries` is typed as a number, but callers pass it from JSON and config,
+  // where a missing or malformed value becomes NaN. `NaN < 1` is false, so a
+  // guard written as a plain comparison lets NaN retry until something else
+  // stops the process rather than failing on the call.
+  it("refuses to run when the retry count is not a finite number", async () => {
+    const fn = vi.fn().mockRejectedValue(new Error("transient"));
+    await expect(retry({ fn, retries: Number.NaN, delay: 1 })).rejects.toThrow(
+      "Retry limit exceeded",
+    );
+    await expect(
+      retry({ fn, retries: Number.POSITIVE_INFINITY, delay: 1 }),
+    ).rejects.toThrow("Retry limit exceeded");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
   it("retries a transient failure while isRetryable stays true", async () => {
     const fn = vi
       .fn()

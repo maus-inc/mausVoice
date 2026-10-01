@@ -28,6 +28,7 @@ import {
   DICTATION_LANGUAGES,
   type DictationLanguageCode,
   ORDERED_DICTATION_LANGUAGES,
+  toSelectableDictationLanguage,
 } from "../../utils/language.utils";
 import { isStyleSelectionAvailable } from "../../utils/post-processing.utils";
 import { getSortedToneIds } from "../../utils/tone.utils";
@@ -67,9 +68,7 @@ export default function TranscriptionsPage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const resolveImportLanguage = (language: string): DictationLanguageCode =>
-    language === "keyboard-layout"
-      ? AUTO_LANGUAGE
-      : (language as DictationLanguageCode);
+    toSelectableDictationLanguage(language);
 
   const [selectedLanguage, setSelectedLanguage] =
     useState<DictationLanguageCode>(resolveImportLanguage(defaultLanguage));

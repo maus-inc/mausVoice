@@ -154,7 +154,11 @@ export const retry = <T>(args: {
     }
   };
 
-  if (retries < 1) {
+  // `retries` is typed, but it arrives from JSON and config in practice, where a
+  // non-numeric value becomes NaN. `NaN < 1` is false and every `attempt >=
+  // retries - 1` is false too, so the check would let it retry until the process
+  // stopped. Number.isFinite rejects that alongside the ordinary too-small case.
+  if (!Number.isFinite(retries) || retries < 1) {
     return Promise.reject(new Error("Retry limit exceeded"));
   }
   return attemptAt(0);

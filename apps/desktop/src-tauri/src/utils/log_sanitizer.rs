@@ -55,10 +55,13 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         // Connector token/credential/secret/api key: <credential>, optionally
         // wrapped in quotes. A quoted value may contain whitespace
         // (`Connector token: "Bearer opaque-secret"`), so match the complete
-        // quoted value before falling back to a bare token.
+        // quoted value before falling back to a bare token. The quoted arm
+        // consumes escape sequences so a JSON-encoded credential whose value
+        // contains a quote (`"tok\"en"`) is taken whole; stopping at that
+        // quote would leave the rest of the secret in the log.
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("[^"]*"|'[^']*'|[^\s"']+)"#,
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("(?:[^"\\]|\\.)*"|'[^']*'|[^\s"']+)"#,
             )
             .unwrap(),
             replacement: "$1 [REDACTED]",
@@ -386,6 +389,18 @@ mod tests {
         let result = sanitize_log_content(input);
         assert!(result.contains("Connector token: [REDACTED]"));
         assert!(!result.contains("opaque-secret"));
+    }
+
+    // A credential is logged from a JSON payload whenever the connector is
+    // configured, so its value arrives already escaped. The rule used to stop at
+    // the first quote, which is the escape, and left the rest of the secret.
+    #[test]
+    fn test_redacts_escaped_quote_inside_a_quoted_connector_token() {
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"sec\\\"ret-fixture-7k2m\"";
+        let result = sanitize_log_content(input);
+        assert!(result.contains("Connector token: [REDACTED]"));
+        assert!(!result.contains("ret-fixture-7k2m"), "got: {result}");
+        assert!(!result.contains("sec"), "got: {result}");
     }
 
     #[test]

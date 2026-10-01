@@ -11,8 +11,6 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
     crate::platform::common::try_spawn_native_overlays(app, &OVERLAY)
 }
 
-/// Forwards the pill anchor preference (`top` / `bottom`) to the GTK pill
-/// process. The GTK pill currently ignores it; see the settings gate.
-pub use crate::platform::common::notifications::notify_pill_placement;
-
+/// `notify_pill_placement` forwards the pill anchor preference (`top` / `bottom`)
+/// to the GTK pill process, which currently ignores it; see the settings gate.
 pub use crate::platform::common::notifications::*;

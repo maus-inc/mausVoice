@@ -53,21 +53,27 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
         return;
     }
 
-    // Oldest first, so deletion walks from the oldest file upward while
-    // the directory stays over the cap. The final entry is the newest
-    // file and is kept unconditionally: it is the active log the rotating
-    // writer currently holds open (deleting it on Windows fails with a
-    // sharing violation anyway). Trimming ignores the MIN_KEEP_RECENT_FILES
-    // recency floor once over the cap, so a directory with few huge legacy
-    // logs (the #468 case) still shrinks.
+    // Oldest first, so deletion walks from the oldest file upward while the
+    // directory stays over the cap. Trimming ignores the MIN_KEEP_RECENT_FILES
+    // recency floor once over the cap, so a directory with few huge legacy logs
+    // (the #468 case) still shrinks.
     files.sort_by_key(|(_, modified, _)| *modified);
 
+    // The active log is the newest file the rotating writer holds open, and
+    // deleting it fails with a sharing violation on Windows. Log file names
+    // carry a second-resolution timestamp, so a rotation can leave several
+    // files with an identical mtime; keeping only the last one of those would
+    // make the survivor depend on the order read_dir happened to return, and on
+    // Unix the file it picked to delete can be the one still being appended to.
+    // Nothing in the directory distinguishes a tie, so every file sharing the
+    // newest mtime is kept and the cap is honoured as far as the rest allows.
+    let newest_modified = files.last().map(|(_, modified, _)| *modified);
+
     let mut removed = 0usize;
-    let newest_idx = files.len() - 1;
     let mut running_total = total_size;
 
-    for (idx, (path, _, size)) in files.iter().enumerate() {
-        if idx == newest_idx {
+    for (path, modified, size) in files.iter() {
+        if Some(*modified) == newest_modified {
             continue;
         }
         if running_total <= cap {
@@ -316,6 +322,50 @@ mod tests {
             survivors.iter().any(|n| n == "mausvoice_04.log"),
             "expected newest file to survive, got {survivors:?}"
         );
+        fs::remove_dir_all(&dir).expect("failed to clean up");
+    }
+
+    // Log file names carry a second-resolution timestamp, so a rotation can
+    // leave two files with an identical mtime. Choosing the survivor by
+    // position in the sorted list then depends on the order read_dir happened
+    // to return, and the file it deletes can be the one the writer still holds
+    // open: on Unix that unlinks the active log while it is being appended to.
+    // Every file sharing the newest mtime is kept instead, because none of them
+    // can be shown to be the older one.
+    #[test]
+    fn purge_keeps_every_file_that_shares_the_newest_mtime() {
+        let dir = unique_tmp_dir("purge-newest-tie");
+        let now = SystemTime::now();
+        let old = filetime::FileTime::from_system_time(now - Duration::from_secs(60));
+        let newest = filetime::FileTime::from_system_time(now - Duration::from_secs(1));
+
+        for (name, mtime) in [
+            ("mausvoice_old_a.log", old),
+            ("mausvoice_old_b.log", old),
+            ("mausvoice_new_a.log", newest),
+            ("mausvoice_new_b.log", newest),
+        ] {
+            let path = dir.join(name);
+            write_file_with_size(&path, 2048);
+            filetime::set_file_mtime(&path, mtime).expect("failed to set mtime");
+        }
+
+        // A quarter of the directory: low enough that a position-based
+        // survivor choice deletes one of the two tied files, which is what
+        // makes this a test of the tie rather than of the ordinary case.
+        purge_old_logs_in_with_cap(&dir, 1024);
+
+        let survivors: Vec<String> = fs::read_dir(&dir)
+            .expect("failed to read dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        for name in ["mausvoice_new_a.log", "mausvoice_new_b.log"] {
+            assert!(
+                survivors.iter().any(|n| n == name),
+                "{name} shares the newest mtime and must survive, got {survivors:?}",
+            );
+        }
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 

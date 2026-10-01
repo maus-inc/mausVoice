@@ -77,14 +77,22 @@ const requestMethod = (
 ): string => init?.method ?? (input instanceof Request ? input.method : "GET");
 
 /**
+ * The statuses the Fetch standard treats as redirects. Membership is by list
+ * rather than by range because the range includes statuses that are not
+ * redirects: a 304 revalidates a cached response and a 305 asks the client to
+ * reuse the same URL, and neither one names a request that should be re-issued.
+ */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
  * The URL one hop of a redirect chain moves to, or null when this response
  * ends the chain. Throws when a hop leaves HTTPS, because that hop must never
  * be issued and there is no response to return in its place.
  */
 const nextHopUrl = (response: Response, currentUrl: URL): URL | null => {
-  if (response.status < 300 || response.status >= 400) return null;
+  if (!REDIRECT_STATUSES.has(response.status)) return null;
   const location = response.headers.get("location");
-  // A 3xx with no Location cannot be followed, so surface it as-is rather
+  // A redirect with no Location cannot be followed, so surface it as-is rather
   // than re-issuing the same request against a server that would answer
   // identically.
   if (!location) return null;
@@ -167,6 +175,15 @@ const followHttpsRedirects = async (
   // `undefined` means the caller gave no body in `init`, so a Request input
   // keeps supplying its own; `null` means the body has been discarded.
   let body = init?.body;
+  // A `Request` input carries its body on the object rather than in `init`, and
+  // every hop after the first is issued against a URL, so a 307 or 308 would
+  // replay with no body at all. Cloning tees the stream, which leaves the
+  // original for hop one, and the clone is read only if a hop has to keep a
+  // body it cannot otherwise get.
+  const requestBody =
+    body === undefined && input instanceof Request && input.body !== null
+      ? input.clone()
+      : undefined;
   let current: RequestInfo | URL = input;
   let currentUrl = startUrl;
   for (let hop = 0; hop <= MAX_HTTPS_REDIRECTS; hop += 1) {
@@ -184,6 +201,13 @@ const followHttpsRedirects = async (
       body,
       headers,
     });
+    // `undefined` on both sides means this hop kept the body, which is what a
+    // 307 or 308 does and what a downgrading 301/302/303 does not. Materialising
+    // the caller's Request body here is the only point where it is needed, so a
+    // chain that never redirects never pays for it.
+    if (next.body === undefined && body === undefined && requestBody) {
+      next.body = await requestBody.arrayBuffer();
+    }
     method = next.method;
     body = next.body;
     current = targetUrl.href;
