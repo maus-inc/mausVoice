@@ -665,6 +665,12 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   const RAW_ASR = "raw asr from this run";
   /** The category `recordPostProcessFailure` records for a 402. */
   const QUOTA_CATEGORY = "Quota or payment required (402)";
+  /**
+   * The localized descriptor `postProcessErrorReason` resolves that category to.
+   * The category itself is internal vocabulary: it carries the HTTP status and
+   * would print in English in every locale.
+   */
+  const QUOTA_COPY = "Quota or payment required";
   /** The reason recorded for an answer that parsed but failed validation. */
   const VALIDATION_WARNING =
     "Post-processing response validation failed: result is required";
@@ -754,10 +760,20 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       postProcessFallback: null,
     });
     // The run failed, so the row must not show a success check or completion
-    // toast, and the recorded failure category is what the user is shown.
+    // toast. The snackbar gets the localized descriptor for the recorded
+    // category; the category itself stays in the log, because `showErrorSnackbar`
+    // renders its argument verbatim and the category is internal vocabulary.
     expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([]);
     expect(showCompletionToast).not.toHaveBeenCalled();
-    expect(showErrorSnackbar).toHaveBeenCalledWith(QUOTA_CATEGORY);
+    expect(showErrorSnackbar).toHaveBeenCalledWith(QUOTA_COPY);
+    expect(shownToUser()).not.toContain(QUOTA_CATEGORY);
+    expect(intlFormatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultMessage: QUOTA_COPY }),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "Failed to retranscribe audio",
+      QUOTA_CATEGORY,
+    );
   });
 
   it("keeps the polished transcript when the response was cut off", async () => {
@@ -971,5 +987,78 @@ describe("retranscribeTranscription unstyled post-processing", () => {
       "Retranscription complete",
     );
     expect(showErrorSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("keeps the locally styled text when the provider failed but the local style ran", async () => {
+    // `postProcessFallback` marks two different runs, and only one of them left
+    // the row without styling: a request that failed while the deterministic
+    // local style produced real styled text. Reading the flag on its own threw
+    // that text away and kept the row's previous text, even though this run's
+    // text was the only polished answer available.
+    class Cerebras402 extends Error {
+      status = 402;
+      constructor() {
+        super("402 status code (no body)");
+        this.name = "CerebrasProviderError";
+      }
+    }
+    generateText.mockRejectedValueOnce(new Cerebras402());
+    const { postProcessTranscript: runPostProcessing } = await vi.importActual<
+      typeof import("./transcribe.actions")
+    >("./transcribe.actions");
+    const degraded = await runPostProcessing({
+      rawTranscript: "um so I went to the store",
+      toneId: "default",
+    });
+    // The metadata that comes back is the point of this test, so the real
+    // post-processing step produces it rather than a hand-written stand-in.
+    expect(degraded.metadata.postProcessFallback).toBe(true);
+    expect(degraded.metadata.postProcessFailed).toBe(false);
+    expect(degraded.metadata.postProcessError).toContain("402");
+    expect(degraded.transcript.toLowerCase()).not.toContain("um");
+
+    seedStyledRow("degraded", POLISHED);
+    postProcessTranscript.mockResolvedValue(degraded);
+
+    await retranscribeTranscription({ transcriptionId: "degraded" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: degraded.transcript,
+        // Still recorded as a degraded run, so History can say the local style
+        // was used instead of the provider.
+        postProcessFallback: true,
+        postProcessFailed: false,
+      }),
+    );
+    expect(getAppState().transcriptionById["degraded"]?.transcript).toBe(
+      degraded.transcript,
+    );
+    expect(showErrorSnackbar).not.toHaveBeenCalled();
+    expect(getAppState().transcriptions.retranscriptionSuccessIds).toEqual([
+      "degraded",
+    ]);
+  });
+
+  it("still keeps the polished transcript when a reply came back unusable", async () => {
+    // The other run that sets the same flag: the request succeeded and the
+    // answer was dropped, so the text this run holds is raw ASR and the row must
+    // keep what it already had.
+    seedStyledRow("unusable-answer", POLISHED);
+    mockUnstyledPostProcess(
+      { postProcessFailed: false, postProcessFallback: true },
+      [VALIDATION_WARNING],
+    );
+
+    await retranscribeTranscription({ transcriptionId: "unusable-answer" });
+
+    expect(updateTranscription).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: POLISHED,
+        rawTranscript: RAW_ASR,
+        postProcessFallback: true,
+      }),
+    );
+    expect(showErrorSnackbar).toHaveBeenCalledWith(UNREADABLE_COPY);
   });
 });

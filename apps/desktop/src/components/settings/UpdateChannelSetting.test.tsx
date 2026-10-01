@@ -15,6 +15,12 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlWithIdsModule(importOriginal);
 });
 
+// The contextual `update-channel` tip needs a Router, which this test has no
+// router for. Stubbed to a marker so the anchor is still asserted on.
+vi.mock("../onboarding/TipCard", () => ({
+  TipCard: ({ id }: { id: string }) => createElement("div", { "data-tip": id }),
+}));
+
 vi.mock("../../actions/user.actions", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../actions/user.actions")>();
@@ -95,6 +101,17 @@ describe("UpdateChannelSetting", () => {
     expect(beta?.getAttribute("aria-selected")).toBe("false");
   });
 
+  it("anchors the update-channel tip where the choice is made", () => {
+    // The tip used to be listed in Help and nowhere else, so the only way to
+    // discover it was to go looking for it. It is anchored on the control it
+    // describes.
+    seedChannel("stable");
+    renderSetting();
+    expect(
+      document.querySelector('[data-tip="update-channel"]'),
+    ).not.toBeNull();
+  });
+
   it("asks for confirmation before joining beta", async () => {
     seedChannel("stable");
     renderSetting();
@@ -128,8 +145,12 @@ describe("UpdateChannelSetting", () => {
 });
 
 it.each(["downloading", "installing"] as const)(
-  "disables channel switching while %s",
+  "keeps the persisted channel selected and enabled while %s",
   (status) => {
+    // Disabling both options left `SegmentedControl` with no enabled option, and
+    // it falls back to the first tab, so a beta user watched the control jump to
+    // "Stable" for the whole download. Only the option the user is not on is
+    // disabled now, and `handleChange` refuses the change regardless.
     seedChannel("beta");
     setAppState((state) => ({
       ...state,
@@ -138,12 +159,35 @@ it.each(["downloading", "installing"] as const)(
     renderSetting();
     const stable = tabByName("Stable") as HTMLButtonElement;
     const beta = tabByName("Beta") as HTMLButtonElement;
+    expect(beta.disabled).toBe(false);
+    expect(beta.getAttribute("aria-selected")).toBe("true");
     expect(stable.disabled).toBe(true);
-    expect(beta.disabled).toBe(true);
+    expect(stable.getAttribute("aria-selected")).toBe("false");
     act(() => stable.click());
     expect(setUpdateChannelMock).not.toHaveBeenCalled();
   },
 );
+it("keeps the persisted channel shown during a beta-to-stable save", async () => {
+  // The store is not updated until the save resolves, so the persisted channel
+  // is still `beta` for the whole in-flight window. That channel is the one
+  // that has to stay enabled and selected; disabling both used to leave the
+  // control with no enabled option and `SegmentedControl` fell back to the
+  // first tab, so it showed "Stable" as if the switch had already happened.
+  seedChannel("beta");
+  setUpdateChannelMock.mockReturnValueOnce(new Promise(() => undefined));
+  renderSetting();
+  act(() => (tabByName("Stable") as HTMLElement).click());
+  expect(setUpdateChannelMock).toHaveBeenCalledWith("stable");
+
+  const stable = tabByName("Stable") as HTMLButtonElement;
+  const beta = tabByName("Beta") as HTMLButtonElement;
+  expect(beta.disabled).toBe(false);
+  expect(beta.getAttribute("aria-selected")).toBe("true");
+  expect(stable.disabled).toBe(true);
+  // And the in-flight save cannot be started a second time.
+  act(() => beta.click());
+  expect(setUpdateChannelMock).toHaveBeenCalledTimes(1);
+});
 it("blocks duplicate switches during persistence and handles the action's reported rejection", async () => {
   seedChannel("beta");
   let fail!: (error: Error) => void;

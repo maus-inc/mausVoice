@@ -23,4 +23,27 @@ describe("getIntl outside React", () => {
     );
     expect(formatted).not.toContain("{");
   });
+
+  it("reports a formatting failure instead of hiding it behind a bare string", () => {
+    // The wrapper used to catch every error and return `defaultMessage ?? ""`,
+    // so a missing value reached the user as the raw template with nothing
+    // logged anywhere. `react-intl` already reports the failure through its own
+    // `onError` and falls back to the verbatim default, so the wrapper must let
+    // that happen rather than intercepting it.
+    const reported: unknown[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => reported.push(args[0]);
+    let formatted = "";
+    try {
+      formatted = getIntl("en").formatMessage(
+        { defaultMessage: "{kept} of {total} characters kept." },
+        { kept: 15000 },
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(reported).not.toHaveLength(0);
+    expect(formatted).toBe("{kept} of {total} characters kept.");
+  });
 });

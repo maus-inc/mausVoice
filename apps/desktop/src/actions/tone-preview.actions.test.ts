@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { IntlShape } from "react-intl";
 import { INITIAL_APP_STATE } from "../state/app.state";
 import { setAppState } from "../store";
 import {
@@ -23,8 +24,37 @@ import {
   TonePreviewUnusableError,
 } from "./tone-preview.actions";
 
+const { intlFormatMessage } = vi.hoisted(() => ({
+  /** Every descriptor the code under test asked the intl layer to format. */
+  intlFormatMessage: vi.fn(),
+}));
+
+// Wrapped, never stubbed. `getIntl` hands an id-less descriptor straight to the
+// formatter, so the text a thrown `Error` carries is the same string whether it
+// was routed through intl or authored in the action; the recorded descriptors
+// are what tell the two apart. `useTonePreview` puts `error.message` on screen.
+vi.mock("../i18n/intl", async () => {
+  const actual =
+    await vi.importActual<typeof import("../i18n/intl")>("../i18n/intl");
+  return {
+    ...actual,
+    getIntl: (...args: Parameters<typeof actual.getIntl>) => {
+      const intl = actual.getIntl(...args);
+      const realFormatMessage = intl.formatMessage;
+      return {
+        ...intl,
+        formatMessage: (...format: Parameters<IntlShape["formatMessage"]>) => {
+          intlFormatMessage(format[0]);
+          return realFormatMessage(...format);
+        },
+      };
+    },
+  };
+});
+
 beforeEach(() => {
   generate.mockReset();
+  intlFormatMessage.mockClear();
   setAppState(structuredClone(INITIAL_APP_STATE), true);
 });
 
@@ -106,6 +136,86 @@ describe("style preview provider contract", () => {
       ),
     ).resolves.toBe("Sure, here it is: styled sample");
   });
+
+  it("fails rather than previewing a blank box when the provider answers with whitespace", async () => {
+    // `useTonePreview` marks the preview done on any resolved value, so an empty
+    // string rendered a blank sample under a successful preview. Whitespace is
+    // the same absence of words as an empty reply.
+    generate.mockResolvedValueOnce({ text: "   \n\t " });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      name: "TonePreviewUnusableError",
+      reason: "empty",
+    });
+  });
+
+  it("fails when every declared edit failed to match the sample", async () => {
+    // The reply declared a change the pipeline could not make, so the text is a
+    // valid transcript. Production stores it, but the preview has no fallback:
+    // the untouched sample under a green "Preview" would read as the style
+    // working when every edit the model asked for was lost.
+    generate.mockResolvedValueOnce({
+      text: JSON.stringify({
+        edits: [{ find: "absent wording", replace: "whatever" }],
+        result: "",
+      }),
+    });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({
+      name: "TonePreviewUnusableError",
+      reason: "unreadable-edits",
+    });
+  });
+
+  it("still previews the partially applied result of a reply that also had misses", async () => {
+    // Distinct from the case above: something did change, so the preview shows
+    // what the style really did rather than throwing away a usable answer.
+    generate.mockResolvedValueOnce({
+      text: JSON.stringify({
+        edits: [
+          { find: "sample", replace: "Styled" },
+          { find: "absent wording", replace: "whatever" },
+        ],
+        result: "",
+      }),
+    });
+    await expect(
+      previewToneStyle(
+        { promptTemplate: "Be concise." },
+        "sample",
+        new AbortController().signal,
+      ),
+    ).resolves.toBe("Styled");
+  });
+
+  it.each(["empty", "unreadable-edits"] as const)(
+    "builds the %s failure detail through the intl layer",
+    async (reason) => {
+      // Both editors render `error.message` verbatim, so prose authored in the
+      // action would reach the user in English in every locale.
+      const error = new TonePreviewUnusableError(reason);
+
+      expect(error.reason).toBe(reason);
+      expect(intlFormatMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultMessage:
+            reason === "empty"
+              ? "The provider returned an empty result, so there is nothing to preview. The style may be asking for something the provider cannot produce for a short sample."
+              : "The provider returned edits that could not be applied and no replacement text, so there is nothing to preview. A style that rewrites the whole sample rather than editing it cannot be previewed this way.",
+        }),
+      );
+    },
+  );
 
   it("requests the same response schema as production and forwards cancellation", async () => {
     generate.mockResolvedValueOnce({ text: '{"result":"Styled"}' });

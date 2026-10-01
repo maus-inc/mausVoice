@@ -98,6 +98,10 @@ export default function ChatsPage() {
           >
             <Typography
               variant="h6"
+              // The empty state's title is the only heading on this route and
+              // the shell renders no `h1`, so `component` supplies the level
+              // while `variant` keeps the display size.
+              component="h1"
               sx={{
                 fontFamily: "var(--font-display)",
                 fontWeight: 500,

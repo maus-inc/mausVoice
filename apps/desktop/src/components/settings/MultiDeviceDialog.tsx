@@ -616,10 +616,15 @@ const useSenderSettings = ({
       // one decision, and doing them independently meant a rejected target
       // write still left the switch on, so dictation audio broadcast to nothing
       // with no indication that anything was wrong.
+      //
+      // The catch reports nothing: `setRemoteTargetDeviceId` goes through
+      // `updateUserPreferences`, which already showed its own localized
+      // "Failed to save paired receiver selection" toast before rethrowing.
+      // Re-reporting here stacked a second toast on top of it, rendering
+      // `String(error)` as a raw `Error: <message>`.
       try {
         await setRemoteTargetDeviceId(firstReceiver.id);
-      } catch (error) {
-        showErrorSnackbar(error);
+      } catch {
         return;
       }
     }

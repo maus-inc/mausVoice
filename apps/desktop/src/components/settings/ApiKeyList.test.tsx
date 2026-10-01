@@ -248,7 +248,7 @@ describe("ApiKeyList", () => {
     expect(testButton!.closest("[aria-pressed]")).toBeNull();
   });
 
-  it("disables the selection region while the card is mid-test", async () => {
+  it("keeps the selection region focusable while the card is mid-test, and inert", async () => {
     seedApiKeys([groqKey]);
     await renderList("post-processing", "key-groq");
 
@@ -266,13 +266,24 @@ describe("ApiKeyList", () => {
     await flush();
 
     // The action buttons are disabled here, so the selection region has to be
-    // too, or a card whose test is in flight still toggles the active key.
+    // inert too, or a card whose test is in flight still toggles the active
+    // key. It is `aria-disabled` rather than `disabled` so it keeps its place in
+    // the tab order: a natively disabled button is removed from it and blurs
+    // itself if it held focus, which dropped a keyboard user back to `<body>`
+    // and sent their next Tab to the top of the settings page.
     const region = metaButton("Groq key") as HTMLButtonElement;
-    expect(region.disabled).toBe(true);
+    expect(region.getAttribute("aria-disabled")).toBe("true");
+    expect(region.hasAttribute("disabled")).toBe(false);
+    expect(region.disabled).toBe(false);
+
+    region.focus();
+    expect(document.activeElement).toBe(region);
 
     mocks.onChange.mockClear();
     region.click();
     expect(mocks.onChange).not.toHaveBeenCalled();
+    // Clicking an inert region must not move focus off it either.
+    expect(document.activeElement).toBe(region);
 
     await act(async () => {
       mocks.releaseTest?.();
@@ -281,7 +292,7 @@ describe("ApiKeyList", () => {
     mocks.holdTest = false;
     mocks.releaseTest = null;
 
-    expect(metaButton("Groq key").hasAttribute("disabled")).toBe(false);
+    expect(metaButton("Groq key").getAttribute("aria-disabled")).toBe("false");
   });
 
   it("captions the model section so the input has a real label", async () => {

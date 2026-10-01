@@ -1,4 +1,9 @@
-import { createIntl, createIntlCache } from "react-intl";
+import {
+  createIntl,
+  createIntlCache,
+  type IntlShape,
+  type MessageDescriptor,
+} from "react-intl";
 import { DEFAULT_LOCALE, Locale, SUPPORTED_LOCALES } from "./config";
 import deMessages from "./locales/de.json";
 import enMessages from "./locales/en.json";
@@ -93,24 +98,35 @@ export function getIntl(locale?: Locale) {
     },
     cache,
   );
-  const rawFormat = intl.formatMessage;
-  (intl as any).formatMessage = (descriptor: any, values?: any, opts?: any) => {
-    try {
-      // An id-less descriptor is not in any catalog, so react-intl cannot
-      // resolve it. Pass it through as the default message. Values must still
-      // be handed to the formatter, otherwise a descriptor carrying ICU
-      // placeholders ships the literal "{count}" to the user.
-      if (descriptor && !descriptor.id && descriptor.defaultMessage) {
-        return rawFormat(
-          { ...descriptor, id: descriptor.defaultMessage },
-          values,
-          opts,
-        );
-      }
-      return rawFormat(descriptor, values, opts);
-    } catch {
-      return descriptor?.defaultMessage ?? "";
-    }
-  };
-  return intl;
+  return { ...intl, formatMessage: idTolerantFormatMessage(intl) };
 }
+
+const idTolerantFormatMessage = (intl: IntlShape) => {
+  const rawFormat = intl.formatMessage;
+  /**
+   * `react-intl` requires an `id` and throws without one, which every call site
+   * in this repo omits on purpose (the repo rule is `defaultMessage`, never an
+   * `id` prop). The `defaultMessage` is used as the lookup key in its place, and
+   * the values are still handed to the formatter, so a descriptor carrying ICU
+   * placeholders never ships a literal `{count}` to the user.
+   *
+   * Nothing else is wrapped. A malformed ICU string or a missing value is a bug
+   * in the call site, and catching it here would ship an unformatted sentence
+   * with nothing logged; `formatMessage` already reports those through its own
+   * `onError` and falls back to the default message.
+   */
+  const format = <T extends MessageDescriptor>(
+    descriptor: T,
+    ...rest: unknown[]
+  ) =>
+    descriptor.id
+      ? rawFormat(descriptor, ...(rest as [never, never]))
+      : rawFormat(
+          { ...descriptor, id: descriptor.defaultMessage },
+          ...(rest as [never, never]),
+        );
+  // Both `IntlShape` overloads are preserved by construction: `format` is
+  // generic over the descriptor and forwards the remaining arguments untouched,
+  // so the return type is whatever the underlying overload produces.
+  return format as IntlShape["formatMessage"];
+};

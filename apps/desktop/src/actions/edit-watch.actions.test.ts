@@ -76,6 +76,23 @@ vi.mock("./toast.actions", () => ({
   showToast: vi.fn(() => Promise.resolve()),
 }));
 
+// Wrapped rather than stubbed, so the real alignment still runs and the tests
+// can count how often a poll paid for it.
+const { scanCount } = vi.hoisted(() => ({ scanCount: { value: 0 } }));
+vi.mock("../utils/edit-watch.utils", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../utils/edit-watch.utils")>();
+  return {
+    ...actual,
+    findEditCorrections: (
+      ...args: Parameters<typeof actual.findEditCorrections>
+    ): ReturnType<typeof actual.findEditCorrections> => {
+      scanCount.value += 1;
+      return actual.findEditCorrections(...args);
+    },
+  };
+});
+
 vi.mock("../store", () => ({
   getAppState: () => state,
   produceAppState: (recipe: (draft: typeof state) => void) => recipe(state),
@@ -115,6 +132,7 @@ beforeEach(() => {
   invokeMock.mockResolvedValue({ textContent: null });
   backingStore.clear();
   storageBlocked.value = false;
+  scanCount.value = 0;
   state.autoLearn.proposal = null;
 });
 
@@ -274,6 +292,45 @@ describe("edit-watch baseline", () => {
     expect(state.autoLearn.proposal?.term).toBe("Ralf");
   });
 
+  it("aligns a settled field once, not on every tick", async () => {
+    // `hasSettled` reports true forever once the field stops changing, so
+    // without a memo on the field text every 500ms tick paid for the alignment
+    // -- up to 601 by 601 cells, 180 times over a three minute watch -- for an
+    // idle user.
+    beginEditWatch("call Wendell");
+    await settleBaseline("call Wendell");
+
+    setField("call Wendell");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal).toBeNull();
+    expect(scanCount.value).toBe(1);
+  });
+
+  it("learns from the baseline the settled poll had to adopt", async () => {
+    // Every capture read fails, so the watch has no baseline until the field
+    // settles. Adopting that first sample finds nothing to correct -- it is the
+    // text itself -- and the correction the user makes after it is what the
+    // adopted baseline is there to catch.
+    invokeMock.mockRejectedValue(new Error("field read timed out"));
+    beginEditWatch("call Wendell");
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    setField("call Wendell");
+    await pollEditWatch();
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal).toBeNull();
+
+    setField("call Wendal");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+
+    expect(state.autoLearn.proposal?.term).toBe("Wendal");
+  });
+
   it("does not mistake a longer unrelated field for the dictation", async () => {
     // The pre-paste read is the ordinary case: the field does not hold the
     // dictation yet, so the capture must not latch it as the baseline.
@@ -368,6 +425,49 @@ describe("edit-watch proposal lifecycle", () => {
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
     expect(state.autoLearn.proposal?.term).toBe("Zsofiaa");
+  });
+
+  it("offers every correction in the same field, not only the first", async () => {
+    // One field text can hold several corrections, and the proposal loop below
+    // picks among them. The scan memo has to survive an offer for that to mean
+    // anything: keyed on the field text before the loop ran, the first candidate
+    // froze the field and the rest of the field was never asked about.
+    //
+    // The words here are unique to this test, because a rejection below is
+    // remembered in the session denial set and would otherwise suppress the
+    // same corrections in the tests that follow.
+    const { createGlossaryTerms } = await import("./dictionary.actions");
+    beginEditWatch("email Torvalden and Zsofiann and Marekkkk");
+    await settleBaseline("email Torvalden and Zsofiann and Marekkkk");
+
+    setField("email Torvaldenn and Zsofiannn and Marekkkkkk");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Torvaldenn");
+
+    // The user turns the first one down. The field has not moved, so this is
+    // the only thing that can bring the next correction into view.
+    rejectAutoLearnProposal();
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Zsofiannn");
+
+    // Accepting it is the same story, and must also let the last one through.
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+    await acceptAutoLearnProposal();
+    expect(createGlossaryTerms).toHaveBeenCalledWith(["Zsofiannn"]);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Marekkkkkk");
+
+    // Nothing left to offer: the last poll re-ran the scan and found no
+    // candidate, so the field is memoized again and stops there.
+    await acceptAutoLearnProposal();
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal).toBeNull();
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
   });
 
   it("keeps the denial in memory when local storage cannot answer", async () => {
@@ -582,6 +682,36 @@ describe("edit-watch proposal lifecycle", () => {
     await advanceAndPoll(1_500);
     await advanceAndPoll(1_500);
     expect(state.autoLearn.proposal).toBeNull();
+    (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
+
+    await acceptAutoLearnProposal();
+
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+  });
+
+  it("does not honour a lapsed click once a later dictation has started", async () => {
+    // The click arrives to find no proposal, so it falls through to the held
+    // term. `activeWatch` cannot be the test here: a later dictation that ended,
+    // or that started no watch at all, leaves it null exactly like a watch that
+    // merely ended, and only the dictation sequence tells the two apart.
+    const { createGlossaryTerms } = await import("./dictionary.actions");
+    const unique = "Quillonwood";
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+    setField(`my wife's name is ${unique}`);
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe(unique);
+
+    // The pill's timer runs out with no answer, so the term is held for the
+    // grace window.
+    await advanceAndPoll(13_000);
+    expect(state.autoLearn.proposal).toBeNull();
+
+    // The dictation finished, and then a further one landed carrying nothing to
+    // watch. Nothing the user is looking at now refers to the held term.
+    endEditWatch();
+    beginEditWatch("   ");
     (createGlossaryTerms as ReturnType<typeof vi.fn>).mockClear();
 
     await acceptAutoLearnProposal();

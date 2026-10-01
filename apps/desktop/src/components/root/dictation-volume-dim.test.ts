@@ -53,7 +53,7 @@ const installVolumeWorld = (
      * Writes held back until the matching deferred resolves, in call order. A
      * write with no deferred left lands immediately.
      */
-    deferWrites?: Deferred<void>[];
+    deferWrites?: (Deferred<void> | undefined)[];
   } = {},
 ): VolumeWorld => {
   const world: VolumeWorld = { volume: SYSTEM_VOLUME, landed: [] };
@@ -186,6 +186,37 @@ describe("createSystemVolumeDim", () => {
     await dim(2);
 
     expect(world.volume).toBe(DIMMED_VOLUME);
+  });
+
+  it("waits for the previous recording's restore before reading the volume", async () => {
+    // `endRecording` restores fire and forget, so a restart landing in that
+    // window used to read the volume before the restore landed. It then dimmed
+    // from the retired recording's dimmed base, and the restore arriving after
+    // it overwrote the new dim, so the user heard the dictation at full volume
+    // through a dim they had asked for.
+    // Only the restore is held: write #1 is the first dim, #2 is the restore.
+    const restoreWrite = deferred<void>();
+    const world = installVolumeWorld({
+      deferWrites: [undefined, restoreWrite],
+    });
+    const { dim, endRecording } = buildDim();
+
+    await dim(1);
+    endRecording();
+    // The restore is issued but held in flight, and the new recording starts
+    // while it is still open.
+    const second = dim(2);
+    await flush();
+    expect(world.volume).toBe(DIMMED_VOLUME);
+
+    restoreWrite.resolve();
+    await second;
+    await flush();
+
+    // The new dim is the last write, so the volume the user is left hearing is
+    // the dim they asked for, not the restore that overtook it.
+    expect(world.volume).toBe(DIMMED_VOLUME);
+    expect(world.landed.at(-1)).toBe(DIMMED_VOLUME);
   });
 
   it("reports a failed volume read instead of dimming from nothing", async () => {

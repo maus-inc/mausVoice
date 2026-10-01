@@ -7,17 +7,19 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { showSnackbar } from "../../actions/app.actions";
 import { getAuthRepo } from "../../repos";
 import { produceAppState, useAppStore } from "../../store";
 
 export const DeleteAccountDialog = () => {
+  const intl = useIntl();
   const open = useAppStore((state) => state.settings.deleteAccountDialog);
   const userEmail = useAppStore((state) => state.auth?.email);
   const [confirmationEmail, setConfirmationEmail] = useState("");
@@ -150,9 +152,29 @@ export const DeleteAccountDialog = () => {
           variant="contained"
           color="error"
           disabled={!isDeleteEnabled || busy}
+          // The label stays in the DOM while the button is busy. Swapping it for
+          // a bare spinner left the button with no accessible name during the
+          // one flow that destroys the user's account, so a screen reader
+          // announced an unlabelled disabled control with no indication that
+          // anything was in progress.
+          aria-busy={busy || undefined}
         >
           {busy ? (
-            <CircularProgress size={16} color="inherit" />
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "center", justifyContent: "center" }}
+            >
+              <CircularProgress
+                size={16}
+                color="inherit"
+                role="progressbar"
+                aria-label={intl.formatMessage({ defaultMessage: "Working" })}
+              />
+              <span>
+                <FormattedMessage defaultMessage="Delete account" />
+              </span>
+            </Stack>
           ) : (
             <FormattedMessage defaultMessage="Delete account" />
           )}

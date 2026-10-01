@@ -56,7 +56,10 @@ ensureUiHarness();
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const STREAMING_CLAIM = "as you speak";
-const BATCH_CLAIM = "only after you stop";
+// A batch session pretranscribes at natural pauses, so a completed chunk
+// is already on the provider while the user keeps talking. The old copy
+// ("only after you stop, so cancelling sends nothing") was false.
+const BATCH_CLAIM = "as you pause";
 
 const resetState = () => setAppState(structuredClone(INITIAL_APP_STATE), true);
 

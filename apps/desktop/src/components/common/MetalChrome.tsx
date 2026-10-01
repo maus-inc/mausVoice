@@ -2,6 +2,7 @@ import { useColorScheme, useTheme } from "@mui/material";
 import { useReducedMotion } from "framer-motion";
 import { MetalFx, type MetalFxProps } from "metal-fx";
 import { useEffect, useId, useState } from "react";
+import { getLogger } from "../../utils/log.utils";
 import "./MetalChrome.css";
 
 /** Data attribute that lets MetalChrome find the wrapper metal-fx renders. */
@@ -14,6 +15,14 @@ export const METAL_CHROME_RESCUED_CLASS = "mv-metal-chrome--rescued";
  * library's own fade-in, and the rescue is lifted again if it paints later.
  */
 export const METAL_CHROME_RESCUE_DELAY_MS = 1500;
+/**
+ * How long the pending lookup waits for metal-fx to render its wrapper before
+ * giving up on it. Without a deadline the observer stayed attached for the
+ * component's whole lifetime, and this app re-renders continuously while
+ * dictation runs and while toasts mount and unmount, so every mutation batch
+ * paid a full-document `findWrapper` scan for a wrapper that was never coming.
+ */
+export const METAL_CHROME_PENDING_LOOKUP_MS = 4000;
 
 const findWrapper = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[${METAL_CHROME_ATTR}="${id}"]`);
@@ -84,16 +93,31 @@ const useFirstFrameRescue = (id: string): boolean => {
     } else {
       // metal-fx can render its wrapper after this effect runs. A missing
       // wrapper is a first state, not a failure, so wait for the insertion
-      // instead of giving up on a lookup that only got asked once.
+      // instead of giving up on a lookup that only got asked once. The wait is
+      // bounded: past the deadline the wrapper is treated as never arriving and
+      // the observer is detached, so a library that fails to mount, sits behind
+      // a Suspense that never resolves, or whose id never matches cannot leave a
+      // whole-document observer running for the rest of the component's life.
+      let deadline = 0;
       const pending = new MutationObserver(() => {
         if (stopped) return;
         const found = findWrapper(id);
         if (!found) return;
+        window.clearTimeout(deadline);
         pending.disconnect();
         attach(found);
       });
       pending.observe(document.body, { childList: true, subtree: true });
-      detach = () => pending.disconnect();
+      deadline = window.setTimeout(() => {
+        pending.disconnect();
+        getLogger().warning(
+          `[MetalChrome] metal-fx wrapper ${id} never appeared within ${METAL_CHROME_PENDING_LOOKUP_MS}ms; stopped watching for it`,
+        );
+      }, METAL_CHROME_PENDING_LOOKUP_MS);
+      detach = () => {
+        window.clearTimeout(deadline);
+        pending.disconnect();
+      };
     }
 
     return () => {

@@ -2,7 +2,7 @@ import { CircleUser } from "lucide-react";
 import { getIdentifier } from "@tauri-apps/api/app";
 import { Avatar, Box, Button, Stack, Typography } from "@mui/material";
 import { useMemo, useState } from "react";
-import { FormattedMessage } from "react-intl";
+import { FormattedMessage, useIntl } from "react-intl";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { useIsOnboarded } from "../../hooks/user.hooks";
 import { produceAppState, useAppStore } from "../../store";
@@ -54,6 +54,7 @@ export const BaseHeader = ({
 };
 
 export const AppHeader = () => {
+  const intl = useIntl();
   const isOnboarded = useIsOnboarded();
   const planName = useAppStore((state) =>
     planToDisplayName(getEffectivePlan(state)),
@@ -65,10 +66,12 @@ export const AppHeader = () => {
   });
   const myName = useAppStore(getMyUserFirstName);
 
-  // Use a single fallback string ("Guest") for both the chip label and
-  // the avatar initials so they never disagree (e.g. "Guest" / "G", not
-  // "Guest" / "U" from the old "Unknown" fallback).
-  const displayName = myName || myFullName || "Guest";
+  // Use a single fallback for both the chip label and the avatar initials so
+  // they never disagree (e.g. "Guest" / "G", not "Guest" / "U" from the old
+  // "Unknown" fallback). It goes through intl because it is rendered as
+  // user-facing header text, not an internal identifier.
+  const guestName = intl.formatMessage({ defaultMessage: "Guest" });
+  const displayName = myName || myFullName || guestName;
   const initialsSource = myFullName || displayName;
   const myInitials = useMemo(
     () => getInitials(initialsSource),

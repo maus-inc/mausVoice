@@ -83,7 +83,24 @@ export const PendingPasteReviewBubble = ({
           <Typography variant="subtitle2">
             <FormattedMessage defaultMessage="Paste action waiting for you" />
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          {/* The body swaps between the pending instructions and the resolved
+              outcome, and both the Copy and Cancel buttons unmount at that
+              point. Without a live region the replacement is silent: a screen
+              reader user hears nothing, and focus is left on a removed node.
+              `role="status"` announces the change, and the region takes focus
+              so it lands on the outcome rather than being dropped. */}
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            role="status"
+            aria-live="polite"
+            tabIndex={pending.status === "pending" ? undefined : 0}
+            ref={
+              pending.status === "pending"
+                ? undefined
+                : (node: HTMLParagraphElement | null) => node?.focus()
+            }
+          >
             {pending.status === "pending" ? (
               <FormattedMessage defaultMessage="Opening Chats changes the focused app. Copy this text, then focus the destination and paste it there." />
             ) : (

@@ -12,12 +12,41 @@ vi.mock("./chat.actions", () => ({
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
+const { intlFormatMessage } = vi.hoisted(() => ({
+  /** Every descriptor the code under test asked the intl layer to format. */
+  intlFormatMessage: vi.fn(),
+}));
+
+// `PendingPasteReviewBubble` hands a thrown Error straight to
+// `showErrorSnackbar`, which stringifies it, so every message these actions
+// throw is user-facing copy. The formatter records the descriptors it was given:
+// a hardcoded sentence and a formatted one produce the same string, so only the
+// record can tell them apart.
+vi.mock("../i18n/intl", () => ({
+  getIntl: () => ({
+    formatMessage: (descriptor: { defaultMessage: string }) => {
+      intlFormatMessage(descriptor);
+      return descriptor.defaultMessage;
+    },
+  }),
+}));
+
 import {
   cancelPendingPasteReview,
   copyPendingPasteReview,
   createPendingPasteReview,
   getPendingPasteReview,
 } from "./pending-paste-review.actions";
+
+/** The Error a call rejected with, so an assertion can read `error.message`. */
+const rejectionOf = async (run: Promise<unknown>): Promise<Error> => {
+  try {
+    await run;
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("expected the call to reject");
+};
 
 const pendingMessage = (): ChatMessage => ({
   id: "review-1",
@@ -141,4 +170,51 @@ describe("pending Paste reviews", () => {
       }),
     );
   });
+
+  it.each([
+    [
+      "an empty save",
+      () => createPendingPasteReview("conversation-1", "   "),
+      "Cannot save an empty Paste review",
+    ],
+    [
+      "an empty copy",
+      () => copyPendingPasteReview(pendingMessage(), "  "),
+      "Cannot copy an empty Paste review",
+    ],
+    [
+      "a review that is no longer pending",
+      () =>
+        copyPendingPasteReview(
+          {
+            ...pendingMessage(),
+            metadata: { ...pendingMessage().metadata, status: "canceled" },
+          },
+          "edited again",
+        ),
+      "This Paste review is no longer pending",
+    ],
+    [
+      "cancelling a review that is no longer pending",
+      () =>
+        cancelPendingPasteReview(
+          {
+            ...pendingMessage(),
+            metadata: { ...pendingMessage().metadata, status: "copied" },
+          },
+          "edited again",
+        ),
+      "This Paste review is no longer pending",
+    ],
+  ])(
+    "builds the %s error from the intl layer",
+    async (_label, run, message) => {
+      const error = await rejectionOf(run());
+
+      expect(error.message).toBe(message);
+      expect(intlFormatMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultMessage: message }),
+      );
+    },
+  );
 });

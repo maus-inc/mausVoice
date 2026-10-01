@@ -39,6 +39,18 @@ export type ElasticSliderProps = {
  */
 export const THUMB_CENTER_TRANSFORM = "translate(-50%, -50%)";
 
+/**
+ * The colour the track and the thumb ring are drawn with.
+ *
+ * `chrome`, not `primary`. The thumb is `#FFFFFF` in both schemes, and in dark
+ * mode `primary.main` is white too, so a `primary.main` ring was white-on-white
+ * and the slider lost the silver accent it is drawn with.
+ */
+export const elasticSliderAccent = (theme: {
+  vars?: { palette?: { chrome?: string } };
+  palette: { chrome: string };
+}): string => theme.vars?.palette?.chrome ?? theme.palette.chrome;
+
 /** Builds the MUI Slider `sx` for the ElasticSlider look. */
 export const buildElasticSliderSx = (
   fill: string,
@@ -109,8 +121,7 @@ export const ElasticSlider = ({
   const [dragValue, setDragValue] = useState(value);
   const draggingRef = useRef(false);
 
-  const accentFill =
-    theme.vars?.palette.primary.main ?? theme.palette.primary.main;
+  const accentFill = elasticSliderAccent(theme);
   const rail = theme.vars?.palette.level3 ?? theme.palette.level3;
 
   useEffect(() => {

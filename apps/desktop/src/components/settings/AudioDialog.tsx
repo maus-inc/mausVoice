@@ -43,13 +43,18 @@ const ThockVolumeControl = ({
   return (
     <Box sx={{ mt: 2, pl: 1, opacity: enabled ? 1 : 0.4 }}>
       <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        <FormattedMessage defaultMessage="Interaction feedback volume" />
+        <FormattedMessage defaultMessage="Pill click volume" />
       </Typography>
       <Typography
         variant="caption"
         sx={{ color: "text.secondary", display: "block", mb: 1 }}
       >
-        <FormattedMessage defaultMessage="Lower the click volume or turn the click off entirely." />
+        {/* Scoped to the pill's own click. The start and stop recording clips go
+            through `play_audio`, which plays the clip at full volume; only the
+            pill thock path reads `interactionFeedbackVolume`. Claiming the
+            slider covers recording feedback too promised a control that does
+            not change it. */}
+        <FormattedMessage defaultMessage="Lower the volume of the click the pill makes when you press it, or turn the click off entirely." />
       </Typography>
       <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
         <ElasticSlider
@@ -64,7 +69,7 @@ const ThockVolumeControl = ({
           step={0.05}
           disabled={!enabled}
           ariaLabel={intl.formatMessage({
-            defaultMessage: "Interaction feedback volume",
+            defaultMessage: "Pill click volume",
           })}
         />
         <Typography variant="body2" sx={{ minWidth: 40, textAlign: "right" }}>

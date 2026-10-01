@@ -94,6 +94,7 @@ beforeEach(() => {
   mocks.deferListen = false;
   mocks.resolveListen = null;
   mocks.listenCalls = 0;
+  mocks.rejectListen = false;
   mocks.unlisten.mockClear();
   mocks.invoke.mockClear();
   mocks.invoke.mockResolvedValue(undefined);
@@ -119,18 +120,14 @@ describe("audio intake ownership", () => {
     // broken dictation. Letting this reject reached the outer start-failure
     // handler and reported "Recording failed" for a recording that was fine.
     mocks.rejectListen = true;
-    try {
-      const intake = await attachSessionAudioIntake(
-        sessionWith(vi.fn()),
-        () => true,
-        () => true,
-        noOverflow,
-      );
-      expect(intake.unlisten).toBeNull();
-      expect(intake.current).toBe(true);
-    } finally {
-      mocks.rejectListen = false;
-    }
+    const intake = await attachSessionAudioIntake(
+      sessionWith(vi.fn()),
+      () => true,
+      () => true,
+      noOverflow,
+    );
+    expect(intake.unlisten).toBeNull();
+    expect(intake.current).toBe(true);
   });
 
   it("skips registration for a session that takes no live audio", async () => {
@@ -424,6 +421,52 @@ describe("native capture ownership", () => {
     const ownerRef = { current: null as number | null };
     await stopNativeRecordingForAbort(ownerRef);
     expect(mocks.invoke).toHaveBeenCalledWith("stop_recording");
+  });
+
+  it("stops the stream a superseded start opened after the abort released its claim", async () => {
+    // An abort that lands while a start is still inside `start_recording` issues
+    // its stop against a recorder that has not opened yet, so the stop returns
+    // having done nothing. The abort also released the claim, so the superseded
+    // start's own `stopOwnedNativeStart` used to decline and the recorder came up
+    // live with no owner: nothing stopped it and the user recorded continuously
+    // from an input they did not choose.
+    const ownerRef = { current: 3 as number | null };
+    await stopNativeRecordingForAbort(ownerRef);
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([command]) => command === "stop_recording",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("does not stop twice when a start that was still opening reports in after its own stop", async () => {
+    // The owed stop only covers the window where the abort's invoke could not
+    // have reached the recorder. Once this start has stopped its own stream, a
+    // second report must not stop a recorder a newer recording may now own.
+    const ownerRef = { current: 3 as number | null };
+    await stopOwnedNativeStart(ownerRef, 3);
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([command]) => command === "stop_recording",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("leaves a newer recording's stream alone even when an abort is owed a stop", async () => {
+    // The claim names the newer recording, so this stale start must not cut off
+    // a live dictation to discharge a debt the abort left behind.
+    const ownerRef = { current: 3 as number | null };
+    await stopNativeRecordingForAbort(ownerRef);
+    ownerRef.current = 4;
+    await stopOwnedNativeStart(ownerRef, 3);
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([command]) => command === "stop_recording",
+      ),
+    ).toHaveLength(1);
+    expect(ownerRef.current).toBe(4);
   });
 
   it("swallows a stop failure so an abort cannot reject", async () => {

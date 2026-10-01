@@ -54,6 +54,12 @@ const BASELINE_CAPTURE_INTERVAL_MS = 150;
 const BASELINE_CAPTURE_ATTEMPTS = 8;
 
 type WatchSnapshot = {
+  /**
+   * Identifies this dictation for the lapsed-proposal record. The record has to
+   * outlive the watch by a grace window, and naming the watch by its id lets the
+   * snapshot itself be released with the watch.
+   */
+  id: number;
   text: string;
   startedAt: number;
   /**
@@ -98,6 +104,18 @@ type WatchSnapshot = {
 // so it lives here rather than in the Zustand store.
 let activeWatch: WatchSnapshot | null = null;
 
+/**
+ * The id of the most recent dictation, and where the next one comes from.
+ *
+ * Every dictation takes the next value, whether or not it goes on to start a
+ * watch: a dictation whose text is empty, or one made while the feature is off,
+ * still ends whatever watch was running. `activeWatch` cannot record that on its
+ * own, because such a dictation leaves it null exactly like a watch that merely
+ * ended, and the two must not be confused.
+ */
+let latestWatchId = 0;
+let nextWatchId = 1;
+
 const isFeatureEnabled = (): boolean =>
   getMyUserPreferences(getAppState())?.autoLearnFromEditsEnabled ?? false;
 
@@ -127,12 +145,16 @@ let sessionDeniedTerms = new Set<string>();
  * for one toast duration instead honours the click without re-asking, and lets
  * it expire on its own so it cannot accept a click from a later, unrelated
  * prompt.
+ *
+ * It names its watch by id rather than by snapshot. Holding the snapshot kept a
+ * whole focused document alive in `baselineText` for the length of the grace
+ * window, after the watch and the document had both moved on.
  */
 let recentlyLapsedProposal: {
   term: string;
   at: number;
-  /** The watch the proposal came from, so a later one cannot claim the click. */
-  watch: WatchSnapshot | null;
+  /** The id of the watch the proposal came from, so a later one cannot claim the click. */
+  watchId: number;
 } | null = null;
 
 /** How long a lapsed proposal still honours a click. */
@@ -266,12 +288,18 @@ export const beginEditWatch = (text: string): void => {
   // its toast is gone (or about to be displaced by the next one), and a
   // stale proposal would block the new watch's polls.
   clearAutoLearnProposal();
+  // Claimed before the snapshot exists, so a dictation that starts no watch at
+  // all still counts as a later one for the lapsed-proposal record.
+  const id = nextWatchId;
+  nextWatchId += 1;
+  latestWatchId = id;
   const normalized = text.trim();
   if (!normalized || !isFeatureEnabled()) {
     activeWatch = null;
     return;
   }
   const snapshot: WatchSnapshot = {
+    id,
     text: normalized,
     startedAt: Date.now(),
     baselineText: null,
@@ -393,7 +421,7 @@ export const pollEditWatch = async (): Promise<void> => {
     // The term stays in `snapshot.proposedTerms`, so this dictation does not nag
     // about it again. What it must not do is lose a click that was already on its
     // way -- see `lapsedProposal`.
-    const lapsed = { term: pending.term, at: Date.now(), watch: snapshot };
+    const lapsed = { term: pending.term, at: Date.now(), watchId: snapshot.id };
     recentlyLapsedProposal = lapsed;
     clearAutoLearnProposal();
   }
@@ -421,10 +449,15 @@ export const pollEditWatch = async (): Promise<void> => {
     // over a three minute watch, for an idle user. `proposedTerms` and
     // `unalignableReported` only suppressed work after that computation. The
     // inputs are identical when the text has not moved, so the result is too.
+    //
+    // Written only once the scan has nothing left to offer, which is below and
+    // not here: stamping it before the proposal loop froze the field at the
+    // first candidate it found, so the multi-candidate selection below could
+    // only ever see that one and every later correction in the same field went
+    // unasked for as long as the dictation ran.
     if (snapshot.lastCorrectedFieldText === fieldText) {
       return;
     }
-    snapshot.lastCorrectedFieldText = fieldText;
 
     const baselineText = resolveBaseline(snapshot, fieldText);
     if (!baselineText) {
@@ -448,6 +481,7 @@ export const pollEditWatch = async (): Promise<void> => {
       },
     });
     if (corrections.length === 0) {
+      snapshot.lastCorrectedFieldText = fieldText;
       return;
     }
 
@@ -463,6 +497,7 @@ export const pollEditWatch = async (): Promise<void> => {
         !denied.has(candidate.toLowerCase()),
     );
     if (!term) {
+      snapshot.lastCorrectedFieldText = fieldText;
       return;
     }
 
@@ -487,13 +522,19 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
     if (!lapsed || Date.now() - lapsed.at > LAPSED_PROPOSAL_GRACE_MS) {
       return;
     }
-    // The held term belongs to the watch that proposed it. A *different* watch
-    // running now means this click belongs to a later dictation, and adding this
-    // one's term would put a correction in the dictionary for a prompt the user
-    // never answered. A watch that has merely ended is the case the grace window
-    // exists for: the dictation finished, the pill was still on screen, and the
-    // click was already on its way.
-    if (activeWatch !== null && activeWatch !== lapsed.watch) {
+    // The held term belongs to one dictation. Any dictation that started after it
+    // owns this click: that prompt is what the user is looking at, and adding
+    // this one's term would put a correction in the dictionary for a prompt the
+    // user never answered. Comparing against the latest dictation rather than
+    // against `activeWatch` is what covers a later dictation that has already
+    // ended, or that started no watch at all, since both leave `activeWatch` null
+    // exactly like a watch that merely ended.
+    //
+    // A watch that has merely ended is the case the grace window exists for: the
+    // dictation finished, the pill was still on screen, and the click was
+    // already on its way. No dictation started in between, so the ids still
+    // match.
+    if (latestWatchId !== lapsed.watchId) {
       return;
     }
     recentlyLapsedProposal = null;

@@ -650,9 +650,13 @@ export const AppSideEffects = () => {
       return;
     }
     // `setInitReady` is what lets the onboarding page render at all
-    // (OnboardingPage returns null until `initialized`). Without this guard a
-    // single failed refresh leaves the user on a permanently blank screen with
-    // no recovery, because nothing else writes `initReady` back to true.
+    // (OnboardingPage returns null until `initialized`). Nothing else writes
+    // `initReady` back to true, so it is set unconditionally after the refresh
+    // rather than on a success path. The catch is defensive: `refreshCurrentUser`
+    // is `enqueueUserMutation(refreshUserAndPreferences)`, whose body already
+    // logs and swallows, so it cannot reject today. It stays so a future change
+    // inside that body cannot turn this into an unhandled rejection and leave
+    // init stuck on `setInitReady` never running.
     await refreshCurrentUser().catch((error: unknown) => {
       getLogger().error(`Failed to load the current user: ${error}`);
     });

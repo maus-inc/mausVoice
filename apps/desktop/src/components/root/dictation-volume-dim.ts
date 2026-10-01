@@ -44,6 +44,22 @@ export const createSystemVolumeDim = (args: {
   const setSystemVolume = (volume: number): Promise<void> =>
     invoke<void>("set_system_volume", { volume });
 
+  /**
+   * The restore an `endRecording` most recently issued, if it is still in
+   * flight. The restore itself stays fire and forget, because awaiting it would
+   * put an IPC round trip in front of the stop the user's key release triggers
+   * and keep the microphone open past the release. What the next recording needs
+   * is the ordering, not the wait: a restart landing in that window used to read
+   * the volume before the restore landed, dim from that stale base, and then
+   * have its own dim overwritten by the restore arriving after it, so the user
+   * heard the dictation at full volume through a dim they had asked for.
+   *
+   * Only one restore can be outstanding: `endRecording` spends the shared ref,
+   * so a second call finds nothing to restore, and any recording that claims the
+   * ref again has already waited for the restore below before its own read.
+   */
+  let pendingRestore: Promise<unknown> = Promise.resolve();
+
   const endRecording = (): void => {
     // Bumped first, and with no await in between. A stop is not finished when it
     // returns: it waits for transcription before the recording is torn down, and
@@ -53,7 +69,7 @@ export const createSystemVolumeDim = (args: {
     const volumeToRestore = preDimVolumeRef.current;
     preDimVolumeRef.current = null;
     if (volumeToRestore !== null) {
-      setSystemVolume(volumeToRestore).catch((error) =>
+      pendingRestore = setSystemVolume(volumeToRestore).catch((error) =>
         getLogger().verbose(`Failed to restore system volume: ${error}`),
       );
     }
@@ -65,6 +81,10 @@ export const createSystemVolumeDim = (args: {
     const generation = recordingGeneration;
 
     try {
+      // The previous recording's restore lands before this reads, so the dim is
+      // computed from the volume the user is actually hearing rather than the
+      // one the retired recording had dimmed.
+      await pendingRestore;
       const volumeBeforeDim = await invoke<number>("get_system_volume");
       // A stop can land while this read is in flight. The volume to restore is
       // only known once it returns, so a stop in that window has nothing to put

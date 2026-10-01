@@ -57,7 +57,13 @@ export const AIPostProcessingConfiguration = () => {
               color: "text.secondary",
             }}
           >
-            <FormattedMessage defaultMessage="LLM post-processing is off. Selected writing styles will still be applied instantly via fast local formatting — no network call, ideal for Deepgram and other fast transcription providers." />
+            {/* Scoped to the built-in styles on purpose. `canApplyFastStyle`
+                only knows the eight built-in tone ids, because a custom tone
+                carries a free-form prompt that no local transform can honour;
+                those take the raw transcript with post-processing off. Promising
+                every selected style would be applied locally sent a custom-tone
+                user a promise the app does not keep. */}
+            <FormattedMessage defaultMessage="LLM post-processing is off. Built-in writing styles with fast local transforms are still applied instantly, with no network call. Custom styles need LLM post-processing." />
           </Typography>
         )}
 

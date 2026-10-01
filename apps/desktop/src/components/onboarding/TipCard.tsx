@@ -1,5 +1,6 @@
 import { CloseRounded } from "@mui/icons-material";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import type { SxProps } from "@mui/material/styles";
 import type { ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useNavigate } from "react-router-dom";
@@ -53,6 +54,68 @@ export const TIP_COPY: Record<
 export const useTip = (id: OnboardingTipId): boolean =>
   useAppStore((s) => !(s.local.dismissedTipIds ?? []).includes(id));
 
+/**
+ * The presentational shell both tip surfaces render: the card frame, the title
+ * row, and the body. `HelpPage` lists the same tips with a "Show again" action
+ * in place of the dismiss control, and the copy and styling used to be written
+ * out twice, so a change to onboarding presentation had to be made in both
+ * places and drifted whenever one was missed.
+ *
+ * `dismissed` is carried as a prop rather than read from the store here, so the
+ * same shell serves a live tip and a dismissed one.
+ */
+export const TipCardFrame = ({
+  title,
+  body,
+  actions,
+  onDismiss,
+  sx,
+}: {
+  title: ReactNode;
+  body: ReactNode;
+  actions?: ReactNode;
+  onDismiss?: () => void;
+  sx?: SxProps;
+}) => {
+  const intl = useIntl();
+  return (
+    <Box
+      sx={[
+        {
+          p: 2,
+          borderRadius: 2,
+          border: 1,
+          borderColor: "divider",
+          bgcolor: "level1",
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
+    >
+      <Stack spacing={1}>
+        <Stack
+          direction="row"
+          sx={{ alignItems: "center", justifyContent: "space-between" }}
+        >
+          <Typography variant="subtitle2">{title}</Typography>
+          {onDismiss && (
+            <IconButton
+              size="small"
+              onClick={onDismiss}
+              aria-label={intl.formatMessage({ defaultMessage: "Dismiss tip" })}
+            >
+              <CloseRounded fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
+        <Typography variant="body2" color="text.secondary">
+          {body}
+        </Typography>
+        {actions}
+      </Stack>
+    </Box>
+  );
+};
+
 export const TipCard = ({
   id,
   href,
@@ -60,40 +123,18 @@ export const TipCard = ({
   id: OnboardingTipId;
   href?: string;
 }) => {
-  const intl = useIntl();
   const navigate = useNavigate();
   const visible = useTip(id);
   if (!visible) return null;
   const copy = TIP_COPY[id];
 
   return (
-    <Box
-      sx={{
-        p: 2,
-        borderRadius: 2,
-        border: 1,
-        borderColor: "divider",
-        bgcolor: "level1",
-      }}
-    >
-      <Stack spacing={1}>
-        <Stack
-          direction="row"
-          sx={{ alignItems: "center", justifyContent: "space-between" }}
-        >
-          <Typography variant="subtitle2">{copy.title}</Typography>
-          <IconButton
-            size="small"
-            onClick={() => dismissTip(id)}
-            aria-label={intl.formatMessage({ defaultMessage: "Dismiss tip" })}
-          >
-            <CloseRounded fontSize="small" />
-          </IconButton>
-        </Stack>
-        <Typography variant="body2" color="text.secondary">
-          {copy.body}
-        </Typography>
-        {href && (
+    <TipCardFrame
+      title={copy.title}
+      body={copy.body}
+      onDismiss={() => dismissTip(id)}
+      actions={
+        href ? (
           <Box>
             <Button
               size="small"
@@ -103,8 +144,8 @@ export const TipCard = ({
               {copy.action}
             </Button>
           </Box>
-        )}
-      </Stack>
-    </Box>
+        ) : undefined
+      }
+    />
   );
 };

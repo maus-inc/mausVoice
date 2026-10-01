@@ -6,7 +6,13 @@ export const chromeMenuPaperSx: SxProps<Theme> = (theme) => ({
   borderRadius: 1.5,
   py: 0.5,
   mt: 0.5,
-  overflow: "hidden",
+  // Scrollable rather than clipped. `overflow: "hidden"` cut off any option
+  // past the viewport's bottom, which the language menu and every long provider
+  // list hit. The horizontal axis stays hidden so the rounded corners still
+  // clip the content, and `auto` on the vertical axis is what gives the paper a
+  // scrollbar only when it actually overflows.
+  overflowX: "hidden",
+  overflowY: "auto",
   border: hairline.light(0.06),
   boxShadow: premiumSurface.light.rest,
   backgroundColor: "background.paper",

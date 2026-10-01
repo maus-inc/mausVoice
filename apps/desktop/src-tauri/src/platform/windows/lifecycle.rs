@@ -4,9 +4,10 @@
 //! across a sleep/wake boundary or a workstation unlock (UIPI / input desktop
 //! changes). Without explicit re-registration the global dictation hotkey
 //! silently dies on resume. This module owns a hidden top-level HWND that
-//! subscribes to the relevant Windows notifications and emits a single
-//! `desktop_resume` Tauri event whenever the user comes back, so the
-//! frontend can ask the listener to re-grab.
+//! subscribes to the relevant Windows notifications and emits
+//! `desktop_resume` when the user comes back, so the frontend can ask the
+//! listener to re-grab. A single wake can produce more than one event; see
+//! [`imp::start_watcher`] for which signals are watched and why.
 //!
 //! # Pump design
 //!
@@ -202,10 +203,25 @@ mod imp {
     /// Spawn the message-pump thread. Idempotent: a second call is a
     /// no-op (the `OnceLock` on `watcher_started` short-circuits).
     ///
-    /// `app` is cloned into the thread and used to emit
-    /// `desktop_resume` whenever the OS notifies us of a sleep/wake
-    /// transition or a session unlock. The thread runs the
-    /// hidden window's pump for the lifetime of the process.
+    /// `app` is cloned into the thread and used to emit `desktop_resume` on
+    /// three signals, which are not all resumes:
+    ///
+    /// * an APM resume (`PBT_APMRESUMEAUTOMATIC` / `PBT_APMRESUMESUSPEND`),
+    /// * a session unlock (`WTS_SESSION_UNLOCK`),
+    /// * the registered console-display setting returning to on.
+    ///
+    /// The third is a fallback for the machines that report a sleep/wake
+    /// *only* as the display coming back, so it also fires for transitions
+    /// that are not resumes at all (a second monitor entering DPMS, a KVM
+    /// switching inputs, a manual display toggle). A machine that reports
+    /// both an APM resume and the display-on change emits twice for one
+    /// wake. That is harmless rather than correct-by-construction:
+    /// `restart_key_listener` runs inside the lifecycle lock in
+    /// `platform/keyboard.rs`, so the second call is serialized behind the
+    /// first instead of racing it.
+    ///
+    /// The thread runs the hidden window's pump for the lifetime of the
+    /// process.
     pub fn start_watcher(app: &tauri::AppHandle<tauri::Wry>) {
         if watcher_started().set(()).is_err() {
             return;

@@ -1,5 +1,6 @@
 import type { ChatMessage } from "@maus-inc/types";
 import { invoke } from "@tauri-apps/api/core";
+import { getIntl } from "../i18n/intl";
 import { createId } from "../utils/id.utils";
 import { nowIso } from "../utils/date.utils";
 import { createChatMessage, updateChatMessage } from "./chat.actions";
@@ -53,7 +54,13 @@ export const createPendingPasteReview = async (
   text: string,
 ): Promise<ChatMessage> => {
   if (!text.trim()) {
-    throw new Error("Cannot save an empty Paste review");
+    // The bubble hands a thrown Error to `showErrorSnackbar`, which stringifies
+    // it, so every message here is user-facing copy and comes from intl.
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "Cannot save an empty Paste review",
+      }),
+    );
   }
 
   return createChatMessage({
@@ -98,10 +105,18 @@ export const copyPendingPasteReview = async (
 ): Promise<void> => {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
-    throw new Error("This Paste review is no longer pending");
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
   }
   if (!text.trim()) {
-    throw new Error("Cannot copy an empty Paste review");
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "Cannot copy an empty Paste review",
+      }),
+    );
   }
 
   const saved = await updatePendingPasteReview(
@@ -121,7 +136,11 @@ export const cancelPendingPasteReview = async (
 ): Promise<void> => {
   const pending = getPendingPasteReview(message.metadata);
   if (pending?.status !== "pending") {
-    throw new Error("This Paste review is no longer pending");
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "This Paste review is no longer pending",
+      }),
+    );
   }
 
   // Cancel dismisses the action, not its durable record. Treat an empty editor

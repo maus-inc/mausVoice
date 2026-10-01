@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { resetTip } from "../../actions/onboarding.actions";
 import { useAppStore } from "../../store";
 import { ONBOARDING_TIPS } from "../../utils/tips";
-import { TIP_COPY } from "../onboarding/TipCard";
+import { TIP_COPY, TipCardFrame } from "../onboarding/TipCard";
 
 export default function HelpPage() {
   const navigate = useNavigate();
@@ -22,7 +22,9 @@ export default function HelpPage() {
         }}
       >
         <Stack spacing={2} sx={{ maxWidth: 640 }}>
-          <Typography variant="h6">
+          {/* This route's only heading, and the shell renders no `h1`, so
+              `component` supplies the level while `variant` keeps the size. */}
+          <Typography variant="h6" component="h1">
             <FormattedMessage defaultMessage="Help and onboarding" />
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -32,21 +34,11 @@ export default function HelpPage() {
             const copy = TIP_COPY[tip.id];
             const isDismissed = dismissed.includes(tip.id);
             return (
-              <Box
+              <TipCardFrame
                 key={tip.id}
-                sx={{
-                  p: 2,
-                  borderRadius: 2,
-                  border: 1,
-                  borderColor: "divider",
-                  opacity: isDismissed ? 0.65 : 1,
-                }}
-              >
-                <Stack spacing={1}>
-                  <Typography variant="subtitle2">{copy.title}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {copy.body}
-                  </Typography>
+                title={copy.title}
+                body={copy.body}
+                actions={
                   <Stack direction="row" spacing={1}>
                     {tip.href && (
                       <Button
@@ -67,8 +59,8 @@ export default function HelpPage() {
                       </Button>
                     )}
                   </Stack>
-                </Stack>
-              </Box>
+                }
+              />
             );
           })}
         </Stack>

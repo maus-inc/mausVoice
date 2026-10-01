@@ -7,11 +7,17 @@ const {
   checkAvailabilityMock,
   getAvailableModelsMock,
   openAICompatibleRepoCalls,
+  openAICompatibleRepoFetches,
+  savedEndpointFetchArgs,
+  privateFetch,
 } = vi.hoisted(() => {
   return {
     checkAvailabilityMock: vi.fn(async () => true),
     getAvailableModelsMock: vi.fn(async () => ["model-a", "model-b"]),
     openAICompatibleRepoCalls: [] as string[],
+    openAICompatibleRepoFetches: [] as unknown[],
+    savedEndpointFetchArgs: [] as string[],
+    privateFetch: vi.fn(),
   };
 });
 
@@ -26,12 +32,9 @@ vi.mock("react-intl", async (importOriginal) => {
 
 vi.mock("../../repos/ollama.repo", () => ({
   OpenAICompatibleRepo: class {
-    constructor(
-      baseUrl: string,
-      _apiKey?: string,
-      _customFetch?: typeof fetch,
-    ) {
+    constructor(baseUrl: string, _apiKey?: string, customFetch?: typeof fetch) {
       openAICompatibleRepoCalls.push(baseUrl);
+      openAICompatibleRepoFetches.push(customFetch);
     }
     checkAvailability = checkAvailabilityMock;
     getAvailableModels = getAvailableModelsMock;
@@ -39,10 +42,17 @@ vi.mock("../../repos/ollama.repo", () => ({
 }));
 
 vi.mock("../../utils/secure-fetch.utils", () => ({
-  createOpenAICompatibleFetch: vi.fn(() => vi.fn()),
+  createOpenAICompatibleFetch: vi.fn((apiKeyId: string) => {
+    savedEndpointFetchArgs.push(apiKeyId);
+    return vi.fn();
+  }),
+  secureFetch: privateFetch,
 }));
 
-import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
+import {
+  OpenAICompatibleModelPicker,
+  PROBE_TIMEOUT_MS,
+} from "./OpenAICompatibleModelPicker";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -57,7 +67,7 @@ import { OpenAICompatibleModelPicker } from "./OpenAICompatibleModelPicker";
 let container: HTMLDivElement;
 let root: Root;
 
-const renderPicker = (baseUrl: string) => {
+const renderPicker = (baseUrl: string | null) => {
   act(() => {
     root.render(
       createElement(OpenAICompatibleModelPicker, {
@@ -77,6 +87,8 @@ beforeEach(() => {
   checkAvailabilityMock.mockResolvedValue(true);
   getAvailableModelsMock.mockResolvedValue(["model-a", "model-b"]);
   openAICompatibleRepoCalls.length = 0;
+  openAICompatibleRepoFetches.length = 0;
+  savedEndpointFetchArgs.length = 0;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -216,5 +228,63 @@ describe("OpenAICompatibleModelPicker polling", () => {
     });
 
     expect(openAICompatibleRepoCalls[0]).toBe("http://127.0.0.1:11434/v1");
+  });
+  it("abandons a probe that never settles and schedules the retry", async () => {
+    // The retry is only scheduled after the current run settles, so a `/models`
+    // request that never answered held the next probe for as long as the network
+    // kept it open and the picker sat on its initial loading indicator.
+    vi.useFakeTimers();
+    try {
+      checkAvailabilityMock.mockImplementation(
+        () => new Promise<boolean>(() => undefined),
+      );
+      renderPicker("http://127.0.0.1:8080");
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(checkAvailabilityMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
+      });
+      // The stuck run is abandoned and the picker falls back to manual input
+      // rather than showing "Checking..." forever.
+      expect(document.body.textContent).toContain(
+        "doesn't support model listing",
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(checkAvailabilityMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("probes a key with no saved base URL through the private fetch", async () => {
+    // `createOpenAICompatibleFetch` authorizes against the base URL stored on
+    // the API-key row and rejects the call outright when that column is null. A
+    // key persisted before the column existed still has none, and
+    // `buildOpenAICompatibleUrl` resolves those to the documented local default,
+    // so probing it through the saved-endpoint fetch could only ever fail.
+    renderPicker(null);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(openAICompatibleRepoCalls[0]).toBe("http://127.0.0.1:8080/v1");
+    expect(savedEndpointFetchArgs).toHaveLength(0);
+    expect(openAICompatibleRepoFetches[0]).toBe(privateFetch);
+  });
+
+  it("probes a key with a saved base URL through the saved-endpoint fetch", async () => {
+    renderPicker("https://api.example.com");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(savedEndpointFetchArgs).toEqual(["key-1"]);
+    expect(openAICompatibleRepoFetches[0]).not.toBe(privateFetch);
   });
 });

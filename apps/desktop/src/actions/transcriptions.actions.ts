@@ -23,6 +23,7 @@ import {
   getMyUserPreferences,
 } from "../utils/user.utils";
 import { showErrorSnackbar, showSnackbar } from "./app.actions";
+import { postProcessErrorReason } from "./post-process-error-category";
 import {
   dismissToast,
   runToast,
@@ -134,13 +135,12 @@ type RetranscribeUpdate = {
    * stored, and always carried in the log so a support report keeps the cause.
    * Null on a styled run.
    *
-   * Whether it is also user-facing depends on the failure. For a response that
-   * came back unusable it is a developer string (a parse error, a schema issue
-   * list, the token-limit warning) and `unstyledMessage` is the localized
-   * outcome instead. For a request that never came back it is the recorded
-   * failure category, a closed vocabulary the run builds from the HTTP status
-   * with the transcript stripped out, so the error surface shows it as is and
-   * this duplicates `unstyledMessage` on that path.
+   * It is never shown. For a response that came back unusable it is a developer
+   * string (a parse error, a schema issue list, the token-limit warning); for a
+   * request that never came back it is the recorded failure category, a closed
+   * vocabulary the run builds from the HTTP status with the transcript stripped
+   * out. `unstyledMessage` is the localized sentence for either, and
+   * `postProcessErrorReason` is what turns the category into one.
    */
   unstyledReason: string | null;
   transcription: Transcription;
@@ -176,8 +176,9 @@ const unstyledResponseMessage = (reason: string): string => {
 /**
  * The surface copy and the log detail for a run that produced no styling. A
  * request that never came back reports its recorded failure category, which is
- * a closed vocabulary the row already stores. A response that came back
- * unusable has no category, so the cause comes from the warnings the
+ * a closed vocabulary the row already stores: the user reads the localized
+ * descriptor for it, and the category itself stays in the log. A response that
+ * came back unusable has no category, so the cause comes from the warnings the
  * post-processing step already recorded on the run: it appends the reason it
  * dropped that answer last, after any dispatch or glossary warning, so the
  * final entry is the cause. That reason stays in the log; the user gets the
@@ -189,20 +190,37 @@ const describeUnstyledRun = (
 ): { message: string; reason: string } => {
   if (orFalse(metadata.postProcessFailed)) {
     const reason = metadata.postProcessError ?? "";
-    return { message: reason, reason };
+    return {
+      // The category is internal vocabulary ("Rate limit exceeded (429)"), and
+      // `showErrorSnackbar` renders its argument verbatim, so it is resolved to
+      // its localized descriptor rather than printed. An unrecognized category
+      // still resolves, to the generic provider error.
+      message: reason
+        ? getIntl().formatMessage(postProcessErrorReason(reason))
+        : "",
+      reason,
+    };
   }
   const reason = postProcessWarnings.at(-1) ?? "";
   return { message: unstyledResponseMessage(reason), reason };
 };
 
 /**
- * Whether this run left the row without usable styling. A failed request and an
- * unusable answer are different failures with the same consequence here, so the
- * guard reads both; treating them differently is what let a degraded run report
- * success and overwrite polished text with raw ASR.
+ * Whether this run left the row without usable styling.
+ *
+ * `postProcessFallback` covers two different runs and cannot be read on its own.
+ * A response that came back unusable sets it, and the text stored is raw ASR, so
+ * the row must keep the text it already holds. A request that failed but whose
+ * deterministic local style succeeded sets it too, and that text really is
+ * styled, so treating it as unstyled would throw away the only polish the run
+ * produced. A recorded failure category is what separates them: only the second
+ * path records one, because only it had a request that never came back. The
+ * same split is what the dictation strategy uses, where a degraded run is still
+ * delivered and pasted.
  */
 const isUnstyledPostProcess = (metadata: PostProcessMetadata): boolean =>
-  orFalse(metadata.postProcessFailed) || orFalse(metadata.postProcessFallback);
+  orFalse(metadata.postProcessFailed) ||
+  (orFalse(metadata.postProcessFallback) && !metadata.postProcessError);
 
 const updateStoredTranscription = async (
   transcription: Transcription,

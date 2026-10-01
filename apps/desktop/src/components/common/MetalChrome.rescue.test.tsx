@@ -132,6 +132,62 @@ describe("useFirstFrameRescue", () => {
     expect(fx.node?.classList).toContain(METAL_CHROME_RESCUED_CLASS);
   });
 
+  it("stops watching for a wrapper that never arrives", async () => {
+    // The pending branch observes `document.body` for insertions, and this app
+    // re-renders continuously while dictation runs and while toasts mount and
+    // unmount. With no deadline the observer stayed attached for the component's
+    // whole lifetime, so every mutation batch paid a full-document lookup for a
+    // wrapper that was never coming.
+    const { MetalChrome, METAL_CHROME_PENDING_LOOKUP_MS } =
+      await import("./MetalChrome");
+
+    // Count the document-scoped observers that are still live, which is the
+    // thing the finding is about: an unbounded one.
+    const liveDocumentObservers = new Set<MutationObserver>();
+    const realObserve = MutationObserver.prototype.observe;
+    const realDisconnect = MutationObserver.prototype.disconnect;
+    MutationObserver.prototype.observe = function (
+      this: MutationObserver,
+      target: Node,
+      options?: MutationObserverInit,
+    ) {
+      if (target === document.body && options?.subtree) {
+        liveDocumentObservers.add(this);
+      }
+      return realObserve.call(this, target, options);
+    };
+    MutationObserver.prototype.disconnect = function (this: MutationObserver) {
+      liveDocumentObservers.delete(this);
+      return realDisconnect.call(this);
+    };
+
+    try {
+      fx.present = false;
+      act(() => root.render(<MetalChrome variant="circle">Play</MetalChrome>));
+      expect(fx.node, "the fake wrapper was not withheld").toBeNull();
+      expect(liveDocumentObservers.size).toBe(1);
+
+      act(() => vi.advanceTimersByTime(METAL_CHROME_PENDING_LOOKUP_MS - 1));
+      // Still waiting: the wrapper has not been given its full window yet.
+      expect(liveDocumentObservers.size).toBe(1);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(liveDocumentObservers.size).toBe(0);
+    } finally {
+      MutationObserver.prototype.observe = realObserve;
+      MutationObserver.prototype.disconnect = realDisconnect;
+    }
+
+    // And a wrapper that turns up after the deadline is not picked up, so no
+    // rescue is armed for a lookup the hook has already given up on.
+    fx.present = true;
+    await settleObserver(() => {
+      act(() => root.render(<MetalChrome variant="circle">Play</MetalChrome>));
+    });
+    act(() => vi.advanceTimersByTime(10_000));
+    expect(fx.node?.className ?? "").not.toContain("mv-metal-chrome--rescued");
+  });
+
   it("re-arms the rescue after the wrapper is revealed and then hidden again", async () => {
     const { METAL_CHROME_RESCUE_DELAY_MS, METAL_CHROME_RESCUED_CLASS } =
       await render();

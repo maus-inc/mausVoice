@@ -122,11 +122,16 @@ describe("AudioTransmissionDisclosure", () => {
       if (sessionStreamsLive(provider)) {
         expect(text).toContain("as you speak");
         expect(text).toContain("cannot be recalled");
-        expect(text).not.toContain("only after you stop");
+        expect(text).not.toContain("as you pause");
       } else {
-        expect(text).toContain("only after you stop");
-        expect(text).not.toContain("as you speak");
-        expect(text).not.toContain("cannot be recalled");
+        // A batch session pretranscribes at natural pauses, so "only after you
+        // stop" and "cancelling sends nothing" were both false: a chunk cut at a
+        // pause is already on the provider while the user keeps talking.
+        expect(text).toContain("as you pause");
+        expect(text).toContain("cannot be recalled");
+        expect(text).not.toContain("only after you stop");
+        expect(text).not.toMatch(/cancelling before you stop sends nothing/);
+        expect(text).not.toContain("as you speak,");
       }
     },
   );
@@ -151,7 +156,7 @@ describe("AudioTransmissionDisclosure", () => {
     // The sentence variant would wrap the text in a Typography paragraph; the
     // setting variant must not, or the description would nest a block element.
     expect(container.querySelector("p")).toBeNull();
-    expect(container.textContent).toContain("only after you stop");
+    expect(container.textContent).toContain("as you pause");
   });
 
   it("does not claim a batch provider is a streaming one", () => {

@@ -53,6 +53,13 @@ export const forwardAudioChunk = (
  *
  * A chunk that arrives before the session is ready is buffered with its
  * absolute sample index and replayed in order once the sink is installed.
+ *
+ * A subscription that cannot be established is reported and tolerated rather
+ * than thrown: a `local` or `after-stop` session still transcribes the whole
+ * recording, so failing the start there would report "Recording failed" for a
+ * dictation that was fine. A `live-streaming` session has no such fallback and
+ * finalizes to an empty result, which is a gap in `DictationSideEffects` rather
+ * than one this module can close.
  */
 export const attachSessionAudioIntake = async (
   session: TranscriptionSession,
@@ -74,12 +81,11 @@ export const attachSessionAudioIntake = async (
   let hasLoggedTrim = false;
 
   // A subscription that cannot be established is not a reason to fail the
-  // recording. The caller tolerates a null `unlisten`: the startup buffer still
-  // works and the session falls back to the whole-recording path, which is
-  // slower but loses nothing. Letting this reject instead reached the outer
-  // start-failure handler and showed "Recording failed" for a dictation that was
-  // perfectly fine.
-  let unlisten: (() => void) | null;
+  // recording, and letting this reject reached the outer start-failure handler
+  // and showed "Recording failed" for a dictation that was perfectly fine. The
+  // caller tolerates a null `unlisten`; see the caveat on the catch below for
+  // the one session kind that cannot survive it.
+  let unlisten: UnlistenFn | null;
   try {
     unlisten = await listenToAudioChunks((samples, offset) => {
       if (!isCurrent()) return;
@@ -117,8 +123,13 @@ export const attachSessionAudioIntake = async (
       }
     });
   } catch (error) {
+    // Only a session whose `finalize` reads the whole recording passed to it can
+    // recover from this, and a live-streaming provider's cannot: it finalizes
+    // whatever its socket produced, and with no chunk ever written that is
+    // nothing. The recording still happens either way, so this is reported and
+    // the start continues; the empty-result path is what has to notice.
     getLogger().warning(
-      `Could not subscribe to the audio chunk stream; falling back to the whole recording: ${error}`,
+      `Could not subscribe to the audio chunk stream; the session has no live audio and can only recover by transcribing the whole recording: ${error}`,
     );
     return { buffer, unlisten: null, current: isCurrent() };
   }
@@ -130,17 +141,60 @@ export const attachSessionAudioIntake = async (
   return { buffer, unlisten, current: true };
 };
 
+type NativeStartOwnerRef = { current: number | null };
+
 /**
- * Stops native capture only for the start that still owns it. A recording that
- * already handed ownership back, or one a newer recording has taken over, is
- * left alone so a stale start cannot silence a live stream.
+ * Native stops an abort issued that its own invocation could not apply.
+ *
+ * An abort releases the claim and issues `stop_recording` with no `await`
+ * between them, but a start that is still inside its own `await start_recording`
+ * has not opened the microphone yet, so that stop can land against a recorder
+ * that does not exist and return immediately. The claim is then gone and the
+ * stream is still about to come up, which leaves a live recorder with no owner:
+ * nothing stops it, and the user records continuously from an input they did not
+ * choose.
+ *
+ * The debt is keyed by the caller's ref so each recording tracks its own, and it
+ * is discharged by the superseded start that reports in and stops the stream it
+ * actually opened. Keyed rather than module-global so an unmounted recording
+ * cannot leave an entry behind for the next one.
+ */
+const owedNativeStops = new WeakMap<NativeStartOwnerRef, Set<number>>();
+
+const oweNativeStop = (ownerRef: NativeStartOwnerRef, operationId: number) => {
+  const owed = owedNativeStops.get(ownerRef) ?? new Set<number>();
+  owed.add(operationId);
+  owedNativeStops.set(ownerRef, owed);
+};
+
+/**
+ * Stops native capture for a start that opened the microphone and then found
+ * itself superseded. A recording a newer one has taken over is left alone, so a
+ * stale start cannot silence a live stream.
+ *
+ * It also discharges a stop an abort still owed this operation (see
+ * `owedNativeStops`). Without that, the abort had already released the claim, so
+ * the ref held nothing and this helper declined to stop the stream this very
+ * start was in the middle of opening.
  */
 export const stopOwnedNativeStart = async (
-  ownerRef: { current: number | null },
+  ownerRef: NativeStartOwnerRef,
   operationId: number,
 ): Promise<void> => {
-  if (ownerRef.current !== operationId) return;
-  ownerRef.current = null;
+  const owner = ownerRef.current;
+  const owed = owedNativeStops.get(ownerRef)?.delete(operationId) ?? false;
+  // A newer recording owns the claim: it is responsible for the stream now, and
+  // stopping here would cut off a live dictation this stale start knows nothing
+  // about.
+  if (owner !== null && owner !== operationId) return;
+  if (owner === operationId) {
+    ownerRef.current = null;
+  } else if (!owed) {
+    // The claim is already released and no abort is waiting on this start, so
+    // whatever stopped this operation has run and a second stop would only
+    // reach a recorder that a newer recording may already own.
+    return;
+  }
   await invoke("stop_recording").catch((error) => {
     getLogger().verbose(`stop_recording failed after stale start: ${error}`);
   });
@@ -166,11 +220,19 @@ export const stopOwnedNativeStart = async (
  * With no await in between, nothing else can run between taking the claim and
  * releasing the stream, and a restart that begins afterwards calls
  * `start_recording` against a stopped recorder.
+ *
+ * A start still inside `start_recording` is the one case that stop cannot reach,
+ * so the claim it held is recorded as owed: it stops the stream itself when it
+ * finds out it was superseded.
  */
-export const stopNativeRecordingForAbort = (ownerRef: {
-  current: number | null;
-}): Promise<void> => {
+export const stopNativeRecordingForAbort = (
+  ownerRef: NativeStartOwnerRef,
+): Promise<void> => {
+  const released = ownerRef.current;
   ownerRef.current = null;
+  if (released !== null) {
+    oweNativeStop(ownerRef, released);
+  }
   return invoke("stop_recording")
     .then(() => undefined)
     .catch((error) => {

@@ -1,8 +1,10 @@
 import { getRec } from "@maus-inc/utilities";
+import { getIntl } from "../i18n/intl";
 import { getTranscriptionRepo } from "../repos";
 import { getAppState, produceAppState } from "../store";
 import { extractAutoLearnTerms } from "../utils/auto-learn.utils";
 import { collectTermValues } from "../utils/app.utils";
+import { isPersistenceAllowed } from "../utils/incognito.utils";
 import { getLogger } from "../utils/log.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { createGlossaryTerms } from "./dictionary.actions";
@@ -56,12 +58,21 @@ export const saveCorrectedTranscript = async ({
   const state = getAppState();
   const transcription = getRec(state.transcriptionById, transcriptionId);
   if (!transcription) {
-    throw new Error("Transcription not found.");
+    // The details dialog hands a thrown `Error` straight to the error snackbar,
+    // so the sentence has to come from the intl layer rather than being written
+    // out here.
+    throw new Error(
+      getIntl().formatMessage({ defaultMessage: "Transcription not found." }),
+    );
   }
 
   const normalized = correctedText.trim();
   if (!normalized) {
-    throw new Error("Transcript cannot be empty.");
+    throw new Error(
+      getIntl().formatMessage({
+        defaultMessage: "Transcript cannot be empty.",
+      }),
+    );
   }
 
   const previous = transcription;
@@ -74,7 +85,13 @@ export const saveCorrectedTranscript = async ({
   let learnedTerms: string[] = [];
   let failedTerms = 0;
   try {
-    const persisted = await getTranscriptionRepo().updateTranscription(updated);
+    // Editing a transcript is a write to the history row like any other, so it
+    // answers the same privacy gate. Under incognito mode or an ephemeral
+    // session the correction stays in memory only: writing it out would put
+    // back exactly the transcript the mode promised to leave unsaved.
+    const persisted = isPersistenceAllowed()
+      ? await getTranscriptionRepo().updateTranscription(updated)
+      : updated;
     produceAppState((draft) => {
       draft.transcriptionById[transcriptionId] = persisted;
     });

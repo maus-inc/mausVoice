@@ -744,14 +744,22 @@ const ApiKeyCard = ({
           component="button"
           type="button"
           aria-pressed={selected}
-          disabled={testing || deleting}
-          onClick={onSelect}
+          aria-disabled={testing || deleting}
+          onClick={() => {
+            // `aria-disabled` rather than `disabled`: a disabled button leaves
+            // the tab order and blurs itself if it held focus, so activating
+            // Test or Delete on the card a keyboard user had just selected
+            // dropped focus to `<body>` and sent the next Tab back to the top of
+            // the settings page. This stays focusable, and the guard below is
+            // what makes it inert.
+            if (testing || deleting) return;
+            onSelect();
+          }}
           sx={{
             // A native <button> for real semantics: Enter and Space activate
             // it, Space does not scroll the page, and it participates in form
-            // submission and in the disabled set. The UA button styling is
-            // neutralised below so the element looks like the meta region it
-            // replaces.
+            // submission. The UA button styling is neutralised below so the
+            // element looks like the meta region it replaces.
             appearance: "none",
             display: "block",
             flex: 1,
@@ -771,7 +779,9 @@ const ApiKeyCard = ({
               outline: `2px solid ${theme.vars?.palette.primary.main ?? theme.palette.primary.main}`,
               outlineOffset: 2,
             },
-            "&:disabled": {
+            // Matched on the attribute rather than `:disabled`, since the
+            // element is no longer natively disabled.
+            '&[aria-disabled="true"]': {
               cursor: "default",
               bgcolor: "transparent",
             },

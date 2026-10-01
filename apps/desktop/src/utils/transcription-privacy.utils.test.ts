@@ -244,7 +244,9 @@ describe("provider disclosure catalogs", () => {
       const intl = createIntl({ locale, messages: loadLocales()[locale] });
       for (const key of [
         "audio_is_sent_to_provider_as_you_speak_so_text_can_come_back",
-        "your_recording_is_uploaded_to_provider_only_after_you_stop_s",
+        // A batch session pretranscribes at natural pauses, so the disclosure
+        // says the audio goes in pieces rather than "only after you stop".
+        "your_recording_is_sent_to_provider_in_pieces_as_you_pause_an",
         "press_cancel_again_to_discard_audio_already_sent_to_provider",
       ]) {
         const formatted = intl.formatMessage({ id: key }, { provider: "Groq" });

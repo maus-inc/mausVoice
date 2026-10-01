@@ -7,6 +7,7 @@ import { getMyUserPreferences } from "../../utils/user.utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { SegmentedControl } from "../common/SegmentedControl";
 import { SettingSection } from "../common/SettingSection";
+import { TipCard } from "../onboarding/TipCard";
 
 export const UpdateChannelSetting = () => {
   const intl = useIntl();
@@ -53,6 +54,11 @@ export const UpdateChannelSetting = () => {
 
   return (
     <>
+      {/* The tip is anchored here rather than only in Help, so a user reaches it
+          where they actually make the choice. Without a contextual anchor the
+          `update-channel` tip was listed in Help and nowhere else, so the only
+          way to discover it was to go looking for it. */}
+      <TipCard id="update-channel" />
       <SettingSection
         title={<FormattedMessage defaultMessage="Update channel" />}
         description={
@@ -62,17 +68,23 @@ export const UpdateChannelSetting = () => {
           <SegmentedControl<UpdateChannel>
             value={channel}
             onChange={handleChange}
+            // Only the option the user is not on is disabled while a change or
+            // an install is in flight. Disabling both left `SegmentedControl`
+            // with no enabled option, and it falls back to the first tab, so a
+            // beta user watched the control jump to "Stable" for the duration
+            // of a download. `handleChange` still refuses the change, so the
+            // persisted option stays selectable and the state cannot move.
             options={[
               {
                 value: "stable",
-                disabled,
+                disabled: disabled && channel !== "stable",
                 label: intl.formatMessage({
                   defaultMessage: "Stable",
                 }),
               },
               {
                 value: "beta",
-                disabled,
+                disabled: disabled && channel !== "beta",
                 label: intl.formatMessage({
                   defaultMessage: "Beta",
                 }),

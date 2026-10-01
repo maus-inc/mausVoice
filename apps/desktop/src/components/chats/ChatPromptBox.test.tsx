@@ -104,7 +104,15 @@ describe("ChatPromptBox", () => {
     mocks.send.mockRejectedValueOnce(error);
     await pressEnter(input);
     expect(input.value).toBe("draft");
-    expect(mocks.showError).toHaveBeenCalledWith(error);
+    // A repository or provider error can carry the submitted text or a
+    // credential, so the snackbar gets a localized sentence and the raw error
+    // goes only to the log.
+    expect(mocks.showError.mock.calls).toEqual([
+      ["Failed to send message. Please try again."],
+    ]);
+    expect(JSON.stringify(mocks.showError.mock.calls)).not.toContain(
+      "private transcript and token",
+    );
     expect(mocks.logError.mock.calls).toEqual([["Failed to send message"]]);
     expect(mocks.onSend).not.toHaveBeenCalled();
     await pressEnter(input);
@@ -151,6 +159,38 @@ describe("ChatPromptBox", () => {
     expect(input.value).toBe("");
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
     expect(mocks.showError).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(mocks.showError.mock.calls)).not.toContain(
+      "No provider configured",
+    );
+  });
+
+  it("does not submit when Enter accepts an IME composition candidate", async () => {
+    // An Enter carrying `isComposing` is the user picking a candidate, not
+    // asking to send. Submitting there posted a half-finished word and threw the
+    // composition away.
+    const input = await render(false);
+    await type(input, "にほん");
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          // jsdom's KeyboardEvent does not read `isComposing` from init, so it
+          // is defined the way the browser exposes it.
+          isComposing: true,
+        } as KeyboardEventInit),
+      );
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(input.value).toBe("にほん");
+
+    // Once the composition is committed, Enter sends as usual.
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+    expect(mocks.send.mock.calls[0].slice(0, 2)).toEqual(["chat", "にほん"]);
   });
   it("reserves the send synchronously against duplicate Enter events", async () => {
     const input = await render(false);

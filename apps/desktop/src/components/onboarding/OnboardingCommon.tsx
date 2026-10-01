@@ -79,6 +79,11 @@ export const OnboardingFormHeader = ({
     <Box>
       <Typography
         variant="h4"
+        // Each onboarding page renders only this title, and `OnboardingPage`
+        // puts it straight inside a plain `Stack` with no other heading, so an
+        // `h4` here was a skipped-level heading under no `h1`. `component` keeps
+        // the h4 typography and its size while making the level correct.
+        component="h1"
         sx={{
           fontWeight: 600,
           pb: 1,

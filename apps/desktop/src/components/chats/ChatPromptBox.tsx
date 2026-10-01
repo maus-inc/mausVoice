@@ -44,10 +44,20 @@ export const ChatPromptBox = ({
         if (editRevision.current === revision) setInput("");
         onSend(text);
       });
-    } catch (error) {
-      // Repository/provider errors can contain the submitted text or credentials.
+    } catch {
+      // A repository or provider error can carry the submitted text, a
+      // transcript, or a credential, and it goes straight into a snackbar the
+      // user sees (and a screenshot they may share). The detail goes to the
+      // log, where it is redacted and stays on the machine; the snackbar gets a
+      // localized sentence that says the same thing without the payload.
       getLogger().error("Failed to send message");
-      if (mounted.current) showErrorSnackbar(error);
+      if (mounted.current) {
+        showErrorSnackbar(
+          intl.formatMessage({
+            defaultMessage: "Failed to send message. Please try again.",
+          }),
+        );
+      }
     } finally {
       sendingRef.current = false;
       if (mounted.current) setSending(false);
@@ -76,7 +86,11 @@ export const ChatPromptBox = ({
           setInput(e.target.value);
         }}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          // `isComposing` is the IME's own "I am assembling a candidate" flag.
+          // An Enter that carries it is the user accepting a composition, not
+          // asking to send, and submitting there discarded the candidate and
+          // posted a half-finished word.
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             if (running) return;
             void handleSend();

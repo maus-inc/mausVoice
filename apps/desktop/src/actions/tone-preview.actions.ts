@@ -1,3 +1,4 @@
+import { getIntl } from "../i18n/intl";
 import { getGenerateTextRepo } from "../repos";
 import { getAppState } from "../store";
 import { resolveProcessedTranscription } from "../utils/ai.utils";
@@ -42,6 +43,13 @@ export class TonePreviewNoProviderError extends Error {
 }
 
 /**
+ * Why a reply that parsed held nothing to preview. "empty" is a reply with no
+ * usable text of any kind; "unreadable-edits" is a reply that declared edits and
+ * could not act on any of them.
+ */
+export type TonePreviewUnusableReason = "empty" | "unreadable-edits";
+
+/**
  * The provider answered, but the answer held no previewable text.
  *
  * A separate error from a transport failure because the two need different
@@ -49,16 +57,30 @@ export class TonePreviewNoProviderError extends Error {
  * retrying is unlikely to help and the style itself may be the problem.
  *
  * The wizard renders a localized "Preview failed." title and this message as the
- * detail, so it carries the explanation.
+ * detail, so it carries the explanation. The detail is formatted here rather
+ * than written out, because `useTonePreview` puts `message` on screen as-is and
+ * a sentence authored in the action would ship untranslated. `reason` is the
+ * stable key for a caller that prefers to pick its own localized wording.
  */
 export class TonePreviewUnusableError extends Error {
-  constructor(reason: "empty" | "unreadable-edits") {
+  readonly reason: TonePreviewUnusableReason;
+
+  constructor(reason: TonePreviewUnusableReason) {
     super(
-      reason === "empty"
-        ? "The provider returned an empty result, so there is nothing to preview. The style may be asking for something the provider cannot produce for a short sample."
-        : "The provider returned edits that could not be applied and no replacement text, so there is nothing to preview. A style that rewrites the whole sample rather than editing it cannot be previewed this way.",
+      getIntl().formatMessage(
+        reason === "empty"
+          ? {
+              defaultMessage:
+                "The provider returned an empty result, so there is nothing to preview. The style may be asking for something the provider cannot produce for a short sample.",
+            }
+          : {
+              defaultMessage:
+                "The provider returned edits that could not be applied and no replacement text, so there is nothing to preview. A style that rewrites the whole sample rather than editing it cannot be previewed this way.",
+            },
+      ),
     );
     this.name = "TonePreviewUnusableError";
+    this.reason = reason;
   }
 }
 
@@ -75,12 +97,28 @@ export class TonePreviewUnusableError extends Error {
 const unwrapResultJson = (raw: string, sample: string): string => {
   const resolution = resolveProcessedTranscription(raw, sample);
   if (resolution.status === "cleaned") {
+    // A reply that declared edits and had none of them applied comes back as
+    // "cleaned" with a warning, because the text is a valid transcript and the
+    // pipeline has nothing better to store. The preview has no such fallback:
+    // showing the untouched sample under a green "Preview" would read as the
+    // style working when the model asked for changes that were all lost. The
+    // same applies to a reply with no content but whitespace.
+    const appliedNothing =
+      resolution.warning !== null && resolution.transcript === sample;
+    if (appliedNothing) {
+      throw new TonePreviewUnusableError("unreadable-edits");
+    }
     return resolution.transcript;
   }
   // A reply that never parsed is shown verbatim: a style that answers in prose
-  // is still worth previewing.
+  // is still worth previewing. A whitespace-only reply has no words to show, so
+  // it is the empty result rather than a preview of nothing.
   if (resolution.reason === "unparseable") {
-    return raw.trim();
+    const verbatim = raw.trim();
+    if (!verbatim) {
+      throw new TonePreviewUnusableError("empty");
+    }
+    return verbatim;
   }
   throw new TonePreviewUnusableError(resolution.reason);
 };

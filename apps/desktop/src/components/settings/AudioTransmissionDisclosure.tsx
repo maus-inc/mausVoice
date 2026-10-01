@@ -34,8 +34,12 @@ export const AudioTransmissionDisclosure = ({
         values={{ provider }}
       />
     ) : (
+      // Not "only after you stop": `BatchTranscriptionSession` pretranscribes
+      // at natural pauses, so a completed chunk is already on the provider while
+      // the user is still talking. Only what has not been cut into a chunk yet
+      // is held back, and cancelling does not recall what was sent.
       <FormattedMessage
-        defaultMessage="Your recording is uploaded to {provider} only after you stop, so cancelling before you stop sends nothing."
+        defaultMessage="Your recording is sent to {provider} in pieces as you pause, and the rest once you stop. Audio already sent cannot be recalled."
         values={{ provider }}
       />
     );
