@@ -6,7 +6,19 @@ import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
+// These guards assert on Rust source text. `cargo fmt` is now a CI gate across
+// every crate, and rustfmt reflows a long signature across lines, so matching the
+// raw text made every guard a formatting change could break. Collapsing runs of
+// whitespace keeps each assertion reading as the code it means while leaving it
+// indifferent to how rustfmt wraps it.
 const read = (relativePath) =>
+  readFileSync(resolve(repoRoot, relativePath), "utf8")
+    .replace(/\s+/g, " ")
+    // rustfmt breaks a method chain across lines with the `.` leading the next
+    // line, which leaves a space before the dot once the newlines are collapsed.
+    .replace(/\s+\./g, ".");
+
+const readRaw = (relativePath) =>
   readFileSync(resolve(repoRoot, relativePath), "utf8");
 
 const source = Object.fromEntries(
@@ -901,7 +913,7 @@ describe("native gesture adapter contracts", () => {
     const endpoint = source.commands
       .split("fn channel_manifest_url(")[1]
       .split("pub async fn check_for_channel_update(")[0];
-    assert.match(endpoint, /"stable" => Ok\(/);
+    assert.match(endpoint, /"stable" => \{?\s*Ok\(/);
     assert.match(endpoint, /"beta" => Ok\(/);
     assert.match(endpoint, /_ => Err\("Unsupported update channel"\)/);
     assert.match(
@@ -1034,8 +1046,8 @@ describe("native review and monitor contracts", () => {
         /#\[serde\(default\)\]\s*pub edit_label: Option<String>/,
       );
       assert.match(draw, /review\.edit_label\.as_deref\(\)/);
-      assert.match(draw, /\(edit_label, ClickAction::ReviewEdit/);
-      assert.doesNotMatch(draw, /\("Edit", ClickAction::ReviewEdit/);
+      assert.match(draw, /edit_label,\s*ClickAction::ReviewEdit/);
+      assert.doesNotMatch(draw, /"Edit",\s*ClickAction::ReviewEdit/);
       assert.match(
         draw,
         /\(text_width \+ 20\.0\)\.max\(PERM_BUTTON_WIDTH \* 0\.8\)/,
