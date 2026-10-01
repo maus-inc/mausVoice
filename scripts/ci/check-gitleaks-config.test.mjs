@@ -190,6 +190,33 @@ describe("updaterRulePattern", () => {
     const toml = `[[rules]]\n${idLine}\nentropy = 3.5\n\n[[rules]]\nid = "another-rule"\nregex = 'dW50cnVzdGVk'\n`;
     assert.equal(updaterRulePattern(toml), null);
   });
+
+  // A description is free text, so it can contain the text `regex =` on its own
+  // line inside a multi-line string. Searching raw text then finds that one
+  // first and reads the wrong value, which is the value this function exists to
+  // compare against the shipped preamble.
+  it("ignores a regex key that only appears inside a multi-line string", () => {
+    const toml = [
+      'id = "tauri-minisign-updater-private-key"',
+      'description = """',
+      "Detects the updater key.",
+      "",
+      "regex = 'not-the-rule'",
+      '"""',
+      "regex = 'dW50cnVzdGVk'",
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
+  });
+
+  it("ignores a regex key that only appears inside a single-line string", () => {
+    const toml = [
+      'id = "tauri-minisign-updater-private-key"',
+      "description = 'use regex = not-the-rule here'",
+      'keywords = ["regex = also-not-the-rule"]',
+      "regex = 'dW50cnVzdGVk'",
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
+  });
 });
 
 describe("hasUseDefaultFalse quoted keys", () => {

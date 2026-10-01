@@ -238,6 +238,29 @@ export function rulesSection(raw) {
 const UPDATER_RULE_ID_LINE =
   /^id\s*=\s*["']tauri-minisign-updater-private-key["']\s*$/;
 
+/**
+ * The offset of a `key =` assignment that starts a line and is not inside a
+ * string, or -1. Reusing the string scanner keeps a quoted run from supplying
+ * the match, which a plain regex over the text cannot tell apart from a key.
+ */
+function findKeyOutsideStrings(text, key) {
+  let cursor = 0;
+  while (cursor < text.length) {
+    const at = indexOfOutsideStrings(text, key, cursor);
+    if (at === -1) return -1;
+    let lineStart = text.lastIndexOf("\n", at - 1) + 1;
+    let indent = lineStart;
+    while (text[indent] === " " || text[indent] === "\t") indent += 1;
+    if (indent === at) {
+      let after = at + key.length;
+      while (text[after] === " " || text[after] === "\t") after += 1;
+      if (text[after] === "=") return at;
+    }
+    cursor = at + key.length;
+  }
+  return -1;
+}
+
 export function updaterRulePattern(rules) {
   const lines = rules.split("\n");
   const idLineIndex = lines.findIndex((line) =>
@@ -250,9 +273,22 @@ export function updaterRulePattern(rules) {
   const nextRulesTable = indexOfOutsideStrings(afterIdLine, "[[rules]]");
   const afterId =
     nextRulesTable === -1 ? afterIdLine : afterIdLine.slice(0, nextRulesTable);
-  const keyMatch = /^[ \t]*regex[ \t]*=[ \t]*/m.exec(afterId);
-  if (!keyMatch) return null;
-  const valueStart = keyMatch.index + keyMatch[0].length;
+  // Find the key with the string scanner rather than a raw regex, so a
+  // `regex =` line inside a multi-line description is not mistaken for the
+  // key. `indexOfOutsideStrings` skips quoted runs, and the line-start and
+  // `=` checks are what make the match a TOML key and not a word like
+  // `regexes` in a free-text value.
+  const keyStart = findKeyOutsideStrings(afterId, "regex");
+  if (keyStart === -1) return null;
+  let afterEquals = keyStart + "regex".length;
+  while (afterId[afterEquals] === " " || afterId[afterEquals] === "\t") {
+    afterEquals += 1;
+  }
+  if (afterId[afterEquals] !== "=") return null;
+  let valueStart = afterEquals + 1;
+  while (afterId[valueStart] === " " || afterId[valueStart] === "\t") {
+    valueStart += 1;
+  }
   const quote = afterId[valueStart];
   if (quote !== '"' && quote !== "'") return null;
   const valueEnd = stringEnd(afterId, valueStart);
