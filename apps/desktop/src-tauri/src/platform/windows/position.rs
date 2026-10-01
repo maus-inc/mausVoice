@@ -1,5 +1,5 @@
 use crate::domain::{MonitorAtCursor, OverlayAnchor};
-use crate::platform::common::{anchored_bounds, anchor_rect, Rect};
+use crate::platform::common::{anchor_rect, anchored_bounds, Rect};
 use tauri::WebviewWindow;
 
 pub fn set_overlay_position(

@@ -391,7 +391,8 @@ mod tests {
 
     #[test]
     fn test_redacts_quoted_connector_token_with_whitespace() {
-        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer sample-value\"";
+        let input =
+            "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer sample-value\"";
         let result = sanitize_log_content(input);
         assert!(result.contains("Connector token: [REDACTED]"));
         assert!(!result.contains("sample-value"));
@@ -415,7 +416,8 @@ mod tests {
     // credential itself.
     #[test]
     fn test_redacts_a_quoted_token_whose_value_ends_in_a_backslash() {
-        let input = "[2026-01-15][14:30:45.123][DEBUG][webview] Connector token: \"trailing-fixture-9k2m\\";
+        let input =
+            "[2026-01-15][14:30:45.123][DEBUG][webview] Connector token: \"trailing-fixture-9k2m\\";
         let result = sanitize_log_content(input);
         assert!(!result.contains("trailing-fixture-9k2m"), "got: {result}");
     }
@@ -429,8 +431,14 @@ mod tests {
         // The fixture text must not share a substring with the label it sits
         // behind, or `contains` reports the label rather than the leak.
         for (label, input) in [
-            ("double quoted", "Connector token: \"head-fixture-9k2m\\\"tail-fixture-4j7x\\"),
-            ("single quoted", "Connector token: 'head-fixture-9k2m\\'tail-fixture-4j7x\\"),
+            (
+                "double quoted",
+                "Connector token: \"head-fixture-9k2m\\\"tail-fixture-4j7x\\",
+            ),
+            (
+                "single quoted",
+                "Connector token: 'head-fixture-9k2m\\'tail-fixture-4j7x\\",
+            ),
         ] {
             let line = format!("[2026-01-15][14:30:45.123][DEBUG][webview] {input}");
             let result = sanitize_log_content(&line);
@@ -484,5 +492,4 @@ mod tests {
             assert!(result.contains("Safe metadata"));
         }
     }
-
 }

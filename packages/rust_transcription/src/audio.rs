@@ -32,11 +32,17 @@ const MAX_TOTAL_COEFFICIENTS: u64 = 32_000_000;
 const MAX_TABLE_CACHE_ENTRIES: usize = 64;
 
 /// Validate headers independently of allocation or silence short-circuits.
-pub(crate) fn validate_sample_rates(source_rate: u32, target_rate: u32) -> Result<(), ResampleError> {
+pub(crate) fn validate_sample_rates(
+    source_rate: u32,
+    target_rate: u32,
+) -> Result<(), ResampleError> {
     if !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&source_rate)
         || !(MIN_SAMPLE_RATE..=MAX_SAMPLE_RATE).contains(&target_rate)
     {
-        return Err(ResampleError::UnsupportedRate { source_rate, target_rate });
+        return Err(ResampleError::UnsupportedRate {
+            source_rate,
+            target_rate,
+        });
     }
     Ok(())
 }
@@ -142,13 +148,14 @@ fn resampled_output_len(
             source_rate,
             target_rate,
         })?;
-    let rounded_len = scaled_len
-        .checked_add(source_rate_u128 - 1)
-        .ok_or(ResampleError::OutputTooLarge {
-            input_len,
-            source_rate,
-            target_rate,
-        })?;
+    let rounded_len =
+        scaled_len
+            .checked_add(source_rate_u128 - 1)
+            .ok_or(ResampleError::OutputTooLarge {
+                input_len,
+                source_rate,
+                target_rate,
+            })?;
     let output_len = (rounded_len / source_rate_u128).max(1);
     usize::try_from(output_len).map_err(|_| ResampleError::OutputTooLarge {
         input_len,

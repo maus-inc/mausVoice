@@ -71,7 +71,13 @@ pub fn anchored_bounds(
     height: f64,
     margin: f64,
 ) -> Rect {
-    anchor_rect(Rect::visible_area_of(monitor), anchor, width, height, margin)
+    anchor_rect(
+        Rect::visible_area_of(monitor),
+        anchor,
+        width,
+        height,
+        margin,
+    )
 }
 
 pub fn anchor_rect(
@@ -178,8 +184,8 @@ pub fn native_setup_result() -> NativeSetupResult {
 pub mod notifications {
     pub use crate::pill_process::{
         notify_assistant_state, notify_audio_levels, notify_phase, notify_pill_placement,
-        notify_pill_window_size, notify_request_position, notify_reset_position,
-        notify_style_info, notify_visibility,
+        notify_pill_window_size, notify_request_position, notify_reset_position, notify_style_info,
+        notify_visibility,
     };
 }
 

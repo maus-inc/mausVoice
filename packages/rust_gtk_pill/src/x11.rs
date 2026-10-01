@@ -35,12 +35,16 @@ extern "C" {
         win_y_return: *mut c_int,
         mask_return: *mut u32,
     ) -> c_int;
-    fn XInternAtom(
-        display: *mut XDisplay, name: *const c_char, only_if_exists: c_int,
-    ) -> XAtom;
+    fn XInternAtom(display: *mut XDisplay, name: *const c_char, only_if_exists: c_int) -> XAtom;
     fn XChangeProperty(
-        display: *mut XDisplay, w: XWindow, property: XAtom, type_: XAtom,
-        format: c_int, mode: c_int, data: *const c_uchar, nelements: c_int,
+        display: *mut XDisplay,
+        w: XWindow,
+        property: XAtom,
+        type_: XAtom,
+        format: c_int,
+        mode: c_int,
+        data: *const c_uchar,
+        nelements: c_int,
     ) -> c_int;
     fn XMoveWindow(display: *mut XDisplay, w: XWindow, x: c_int, y: c_int) -> c_int;
     fn XFlush(display: *mut XDisplay) -> c_int;
@@ -147,12 +151,7 @@ pub(crate) fn persist_drop_position(
 /// Persists an explicit window position as the X11 drop point (the frame tick
 /// calls this when a release settle finishes) and marks the release consumed
 /// so the slow timer cannot overwrite it with a later cursor poll.
-pub(crate) fn persist_window_position(
-    window: &gtk::Window,
-    state: &PillState,
-    x: f64,
-    y: f64,
-) {
+pub(crate) fn persist_window_position(window: &gtk::Window, state: &PillState, x: f64, y: f64) {
     state.saved_x.set(x);
     state.saved_y.set(y);
     state.has_saved_position.set(true);
@@ -183,12 +182,7 @@ pub(crate) fn x11_root_scale(window: &gtk::Window) -> f64 {
 /// pointer, runs it through the shared controller, and moves the toplevel.
 /// The first frame lazily arms the controller using the physical offset
 /// captured at press time, even if the pointer has already crossed monitors.
-pub(crate) fn tick_drag_frame(
-    window: &gtk::Window,
-    state: &PillState,
-    now: f64,
-    dt: f64,
-) {
+pub(crate) fn tick_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt: f64) {
     let dragging = state.dragging.get();
     {
         let motion = state.drag_motion.borrow();
@@ -199,21 +193,23 @@ pub(crate) fn tick_drag_frame(
     let display = window.display();
     let scale = x11_root_scale(window);
     let (cx, cy) = root_pointer(window);
-    let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
-        (cx as f64, cy as f64), dragging,
-    );
-    let placement = placement_on_monitor(
-        anchor_x, anchor_y, dragging, scale, &display, window, state,
-    )
-    .or_else(|| {
-        let monitor = window.window().and_then(|surface| display.monitor_at_window(&surface))?;
-        let (x, y) = monitor_bottom_centre(&monitor, scale);
-        placement_on_monitor(x, y, dragging, scale, &display, window, state)
-    })
-    .or_else(|| {
-        let (x, y) = primary_monitor_bottom_centre(&display, scale)?;
-        placement_on_monitor(x, y, dragging, scale, &display, window, state)
-    });
+    let (anchor_x, anchor_y) = state
+        .drag_motion
+        .borrow()
+        .monitor_anchor((cx as f64, cy as f64), dragging);
+    let placement =
+        placement_on_monitor(anchor_x, anchor_y, dragging, scale, &display, window, state)
+            .or_else(|| {
+                let monitor = window
+                    .window()
+                    .and_then(|surface| display.monitor_at_window(&surface))?;
+                let (x, y) = monitor_bottom_centre(&monitor, scale);
+                placement_on_monitor(x, y, dragging, scale, &display, window, state)
+            })
+            .or_else(|| {
+                let (x, y) = primary_monitor_bottom_centre(&display, scale)?;
+                placement_on_monitor(x, y, dragging, scale, &display, window, state)
+            });
     let Some(p) = placement else { return };
     let mut motion = state.drag_motion.borrow_mut();
     if dragging && motion.phase() != DragPhase::Held {
@@ -270,15 +266,20 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     };
 
     unsafe {
-        let intern = |name: &[u8]| -> XAtom {
-            XInternAtom(xdisplay, name.as_ptr() as *const c_char, 0)
-        };
+        let intern =
+            |name: &[u8]| -> XAtom { XInternAtom(xdisplay, name.as_ptr() as *const c_char, 0) };
 
         let wm_window_type = intern(b"_NET_WM_WINDOW_TYPE\0");
         let type_dock = intern(b"_NET_WM_WINDOW_TYPE_DOCK\0");
         XChangeProperty(
-            xdisplay, xwindow, wm_window_type, XA_ATOM, 32, 0,
-            &type_dock as *const XAtom as *const c_uchar, 1,
+            xdisplay,
+            xwindow,
+            wm_window_type,
+            XA_ATOM,
+            32,
+            0,
+            &type_dock as *const XAtom as *const c_uchar,
+            1,
         );
 
         let wm_state = intern(b"_NET_WM_STATE\0");
@@ -289,8 +290,14 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             intern(b"_NET_WM_STATE_SKIP_PAGER\0"),
         ];
         XChangeProperty(
-            xdisplay, xwindow, wm_state, XA_ATOM, 32, 0,
-            states.as_ptr() as *const c_uchar, states.len() as c_int,
+            xdisplay,
+            xwindow,
+            wm_state,
+            XA_ATOM,
+            32,
+            0,
+            states.as_ptr() as *const c_uchar,
+            states.len() as c_int,
         );
 
         XFlush(xdisplay);
@@ -304,8 +311,7 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
             let (mut dx, mut dy) = (0 as c_int, 0 as c_int);
             let mut dm: c_uint = 0;
             XQueryPointer(
-                xdisplay, root, &mut dw1, &mut dw2,
-                &mut rx, &mut ry, &mut dx, &mut dy, &mut dm,
+                xdisplay, root, &mut dw1, &mut dw2, &mut rx, &mut ry, &mut dx, &mut dy, &mut dm,
             );
             (rx, ry)
         }
@@ -325,16 +331,11 @@ pub(crate) fn setup_x11_window(window: &gtk::Window, state: Rc<PillState>) {
     // to (0, 0) would throw the pill into the top-left corner of the root
     // window; park it bottom-centre on the primary monitor instead — the same
     // anchor the idle placement logic uses for first paint.
-    .or_else(|| primary_monitor_bottom_centre(&display, x11_root_scale(window)).and_then(|(bx, by)| {
-        pill_pos_on_monitor(
-            bx,
-            by,
-            state.dragging.get(),
-            &display,
-            window,
-            &state,
-        )
-    }))
+    .or_else(|| {
+        primary_monitor_bottom_centre(&display, x11_root_scale(window)).and_then(|(bx, by)| {
+            pill_pos_on_monitor(bx, by, state.dragging.get(), &display, window, &state)
+        })
+    })
     .unwrap_or((0, 0));
     unsafe {
         XMoveWindow(xdisplay, xwindow, init_pos.0, init_pos.1);
@@ -481,10 +482,12 @@ pub(crate) fn monitor_at_physical_point(
     y: f64,
     scale: f64,
 ) -> Option<gdk::Monitor> {
-    (0..display.n_monitors()).filter_map(|i| display.monitor(i)).find(|monitor| {
-        let rect = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
-        x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
-    })
+    (0..display.n_monitors())
+        .filter_map(|i| display.monitor(i))
+        .find(|monitor| {
+            let rect = crate::pill::logical_rect_to_physical(&monitor.geometry(), scale);
+            x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
+        })
 }
 
 /// Finds the monitor an anchor point belongs to and resolves its work area,
@@ -522,12 +525,12 @@ fn placement_on_monitor(
                     || geometry.height() != monitor_geometry.height()
             })
             .map(|candidate| {
-                let rect = crate::pill::logical_rect_to_physical(
-                    &candidate.geometry(),
-                    scale,
-                );
+                let rect = crate::pill::logical_rect_to_physical(&candidate.geometry(), scale);
                 rust_pill_shared::edge::MonitorRect {
-                    x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
                 }
             })
             .collect()
@@ -535,10 +538,16 @@ fn placement_on_monitor(
         Vec::new()
     };
     let monitor_rect = rust_pill_shared::edge::MonitorRect {
-        x: full.x, y: full.y, width: full.width, height: full.height,
+        x: full.x,
+        y: full.y,
+        width: full.width,
+        height: full.height,
     };
     let work_area = rust_pill_shared::edge::MonitorRect {
-        x: wa.x, y: wa.y, width: wa.width, height: wa.height,
+        x: wa.x,
+        y: wa.y,
+        width: wa.width,
+        height: wa.height,
     };
     let region = if seams_open {
         state.drag_motion.borrow_mut().resolve_drag_region(
@@ -555,9 +564,8 @@ fn placement_on_monitor(
     // window.size() returns logical pixels; XMoveWindow and the
     // workarea math above are in physical pixels, so scale here too.
     let win_w = alloc_w as f64 * scale;
-    let content_h = crate::state::content_canvas_height(
-        alloc_h as f64, state.below_slot_extra(),
-    ) * scale;
+    let content_h =
+        crate::state::content_canvas_height(alloc_h as f64, state.below_slot_extra()) * scale;
     let margin = MARGIN_BOTTOM as f64 * scale;
 
     // The toplevel is a fixed-size transparent canvas; the visible pill
@@ -571,30 +579,36 @@ fn placement_on_monitor(
     //
     // Normalize impossible ranges before clamping. On a shared axis this
     // preserves the seam side; otherwise it safely collapses to the minimum.
-    let (min_x, min_y, max_x, max_y) =
-        if state.effective_window_mode() == WindowMode::Dictation
-            && !state.assistant_active.get()
-        {
-            let (px, py, pw, ph) = crate::draw::pill_position(
-                state,
-                state.draw_width.get(),
-                state.draw_height.get(),
-            );
-            let (cox, coy) = state.content_offset();
-            let fx = (cox + px) * scale;
-            let fy = (coy + py) * scale;
-            let fw = pw * scale;
-            let fh = ph * scale;
-            (
-                area.x - fx,
-                area.y - fy,
-                area.right() - fx - fw,
-                area.bottom() - fy - fh,
-            )
-        } else {
-            (area.x, area.y, area.right() - win_w, area.bottom() - content_h)
-        };
-    let mut bounds = DragBounds { min_x, min_y, max_x, max_y };
+    let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
+        && !state.assistant_active.get()
+    {
+        let (px, py, pw, ph) =
+            crate::draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
+        let (cox, coy) = state.content_offset();
+        let fx = (cox + px) * scale;
+        let fy = (coy + py) * scale;
+        let fw = pw * scale;
+        let fh = ph * scale;
+        (
+            area.x - fx,
+            area.y - fy,
+            area.right() - fx - fw,
+            area.bottom() - fy - fh,
+        )
+    } else {
+        (
+            area.x,
+            area.y,
+            area.right() - win_w,
+            area.bottom() - content_h,
+        )
+    };
+    let mut bounds = DragBounds {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    };
     if let Some(center) = pill_center {
         bounds.apply_shared_seam_bounds(area, center.offset, region.edge_mask);
     }
@@ -639,9 +653,7 @@ fn pill_pos_on_monitor(
         // tracking instead of snapping the window centre to it),
         // clamped so the pill's footprint stays in the work area.
         let (drag_x, drag_y) = state.drag_press_offset.get();
-        let (x, y) = p
-            .bounds
-            .clamp_point(anchor_x - drag_x, anchor_y - drag_y);
+        let (x, y) = p.bounds.clamp_point(anchor_x - drag_x, anchor_y - drag_y);
         return Some((x as c_int, y as c_int));
     }
 
@@ -672,7 +684,10 @@ pub(crate) fn force_keyboard_focus(window: &gtk::Window) {
     #[link(name = "X11")]
     extern "C" {
         fn XSetInputFocus(
-            display: *mut XDisplay, focus: XWindow, revert_to: c_int, time: c_ulong,
+            display: *mut XDisplay,
+            focus: XWindow,
+            revert_to: c_int,
+            time: c_ulong,
         ) -> c_int;
         fn XFlush(display: *mut XDisplay) -> c_int;
     }
@@ -713,7 +728,12 @@ mod press_scale_tests {
             pointer_y: 400.0,
             now: 0.02,
             dt: 0.02,
-            bounds: DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1000.0, max_y: 1000.0 },
+            bounds: DragBounds {
+                min_x: 0.0,
+                min_y: 0.0,
+                max_x: 1000.0,
+                max_y: 1000.0,
+            },
             held: true,
             reduced_motion: true,
             edge_work: None,

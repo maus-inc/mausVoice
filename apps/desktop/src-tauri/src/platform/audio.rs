@@ -1402,14 +1402,26 @@ mod cpal_impl {
 
         #[test]
         fn repeated_names_get_an_ordinal_suffix() {
-            assert_eq!(disambiguated_label("USB Microphone", 1), "USB Microphone (2)");
-            assert_eq!(disambiguated_label("USB Microphone", 2), "USB Microphone (3)");
+            assert_eq!(
+                disambiguated_label("USB Microphone", 1),
+                "USB Microphone (2)"
+            );
+            assert_eq!(
+                disambiguated_label("USB Microphone", 2),
+                "USB Microphone (3)"
+            );
         }
 
         #[test]
         fn preferences_match_labels_case_insensitively() {
-            assert!(device_matches_preferred("USB Microphone (2)", "usb microphone (2)"));
-            assert!(!device_matches_preferred("USB Microphone", "usb microphone (2)"));
+            assert!(device_matches_preferred(
+                "USB Microphone (2)",
+                "usb microphone (2)"
+            ));
+            assert!(!device_matches_preferred(
+                "USB Microphone",
+                "usb microphone (2)"
+            ));
         }
 
         #[test]

@@ -1,7 +1,4 @@
-fn decode_utf16(
-    bytes: &[u8],
-    decode_code_unit: fn([u8; 2]) -> u16,
-) -> Result<String, String> {
+fn decode_utf16(bytes: &[u8], decode_code_unit: fn([u8; 2]) -> u16) -> Result<String, String> {
     let (code_unit_bytes, trailing_bytes) = bytes.as_chunks::<2>();
     if !trailing_bytes.is_empty() {
         return Err("UTF-16 input has an odd number of bytes".to_owned());

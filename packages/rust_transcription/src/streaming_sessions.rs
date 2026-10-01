@@ -58,12 +58,11 @@ impl SessionStore {
     fn evict_stale(&mut self) -> usize {
         let now = Instant::now();
         let before = self.sessions.len();
-        self.sessions
-            .retain(|_, session| {
-                now.checked_duration_since(session.last_activity)
-                    .map(|d| d < SESSION_IDLE_TTL)
-                    .unwrap_or(true)
-            });
+        self.sessions.retain(|_, session| {
+            now.checked_duration_since(session.last_activity)
+                .map(|d| d < SESSION_IDLE_TTL)
+                .unwrap_or(true)
+        });
         self.last_eviction = Some(now);
         before - self.sessions.len()
     }

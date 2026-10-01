@@ -1720,11 +1720,7 @@ mod tests {
 
         let registry = DownloadRegistry::default();
         let snapshot = registry
-            .start_or_get_active(
-                WhisperModel::Tiny,
-                vec![artifact],
-                reqwest::Client::new(),
-            )
+            .start_or_get_active(WhisperModel::Tiny, vec![artifact], reqwest::Client::new())
             .await
             .unwrap();
 

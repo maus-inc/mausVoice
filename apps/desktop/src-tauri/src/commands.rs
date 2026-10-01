@@ -78,8 +78,8 @@ use crate::platform::{ChunkCallback, LevelCallback};
 mod shared_audio;
 use crate::system::crypto::{protect_api_key, reveal_api_key};
 use crate::system::StorageRepo;
-use sqlx::Row;
 use rodio::Source;
+use sqlx::Row;
 
 use crate::platform::input::paste_text_into_focused_field as platform_paste_text;
 
@@ -438,8 +438,7 @@ pub struct UserPreferencesCompareSetExpansionFlagsArgs {
 const MAX_RETAINED_TRANSCRIPTION_AUDIO: usize = 20;
 const MAX_AUDIO_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_AUDIO_IMPORT_DURATION_SECONDS: u64 = 5 * 60;
-const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize =
-    16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
+const MAX_AUDIO_IMPORT_OUTPUT_SAMPLES: usize = 16_000 * MAX_AUDIO_IMPORT_DURATION_SECONDS as usize;
 // Keep one absolute memory ceiling for pathological sample rates while the
 // normal limit below is derived from the file's actual rate and channel count.
 const MAX_AUDIO_IMPORT_DECODED_MEMORY_BYTES: usize = 128 * 1024 * 1024;
@@ -494,8 +493,7 @@ pub struct PrivateHttpResponse {
     pub body_base64: String,
 }
 
-const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize =
-    MAX_PRIVATE_HTTP_REQUEST_BYTES.div_ceil(3) * 4;
+const MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES: usize = MAX_PRIVATE_HTTP_REQUEST_BYTES.div_ceil(3) * 4;
 
 fn private_http_request_body_limit_error() -> String {
     format!(
@@ -580,10 +578,7 @@ fn decode_private_http_body(body_base64: Option<&str>) -> Result<Option<Vec<u8>>
     Ok(Some(decoded))
 }
 
-fn reserve_private_http_response_body(
-    body: &mut Vec<u8>,
-    additional: usize,
-) -> Result<(), String> {
+fn reserve_private_http_response_body(body: &mut Vec<u8>, additional: usize) -> Result<(), String> {
     body.try_reserve(additional)
         .map_err(|_| "Unable to allocate the private-network response body".to_string())
 }
@@ -733,13 +728,24 @@ impl AuthorizedAudioRoot {
         let p = path.as_ref();
         let canonical_path = std::fs::canonicalize(p)
             .map_err(|e| format!("Failed to canonicalize root {}: {e}", p.display()))?;
-        let dir = Dir::open_ambient_dir(&canonical_path, cap_std::ambient_authority())
-            .map_err(|e| format!("Unable to open directory capability for {}: {e}", canonical_path.display()))?;
-        let meta = dir
-            .dir_metadata()
-            .map_err(|e| format!("Unable to inspect directory {}: {e}", canonical_path.display()))?;
+        let dir =
+            Dir::open_ambient_dir(&canonical_path, cap_std::ambient_authority()).map_err(|e| {
+                format!(
+                    "Unable to open directory capability for {}: {e}",
+                    canonical_path.display()
+                )
+            })?;
+        let meta = dir.dir_metadata().map_err(|e| {
+            format!(
+                "Unable to inspect directory {}: {e}",
+                canonical_path.display()
+            )
+        })?;
         if !meta.is_dir() || meta.is_symlink() {
-            return Err(format!("Root {} is not a valid directory.", canonical_path.display()));
+            return Err(format!(
+                "Root {} is not a valid directory.",
+                canonical_path.display()
+            ));
         }
         Ok(Self {
             path: canonical_path,
@@ -760,8 +766,13 @@ impl AuthorizedAudioRoot {
 /// Rust-owned import picker is the authorization boundary; this additional
 /// confinement keeps sensitive home-directory dotfiles out of scope even after
 /// an accidental or malicious picker-path substitution.
-fn is_path_within_allowed_roots(path: &std::path::Path, allowed_roots: &[AuthorizedAudioRoot]) -> bool {
-    allowed_roots.iter().any(|root| path.starts_with(root.path()))
+fn is_path_within_allowed_roots(
+    path: &std::path::Path,
+    allowed_roots: &[AuthorizedAudioRoot],
+) -> bool {
+    allowed_roots
+        .iter()
+        .any(|root| path.starts_with(root.path()))
 }
 
 /// Safely opens a user-selected audio file for import, confining access strictly
@@ -799,10 +810,7 @@ fn open_audio_import_file(
         .map_err(|_| "The selected file is outside the allowed import locations.".to_string())?;
 
     let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .follow(FollowSymlinks::No)
-        .nonblock(true);
+    options.read(true).follow(FollowSymlinks::No).nonblock(true);
 
     let cap_file = matching_root
         .dir()
@@ -918,8 +926,8 @@ fn canonical_url_segments(path: &str) -> Result<Vec<String>, String> {
         if !decoded_any {
             break;
         }
-        current = String::from_utf8(bytes)
-            .map_err(|_| "URL path contains invalid UTF-8".to_string())?;
+        current =
+            String::from_utf8(bytes).map_err(|_| "URL path contains invalid UTF-8".to_string())?;
     }
 
     let mut segments = Vec::new();
@@ -1218,8 +1226,8 @@ async fn execute_http_request(
         decode_private_http_body(encoded_request_body.as_deref())?.map(bytes::Bytes::from);
     drop(encoded_request_body);
 
-    let initial_url = Url::parse(&request.url)
-        .map_err(|_| "HTTP request URL is invalid".to_string())?;
+    let initial_url =
+        Url::parse(&request.url).map_err(|_| "HTTP request URL is invalid".to_string())?;
     // The redirect loop owns the mutable hop URL; credentials belong to this
     // original origin alone for the rest of the chain.
     let credential_origin = initial_url.clone();
@@ -1311,8 +1319,7 @@ async fn execute_http_request(
         {
             // Pin the dial to the validated answers so a DNS flip between
             // validation and connect cannot land elsewhere.
-            client_builder = client_builder
-                .resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
+            client_builder = client_builder.resolve_to_addrs(&domain.to_ascii_lowercase(), &addrs);
         }
         let client = client_builder
             .build()
@@ -1571,8 +1578,8 @@ pub async fn transcription_import_audio(
         let duration_sample_limit = (source_rate as usize)
             .saturating_mul(channels)
             .saturating_mul(MAX_AUDIO_IMPORT_DURATION_SECONDS as usize);
-        let max_decoded_samples = duration_sample_limit
-            .clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
+        let max_decoded_samples =
+            duration_sample_limit.clamp(1, MAX_AUDIO_IMPORT_ABSOLUTE_DECODED_SAMPLES);
         let memory_limited = duration_sample_limit > max_decoded_samples;
         let decoded: Vec<f32> = decoder
             .convert_samples::<f32>()
@@ -1601,9 +1608,8 @@ pub async fn transcription_import_audio(
                 .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
                 .collect()
         };
-        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000).map_err(|err| {
-            format!("Unable to convert the selected audio to 16 kHz mono: {err}")
-        })?;
+        let samples = shared_audio::resample_to_rate(&mono, source_rate, 16_000)
+            .map_err(|err| format!("Unable to convert the selected audio to 16 kHz mono: {err}"))?;
         if samples.len() > MAX_AUDIO_IMPORT_OUTPUT_SAMPLES {
             return Err(format!(
                 "The selected audio file exceeds the {} minute import limit",
@@ -1656,8 +1662,7 @@ async fn delete_audio_entries(
             // empty-marker behavior (clear metadata but do not delete a file),
             // while deriving every non-empty marker's filename from its ID.
             if has_file_path {
-                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id)
-                {
+                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id) {
                     if err.kind() != std::io::ErrorKind::NotFound {
                         log::error!("Failed to delete audio file for transcription {id}: {err}");
                     }
@@ -1768,10 +1773,11 @@ pub async fn user_preferences_set_expansion_flags(
     set_expansion_flags(database.pool(), &args.flags)
         .await
         .map_err(|err| err.to_string())?;
-    let prefs = crate::db::preferences_queries::fetch_user_preferences(database.pool(), LOCAL_USER_ID)
-        .await
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "Preferences not found".to_string())?;
+    let prefs =
+        crate::db::preferences_queries::fetch_user_preferences(database.pool(), LOCAL_USER_ID)
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or_else(|| "Preferences not found".to_string())?;
     Ok(prefs)
 }
 
@@ -2100,8 +2106,8 @@ pub async fn transcription_audio_load(
         return Err("No audio snapshot available for this transcription".to_string());
     }
 
-    let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
-        .map_err(|err| err.to_string())?;
+    let audio_dir =
+        crate::system::audio_store::open_managed_audio_dir(&app).map_err(|err| err.to_string())?;
     let mut audio_file = crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
         .map_err(|err| format!("Unable to open the managed audio snapshot: {err}"))?;
 
@@ -2354,13 +2360,9 @@ pub async fn hotkey_replace_style_hotkeys(
     if prefix.is_empty() {
         return Err("hotkey prefix must not be empty".to_string());
     }
-    crate::db::hotkey_queries::replace_hotkeys_by_prefix(
-        database.pool(),
-        &prefix,
-        &hotkeys,
-    )
-    .await
-    .map_err(|err| err.to_string())
+    crate::db::hotkey_queries::replace_hotkeys_by_prefix(database.pool(), &prefix, &hotkeys)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 fn current_timestamp_millis() -> Result<i64, String> {
@@ -2770,7 +2772,10 @@ pub async fn stop_recording(
     let recorder = Arc::clone(&recorder);
 
     let bytes = tauri::async_runtime::spawn_blocking(move || match recorder.stop() {
-        Ok(result) => Ok(encode_recorded_audio(&result.audio.samples, result.audio.sample_rate)),
+        Ok(result) => Ok(encode_recorded_audio(
+            &result.audio.samples,
+            result.audio.sample_rate,
+        )),
         Err(err) => {
             let not_recording = (*err)
                 .downcast_ref::<crate::errors::RecordingError>()
@@ -2791,7 +2796,6 @@ pub async fn stop_recording(
 
     Ok(tauri::ipc::Response::new(bytes))
 }
-
 
 #[tauri::command]
 #[specta::specta]
@@ -2981,8 +2985,8 @@ pub async fn paste(
     // Re-entry guard: a paste in progress owns the clipboard and the
     // synthetic keystroke pipeline. Racing a second paste interleaves both
     // clipboard swaps and keystrokes and produces garbled output.
-    let _paste_guard =
-        ReentryGuard::acquire(&PASTE_IN_PROGRESS).map_err(|_| "Paste is already in progress".to_string())?;
+    let _paste_guard = ReentryGuard::acquire(&PASTE_IN_PROGRESS)
+        .map_err(|_| "Paste is already in progress".to_string())?;
 
     // Probe the focused target first. If it clearly can't accept text, write
     // the transcript to the clipboard and skip the paste keystroke entirely —
@@ -3505,10 +3509,7 @@ pub fn request_pill_position(app: AppHandle) -> Result<(), String> {
 /// `"cursor"` (the monitor under the mouse).
 #[tauri::command]
 #[specta::specta]
-pub fn reset_pill_position(
-    app: AppHandle,
-    strategy: Option<String>,
-) -> Result<(), String> {
+pub fn reset_pill_position(app: AppHandle, strategy: Option<String>) -> Result<(), String> {
     let strategy = strategy.unwrap_or_else(|| "current".to_string());
     crate::platform::overlay::notify_reset_position(&app, &strategy)
 }
@@ -3843,23 +3844,68 @@ struct AllowedCommand {
 
 #[cfg(not(target_os = "windows"))]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "ls", fixed_args: &[] },
-    AllowedCommand { binary: "pwd", fixed_args: &[] },
-    AllowedCommand { binary: "echo", fixed_args: &[] },
-    AllowedCommand { binary: "cat", fixed_args: &[] },
-    AllowedCommand { binary: "which", fixed_args: &[] },
-    AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "date", fixed_args: &[] },
-    AllowedCommand { binary: "uname", fixed_args: &["-a"] },
-    AllowedCommand { binary: "df", fixed_args: &["-h"] },
-    AllowedCommand { binary: "du", fixed_args: &["-sh"] },
-    AllowedCommand { binary: "head", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "tail", fixed_args: &["-n", "200"] },
-    AllowedCommand { binary: "wc", fixed_args: &["-l"] },
+    AllowedCommand {
+        binary: "ls",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "pwd",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "echo",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "cat",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "which",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "whoami",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "date",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "uname",
+        fixed_args: &["-a"],
+    },
+    AllowedCommand {
+        binary: "df",
+        fixed_args: &["-h"],
+    },
+    AllowedCommand {
+        binary: "du",
+        fixed_args: &["-sh"],
+    },
+    AllowedCommand {
+        binary: "head",
+        fixed_args: &["-n", "200"],
+    },
+    AllowedCommand {
+        binary: "tail",
+        fixed_args: &["-n", "200"],
+    },
+    AllowedCommand {
+        binary: "wc",
+        fixed_args: &["-l"],
+    },
     #[cfg(target_os = "macos")]
-    AllowedCommand { binary: "open", fixed_args: &[] },
+    AllowedCommand {
+        binary: "open",
+        fixed_args: &[],
+    },
     #[cfg(target_os = "linux")]
-    AllowedCommand { binary: "xdg-open", fixed_args: &[] },
+    AllowedCommand {
+        binary: "xdg-open",
+        fixed_args: &[],
+    },
 ];
 
 /// Windows allow-list. Deliberately excludes CMD builtins (`dir`, `cd`,
@@ -3868,10 +3914,22 @@ const ALLOWED_COMMANDS: &[AllowedCommand] = &[
 /// always fail with "program not found". Only real executables are listed.
 #[cfg(target_os = "windows")]
 const ALLOWED_COMMANDS: &[AllowedCommand] = &[
-    AllowedCommand { binary: "whoami", fixed_args: &[] },
-    AllowedCommand { binary: "where", fixed_args: &[] },
-    AllowedCommand { binary: "hostname", fixed_args: &[] },
-    AllowedCommand { binary: "explorer", fixed_args: &[] },
+    AllowedCommand {
+        binary: "whoami",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "where",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "hostname",
+        fixed_args: &[],
+    },
+    AllowedCommand {
+        binary: "explorer",
+        fixed_args: &[],
+    },
 ];
 
 /// Validate that a single argv token contains no NUL bytes (which would truncate
@@ -3881,7 +3939,9 @@ fn is_safe_arg_token(token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
-    token.chars().all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
+    token
+        .chars()
+        .all(|ch| !(ch.is_control() && ch != '\t') && ch != '\0')
 }
 
 /// Characters that are forbidden inside any argv token passed through
@@ -3891,8 +3951,9 @@ fn is_safe_arg_token(token: &str) -> bool {
 /// (e.g. a hypothetical `cat`) cannot reach arbitrary filesystem paths like
 /// `/etc/passwd`, `C:\Users\…`, or `~/.ssh/id_rsa`. A standalone `..` token
 /// is explicitly rejected; the `/` guard prevents traversal sequences.
-const TERMINAL_FORBIDDEN_CHARS: &[char] =
-    &[';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r'];
+const TERMINAL_FORBIDDEN_CHARS: &[char] = &[
+    ';', '|', '&', '$', '`', '>', '<', '(', ')', '/', '\\', '\n', '\r',
+];
 
 /// Validate a user-supplied command string against the same rules
 /// `run_terminal_command` enforces. Shared between the command itself and
@@ -3958,8 +4019,8 @@ fn validate_floating_window_url(url: &Url) -> Result<(), String> {
             // IPC: `maus-inc.github.io` is not in the `floating-*` capability
             // `remote.urls` list. Localhost remains the only remote host with
             // IPC (dev tooling).
-            let is_docs_site = host == "maus-inc.github.io"
-                && url.path().starts_with("/mausVoice/");
+            let is_docs_site =
+                host == "maus-inc.github.io" && url.path().starts_with("/mausVoice/");
             if !is_localhost && !is_docs_site {
                 return Err(format!(
                     "Floating window URL host {host:?} is not in the trusted allow-list"
@@ -4013,8 +4074,7 @@ fn percent_decode_route_path_once(path: &str) -> Result<String, String> {
             index += 1;
         }
     }
-    String::from_utf8(decoded)
-        .map_err(|_| "Floating app route path is not valid UTF-8".to_string())
+    String::from_utf8(decoded).map_err(|_| "Floating app route path is not valid UTF-8".to_string())
 }
 
 fn percent_decode_route_path(path: &str) -> Result<String, String> {
@@ -4042,9 +4102,10 @@ fn percent_decode_route_path(path: &str) -> Result<String, String> {
         if let Some(err) = last_error {
             return Err(err);
         }
-        let still_encoded = decoded.as_bytes().windows(3).any(|w| {
-            w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some()
-        });
+        let still_encoded = decoded
+            .as_bytes()
+            .windows(3)
+            .any(|w| w[0] == b'%' && hex_value(w[1]).is_some() && hex_value(w[2]).is_some());
         if still_encoded {
             return Err("Floating app route has excessive percent encoding".to_string());
         }
@@ -4418,8 +4479,7 @@ fn updater_public_key_text(app: &AppHandle) -> Result<String, String> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(raw)
         .map_err(|e| format!("Failed to decode updater public key: {e}"))?;
-    String::from_utf8(decoded)
-        .map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
+    String::from_utf8(decoded).map_err(|e| format!("Updater public key is not valid UTF-8: {e}"))
 }
 
 /// Download the detached `.sig` (a Base64-encoded minisign signature) for an
@@ -4448,11 +4508,7 @@ async fn download_installer_signature(signature_url: &str) -> Result<Vec<u8>, St
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = client.get(parsed).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!(
             "Signature download failed with status {}",
@@ -4507,7 +4563,9 @@ async fn verify_installer_signature(
     signature_url: &str,
 ) -> Result<(), String> {
     if signature_url.is_empty() {
-        return Err("No installer signature provided; refusing to open unverified installer".to_string());
+        return Err(
+            "No installer signature provided; refusing to open unverified installer".to_string(),
+        );
     }
     let public_key_text = updater_public_key_text(app)?;
     let sig_bytes = download_installer_signature(signature_url).await?;
@@ -4735,11 +4793,7 @@ pub async fn download_and_open_mac_installer(
         .build()
         .map_err(|e| e.to_string())?;
 
-    let mut response = client
-        .get(parsed)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut response = client.get(parsed).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("Download failed with status {}", response.status()));
     }
@@ -4795,9 +4849,9 @@ fn channel_manifest_url(channel: &str) -> Result<&'static str, &'static str> {
         "beta" => Ok(
             "https://github.com/maus-inc/mausVoice/releases/download/beta-channel/latest-beta.json",
         ),
-        "stable" => Ok(
-            "https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json",
-        ),
+        "stable" => {
+            Ok("https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json")
+        }
         _ => Err("Unsupported update channel"),
     }
 }
@@ -4817,8 +4871,7 @@ pub async fn check_for_channel_update(
     webview: tauri::Webview<tauri::Wry>,
     channel: String,
 ) -> Result<Option<ChannelUpdateMetadata>, String> {
-    let url = Url::parse(channel_manifest_url(channel.as_str())?)
-        .map_err(|e| e.to_string())?;
+    let url = Url::parse(channel_manifest_url(channel.as_str())?).map_err(|e| e.to_string())?;
     let updater = webview
         .updater_builder()
         .endpoints(vec![url])
@@ -4834,8 +4887,7 @@ pub async fn check_for_channel_update(
                 version: update.version.clone(),
                 date_unix: update.date.map(|date| date.unix_timestamp()),
                 body: update.body.clone(),
-                raw_json: serde_json::to_string(&update.raw_json)
-                    .map_err(|e| e.to_string())?,
+                raw_json: serde_json::to_string(&update.raw_json).map_err(|e| e.to_string())?,
             };
             let rid = webview.resources_table().add(update);
             Ok(Some(ChannelUpdateMetadata { rid, ..metadata }))
@@ -4867,7 +4919,10 @@ mod channel_update_tests {
     #[test]
     fn unknown_channels_are_rejected() {
         for channel in ["", "nightly", "Beta", " stable "] {
-            assert_eq!(channel_manifest_url(channel), Err("Unsupported update channel"));
+            assert_eq!(
+                channel_manifest_url(channel),
+                Err("Unsupported update channel")
+            );
         }
     }
 }
@@ -4965,7 +5020,10 @@ pub async fn floating_window_create(
     state: State<'_, crate::state::FloatingWindowState>,
 ) -> Result<FloatingWindowInfo, String> {
     let label = state.next_label();
-    let title = args.title.clone().unwrap_or_else(|| "mausVoice".to_string());
+    let title = args
+        .title
+        .clone()
+        .unwrap_or_else(|| "mausVoice".to_string());
     let (webview_url, reported_url) = if let Some(route) = args
         .route
         .as_deref()
@@ -4983,18 +5041,14 @@ pub async fn floating_window_create(
         (tauri::WebviewUrl::External(parsed_url), args.url.clone())
     };
 
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        &app,
-        label.clone(),
-        webview_url,
-    )
-    .title(title.clone())
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible(true)
-    .decorations(args.decorations.unwrap_or(true))
-    .resizable(args.resizable.unwrap_or(true))
-    .focused(args.focused.unwrap_or(false));
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, label.clone(), webview_url)
+        .title(title.clone())
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(true)
+        .decorations(args.decorations.unwrap_or(true))
+        .resizable(args.resizable.unwrap_or(true))
+        .focused(args.focused.unwrap_or(false));
 
     // Windows: apply the same renderer-backgrounding mitigations the main
     // window uses, so a composer webview cannot be suspended before it has
@@ -5089,8 +5143,6 @@ pub async fn floating_window_list(app: AppHandle) -> Result<Vec<FloatingWindowIn
     Ok(out)
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5158,10 +5210,10 @@ mod tests {
         assert_eq!(maximum_private_http_base64_decoded_length("AA=="), Ok(1));
         assert_eq!(maximum_private_http_base64_decoded_length("AAE="), Ok(2));
         assert_eq!(maximum_private_http_base64_decoded_length("AAEC"), Ok(3));
-        assert!(validate_private_http_encoded_body_length(
-            MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES
-        )
-        .is_ok());
+        assert!(
+            validate_private_http_encoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES)
+                .is_ok()
+        );
         assert_eq!(
             validate_private_http_encoded_body_length(MAX_PRIVATE_HTTP_REQUEST_BASE64_BYTES + 1),
             Err(private_http_request_body_limit_error())
@@ -5250,7 +5302,10 @@ mod tests {
             "whoami"
         );
         assert_eq!(
-            validate_terminal_command_args("where cargo").unwrap().0.binary,
+            validate_terminal_command_args("where cargo")
+                .unwrap()
+                .0
+                .binary,
             "where"
         );
         // CMD builtins are intentionally absent: without a shell they have
@@ -5272,12 +5327,21 @@ mod tests {
 
     #[test]
     fn terminal_readers_and_openers_accept_bare_filenames_but_not_urls() {
-        let file_commands = ["cat", "head", "tail", "wc", "du", "df", "open", "xdg-open", "explorer"];
-        for entry in ALLOWED_COMMANDS.iter().filter(|entry| file_commands.contains(&entry.binary)) {
+        let file_commands = [
+            "cat", "head", "tail", "wc", "du", "df", "open", "xdg-open", "explorer",
+        ];
+        for entry in ALLOWED_COMMANDS
+            .iter()
+            .filter(|entry| file_commands.contains(&entry.binary))
+        {
             let (_, args) = validate_terminal_command_args(&format!("{} notes.txt", entry.binary))
                 .expect("bare filenames stay within the existing argument policy");
             assert_eq!(args, vec!["notes.txt"]);
-            assert!(validate_terminal_command_args(&format!("{} https://example.com/file", entry.binary)).is_err());
+            assert!(validate_terminal_command_args(&format!(
+                "{} https://example.com/file",
+                entry.binary
+            ))
+            .is_err());
         }
     }
 
@@ -5382,13 +5446,11 @@ mod tests {
     fn installer_url_rejects_untrusted_hosts_schemes_and_extensions() {
         // A redirect target on an untrusted host must be refused: this is the
         // check the redirect policy applies to every hop.
-        assert!(
-            validate_installer_url(
-                &Url::parse("https://evil.com/app.pkg").unwrap(),
-                TRUSTED_REPO_NAMESPACE
-            )
-            .is_err()
-        );
+        assert!(validate_installer_url(
+            &Url::parse("https://evil.com/app.pkg").unwrap(),
+            TRUSTED_REPO_NAMESPACE
+        )
+        .is_err());
         assert!(validate_installer_url(
             &Url::parse("http://github.com/maus-inc/app.pkg").unwrap(),
             TRUSTED_REPO_NAMESPACE
@@ -5429,8 +5491,12 @@ mod tests {
 
     #[test]
     fn floating_window_allows_localhost() {
-        assert!(validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok());
-        assert!(validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok());
+        assert!(
+            validate_floating_window_url(&Url::parse("http://localhost:1420/").unwrap()).is_ok()
+        );
+        assert!(
+            validate_floating_window_url(&Url::parse("http://127.0.0.1:8080/foo").unwrap()).is_ok()
+        );
     }
 
     #[test]
@@ -5459,10 +5525,7 @@ mod tests {
 
     #[test]
     fn floating_window_treats_ipv6_loopback_as_localhost() {
-        assert!(validate_floating_window_url(
-            &Url::parse("http://[::1]:1420/").unwrap()
-        )
-        .is_ok());
+        assert!(validate_floating_window_url(&Url::parse("http://[::1]:1420/").unwrap()).is_ok());
     }
 
     #[test]
@@ -5908,9 +5971,7 @@ mod tests {
         static NEXT: AtomicU64 = AtomicU64::new(42);
         // Leaks one boxed string per test — fine for a bounded test set.
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        Box::leak(
-            format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str(),
-        )
+        Box::leak(format!("00000000-0000-4000-8000-0000000000{id:02}").into_boxed_str())
     }
 
     /// Drives a chain of hops across listeners as specified; returns the
@@ -5925,8 +5986,7 @@ mod tests {
             receivers.push(spawn_head_capturing_server(listener, responses));
         }
         let outcome =
-            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy)
-                .await;
+            execute_http_request(credentialed_post(redirect_chain_test_id(), start), policy).await;
         let mut heads = Vec::new();
         for mut receiver in receivers {
             while let Ok(head) = receiver.try_recv() {
@@ -5955,7 +6015,10 @@ mod tests {
             vec![
                 (
                     listener_a,
-                    vec![redirect_response(&url_hop), REDIRECT_OK_RESPONSE.to_string()],
+                    vec![
+                        redirect_response(&url_hop),
+                        REDIRECT_OK_RESPONSE.to_string(),
+                    ],
                 ),
                 (listener_b, vec![redirect_response(&url_back)]),
             ],
@@ -5989,7 +6052,10 @@ mod tests {
         let (outcome, heads) = run_redirect_chain(
             vec![(
                 listener,
-                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+                vec![
+                    redirect_response(&url_next),
+                    REDIRECT_OK_RESPONSE.to_string(),
+                ],
             )],
             &url_start,
             HttpRequestPolicy::PrivateNetwork,
@@ -6061,7 +6127,10 @@ mod tests {
         let (outcome, heads) = run_redirect_chain(
             vec![(
                 listener,
-                vec![redirect_response(&url_next), REDIRECT_OK_RESPONSE.to_string()],
+                vec![
+                    redirect_response(&url_next),
+                    REDIRECT_OK_RESPONSE.to_string(),
+                ],
             )],
             &url_start,
             HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: base },
@@ -6149,10 +6218,12 @@ mod tests {
         let private = HttpRequestPolicy::PrivateNetwork;
         let https_base = Url::parse("https://api.example.com").unwrap();
         let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
-        let https_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
-        let http_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let https_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: https_base,
+        };
+        let http_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: http_base,
+        };
 
         for ip in [
             // Cloud metadata and generic link-local.
@@ -6181,11 +6252,13 @@ mod tests {
 
         let private = HttpRequestPolicy::PrivateNetwork;
         let http_base = Url::parse("http://192.168.1.20:8080").unwrap();
-        let http_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: http_base };
+        let http_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: http_base,
+        };
         let https_base = Url::parse("https://api.example.com").unwrap();
-        let https_policy =
-            HttpRequestPolicy::SavedOpenAiCompatibleEndpoint { base_url: https_base };
+        let https_policy = HttpRequestPolicy::SavedOpenAiCompatibleEndpoint {
+            base_url: https_base,
+        };
 
         // A poisoned `.local`/`localhost` answer resolving to a public address
         // must fail the plaintext policies after resolution.
@@ -6369,8 +6442,8 @@ mod tests {
         // Mirrors the confinement check in `transcription_import_audio`: a path
         // outside the allowed import roots must be rejected so the command
         // cannot be used as a filesystem read oracle.
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-confine-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-confine-{}", std::process::id()));
         let allowed_dir = tmp.join("allowed");
         std::fs::create_dir_all(&allowed_dir).unwrap();
         let allowed = vec![AuthorizedAudioRoot::open(&allowed_dir).unwrap()];
@@ -6385,8 +6458,8 @@ mod tests {
     fn import_file_inside_allowed_root_succeeds() {
         use std::io::Read;
 
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-cap-ok-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-cap-ok-{}", std::process::id()));
         let allowed_dir = tmp.join("allowed");
         std::fs::create_dir_all(&allowed_dir).unwrap();
         let allowed = vec![AuthorizedAudioRoot::open(&allowed_dir).unwrap()];
@@ -6404,8 +6477,8 @@ mod tests {
 
     #[test]
     fn import_file_outside_allowed_root_is_rejected() {
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-cap-out-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-cap-out-{}", std::process::id()));
         let allowed_dir = tmp.join("allowed");
         std::fs::create_dir_all(&allowed_dir).unwrap();
         let allowed = vec![AuthorizedAudioRoot::open(&allowed_dir).unwrap()];
@@ -6426,8 +6499,8 @@ mod tests {
         #[cfg(windows)]
         use std::os::windows::fs::symlink_file as symlink;
 
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-cap-sym-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-cap-sym-{}", std::process::id()));
         let allowed_dir = tmp.join("allowed");
         std::fs::create_dir_all(&allowed_dir).unwrap();
         let allowed = vec![AuthorizedAudioRoot::open(&allowed_dir).unwrap()];
@@ -6457,8 +6530,8 @@ mod tests {
 
     #[test]
     fn import_directory_or_special_file_is_rejected() {
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-cap-dir-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-cap-dir-{}", std::process::id()));
         let allowed_dir = tmp.join("allowed");
         let subdir = allowed_dir.join("nested_dir");
         std::fs::create_dir_all(&subdir).unwrap();
@@ -6493,8 +6566,8 @@ mod tests {
         #[cfg(unix)]
         use std::os::unix::fs::symlink;
 
-        let tmp = std::env::temp_dir()
-            .join(format!("mausvoice-import-race-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("mausvoice-import-race-{}", std::process::id()));
         let real_root = tmp.join("real_root");
         let evil_root = tmp.join("evil_root");
         std::fs::create_dir_all(&real_root).unwrap();
@@ -6531,10 +6604,8 @@ mod tests {
 
     #[test]
     fn clear_local_data_deletes_derived_names_and_only_sweeps_wavs() {
-        let root = std::env::temp_dir().join(format!(
-            "mausvoice-clear-local-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("mausvoice-clear-local-{}", std::process::id()));
         let app_data = root.join("app-data");
         let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
             .expect("managed audio directory must be openable");
@@ -6551,13 +6622,19 @@ mod tests {
         // The list contains IDs collected from non-null database markers, not
         // mutable filesystem paths. It therefore cannot name `outside.wav`.
         delete_listed_audio_files(&held_audio_dir, &["known-id".to_string()]);
-        assert!(!expected.exists(), "the derived managed file must be deleted");
+        assert!(
+            !expected.exists(),
+            "the derived managed file must be deleted"
+        );
         assert!(outside.exists(), "an outside file must remain untouched");
 
         sweep_orphaned_wavs(&held_audio_dir);
         assert!(!orphan.exists(), "the held-root WAV orphan must be removed");
         assert!(other.exists(), "non-WAV files must not be swept");
-        assert!(outside.exists(), "the sweep must not reach outside the root");
+        assert!(
+            outside.exists(),
+            "the sweep must not reach outside the root"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -6600,10 +6677,8 @@ mod tests {
 
     #[test]
     fn installer_redirect_validates_each_hop_and_caps_depth() {
-        let ok = Url::parse(
-            "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg",
-        )
-        .unwrap();
+        let ok = Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+            .unwrap();
         let evil = Url::parse("https://evil.com/app.pkg").unwrap();
         assert!(installer_redirect_allowed(0, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
         assert!(installer_redirect_allowed(9, &ok, TRUSTED_REPO_NAMESPACE).is_ok());
@@ -6687,7 +6762,10 @@ mod tests {
         server.await.expect("test server completes");
 
         assert!(result.is_err(), "a truncated HTTP body must fail");
-        assert!(was_removed, "a failed transfer must remove its partial file");
+        assert!(
+            was_removed,
+            "a failed transfer must remove its partial file"
+        );
     }
 
     #[test]
@@ -6740,10 +6818,7 @@ mod installer_url_tests {
 
         // A release asset from a *different* repository must be rejected.
         assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/evil/repo/releases/download/v1/x.dmg"
-            )
-            .unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.dmg").unwrap()
         )
         .is_err());
 
@@ -6758,10 +6833,8 @@ mod installer_url_tests {
 
         // Non-installer extensions are rejected.
         assert!(validate_initial_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt"
-            )
-            .unwrap()
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v0.1.5/notes.txt")
+                .unwrap()
         )
         .is_err());
     }
@@ -6799,10 +6872,8 @@ mod installer_url_tests {
 
         // A github.com hop that stays within the trusted repo is still allowed.
         assert!(validate_installer_url(
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg"
-            )
-            .unwrap(),
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/app.pkg")
+                .unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
@@ -6818,10 +6889,8 @@ mod installer_url_tests {
         .is_err());
         assert!(signature_redirect_allowed(
             1,
-            &Url::parse(
-                "https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig"
-            )
-            .unwrap(),
+            &Url::parse("https://github.com/maus-inc/mausVoice/releases/download/v1/x.sig")
+                .unwrap(),
             TRUSTED_REPO_NAMESPACE
         )
         .is_ok());
@@ -6849,8 +6918,7 @@ mod installer_url_tests {
 
         // A release asset from a *different* repository is rejected.
         assert!(validate_initial_signature_url(
-            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig")
-                .unwrap()
+            &Url::parse("https://github.com/evil/repo/releases/download/v1/x.sig").unwrap()
         )
         .is_err());
 

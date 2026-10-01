@@ -52,10 +52,18 @@ impl DragBounds {
         center_offset: (f64, f64),
         edges: EdgeMask,
     ) {
-        if !edges.left { self.min_x = region.x - center_offset.0; }
-        if !edges.right { self.max_x = region.right() - center_offset.0; }
-        if !edges.top { self.min_y = region.y - center_offset.1; }
-        if !edges.bottom { self.max_y = region.bottom() - center_offset.1; }
+        if !edges.left {
+            self.min_x = region.x - center_offset.0;
+        }
+        if !edges.right {
+            self.max_x = region.right() - center_offset.0;
+        }
+        if !edges.top {
+            self.min_y = region.y - center_offset.1;
+        }
+        if !edges.bottom {
+            self.max_y = region.bottom() - center_offset.1;
+        }
     }
 
     /// Collapse impossible ranges toward a shared seam when only one side is
@@ -87,21 +95,11 @@ impl DragBounds {
     }
 }
 
-fn collapsed_value(
-    min: f64,
-    max: f64,
-    min_exposed: bool,
-    max_exposed: bool,
-    current: f64,
-) -> f64 {
+fn collapsed_value(min: f64, max: f64, min_exposed: bool, max_exposed: bool, current: f64) -> f64 {
     match (!min_exposed, !max_exposed) {
         (true, false) => min,
         (false, true) => max,
-        (true, true)
-            if current.is_finite() && (current - max).abs() < (current - min).abs() =>
-        {
-            max
-        }
+        (true, true) if current.is_finite() && (current - max).abs() < (current - min).abs() => max,
         _ => min,
     }
 }
@@ -288,7 +286,8 @@ impl DragController {
         neighbors: &[MonitorRect],
         seam_point: (f64, f64),
     ) -> DragRegion {
-        self.seam_tracker.resolve(monitor, work_area, neighbors, seam_point)
+        self.seam_tracker
+            .resolve(monitor, work_area, neighbors, seam_point)
     }
 
     /// Release velocity latched by the last [`DragController::end_drag`], in
@@ -337,8 +336,10 @@ impl DragController {
         _now: f64,
     ) {
         // Ignore invalid geometry without discarding a valid in-flight gesture.
-        if !grab_dx.is_finite() || !grab_dy.is_finite()
-            || !window_x.is_finite() || !window_y.is_finite()
+        if !grab_dx.is_finite()
+            || !grab_dy.is_finite()
+            || !window_x.is_finite()
+            || !window_y.is_finite()
         {
             return;
         }
@@ -483,7 +484,11 @@ impl DragController {
         let (vx, vy) = self.estimate_velocity(frame.now);
         // Reduced motion keeps the gap with the full ease: zero velocity
         // reads as no fling, so the blend stays at one.
-        let (evx, evy) = if frame.reduced_motion { (0.0, 0.0) } else { (vx, vy) };
+        let (evx, evy) = if frame.reduced_motion {
+            (0.0, 0.0)
+        } else {
+            (vx, vy)
+        };
         let (x, y) = if frame.pointer_x.is_finite() && frame.pointer_y.is_finite() {
             let (cx, cy) = frame.bounds.clamp_point(
                 frame.pointer_x - self.grab_dx,
@@ -526,32 +531,43 @@ impl DragController {
                 // Recover the raw release origin, not the already edge-mapped
                 // held output. Map the destination exactly once; both spring
                 // state and target then remain in displayed coordinates.
-                let (px, py) = self.release_anchor.unwrap_or((
-                    self.settle_x + self.grab_dx,
-                    self.settle_y + self.grab_dy,
-                ));
-                let origin = frame.bounds.clamp_point(px - self.grab_dx, py - self.grab_dy);
+                let (px, py) = self
+                    .release_anchor
+                    .unwrap_or((self.settle_x + self.grab_dx, self.settle_y + self.grab_dy));
+                let origin = frame
+                    .bounds
+                    .clamp_point(px - self.grab_dx, py - self.grab_dy);
                 let (gx, gy) = if frame.reduced_motion || speed < SETTLE_MIN_FLING_SPEED {
                     (0.0, 0.0)
                 } else {
-                    bounded_glide(self.release_vx * SETTLE_GLIDE_TIME, self.release_vy * SETTLE_GLIDE_TIME)
+                    bounded_glide(
+                        self.release_vx * SETTLE_GLIDE_TIME,
+                        self.release_vy * SETTLE_GLIDE_TIME,
+                    )
                 };
                 let raw = frame.bounds.clamp_point(origin.0 + gx, origin.1 + gy);
                 let bounds = frame.bounds;
                 let mapped = ease_point(
-                    raw.0, raw.1, 0.0, 0.0,
+                    raw.0,
+                    raw.1,
+                    0.0,
+                    0.0,
                     (bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y),
                     frame.edge_work,
                 );
                 // The edge map can expand distances inside its transition.
                 // Preserve the glide cap in displayed coordinates as well.
                 let (dx, dy) = bounded_glide(mapped.0 - self.settle_x, mapped.1 - self.settle_y);
-                let clamped = frame.bounds.clamp_point(self.settle_x + dx, self.settle_y + dy);
+                let clamped = frame
+                    .bounds
+                    .clamp_point(self.settle_x + dx, self.settle_y + dy);
                 self.settle_target = Some(clamped);
                 // Critical damping alone cannot prevent overshoot when the
                 // launch velocity exceeds the distance remaining to the cap.
-                self.settle_vx = bounded_launch_velocity(self.release_vx, clamped.0 - self.settle_x);
-                self.settle_vy = bounded_launch_velocity(self.release_vy, clamped.1 - self.settle_y);
+                self.settle_vx =
+                    bounded_launch_velocity(self.release_vx, clamped.0 - self.settle_x);
+                self.settle_vy =
+                    bounded_launch_velocity(self.release_vy, clamped.1 - self.settle_y);
                 clamped
             }
         };
@@ -573,10 +589,18 @@ impl DragController {
         }
 
         let (x, mut vx) = crate::spring::spring_integrate(
-            self.settle_x, self.settle_vx, tx, SETTLE_STIFFNESS, dt,
+            self.settle_x,
+            self.settle_vx,
+            tx,
+            SETTLE_STIFFNESS,
+            dt,
         );
         let (y, mut vy) = crate::spring::spring_integrate(
-            self.settle_y, self.settle_vy, ty, SETTLE_STIFFNESS, dt,
+            self.settle_y,
+            self.settle_vy,
+            ty,
+            SETTLE_STIFFNESS,
+            dt,
         );
         // Never feed an edge-mapped output back through the edge map. That
         // moves the spring's equilibrium away from its target and causes a
@@ -721,12 +745,20 @@ mod tests {
             drag.begin_drag(4.0, 5.0, 100.0, 200.0, 0.0);
             drag.push_sample(104.0, 205.0, 0.0);
             drag.push_sample(114.0, 205.0, 0.01);
-            if settling { drag.end_drag(0.02); }
+            if settling {
+                drag.end_drag(0.02);
+            }
             let before = drag.clone();
             drag.begin_drag(f64::NAN, 0.0, 0.0, 0.0, 0.03);
             assert_eq!(drag.phase, before.phase);
-            assert_eq!((drag.grab_dx, drag.grab_dy), (before.grab_dx, before.grab_dy));
-            assert_eq!((drag.window_x, drag.window_y), (before.window_x, before.window_y));
+            assert_eq!(
+                (drag.grab_dx, drag.grab_dy),
+                (before.grab_dx, before.grab_dy)
+            );
+            assert_eq!(
+                (drag.window_x, drag.window_y),
+                (before.window_x, before.window_y)
+            );
             assert_eq!(drag.sample_len, before.sample_len);
             assert_eq!(drag.release_velocity(), before.release_velocity());
             assert_eq!(drag.release_anchor, before.release_anchor);
@@ -770,7 +802,12 @@ mod tests {
                     let mut drag = DragController::new();
                     drag.begin_drag(0.0, 0.0, 0.0, 500.0, 0.0);
                     let mut frame = held_frame(if moving { 24.0 } else { 0.0 }, 500.0, 0.0);
-                    frame.bounds = DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1920.0, max_y: 1080.0 };
+                    frame.bounds = DragBounds {
+                        min_x: 0.0,
+                        min_y: 0.0,
+                        max_x: 1920.0,
+                        max_y: 1080.0,
+                    };
                     frame.edge_work = Some(EdgeWork::all(1920.0, 1080.0));
                     frame.reduced_motion = reduced_motion;
                     drag.advance(&frame);
@@ -784,7 +821,11 @@ mod tests {
                     for _ in 0..(hz as usize) {
                         frame.now += frame.dt;
                         let out = drag.advance(&frame);
-                        assert!(out.x >= previous - 1e-9, "edge settle reversed: {previous} -> {}", out.x);
+                        assert!(
+                            out.x >= previous - 1e-9,
+                            "edge settle reversed: {previous} -> {}",
+                            out.x
+                        );
                         assert!(out.x <= crate::edge::EDGE_REST_GAP + 1e-9);
                         previous = out.x;
                         if out.settled {
@@ -810,12 +851,21 @@ mod tests {
             pointer_y: 500.0,
             now: 0.05,
             dt: FRAME_DT,
-            bounds: DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1920.0, max_y: 1080.0 },
+            bounds: DragBounds {
+                min_x: 0.0,
+                min_y: 0.0,
+                max_x: 1920.0,
+                max_y: 1080.0,
+            },
             held: true,
             reduced_motion: false,
             edge_work: Some(EdgeWork::all(1920.0, 1080.0)),
         });
-        assert!(out.x > 2.0 && out.x <= 12.5, "edge should ease, got {}", out.x);
+        assert!(
+            out.x > 2.0 && out.x <= 12.5,
+            "edge should ease, got {}",
+            out.x
+        );
         assert_eq!(out.y, 500.0);
     }
 
@@ -860,9 +910,24 @@ mod tests {
 
     #[test]
     fn shared_seam_bounds_adjust_only_connected_edges() {
-        let region = MonitorRect { x: 100.0, y: 200.0, width: 300.0, height: 400.0 };
-        let edges = EdgeMask { left: false, right: true, top: true, bottom: false };
-        let mut bounds = DragBounds { min_x: 10.0, min_y: 20.0, max_x: 190.0, max_y: 180.0 };
+        let region = MonitorRect {
+            x: 100.0,
+            y: 200.0,
+            width: 300.0,
+            height: 400.0,
+        };
+        let edges = EdgeMask {
+            left: false,
+            right: true,
+            top: true,
+            bottom: false,
+        };
+        let mut bounds = DragBounds {
+            min_x: 10.0,
+            min_y: 20.0,
+            max_x: 190.0,
+            max_y: 180.0,
+        };
         bounds.apply_shared_seam_bounds(region, (40.0, 50.0), edges);
         assert_eq!(bounds.min_x, 60.0);
         assert_eq!(bounds.min_y, 20.0);
@@ -872,9 +937,23 @@ mod tests {
 
     #[test]
     fn ending_a_drag_clears_the_partial_seam_latch() {
-        let monitor = MonitorRect { x: 0.0, y: 0.0, width: 1200.0, height: 1000.0 };
-        let work = MonitorRect { width: 1180.0, height: 900.0, ..monitor };
-        let neighbor = MonitorRect { x: 1200.0, y: 200.0, width: 1000.0, height: 600.0 };
+        let monitor = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1200.0,
+            height: 1000.0,
+        };
+        let work = MonitorRect {
+            width: 1180.0,
+            height: 900.0,
+            ..monitor
+        };
+        let neighbor = MonitorRect {
+            x: 1200.0,
+            y: 200.0,
+            width: 1000.0,
+            height: 600.0,
+        };
         let mut drag = DragController::new();
         drag.begin_drag(0.0, 0.0, 100.0, 100.0, 0.0);
 
@@ -890,9 +969,24 @@ mod tests {
 
     #[test]
     fn oversized_footprint_collapses_to_the_shared_seam_plane() {
-        let region = MonitorRect { x: 0.0, y: 0.0, width: 300.0, height: 200.0 };
-        let edges = EdgeMask { left: true, right: false, top: true, bottom: true };
-        let mut bounds = DragBounds { min_x: 250.0, min_y: 0.0, max_x: 100.0, max_y: 180.0 };
+        let region = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 200.0,
+        };
+        let edges = EdgeMask {
+            left: true,
+            right: false,
+            top: true,
+            bottom: true,
+        };
+        let mut bounds = DragBounds {
+            min_x: 250.0,
+            min_y: 0.0,
+            max_x: 100.0,
+            max_y: 180.0,
+        };
         bounds.apply_shared_seam_bounds(region, (200.0, 50.0), edges);
         bounds.collapse_inverted(edges, (200.0, 50.0));
         assert_eq!(bounds.min_x, 100.0);
@@ -907,7 +1001,12 @@ mod tests {
             max_x: 800.0,
             max_y: 600.0,
         };
-        let edges = EdgeMask { left: false, right: true, top: true, bottom: false };
+        let edges = EdgeMask {
+            left: false,
+            right: true,
+            top: true,
+            bottom: false,
+        };
         bounds.collapse_inverted(edges, (950.0, 650.0));
         assert_eq!(bounds.min_x, 900.0);
         assert_eq!(bounds.max_x, 900.0);
@@ -1070,14 +1169,22 @@ mod tests {
                 let mut drag = DragController::new();
                 drag.begin_drag(0.0, 0.0, 0.0, 0.0, 0.0);
                 drag.advance(&held_frame(0.0, 0.0, 0.001));
-                let release = drag.advance(&held_frame(direction * 140.0, direction * 140.0, 0.011));
+                let release =
+                    drag.advance(&held_frame(direction * 140.0, direction * 140.0, 0.011));
                 drag.end_drag(0.011);
                 let mut done = false;
                 for frame in 1..=150 {
                     let out = drag.advance(&free_frame(0.011 + frame as f64 * dt, dt));
-                    let distance = ((out.x - release.x).powi(2) + (out.y - release.y).powi(2)).sqrt();
-                    assert!(distance <= SETTLE_MAX_GLIDE + 1e-6, "glide exceeded cap: {distance}");
-                    if out.settled { done = true; break; }
+                    let distance =
+                        ((out.x - release.x).powi(2) + (out.y - release.y).powi(2)).sqrt();
+                    assert!(
+                        distance <= SETTLE_MAX_GLIDE + 1e-6,
+                        "glide exceeded cap: {distance}"
+                    );
+                    if out.settled {
+                        done = true;
+                        break;
+                    }
                 }
                 assert!(done);
             }
@@ -1343,9 +1450,19 @@ mod tests {
             let mut drag = DragController::new();
             drag.begin_drag(0.0, 0.0, 0.0, 0.0, 0.0);
             let mut frame = DragFrame {
-                pointer_x: 1.0, pointer_y: 1.0, now: 0.01, dt: 0.0,
-                bounds: DragBounds { min_x: 0.0, min_y: 0.0, max_x: 1000.0, max_y: 1000.0 },
-                edge_work, held: true, reduced_motion: true,
+                pointer_x: 1.0,
+                pointer_y: 1.0,
+                now: 0.01,
+                dt: 0.0,
+                bounds: DragBounds {
+                    min_x: 0.0,
+                    min_y: 0.0,
+                    max_x: 1000.0,
+                    max_y: 1000.0,
+                },
+                edge_work,
+                held: true,
+                reduced_motion: true,
             };
             let held = drag.advance(&frame);
             assert_eq!(held.phase, DragPhase::Held);

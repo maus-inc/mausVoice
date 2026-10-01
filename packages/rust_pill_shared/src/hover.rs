@@ -436,7 +436,10 @@ mod tests {
             hover.advance(&frame(true, 100.0, 1.0));
             hover.advance(&frame(true, -1000.0, stale_time));
             let out = hover.advance(&frame(true, 100.0, 1.0 + ARM_DWELL + 0.01));
-            assert!(out.hovered && out.entered, "stale time {stale_time} delayed hover");
+            assert!(
+                out.hovered && out.entered,
+                "stale time {stale_time} delayed hover"
+            );
         }
     }
 

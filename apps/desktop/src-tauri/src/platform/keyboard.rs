@@ -1425,4 +1425,4 @@ mod lifecycle_tests {
         assert!(super::stop_key_listener().is_ok());
         assert!(super::stop_key_listener().is_ok());
     }
-    }
+}

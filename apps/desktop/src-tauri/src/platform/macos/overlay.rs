@@ -230,17 +230,13 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                                 "action": action.as_str(),
                                 "text": text,
                             });
-                            if let Err(err) =
-                                app.emit_to("main", "pill-review-decision", payload)
-                            {
-                                log::error!(
-                                    "Failed to deliver a pill review decision: {err}"
-                                );
+                            if let Err(err) = app.emit_to("main", "pill-review-decision", payload) {
+                                log::error!("Failed to deliver a pill review decision: {err}");
                             }
                         }
-                        _ => log::warn!(
-                            "Ignoring an unreadable review decision from the macOS pill"
-                        ),
+                        _ => {
+                            log::warn!("Ignoring an unreadable review decision from the macOS pill")
+                        }
                     }
                 }
                 OutMessage::StyleSwitch { direction } => {
@@ -261,7 +257,11 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     crate::system::audio_feedback::play_thock(&kind);
                 }
                 OutMessage::Hover { .. } => {}
-                OutMessage::PositionChanged { has_saved_position, rect, monitor } => {
+                OutMessage::PositionChanged {
+                    has_saved_position,
+                    rect,
+                    monitor,
+                } => {
                     let rect_json = rect.map(|r| {
                         serde_json::json!({ "x": r.x, "y": r.y, "width": r.width, "height": r.height })
                     });

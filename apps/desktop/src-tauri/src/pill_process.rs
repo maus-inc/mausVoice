@@ -393,7 +393,10 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
             Some(PillEvent::TypedMessage { text })
         }
         "open_conversation" => {
-            let conversation_id = val.get("conversation_id").and_then(|v| v.as_str())?.to_string();
+            let conversation_id = val
+                .get("conversation_id")
+                .and_then(|v| v.as_str())?
+                .to_string();
             Some(PillEvent::OpenConversation { conversation_id })
         }
         "resolve_permission" => {
@@ -716,15 +719,11 @@ mod style_switch_parse_tests {
     #[test]
     fn parses_canonical_pill_line() {
         assert_eq!(
-            parse_style_switch_direction(
-                r#"{"type":"style_switch","direction":"forward"}"#
-            ),
+            parse_style_switch_direction(r#"{"type":"style_switch","direction":"forward"}"#),
             Some(PillStyleSwitchDirection::Forward)
         );
         assert_eq!(
-            parse_style_switch_direction(
-                r#"{"type":"style_switch","direction":"backward"}"#
-            ),
+            parse_style_switch_direction(r#"{"type":"style_switch","direction":"backward"}"#),
             Some(PillStyleSwitchDirection::Backward)
         );
     }
@@ -732,9 +731,7 @@ mod style_switch_parse_tests {
     #[test]
     fn accepts_trailing_newline_and_mixed_case() {
         assert_eq!(
-            parse_style_switch_direction(
-                "{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"
-            ),
+            parse_style_switch_direction("{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"),
             Some(PillStyleSwitchDirection::Forward)
         );
         assert_eq!(
@@ -747,10 +744,7 @@ mod style_switch_parse_tests {
 
     #[test]
     fn rejects_malformed_or_unrelated_lines() {
-        assert_eq!(
-            parse_style_switch_direction(r#"{"type":"click"}"#),
-            None
-        );
+        assert_eq!(parse_style_switch_direction(r#"{"type":"click"}"#), None);
         assert_eq!(
             parse_style_switch_direction(r#"{"type":"style_switch","direction":"sideways"}"#),
             None
@@ -776,8 +770,7 @@ mod review_decision_parse_tests {
             ("open", PillReviewAction::Open),
             ("edit", PillReviewAction::Edit),
         ] {
-            let line =
-                format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
+            let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
             assert_eq!(
                 parse_review_decision(&line),
                 Some(("r1".to_string(), expected, None))
@@ -843,9 +836,7 @@ mod review_decision_parse_tests {
             None
         );
         assert_eq!(
-            parse_review_decision(
-                r#"{"type":"review_decision","review_id":"","action":"insert"}"#
-            ),
+            parse_review_decision(r#"{"type":"review_decision","review_id":"","action":"insert"}"#),
             None
         );
         assert_eq!(parse_review_decision(r#"{"type":"click"}"#), None);
@@ -894,12 +885,23 @@ mod pill_event_dispatch_tests {
 
     #[test]
     fn dispatches_other_valid_events_by_exact_type() {
-        assert_eq!(parse_pill_event(r#"{"type":"click"}"#), Some(PillEvent::Click));
-        assert_eq!(parse_pill_event(r#"{"type":"agent_talk"}"#), Some(PillEvent::AgentTalk));
-        assert_eq!(parse_pill_event(r#"{"type":"cancel_dictation"}"#), Some(PillEvent::CancelDictation));
+        assert_eq!(
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"agent_talk"}"#),
+            Some(PillEvent::AgentTalk)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"cancel_dictation"}"#),
+            Some(PillEvent::CancelDictation)
+        );
         assert_eq!(
             parse_pill_event(r#"{"type":"typed_message","text":"hello world"}"#),
-            Some(PillEvent::TypedMessage { text: "hello world".to_string() })
+            Some(PillEvent::TypedMessage {
+                text: "hello world".to_string()
+            })
         );
     }
 }

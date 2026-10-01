@@ -341,7 +341,8 @@ impl PillState {
     /// Shared paint/input visibility during a selector side transition.
     pub(crate) fn tooltip_opacity(&self) -> f64 {
         rust_pill_shared::placement::tooltip_opacity(
-            self.tooltip_t.get(), self.selector_placement.borrow().blend(),
+            self.tooltip_t.get(),
+            self.selector_placement.borrow().blend(),
         )
     }
 
@@ -398,8 +399,11 @@ impl PillState {
 
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         content_origin(
-            self.alloc_width.get(), self.alloc_height.get(),
-            self.draw_width.get(), self.draw_height.get(), self.below_slot_extra(),
+            self.alloc_width.get(),
+            self.alloc_height.get(),
+            self.draw_width.get(),
+            self.draw_height.get(),
+            self.below_slot_extra(),
         )
     }
 }
@@ -412,9 +416,15 @@ pub(crate) fn content_canvas_height(allocation_height: f64, below_slot: f64) -> 
 
 fn content_origin(aw: f64, ah: f64, dw: f64, dh: f64, below_slot: f64) -> (f64, f64) {
     if aw > 0.0 && ah > 0.0 {
-        ((aw - dw) / 2.0, content_canvas_height(ah, below_slot) - dh - MARGIN_BOTTOM as f64)
+        (
+            (aw - dw) / 2.0,
+            content_canvas_height(ah, below_slot) - dh - MARGIN_BOTTOM as f64,
+        )
     } else {
-        ((WINDOW_W_TYPING as f64 - dw) / 2.0, WINDOW_H_TYPING as f64 - dh)
+        (
+            (WINDOW_W_TYPING as f64 - dw) / 2.0,
+            WINDOW_H_TYPING as f64 - dh,
+        )
     }
 }
 
@@ -449,7 +459,9 @@ mod tests {
 
     #[test]
     fn backends_without_a_selector_reserve_keep_the_existing_origin() {
-        assert_eq!(content_origin(1000.0, 800.0, 200.0, 100.0, 0.0),
-            (400.0, 700.0 - MARGIN_BOTTOM as f64));
+        assert_eq!(
+            content_origin(1000.0, 800.0, 200.0, 100.0, 0.0),
+            (400.0, 700.0 - MARGIN_BOTTOM as f64)
+        );
     }
 }

@@ -93,10 +93,7 @@ pub fn path_distances(path: &[(f64, f64)]) -> (Vec<f64>, f64) {
 /// inert: no haptic/audio event and no second action. A click on an unavailable
 /// action is also inert. Both conditions stay identical on every platform
 /// because the decision lives in this shared crate.
-pub const fn can_emit_interaction_feedback(
-    action_available: bool,
-    is_loading: bool,
-) -> bool {
+pub const fn can_emit_interaction_feedback(action_available: bool, is_loading: bool) -> bool {
     action_available && !is_loading
 }
 
@@ -541,12 +538,8 @@ pub fn ring_head_disc(k: usize, steps: usize) -> (f64, f64) {
 /// passes sum to a falloff that is darkest exactly under the ring and gone
 /// within a few pixels; the combined alpha is kept low enough that dark
 /// backdrops are unaffected.
-pub const RING_SHADOW_LAYERS: &[(f64, f64)] = &[
-    (2.0, 0.07),
-    (4.0, 0.05),
-    (6.0, 0.035),
-    (8.0, 0.02),
-];
+pub const RING_SHADOW_LAYERS: &[(f64, f64)] =
+    &[(2.0, 0.07), (4.0, 0.05), (6.0, 0.035), (8.0, 0.02)];
 
 /// Per-disc alpha of the dark underlay beneath the comet head. It mirrors the
 /// head's concentric-disc shading so the soft silver blob also separates from
@@ -685,7 +678,11 @@ impl RingLayers {
     fn discs(&self, peak_alpha: f64) -> impl Iterator<Item = RingHeadDisc> {
         // An empty range is how "too faint to draw" is expressed, so the
         // decision stays here instead of being re-derived by every renderer.
-        let steps = if peak_alpha > RING_HEAD_FADE_CUTOFF { RING_HEAD_STEPS } else { 0 };
+        let steps = if peak_alpha > RING_HEAD_FADE_CUTOFF {
+            RING_HEAD_STEPS
+        } else {
+            0
+        };
         let (cx, cy, head_radius) = (self.head_x, self.head_y, self.head_radius);
         (1..=steps).rev().map(move |k| {
             let (radius_frac, falloff) = ring_head_disc(k, steps);
@@ -776,11 +773,7 @@ pub fn style_tooltip_visible(
     hovered: bool,
     expand_t: f64,
 ) -> bool {
-    !assistant_active
-        && style_count > 1
-        && !paused
-        && hovered
-        && expand_t > STYLE_TOOLTIP_EXPAND_T
+    !assistant_active && style_count > 1 && !paused && hovered && expand_t > STYLE_TOOLTIP_EXPAND_T
 }
 
 /// Spring target (0.0 or 1.0) for the style tooltip, combining the pure
@@ -936,7 +929,11 @@ pub fn resample_perimeter(
         }
         let d0 = distances[seg - 1];
         let d1 = distances[seg];
-        let k = if d1 > d0 { (target - d0) / (d1 - d0) } else { 0.0 };
+        let k = if d1 > d0 {
+            (target - d0) / (d1 - d0)
+        } else {
+            0.0
+        };
         let (x0, y0) = path[seg - 1];
         let (x1, y1) = path[seg];
         out.push((x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, target));
@@ -1087,7 +1084,8 @@ mod tests {
 
     #[test]
     fn perimeter_closes_back_to_start() {
-        let pts = rounded_rectangle_perimeter(10.0, 20.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let pts =
+            rounded_rectangle_perimeter(10.0, 20.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
         assert!(pts.len() > 8);
         let first = pts[0];
         let last = *pts.last().unwrap();
@@ -1098,7 +1096,8 @@ mod tests {
 
     #[test]
     fn zero_radius_produces_a_rectangle() {
-        let pts = rounded_rectangle_perimeter(0.0, 0.0, 100.0, 50.0, 0.0, RoundedRectArcSteps::Exact(1));
+        let pts =
+            rounded_rectangle_perimeter(0.0, 0.0, 100.0, 50.0, 0.0, RoundedRectArcSteps::Exact(1));
         // With r=0 the "arcs" collapse to the corners: 4 edge endpoints +
         // 4 one-step corners + the closing start point = 9.
         assert_eq!(pts.len(), 9);
@@ -1108,8 +1107,10 @@ mod tests {
 
     #[test]
     fn auto_steps_follow_radius() {
-        let small = rounded_rectangle_perimeter(0.0, 0.0, 100.0, 32.0, 8.0, RoundedRectArcSteps::Auto);
-        let big = rounded_rectangle_perimeter(0.0, 0.0, 400.0, 200.0, 100.0, RoundedRectArcSteps::Auto);
+        let small =
+            rounded_rectangle_perimeter(0.0, 0.0, 100.0, 32.0, 8.0, RoundedRectArcSteps::Auto);
+        let big =
+            rounded_rectangle_perimeter(0.0, 0.0, 400.0, 200.0, 100.0, RoundedRectArcSteps::Auto);
         // Bigger radius -> more steps; the minimum is 6.
         assert!(big.len() > small.len());
         assert!(small.len() >= 6 * 4 + 5);
@@ -1198,10 +1199,10 @@ mod tests {
     fn hold_progress_decelerates_into_completion() {
         // Smootherstep: the last slice of time must advance less than a slice
         // taken mid-ramp, otherwise the ring arrives at full speed.
-        let mid = hold_progress(0.30, HOLD_DELAY, DURATION)
-            - hold_progress(0.29, HOLD_DELAY, DURATION);
-        let end = hold_progress(0.45, HOLD_DELAY, DURATION)
-            - hold_progress(0.44, HOLD_DELAY, DURATION);
+        let mid =
+            hold_progress(0.30, HOLD_DELAY, DURATION) - hold_progress(0.29, HOLD_DELAY, DURATION);
+        let end =
+            hold_progress(0.45, HOLD_DELAY, DURATION) - hold_progress(0.44, HOLD_DELAY, DURATION);
         assert!(end < mid, "expected deceleration: end {end} >= mid {mid}");
     }
 
@@ -1234,9 +1235,8 @@ mod tests {
         for i in 0..=40 {
             let p = start + (1.0 - start) * i as f64 / 40.0;
             let head = total * p;
-            let step = (ring_envelope(head, head, p, total)
-                - ring_envelope(0.0, head, p, total))
-            .abs();
+            let step =
+                (ring_envelope(head, head, p, total) - ring_envelope(0.0, head, p, total)).abs();
             assert!(step <= prev + 1e-9, "seam step grew at p={p}");
             prev = step;
         }
@@ -1269,7 +1269,10 @@ mod tests {
         let head = total * p;
         let at_head = ring_envelope(head, head, p, total);
         let behind = ring_envelope(head - 100.0, head, p, total);
-        assert!(at_head > behind, "head {at_head} not brighter than {behind}");
+        assert!(
+            at_head > behind,
+            "head {at_head} not brighter than {behind}"
+        );
     }
 
     #[test]
@@ -1280,7 +1283,10 @@ mod tests {
         for i in 0..=100 {
             let d = total * i as f64 / 100.0;
             let e = ring_envelope(d, head, p, total);
-            assert!((0.0..=1.0 + 1e-9).contains(&e), "envelope out of range: {e}");
+            assert!(
+                (0.0..=1.0 + 1e-9).contains(&e),
+                "envelope out of range: {e}"
+            );
         }
     }
 
@@ -1292,7 +1298,10 @@ mod tests {
         for &phase in &[0.0, 1.0, 2.5, 4.2] {
             let a = ring_glimmer(0.0, total, phase, 1.0);
             let b = ring_glimmer(total, total, phase, 1.0);
-            assert!((a - b).abs() < 1e-9, "glimmer seam mismatch at phase {phase}");
+            assert!(
+                (a - b).abs() < 1e-9,
+                "glimmer seam mismatch at phase {phase}"
+            );
         }
     }
 
@@ -1387,9 +1396,18 @@ mod tests {
         let mut prev_falloff = f64::INFINITY;
         for k in 1..=steps {
             let (radius_frac, falloff) = ring_head_disc(k, steps);
-            assert!((0.0..=1.0).contains(&radius_frac), "radius out of range: {radius_frac}");
-            assert!((0.0..=1.0).contains(&falloff), "falloff out of range: {falloff}");
-            assert!(radius_frac > prev_radius, "disc radius must grow outward at k={k}");
+            assert!(
+                (0.0..=1.0).contains(&radius_frac),
+                "radius out of range: {radius_frac}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&falloff),
+                "falloff out of range: {falloff}"
+            );
+            assert!(
+                radius_frac > prev_radius,
+                "disc radius must grow outward at k={k}"
+            );
             assert!(falloff < prev_falloff, "falloff must dim outward at k={k}");
             prev_radius = radius_frac;
             prev_falloff = falloff;
@@ -1458,7 +1476,10 @@ mod tests {
             let layers = RingLayers::new(&points, head_len, total, p, 0.0, 1.0).unwrap();
             // Same placement the shadow arc slices to, so the halo can never
             // stop short of (or run past) the head it sits under.
-            assert_eq!(layers.head_index, ring_head_index(head_len, total, points.len()));
+            assert_eq!(
+                layers.head_index,
+                ring_head_index(head_len, total, points.len())
+            );
             let (hx, hy, _) = points[layers.head_index];
             assert_eq!((layers.head_x, layers.head_y), (hx, hy));
             assert!(layers.head_index < points.len());
@@ -1557,7 +1578,10 @@ mod tests {
         assert_eq!(inflate_target(0.0, true, false), 0.0);
         assert_eq!(inflate_target(INFLATE_PRE_AT, true, false), 0.0);
         let mid = inflate_target(0.8, true, false);
-        assert!(mid > 0.0 && mid < 1.0, "expected partial pre-inflate, got {mid}");
+        assert!(
+            mid > 0.0 && mid < 1.0,
+            "expected partial pre-inflate, got {mid}"
+        );
         // Arming completes it.
         assert_eq!(inflate_target(1.0, true, true), 1.0);
         // Not held: fully deflated.
@@ -1583,12 +1607,21 @@ mod tests {
     fn ring_alpha_rises_fast_and_exits_faster_than_it_enters() {
         // Reaches near-full within the rise window.
         let risen = ring_alpha(true, HOLD_DELAY + RING_ALPHA_RISE, 0.0, HOLD_DELAY);
-        assert!(risen > 0.99, "alpha should be up by the rise window: {risen}");
+        assert!(
+            risen > 0.99,
+            "alpha should be up by the rise window: {risen}"
+        );
         // Release is an accelerating curve: the first half sheds less than the
         // second, i.e. it lingers then drops.
         let half = ring_alpha(false, 0.0, LONG_PRESS_RING_FADE * 0.5, HOLD_DELAY);
-        assert!((half - 0.75).abs() < 1e-9, "expected quadratic exit, got {half}");
-        assert_eq!(ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, HOLD_DELAY), 0.0);
+        assert!(
+            (half - 0.75).abs() < 1e-9,
+            "expected quadratic exit, got {half}"
+        );
+        assert_eq!(
+            ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, HOLD_DELAY),
+            0.0
+        );
     }
 
     #[test]
@@ -1676,18 +1709,43 @@ mod tests {
 
     #[test]
     fn advance_ring_pins_alpha_while_held_and_fades_after() {
-        let mut a = RingAnim { release_elapsed: LONG_PRESS_RING_FADE, ..Default::default() };
+        let mut a = RingAnim {
+            release_elapsed: LONG_PRESS_RING_FADE,
+            ..Default::default()
+        };
         let hd = 0.12;
         // Held: alpha rises to full.
         for _ in 0..20 {
-            advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: false,
+                    progress: 0.5,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
-        assert!(a.alpha > 0.99, "alpha should be pinned high while held: {}", a.alpha);
+        assert!(
+            a.alpha > 0.99,
+            "alpha should be pinned high while held: {}",
+            a.alpha
+        );
         assert!((a.release_progress - 0.5).abs() < 1e-9);
 
         // Released: fades to zero and stays there.
         for _ in 0..60 {
-            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: false,
+                    dragging: false,
+                    progress: 0.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.alpha, 0.0);
     }
@@ -1696,15 +1754,45 @@ mod tests {
     fn advance_ring_records_the_level_reached_at_release() {
         let mut a = RingAnim::default();
         let hd = 0.12;
-        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.37, delta_seconds: 0.016 }, hd);
-        advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
-        assert!((a.release_progress - 0.37).abs() < 1e-9, "must fade from the level reached");
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: false,
+                progress: 0.37,
+                delta_seconds: 0.016,
+            },
+            hd,
+        );
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: false,
+                dragging: false,
+                progress: 0.0,
+                delta_seconds: 0.016,
+            },
+            hd,
+        );
+        assert!(
+            (a.release_progress - 0.37).abs() < 1e-9,
+            "must fade from the level reached"
+        );
     }
 
     #[test]
     fn dragging_pins_release_progress_to_a_full_ring() {
         let mut a = RingAnim::default();
-        advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 0.2, delta_seconds: 0.016 }, 0.12);
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: true,
+                progress: 0.2,
+                delta_seconds: 0.016,
+            },
+            0.12,
+        );
         assert_eq!(a.release_progress, 1.0);
     }
 
@@ -1713,11 +1801,29 @@ mod tests {
         let mut a = RingAnim::default();
         let hd = 0.12;
         for _ in 0..(ARM_RAMP_IN / 0.016) as usize + 2 {
-            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: true,
+                    progress: 1.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.arm_t, 1.0);
         for _ in 0..(ARM_RAMP_OUT / 0.016) as usize + 2 {
-            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: false,
+                    dragging: false,
+                    progress: 0.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.arm_t, 0.0);
     }
@@ -1749,7 +1855,16 @@ mod tests {
 
         let mut ticks = 0;
         while pulse_is_running(a.arm_pulse) && ticks < 1000 {
-            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, 0.12);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: true,
+                    progress: 1.0,
+                    delta_seconds: 0.016,
+                },
+                0.12,
+            );
             ticks += 1;
         }
         assert!(ticks < 1000, "pulse never retired");
@@ -1761,7 +1876,16 @@ mod tests {
     #[test]
     fn advance_ring_tolerates_a_negative_delta() {
         let mut a = RingAnim::default();
-        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: -1.0 }, 0.12);
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: false,
+                progress: 0.5,
+                delta_seconds: -1.0,
+            },
+            0.12,
+        );
         assert!(a.press_elapsed >= 0.0);
         assert!((0.0..=1.0).contains(&a.alpha));
     }
@@ -1866,7 +1990,10 @@ mod tests {
         gate.set_take_running(true);
         // Pointer leaves while only one style is active: the rule is false,
         // but the leave must still release the latch.
-        assert_eq!(style_tooltip_target(&gate, false, 1, false, false, 1.0), 0.0);
+        assert_eq!(
+            style_tooltip_target(&gate, false, 1, false, false, 1.0),
+            0.0
+        );
         // A second style becomes active and the pointer re-enters mid-take.
         assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
     }
@@ -1995,27 +2122,36 @@ mod tests {
 
     #[test]
     fn a_button_fully_inside_the_band_is_untouched() {
-        assert_eq!(clip_span_to_band(120.0, 44.0, 100.0, 200.0), Some((120.0, 44.0)));
+        assert_eq!(
+            clip_span_to_band(120.0, 44.0, 100.0, 200.0),
+            Some((120.0, 44.0))
+        );
     }
 
     #[test]
     fn a_button_sliding_off_the_top_keeps_only_the_visible_strip() {
         // 20 of the 44 points scrolled above the panel, so only the lower 24
         // may take a click.
-        assert_eq!(clip_span_to_band(80.0, 44.0, 100.0, 200.0), Some((100.0, 24.0)));
+        assert_eq!(
+            clip_span_to_band(80.0, 44.0, 100.0, 200.0),
+            Some((100.0, 24.0))
+        );
     }
 
     #[test]
     fn a_button_sliding_off_the_bottom_keeps_only_the_visible_strip() {
-        assert_eq!(clip_span_to_band(280.0, 44.0, 100.0, 200.0), Some((280.0, 20.0)));
+        assert_eq!(
+            clip_span_to_band(280.0, 44.0, 100.0, 200.0),
+            Some((280.0, 20.0))
+        );
     }
 
     #[test]
     fn a_button_with_its_centre_inside_still_loses_its_hidden_half() {
         // This is the case the centre test got wrong: the top half is off the
         // panel, painted over by the chrome, and must not be clickable.
-        let (top, height) = clip_span_to_band(90.0, 44.0, 100.0, 200.0)
-            .expect("the lower half is still on screen");
+        let (top, height) =
+            clip_span_to_band(90.0, 44.0, 100.0, 200.0).expect("the lower half is still on screen");
         assert_eq!(top, 100.0);
         assert_eq!(height, 34.0);
     }
@@ -2024,7 +2160,10 @@ mod tests {
     fn a_button_with_its_centre_outside_keeps_the_sliver_that_shows() {
         // The mirror case: the centre test dropped this one even though a
         // visible sliver is still on the panel.
-        assert_eq!(clip_span_to_band(70.0, 44.0, 100.0, 200.0), Some((100.0, 14.0)));
+        assert_eq!(
+            clip_span_to_band(70.0, 44.0, 100.0, 200.0),
+            Some((100.0, 14.0))
+        );
     }
 
     #[test]
@@ -2061,7 +2200,10 @@ mod tests {
         // would pass for a preview that kept a fraction of it.
         assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
         assert!(preview.contains("Full transcript preserved"));
-        assert!(elapsed.as_millis() < 50, "Bounding huge text must be nearly instantaneous");
+        assert!(
+            elapsed.as_millis() < 50,
+            "Bounding huge text must be nearly instantaneous"
+        );
     }
 
     #[test]
@@ -2105,7 +2247,10 @@ mod tests {
         let text = "あ".repeat(MAX_REVIEW_PREVIEW_CHARS);
         assert!(text.len() > MAX_REVIEW_PREVIEW_CHARS);
         let (preview, truncated) = bound_review_preview_text(&text);
-        assert!(!truncated, "text exactly on the character budget was truncated");
+        assert!(
+            !truncated,
+            "text exactly on the character budget was truncated"
+        );
         assert_eq!(preview, text);
     }
 

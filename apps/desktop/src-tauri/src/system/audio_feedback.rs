@@ -260,10 +260,8 @@ mod thock_limiter {
 
     #[cfg(test)]
     mod tests {
+        use super::super::{current_interaction_feedback_volume, set_interaction_feedback_volume};
         use super::*;
-        use super::super::{
-            current_interaction_feedback_volume, set_interaction_feedback_volume,
-        };
 
         #[test]
         fn first_thock_is_not_throttled() {
@@ -332,9 +330,18 @@ pub fn play_thock(kind: &str) -> bool {
         return false;
     }
     match kind {
-        "press" => { play_thock_press(); true }
-        "deep" => { play_thock_deep(); true }
-        "release" => { play_thock_release(); true }
+        "press" => {
+            play_thock_press();
+            true
+        }
+        "deep" => {
+            play_thock_deep();
+            true
+        }
+        "release" => {
+            play_thock_release();
+            true
+        }
         _ => {
             log::warn!("Unknown thock kind: {kind}");
             false

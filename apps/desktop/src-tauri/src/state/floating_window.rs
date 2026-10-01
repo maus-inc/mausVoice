@@ -58,12 +58,11 @@ impl FloatingWindowState {
                 if *shutdown {
                     return;
                 }
-                let (guard, timeout) = match condvar
-                    .wait_timeout(shutdown, PENDING_COMPOSER_TEXT_REAPER_INTERVAL)
-                {
-                    Ok(result) => result,
-                    Err(_) => return,
-                };
+                let (guard, timeout) =
+                    match condvar.wait_timeout(shutdown, PENDING_COMPOSER_TEXT_REAPER_INTERVAL) {
+                        Ok(result) => result,
+                        Err(_) => return,
+                    };
                 shutdown = guard;
                 if *shutdown {
                     return;

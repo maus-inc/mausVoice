@@ -184,12 +184,15 @@ pub fn save_transcription_audio(
     // file. This prevents Windows' reparse-point semantics from turning a
     // no-follow open into a destructive overwrite.
     audio_file.set_len(0)?;
-    let mut writer = WavWriter::new(audio_file, WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: SampleFormat::Int,
-    })
+    let mut writer = WavWriter::new(
+        audio_file,
+        WavSpec {
+            channels: 1,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: SampleFormat::Int,
+        },
+    )
     .map_err(map_hound_error)?;
     for sample in samples {
         let normalized = sample.clamp(-1.0, 1.0);
@@ -409,8 +412,8 @@ pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32
 #[cfg(test)]
 mod tests {
     use super::{
-        audio_file_name_for, delete_audio_file, open_audio_file_for_read, open_managed_audio_dir_at,
-        AUDIO_DIR_NAME,
+        audio_file_name_for, delete_audio_file, open_audio_file_for_read,
+        open_managed_audio_dir_at, AUDIO_DIR_NAME,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -451,8 +454,8 @@ mod tests {
     #[test]
     fn opens_a_regular_managed_audio_directory() {
         let root = TemporaryDirectory::create();
-        let held_audio_dir = open_managed_audio_dir_at(&root.0)
-            .expect("managed audio directory must be openable");
+        let held_audio_dir =
+            open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
 
         assert!(
             held_audio_dir
@@ -466,8 +469,8 @@ mod tests {
     #[test]
     fn deletion_uses_the_transcription_id_not_a_tampered_stored_path() {
         let root = TemporaryDirectory::create();
-        let held_audio_dir = open_managed_audio_dir_at(&root.0)
-            .expect("managed audio directory must be openable");
+        let held_audio_dir =
+            open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
         let expected = root.audio_dir().join("known-id.wav");
         let outside = root.0.join("outside.wav");
         fs::write(&expected, b"managed").expect("managed fixture must be writable");
@@ -478,16 +481,22 @@ mod tests {
         delete_audio_file(&held_audio_dir, "known-id")
             .expect("derived managed file must be removable");
 
-        assert!(!expected.exists(), "the derived managed file must be removed");
-        assert!(outside.exists(), "a tampered stored path must remain untouched");
+        assert!(
+            !expected.exists(),
+            "the derived managed file must be removed"
+        );
+        assert!(
+            outside.exists(),
+            "a tampered stored path must remain untouched"
+        );
     }
 
     #[cfg(unix)]
     #[test]
     fn held_directory_deletion_survives_root_replacement() {
         let root = TemporaryDirectory::create();
-        let held_audio_dir = open_managed_audio_dir_at(&root.0)
-            .expect("managed audio directory must be openable");
+        let held_audio_dir =
+            open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
         let original = root.audio_dir();
         let detached = root.0.join("former-transcription-audio");
         let file_name = audio_file_name_for("session");
@@ -550,12 +559,15 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let root = TemporaryDirectory::create();
-        let held_audio_dir = open_managed_audio_dir_at(&root.0)
-            .expect("managed audio directory must be openable");
+        let held_audio_dir =
+            open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
         let secret = root.0.join("secret.wav");
         fs::write(&secret, b"do not read").expect("secret fixture must be writable");
-        symlink(&secret, root.audio_dir().join(audio_file_name_for("session")))
-            .expect("final symlink must be creatable");
+        symlink(
+            &secret,
+            root.audio_dir().join(audio_file_name_for("session")),
+        )
+        .expect("final symlink must be creatable");
 
         assert!(
             open_audio_file_for_read(&held_audio_dir, "session").is_err(),
@@ -566,8 +578,8 @@ mod tests {
     #[test]
     fn read_returns_a_handle_for_the_derived_regular_file() {
         let root = TemporaryDirectory::create();
-        let held_audio_dir = open_managed_audio_dir_at(&root.0)
-            .expect("managed audio directory must be openable");
+        let held_audio_dir =
+            open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
         let expected = root.audio_dir().join(audio_file_name_for("session"));
         fs::write(&expected, b"readable-bytes").expect("fixture must be writable");
 

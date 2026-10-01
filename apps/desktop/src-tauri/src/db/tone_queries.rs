@@ -83,18 +83,13 @@ fn tone_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Tone, sqlx::Error> {
 
 pub async fn fetch_tone_by_id(pool: SqlitePool, id: &str) -> Result<Option<Tone>, sqlx::Error> {
     let query = format!("SELECT {TONE_COLUMNS} FROM tones WHERE id = ?1 LIMIT 1");
-    let row = sqlx::query(&query)
-        .bind(id)
-        .fetch_optional(&pool)
-        .await?;
+    let row = sqlx::query(&query).bind(id).fetch_optional(&pool).await?;
 
     row.as_ref().map(tone_from_row).transpose()
 }
 
 pub async fn fetch_all_tones(pool: SqlitePool) -> Result<Vec<Tone>, sqlx::Error> {
-    let query = format!(
-        "SELECT {TONE_COLUMNS} FROM tones ORDER BY sort_order ASC, created_at ASC"
-    );
+    let query = format!("SELECT {TONE_COLUMNS} FROM tones ORDER BY sort_order ASC, created_at ASC");
     let rows = sqlx::query(&query).fetch_all(&pool).await?;
     rows.iter().map(tone_from_row).collect()
 }
@@ -179,9 +174,7 @@ mod tests {
         .expect("seed a tone whose category is a blob");
 
         assert!(
-            fetch_tone_by_id(pool.clone(), "t1")
-                .await
-                .is_err(),
+            fetch_tone_by_id(pool.clone(), "t1").await.is_err(),
             "reading one unreadable tone must not look like a tone with no category"
         );
         assert!(
@@ -222,7 +215,9 @@ mod tests {
         }))
         .expect("deserialize a tone");
 
-        let saved = insert_tone(pool.clone(), &tone).await.expect("insert the tone");
+        let saved = insert_tone(pool.clone(), &tone)
+            .await
+            .expect("insert the tone");
         assert_eq!(saved.category.as_deref(), Some("conversational"));
 
         let loaded = fetch_tone_by_id(pool.clone(), "t1")

@@ -95,7 +95,9 @@ pub fn satoshi_font(size: f64, bold: bool) -> id {
                 return font;
             }
         }
-        rust_pill_shared::log_font_error("embedded Satoshi registered but NSFont cannot resolve it");
+        rust_pill_shared::log_font_error(
+            "embedded Satoshi registered but NSFont cannot resolve it",
+        );
         panic!("embedded Satoshi is registered but NSFont cannot resolve it");
     }
 }

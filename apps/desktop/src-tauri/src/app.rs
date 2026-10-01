@@ -142,8 +142,7 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
                 .format(|out, message, record| {
                     let now = chrono::Local::now();
                     let raw_message = message.to_string();
-                    let sanitized =
-                        crate::utils::log_sanitizer::sanitize_log_content(&raw_message);
+                    let sanitized = crate::utils::log_sanitizer::sanitize_log_content(&raw_message);
                     out.finish(format_args!(
                         "[{}][{}][{}] {}",
                         now.format("%Y-%m-%d][%H:%M:%S%.3f"),
@@ -269,8 +268,10 @@ pub fn build() -> tauri::Builder<tauri::Wry> {
             // says which file to look at.
             let pool = tauri::async_runtime::block_on(crate::db::open::open_app_database(&db_path))
                 .map_err(|err| -> Box<dyn std::error::Error> {
-                    let message =
-                        format!("could not open the database at {}: {err}", db_path.display());
+                    let message = format!(
+                        "could not open the database at {}: {err}",
+                        db_path.display()
+                    );
                     log::error!("{message}");
                     message.into()
                 })?;

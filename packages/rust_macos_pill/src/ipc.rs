@@ -51,7 +51,6 @@ pub enum Phase {
     Paused,
 }
 
-
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,10 +118,19 @@ pub enum InMessage {
         #[serde(default)]
         seq: u64,
     },
-    Levels { levels: Vec<f32> },
-    StyleInfo { count: u32, name: String },
-    Visibility { visibility: Visibility },
-    WindowSize { size: String },
+    Levels {
+        levels: Vec<f32>,
+    },
+    StyleInfo {
+        count: u32,
+        name: String,
+    },
+    Visibility {
+        visibility: Visibility,
+    },
+    WindowSize {
+        size: String,
+    },
     Toast {
         message: String,
         toast_type: Option<String>,
@@ -135,11 +143,19 @@ pub enum InMessage {
         reject_action_label: Option<String>,
     },
     DismissToast,
-    Fireworks { message: String },
-    Flame { message: String },
+    Fireworks {
+        message: String,
+    },
+    Flame {
+        message: String,
+    },
     FlashBlue,
-    BroadcastTranscript { text: String },
-    StageText { text: Option<String> },
+    BroadcastTranscript {
+        text: String,
+    },
+    StageText {
+        text: Option<String>,
+    },
     AssistantState {
         active: bool,
         input_mode: String,
@@ -175,14 +191,22 @@ pub enum InMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutMessage {
     Ready,
-    Hover { hovered: bool },
+    Hover {
+        hovered: bool,
+    },
     Click,
-    StyleSwitch { direction: String },
+    StyleSwitch {
+        direction: String,
+    },
     AgentTalk,
     AssistantClose,
     EnableTypeMode,
-    TypedMessage { text: String },
-    OpenConversation { conversation_id: String },
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
     ResolvePermission {
         permission_id: String,
         status: String,
@@ -191,7 +215,9 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-    ToastAction { action: String },
+    ToastAction {
+        action: String,
+    },
     /// The user's decision on the transcript under review.
     /// `action` is one of "insert", "copy", "cancel", "open", "edit".
     ///
@@ -211,7 +237,9 @@ pub enum OutMessage {
     },
     /// Haptic/audio feedback request for the desktop process.
     /// `kind` values: "press", "deep", "release".
-    HapticFeedback { kind: String },
+    HapticFeedback {
+        kind: String,
+    },
 }
 
 pub fn send(msg: &OutMessage) -> bool {
@@ -267,9 +295,9 @@ mod review_localization_tests {
     fn review_edit_label_accepts_legacy_and_localized_payloads() {
         let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
         assert!(legacy.edit_label.is_none());
-        let localized: PillReview = serde_json::from_str(
-            r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#,
-        ).unwrap();
+        let localized: PillReview =
+            serde_json::from_str(r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#)
+                .unwrap();
         assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
         assert_eq!(localized.text, "draft");
     }

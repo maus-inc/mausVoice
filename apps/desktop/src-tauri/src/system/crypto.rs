@@ -24,13 +24,10 @@ fn legacy_fallback_secret() -> &'static [u8] {
         .get_or_init(|| {
             let mut hasher = Sha256::new();
             hasher.update(b"mausvoice-local-dev-fallback-v1");
-            if let Ok(home) =
-                std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
-            {
+            if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
                 hasher.update(home.as_bytes());
             }
-            if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME"))
-            {
+            if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
                 hasher.update(user.as_bytes());
             }
             hasher.finalize().to_vec()
@@ -78,10 +75,14 @@ pub fn runtime_secret() -> &'static [u8] {
                         if let Some(machine) = crate::system::machine_id::machine_id() {
                             hasher.update(machine.as_bytes());
                         }
-                        if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+                        if let Ok(home) =
+                            std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))
+                        {
                             hasher.update(home.as_bytes());
                         }
-                        if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
+                        if let Ok(user) =
+                            std::env::var("USER").or_else(|_| std::env::var("USERNAME"))
+                        {
                             hasher.update(user.as_bytes());
                         }
                         hasher.finalize().to_vec()
@@ -127,7 +128,9 @@ pub fn reveal_api_key(salt_b64: &str, ciphertext_b64: &str) -> Result<String, Cr
     // built-in fallback; if an explicit secret is set there is no legacy variant
     // to migrate from (all writes already used the explicit secret).
     if option_env!("MAUSVOICE_API_KEY_SECRET").is_none()
-        && std::env::var(SECRET_ENV).map(|v| v.is_empty()).unwrap_or(true)
+        && std::env::var(SECRET_ENV)
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
     {
         candidates.push(legacy_fallback_secret());
     }
@@ -253,13 +256,15 @@ mod tests {
         let nonce = generate_nonce();
         let cipher = cipher_for(legacy, &nonce);
         let ciphertext = cipher
-            .encrypt(XNonce::from_slice(&nonce), b"gsk_legacy_row_value".as_slice())
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                b"gsk_legacy_row_value".as_slice(),
+            )
             .expect("legacy encrypt");
         let salt_b64 = general_purpose::STANDARD.encode(nonce);
         let ciphertext_b64 = general_purpose::STANDARD.encode(ciphertext);
 
-        let revealed =
-            reveal_api_key(&salt_b64, &ciphertext_b64).expect("legacy row decrypts");
+        let revealed = reveal_api_key(&salt_b64, &ciphertext_b64).expect("legacy row decrypts");
         assert_eq!(revealed, "gsk_legacy_row_value");
     }
 }

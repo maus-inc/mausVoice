@@ -134,10 +134,13 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
                 // the surface calls and the window's own minimized state have
                 // to agree, and an unreadable state counts as minimized so
                 // the keepalive stays on.
-                if restored && shown && keepalive_can_be_released(
-                    window_for_handle.is_visible().unwrap_or(false),
-                    window_for_handle.is_minimized().unwrap_or(true),
-                ) {
+                if restored
+                    && shown
+                    && keepalive_can_be_released(
+                        window_for_handle.is_visible().unwrap_or(false),
+                        window_for_handle.is_minimized().unwrap_or(true),
+                    )
+                {
                     set_webview_keepalive(false);
                 } else {
                     log::warn!(

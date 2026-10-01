@@ -17,9 +17,8 @@ pub(crate) fn is_valid_hotkey_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 64 {
         return false;
     }
-    name.chars().all(|ch| {
-        matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | ':' | '.')
-    })
+    name.chars()
+        .all(|ch| matches!(ch, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | ':' | '.'))
 }
 
 #[cfg(test)]

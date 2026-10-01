@@ -285,12 +285,11 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         )));
     }
 
-    let applied = sqlx::query(
-        "SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|err| classify_sqlx("read applied migrations", err))?;
+    let applied =
+        sqlx::query("SELECT version, description, checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await
+            .map_err(|err| classify_sqlx("read applied migrations", err))?;
 
     let mut applied_checksums = std::collections::HashMap::new();
     let mut applied_descriptions = std::collections::HashMap::new();
@@ -588,7 +587,9 @@ mod tests {
         ));
         assert!(is_integrity_failure("database disk image is malformed"));
         assert!(is_integrity_failure("file is not a database"));
-        assert!(is_integrity_failure("(code: 11) database disk image is malformed"));
+        assert!(is_integrity_failure(
+            "(code: 11) database disk image is malformed"
+        ));
         assert!(!is_integrity_failure("database is locked"));
         assert!(!is_integrity_failure("migration 77 failed: syntax error"));
     }
@@ -602,7 +603,8 @@ mod tests {
         // repairable error. This is the string sqlx actually produces —
         // `SqliteError` renders as `(code: <int>) <message>` and exposes only
         // the numeric extended result code, never the `SQLITE_FULL` symbol.
-        let sqlx_full = "migration 89 (user_profile_timestamps): (code: 13) database or disk is full";
+        let sqlx_full =
+            "migration 89 (user_profile_timestamps): (code: 13) database or disk is full";
         assert!(!is_integrity_failure(sqlx_full));
         assert!(!is_integrity_failure(
             "record migration: (code: 13) database or disk is full"
@@ -694,9 +696,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, migrations().len() as i64);
         recovered.close().await;
-        assert_quarantined(
-            &temp.dir, "corrupt bytes must be quarantined",
-        );
+        assert_quarantined(&temp.dir, "corrupt bytes must be quarantined");
     }
 
     #[tokio::test]
@@ -706,11 +706,10 @@ mod tests {
         let pool = try_open(path).await.expect("initial migrate");
         // One row, not all of them: a crash mid-migration leaves exactly the step
         // it was on flipped, and the code reads the lowest such version.
-        let expected_version: i64 =
-            sqlx::query_scalar("SELECT MIN(version) FROM _sqlx_migrations")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let expected_version: i64 = sqlx::query_scalar("SELECT MIN(version) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let affected =
             sqlx::query("UPDATE _sqlx_migrations SET success = false WHERE version = ?1")
                 .bind(expected_version)
@@ -742,13 +741,8 @@ mod tests {
             error.contains("needs recovery"),
             "the message must say the row is recoverable: {error}"
         );
-        assert!(
-            path.exists(),
-            "the database file must be left where it was"
-        );
-        assert_not_quarantined(
-            &temp.dir, "a readable database must not be quarantined",
-        );
+        assert!(path.exists(), "the database file must be left where it was");
+        assert_not_quarantined(&temp.dir, "a readable database must not be quarantined");
     }
 
     #[tokio::test]
@@ -775,7 +769,8 @@ mod tests {
             "newer-schema database must be surfaced, not silently opened"
         );
         assert_not_quarantined(
-            &temp.dir, "a newer-schema database must never be quarantined",
+            &temp.dir,
+            "a newer-schema database must never be quarantined",
         );
         assert!(path.exists(), "the original database must be preserved");
     }
@@ -847,7 +842,8 @@ mod tests {
         );
         upgraded.close().await;
         assert_not_quarantined(
-            &temp.dir, "a routine upgrade must never quarantine the database",
+            &temp.dir,
+            "a routine upgrade must never quarantine the database",
         );
     }
 
@@ -877,7 +873,8 @@ mod tests {
             "a database with newer-release migrations must be surfaced, not silently opened"
         );
         assert_not_quarantined(
-            &temp.dir, "a downgrade with multiple newer versions must never quarantine the database",
+            &temp.dir,
+            "a downgrade with multiple newer versions must never quarantine the database",
         );
         assert!(
             path.exists(),
@@ -937,12 +934,15 @@ mod tests {
             "the original database file must be left in place for repair"
         );
         assert_not_quarantined(
-            &temp.dir, "a ledger disagreement must never quarantine the database",
+            &temp.dir,
+            "a ledger disagreement must never quarantine the database",
         );
 
         // The schema and the user's data are all still there, and the ledger row
         // is untouched, so the mismatch is diagnosable and repairable in place.
-        let check = connect_pool(path).await.expect("the file is still openable");
+        let check = connect_pool(path)
+            .await
+            .expect("the file is still openable");
         let transcript: String =
             sqlx::query_scalar("SELECT transcript FROM transcriptions WHERE id = 'keep-me'")
                 .fetch_one(&check)
@@ -979,9 +979,7 @@ mod tests {
             .expect("a corrupt file quarantines and reopens");
         recovered.close().await;
 
-        assert_quarantined(
-            &temp.dir, "broken archive must exist after recovery",
-        );
+        assert_quarantined(&temp.dir, "broken archive must exist after recovery");
 
         let removed =
             delete_quarantined_databases(&temp.dir).expect("quarantine deletion succeeds");
@@ -991,7 +989,8 @@ mod tests {
         );
 
         assert_not_quarantined(
-            &temp.dir, "no broken archives should remain after explicit deletion",
+            &temp.dir,
+            "no broken archives should remain after explicit deletion",
         );
     }
 
@@ -1508,7 +1507,8 @@ mod tests {
         assert_eq!(ghosts, 0);
         reopened.close().await;
         assert_not_quarantined(
-            &temp.dir, "retiring consolidation-era rows must never quarantine the database",
+            &temp.dir,
+            "retiring consolidation-era rows must never quarantine the database",
         );
     }
 
@@ -1565,7 +1565,8 @@ mod tests {
             );
             check.close().await;
             assert_not_quarantined(
-                &temp.dir, "surfacing version {version} must never quarantine the database",
+                &temp.dir,
+                "surfacing version {version} must never quarantine the database",
             );
         }
     }
@@ -1682,9 +1683,7 @@ mod tests {
         std::fs::create_dir_all(&dir_as_db).unwrap();
         let result = open_app_database(&dir_as_db).await;
         assert!(result.is_err());
-        assert_not_quarantined(
-            &temp.dir, "the database must not be quarantined",
-        );
+        assert_not_quarantined(&temp.dir, "the database must not be quarantined");
     }
 
     // The History list query decodes rows through row_to_transcription, which

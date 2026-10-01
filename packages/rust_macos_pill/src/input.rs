@@ -115,11 +115,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::StyleForward => {
                     send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "forward".to_string(),
+                    });
                 }
                 ClickAction::StyleBackward => {
                     send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "backward".to_string(),
+                    });
                 }
                 ClickAction::AssistantClose => {
                     // Closing the panel while a transcript is under review is
@@ -172,7 +176,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         send_review_decision(&review_id, "open", Some(text));
                     } else {
                         if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                            ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                            ipc::send(&OutMessage::OpenConversation {
+                                conversation_id: id.clone(),
+                            });
                         }
                         ipc::send(&OutMessage::AssistantClose);
                     }
@@ -194,17 +200,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::PermissionAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionDeny(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "denied".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "denied".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionAlwaysAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: true,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: true,
                     });
                 }
                 ClickAction::SendButton => {
@@ -212,7 +224,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     rust_pill_shared::clear_flash_state(
                         &state.flash_visible,
@@ -225,7 +239,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashReject => {
                     if let Some(ref action) = *state.flash_reject_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     rust_pill_shared::clear_flash_state(
                         &state.flash_visible,
@@ -329,8 +345,10 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
     };
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, dw, dh);
-    if x >= pill_x - pad && x <= pill_x + pill_w + pad
-        && y >= pill_y - pad && y <= pill_y + pill_h + pad
+    if x >= pill_x - pad
+        && x <= pill_x + pill_w + pad
+        && y >= pill_y - pad
+        && y <= pill_y + pill_h + pad
     {
         return true;
     }
@@ -339,9 +357,16 @@ pub(crate) fn is_in_hover_zone(state: &PillState, x: f64, y: f64) -> bool {
         if state.tooltip_opacity() > 0.1 {
             let tooltip_w = state.tooltip_width.get();
             let blend = state.selector_placement.borrow().blend();
-            let (tooltip_x, tooltip_y) = tooltip_rendered_origin((pill_x, pill_y, pill_w, pill_h), tooltip_w, state.tooltip_t.get(), blend);
-            if x >= tooltip_x && x <= tooltip_x + tooltip_w
-                && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
+            let (tooltip_x, tooltip_y) = tooltip_rendered_origin(
+                (pill_x, pill_y, pill_w, pill_h),
+                tooltip_w,
+                state.tooltip_t.get(),
+                blend,
+            );
+            if x >= tooltip_x
+                && x <= tooltip_x + tooltip_w
+                && y >= tooltip_y
+                && y <= tooltip_y + TOOLTIP_HEIGHT
             {
                 return true;
             }
@@ -384,9 +409,16 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
     if state.tooltip_opacity() > 0.1 {
         let tooltip_w = state.tooltip_width.get();
         let blend = state.selector_placement.borrow().blend();
-        let (tooltip_x, tooltip_y) = tooltip_rendered_origin(pill_position(state, dw, dh), tooltip_w, state.tooltip_t.get(), blend);
-        if x >= tooltip_x && x <= tooltip_x + tooltip_w
-            && y >= tooltip_y && y <= tooltip_y + TOOLTIP_HEIGHT
+        let (tooltip_x, tooltip_y) = tooltip_rendered_origin(
+            pill_position(state, dw, dh),
+            tooltip_w,
+            state.tooltip_t.get(),
+            blend,
+        );
+        if x >= tooltip_x
+            && x <= tooltip_x + tooltip_w
+            && y >= tooltip_y
+            && y <= tooltip_y + TOOLTIP_HEIGHT
         {
             return true;
         }

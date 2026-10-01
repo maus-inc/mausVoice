@@ -111,10 +111,7 @@ pub struct CrossingDeform {
 /// A side-by-side pair overlaps vertically; a stacked pair overlaps
 /// horizontally. Corner-only, overlapping/mirrored, or diagonal layouts have
 /// no unambiguous shared normal, so suppress the cosmetic trigger there.
-fn boundary_axis(
-    from: (f64, f64, f64, f64),
-    to: (f64, f64, f64, f64),
-) -> Option<CrossingAxis> {
+fn boundary_axis(from: (f64, f64, f64, f64), to: (f64, f64, f64, f64)) -> Option<CrossingAxis> {
     let (fx, fy, fw, fh) = from;
     let (tx, ty, tw, th) = to;
     let overlap_x = (fx + fw).min(tx + tw) - fx.max(tx);
@@ -156,8 +153,10 @@ impl CrossingDeform {
     /// True while the return spring is still moving. The redraw gate reads
     /// it to keep painting until the pill is round again.
     pub fn animating(&self) -> bool {
-        self.squeeze_x.get() != 0.0 || self.squeeze_x_vel.get() != 0.0
-            || self.squeeze_y.get() != 0.0 || self.squeeze_y_vel.get() != 0.0
+        self.squeeze_x.get() != 0.0
+            || self.squeeze_x_vel.get() != 0.0
+            || self.squeeze_y.get() != 0.0
+            || self.squeeze_y_vel.get() != 0.0
     }
 
     /// Forget the monitor. Used when the platform re-homes the pill itself.
@@ -182,12 +181,15 @@ impl CrossingDeform {
         } else {
             170.0
         };
-        self.pulse.set((self.pulse.get() - dt / CROSS_PULSE_TIME).max(0.0));
+        self.pulse
+            .set((self.pulse.get() - dt / CROSS_PULSE_TIME).max(0.0));
 
         let known = frame.monitor_x.is_finite()
             && frame.monitor_y.is_finite()
-            && frame.monitor_width.is_finite() && frame.monitor_width > 0.0
-            && frame.monitor_height.is_finite() && frame.monitor_height > 0.0
+            && frame.monitor_width.is_finite()
+            && frame.monitor_width > 0.0
+            && frame.monitor_height.is_finite()
+            && frame.monitor_height > 0.0
             && (frame.monitor_x + frame.monitor_width).is_finite()
             && (frame.monitor_y + frame.monitor_height).is_finite()
             && frame.pill_cx.is_finite()
@@ -211,17 +213,23 @@ impl CrossingDeform {
             let speed = (dx * dx + dy * dy).sqrt() / span;
             let normal = boundary_axis(
                 (self.mon_x, self.mon_y, self.mon_width, self.mon_height),
-                (frame.monitor_x, frame.monitor_y, frame.monitor_width, frame.monitor_height),
+                (
+                    frame.monitor_x,
+                    frame.monitor_y,
+                    frame.monitor_width,
+                    frame.monitor_height,
+                ),
             );
-            if let Some(axis) = normal.filter(|_| (CROSS_MIN_SPEED..=CROSS_MAX_SPEED).contains(&speed)) {
+            if let Some(axis) =
+                normal.filter(|_| (CROSS_MIN_SPEED..=CROSS_MAX_SPEED).contains(&speed))
+            {
                 if !frame.reduced_motion {
                     let speed_progress = ((speed - CROSS_MIN_SPEED)
-                        / (CROSS_FULL_SPEED - CROSS_MIN_SPEED)).clamp(0.0, 1.0);
+                        / (CROSS_FULL_SPEED - CROSS_MIN_SPEED))
+                        .clamp(0.0, 1.0);
                     let peak = speed_progress.powf(CROSS_RESPONSE_EXPONENT);
-                    let impulse = peak
-                        * stiffness.sqrt()
-                        * std::f64::consts::E
-                        * CROSS_IMPULSE_GAIN;
+                    let impulse =
+                        peak * stiffness.sqrt() * std::f64::consts::E * CROSS_IMPULSE_GAIN;
                     let velocity = match axis {
                         CrossingAxis::X => &self.squeeze_x_vel,
                         CrossingAxis::Y => &self.squeeze_y_vel,
@@ -377,7 +385,10 @@ mod tests {
             let center = 1919.0 + speed / 60.0;
             let first = deform.advance(&frame(1920.0, 0.0, center, 1.0 / 60.0));
             assert!(first.triggered);
-            assert!(first.scale_x > 1.0 - CROSS_SQUEEZE, "the impulse should build instead of snapping");
+            assert!(
+                first.scale_x > 1.0 - CROSS_SQUEEZE,
+                "the impulse should build instead of snapping"
+            );
             let mut peak = 1.0 - first.scale_x;
             for i in 2..=24 {
                 let output = deform.advance(&frame(1920.0, 0.0, center, i as f64 / 60.0));
@@ -389,8 +400,14 @@ mod tests {
         let ordinary = peak_squeeze(1000.0);
         let full = peak_squeeze(CROSS_FULL_SPEED);
         let over = peak_squeeze(7000.0);
-        assert!(slow > 0.03, "a deliberate crossing should be visible: {slow}");
-        assert!(ordinary > slow && full > ordinary, "faster crossings should deform more: {slow} {ordinary} {full}");
+        assert!(
+            slow > 0.03,
+            "a deliberate crossing should be visible: {slow}"
+        );
+        assert!(
+            ordinary > slow && full > ordinary,
+            "faster crossings should deform more: {slow} {ordinary} {full}"
+        );
         assert!(
             (full - CROSS_SQUEEZE).abs() < 0.01,
             "full squeeze should reach the design cap, got {full}"
@@ -409,13 +426,7 @@ mod tests {
         assert!(across.triggered);
         let expected_x = std::cell::Cell::new(deform.squeeze_x.get());
         let expected_x_velocity = std::cell::Cell::new(deform.squeeze_x_vel.get());
-        spring_01(
-            &expected_x,
-            &expected_x_velocity,
-            0.0,
-            170.0,
-            1.0 / 60.0,
-        );
+        spring_01(&expected_x, &expected_x_velocity, 0.0, 170.0, 1.0 / 60.0);
         let vertical = frame_at(1920.0, 1080.0, 1950.0, 1100.0, 2.0 / 60.0);
         let output = deform.advance(&vertical);
         assert!(output.triggered);
@@ -508,7 +519,10 @@ mod tests {
         // The pulse decays away on its own.
         let mut last = 1.0;
         for i in 1..30 {
-            let out = deform.advance(&CrossingFrame { now: (1 + i) as f64 / 60.0, ..f });
+            let out = deform.advance(&CrossingFrame {
+                now: (1 + i) as f64 / 60.0,
+                ..f
+            });
             assert!(out.pulse <= last);
             last = out.pulse;
         }
@@ -578,10 +592,9 @@ mod tests {
 
     #[test]
     fn vertically_offset_side_by_side_monitors_keep_a_horizontal_normal() {
-        for (next_x, old_x, new_x, width) in [
-            (800.0, 790.0, 810.0, 1200.0),
-            (-400.0, 10.0, -10.0, 400.0),
-        ] {
+        for (next_x, old_x, new_x, width) in
+            [(800.0, 790.0, 810.0, 1200.0), (-400.0, 10.0, -10.0, 400.0)]
+        {
             let mut deform = CrossingDeform::new();
             let mut before = frame(0.0, 0.0, old_x, 0.0);
             before.monitor_width = 800.0;
@@ -641,5 +654,4 @@ mod tests {
             assert!(!deform.seeded);
         }
     }
-
 }

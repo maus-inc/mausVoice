@@ -63,7 +63,9 @@ mod tests {
 
     #[test]
     fn sets_both_vars_on_x11() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_webkit_env();
         env::set_var(ENV_XDG_SESSION_TYPE, "x11");
         env::remove_var(super::ENV_WAYLAND_DISPLAY);
@@ -78,7 +80,9 @@ mod tests {
 
     #[test]
     fn skips_on_wayland() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_webkit_env();
         env::remove_var(ENV_XDG_SESSION_TYPE);
         env::set_var(super::ENV_WAYLAND_DISPLAY, "wayland-0");
@@ -93,7 +97,9 @@ mod tests {
 
     #[test]
     fn skips_on_explicit_xdg_session_type_wayland() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_webkit_env();
         env::set_var(ENV_XDG_SESSION_TYPE, "wayland");
         env::remove_var(super::ENV_WAYLAND_DISPLAY);
@@ -114,7 +120,9 @@ mod tests {
     #[test]
     fn applies_on_an_unrecognized_session_type_with_no_wayland_display() {
         for session_type in ["tty", "mir", "x11", "XORG"] {
-            let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             clear_webkit_env();
             env::set_var(ENV_XDG_SESSION_TYPE, session_type);
             env::remove_var(super::ENV_WAYLAND_DISPLAY);
@@ -138,7 +146,9 @@ mod tests {
 
     #[test]
     fn does_not_overwrite_existing_user_value() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         clear_webkit_env();
         env::set_var(ENV_XDG_SESSION_TYPE, "x11");
         env::remove_var(super::ENV_WAYLAND_DISPLAY);

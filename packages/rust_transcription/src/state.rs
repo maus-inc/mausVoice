@@ -78,7 +78,8 @@ fn is_hugging_face_delivery_host(host: &str) -> bool {
 /// redirect policy after receiving a 3xx response. Debug builds retain
 /// loopback HTTP support for sidecar integration tests and local development.
 pub(crate) fn validate_model_download_url(value: &str) -> Result<(), String> {
-    let url = reqwest::Url::parse(value).map_err(|_| "model download URL is invalid".to_string())?;
+    let url =
+        reqwest::Url::parse(value).map_err(|_| "model download URL is invalid".to_string())?;
     let host = url
         .host_str()
         .ok_or_else(|| "model download URL has no host".to_string())?;

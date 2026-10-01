@@ -198,12 +198,9 @@ impl WhisperModel {
             }
             // whisper.cpp ggml models are single blobs fetched through
             // `download_url()` and verified by `whisper_cpp_sha256()`.
-            Self::Tiny
-            | Self::Base
-            | Self::Small
-            | Self::Medium
-            | Self::Large
-            | Self::Turbo => Vec::new(),
+            Self::Tiny | Self::Base | Self::Small | Self::Medium | Self::Large | Self::Turbo => {
+                Vec::new()
+            }
         }
     }
 
@@ -229,29 +226,16 @@ impl WhisperModel {
     /// Sources: Hugging Face repo API `lfs.oid` fields for the pinned tree.
     const fn whisper_cpp_sha256(self) -> Option<&'static str> {
         match self {
-            Self::Tiny => {
-                Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21")
-            }
-            Self::Base => {
-                Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe")
-            }
-            Self::Small => {
-                Some("1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b")
-            }
+            Self::Tiny => Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"),
+            Self::Base => Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
+            Self::Small => Some("1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"),
             Self::Medium => {
                 Some("6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208")
             }
-            Self::Large => {
-                Some("64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2")
-            }
-            Self::Turbo => {
-                Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69")
-            }
+            Self::Large => Some("64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"),
+            Self::Turbo => Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
             // ONNX models pin per-artifact digests in `artifact_set()`.
-            Self::ParakeetCtc06B
-            | Self::ParakeetTdt06B
-            | Self::Canary1B
-            | Self::SenseVoice => None,
+            Self::ParakeetCtc06B | Self::ParakeetTdt06B | Self::Canary1B | Self::SenseVoice => None,
         }
     }
 
@@ -501,7 +485,10 @@ mod tests {
             .filter_map(|slug| WhisperModel::from_slug(slug).map(|model| (*slug, model)))
             .filter(|(_, model)| !model.is_onnx())
             .collect();
-        assert!(ggml_models.len() >= 6, "expected the six whisper.cpp variants");
+        assert!(
+            ggml_models.len() >= 6,
+            "expected the six whisper.cpp variants"
+        );
 
         for (slug, model) in ggml_models {
             let url = model.download_url();
@@ -557,10 +544,7 @@ mod tests {
             "http://127.0.0.1:1234/local-tiny.bin",
         );
         let tiny = WhisperModel::from_slug("tiny").expect("tiny parses");
-        assert_eq!(
-            tiny.download_url(),
-            "http://127.0.0.1:1234/local-tiny.bin"
-        );
+        assert_eq!(tiny.download_url(), "http://127.0.0.1:1234/local-tiny.bin");
         // A developer-supplied URL never wears the upstream digest.
         assert_eq!(tiny.download_sha256(), None);
     }

@@ -124,7 +124,13 @@ impl SelectorPlacement {
             self.blend.set(target);
             self.blend_vel.set(0.0);
         } else {
-            spring_01(&self.blend, &self.blend_vel, target, frame.stiffness, frame.dt);
+            spring_01(
+                &self.blend,
+                &self.blend_vel,
+                target,
+                frame.stiffness,
+                frame.dt,
+            );
         }
         PlacementOutput {
             side: self.side,
@@ -195,14 +201,22 @@ pub fn tooltip_origin(
 }
 
 fn normalized_blend(blend: f64) -> f64 {
-    if blend.is_finite() { blend.clamp(0.0, 1.0) } else { 0.0 }
+    if blend.is_finite() {
+        blend.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 /// Fade out in the old slot, switch while hidden, then fade into the new
 /// slot. Multiply by the normal tooltip reveal; invalid progress is hidden.
 /// Callers must use this opacity when deciding whether to expose hit regions.
 pub fn tooltip_opacity(progress: f64, blend: f64) -> f64 {
-    let progress = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     progress * (2.0 * normalized_blend(blend) - 1.0).abs()
 }
 
@@ -251,7 +265,10 @@ mod tests {
 
     #[test]
     fn exact_fit_stays_above() {
-        assert_eq!(decide_side(SelectorSide::Above, NEEDED, H), SelectorSide::Above);
+        assert_eq!(
+            decide_side(SelectorSide::Above, NEEDED, H),
+            SelectorSide::Above
+        );
     }
 
     #[test]
@@ -291,12 +308,18 @@ mod tests {
 
     #[test]
     fn negative_headroom_goes_below() {
-        assert_eq!(decide_side(SelectorSide::Above, -40.0, H), SelectorSide::Below);
+        assert_eq!(
+            decide_side(SelectorSide::Above, -40.0, H),
+            SelectorSide::Below
+        );
     }
 
     #[test]
     fn zero_height_selector_needs_only_the_gap() {
-        assert_eq!(decide_side(SelectorSide::Above, PLACEMENT_GAP, 0.0), SelectorSide::Above);
+        assert_eq!(
+            decide_side(SelectorSide::Above, PLACEMENT_GAP, 0.0),
+            SelectorSide::Above
+        );
         assert_eq!(
             decide_side(SelectorSide::Above, PLACEMENT_GAP - 1.0, 0.0),
             SelectorSide::Below
@@ -317,7 +340,10 @@ mod tests {
             decide_side(SelectorSide::Above, 500.0, f64::NAN),
             SelectorSide::Above
         );
-        assert_eq!(decide_side(SelectorSide::Below, 500.0, -1.0), SelectorSide::Below);
+        assert_eq!(
+            decide_side(SelectorSide::Below, 500.0, -1.0),
+            SelectorSide::Below
+        );
     }
 
     #[test]
@@ -392,9 +418,18 @@ mod tests {
     fn origin_clamps_wild_blend_values() {
         let (_, top) = tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, 0.0);
         let (_, bottom) = tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, 1.0);
-        assert_eq!(tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, -3.0).1, top);
-        assert_eq!(tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, 9.0).1, bottom);
-        assert_eq!(tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, f64::NAN).1, top);
+        assert_eq!(
+            tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, -3.0).1,
+            top
+        );
+        assert_eq!(
+            tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, 9.0).1,
+            bottom
+        );
+        assert_eq!(
+            tooltip_origin(0.0, 100.0, 120.0, 32.0, 160.0, H, 6.0, f64::NAN).1,
+            top
+        );
     }
 
     #[test]

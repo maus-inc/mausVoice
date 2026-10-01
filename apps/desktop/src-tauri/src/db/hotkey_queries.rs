@@ -86,14 +86,12 @@ pub async fn replace_hotkeys_by_prefix(
         .await?;
     for hotkey in hotkeys {
         let keys_json = serialize_keys(&hotkey.keys)?;
-        sqlx::query(
-            "INSERT INTO hotkeys (id, action_name, keys) VALUES (?1, ?2, ?3)",
-        )
-        .bind(&hotkey.id)
-        .bind(&hotkey.action_name)
-        .bind(keys_json)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT INTO hotkeys (id, action_name, keys) VALUES (?1, ?2, ?3)")
+            .bind(&hotkey.id)
+            .bind(&hotkey.action_name)
+            .bind(keys_json)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
 

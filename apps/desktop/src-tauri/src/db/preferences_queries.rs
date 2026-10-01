@@ -171,7 +171,9 @@ pub async fn upsert_user_preferences(
     .bind(preferences.language_switch_enabled)
     .bind(&preferences.secondary_dictation_language)
     .bind(&preferences.active_dictation_language)
-    .bind(serialize_additional_languages(&preferences.additional_dictation_languages))
+    .bind(serialize_additional_languages(
+        &preferences.additional_dictation_languages,
+    ))
     .bind(&preferences.preferred_microphone)
     .bind(preferences.ignore_update_dialog)
     .bind(preferences.incognito_mode_enabled)
@@ -601,7 +603,10 @@ mod tests {
                 .map(|row| row.get::<String, _>("name"))
                 .collect();
         schema_columns.sort();
-        let mut listed_columns: Vec<String> = USER_PREFERENCES_COLUMNS.iter().map(|c| c.to_string()).collect();
+        let mut listed_columns: Vec<String> = USER_PREFERENCES_COLUMNS
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
         listed_columns.sort();
         assert_eq!(
             schema_columns, listed_columns,

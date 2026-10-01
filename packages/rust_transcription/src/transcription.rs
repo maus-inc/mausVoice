@@ -151,8 +151,9 @@ impl TranscriptionEngine {
             });
         }
 
-        let processed = crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000)
-            .map_err(|err| format!("unable to resample audio: {err}"))?;
+        let processed =
+            crate::audio::resample_to_rate(&filtered_samples, input.sample_rate, 16_000)
+                .map_err(|err| format!("unable to resample audio: {err}"))?;
 
         // Parakeet and Canary run through model-specific ONNX Runtime engines
         // with their real feature extractors and decoders. The current ONNX
@@ -580,7 +581,6 @@ unsafe fn c_string(ptr: *const std::os::raw::c_char) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-
 #[cfg(test)]
 mod filter_contract_tests {
     use super::*;
@@ -602,7 +602,9 @@ mod filter_contract_tests {
     fn enabled_filter_returns_empty_without_loading_whisper_or_onnx() {
         let engine = TranscriptionEngine::new(ComputeMode::Cpu);
         for model in [WhisperModel::Tiny, WhisperModel::ParakeetCtc06B] {
-            let output = engine.transcribe_blocking(quiet_input(model, true, 16_000)).unwrap();
+            let output = engine
+                .transcribe_blocking(quiet_input(model, true, 16_000))
+                .unwrap();
             assert!(output.text.is_empty());
             assert!(output.segments.is_empty());
         }
@@ -612,7 +614,9 @@ mod filter_contract_tests {
     fn disabled_filter_does_not_short_circuit_silent_inference() {
         let engine = TranscriptionEngine::new(ComputeMode::Cpu);
         for model in [WhisperModel::Tiny, WhisperModel::ParakeetCtc06B] {
-            let error = engine.transcribe_blocking(quiet_input(model, false, 16_000)).unwrap_err();
+            let error = engine
+                .transcribe_blocking(quiet_input(model, false, 16_000))
+                .unwrap_err();
             // The invalid device stops this test before model loading, proving
             // the ordinary inference path was reached rather than silence-gated.
             assert!(error.contains("unsupported deviceId"), "{error}");
@@ -624,7 +628,11 @@ mod filter_contract_tests {
     #[test]
     fn near_silent_when_too_few_windows_are_loud() {
         assert!(is_near_silent(&[], RATE_16K, SILENCE_RMS_THRESHOLD));
-        assert!(is_near_silent(&[0.001; 16_000], RATE_16K, SILENCE_RMS_THRESHOLD));
+        assert!(is_near_silent(
+            &[0.001; 16_000],
+            RATE_16K,
+            SILENCE_RMS_THRESHOLD
+        ));
 
         // 0.3 s at 0.01 RMS inside 10 s of silence averages below the
         // threshold over the whole clip, yet it is real speech: 1 loud window
@@ -677,7 +685,10 @@ mod filter_contract_tests {
         let error = engine
             .transcribe_blocking(quiet_input(WhisperModel::Tiny, true, 0))
             .unwrap_err();
-        assert!(error.contains("sampleRate must be greater than 0"), "{error}");
+        assert!(
+            error.contains("sampleRate must be greater than 0"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -686,7 +697,9 @@ mod filter_contract_tests {
         for model in [WhisperModel::Tiny, WhisperModel::ParakeetCtc06B] {
             for enabled in [true, false] {
                 for rate in [1, 7_999, 384_001, u32::MAX] {
-                    let error = engine.transcribe_blocking(quiet_input(model, enabled, rate)).unwrap_err();
+                    let error = engine
+                        .transcribe_blocking(quiet_input(model, enabled, rate))
+                        .unwrap_err();
                     assert!(error.contains("unsupported sample rate"), "{error}");
                 }
             }

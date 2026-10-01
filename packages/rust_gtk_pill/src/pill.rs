@@ -23,12 +23,13 @@ pub(crate) enum Backend {
 
 // Wayland cannot expose a portable absolute work area. This finite safety
 // envelope replaces an unbounded clamp on every held/release frame.
-const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds = rust_pill_shared::drag::DragBounds {
-    min_x: -1e9,
-    min_y: -1e9,
-    max_x: 1e9,
-    max_y: 1e9,
-};
+const WAYLAND_DRAG_BOUNDS: rust_pill_shared::drag::DragBounds =
+    rust_pill_shared::drag::DragBounds {
+        min_x: -1e9,
+        min_y: -1e9,
+        max_x: 1e9,
+        max_y: 1e9,
+    };
 
 /// Runs the GTK pill: picks the display backend, creates the frameless
 /// window, and drives the message/event loop until a quit message arrives.
@@ -368,9 +369,9 @@ pub fn run(receiver: Receiver<InMessage>) {
             state_press.long_press_start_y.set(y);
             state_press.drag_cursor_x.set(x);
             state_press.drag_cursor_y.set(y);
-            state_press.drag_press_offset.set(x11::physical_grab_offset(
-                (x, y), win_press.scale_factor(),
-            ));
+            state_press
+                .drag_press_offset
+                .set(x11::physical_grab_offset((x, y), win_press.scale_factor()));
             // Seed the Wayland sample so the first drag frame has a sane
             // pointer even if no motion event arrived since the press.
             state_press.drag_last_x.set(x);
@@ -465,7 +466,10 @@ pub fn run(receiver: Receiver<InMessage>) {
         draw::draw_all(cr, &state_draw);
         if let Err(error) = cr.status() {
             let now = Instant::now();
-            if last_draw_error.get().is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2)) {
+            if last_draw_error
+                .get()
+                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(2))
+            {
                 eprintln!("pill drawing failed: {error}");
                 last_draw_error.set(Some(now));
             }
@@ -535,7 +539,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     }
                     let prev = state_tick.phase.get();
                     state_tick.phase.set(phase);
-                    state_tick.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+                    state_tick
+                        .style_tooltip_gate
+                        .set_take_running(phase == Phase::Recording);
                     // A new take sweeps any banner parked above the pill (for
                     // example the retranscribing toast) so it cannot sit on the
                     // style selector for the whole take. A resume from Paused
@@ -557,11 +563,23 @@ pub fn run(receiver: Receiver<InMessage>) {
                     state_tick.style_count.set(count);
                     *state_tick.style_name.borrow_mut() = name;
                 }
-                InMessage::Toast { message, toast_type, duration, action, action_label, reject_action, reject_action_label } => {
+                InMessage::Toast {
+                    message,
+                    toast_type,
+                    duration,
+                    action,
+                    action_label,
+                    reject_action,
+                    reject_action_label,
+                } => {
                     *state_tick.flash_message.borrow_mut() = message;
-                    state_tick.flash_is_error.set(toast_type.as_deref() == Some("error"));
+                    state_tick
+                        .flash_is_error
+                        .set(toast_type.as_deref() == Some("error"));
                     state_tick.flash_visible.set(true);
-                    state_tick.flash_timer.set(duration.unwrap_or(FLASH_DURATION));
+                    state_tick
+                        .flash_timer
+                        .set(duration.unwrap_or(FLASH_DURATION));
                     *state_tick.flash_action.borrow_mut() = action;
                     *state_tick.flash_action_label.borrow_mut() = action_label;
                     *state_tick.flash_reject_action.borrow_mut() = reject_action;
@@ -740,13 +758,10 @@ pub fn run(receiver: Receiver<InMessage>) {
             } else {
                 WINDOW_W_TYPING as f64 - ox - dw
             };
-            let margin_end = (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
+            let margin_end =
+                (right_margin + (dw - panel_x - panel_w) + PANEL_CONTENT_SIDE_INSET) as i32;
             let ah = state_tick.alloc_height.get();
-            let bottom_margin = if ah > 0.0 {
-                ah - oy - dh
-            } else {
-                0.0
-            };
+            let bottom_margin = if ah > 0.0 { ah - oy - dh } else { 0.0 };
             let margin_bottom = (bottom_margin + PANEL_BOTTOM_MARGIN) as i32;
             entry_tick.set_margin_start(margin_start);
             entry_tick.set_margin_end(margin_end);
@@ -761,7 +776,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     win_tick.set_keyboard_mode(gtk_layer_shell::KeyboardMode::OnDemand);
                     glib::idle_add_local_once({
                         let e = entry_tick.clone();
-                        move || { e.grab_focus(); }
+                        move || {
+                            e.grab_focus();
+                        }
                     });
                 }
                 Backend::X11 => {
@@ -780,7 +797,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                     win_tick.set_accept_focus(true);
                     glib::idle_add_local_once({
                         let e = entry_tick.clone();
-                        move || { e.grab_focus(); }
+                        move || {
+                            e.grab_focus();
+                        }
                     });
                 }
             }
@@ -913,7 +932,10 @@ pub fn run(receiver: Receiver<InMessage>) {
 /// reported; on Wayland (where the layer-shell compositor owns placement and
 /// there is no queryable absolute position) only the monitor is reported and
 /// the rect is omitted.
-pub(crate) fn pill_geometry(window: &gtk::Window, state: &PillState) -> (Option<Rect>, Option<Rect>) {
+pub(crate) fn pill_geometry(
+    window: &gtk::Window,
+    state: &PillState,
+) -> (Option<Rect>, Option<Rect>) {
     let (w, h) = window.size();
     let scale = x11::x11_root_scale(window);
     let monitor = pill_monitor(window, state);
@@ -1008,13 +1030,7 @@ pub(crate) fn reduced_motion() -> bool {
 /// pointer and moves the toplevel; the Wayland backends run the same
 /// controller in window-relative offset space (the compositor owns the
 /// toplevel there).
-fn tick_drag_frame(
-    window: &gtk::Window,
-    state: &PillState,
-    backend: Backend,
-    now: f64,
-    dt: f64,
-) {
+fn tick_drag_frame(window: &gtk::Window, state: &PillState, backend: Backend, now: f64, dt: f64) {
     let dragging = state.dragging.get();
     let settling = state.drag_motion.borrow().is_settling();
     if !dragging && !settling {
@@ -1036,7 +1052,11 @@ fn persist_drag_position(window: &gtk::Window, state: &PillState) {
     }
     state.has_saved_position.set(true);
     let (rect, monitor) = pill_geometry(window, state);
-    ipc::send(&OutMessage::PositionChanged { has_saved_position: true, rect, monitor });
+    ipc::send(&OutMessage::PositionChanged {
+        has_saved_position: true,
+        rect,
+        monitor,
+    });
 }
 
 fn begin_wayland_drag(
@@ -1045,7 +1065,13 @@ fn begin_wayland_drag(
     offset: (f64, f64),
     now: f64,
 ) {
-    motion.begin_drag(press.0 - offset.0, press.1 - offset.1, offset.0, offset.1, now);
+    motion.begin_drag(
+        press.0 - offset.0,
+        press.1 - offset.1,
+        offset.0,
+        offset.1,
+        now,
+    );
 }
 
 /// One frame of Wayland/LayerShell drag motion: the newest motion sample runs
@@ -1062,7 +1088,10 @@ fn tick_wayland_drag_frame(window: &gtk::Window, state: &PillState, now: f64, dt
         begin_wayland_drag(
             &mut motion,
             (state.drag_cursor_x.get(), state.drag_cursor_y.get()),
-            (state.drag_draw_offset_x.get(), state.drag_draw_offset_y.get()),
+            (
+                state.drag_draw_offset_x.get(),
+                state.drag_draw_offset_y.get(),
+            ),
             now,
         );
     }
@@ -1129,7 +1158,9 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
     if state.backend.get() == Backend::PlainWayland {
         return local_top;
     }
-    let Some(monitor) = pill_monitor(window, state) else { return local_top };
+    let Some(monitor) = pill_monitor(window, state) else {
+        return local_top;
+    };
     let scale = if state.backend.get() == Backend::X11 {
         x11::x11_root_scale(window)
     } else {
@@ -1141,7 +1172,9 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
     let work = logical_rect_to_physical(&monitor.workarea(), scale);
     let surface_y = if state.backend.get() == Backend::X11 {
         let y = state.x11_drag_applied.get().1;
-        if y == i32::MIN { return local_top; }
+        if y == i32::MIN {
+            return local_top;
+        }
         y as f64
     } else {
         let geometry = logical_rect_to_physical(&monitor.geometry(), scale);
@@ -1156,15 +1189,16 @@ fn selector_headroom(window: &gtk::Window, state: &PillState) -> f64 {
 /// every frame, so both track the animation.
 fn tick_selector_placement(window: &gtk::Window, state: &PillState, dt: f64) {
     let space_above = selector_headroom(window, state);
-    state.selector_placement.borrow_mut().advance(
-        &rust_pill_shared::placement::PlacementFrame {
+    state
+        .selector_placement
+        .borrow_mut()
+        .advance(&rust_pill_shared::placement::PlacementFrame {
             space_above,
             tooltip_h: TOOLTIP_HEIGHT,
             stiffness: SPRING_STIFFNESS,
             dt,
             reduced_motion: reduced_motion(),
-        },
-    );
+        });
 }
 
 /// Center coordinates in the supplied X11 scale space.
@@ -1214,7 +1248,9 @@ fn x11_pill_monitor(window: &gtk::Window, state: &PillState) -> Option<(gdk::Mon
 
 fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, f64, f64, f64) {
     let unknown = (f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN);
-    let Some((monitor, cx, cy)) = x11_pill_monitor(window, state) else { return unknown };
+    let Some((monitor, cx, cy)) = x11_pill_monitor(window, state) else {
+        return unknown;
+    };
     let scale = x11::x11_root_scale(window);
     if !scale.is_finite() || scale <= 0.0 {
         return unknown;
@@ -1229,8 +1265,10 @@ fn crossing_monitor(window: &gtk::Window, state: &PillState) -> (f64, f64, f64, 
 fn tick_crossing_frame(window: &gtk::Window, state: &PillState, dt: f64) {
     let (mx, my, mw, mh, cx, cy) = crossing_monitor(window, state);
     let rm = reduced_motion();
-    let out = state.crossing.borrow_mut().advance(
-        &rust_pill_shared::deform::CrossingFrame {
+    let out = state
+        .crossing
+        .borrow_mut()
+        .advance(&rust_pill_shared::deform::CrossingFrame {
             monitor_x: mx,
             monitor_y: my,
             monitor_width: mw,
@@ -1241,8 +1279,7 @@ fn tick_crossing_frame(window: &gtk::Window, state: &PillState, dt: f64) {
             dt,
             stiffness: SPRING_STIFFNESS,
             reduced_motion: rm,
-        },
-    );
+        });
     if out.triggered && rm {
         state.flash_blue_active.set(true);
         state.flash_blue_elapsed.set(0.0);
@@ -1253,15 +1290,16 @@ fn tick_crossing_frame(window: &gtk::Window, state: &PillState, dt: f64) {
 /// The hover IPC fires only on entered/exited, so every platform reports each
 /// transition exactly once.
 fn tick_hover_frame(state: &PillState) {
-    let output = state.hover_intent.borrow_mut().advance(
-        &rust_pill_shared::hover::HoverFrame {
+    let output = state
+        .hover_intent
+        .borrow_mut()
+        .advance(&rust_pill_shared::hover::HoverFrame {
             probed: state.hover_probed.get(),
             pointer_x: state.hover_probe_x.get(),
             pointer_y: state.hover_probe_y.get(),
             now: drag_clock_now(),
             pointer_down: state.pointer_down.get(),
-        },
-    );
+        });
     state.hovered.set(output.hovered);
     if output.entered || output.exited {
         ipc::send(&OutMessage::Hover {
@@ -1295,7 +1333,9 @@ fn release_pointer_if_button_up(window: &gtk::Window, state: &PillState) {
         // Teardown can flush a final drag move. Query again afterwards so the
         // coordinates belong to the new window origin, not the previous frame.
         let (_, x, y, _) = gdk_window.device_position(&pointer);
-        state.hover_probed.set(input::is_over_pill_area(state, x as f64, y as f64));
+        state
+            .hover_probed
+            .set(input::is_over_pill_area(state, x as f64, y as f64));
         state.hover_probe_x.set(x as f64);
         state.hover_probe_y.set(y as f64);
     }
@@ -1324,12 +1364,25 @@ fn tick(state: &PillState, dt: f64) {
     // Pill expand/collapse — PILL_EXPAND_STIFFNESS is snappier than the
     // generic 200 so the primary affordance feels instant. The spring
     // still settles without overshoot (critically damped).
-    let expand_target = if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.expand_t, &state.expand_velocity, expand_target, rust_pill_shared::PILL_EXPAND_STIFFNESS, dt);
+    let expand_target =
+        if is_active || hovered || state.assistant_active.get() || phase == Phase::Paused {
+            1.0
+        } else {
+            0.0
+        };
+    rust_pill_shared::spring::spring_01(
+        &state.expand_t,
+        &state.expand_velocity,
+        expand_target,
+        rust_pill_shared::PILL_EXPAND_STIFFNESS,
+        dt,
+    );
 
     // Loading offset
     if is_loading {
-        state.loading_offset.set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
+        state
+            .loading_offset
+            .set((state.loading_offset.get() + LOADING_SPEED) % 1.0);
     }
 
     // Tooltip animation (spring)
@@ -1345,32 +1398,63 @@ fn tick(state: &PillState, dt: f64) {
         hovered,
         state.expand_t.get(),
     );
-    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.tooltip_t,
+        &state.tooltip_velocity,
+        tooltip_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Panel open/close (spring)
     // A pending review holds the panel open on its own: the transcript must
     // stay visible until the user answers it.
-    let panel_target =
-        if state.owns_panel() {
-            1.0
-        } else {
-            0.0
-        };
-    rust_pill_shared::spring::spring_01(&state.panel_open_t, &state.panel_open_velocity, panel_target, SPRING_STIFFNESS, dt);
+    let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
+    rust_pill_shared::spring::spring_01(
+        &state.panel_open_t,
+        &state.panel_open_velocity,
+        panel_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Keyboard button (spring)
     let is_voice = *state.assistant_input_mode.borrow() == "voice";
-    let kb_target = if state.assistant_active.get() && is_voice { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.kb_button_t, &state.kb_button_velocity, kb_target, SPRING_STIFFNESS, dt);
+    let kb_target = if state.assistant_active.get() && is_voice {
+        1.0
+    } else {
+        0.0
+    };
+    rust_pill_shared::spring::spring_01(
+        &state.kb_button_t,
+        &state.kb_button_velocity,
+        kb_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Animate content dimensions toward target mode
     let mode = state.effective_window_mode();
     let (tw, th) = mode.dimensions();
-    rust_pill_shared::spring::spring_px(&state.draw_width, &state.draw_w_velocity, tw as f64, SPRING_STIFFNESS, dt);
-    rust_pill_shared::spring::spring_px(&state.draw_height, &state.draw_h_velocity, th as f64, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_px(
+        &state.draw_width,
+        &state.draw_w_velocity,
+        tw as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
+    rust_pill_shared::spring::spring_px(
+        &state.draw_height,
+        &state.draw_h_velocity,
+        th as f64,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Shimmer phase for thinking animation
-    state.shimmer_phase.set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
+    state
+        .shimmer_phase
+        .set((state.shimmer_phase.get() + SHIMMER_SPEED) % 1.0);
 
     // Fireworks
     tick_fireworks(state);
@@ -1394,8 +1478,18 @@ fn tick(state: &PillState, dt: f64) {
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
-    let pause_target = if state.phase.get() == Phase::Paused { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.pause_t, &state.pause_velocity, pause_target, SPRING_STIFFNESS, dt);
+    let pause_target = if state.phase.get() == Phase::Paused {
+        1.0
+    } else {
+        0.0
+    };
+    rust_pill_shared::spring::spring_01(
+        &state.pause_t,
+        &state.pause_velocity,
+        pause_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Cancel + pause controls.
     let controls_phase = state.phase.get();
@@ -1409,7 +1503,13 @@ fn tick(state: &PillState, dt: f64) {
             Phase::Idle | Phase::Loading => false,
         };
     let cancel_target = if show_controls { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.cancel_t, &state.cancel_velocity, cancel_target, SPRING_STIFFNESS * 2.0, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.cancel_t,
+        &state.cancel_velocity,
+        cancel_target,
+        SPRING_STIFFNESS * 2.0,
+        dt,
+    );
 
     // Inflate animation. The target ramps up partway through the hold (not at
     // the arm moment), so the pill is already growing while the ring fills and
@@ -1420,10 +1520,26 @@ fn tick(state: &PillState, dt: f64) {
         state.long_press_active.get(),
         state.dragging.get(),
     );
-    rust_pill_shared::spring::spring_01(&state.inflate_t, &state.inflate_velocity, inflate_target, DRAG_INFLATE_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.inflate_t,
+        &state.inflate_velocity,
+        inflate_target,
+        DRAG_INFLATE_STIFFNESS,
+        dt,
+    );
 
-    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+    let drag_target = if state.dragging.get() || state.long_press_active.get() {
+        1.0
+    } else {
+        0.0
+    };
+    rust_pill_shared::spring::spring_01(
+        &state.drag_label_t,
+        &state.drag_label_velocity,
+        drag_target,
+        rust_pill_shared::LABEL_SPRING_STIFFNESS,
+        dt,
+    );
 
     tick_ring(state, dt);
 
@@ -1450,7 +1566,9 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
             let combined = (avg * 0.9 + peak * 0.85).min(1.0);
             let boosted = (combined.sqrt() * 1.35).min(1.0);
             let target = state.target_level.get();
-            state.target_level.set((target * 0.25 + boosted * 0.75).min(1.0));
+            state
+                .target_level
+                .set((target * 0.25 + boosted * 0.75).min(1.0));
         }
     } else if is_loading {
         let target = state.target_level.get();
@@ -1466,16 +1584,28 @@ fn tick_audio_levels(state: &PillState, phase: Phase) {
     let current = state.current_level.get();
     let target = state.target_level.get();
     let new_current = current + (target - current) * LEVEL_SMOOTHING;
-    state.current_level.set(if new_current < 0.0002 { 0.0 } else { new_current });
+    state.current_level.set(if new_current < 0.0002 {
+        0.0
+    } else {
+        new_current
+    });
 
     let decayed = target * TARGET_DECAY_PER_FRAME;
-    state.target_level.set(if decayed < 0.0005 { 0.0 } else { decayed });
+    state
+        .target_level
+        .set(if decayed < 0.0005 { 0.0 } else { decayed });
 
     let level = state.current_level.get();
-    let base_level = if is_loading && !is_recording { PROCESSING_BASE_LEVEL } else { 0.0 };
+    let base_level = if is_loading && !is_recording {
+        PROCESSING_BASE_LEVEL
+    } else {
+        0.0
+    };
     let effective_level = level.max(base_level);
     let advance = WAVE_BASE_PHASE_STEP + WAVE_PHASE_GAIN * effective_level;
-    state.wave_phase.set((state.wave_phase.get() + advance) % TAU);
+    state
+        .wave_phase
+        .set((state.wave_phase.get() + advance) % TAU);
 }
 
 /// Flash banner (native pill toast) expiry and fade spring. An action-less
@@ -1495,7 +1625,13 @@ fn tick_flash(state: &PillState, tooltip_revealed: bool, dt: f64) {
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_revealed,
     );
-    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 }
 
 fn tick_long_press(state: &PillState, dt: f64) {
@@ -1730,7 +1866,11 @@ fn tick_transcript(state: &PillState) {
         0.0
     };
 
-    let speed = if target > 0.5 { TRANSCRIPT_RISE_SPEED } else { TRANSCRIPT_FADE_SPEED };
+    let speed = if target > 0.5 {
+        TRANSCRIPT_RISE_SPEED
+    } else {
+        TRANSCRIPT_FADE_SPEED
+    };
     let opacity = state.transcript_opacity.get();
     let blend = 1.0 - (-speed * dt).exp();
     let next = opacity + (target - opacity) * blend;
@@ -1742,7 +1882,6 @@ fn tick_transcript(state: &PillState) {
         state.transcript_text.borrow_mut().clear();
     }
 }
-
 
 #[cfg(test)]
 mod geometry_tests {
@@ -1776,9 +1915,14 @@ mod geometry_tests {
             let mut motion = DragController::new();
             begin_wayland_drag(&mut motion, (200.0, 100.0), offset, 0.0);
             let mut frame = DragFrame {
-                pointer_x: 200.0, pointer_y: 100.0, now: 0.01, dt: 0.0,
+                pointer_x: 200.0,
+                pointer_y: 100.0,
+                now: 0.01,
+                dt: 0.0,
                 bounds: WAYLAND_DRAG_BOUNDS,
-                edge_work: None, held: true, reduced_motion: true,
+                edge_work: None,
+                held: true,
+                reduced_motion: true,
             };
             let unchanged = motion.advance(&frame);
             assert_eq!((unchanged.x, unchanged.y), offset);
@@ -1813,7 +1957,8 @@ mod geometry_tests {
                 height: 2000.0,
             },
         );
-        let left_monitor = logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 2.0);
+        let left_monitor =
+            logical_rect_to_physical(&gdk::Rectangle::new(-1920, 0, 1920, 1080), 2.0);
         assert_eq!(left_monitor.x, -3840.0);
         assert_eq!(left_monitor.width, 3840.0);
     }

@@ -103,7 +103,11 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
             .clamp(0.05, 0.5) as f64,
     )
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
-    .bind(if user.has_migrated_preferred_microphone { 1 } else { 0 })
+    .bind(if user.has_migrated_preferred_microphone {
+        1
+    } else {
+        0
+    })
     .bind(&user.cohort)
     .bind(&user.styling_mode)
     .bind(&user.selected_tone_id)
@@ -297,7 +301,11 @@ mod tests {
         assert_eq!(saved.name, "Renamed");
         assert_eq!(saved.interaction_feedback_volume, Some(0.4));
         assert_eq!(
-            fetch_user(pool).await.expect("load").expect("a user exists").name,
+            fetch_user(pool)
+                .await
+                .expect("load")
+                .expect("a user exists")
+                .name,
             "Renamed"
         );
     }

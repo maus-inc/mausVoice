@@ -466,9 +466,7 @@ struct TranscribeResponse {
     segments: Vec<SegmentResponse>,
 }
 
-fn segments_to_response(
-    segments: &[TranscriptionSegment],
-) -> Vec<SegmentResponse> {
+fn segments_to_response(segments: &[TranscriptionSegment]) -> Vec<SegmentResponse> {
     segments
         .iter()
         .map(|segment| SegmentResponse {
@@ -935,7 +933,8 @@ mod tests {
                 payload["hallucinationFilterEnabled"] = serde_json::json!(enabled);
             }
             let batch: TranscribeRequest = serde_json::from_value(payload.clone()).unwrap();
-            let stream: CreateTranscriptionSessionRequest = serde_json::from_value(payload).unwrap();
+            let stream: CreateTranscriptionSessionRequest =
+                serde_json::from_value(payload).unwrap();
             assert_eq!(batch.hallucination_filter_enabled, flag.unwrap_or(true));
             assert_eq!(stream.hallucination_filter_enabled, flag.unwrap_or(true));
         }

@@ -151,9 +151,7 @@ pub fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 // The app-level close handler always turns a main-window close
                 // request into hide-to-tray. Update immediately, before a
                 // platform can suspend the hidden webview.
-                tauri::WindowEvent::CloseRequested { .. } => {
-                    set_dashboard_menu_visibility(false)
-                }
+                tauri::WindowEvent::CloseRequested { .. } => set_dashboard_menu_visibility(false),
                 tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_) => {
                     sync_dashboard_menu_state(&app_handle)
                 }
@@ -323,7 +321,10 @@ pub fn set_menu_icon(app: &tauri::AppHandle, variant: MenuIconVariant) -> Result
     Ok(())
 }
 
-pub fn set_register_app_label(_app: &tauri::AppHandle, app_name: Option<String>) -> Result<(), String> {
+pub fn set_register_app_label(
+    _app: &tauri::AppHandle,
+    app_name: Option<String>,
+) -> Result<(), String> {
     let Some(item) = REGISTER_MENU_ITEM.get() else {
         return Err("Register menu item not initialized".to_string());
     };
@@ -361,15 +362,11 @@ pub fn set_dashboard_menu_labels(
 /// Native menu state only: this never writes user preferences. The item stays
 /// enabled in every state, so a single click is always a recovery path.
 /// The frontend resolves the localized label and passes it here.
-pub fn set_pill_visibility_menu_state(
-    _app: &tauri::AppHandle,
-    label: &str,
-) -> Result<(), String> {
+pub fn set_pill_visibility_menu_state(_app: &tauri::AppHandle, label: &str) -> Result<(), String> {
     let Some(item) = PILL_VISIBILITY_MENU_ITEM.get() else {
         return Err("Pill visibility menu item not initialized".to_string());
     };
-    item.set_text(label)
-        .map_err(|err| err.to_string())?;
+    item.set_text(label).map_err(|err| err.to_string())?;
     item.set_enabled(true).map_err(|err| err.to_string())
 }
 
