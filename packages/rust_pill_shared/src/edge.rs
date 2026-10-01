@@ -196,19 +196,10 @@ pub const SEAM_HYSTERESIS_FRACTION: f64 = 0.10;
 /// only after the center returns by a fraction of the adjacent monitors' span.
 /// A source-monitor change, removal of the latched neighbor, or new drag resets
 /// the latch.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SeamTracker {
     monitor: Option<MonitorRect>,
     neighbors: [Option<MonitorRect>; 4],
-}
-
-impl Default for SeamTracker {
-    fn default() -> Self {
-        Self {
-            monitor: None,
-            neighbors: [None; 4],
-        }
-    }
 }
 
 impl SeamTracker {
@@ -263,7 +254,7 @@ impl SeamTracker {
                 }
             } else if !side_is_exposed(exposed, side) {
                 if let Some(neighbor) = neighbors.iter().copied().find(|neighbor| {
-                    neighbor_interval(monitor, *neighbor, side).map_or(false, |(start, end)| {
+                    neighbor_interval(monitor, *neighbor, side).is_some_and(|(start, end)| {
                         let margin = seam_hysteresis_margin(monitor, *neighbor, side, start, end);
                         coordinate <= start + margin || coordinate >= end - margin
                     })
@@ -928,7 +919,7 @@ mod tests {
             let eased = ease_axis(pos, 0.0, MIN, MAX, DIM);
             assert!(eased >= last, "ease reversed at {pos}");
             assert!(
-                eased >= MIN && eased <= MIN + BAND,
+                (MIN..=MIN + BAND).contains(&eased),
                 "ease left the band at {pos}"
             );
             last = eased;

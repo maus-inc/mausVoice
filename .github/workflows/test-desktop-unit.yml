@@ -175,26 +175,22 @@ jobs:
         shell: bash
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-unit cargo test --locked --lib
-      - name: Lint the desktop crate
-        working-directory: apps/desktop/src-tauri
-        env:
-          TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
-        shell: bash
-        run: |
-          bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" rust-clippy \
-            cargo clippy --locked --lib -- -D warnings
-      - name: Lint the GTK pill crate on every target
-        # `--all-targets` here because the crate is clean under it, which makes it
-        # the regression net for the desktop crate's own test targets: those have
-        # pre-existing findings (a `trim`-before-`split_whitespace` in
-        # `consolidation.rs`, `assert!(true)` in drag tests) and are tracked
-        # separately rather than gated while red.
+      - name: Lint every Rust target
+        # `--all-targets` rather than the library alone. A test or bench is not
+        # linted by a `--lib` invocation, which is how six `assert!(true)` calls
+        # in the drag tests and a redundant `trim` in consolidation.rs sat there
+        # unnoticed: every one of them was checking a constant, which the
+        # compiler folds away, so the test passed whatever the value was.
         working-directory: .
         shell: bash
         run: |
-          for crate in packages/rust_gtk_pill packages/rust_pill_shared; do
+          for crate in \
+            apps/desktop/src-tauri \
+            packages/rust_pill_shared \
+            packages/rust_gtk_pill; do
             echo "::group::$crate"
-            (cd "$crate" && cargo clippy --locked --lib --bins -- -D warnings) || exit 1
+            (cd "$crate" && TAURI_CONFIG='{"bundle":{"externalBin":[]}}' \
+              cargo clippy --locked --all-targets -- -D warnings) || exit 1
             echo "::endgroup::"
           done
       - name: Check published package export contracts

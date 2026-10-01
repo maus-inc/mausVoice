@@ -1429,21 +1429,24 @@ mod tests {
         assert_eq!(ring_head_disc(1, 0), (1.0, 1.0));
     }
 
-    #[test]
-    fn head_draw_cutoff_is_below_perception() {
-        // Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it a disc
-        // would contribute less than a single alpha step and is not worth
-        // painting.
+    /// These are all `const`, so an `assert!(CONST)` in a `#[test]` is folded
+    /// away at compile time and the test passes whatever the constants say —
+    /// `clippy::assertions_on_constants` is right about that. `const _` blocks
+    /// are evaluated during compilation, so an inequality that stops holding
+    /// fails the build instead of a test nobody would have read anyway.
+    const _: () = {
+        // Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it a disc would
+        // contribute less than a single alpha step and is not worth painting.
         assert!(RING_HEAD_FADE_CUTOFF > 0.0);
         assert!(RING_HEAD_FADE_CUTOFF <= 1.0 / 255.0 * 1.5);
-        // The comet's per-segment cutoff is deliberately the coarser of the
-        // two — hundreds of segments per frame versus a handful of discs —
-        // but must still stay within a few 8-bit alpha steps.
+        // The comet's per-segment cutoff is deliberately the coarser of the two
+        // -- hundreds of segments per frame versus a handful of discs -- but
+        // must still stay within a few 8-bit alpha steps.
         assert!(RING_SEGMENT_ALPHA_CUTOFF > RING_HEAD_FADE_CUTOFF);
         assert!(RING_SEGMENT_ALPHA_CUTOFF <= 1.0 / 255.0 * 4.0);
         // The path-length guard must stay far below any real pixel distance.
         assert!(RING_PATH_LEN_EPSILON > 0.0 && RING_PATH_LEN_EPSILON < 1e-3);
-    }
+    };
 
     /// A resampled perimeter of the size the pills actually draw.
     fn sample_ring() -> (Vec<(f64, f64, f64)>, f64) {

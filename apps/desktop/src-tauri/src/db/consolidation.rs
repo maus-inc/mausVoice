@@ -236,7 +236,6 @@ mod tests {
                     .lines()
                     .find(|line| !line.trim().is_empty())
                     .unwrap_or_default()
-                    .trim()
                     .split_whitespace()
                     .next()
                     .unwrap_or_default();
