@@ -155,8 +155,8 @@ jobs:
         # Every crate, not just the one the tests below run: the deviations that
         # accumulated were in the pill crates and the transcription bench, and a
         # gate that only looked at src-tauri would have reported the repo clean.
-        # `rust_windows_pill` included -- it is a crate of this repo and was not
-        # in the list until a reviewer pointed at the omission.
+        # `rust_windows_pill` is a crate of this repo too, and it is the one with
+        # the most deviations of the six.
         working-directory: .
         shell: bash
         run: |

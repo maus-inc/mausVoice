@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
 import type { ToolInfo } from "@maus-inc/types";
 import { BaseTool, type ToolExecutionContext } from "./base.tool";
 import {
@@ -9,9 +10,6 @@ import { getAppState } from "../store";
 import { getLogger } from "../utils/log.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
-
-/** Mirrors the Rust `PasteOutcome`, serialized snake_case. */
-type PasteOutcome = "pasted" | "copied_to_clipboard";
 
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {

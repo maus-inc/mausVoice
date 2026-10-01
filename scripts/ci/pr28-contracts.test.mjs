@@ -1053,15 +1053,30 @@ describe("native review and monitor contracts", () => {
   });
 
   it("centralizes fallible Win32 monitor-info initialization", () => {
-    assert.equal(source.windowsPill.match(/GetMonitorInfoW\(/g)?.length, 1);
-    assert.ok(source.windowsPill.match(/query_monitor_info\(/g)?.length >= 6);
-    assert.match(
-      source.windowsPill,
-      /let Some\(info\) = query_monitor_info\(monitor\) else (\{ return \};|\{)/,
-    );
-    assert.match(
-      source.windowsPill,
-      /let info = query_monitor_info\(monitor\)\?;/,
+    const pill = source.windowsPill;
+    // `GetMonitorInfoW` belongs to the one wrapper, not to its callers.
+    assert.equal(pill.match(/GetMonitorInfoW\(/g)?.length, 1);
+    assert.ok((pill.match(/query_monitor_info\(/g)?.length ?? 0) >= 6);
+
+    // A caller binds the info in one of two ways, and both have to guard: a
+    // `?`, or a let-else whose block returns. Counting the two guarded shapes
+    // separately is what makes this bite -- a new binding with neither leaves
+    // one of them short of the total, and matching either shape on its own
+    // proved nothing about the other call sites.
+    const bindings =
+      (pill.match(/let Some\(info\) = query_monitor_info\(/g)?.length ?? 0) +
+      (pill.match(/let info = query_monitor_info\(/g)?.length ?? 0);
+    const guarded =
+      (pill.match(/let info = query_monitor_info\(monitor\)\?;/g)?.length ??
+        0) +
+      (pill.match(
+        /let Some\(info\) = query_monitor_info\(monitor\) else \{[^}]*return[^}]*\};?/g,
+      )?.length ?? 0);
+    assert.ok(bindings > 0, "the wrapper's callers bind the info");
+    assert.equal(
+      guarded,
+      bindings,
+      "every info binding is guarded by ? or a let-else that returns",
     );
   });
 });

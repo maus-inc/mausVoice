@@ -1,3 +1,4 @@
+import type { PasteOutcome } from "@maus-inc/desktop-native-apis";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   RouteTranscriptOutputArgs,
@@ -13,8 +14,6 @@ import { sendPillFlashMessage, sendPillStageText } from "./overlay.utils";
 import { markPipeline, type PipelineTrace } from "./pipeline-trace";
 import { sanitizeIndentation } from "./string.utils";
 import { getMyUserPreferences } from "./user.utils";
-
-type PasteOutcome = "pasted" | "copied_to_clipboard";
 
 let handsFreeSessionId = 0;
 
