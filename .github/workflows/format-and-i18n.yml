@@ -25,6 +25,10 @@ on:
       - ".prettierignore"
       - ".prettierrc*"
       - "*.md"
+      # Both jobs below resolve the runtime through `node-version-file:
+      # .nvmrc`, so a change to the pin has to run the checks that validate
+      # the runtime it selects. Without this, bumping the pin skipped them.
+      - ".nvmrc"
       - ".github/**"
   # No branches filter: this repo stacks PRs onto feature branches, so a
   # main-targeted filter would skip exactly the changes that need checking.
@@ -46,6 +50,7 @@ on:
       - ".prettierignore"
       - ".prettierrc*"
       - "*.md"
+      - ".nvmrc"
       - ".github/**"
   workflow_dispatch:
 
@@ -106,5 +111,17 @@ jobs:
         run: |
           if ! git diff --exit-code -- apps/desktop/src/i18n; then
             echo "::error::The i18n extractor changed the committed locales. Run 'pnpm --filter desktop run i18n' and commit the result." >&2
+            exit 1
+          fi
+          # `git diff` only looks at tracked files, so a locale the extractor
+          # generated for a newly supported language passed this check while
+          # sitting untracked in the runner's working tree. Nothing in the
+          # commit carried the JSON, and the app shipped with the language
+          # listed but untranslated.
+          untracked="$(git ls-files --others --exclude-standard -- apps/desktop/src/i18n)"
+          if [ -n "$untracked" ]; then
+            echo "::error::The i18n extractor generated files that are not committed:" >&2
+            echo "$untracked" >&2
+            echo "Run 'pnpm --filter desktop run i18n' and commit the result." >&2
             exit 1
           fi

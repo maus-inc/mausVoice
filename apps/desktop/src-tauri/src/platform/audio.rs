@@ -173,6 +173,19 @@ mod cpal_impl {
         callback: ChunkCallback,
         throttle: Throttle,
         buffer: Mutex<Vec<f32>>,
+        /// Serialises claiming an offset with handing the chunk to the
+        /// callback, so two dispatches cannot reach the callback in the
+        /// opposite order to the one their offsets were claimed in.
+        ///
+        /// `buffer` alone is not enough. Taking the index and advancing the
+        /// counter inside the buffer lock makes each index unique, but the
+        /// callback was invoked after that lock was released, so a thread
+        /// that had already claimed the next index could deliver first. The
+        /// webview appends each chunk at the offset it is handed, so it saw
+        /// a gap in a stream with no gap in it. This lock is separate from
+        /// `buffer` so the audio callback keeps buffering while a chunk is
+        /// in flight; it is only ever taken by a dispatch.
+        dispatch: Mutex<()>,
         emitted_samples: AtomicU64,
     }
 
@@ -182,6 +195,7 @@ mod cpal_impl {
                 callback,
                 throttle: Throttle::new(CHUNK_DISPATCH_INTERVAL),
                 buffer: Mutex::new(Vec::new()),
+                dispatch: Mutex::new(()),
                 emitted_samples: AtomicU64::new(0),
             })
         }
@@ -210,7 +224,16 @@ mod cpal_impl {
         /// `fetch_add` after releasing the lock would let a second dispatch
         /// read the pre-advance value and hand out a duplicate index, and a
         /// duplicate makes the webview treat the stream as discontinuous.
+        ///
+        /// The callback runs while `dispatch` is still held, so the order the
+        /// offsets were claimed in is the order the webview receives them in.
+        /// A dispatch takes `dispatch` before `buffer` and never the other way
+        /// round, so the two cannot deadlock against each other.
         fn dispatch_buffered_chunk(&self) {
+            let _in_order = self
+                .dispatch
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let (chunk, offset) = {
                 let mut buffer = self
                     .buffer
@@ -1282,6 +1305,90 @@ mod cpal_impl {
                 unique.len(),
                 seen.len(),
                 "two dispatches claimed the same starting index"
+            );
+        }
+
+        /// Uniqueness is not enough. The webview places each chunk at the
+        /// offset it is handed, so a callback that runs *after* a later
+        /// offset has been delivered leaves a hole in a stream whose samples
+        /// were contiguous. The offset was claimed under `buffer` but the
+        /// callback ran after that lock was released, which is the window
+        /// this closes.
+        ///
+        /// The first callback is held inside the callback so a second
+        /// dispatch has to get past it to be delivered. Samples are pushed
+        /// straight into the buffer rather than through `emit`, so the
+        /// throttle window cannot turn the second dispatch into a no-op and
+        /// make the test pass for the wrong reason.
+        #[test]
+        fn a_dispatch_in_flight_is_delivered_before_the_next_one() {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::Barrier;
+            use std::time::Duration;
+
+            let first_entered = Arc::new(Barrier::new(2));
+            let release_first = Arc::new(Barrier::new(2));
+            let second_started = Arc::new(AtomicBool::new(false));
+            let seen = Arc::new(Mutex::new(Vec::<u64>::new()));
+
+            let entered = first_entered.clone();
+            let release = release_first.clone();
+            let seen_in_callback = seen.clone();
+            let emitter = ChunkEmitter::new(Arc::new(move |_chunk, offset| {
+                if offset == 0 {
+                    // Park inside the first callback. Everything recorded
+                    // after this point is a delivery that overtook it.
+                    entered.wait();
+                    release.wait();
+                }
+                seen_in_callback.lock().unwrap().push(offset);
+            }));
+
+            let first = {
+                let emitter = emitter.clone();
+                std::thread::spawn(move || {
+                    emitter
+                        .buffer
+                        .lock()
+                        .unwrap()
+                        .extend_from_slice(&[0.0f32; 4]);
+                    emitter.flush();
+                })
+            };
+            first_entered.wait();
+
+            let second_started_in_thread = second_started.clone();
+            let second = {
+                let emitter = emitter.clone();
+                std::thread::spawn(move || {
+                    second_started_in_thread.store(true, Ordering::SeqCst);
+                    emitter
+                        .buffer
+                        .lock()
+                        .unwrap()
+                        .extend_from_slice(&[0.0f32; 4]);
+                    emitter.flush();
+                })
+            };
+            while !second_started.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            // Long enough for the second dispatch to have been delivered if
+            // nothing serialises it.
+            std::thread::sleep(Duration::from_millis(200));
+            assert!(
+                seen.lock().unwrap().is_empty(),
+                "a second dispatch reached the callback while the first was still in it"
+            );
+
+            release_first.wait();
+            first.join().expect("first dispatch thread panicked");
+            second.join().expect("second dispatch thread panicked");
+
+            assert_eq!(
+                *seen.lock().unwrap(),
+                vec![0, 4],
+                "chunks must reach the callback in the order their offsets were claimed"
             );
         }
 

@@ -55,17 +55,19 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         // Connector token/credential/secret/api key: <credential>, optionally
         // wrapped in quotes. A quoted value may contain whitespace
         // (`Connector token: "Bearer <redacted>"`), so match the complete
-        // quoted value before falling back to a bare token. The quoted arm
-        // consumes escape sequences so a JSON-encoded credential whose value
-        // contains a quote (`"tok\"en"`) is taken whole; stopping at that
-        // quote would leave the rest of the secret in the log. The second
-        // quoted arm covers a value whose closing quote never arrived -- a
-        // truncated log line, or one ending in a lone backslash -- where the
-        // escape-aware arm has no closing quote to reach and the bare-token
-        // arm cannot start on a quote.
+        // quoted value before falling back to a bare token. Each quote style
+        // gets two arms. The first consumes escape sequences, so a
+        // JSON-encoded credential whose value contains a quote
+        // (`"tok\"en"`) is taken whole. The second covers a value whose
+        // closing quote never arrived -- a truncated log line, or one ending
+        // in a lone backslash -- and takes the rest of the line, escapes
+        // included: a tail that is both escaped and truncated
+        // (`"tok\"en\`) has no closing quote for the first arm to reach, and
+        // an arm that stopped at the escaped quote instead left `en\` of the
+        // credential in the log.
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("(?:[^"\\]|\\.)*"|"[^"\r\n]*|'[^']*'|[^\s"']+)"#,
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("(?:[^"\\]|\\.)*"|"[^\r\n]*|'(?:[^'\\]|\\.)*'|'[^\r\n]*|[^\s"']+)"#,
             )
             .unwrap(),
             replacement: "$1 [REDACTED]",
@@ -416,6 +418,35 @@ mod tests {
         let input = "[2026-01-15][14:30:45.123][DEBUG][webview] Connector token: \"trailing-fixture-9k2m\\";
         let result = sanitize_log_content(input);
         assert!(!result.contains("trailing-fixture-9k2m"), "got: {result}");
+    }
+
+    // The hard case is a tail that is both escaped and truncated. The closed
+    // arm has no closing quote to reach, and the unterminated arm used to
+    // stop at the escaped quote, so it redacted `"tok\` and left `en\` in
+    // the log. Both halves of the credential have to go.
+    #[test]
+    fn test_redacts_an_escaped_quote_in_a_truncated_quoted_token() {
+        // The fixture text must not share a substring with the label it sits
+        // behind, or `contains` reports the label rather than the leak.
+        for (label, input) in [
+            ("double quoted", "Connector token: \"head-fixture-9k2m\\\"tail-fixture-4j7x\\"),
+            ("single quoted", "Connector token: 'head-fixture-9k2m\\'tail-fixture-4j7x\\"),
+        ] {
+            let line = format!("[2026-01-15][14:30:45.123][DEBUG][webview] {input}");
+            let result = sanitize_log_content(&line);
+            assert!(
+                !result.contains("head-fixture"),
+                "{label} leaked the head: {result}"
+            );
+            assert!(
+                !result.contains("tail-fixture"),
+                "{label} leaked the tail: {result}"
+            );
+            assert!(
+                result.contains("Connector token: [REDACTED]"),
+                "{label} did not report the redaction: {result}"
+            );
+        }
     }
 
     #[test]

@@ -103,21 +103,46 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
                     let _ = BringWindowToTop(hwnd);
                 }
 
-                if let Err(err) = window_for_handle.unminimize() {
-                    log::error!("Failed to unminimize window: {err}");
-                }
-                if let Err(err) = window_for_handle.show() {
-                    log::error!("Failed to show window: {err}");
-                }
+                let restored = match window_for_handle.unminimize() {
+                    Ok(()) => true,
+                    Err(err) => {
+                        log::error!("Failed to unminimize window: {err}");
+                        false
+                    }
+                };
+                let shown = match window_for_handle.show() {
+                    Ok(()) => true,
+                    Err(err) => {
+                        log::error!("Failed to show window: {err}");
+                        false
+                    }
+                };
                 if let Err(err) = window_for_handle.set_focus() {
+                    // Focus is best-effort: `SetForegroundWindow` is refused
+                    // whenever this process is not the foreground one, and a
+                    // visible unfocused window still runs its webview, so a
+                    // refused focus is not treated as a failure to surface.
                     log::error!("Failed to focus window: {err}");
                 }
 
-                // A12: Clear the WebView2 keepalive only after the window is
-                // confirmed visible. If show/unminimize failed the window may
-                // still be hidden — leave keepalive on so background JS runs.
-                if window_for_handle.is_visible().unwrap_or(false) {
+                // A12: Clear the WebView2 keepalive only once the window is
+                // confirmed to be on screen. `is_visible` alone is not that
+                // confirmation: a minimized window keeps the WS_VISIBLE style,
+                // so it reports visible while WebView2 is free to stop
+                // dispatching, and clearing the keepalive then freezes
+                // background JS and with it global hotkey detection. Both
+                // the surface calls and the window's own minimized state have
+                // to agree, and an unreadable state counts as minimized so
+                // the keepalive stays on.
+                if restored && shown && keepalive_can_be_released(
+                    window_for_handle.is_visible().unwrap_or(false),
+                    window_for_handle.is_minimized().unwrap_or(true),
+                ) {
                     set_webview_keepalive(false);
+                } else {
+                    log::warn!(
+                        "Window not confirmed on screen; leaving the WebView2 keepalive running"
+                    );
                 }
 
                 Ok(())
@@ -129,6 +154,44 @@ pub fn surface_main_window(window: &WebviewWindow) -> Result<(), String> {
 
     rx.recv()
         .map_err(|_| "failed to surface window on main thread".to_string())?
+}
+
+/// Whether the WebView2 keepalive can be released, given the window's
+/// reported visibility and minimized state.
+///
+/// A minimized window still reports itself visible, so visibility on its own
+/// clears the keepalive for a window that is not actually on screen, which is
+/// the state WebView2 is allowed to stop rendering in. Being merely
+/// unfocused is not part of this: an unfocused window that is on screen runs
+/// its webview normally, and `SetForegroundWindow` is refused whenever this
+/// process is not the foreground one, so requiring focus would leave the
+/// keepalive running for the ordinary case.
+fn keepalive_can_be_released(is_visible: bool, is_minimized: bool) -> bool {
+    is_visible && !is_minimized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keepalive_can_be_released;
+
+    #[test]
+    fn a_minimized_window_keeps_the_keepalive_running() {
+        // The regression: a minimized window reports WS_VISIBLE, so
+        // visibility on its own released the keepalive for a window that was
+        // not on screen.
+        assert!(!keepalive_can_be_released(true, true));
+    }
+
+    #[test]
+    fn a_restored_visible_window_releases_the_keepalive() {
+        assert!(keepalive_can_be_released(true, false));
+    }
+
+    #[test]
+    fn a_hidden_window_keeps_the_keepalive_running() {
+        assert!(!keepalive_can_be_released(false, false));
+        assert!(!keepalive_can_be_released(false, true));
+    }
 }
 
 pub fn find_pid_by_window_title(title_substring: &str) -> Option<i32> {

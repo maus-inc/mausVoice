@@ -1,5 +1,5 @@
 use crate::domain::{MonitorAtCursor, OverlayAnchor};
-use crate::platform::common::anchored_bounds;
+use crate::platform::common::{anchored_bounds, anchor_rect, Rect};
 use tauri::WebviewWindow;
 
 pub fn set_overlay_position(
@@ -19,6 +19,8 @@ pub fn set_overlay_position(
     let scale = monitor.scale_factor;
     let visible = Rect::visible_area_of(monitor).in_logical_points(scale);
 
+    // `visible` has already been scaled to logical points, so this is not the
+    // helper's expression and calls `anchor_rect` directly on purpose.
     let target = anchor_rect(visible, anchor, window_width, window_height, margin);
 
     // Convert back to physical pixels
@@ -41,8 +43,8 @@ pub fn is_cursor_in_bounds(
     let scale = monitor.scale_factor;
 
     // Scale the logical dimensions to physical
-    let bounds = anchor_rect(
-        Rect::visible_area_of(monitor),
+    let bounds = anchored_bounds(
+        monitor,
         anchor,
         bounds_width * scale,
         bounds_height * scale,

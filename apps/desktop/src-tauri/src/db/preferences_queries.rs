@@ -124,15 +124,28 @@ fn deserialize_additional_languages(value: Option<String>) -> Option<Vec<String>
     })
 }
 
+/// Saves the whole preferences row and returns it as stored.
+///
+/// On conflict `expansion_flags` is deliberately preserved (see
+/// [`PRESERVED_ON_CONFLICT`]), so the input can disagree with the row this
+/// leaves behind: a caller that saved a stale snapshot got its own
+/// `expansion_flags` back and kept rendering flags the database had already
+/// moved on from. `RETURNING` reads the winning row out of the same
+/// statement, so there is no second read that could race another writer, and
+/// the value the caller receives is the value that was stored.
 pub async fn upsert_user_preferences(
     pool: SqlitePool,
     preferences: &UserPreferences,
 ) -> Result<UserPreferences, sqlx::Error> {
-    sqlx::query(&format!(
+    // The primary key bounds this to one row. Drain RETURNING through
+    // completion before reporting success, including any final statement
+    // error.
+    let mut rows = sqlx::query(&format!(
         "INSERT INTO user_preferences ({})
              VALUES ({})
          ON CONFLICT(user_id) DO UPDATE SET
-            {}",
+            {}
+         RETURNING *",
         user_preferences_column_list(),
         user_preferences_placeholder_list(),
         user_preferences_conflict_assignments(),
@@ -192,10 +205,16 @@ pub async fn upsert_user_preferences(
     .bind(preferences.eleven_labs_keyterms_enabled)
     .bind(&preferences.expansion_flags)
     .bind(&preferences.update_channel)
-    .execute(&pool)
+    .fetch_all(&pool)
     .await?;
 
-    Ok(preferences.clone())
+    // An upsert always returns its row, so the fallback is unreachable; it
+    // exists so this cannot silently start handing back the caller's input
+    // again, which is the bug RETURNING was added to remove.
+    Ok(rows
+        .pop()
+        .map(user_preferences_from_row)
+        .unwrap_or_else(|| preferences.clone()))
 }
 
 pub async fn fetch_user_preferences(
@@ -534,7 +553,7 @@ mod tests {
             .await
             .expect("save flags through their dedicated path");
         stale.ignore_update_dialog = true;
-        upsert_user_preferences(pool.clone(), &stale)
+        let saved = upsert_user_preferences(pool.clone(), &stale)
             .await
             .expect("save an unrelated preference from a stale snapshot");
 
@@ -544,32 +563,52 @@ mod tests {
             .expect("preferences exist");
         assert_eq!(loaded.expansion_flags, flags);
         assert!(loaded.ignore_update_dialog);
+        // The row on disk is only half the contract: this command hands its
+        // result straight back to the frontend, so a caller that received
+        // the stale snapshot would keep rendering flags the database has
+        // already moved on from.
+        assert_eq!(saved.expansion_flags, flags);
+        assert!(saved.ignore_update_dialog);
     }
 
     /// The `.bind()` chain cannot be generated from a column list, so this is
-    /// what holds it to one. SQLite reports a bind count that exceeds the
-    /// placeholder count as an error, and one that falls short writes a
-    /// neighbour's value into the wrong column instead of failing. Counting the
-    /// binds in this file's own source is blunt, but it is the only check that
-    /// fails when a column is added without a matching bind.
-    #[test]
-    fn upsert_binds_every_column() {
-        let source = include_str!("preferences_queries.rs");
-        let upsert = source
-            .split("pub async fn upsert_user_preferences")
-            .nth(1)
-            .and_then(|rest| rest.split("\n}\n").next())
-            .expect("upsert_user_preferences is in this file");
-        let binds = upsert.matches(".bind(").count();
+    /// what holds it to one.
+    ///
+    /// It runs the real statement against a real database and round-trips a
+    /// value whose every field is distinct, which is a binding contract
+    /// rather than a source-text guess. A column added to the list without a
+    /// bind lands NULL, two binds swapped put each value in the other's
+    /// column, and a bind left off the end writes nothing. Counting `.bind(`
+    /// in this file's own source caught only the first of those, and it also
+    /// failed on a `.bind(` inside a comment while passing on a bind written
+    /// in the wrong order.
+    #[tokio::test]
+    async fn upsert_binds_every_column() {
+        let pool = migrated_pool().await;
+
+        // The list is what every statement is generated from, so it has to
+        // name exactly the columns the schema has. Order is not compared:
+        // the table's physical order is the order the migrations appended
+        // columns in, and the list groups them by concern. The order that
+        // actually has to hold is the bind order, which the round-trip below
+        // checks.
+        let mut schema_columns: Vec<String> =
+            sqlx::query("SELECT name FROM pragma_table_info('user_preferences')")
+                .fetch_all(&pool)
+                .await
+                .expect("read the user_preferences schema")
+                .into_iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect();
+        schema_columns.sort();
+        let mut listed_columns: Vec<String> = USER_PREFERENCES_COLUMNS.iter().map(|c| c.to_string()).collect();
+        listed_columns.sort();
         assert_eq!(
-            binds,
-            USER_PREFERENCES_COLUMNS.len(),
-            "each column needs exactly one bind, in the list's order",
+            schema_columns, listed_columns,
+            "the column list has drifted from the schema the SQL is generated for"
         );
         assert_eq!(
-            user_preferences_placeholder_list()
-                .split(", ")
-                .count(),
+            user_preferences_placeholder_list().split(", ").count(),
             USER_PREFERENCES_COLUMNS.len(),
         );
         assert_eq!(
@@ -578,6 +617,81 @@ mod tests {
                 .count(),
             USER_PREFERENCES_COLUMNS.len() - 1,
             "every column but the conflict key is assigned",
+        );
+
+        // A `json!` literal this wide exceeds the macro's recursion limit,
+        // so the value is parsed from text. Every field carries a distinct
+        // value, which is what makes a bind in the wrong column visible.
+        let preferences: UserPreferences = serde_json::from_str(
+            r#"{
+                "userId": "v0",
+                "transcriptionMode": "v1",
+                "transcriptionApiKeyId": "v2",
+                "transcriptionDevice": "v3",
+                "transcriptionModelSize": "v4",
+                "postProcessingMode": "v5",
+                "postProcessingApiKeyId": "v6",
+                "postProcessingOllamaUrl": "v7",
+                "postProcessingOllamaModel": "v8",
+                "agentMode": "v9",
+                "agentModeApiKeyId": "v10",
+                "openclawGatewayUrl": "v11",
+                "openclawToken": "v12",
+                "activeToneId": "v13",
+                "gotStartedAt": 1014,
+                "gpuEnumerationEnabled": true,
+                "pasteKeybind": "v16",
+                "lastSeenFeature": "v17",
+                "languageSwitchEnabled": false,
+                "secondaryDictationLanguage": "v19",
+                "activeDictationLanguage": "v20",
+                "additionalDictationLanguages": ["lang-21"],
+                "preferredMicrophone": "v22",
+                "ignoreUpdateDialog": true,
+                "incognitoModeEnabled": false,
+                "incognitoModeIncludeInStats": true,
+                "preserveAudioOnFailure": false,
+                "dictationLimitMinutes": 1027,
+                "dictationPillVisibility": "v28",
+                "useNewBackend": true,
+                "realtimeOutputEnabled": false,
+                "remoteOutputEnabled": true,
+                "remoteTargetDeviceId": "v32",
+                "remoteReceiverPort": 1033,
+                "remoteReceiverAutoStart": false,
+                "dictationAudioDim": 36.5,
+                "menuBarIconHidden": true,
+                "insertionMethod": "v37",
+                "typingSpeedMs": 1038,
+                "pillResetMonitorStrategy": "v39",
+                "alwaysRequestAdminOnStartup": false,
+                "expansionFlags": "v41",
+                "pillPlacement": "v42",
+                "handsFreeDelayMs": 1043,
+                "inDictationStyleSwitchingEnabled": true,
+                "hallucinationFilterEnabled": false,
+                "reviewBeforeInsert": true,
+                "agentEnabledTools": "v47",
+                "agentMaxIterations": 1048,
+                "agentPermissionTimeoutMs": 1049,
+                "spokenCommandsEnabled": true,
+                "autoLearnDictionaryEnabled": false,
+                "autoLearnFromEditsEnabled": true,
+                "elevenLabsKeytermsEnabled": false,
+                "updateChannel": "v54"
+            }"#,
+        )
+        .expect("deserialize a fully populated preferences value");
+        let expected = serde_json::to_value(&preferences).expect("serialize the input");
+
+        let saved = upsert_user_preferences(pool, &preferences)
+            .await
+            .expect("save every column");
+
+        assert_eq!(
+            serde_json::to_value(&saved).expect("serialize the saved row"),
+            expected,
+            "a column was left unbound or bound to the wrong value"
         );
     }
 

@@ -146,24 +146,40 @@ mod imp {
     }
 
     /// Whether a `PBT_POWERSETTINGCHANGE` reports the registered console display
-    /// setting has come back on. The payload is a borrowed
-    /// `POWERBROADCAST_SETTING`; it is validated for the expected GUID and data
-    /// length before the value is read, so a message from another registered
-    /// setting cannot be answered with this one's answer.
+    /// setting has come back on.
+    ///
+    /// The payload is borrowed as a `POWERBROADCAST_SETTING`, whose `Data`
+    /// tail is only `DataLength` bytes long, so the message guarantees
+    /// `offset_of!(Data) + DataLength` bytes and nothing more. A `DataLength`
+    /// of 0 means 20 of that struct's 24 bytes exist, and forming a
+    /// `&POWERBROADCAST_SETTING` asserts all 24 are readable and that the
+    /// address carries the struct's alignment. So each field is read from the
+    /// raw pointer with `read_unaligned` instead, and the `Data` byte is
+    /// touched only after the length says it is there. The expected GUID is
+    /// checked first, so a message from another registered setting cannot be
+    /// answered with this one's answer.
     fn console_display_is_on(lparam: LPARAM) -> bool {
         if lparam.0 == 0 {
             return false;
         }
-        let setting = unsafe { &*(lparam.0 as *const POWERBROADCAST_SETTING) };
-        if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE {
+        let base = lparam.0 as *const u8;
+        let power_setting = unsafe { std::ptr::read_unaligned(base.cast::<GUID>()) };
+        if power_setting != GUID_CONSOLE_DISPLAY_STATE {
             return false;
         }
-        if setting.DataLength as usize != std::mem::size_of::<u32>() {
+        let data_length = unsafe {
+            std::ptr::read_unaligned(
+                base.add(std::mem::offset_of!(POWERBROADCAST_SETTING, DataLength))
+                    .cast::<u32>(),
+            )
+        };
+        if data_length as usize != std::mem::size_of::<u32>() {
             return false;
         }
         // `Data` is a `[u8; 1]`, so read the byte rather than casting to a
         // `*const u32`: the array is only byte-aligned and the value is small.
-        u32::from(setting.Data[0]) == CONSOLE_DISPLAY_ON
+        unsafe { *base.add(std::mem::offset_of!(POWERBROADCAST_SETTING, Data)) }
+            == CONSOLE_DISPLAY_ON as u8
     }
 
     /// `Send + Sync` closure target for the resume emission. We stash a
@@ -318,6 +334,76 @@ mod imp {
             return BOOL(1);
         }
         BOOL(0)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{console_display_is_on, CONSOLE_DISPLAY_ON, GUID_CONSOLE_DISPLAY_STATE};
+        use windows::core::GUID;
+        use windows::Win32::Foundation::LPARAM;
+        use windows::Win32::System::Power::POWERBROADCAST_SETTING;
+
+        const OTHER_SETTING: GUID = GUID::from_u128(0x00000000_0000_0000_0000_000000000000);
+
+        fn lparam_of(setting: &POWERBROADCAST_SETTING) -> LPARAM {
+            LPARAM(setting as *const POWERBROADCAST_SETTING as isize)
+        }
+
+        #[test]
+        fn the_display_coming_back_on_is_a_wake() {
+            let setting = POWERBROADCAST_SETTING {
+                PowerSetting: GUID_CONSOLE_DISPLAY_STATE,
+                DataLength: std::mem::size_of::<u32>() as u32,
+                Data: [CONSOLE_DISPLAY_ON as u8],
+            };
+            assert!(console_display_is_on(lparam_of(&setting)));
+        }
+
+        #[test]
+        fn the_display_going_off_is_not_a_wake() {
+            let setting = POWERBROADCAST_SETTING {
+                PowerSetting: GUID_CONSOLE_DISPLAY_STATE,
+                DataLength: std::mem::size_of::<u32>() as u32,
+                Data: [0],
+            };
+            assert!(!console_display_is_on(lparam_of(&setting)));
+        }
+
+        /// The reported length is what says how much data follows the fixed
+        /// header, so a length that is not the one this watcher registered
+        /// for is not a value it may read.
+        #[test]
+        fn a_zero_or_unexpected_data_length_is_rejected() {
+            for data_length in [0u32, 1, 2, 3, 5, 8] {
+                let setting = POWERBROADCAST_SETTING {
+                    PowerSetting: GUID_CONSOLE_DISPLAY_STATE,
+                    DataLength: data_length,
+                    Data: [CONSOLE_DISPLAY_ON as u8],
+                };
+                assert!(
+                    !console_display_is_on(lparam_of(&setting)),
+                    "DataLength {data_length} is not the registered setting's width"
+                );
+            }
+        }
+
+        /// A message for a different registered setting carries the same
+        /// header shape, and answering it with this setting's answer is how a
+        /// resume gets emitted for an event that was never one.
+        #[test]
+        fn another_registered_setting_is_not_answered() {
+            let setting = POWERBROADCAST_SETTING {
+                PowerSetting: OTHER_SETTING,
+                DataLength: std::mem::size_of::<u32>() as u32,
+                Data: [CONSOLE_DISPLAY_ON as u8],
+            };
+            assert!(!console_display_is_on(lparam_of(&setting)));
+        }
+
+        #[test]
+        fn a_null_pointer_is_not_a_wake() {
+            assert!(!console_display_is_on(LPARAM(0)));
+        }
     }
 }
 

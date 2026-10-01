@@ -366,41 +366,49 @@ pub fn reset_pressed_keys() {
     }
 }
 
-/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
-/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
-/// first thread + child. Held across the entire stop→spawn→store operation.
 fn lifecycle_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
+/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
+/// first thread + child. Held across the entire stop→spawn→store operation.
+///
+/// Every entry point goes through here rather than locking at each call
+/// site, so the guarantee is a property of the one function below instead of
+/// something each caller has to remember to do.
+fn with_lifecycle_lock<R>(transition: impl FnOnce() -> R) -> R {
     let _lifecycle = lock(lifecycle_lock());
+    transition()
+}
 
-    stop_listener_locked();
+pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+    with_lifecycle_lock(|| {
+        stop_listener_locked();
 
-    {
-        let mut app_guard = lock(listener_app());
-        *app_guard = Some(app.clone());
-    }
+        {
+            let mut app_guard = lock(listener_app());
+            *app_guard = Some(app.clone());
+        }
 
-    let mut state = lock(listener_state());
+        let mut state = lock(listener_state());
 
-    log::info!("Starting keyboard listener");
-    let emitter = Arc::new(KeyEventEmitter::new(app));
-    let (join_handle, running) = start_external_listener(emitter.clone())?;
-    *state = Some(ListenerHandle {
-        join_handle,
-        running,
-        emitter,
-    });
+        log::info!("Starting keyboard listener");
+        let emitter = Arc::new(KeyEventEmitter::new(app));
+        let (join_handle, running) = start_external_listener(emitter.clone())?;
+        *state = Some(ListenerHandle {
+            join_handle,
+            running,
+            emitter,
+        });
 
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn stop_key_listener() -> Result<(), String> {
-    let _lifecycle = lock(lifecycle_lock());
-    stop_listener_locked();
+    with_lifecycle_lock(stop_listener_locked);
     Ok(())
 }
 
@@ -1349,19 +1357,72 @@ mod tests {
         assert_eq!(retry_backoff(FAILURE_CAP), SLOW_RETRY_INTERVAL);
         assert_eq!(retry_backoff(FAILURE_CAP + 5), SLOW_RETRY_INTERVAL);
     }
+}
 
+/// The lifecycle serialization is platform-agnostic, and these live outside
+/// the `macos`/`windows`-gated module above so the Linux unit-test job is
+/// what runs them. They were in the gated module, where neither the CI
+/// desktop unit-test job (ubuntu) nor the Windows clippy job ever executed
+/// them.
+#[cfg(test)]
+mod lifecycle_tests {
     /// Regression test for issue #488: the Windows resume path calls
     /// `restart_key_listener` (which is `start_key_listener` under the
     /// hood) after sleep/wake or session unlock, and may receive a second
     /// `desktop_resume` event while the first restart is still in flight.
     /// The platform-agnostic entry point must therefore be safe to call
-    /// twice in quick succession. We exercise the stop half directly here
-    /// because the start half spawns a child process; the stop path
-    /// shares the same `lifecycle_lock` + `Option::take` invariant.
+    /// twice in quick succession.
+    ///
+    /// The start half needs an `AppHandle` and spawns a child process, so
+    /// what is under test here is the serialization both halves run inside:
+    /// every entry point goes through `with_lifecycle_lock`, and that is
+    /// what stops two overlapping transitions from each seeing "nothing to
+    /// stop" and both spawning. The test drives that same function
+    /// concurrently and fails if the critical section is not exclusive.
+    #[test]
+    fn overlapping_listener_transitions_are_serialized() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let inside = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let inside = inside.clone();
+            let overlapped = overlapped.clone();
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..500 {
+                    super::with_lifecycle_lock(|| {
+                        if inside.swap(true, Ordering::SeqCst) {
+                            overlapped.store(true, Ordering::SeqCst);
+                        }
+                        // Hold the section long enough that an unguarded
+                        // transition is certain to be found inside it.
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                        inside.store(false, Ordering::SeqCst);
+                    });
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("lifecycle thread panicked");
+        }
+
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two listener transitions ran inside the lifecycle section at once, so a \
+             restart could observe an empty slot and orphan the running listener"
+        );
+    }
+
+    /// A stop with nothing running must stay harmless, which is the state a
+    /// duplicate `desktop_resume` finds when the first restart has already
+    /// finished.
     #[test]
     fn stop_key_listener_is_idempotent() {
         assert!(super::stop_key_listener().is_ok());
         assert!(super::stop_key_listener().is_ok());
         assert!(super::stop_key_listener().is_ok());
     }
-}
+    }

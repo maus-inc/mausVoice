@@ -5098,6 +5098,35 @@ mod tests {
     static PRIVATE_HTTP_CANCELLATION_TEST_LOCK: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
 
+    /// The wire contract for the raw `stop_recording` body: a `u32` sample
+    /// rate then the samples, both little-endian, with no padding between
+    /// them.
+    ///
+    /// The expected bytes are written out literally rather than rebuilt with
+    /// `to_le_bytes`, because building the expectation from the same
+    /// primitives the encoder uses only proves the encoder is consistent
+    /// with itself. A literal is the same thing the TypeScript decoder in
+    /// `apps/desktop/src/utils/recorded-audio.utils.ts` has to read, so an
+    /// endianness or layout change here fails against the format rather than
+    /// against a second copy of the encoder.
+    #[test]
+    fn recorded_audio_encoding_matches_the_wire_layout() {
+        assert_eq!(
+            encode_recorded_audio(&[0.5, -1.0], 48_000),
+            vec![
+                0x80, 0xBB, 0x00, 0x00, // 48000 = 0x0000BB80, u32 LE
+                0x00, 0x00, 0x00, 0x3F, // 0.5 = 0x3F000000, f32 LE
+                0x00, 0x00, 0x80, 0xBF, // -1.0 = 0xBF800000, f32 LE
+            ],
+            "the body is [sample rate u32 LE][sample f32 LE] with no padding"
+        );
+        assert_eq!(
+            encode_recorded_audio(&[], 0),
+            vec![0x00, 0x00, 0x00, 0x00],
+            "the not-recording body is a bare zero rate"
+        );
+    }
+
     #[test]
     fn recorded_audio_encoding_prefixes_rate_and_packs_f32_le() {
         let bytes = encode_recorded_audio(&[0.5, -1.0], 48_000);
