@@ -170,54 +170,65 @@ const followHttpsRedirects = async (
   init: RequestInit | undefined,
   startUrl: URL,
 ): Promise<Response> => {
-  const headers = requestHeaders(input, init);
-  let method = requestMethod(input, init);
-  // `undefined` means the caller gave no body in `init`, so a Request input
-  // keeps supplying its own; `null` means the body has been discarded.
-  let body = init?.body;
+  const chain = {
+    headers: requestHeaders(input, init),
+    method: requestMethod(input, init),
+    // `undefined` means the caller gave no body in `init`, so a Request input
+    // keeps supplying its own; `null` means the body has been discarded.
+    body: init?.body,
+    url: startUrl,
+  };
   // A `Request` input carries its body on the object rather than in `init`, and
   // every hop after the first is issued against a URL, so a 307 or 308 would
   // replay with no body at all. Cloning tees the stream, which leaves the
   // original for hop one, and the clone is read only if a hop has to keep a
   // body it cannot otherwise get.
   const requestBody =
-    body === undefined && input instanceof Request && input.body !== null
+    chain.body === undefined && input instanceof Request && input.body !== null
       ? input.clone()
       : undefined;
-  let current: RequestInfo | URL = input;
-  let currentUrl = startUrl;
-  for (let hop = 0; hop <= MAX_HTTPS_REDIRECTS; hop += 1) {
-    const response = await tauriFetch(current, {
+
+  // The chain is walked recursively rather than in a loop, because a hop's own
+  // body has to be read before the next request goes out and a loop that awaits
+  // inside it reads as serialisation nobody chose.
+  const walkChain = async (hop: number): Promise<Response> => {
+    if (hop > MAX_HTTPS_REDIRECTS) {
+      // The Fetch standard caps redirect chains at 20 hops; a cycle would
+      // otherwise spin here forever.
+      throw new TypeError(
+        `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
+      );
+    }
+    const response = await tauriFetch(chain.url.href, {
       ...init,
-      method,
-      headers,
-      body,
+      method: chain.method,
+      headers: chain.headers,
+      body: chain.body,
       maxRedirections: 0,
     });
-    const targetUrl = nextHopUrl(response, currentUrl);
+    const targetUrl = nextHopUrl(response, chain.url);
     if (!targetUrl) return response;
-    const next = rewriteForRedirect(response.status, currentUrl, targetUrl, {
-      method,
-      body,
-      headers,
+
+    const from = chain.url;
+    const next = rewriteForRedirect(response.status, from, targetUrl, {
+      method: chain.method,
+      body: chain.body,
+      headers: chain.headers,
     });
     // `undefined` on both sides means this hop kept the body, which is what a
-    // 307 or 308 does and what a downgrading 301/302/303 does not. Materialising
-    // the caller's Request body here is the only point where it is needed, so a
+    // 307 or 308 does and what a downgrading 301/302/303 does not. Reading the
+    // caller's Request body here is the only point where it is needed, so a
     // chain that never redirects never pays for it.
-    if (next.body === undefined && body === undefined && requestBody) {
+    if (next.body === undefined && chain.body === undefined && requestBody) {
       next.body = await requestBody.arrayBuffer();
     }
-    method = next.method;
-    body = next.body;
-    current = targetUrl.href;
-    currentUrl = targetUrl;
-  }
-  // The Fetch standard caps redirect chains at 20 hops; a cycle would
-  // otherwise spin here forever.
-  throw new TypeError(
-    `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
-  );
+    chain.method = next.method;
+    chain.body = next.body;
+    chain.url = targetUrl;
+    return walkChain(hop + 1);
+  };
+
+  return walkChain(0);
 };
 
 const abortReason = (signal: AbortSignal): unknown =>
