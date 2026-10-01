@@ -1,12 +1,63 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_MAX_RETRY_DELAY_MS, delayed, retry } from "./async";
+import {
+  DEFAULT_MAX_RETRY_DELAY_MS,
+  batchAsync,
+  delayed,
+  retry,
+} from "./async";
 import { HttpError, MAX_RETRY_AFTER_MS, toHttpError } from "./http-error";
+
+describe("batchAsync", () => {
+  it("returns every result in the order the thunks were given", async () => {
+    const thunks = [30, 10, 20, 5].map(
+      (ms, index) => () =>
+        new Promise<number>((resolve) => setTimeout(() => resolve(index), ms)),
+    );
+
+    await expect(batchAsync(2, thunks)).resolves.toEqual([0, 1, 2, 3]);
+  });
+
+  it("never runs more than the batch size at once", async () => {
+    const inFlight: number[] = [];
+    const peak: number[] = [];
+    const thunks = Array.from({ length: 7 }, (_unused, index) => () => {
+      inFlight.push(index);
+      peak.push(inFlight.length);
+      return Promise.resolve().then(() => {
+        inFlight.pop();
+        return index;
+      });
+    });
+
+    await expect(batchAsync(3, thunks)).resolves.toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(Math.max(...peak)).toBe(3);
+  });
+
+  it("stops handing out work once a chunk rejects", async () => {
+    const started = vi.fn(() => Promise.resolve("ok"));
+    const failing = vi.fn(() => Promise.reject(new Error("no")));
+
+    await expect(batchAsync(2, [started, failing, started])).rejects.toThrow(
+      "no",
+    );
+    // The first chunk was two thunks and it failed, so the third never ran.
+    expect(started).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("retry", () => {
   it("returns the first successful result", async () => {
     const fn = vi.fn().mockResolvedValue("ok");
     await expect(retry({ fn, retries: 3, delay: 1 })).resolves.toBe("ok");
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to run when the caller allows no attempts", async () => {
+    const fn = vi.fn().mockResolvedValue("ok");
+    await expect(retry({ fn, retries: 0, delay: 1 })).rejects.toThrow(
+      "Retry limit exceeded",
+    );
+    expect(fn).not.toHaveBeenCalled();
   });
 
   it("retries a transient failure while isRetryable stays true", async () => {

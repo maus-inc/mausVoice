@@ -85,6 +85,11 @@ const setField = (textContent: string) => {
   invokeMock.mockResolvedValue({ textContent });
 };
 
+/** How many times the baseline capture has read the target field. */
+const fieldReads = () =>
+  invokeMock.mock.calls.filter(([command]) => command === "get_text_field_info")
+    .length;
+
 /** Moves the clock the way the poll interval would, then polls once. */
 const advanceAndPoll = async (ms: number) => {
   await vi.advanceTimersByTimeAsync(ms);
@@ -287,6 +292,27 @@ describe("edit-watch baseline", () => {
 });
 
 describe("edit-watch proposal lifecycle", () => {
+  it("takes exactly one field read per attempt, then stops", async () => {
+    // The capture is a fixed budget of reads spaced by the interval, not a read
+    // per turn of a loop that could run long. Counting the reads pins both the
+    // number of attempts and that the interval separates them.
+    beginEditWatch("call Ralph");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fieldReads()).toBe(1);
+
+    // One read is released per interval, so the budget is spent exactly when
+    // the last interval elapses.
+    for (let attempt = 1; attempt <= 7; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(149);
+      expect(fieldReads()).toBe(attempt);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fieldReads()).toBe(attempt + 1);
+    }
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fieldReads()).toBe(8);
+  });
+
   it("stops offering an expired term for the rest of the watch without blacklisting it", async () => {
     beginEditWatch("my wife's name is Sonia");
     await settleBaseline("my wife's name is Sonia");

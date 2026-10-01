@@ -14,7 +14,7 @@ pub mod volume;
 pub mod window;
 
 pub fn get_hotkey_strategy() -> &'static str {
-    "listener"
+    crate::platform::common::LISTENER_HOTKEY_STRATEGY
 }
 
 pub fn supports_app_detection() -> bool {

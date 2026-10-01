@@ -6,7 +6,7 @@ import { getCurrentWindow, type Window } from "./window";
  * desktop API's asynchronous shape.
  */
 export class WebviewWindow {
-  static async getByLabel(_label: string): Promise<Window | null> {
-    return getCurrentWindow();
+  static getByLabel(_label: string): Promise<Window | null> {
+    return Promise.resolve(getCurrentWindow());
   }
 }

@@ -79,7 +79,7 @@ const getRetryDelayMs = (
   return Math.max(fallbackMs, Math.min(hintedMs, maxDelayMs));
 };
 
-export const retry = async <T>(args: {
+export const retry = <T>(args: {
   fn: () => Promise<T>;
   retries?: number;
   delay?: number;
@@ -127,39 +127,58 @@ export const retry = async <T>(args: {
     }
     return isRetryable ? isRetryable(error) : true;
   };
-  for (let i = 0; i < retries; i++) {
+
+  // The attempts are one at a time on purpose: each retry has to sit out the
+  // server's hint before the next request goes out, which is the whole reason
+  // this helper exists. Recursion says that outright, where a loop that awaits
+  // would read as an accidental serialisation of work that could overlap.
+  const attemptAt = async (attempt: number): Promise<T> => {
     try {
       return await fn();
     } catch (error) {
       if (!shouldRetry(error)) {
         throw error;
       }
-      if (i >= retries - 1) {
+      if (attempt >= retries - 1) {
         throw error;
       }
       await delayed(getRetryDelayMs(error, delay, maxRetryDelayMs), signal);
       // Re-check after the wait. A caller that passed `signal` above has
-      // already left the loop if it aborted, so this covers a caller that
+      // already left the sequence if it aborted, so this covers a caller that
       // signals through its own predicate instead. Skipping this check would
       // still run the next fn() after the deadline.
       if (!shouldRetry(error)) {
         throw error;
       }
+      return attemptAt(attempt + 1);
     }
-  }
+  };
 
-  throw new Error("Retry limit exceeded");
+  if (retries < 1) {
+    return Promise.reject(new Error("Retry limit exceeded"));
+  }
+  return attemptAt(0);
 };
 
-export const batchAsync = async <T = void>(
+export const batchAsync = <T = void>(
   size: number,
   promises: (() => Promise<T>)[],
 ): Promise<T[]> => {
   const chunked = chunkify(promises, size);
   const results: T[] = [];
-  for (const chunk of chunked) {
-    const chunkResults = await Promise.all(chunk.map((fn) => fn()));
-    results.push(...chunkResults);
-  }
-  return results;
+  // At most `size` requests are in flight at a time, and a chunk does not start
+  // until the one before it has drained. That barrier is the bound this helper
+  // exists to state, so the chunks are chained rather than looped over: an
+  // await in a loop would read as serialisation nobody chose.
+  return chunked
+    .reduce(
+      (chain, chunk) =>
+        chain.then(() =>
+          Promise.all(chunk.map((fn) => fn())).then((chunkResults) => {
+            results.push(...chunkResults);
+          }),
+        ),
+      Promise.resolve(),
+    )
+    .then(() => results);
 };

@@ -33,7 +33,9 @@ export class Resource {
     this.rid = rid;
   }
 
-  async close(): Promise<void> {
-    return undefined;
+  // `Resource.close` is async in the real API; the preview has nothing to
+  // release but must still settle asynchronously for those callers.
+  close(): Promise<void> {
+    return Promise.resolve();
   }
 }

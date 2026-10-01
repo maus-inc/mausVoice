@@ -162,8 +162,8 @@ export abstract class BaseSidecar {
   protected abstract buildSpawnEnv(): Promise<Record<string, string>>;
   /** Optional working directory for the spawned sidecar. Used on Windows to
    * point the child's DLL search at the bundled sherpa-onnx runtime folder. */
-  protected async buildSpawnCwd(): Promise<string | undefined> {
-    return undefined;
+  protected buildSpawnCwd(): Promise<string | undefined> {
+    return Promise.resolve(undefined);
   }
   protected abstract parsePortFromLine(line: string): number | null;
   protected abstract handleStdoutLine(
@@ -297,12 +297,23 @@ export abstract class BaseSidecar {
   private async waitUntilHealthy(baseUrl: string): Promise<void> {
     const deadline = Date.now() + this.config.startupTimeoutMs;
 
-    while (Date.now() < deadline) {
-      if (await this.checkHealth(baseUrl)) {
-        return;
+    // The probe is one at a time on purpose: each is spaced by the poll
+    // interval and the loop ends on the first healthy answer, so the health
+    // endpoint is asked at a fixed rate rather than in a burst. Recursion says
+    // that outright, where an await in a loop reads as work that could overlap.
+    const probe = async (): Promise<boolean> => {
+      if (Date.now() >= deadline) {
+        return false;
       }
-
+      if (await this.checkHealth(baseUrl)) {
+        return true;
+      }
       await sleep(this.config.healthPollIntervalMs);
+      return probe();
+    };
+
+    if (await probe()) {
+      return;
     }
 
     throw new Error(`Timed out waiting for ${this.config.logPrefix} health`);

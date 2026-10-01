@@ -33,7 +33,7 @@ export type OpenAICompatibleTranscribeAudioArgs = {
   signal?: AbortSignal;
 };
 
-export const openaiCompatibleTranscribeAudio = async ({
+export const openaiCompatibleTranscribeAudio = ({
   client,
   blob,
   model,

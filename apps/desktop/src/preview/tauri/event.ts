@@ -11,7 +11,7 @@ type Listener = EventCallback<unknown>;
 const listeners = new Map<string, Set<Listener>>();
 let nextListenerId = 1;
 
-export const listen = async <T>(
+export const listen = <T>(
   event: string,
   handler: EventCallback<T>,
 ): Promise<UnlistenFn> => {
@@ -20,10 +20,10 @@ export const listen = async <T>(
   set.add(listener);
   listeners.set(event, set);
 
-  return () => {
+  return Promise.resolve(() => {
     set.delete(listener);
     if (set.size === 0) listeners.delete(event);
-  };
+  });
 };
 
 export const once = async <T>(
@@ -38,11 +38,19 @@ export const once = async <T>(
   return unlisten;
 };
 
-export const emit = async <T>(event: string, payload?: T): Promise<void> => {
+export const emit = <T>(event: string, payload?: T): Promise<void> => {
   const eventId = nextListenerId++;
-  for (const handler of listeners.get(event) ?? []) {
-    handler({ event, id: eventId, payload });
+  try {
+    for (const handler of listeners.get(event) ?? []) {
+      handler({ event, id: eventId, payload });
+    }
+  } catch (error) {
+    // Tauri's `emit` rejects when a listener throws, and callers such as
+    // ComposerPage mount rely on `emit(...).catch(...)` to absorb that, so the
+    // failure has to arrive as a rejection rather than a synchronous throw.
+    return Promise.reject(error);
   }
+  return Promise.resolve();
 };
 
 // Window routing is intentionally local in the browser: a preview only owns

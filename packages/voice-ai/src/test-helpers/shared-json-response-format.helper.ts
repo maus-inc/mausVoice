@@ -51,10 +51,8 @@ export function createJsonResponseFormatTests({
         AzureOpenAI: class MockAzureOpenAI {
           chat = { completions: { create } };
         },
-        toFile: async (blob: ArrayBuffer | Buffer, name: string) => ({
-          blob,
-          name,
-        }),
+        toFile: (blob: ArrayBuffer | Buffer, name: string) =>
+          Promise.resolve({ blob, name }),
       }));
     };
 

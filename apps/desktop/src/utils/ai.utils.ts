@@ -115,11 +115,59 @@ export type TranscriptionEditApplication = {
  * them adjacent is still inside one word.
  */
 const WORD_CHARACTER = /[\p{L}\p{N}]/u;
-const LEADING_NON_WORD = /^[^\p{L}\p{N}]+/u;
-const TRAILING_NON_WORD = /[^\p{L}\p{N}]+$/u;
 
 const isWordCharacter = (character: string | undefined): boolean =>
-  character !== undefined && WORD_CHARACTER.test(character);
+  character !== undefined && WORD_CHARACTER.exec(character) !== null;
+
+/** One code point of `value` at `index`, which may be a surrogate pair. */
+const codePointAt = (value: string, index: number): string =>
+  String.fromCodePoint(value.codePointAt(index) ?? 0);
+
+/**
+ * The UTF-16 length of the run of non-word characters at the start of `value`.
+ *
+ * `^[^\p{L}\p{N}]+/u` read this run and, unlike its trailing twin, stayed
+ * linear because `^` fails every attempt but the first. It is a scan here so
+ * that both ends of a `find` are read by one rule rather than two.
+ *
+ * Steps by code point but reports UTF-16 length, because the caller offsets
+ * into the transcript by it and a character outside the basic plane counts as
+ * two.
+ */
+const leadingNonWordLength = (value: string): number => {
+  let index = 0;
+  while (index < value.length) {
+    const character = codePointAt(value, index);
+    if (isWordCharacter(character)) return index;
+    index += character.length;
+  }
+  return index;
+};
+
+/**
+ * The UTF-16 length of the run of non-word characters at the end of `value`.
+ *
+ * `[^\p{L}\p{N}]+$/u` read this run and was quadratic, which is what Sonar
+ * flagged: `$` only matches at the end of the string, so once the greedy run
+ * falls short of it the engine gives the run back one character at a time, and
+ * it starts the whole attempt over from the next position. A `find` of 32,000
+ * punctuation characters followed by a letter took half a second to read and
+ * takes nothing measurable to read now.
+ *
+ * One forward pass records where the last word character ended, which is where
+ * the trailing run begins. Walking backwards instead would have to enter a
+ * surrogate pair from its low surrogate, which is the mistake this avoids.
+ */
+const trailingNonWordLength = (value: string): number => {
+  let index = 0;
+  let wordEnd = 0;
+  while (index < value.length) {
+    const character = codePointAt(value, index);
+    index += character.length;
+    if (isWordCharacter(character)) wordEnd = index;
+  }
+  return value.length - wordEnd;
+};
 
 /**
  * True when the word characters inside `find` run against the middle of a word
@@ -129,10 +177,8 @@ const isWordCharacter = (character: string | undefined): boolean =>
  * a boundary that is not one.
  */
 const splitsWord = (text: string, find: string, index: number): boolean => {
-  const leading = find.match(LEADING_NON_WORD)?.[0].length ?? 0;
-  const trailing = find.match(TRAILING_NON_WORD)?.[0].length ?? 0;
-  const start = index + leading;
-  const end = index + find.length - trailing;
+  const start = index + leadingNonWordLength(find);
+  const end = index + find.length - trailingNonWordLength(find);
   if (start >= end) {
     // Nothing but punctuation, so the match cannot land inside a word.
     return false;

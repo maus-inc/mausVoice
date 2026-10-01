@@ -526,6 +526,36 @@ mod tests {
         }
     }
 
+    /// The `mausvoice.broken-*` quarantine directories currently in `dir`.
+    fn quarantined_archives(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("mausvoice.broken-"))
+            .collect()
+    }
+
+    /// Assert the open left no quarantined copy of the database behind.
+    ///
+    /// Quarantine renames the user's file aside and reopens a fresh one, so it
+    /// is only ever correct for genuine file damage. Every repairable failure
+    /// has to leave the file in place, which is what these assert.
+    fn assert_not_quarantined(dir: &Path, context: &str) {
+        let archives = quarantined_archives(dir);
+        assert!(
+            archives.is_empty(),
+            "{context}, but found quarantined archives: {archives:?}"
+        );
+    }
+
+    fn assert_quarantined(dir: &Path, context: &str) {
+        assert!(
+            !quarantined_archives(dir).is_empty(),
+            "{context}, but no quarantined archive exists"
+        );
+    }
+
     #[test]
     fn checksum_matches_sqlx_sha384_vector() {
         // Independent SHA-384 of b"SELECT 1;" (same digest sqlx stores).
@@ -664,13 +694,9 @@ mod tests {
             .unwrap();
         assert_eq!(count, migrations().len() as i64);
         recovered.close().await;
-        assert!(std::fs::read_dir(&temp.dir)
-            .unwrap()
-            .flatten()
-            .any(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("mausvoice.broken-")));
+        assert_quarantined(
+            &temp.dir, "corrupt bytes must be quarantined",
+        );
     }
 
     #[tokio::test]
@@ -720,15 +746,8 @@ mod tests {
             path.exists(),
             "the database file must be left where it was"
         );
-        assert!(
-            !std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .any(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "a readable database must not be quarantined"
+        assert_not_quarantined(
+            &temp.dir, "a readable database must not be quarantined",
         );
     }
 
@@ -755,15 +774,8 @@ mod tests {
             result.is_err(),
             "newer-schema database must be surfaced, not silently opened"
         );
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "a newer-schema database must never be quarantined"
+        assert_not_quarantined(
+            &temp.dir, "a newer-schema database must never be quarantined",
         );
         assert!(path.exists(), "the original database must be preserved");
     }
@@ -834,15 +846,8 @@ mod tests {
             "the remaining migration must be applied on upgrade"
         );
         upgraded.close().await;
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "a routine upgrade must never quarantine the database"
+        assert_not_quarantined(
+            &temp.dir, "a routine upgrade must never quarantine the database",
         );
     }
 
@@ -871,15 +876,8 @@ mod tests {
             result.is_err(),
             "a database with newer-release migrations must be surfaced, not silently opened"
         );
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "a downgrade with multiple newer versions must never quarantine the database"
+        assert_not_quarantined(
+            &temp.dir, "a downgrade with multiple newer versions must never quarantine the database",
         );
         assert!(
             path.exists(),
@@ -938,15 +936,8 @@ mod tests {
             path.exists(),
             "the original database file must be left in place for repair"
         );
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "a ledger disagreement must never quarantine the database"
+        assert_not_quarantined(
+            &temp.dir, "a ledger disagreement must never quarantine the database",
         );
 
         // The schema and the user's data are all still there, and the ledger row
@@ -988,15 +979,8 @@ mod tests {
             .expect("a corrupt file quarantines and reopens");
         recovered.close().await;
 
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .any(|entry| entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "broken archive must exist after recovery"
+        assert_quarantined(
+            &temp.dir, "broken archive must exist after recovery",
         );
 
         let removed =
@@ -1006,15 +990,8 @@ mod tests {
             "must delete at least one quarantined directory"
         );
 
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "no broken archives should remain after explicit deletion"
+        assert_not_quarantined(
+            &temp.dir, "no broken archives should remain after explicit deletion",
         );
     }
 
@@ -1530,15 +1507,8 @@ mod tests {
                 .unwrap();
         assert_eq!(ghosts, 0);
         reopened.close().await;
-        assert!(
-            std::fs::read_dir(&temp.dir)
-                .unwrap()
-                .flatten()
-                .all(|entry| !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("mausvoice.broken-")),
-            "retiring consolidation-era rows must never quarantine the database"
+        assert_not_quarantined(
+            &temp.dir, "retiring consolidation-era rows must never quarantine the database",
         );
     }
 
@@ -1594,15 +1564,8 @@ mod tests {
                 "the row for version {version} must survive, not be deleted"
             );
             check.close().await;
-            assert!(
-                std::fs::read_dir(&temp.dir)
-                    .unwrap()
-                    .flatten()
-                    .all(|entry| !entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("mausvoice.broken-")),
-                "surfacing version {version} must never quarantine the database"
+            assert_not_quarantined(
+                &temp.dir, "surfacing version {version} must never quarantine the database",
             );
         }
     }
@@ -1675,15 +1638,8 @@ mod tests {
                 "the row for version {version} ({foreign_description}) must survive, not be deleted"
             );
             check.close().await;
-            assert!(
-                std::fs::read_dir(&temp.dir)
-                    .unwrap()
-                    .flatten()
-                    .all(|entry| !entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("mausvoice.broken-")),
-                "surfacing version {version} ({foreign_description}) must never quarantine the database"
+            assert_not_quarantined(
+                &temp.dir, "surfacing version {version} ({foreign_description}) must never quarantine the database",
             );
 
             let temp = TempDb::new();
@@ -1726,13 +1682,9 @@ mod tests {
         std::fs::create_dir_all(&dir_as_db).unwrap();
         let result = open_app_database(&dir_as_db).await;
         assert!(result.is_err());
-        assert!(std::fs::read_dir(&temp.dir)
-            .unwrap()
-            .flatten()
-            .all(|entry| !entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("mausvoice.broken-")));
+        assert_not_quarantined(
+            &temp.dir, "the database must not be quarantined",
+        );
     }
 
     // The History list query decodes rows through row_to_transcription, which

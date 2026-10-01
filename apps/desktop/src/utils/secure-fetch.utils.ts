@@ -77,6 +77,72 @@ const requestMethod = (
 ): string => init?.method ?? (input instanceof Request ? input.method : "GET");
 
 /**
+ * The URL one hop of a redirect chain moves to, or null when this response
+ * ends the chain. Throws when a hop leaves HTTPS, because that hop must never
+ * be issued and there is no response to return in its place.
+ */
+const nextHopUrl = (response: Response, currentUrl: URL): URL | null => {
+  if (response.status < 300 || response.status >= 400) return null;
+  const location = response.headers.get("location");
+  // A 3xx with no Location cannot be followed, so surface it as-is rather
+  // than re-issuing the same request against a server that would answer
+  // identically.
+  if (!location) return null;
+  const targetUrl = new URL(location, currentUrl);
+  if (targetUrl.protocol !== "https:") {
+    throw new TypeError(
+      `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
+    );
+  }
+  return targetUrl;
+};
+
+/** What one hop of a redirect chain is asked to send. */
+type RedirectHop = {
+  method: string;
+  /** See `followHttpsRedirects` for what `undefined` and `null` mean here. */
+  body: BodyInit | null | undefined;
+  headers: Headers;
+};
+
+/**
+ * What the next hop of a redirect chain carries, per the Fetch standard's
+ * redirect handling: the headers the standard deletes when a hop leaves the
+ * origin the request was issued to, and the method and body it rewrites. The
+ * hop's own `Headers` is edited in place, because the chain carries one header
+ * list across hops and a returned copy would leave the caller sending a stale
+ * one. The two URLs are named rather than positional because which of them the
+ * origin is compared against is the whole difference between the strip
+ * applying and not.
+ */
+const rewriteForRedirect = (
+  status: number,
+  from: URL,
+  to: URL,
+  hop: RedirectHop,
+): RedirectHop => {
+  // Compare against the URL this hop was sent to, so the strip applies from
+  // the first hop that changes origin and not from the last.
+  if (to.origin !== from.origin) {
+    for (const name of CROSS_ORIGIN_STRIPPED_HEADERS) {
+      hop.headers.delete(name);
+    }
+  }
+  // A 301 or 302 downgrades a POST to a GET, and a 303 does the same for every
+  // method but GET and HEAD, discarding the body in both cases. 307 and 308
+  // keep the method and body by definition.
+  const uppercase = hop.method.toUpperCase();
+  const downgrades =
+    ((status === 301 || status === 302) && uppercase === "POST") ||
+    (status === 303 && uppercase !== "GET" && uppercase !== "HEAD");
+  if (!downgrades) return hop;
+  // A Content-Type or Content-Length that outlives the discarded body
+  // describes a request that is no longer being sent.
+  for (const name of BODY_HEADERS) hop.headers.delete(name);
+  return { ...hop, method: "GET", body: null };
+};
+
+/**
  * Walk an HTTPS redirect chain one hop at a time, refusing any hop that leaves
  * HTTPS. The chain has to be walked here rather than handed back to
  * plugin-http: the plugin ignores `RequestInit.redirect` and forwards only
@@ -111,36 +177,15 @@ const followHttpsRedirects = async (
       body,
       maxRedirections: 0,
     });
-    if (response.status < 300 || response.status >= 400) return response;
-    const location = response.headers.get("location");
-    // A 3xx with no Location cannot be followed, so surface it as-is rather
-    // than re-issuing the same request against a server that would answer
-    // identically.
-    if (!location) return response;
-    const targetUrl = new URL(location, currentUrl);
-    if (targetUrl.protocol !== "https:") {
-      throw new TypeError(
-        `Refusing redirect from HTTPS to insecure protocol: ${targetUrl.protocol}`,
-      );
-    }
-    // Compare against the URL this hop was sent to, so the strip applies from
-    // the first hop that changes origin and not from the last.
-    if (targetUrl.origin !== currentUrl.origin) {
-      for (const name of CROSS_ORIGIN_STRIPPED_HEADERS) headers.delete(name);
-    }
-    // HTTP-redirect fetch: a 301 or 302 downgrades a POST to a GET, and a 303
-    // does the same for every method but GET and HEAD, discarding the body in
-    // both cases. 307 and 308 keep the method and body by definition.
-    const uppercase = method.toUpperCase();
-    if (
-      ((response.status === 301 || response.status === 302) &&
-        uppercase === "POST") ||
-      (response.status === 303 && uppercase !== "GET" && uppercase !== "HEAD")
-    ) {
-      method = "GET";
-      body = null;
-      for (const name of BODY_HEADERS) headers.delete(name);
-    }
+    const targetUrl = nextHopUrl(response, currentUrl);
+    if (!targetUrl) return response;
+    const next = rewriteForRedirect(response.status, currentUrl, targetUrl, {
+      method,
+      body,
+      headers,
+    });
+    method = next.method;
+    body = next.body;
     current = targetUrl.href;
     currentUrl = targetUrl;
   }

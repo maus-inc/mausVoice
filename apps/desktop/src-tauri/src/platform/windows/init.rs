@@ -60,17 +60,7 @@ pub fn is_process_elevated() -> bool {
 }
 
 pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
-    let mic = permissions::check_microphone_permission();
-    let ax = permissions::check_accessibility_permission();
-
-    let mic_ok = matches!(mic, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-    let ax_ok = matches!(ax, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-
-    if mic_ok && ax_ok {
-        crate::platform::NativeSetupStatus::Ready
-    } else {
-        crate::platform::NativeSetupStatus::NeedsSetup
-    }
+    crate::platform::common::native_setup_status()
 }
 
 pub async fn run_native_setup(app: tauri::AppHandle) -> crate::platform::NativeSetupResult {

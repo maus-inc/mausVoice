@@ -73,17 +73,25 @@ class PreviewWindow {
   async setTitle(_title: string): Promise<void> {
     /* preview stub: no native window to drive */
   }
-  async isVisible(): Promise<boolean> {
-    return true;
+  // The remaining window methods stay promise-returning to mirror
+  // `@tauri-apps/api/window`, where every query is an async IPC round trip.
+  isVisible(): Promise<boolean> {
+    return Promise.resolve(true);
   }
-  async isMaximized(): Promise<boolean> {
-    return false;
+  isMaximized(): Promise<boolean> {
+    return Promise.resolve(false);
   }
-  async innerSize(): Promise<LogicalSize> {
-    return { width: window.innerWidth, height: window.innerHeight };
+  innerSize(): Promise<LogicalSize> {
+    return Promise.resolve().then(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }));
   }
-  async outerSize(): Promise<LogicalSize> {
-    return { width: window.outerWidth, height: window.outerHeight };
+  outerSize(): Promise<LogicalSize> {
+    return Promise.resolve().then(() => ({
+      width: window.outerWidth,
+      height: window.outerHeight,
+    }));
   }
   async emit<T>(event: string, payload?: T): Promise<void> {
     return emit(event, payload);
@@ -101,6 +109,7 @@ export type Window = PreviewWindow;
 const currentWindow = new PreviewWindow();
 
 export const getCurrentWindow = (): Window => currentWindow;
-export const getAllWindows = async (): Promise<Window[]> => [currentWindow];
-export const currentMonitor = async (): Promise<null> => null;
-export const availableMonitors = async (): Promise<never[]> => [];
+export const getAllWindows = (): Promise<Window[]> =>
+  Promise.resolve([currentWindow]);
+export const currentMonitor = (): Promise<null> => Promise.resolve(null);
+export const availableMonitors = (): Promise<never[]> => Promise.resolve([]);

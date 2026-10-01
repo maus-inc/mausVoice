@@ -82,26 +82,41 @@ export const redactStringSync = (
  * Redact a string according to the given mode.
  * "full" replaces with [redacted], "hash" replaces with a short hash,
  * "truncate" shows only the first and last two characters.
+ *
+ * Every branch is wrapped by hand rather than by `async`, because the "hash"
+ * mode is the only one that reaches a promise and a plain `async` there would
+ * be a promise-returning function that never awaits.
  */
-export const redactString = async (
+export const redactString = (
   input: string,
   mode: RedactionMode = "full",
 ): Promise<string> => {
   if (!input) {
-    return input;
+    return Promise.resolve(input);
   }
   if (mode === "hash") {
     return sha256Prefix(input);
   }
-  return redactStringSync(input, mode);
+  return Promise.resolve(redactStringSync(input, mode));
 };
 
 /**
  * Redact any embedded secrets from an error message.
+ *
+ * `String(error)` runs the value's own primitive conversion, which throws for
+ * an object that has none, so the failure is turned back into a rejection: a
+ * caller that chains `.catch()` onto this must still see it there and not as a
+ * synchronous throw from the call itself.
  */
-export const redactError = async (error: unknown): Promise<string> => {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]");
+export const redactError = (error: unknown): Promise<string> => {
+  try {
+    const message = error instanceof Error ? error.message : String(error);
+    return Promise.resolve(
+      message.replace(SECRET_VALUE_PATTERN, "[redacted-secret]"),
+    );
+  } catch (cause) {
+    return Promise.reject(cause);
+  }
 };
 
 const isObject = (value: unknown): value is object => {
@@ -255,12 +270,20 @@ export const redactObjectSync = (
 
 /**
  * The promise returning form of redactObjectSync, kept for callers that
- * already await it. The traversal itself is synchronous.
+ * already await it. The traversal itself is synchronous and stays that way:
+ * it runs before this returns rather than on a later microtask, so a caller's
+ * side effects land in the order it wrote them. The walk can still fail, on a
+ * proxy trap or on a `toJSON` that throws, and that failure is reported as a
+ * rejection because that is what every caller of this form already handles.
  */
-export const redactObject = async (
+export const redactObject = (
   obj: Record<string, unknown>,
   sensitiveKeys: string[] = [],
   forceFull = false,
 ): Promise<Record<string, unknown>> => {
-  return redactObjectSync(obj, sensitiveKeys, forceFull);
+  try {
+    return Promise.resolve(redactObjectSync(obj, sensitiveKeys, forceFull));
+  } catch (cause) {
+    return Promise.reject(cause);
+  }
 };

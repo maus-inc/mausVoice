@@ -1,8 +1,9 @@
 use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
 use crate::errors::RecordingError;
-use crate::platform::audio::InputDeviceDescriptor;
+use crate::platform::audio::{
+    compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+};
 use crate::platform::{ChunkCallback, LevelCallback, Recorder};
-use std::cmp;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -11,9 +12,6 @@ use libpulse_binding::mainloop::standard::Mainloop;
 use libpulse_simple_binding as psimple;
 
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
-const LEVEL_BIN_COUNT: usize = 12;
-const LEVEL_DISPATCH_INTERVAL: Duration = Duration::from_millis(48);
-const CHUNK_DISPATCH_INTERVAL: Duration = Duration::from_millis(100);
 const READ_CHUNK_FRAMES: usize = 1024;
 
 pub struct PulseRecorder {
@@ -359,30 +357,6 @@ fn empty_result() -> RecordingResult {
             sample_rate: FALLBACK_SAMPLE_RATE,
         },
     }
-}
-
-fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
-    if samples.is_empty() {
-        return vec![0.0; LEVEL_BIN_COUNT];
-    }
-
-    let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
-    let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
-    let mut counts = vec![0u32; LEVEL_BIN_COUNT];
-
-    for (index, sample) in samples.iter().enumerate() {
-        let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
-        bins[bin_index] += sample.abs();
-        counts[bin_index] += 1;
-    }
-
-    for (value, count) in bins.iter_mut().zip(counts) {
-        if count > 0 {
-            *value = (*value / count as f32).clamp(0.0, 1.0);
-        }
-    }
-
-    bins
 }
 
 // ── PulseAudio source enumeration ──────────────────────────────────────

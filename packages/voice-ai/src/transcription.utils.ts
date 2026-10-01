@@ -106,7 +106,7 @@ export type SdkTranscriptionBody = {
  * normalize / parse pipeline so each provider only supplies its client and the
  * `response_format` it supports.
  */
-export async function runSdkTranscription(
+export function runSdkTranscription(
   transcribe: (body: SdkTranscriptionBody) => Promise<unknown>,
   params: SdkTranscriptionBody,
 ): Promise<TranscribeAudioOutput> {

@@ -1,65 +1,18 @@
-use crate::domain::{OverlayPhase, PillWindowSize};
-use crate::pill_process;
+use crate::platform::common::PillOverlay;
 
-const BINARY_NAME: &str = "mausvoice-gtk-pill";
-const PACKAGE_DIR: &str = "rust_gtk_pill";
+const OVERLAY: PillOverlay = PillOverlay {
+    binary_name: "mausvoice-gtk-pill",
+    package_dir: "rust_gtk_pill",
+    missing_label: "GTK pill binary not found",
+    active_label: "Using native overlays via GTK layer-shell",
+};
 
 pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
-    let Some(pill_path) = resolve_pill_binary_path(app) else {
-        log::warn!("GTK pill binary not found");
-        return false;
-    };
-
-    if pill_process::try_spawn_pill(app, &pill_path) {
-        log::info!("Using native overlays via GTK layer-shell");
-        true
-    } else {
-        log::warn!("Native overlay not available, falling back to Tauri overlays");
-        false
-    }
-}
-
-pub fn notify_phase(app: &tauri::AppHandle, phase: &OverlayPhase) {
-    pill_process::notify_phase(app, phase);
-}
-
-pub fn notify_audio_levels(app: &tauri::AppHandle, levels: &[f32]) {
-    pill_process::notify_audio_levels(app, levels);
-}
-
-pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
-    pill_process::notify_visibility(app, visibility);
+    crate::platform::common::try_spawn_native_overlays(app, &OVERLAY)
 }
 
 /// Forwards the pill anchor preference (`top` / `bottom`) to the GTK pill
 /// process. The GTK pill currently ignores it; see the settings gate.
-pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
-    pill_process::notify_pill_placement(app, placement);
-}
+pub use crate::platform::common::notifications::notify_pill_placement;
 
-/// See [`pill_process::notify_style_info`].
-pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
-    pill_process::notify_style_info(app, count, name);
-}
-
-/// Forwards a pill window-size change to the native pill process.
-pub fn notify_pill_window_size(app: &tauri::AppHandle, size: &PillWindowSize) {
-    pill_process::notify_pill_window_size(app, size);
-}
-
-pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
-    pill_process::notify_assistant_state(app, payload);
-}
-
-pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
-    pill_process::notify_request_position(app)
-}
-
-pub fn notify_reset_position(app: &tauri::AppHandle, strategy: &str) -> Result<(), String> {
-    pill_process::notify_reset_position(app, strategy)
-}
-
-fn resolve_pill_binary_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
-    pill_process::resolve_pill_binary_in_resources(app, BINARY_NAME)
-        .or_else(|| pill_process::resolve_pill_binary_in_dev(PACKAGE_DIR, BINARY_NAME))
-}
+pub use crate::platform::common::notifications::*;

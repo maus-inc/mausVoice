@@ -8,7 +8,7 @@
  * behind it, so the session aborts this scope in `cleanup`.
  */
 export class SessionAbortScope {
-  private controller = new AbortController();
+  private readonly controller = new AbortController();
 
   get signal(): AbortSignal {
     return this.controller.signal;

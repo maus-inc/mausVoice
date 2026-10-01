@@ -1,9 +1,13 @@
 let enabled = false;
 
-export const enable = async (): Promise<void> => {
+// The real autostart plugin resolves after the OS confirms the change; the
+// shim resolves immediately but keeps the same promise-returning signatures.
+export const enable = (): Promise<void> => {
   enabled = true;
+  return Promise.resolve();
 };
-export const disable = async (): Promise<void> => {
+export const disable = (): Promise<void> => {
   enabled = false;
+  return Promise.resolve();
 };
-export const isEnabled = async (): Promise<boolean> => enabled;
+export const isEnabled = (): Promise<boolean> => Promise.resolve(enabled);

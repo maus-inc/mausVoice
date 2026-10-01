@@ -304,6 +304,129 @@ describe("secureFetch", () => {
     expect(hop(1).headers["content-type"]).toBe("application/json");
   });
 
+  it.each([301, 302])(
+    "downgrades a POST to a bodyless GET on a %i as well",
+    async (status) => {
+      // Both statuses rewrite a POST, and the rule that does it is shared, so
+      // a fix that only recognised one of them would rewrite the chain the
+      // other way.
+      serveHops([
+        new Response(null, {
+          status,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+        new Response("ok"),
+      ]);
+
+      await secureFetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"model":"gpt-4o"}',
+      });
+
+      expect(hop(1).method).toBe("GET");
+      expect(hop(1).body ?? null).toBeNull();
+      expect(hop(1).headers).not.toHaveProperty("content-type");
+    },
+  );
+
+  it("keeps a method the 301 or 302 rule does not rewrite", async () => {
+    // Only a POST is downgraded by 301 and 302. A PUT is a request the origin
+    // answered with a redirect, not one it refused, so it has to survive.
+    serveHops([
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/threads/abc/runs", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: '{"name":"run"}',
+    });
+
+    expect(hop(1).method).toBe("PUT");
+    expect(hop(1).body).toBe('{"name":"run"}');
+    expect(hop(1).headers["content-type"]).toBe("application/json");
+  });
+
+  it.each(["POST", "DELETE"])(
+    "downgrades a %s to a bodyless GET on a 303",
+    async (method) => {
+      // 303 downgrades every method but GET and HEAD, so the 301/302 rule alone
+      // would replay a DELETE the origin has already answered with a redirect.
+      serveHops([
+        new Response(null, {
+          status: 303,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+        new Response("ok"),
+      ]);
+
+      await secureFetch("https://api.openai.com/v1/threads/abc", {
+        method,
+        headers: { "content-type": "application/json" },
+        body: '{"name":"run"}',
+      });
+
+      expect(hop(1).method).toBe("GET");
+      expect(hop(1).body ?? null).toBeNull();
+      expect(hop(1).headers).not.toHaveProperty("content-type");
+    },
+  );
+
+  it.each(["GET", "HEAD"])("keeps a %s on a 303", async (method) => {
+    // The two exceptions the 303 rule names. A GET has no body to discard, and
+    // a HEAD is a request for headers, so rewriting either would answer a
+    // question the caller did not ask.
+    serveHops([
+      new Response(null, {
+        status: 303,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/models", { method });
+
+    expect(hop(1).method).toBe(method);
+  });
+
+  it("replays the method and body unchanged on a 308", async () => {
+    serveHops([
+      new Response(null, {
+        status: 308,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    await secureFetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    expect(hop(1).method).toBe("POST");
+    expect(hop(1).body).toBe('{"model":"gpt-4o"}');
+  });
+
+  it("returns a redirect with no Location instead of re-issuing it", async () => {
+    // Nothing to follow, and re-issuing the same request against a server that
+    // would answer identically only spends the caller's credentials twice.
+    const expected = new Response(null, { status: 302 });
+    pluginFetchMock.mockResolvedValue(expected);
+
+    await expect(
+      secureFetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: "Bearer secret" },
+      }),
+    ).resolves.toBe(expected);
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves every byte value in a private-network response body", async () => {
     const bytes = Uint8Array.from({ length: 256 }, (_, index) => index);
     invokeMock.mockResolvedValue({

@@ -587,18 +587,34 @@ const waitForGeminiFileActive = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   const startedAt = Date.now();
-  for (let attempt = 0; attempt < FILE_POLL_MAX_ATTEMPTS; attempt++) {
-    if (Date.now() - startedAt >= FILE_POLL_DEADLINE_MS) break;
+  // The poll is one request at a time by design: the state endpoint is polled
+  // on a backoff that grows with the attempt count, and every step decides
+  // whether there is a next step at all. Recursion states that dependency,
+  // where a loop that awaits would look like work that could safely overlap.
+  const pollAt = async (attempt: number): Promise<boolean> => {
+    if (attempt >= FILE_POLL_MAX_ATTEMPTS) {
+      return false;
+    }
+    if (Date.now() - startedAt >= FILE_POLL_DEADLINE_MS) {
+      return false;
+    }
     const outcome = await pollGeminiFileState(
       fileUri,
       apiKey,
       customFetch,
       signal,
     );
-    if (outcome === "active") return;
+    if (outcome === "active") {
+      return true;
+    }
     // A cancel during the wait rejects here with the caller's reason, so the
-    // poll loop stops on the signal rather than sitting out the last interval.
+    // poll stops on the signal rather than sitting out the last interval.
     await delay(filePollInterval(attempt), signal);
+    return pollAt(attempt + 1);
+  };
+
+  if (await pollAt(0)) {
+    return;
   }
   throw new Error(
     `Gemini file did not become ACTIVE within ${
@@ -866,7 +882,7 @@ const transcribeWithGeneralModel = async (args: {
  * polling and generateContent attempts. Prevents leaked retries after
  * cancellation and bounds total wall time.
  */
-export const geminiTranscribeAudio = async ({
+export const geminiTranscribeAudio = ({
   apiKey,
   model = GEMINI_TRANSCRIPTION_MODELS[0],
   blob,
@@ -891,34 +907,35 @@ export const geminiTranscribeAudio = async ({
     // `retry-after` header, so a 429 wait grows to the hint. `maxRetryDelayMs`
     // is left at its 2s default, far short of the five-minute deadline.
     signal: deadlineSignal,
-    fn: async () => {
-      if (isGeminiTranscribeModel(model)) {
-        return transcribeWithDedicatedModel({
-          apiKey,
-          model,
-          blob,
-          mimeType,
-          prompt,
-          language,
-          customVocabulary,
-          transcriptionMode,
-          enableDiarization,
-          enableWordTimestamps,
-          customFetch,
-          signal: deadlineSignal,
-        });
-      }
-      return transcribeWithGeneralModel({
-        apiKey,
-        model,
-        blob,
-        mimeType,
-        prompt,
-        language,
-        customFetch,
-        signal: deadlineSignal,
-      });
-    },
+    // Not `async`: both branches already return the promise they were given,
+    // and `retry` awaits the thunk inside a try, so a synchronous failure on
+    // either branch is still seen as a failure rather than escaping the loop.
+    fn: () =>
+      isGeminiTranscribeModel(model)
+        ? transcribeWithDedicatedModel({
+            apiKey,
+            model,
+            blob,
+            mimeType,
+            prompt,
+            language,
+            customVocabulary,
+            transcriptionMode,
+            enableDiarization,
+            enableWordTimestamps,
+            customFetch,
+            signal: deadlineSignal,
+          })
+        : transcribeWithGeneralModel({
+            apiKey,
+            model,
+            blob,
+            mimeType,
+            prompt,
+            language,
+            customFetch,
+            signal: deadlineSignal,
+          }),
   });
 };
 
@@ -943,7 +960,7 @@ export type GeminiGenerateResponseOutput = {
  * One absolute deadline per operation, shared across attempts, with
  * AbortController that is aborted on timeout or on caller's signal.
  */
-export const geminiGenerateTextResponse = async ({
+export const geminiGenerateTextResponse = ({
   apiKey,
   model = GEMINI_GENERATE_TEXT_MODELS[0],
   system,
@@ -1237,6 +1254,37 @@ const splitGeminiSseBuffer = (
   return { events, remainder };
 };
 
+/**
+ * The reader's own read results, in order, as something a `for await` can
+ * consume.
+ *
+ * A stream reader hands out one chunk at a time and refuses a second read
+ * while the first is outstanding, so the reads cannot overlap however the
+ * loop around them is written. Exposing them as an iterable says that once:
+ * each `next` is a single read, the consumer's `for await` supplies the
+ * repetition, and the terminal result is yielded like any other so the
+ * consumer still sees the flush.
+ */
+const readerResults = (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncIterable<ReadableStreamReadResult<Uint8Array>> => ({
+  [Symbol.asyncIterator]: () => {
+    let finished = false;
+    return {
+      next: async (): Promise<
+        IteratorResult<ReadableStreamReadResult<Uint8Array>>
+      > => {
+        if (finished) {
+          return { done: true, value: undefined };
+        }
+        const result = await reader.read();
+        finished = result.done;
+        return { done: false, value: result };
+      },
+    };
+  },
+});
+
 async function* parseGeminiSse(
   response: Response,
 ): AsyncGenerator<GeminiGenerateContentResponse> {
@@ -1248,15 +1296,12 @@ async function* parseGeminiSse(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let done = false;
 
   try {
-    while (!done) {
-      const chunk = await reader.read();
-      done = chunk.done;
-      buffer += decoder.decode(chunk.value, { stream: !done });
+    for await (const result of readerResults(reader)) {
+      buffer += decoder.decode(result.value, { stream: !result.done });
 
-      const parsed = splitGeminiSseBuffer(buffer, done);
+      const parsed = splitGeminiSseBuffer(buffer, result.done);
       buffer = parsed.remainder;
       yield* parseGeminiSseEvents(parsed.events);
     }

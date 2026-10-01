@@ -5,9 +5,17 @@ const reportBlockedOpen = (target: string): void => {
   );
 };
 
-export const openUrl = async (url: string): Promise<void> =>
+// The real opener plugin resolves only once the OS has handled the request, so
+// these stay promise-returning even though the preview only logs the block.
+export const openUrl = (url: string): Promise<void> => {
   reportBlockedOpen(url);
-export const revealItemInDir = async (path: string): Promise<void> =>
+  return Promise.resolve();
+};
+export const revealItemInDir = (path: string): Promise<void> => {
   reportBlockedOpen(path);
-export const openPath = async (path: string): Promise<void> =>
+  return Promise.resolve();
+};
+export const openPath = (path: string): Promise<void> => {
   reportBlockedOpen(path);
+  return Promise.resolve();
+};

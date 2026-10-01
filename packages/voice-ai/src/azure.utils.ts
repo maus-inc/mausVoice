@@ -479,8 +479,11 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // only the scheme word. It also covers the parameters a scheme carries, such
   // as the nonce in a Digest header.
   /\bauthorization\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,2}["']?[^\r\n]+/gi,
-  // A bare provider-style token, wherever it appears.
-  /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/gi,
+  // A bare provider-style token, wherever it appears. The body class lists only
+  // `A-Z`: the `i` flag already matches lowercase, so spelling out `a-z` would
+  // match exactly the same characters, and the flag cannot be dropped because an
+  // uppercase prefix has to be redacted too.
+  /\b(?:sk|pk|rk)-[A-Z0-9_-]{8,}/gi,
   // A JWT, which is long and structurally unmistakable. Its whole body is
   // base64url plus the two dots, so one class covers every segment and the
   // length is what makes it distinctive.
@@ -519,7 +522,10 @@ const redactSuppliedKey = (text: string, subscriptionKey: string): string => {
   // would replace ordinary words in the excerpt.
   if (literal.length < 8) return text;
   return text.replace(
-    new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+    // `String.raw` so the escape stays readable: the literal backslash in front
+    // of `$&` is the character that has to reach the pattern, and the same
+    // spelling as `escapeRegExp` in the desktop app.
+    new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`), "g"),
     "[redacted]",
   );
 };

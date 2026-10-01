@@ -20,6 +20,7 @@ const source = Object.fromEntries(
       "windowsOverlay",
       "apps/desktop/src-tauri/src/platform/windows/overlay.rs",
     ],
+    ["commonPlatform", "apps/desktop/src-tauri/src/platform/common.rs"],
     ["macPill", "packages/rust_macos_pill/src/app.rs"],
     ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
     ["gtkInput", "packages/rust_gtk_pill/src/input.rs"],
@@ -65,13 +66,27 @@ describe("PR28 native reset contracts", () => {
       source.macOverlay,
       /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
     );
+    // The Linux and Windows overlays re-export the shared notifiers rather than
+    // calling `pill_process` themselves, so the contract is that each platform
+    // module still exposes the reset route — not which line it is written on.
+    // Both overlays re-export the shared notifiers with a glob rather than
+    // naming each one, so the route lives in the module they pull from. What the
+    // contract needs is that the name resolves for a caller of the platform
+    // overlay module, which is what these check together.
     assert.match(
       source.linuxOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
+      /pub use crate::platform::common::notifications::\*/,
+      "the linux overlay must re-export the shared reset notifier",
     );
     assert.match(
       source.windowsOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
+      /pub use crate::platform::common::notifications::\*/,
+      "the windows overlay must re-export the shared reset notifier",
+    );
+    assert.match(
+      source.commonPlatform,
+      /notify_reset_position/,
+      "the shared notifier module must still export the reset command",
     );
     assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
   });
@@ -113,13 +128,24 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
       source.macOverlay,
       /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
     );
+    // Both overlays re-export the shared notifiers with a glob rather than
+    // naming each one, so the route lives in the module they pull from. What the
+    // contract needs is that the name resolves for a caller of the platform
+    // overlay module, which is what these check together.
     assert.match(
       source.linuxOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
+      /pub use crate::platform::common::notifications::\*/,
+      "the linux overlay must re-export the shared reset notifier",
     );
     assert.match(
       source.windowsOverlay,
-      /pill_process::notify_reset_position\(app, strategy\)/,
+      /pub use crate::platform::common::notifications::\*/,
+      "the windows overlay must re-export the shared reset notifier",
+    );
+    assert.match(
+      source.commonPlatform,
+      /notify_reset_position/,
+      "the shared notifier module must still export the reset command",
     );
     assert.match(
       source.gtkPill,

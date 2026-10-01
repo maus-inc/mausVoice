@@ -181,14 +181,39 @@ export class AgentLoop {
     history: LlmMessage[],
     toolCalls: LlmToolCall[],
   ): AsyncGenerator<AgentEvent> {
-    for (const tc of toolCalls) {
-      if (this.aborted) {
-        // Once an assistant message emits tool calls, every tool call must be paired
-        // with a tool result message in history to keep provider conversational context valid.
-        yield this.toolResult(tc, "Tool execution aborted", history, true);
-        continue;
-      }
+    yield* this.processToolCallsFrom(history, toolCalls, 0);
+  }
 
+  /**
+   * Walks the tool calls in the order the model emitted them, one at a time.
+   *
+   * The order is the contract, not an accident of scheduling: every call's
+   * result is pushed onto the same history, the provider reads that history
+   * back on the next turn, and a consumer pairing a start with its result sees
+   * them interleaved in this order. Running two at once would let a tool read
+   * state another tool is midway through writing. So the walk recurses from the
+   * call after the current one rather than looping over an await.
+   *
+   * Each step delegates to the next with `yield*`, which keeps a frame per call
+   * until the sequence drains. That is bounded well past anything a model emits
+   * in one message (the V8 delegation chain holds roughly three thousand), and
+   * the whole batch is bounded by the response that produced it.
+   */
+  private async *processToolCallsFrom(
+    history: LlmMessage[],
+    toolCalls: LlmToolCall[],
+    index: number,
+  ): AsyncGenerator<AgentEvent> {
+    const tc = toolCalls[index];
+    if (!tc) {
+      return;
+    }
+
+    if (this.aborted) {
+      // Once an assistant message emits tool calls, every tool call must be paired
+      // with a tool result message in history to keep provider conversational context valid.
+      yield this.toolResult(tc, "Tool execution aborted", history, true);
+    } else {
       const params = parseJsonObject(tc.arguments);
 
       yield {
@@ -208,23 +233,29 @@ export class AgentLoop {
           history,
           true,
         );
-        continue;
+      } else {
+        const { reason, ...toolParams } = params;
+        const tool = this.config.tools.find((t) => t.name === tc.name);
+
+        if (!tool) {
+          yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
+        } else {
+          const output = await this.executeTool(
+            tool,
+            tc.id,
+            toolParams,
+            reason,
+          );
+          const resultStr = output.success
+            ? stringifyToolResult(output.result)
+            : (output.failureReason ?? "Tool execution failed");
+
+          yield this.toolResult(tc, resultStr, history, !output.success);
+        }
       }
-      const { reason, ...toolParams } = params;
-      const tool = this.config.tools.find((t) => t.name === tc.name);
-
-      if (!tool) {
-        yield this.toolResult(tc, `Unknown tool: ${tc.name}`, history, true);
-        continue;
-      }
-
-      const output = await this.executeTool(tool, tc.id, toolParams, reason);
-      const resultStr = output.success
-        ? stringifyToolResult(output.result)
-        : (output.failureReason ?? "Tool execution failed");
-
-      yield this.toolResult(tc, resultStr, history, !output.success);
     }
+
+    yield* this.processToolCallsFrom(history, toolCalls, index + 1);
   }
 
   private toolResult(

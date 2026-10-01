@@ -250,7 +250,18 @@ class PreviewRuntime {
     return clone(apiKey);
   }
 
-  async invoke(command: string, args: WireRecord = {}): Promise<unknown> {
+  /**
+   * Mirrors Tauri's `invoke`, which is always promise-returning, so this keeps a
+   * promise signature even though the mock dispatch below is synchronous:
+   * `invokePreviewCommand` chains `.then(...)` and pages `await` the result.
+   * Deferring the dispatch is also what keeps a rejected command an async
+   * rejection rather than a synchronous throw.
+   */
+  invoke(command: string, args: WireRecord = {}): Promise<unknown> {
+    return Promise.resolve().then(() => this.dispatch(command, args));
+  }
+
+  private dispatch(command: string, args: WireRecord): unknown {
     switch (command) {
       case "user_get_one":
         return clone(this.database.user);

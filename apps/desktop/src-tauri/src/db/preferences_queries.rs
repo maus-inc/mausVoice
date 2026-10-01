@@ -3,6 +3,102 @@ use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use crate::domain::{preferences::DEFAULT_DICTATION_LIMIT_MINUTES, UserPreferences};
 const SEP: &str = "::";
 
+/// Every `user_preferences` column, in the order `upsert_user_preferences`
+/// binds its `?N` placeholders.
+///
+/// The writer's column list, the writer's `ON CONFLICT` assignments and the
+/// reader's SELECT are all derived from this one list, so a column cannot be
+/// written by one statement and forgotten by the others.
+const USER_PREFERENCES_COLUMNS: &[&str] = &[
+    "user_id",
+    "transcription_mode",
+    "transcription_api_key_id",
+    "transcription_device",
+    "transcription_model_size",
+    "post_processing_mode",
+    "post_processing_api_key_id",
+    "post_processing_ollama_url",
+    "post_processing_ollama_model",
+    "agent_mode",
+    "agent_mode_api_key_id",
+    "openclaw_gateway_url",
+    "openclaw_token",
+    "active_tone_id",
+    "got_started_at",
+    "gpu_enumeration_enabled",
+    "paste_keybind",
+    "last_seen_feature",
+    "language_switch_enabled",
+    "secondary_dictation_language",
+    "active_dictation_language",
+    "additional_dictation_languages",
+    "preferred_microphone",
+    "ignore_update_dialog",
+    "incognito_mode_enabled",
+    "incognito_mode_include_in_stats",
+    "preserve_audio_on_failure",
+    "dictation_limit_minutes",
+    "dictation_pill_visibility",
+    "use_new_backend",
+    "realtime_output_enabled",
+    "remote_output_enabled",
+    "remote_target_device_id",
+    "remote_receiver_port",
+    "remote_receiver_auto_start",
+    "dictation_audio_dim",
+    "menu_bar_icon_hidden",
+    "insertion_method",
+    "typing_speed_ms",
+    "pill_reset_monitor_strategy",
+    "always_request_admin_on_startup",
+    "pill_placement",
+    "hands_free_delay_ms",
+    "in_dictation_style_switching_enabled",
+    "hallucination_filter_enabled",
+    "review_before_insert",
+    "agent_enabled_tools",
+    "agent_max_iterations",
+    "agent_permission_timeout_ms",
+    "spoken_commands_enabled",
+    "auto_learn_dictionary_enabled",
+    "auto_learn_from_edits_enabled",
+    "eleven_labs_keyterms_enabled",
+    "expansion_flags",
+    "update_channel",
+];
+
+/// The conflict key, and therefore the one column the `ON CONFLICT` clause
+/// must not assign: it is the row's identity, not a value to overwrite.
+const CONFLICT_KEY: &str = "user_id";
+
+/// The one column whose stored value `upsert_user_preferences` preserves on
+/// conflict. It has a dedicated single-column write path (see
+/// [`expansion_flags_update_sql`]), so taking it from `excluded` here would
+/// let a stale preferences snapshot undo a concurrent flag change.
+const PRESERVED_ON_CONFLICT: &str = "expansion_flags";
+
+fn user_preferences_column_list() -> String {
+    USER_PREFERENCES_COLUMNS.join(",\n             ")
+}
+
+fn user_preferences_conflict_assignments() -> String {
+    let mut assignments = String::new();
+    for column in USER_PREFERENCES_COLUMNS {
+        if *column == CONFLICT_KEY {
+            continue;
+        }
+        if !assignments.is_empty() {
+            assignments.push_str(",\n            ");
+        }
+        if *column == PRESERVED_ON_CONFLICT {
+            assignments.push_str(&format!("{column} = {column}"));
+        } else {
+            assignments.push_str(&format!("{column} = excluded.{column}"));
+        }
+    }
+    assignments
+}
+
 fn serialize_additional_languages(languages: &Option<Vec<String>>) -> Option<String> {
     languages.as_ref().map(|languages| languages.join(SEP))
 }
@@ -21,121 +117,14 @@ pub async fn upsert_user_preferences(
     pool: SqlitePool,
     preferences: &UserPreferences,
 ) -> Result<UserPreferences, sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO user_preferences (
-             user_id,
-             transcription_mode,
-             transcription_api_key_id,
-             transcription_device,
-             transcription_model_size,
-             post_processing_mode,
-             post_processing_api_key_id,
-             post_processing_ollama_url,
-             post_processing_ollama_model,
-             agent_mode,
-             agent_mode_api_key_id,
-             openclaw_gateway_url,
-             openclaw_token,
-             active_tone_id,
-             got_started_at,
-             gpu_enumeration_enabled,
-             paste_keybind,
-             last_seen_feature,
-             language_switch_enabled,
-             secondary_dictation_language,
-             active_dictation_language,
-             additional_dictation_languages,
-             preferred_microphone,
-              ignore_update_dialog,
-              incognito_mode_enabled,
-             incognito_mode_include_in_stats,
-             preserve_audio_on_failure,
-              dictation_limit_minutes,
-             dictation_pill_visibility,
-             use_new_backend,
-             realtime_output_enabled,
-             remote_output_enabled,
-             remote_target_device_id,
-             remote_receiver_port,
-             remote_receiver_auto_start,
-             dictation_audio_dim,
-             menu_bar_icon_hidden,
-             insertion_method,
-             typing_speed_ms,
-             pill_reset_monitor_strategy,
-             always_request_admin_on_startup,
-             pill_placement,
-             hands_free_delay_ms,
-             in_dictation_style_switching_enabled,
-             hallucination_filter_enabled,
-             review_before_insert,
-             agent_enabled_tools,
-             agent_max_iterations,
-             agent_permission_timeout_ms,
-             spoken_commands_enabled,
-             auto_learn_dictionary_enabled,
-             auto_learn_from_edits_enabled,
-             eleven_labs_keyterms_enabled,
-             expansion_flags,
-             update_channel
-          )
+    sqlx::query(&format!(
+        "INSERT INTO user_preferences ({})
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)
          ON CONFLICT(user_id) DO UPDATE SET
-            transcription_mode = excluded.transcription_mode,
-            transcription_api_key_id = excluded.transcription_api_key_id,
-            transcription_device = excluded.transcription_device,
-            transcription_model_size = excluded.transcription_model_size,
-            post_processing_mode = excluded.post_processing_mode,
-            post_processing_api_key_id = excluded.post_processing_api_key_id,
-            post_processing_ollama_url = excluded.post_processing_ollama_url,
-            post_processing_ollama_model = excluded.post_processing_ollama_model,
-            agent_mode = excluded.agent_mode,
-            agent_mode_api_key_id = excluded.agent_mode_api_key_id,
-            openclaw_gateway_url = excluded.openclaw_gateway_url,
-            openclaw_token = excluded.openclaw_token,
-            active_tone_id = excluded.active_tone_id,
-            got_started_at = excluded.got_started_at,
-            gpu_enumeration_enabled = excluded.gpu_enumeration_enabled,
-            paste_keybind = excluded.paste_keybind,
-            last_seen_feature = excluded.last_seen_feature,
-            language_switch_enabled = excluded.language_switch_enabled,
-            secondary_dictation_language = excluded.secondary_dictation_language,
-            active_dictation_language = excluded.active_dictation_language,
-            additional_dictation_languages = excluded.additional_dictation_languages,
-            preferred_microphone = excluded.preferred_microphone,
-            ignore_update_dialog = excluded.ignore_update_dialog,
-            incognito_mode_enabled = excluded.incognito_mode_enabled,
-             incognito_mode_include_in_stats = excluded.incognito_mode_include_in_stats,
-             preserve_audio_on_failure = excluded.preserve_audio_on_failure,
-            dictation_limit_minutes = excluded.dictation_limit_minutes,
-            dictation_pill_visibility = excluded.dictation_pill_visibility,
-            use_new_backend = excluded.use_new_backend,
-            realtime_output_enabled = excluded.realtime_output_enabled,
-            remote_output_enabled = excluded.remote_output_enabled,
-            remote_target_device_id = excluded.remote_target_device_id,
-            remote_receiver_port = excluded.remote_receiver_port,
-            remote_receiver_auto_start = excluded.remote_receiver_auto_start,
-            dictation_audio_dim = excluded.dictation_audio_dim,
-            menu_bar_icon_hidden = excluded.menu_bar_icon_hidden,
-            insertion_method = excluded.insertion_method,
-            typing_speed_ms = excluded.typing_speed_ms,
-            pill_reset_monitor_strategy = excluded.pill_reset_monitor_strategy,
-            always_request_admin_on_startup = excluded.always_request_admin_on_startup,
-            pill_placement = excluded.pill_placement,
-            hands_free_delay_ms = excluded.hands_free_delay_ms,
-            in_dictation_style_switching_enabled = excluded.in_dictation_style_switching_enabled,
-            hallucination_filter_enabled = excluded.hallucination_filter_enabled,
-            review_before_insert = excluded.review_before_insert,
-            agent_enabled_tools = excluded.agent_enabled_tools,
-            agent_max_iterations = excluded.agent_max_iterations,
-            agent_permission_timeout_ms = excluded.agent_permission_timeout_ms,
-            spoken_commands_enabled = excluded.spoken_commands_enabled,
-            auto_learn_dictionary_enabled = excluded.auto_learn_dictionary_enabled,
-            auto_learn_from_edits_enabled = excluded.auto_learn_from_edits_enabled,
-            eleven_labs_keyterms_enabled = excluded.eleven_labs_keyterms_enabled,
-            update_channel = excluded.update_channel,
-            expansion_flags = expansion_flags"
-        )
+            {}",
+        user_preferences_column_list(),
+        user_preferences_conflict_assignments(),
+    ))
     .bind(&preferences.user_id)
     .bind(&preferences.transcription_mode)
     .bind(&preferences.transcription_api_key_id)
@@ -201,67 +190,13 @@ pub async fn fetch_user_preferences(
     pool: SqlitePool,
     user_id: &str,
 ) -> Result<Option<UserPreferences>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT
-            user_id,
-            transcription_mode,
-            transcription_api_key_id,
-            transcription_device,
-            transcription_model_size,
-            post_processing_mode,
-            post_processing_api_key_id,
-            post_processing_ollama_url,
-            post_processing_ollama_model,
-            agent_mode,
-            agent_mode_api_key_id,
-            openclaw_gateway_url,
-            openclaw_token,
-            active_tone_id,
-            got_started_at,
-            gpu_enumeration_enabled,
-            paste_keybind,
-            last_seen_feature,
-            language_switch_enabled,
-            secondary_dictation_language,
-            active_dictation_language,
-            additional_dictation_languages,
-            preferred_microphone,
-            ignore_update_dialog,
-            incognito_mode_enabled,
-            incognito_mode_include_in_stats,
-            preserve_audio_on_failure,
-            dictation_limit_minutes,
-            dictation_pill_visibility,
-            use_new_backend,
-            realtime_output_enabled,
-            remote_output_enabled,
-            remote_target_device_id,
-            remote_receiver_port,
-            remote_receiver_auto_start,
-            dictation_audio_dim,
-            menu_bar_icon_hidden,
-            insertion_method,
-            typing_speed_ms,
-            pill_reset_monitor_strategy,
-            always_request_admin_on_startup,
-            pill_placement,
-            hands_free_delay_ms,
-            in_dictation_style_switching_enabled,
-            hallucination_filter_enabled,
-            review_before_insert,
-            agent_enabled_tools,
-            agent_max_iterations,
-            agent_permission_timeout_ms,
-            spoken_commands_enabled,
-            auto_learn_dictionary_enabled,
-            auto_learn_from_edits_enabled,
-            eleven_labs_keyterms_enabled,
-            expansion_flags,
-            update_channel
+    let row = sqlx::query(&format!(
+        "SELECT {}
          FROM user_preferences
          WHERE user_id = ?1
          LIMIT 1",
-    )
+        user_preferences_column_list(),
+    ))
     .bind(user_id)
     .fetch_optional(&pool)
     .await?;

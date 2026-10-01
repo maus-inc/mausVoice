@@ -322,6 +322,33 @@ describe("Gemini native transport", () => {
     expect(body).not.toHaveProperty("generationConfig");
   });
 
+  it("parses a final event that arrives without its terminating blank line", async () => {
+    // The flush that happens on the terminal read is the only thing that
+    // carries an event the stream ended in the middle of.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"tail"}]}}]}',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: { messages: [{ role: "user", content: "Hello" }] },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "text-delta", text: "tail" },
+      { type: "finish", finishReason: "other", usage: undefined },
+    ]);
+  });
+
   it("pairs tool results with the declared function name, not the call id", async () => {
     const capturedBodies: unknown[] = [];
     const customFetch = vi.fn().mockImplementation((_url, init) => {

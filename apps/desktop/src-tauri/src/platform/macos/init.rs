@@ -9,17 +9,7 @@ pub fn configure_display_backend() {}
 pub fn apply_webkit_workarounds() {}
 
 pub fn get_native_setup_status() -> crate::platform::NativeSetupStatus {
-    let mic = permissions::check_microphone_permission();
-    let ax = permissions::check_accessibility_permission();
-
-    let mic_ok = matches!(mic, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-    let ax_ok = matches!(ax, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-
-    if mic_ok && ax_ok {
-        crate::platform::NativeSetupStatus::Ready
-    } else {
-        crate::platform::NativeSetupStatus::NeedsSetup
-    }
+    crate::platform::common::native_setup_status()
 }
 
 pub async fn run_native_setup(_app: tauri::AppHandle) -> crate::platform::NativeSetupResult {
@@ -44,16 +34,7 @@ pub async fn run_native_setup(_app: tauri::AppHandle) -> crate::platform::Native
         log::error!("Failed to request permission ({err})");
     }
 
-    let mic = permissions::check_microphone_permission();
-    let ax = permissions::check_accessibility_permission();
-    let mic_ok = matches!(mic, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-    let ax_ok = matches!(ax, Ok(s) if s.state == crate::domain::PermissionState::Authorized);
-
-    if mic_ok && ax_ok {
-        crate::platform::NativeSetupResult::Success
-    } else {
-        crate::platform::NativeSetupResult::RequireRestart
-    }
+    crate::platform::common::native_setup_result()
 }
 
 pub fn ensure_background_services() {}

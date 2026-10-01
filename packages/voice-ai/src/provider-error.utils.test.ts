@@ -147,4 +147,152 @@ describe("redactProviderMessage", () => {
     const message = "the api key you pasted was rejected";
     expect(providerErrorUtils.redactProviderMessage(message)).toBe(message);
   });
+
+  // The `api_key` shape is matched by a scanner instead of a pattern, so the
+  // equivalence is proved against the pattern it replaced rather than assumed.
+  // This chain is that pattern list verbatim: every case below runs through
+  // both it and the shipped scrubber, and the outputs have to be identical. It
+  // lives here, in an excluded-from-analysis file, so the pattern that Sonar
+  // flags is never reintroduced into the module.
+  const REFERENCE_SECRET_PATTERNS: RegExp[] = [
+    /\b(?:gsk|csk|sk)[-_][a-z0-9_-]+/gi,
+    /bearer\s+[a-z0-9._~+/=-]+/gi,
+    /authorization:\s*[^\s;,]+/gi,
+    /api[_-]?key["']?\s*[:=]\s*["']?\s*[a-z0-9._~+/=-]+/gi,
+  ];
+
+  const referenceRedact = (message: string): string =>
+    REFERENCE_SECRET_PATTERNS.reduce(
+      (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
+      message,
+    );
+
+  // Every axis the shape is built from. The sweep below crosses them, so a
+  // change to any one of them lands in a case rather than in a gap.
+  const LABELS = [
+    "api_key",
+    "API-KEY",
+    "Api_Key",
+    "apikey",
+    "APIKEY",
+    "xapi_key",
+    "api_keys",
+    "api_ke",
+    "api_",
+    "monkey",
+    "key",
+  ];
+  const BEFORE_SEPARATOR = ["", " ", "  ", "\t", "\n", '"', "'", ' "', " ' "];
+  const SEPARATORS = [":", "=", " = ", "\t=\t", ":=", "::", "", " - ", "=>"];
+  const AFTER_SEPARATOR = [
+    "",
+    " ",
+    "  ",
+    "\n",
+    '"',
+    "'",
+    ' "',
+    " ' ",
+    ' " ',
+  ];
+  const VALUES = [
+    "",
+    "abc123",
+    "ABC123",
+    "abc.def",
+    "a_b-c~d+/=-",
+    '"abc123"',
+    "abc def",
+    "!",
+    "é",
+    "  ",
+  ];
+
+  const expectSameAsPattern = (message: string): void => {
+    expect(
+      providerErrorUtils.redactProviderMessage(message),
+      `shipped scrubber disagreed with the pattern on ${JSON.stringify(message)}`,
+    ).toBe(referenceRedact(message));
+  };
+
+  it("redacts every api key assignment shape the pattern it replaced matched", () => {
+    // The whole cross product of the five axes, on its own. This is the part
+    // that decides whether the scanner reads the same match out of the same
+    // text.
+    let compared = 0;
+    for (const label of LABELS) {
+      for (const before of BEFORE_SEPARATOR) {
+        for (const separator of SEPARATORS) {
+          for (const after of AFTER_SEPARATOR) {
+            for (const value of VALUES) {
+              compared += 1;
+              expectSameAsPattern(`${label}${before}${separator}${after}${value}`);
+            }
+          }
+        }
+      }
+    }
+    // A sweep that silently degenerated into a handful of cases would pass
+    // while proving nothing.
+    expect(compared).toBe(LABELS.length * BEFORE_SEPARATOR.length *
+      SEPARATORS.length * AFTER_SEPARATOR.length * VALUES.length);
+    expect(compared).toBeGreaterThan(80_000);
+  });
+
+  it("redacts the same shapes surrounded by other text", () => {
+    // The junk around an assignment matters as much as the assignment: it is
+    // what proves the scanner stops where the pattern stopped rather than
+    // redacting more of the sentence or less of the value than it did. Every
+    // other element of each axis is enough here, because the sweep above
+    // already crossed all of them unwrapped.
+    const WRAPPERS = ["", "upstream said: ", ' {"body": "', "} ", " error "];
+    const REAL_LABELS = ["api_key", "API-KEY", "apikey"];
+    const everyOther = (values: readonly string[]): string[] =>
+      values.filter((_value, position) => position % 2 === 0);
+    let compared = 0;
+    for (const label of REAL_LABELS) {
+      for (const before of everyOther(BEFORE_SEPARATOR)) {
+        for (const separator of everyOther(SEPARATORS)) {
+          for (const after of everyOther(AFTER_SEPARATOR)) {
+            for (const value of everyOther(VALUES)) {
+              const core = `${label}${before}${separator}${after}${value}`;
+              for (const prefix of WRAPPERS) {
+                for (const suffix of WRAPPERS) {
+                  compared += 1;
+                  expectSameAsPattern(`${prefix}${core}${suffix}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(15_000);
+  });
+
+  it("redacts a second assignment beside the first, and resumes after it", () => {
+    const message = `{"api_key":"one"}{"api_key":"two"}`;
+    const output = providerErrorUtils.redactProviderMessage(message);
+    expect(output).toBe(referenceRedact(message));
+    expect(output).toBe('{"[redacted]"}{"[redacted]"}');
+  });
+
+  it("scrubs a long whitespace run without super-linear work", () => {
+    // A remote end chooses this text and no caller of the scrubber bounds its
+    // length, so the cost of a label followed by a long whitespace run and a
+    // value the class does not hold is the remote end's to choose. The pattern
+    // this replaced let the engine split that one run between its two
+    // whitespace quantifiers and retry every split once the value failed, so
+    // the work grew with the square of the run. The scanner reads each
+    // character once.
+    //
+    // 150,000 characters took about 11 seconds under the pattern and takes
+    // single-digit milliseconds under the scanner, so the 1,000 ms budget is
+    // not a close call in either direction.
+    const message = "api_key=" + " ".repeat(150_000) + "!";
+
+    const started = Date.now();
+    expect(providerErrorUtils.redactProviderMessage(message)).toBe(message);
+    expect(Date.now() - started).toBeLessThan(1000);
+  }, 1000);
 });

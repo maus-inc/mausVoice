@@ -80,6 +80,19 @@ describe("redaction.utils", () => {
         "Plain error message",
       );
     });
+
+    it("rejects rather than throwing when the value has no string form", async () => {
+      // An object with no prototype has no toString, so String() raises. The
+      // promise form is what callers chain onto, so the failure has to arrive
+      // as a rejection: a synchronous throw here would escape a `.catch()`
+      // that the async form always fed.
+      const unstringifiable = Object.create(null) as unknown;
+      let pending: Promise<string> | undefined;
+      expect(() => {
+        pending = redactError(unstringifiable);
+      }).not.toThrow();
+      await expect(pending).rejects.toThrow(TypeError);
+    });
   });
 
   describe("redactObject", () => {
@@ -396,6 +409,35 @@ describe("redaction.utils", () => {
       expectTypeOf<Parameters<typeof redactObject>>().toEqualTypeOf<
         [Record<string, unknown>, string[]?, boolean?]
       >();
+    });
+
+    it("rejects rather than throwing when the walk itself fails", async () => {
+      // A value that renders itself through toJSON can raise from that method,
+      // and the walk does not guard it. The promise form reports that as a
+      // rejection, which is what every caller of this form handles; a
+      // synchronous throw would escape a `.catch()` chained onto the call.
+      const exploding = {
+        toJSON: () => {
+          throw new Error("toJSON failed");
+        },
+      };
+      let pending: Promise<Record<string, unknown>> | undefined;
+      expect(() => {
+        pending = redactObject(asRecord(exploding));
+      }).not.toThrow();
+      await expect(pending).rejects.toThrow("toJSON failed");
+    });
+
+    it("runs the walk before returning, not on a later microtask", () => {
+      // The traversal is synchronous work, so a caller's own side effects must
+      // still land in the order it wrote them rather than a tick behind.
+      const input = asRecord({ name: "ok", password: "hunter2" });
+      const pending = redactObject(input);
+      expect(pending).toBeInstanceOf(Promise);
+      return expect(pending).resolves.toEqual({
+        name: "ok",
+        password: "[redacted]",
+      });
     });
 
     it("ignores a caller supplied ancestor set instead of dropping the record", () => {

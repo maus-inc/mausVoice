@@ -1,5 +1,7 @@
 use serde::Serialize;
+use std::cmp;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::platform::Recorder;
 
@@ -22,10 +24,53 @@ pub fn list_input_devices() -> Vec<InputDeviceDescriptor> {
     cpal_impl::list_input_devices()
 }
 
+// ── Level metering, shared by every backend ─────────────────────────────
+
+/// Bins in the level meter. Fixed so the webview's meter renders the same
+/// number of bars whichever backend produced the samples.
+pub(crate) const LEVEL_BIN_COUNT: usize = 12;
+
+/// How often level bins reach the webview. The callbacks arrive at buffer
+/// rate, far faster than a meter can be read.
+pub(crate) const LEVEL_DISPATCH_INTERVAL: Duration = Duration::from_millis(48);
+
+/// How often buffered audio reaches the webview, as audio rather than levels.
+pub(crate) const CHUNK_DISPATCH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Fold samples into [`LEVEL_BIN_COUNT`] mean-absolute-amplitude bins.
+///
+/// Every backend meters the same way, so the meter means the same thing on
+/// every platform; only the sample delivery differs.
+pub(crate) fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
+    if samples.is_empty() {
+        return vec![0.0; LEVEL_BIN_COUNT];
+    }
+
+    let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
+    let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
+    let mut counts = vec![0u32; LEVEL_BIN_COUNT];
+
+    for (index, sample) in samples.iter().enumerate() {
+        let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
+        bins[bin_index] += sample.abs();
+        counts[bin_index] += 1;
+    }
+
+    for (value, count) in bins.iter_mut().zip(counts) {
+        if count > 0 {
+            *value = (*value / count as f32).clamp(0.0, 1.0);
+        }
+    }
+
+    bins
+}
+
 // ── CPAL backend (macOS, Windows) ──────────────────────────────────────
 
 mod cpal_impl {
-    use super::InputDeviceDescriptor;
+    use super::{
+        compute_level_bins, InputDeviceDescriptor, CHUNK_DISPATCH_INTERVAL, LEVEL_DISPATCH_INTERVAL,
+    };
     use crate::domain::{RecordedAudio, RecordingMetrics, RecordingResult};
     use crate::errors::RecordingError;
     use crate::platform::{ChunkCallback, LevelCallback, Recorder};
@@ -60,22 +105,53 @@ mod cpal_impl {
         _chunk_emitter: Option<Arc<ChunkEmitter>>,
     }
 
-    const LEVEL_BIN_COUNT: usize = 12;
-    const LEVEL_DISPATCH_INTERVAL_MS: u64 = 48;
-    const CHUNK_DISPATCH_INTERVAL_MS: u64 = 100;
+    /// Rate limiter shared by the level and chunk emitters.
+    ///
+    /// Both callbacks arrive at buffer rate and must not reach the webview at
+    /// that rate, so each keeps its own window. Deciding and advancing the
+    /// window happen under the same lock: taking the timestamp twice would let
+    /// two callers in the same window both be told they could emit.
+    struct Throttle {
+        interval: Duration,
+        last_emit: Mutex<Option<Instant>>,
+    }
+
+    impl Throttle {
+        fn new(interval: Duration) -> Self {
+            Self {
+                interval,
+                last_emit: Mutex::new(None),
+            }
+        }
+
+        /// Whether the caller may emit now, consuming one slot of the window.
+        fn should_emit(&self) -> bool {
+            let now = Instant::now();
+            let mut guard = match self.last_emit.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            let should_send = match *guard {
+                Some(last) => now.duration_since(last) >= self.interval,
+                None => true,
+            };
+            if should_send {
+                *guard = Some(now);
+            }
+            should_send
+        }
+    }
 
     struct LevelEmitter {
         callback: LevelCallback,
-        throttle: Duration,
-        last_emit: Mutex<Option<Instant>>,
+        throttle: Throttle,
     }
 
     impl LevelEmitter {
         fn new(callback: LevelCallback) -> Arc<Self> {
             Arc::new(Self {
                 callback,
-                throttle: Duration::from_millis(LEVEL_DISPATCH_INTERVAL_MS),
-                last_emit: Mutex::new(None),
+                throttle: Throttle::new(LEVEL_DISPATCH_INTERVAL),
             })
         }
 
@@ -84,23 +160,7 @@ mod cpal_impl {
                 return;
             }
 
-            let now = Instant::now();
-            let should_emit = {
-                let mut guard = match self.last_emit.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let should_send = match *guard {
-                    Some(last) => now.duration_since(last) >= self.throttle,
-                    None => true,
-                };
-                if should_send {
-                    *guard = Some(now);
-                }
-                should_send
-            };
-
-            if !should_emit {
+            if !self.throttle.should_emit() {
                 return;
             }
 
@@ -111,8 +171,7 @@ mod cpal_impl {
 
     struct ChunkEmitter {
         callback: ChunkCallback,
-        throttle: Duration,
-        last_emit: Mutex<Option<Instant>>,
+        throttle: Throttle,
         buffer: Mutex<Vec<f32>>,
         emitted_samples: AtomicU64,
     }
@@ -121,8 +180,7 @@ mod cpal_impl {
         fn new(callback: ChunkCallback) -> Arc<Self> {
             Arc::new(Self {
                 callback,
-                throttle: Duration::from_millis(CHUNK_DISPATCH_INTERVAL_MS),
-                last_emit: Mutex::new(None),
+                throttle: Throttle::new(CHUNK_DISPATCH_INTERVAL),
                 buffer: Mutex::new(Vec::new()),
                 emitted_samples: AtomicU64::new(0),
             })
@@ -139,23 +197,7 @@ mod cpal_impl {
                 return;
             }
 
-            let now = Instant::now();
-            let should_emit = {
-                let mut guard = match self.last_emit.lock() {
-                    Ok(guard) => guard,
-                    Err(poisoned) => poisoned.into_inner(),
-                };
-                let should_send = match *guard {
-                    Some(last) => now.duration_since(last) >= self.throttle,
-                    None => true,
-                };
-                if should_send {
-                    *guard = Some(now);
-                }
-                should_send
-            };
-
-            if should_emit {
+            if self.throttle.should_emit() {
                 self.dispatch_buffered_chunk();
             }
         }
@@ -189,30 +231,6 @@ mod cpal_impl {
         fn flush(&self) {
             self.dispatch_buffered_chunk();
         }
-    }
-
-    fn compute_level_bins(samples: &[f32]) -> Vec<f32> {
-        if samples.is_empty() {
-            return vec![0.0; LEVEL_BIN_COUNT];
-        }
-
-        let frames_per_bin = cmp::max(1, samples.len() / LEVEL_BIN_COUNT);
-        let mut bins = vec![0.0f32; LEVEL_BIN_COUNT];
-        let mut counts = vec![0u32; LEVEL_BIN_COUNT];
-
-        for (index, sample) in samples.iter().enumerate() {
-            let bin_index = cmp::min(index / frames_per_bin, LEVEL_BIN_COUNT - 1);
-            bins[bin_index] += sample.abs();
-            counts[bin_index] += 1;
-        }
-
-        for (value, count) in bins.iter_mut().zip(counts) {
-            if count > 0 {
-                *value = (*value / count as f32).clamp(0.0, 1.0);
-            }
-        }
-
-        bins
     }
 
     impl Drop for ActiveRecording {
@@ -1215,6 +1233,10 @@ mod cpal_impl {
             assert_eq!(expected_offset, 5 * 128);
         }
 
+        /// The throttle was one inline block in each emitter, with the decide
+        /// and the advance under one lock. That pairing is the load-bearing
+        /// part: if the timestamp were taken twice, two callers inside one
+        /// window would both be told they could emit.
         #[test]
         fn chunk_offset_keeps_counting_when_a_dispatch_is_skipped() {
             let seen = Arc::new(Mutex::new(Vec::<(usize, u64)>::new()));

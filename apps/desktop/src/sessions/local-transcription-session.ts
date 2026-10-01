@@ -70,7 +70,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
    * early subscribe and a usable pretranscriber is held here and replayed in
    * order with its absolute index.
    */
-  private startupBuffer: AudioChunkStartupBuffer =
+  private readonly startupBuffer: AudioChunkStartupBuffer =
     createAudioChunkStartupBuffer(
       (dropped) => {
         this.startupBufferOverflowed = true;

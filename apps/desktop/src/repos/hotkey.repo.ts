@@ -13,11 +13,11 @@ export abstract class BaseHotkeyRepo extends BaseRepo {
 }
 
 export class LocalHotkeyRepo extends BaseHotkeyRepo {
-  async listHotkeys(): Promise<Hotkey[]> {
+  listHotkeys(): Promise<Hotkey[]> {
     return invoke<Hotkey[]>("hotkey_list");
   }
 
-  async saveHotkey(hotkey: Hotkey): Promise<Hotkey> {
+  saveHotkey(hotkey: Hotkey): Promise<Hotkey> {
     return invoke<Hotkey>("hotkey_save", { hotkey });
   }
 
@@ -25,10 +25,7 @@ export class LocalHotkeyRepo extends BaseHotkeyRepo {
     await invoke<void>("hotkey_delete", { id });
   }
 
-  async replaceStyleHotkeys(
-    prefix: string,
-    hotkeys: Hotkey[],
-  ): Promise<Hotkey[]> {
+  replaceStyleHotkeys(prefix: string, hotkeys: Hotkey[]): Promise<Hotkey[]> {
     return invoke<Hotkey[]>("hotkey_replace_style_hotkeys", {
       prefix,
       hotkeys,

@@ -2,62 +2,76 @@ use sqlx::{Row, SqlitePool};
 
 use crate::domain::User;
 
+/// Every `user_profiles` column, in the order `upsert_user` binds its `?N`
+/// placeholders.
+///
+/// The writer's column list, the writer's `ON CONFLICT` assignments and the
+/// reader's SELECT are all generated from this one list, so a column cannot be
+/// written by one statement and silently dropped by the others.
+const USER_PROFILE_COLUMNS: &[&str] = &[
+    "id",
+    "name",
+    "bio",
+    "company",
+    "title",
+    "onboarded",
+    "preferred_microphone",
+    "preferred_language",
+    "words_this_month",
+    "words_this_month_month",
+    "words_total",
+    "play_interaction_chime",
+    "interaction_feedback_volume",
+    "has_finished_tutorial",
+    "has_migrated_preferred_microphone",
+    "cohort",
+    "styling_mode",
+    "selected_tone_id",
+    "active_tone_ids",
+    "streak",
+    "streak_recorded_at",
+    "referral_source",
+    "created_at",
+    "onboarded_at",
+];
+
+/// The conflict key, so the one column `ON CONFLICT` must not assign: it is
+/// the row's identity rather than a value to overwrite.
+const CONFLICT_KEY: &str = "id";
+
+fn user_profile_column_list() -> String {
+    USER_PROFILE_COLUMNS.join(",\n         ")
+}
+
+fn user_profile_conflict_assignments() -> String {
+    USER_PROFILE_COLUMNS
+        .iter()
+        .filter(|column| **column != CONFLICT_KEY)
+        .map(|column| format!("{column} = excluded.{column}"))
+        .collect::<Vec<_>>()
+        .join(",\n        ")
+}
+
+/// `?1, ?2, ... ?n` for a positional bind of `count` values.
+fn positional_placeholders(count: usize) -> String {
+    (1..=count)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Insert or update a user profile row, clamping the optional thock
 /// volume into the canonical safe window before it reaches SQLite.
 pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Error> {
-    sqlx::query(
-    "INSERT INTO user_profiles (
-         id,
-         name,
-         bio,
-         company,
-         title,
-         onboarded,
-         preferred_microphone,
-         preferred_language,
-         words_this_month,
-         words_this_month_month,
-         words_total,
-         play_interaction_chime,
-         interaction_feedback_volume,
-         has_finished_tutorial,
-         has_migrated_preferred_microphone,
-         cohort,
-         styling_mode,
-         selected_tone_id,
-         active_tone_ids,
-         streak,
-         streak_recorded_at,
-         referral_source,
-         created_at,
-         onboarded_at
-     )
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+    sqlx::query(&format!(
+        "INSERT INTO user_profiles ({})
+     VALUES ({})
      ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        bio = excluded.bio,
-        company = excluded.company,
-        title = excluded.title,
-        onboarded = excluded.onboarded,
-        preferred_microphone = excluded.preferred_microphone,
-        preferred_language = excluded.preferred_language,
-        words_this_month = excluded.words_this_month,
-        words_this_month_month = excluded.words_this_month_month,
-        words_total = excluded.words_total,
-        play_interaction_chime = excluded.play_interaction_chime,
-        interaction_feedback_volume = excluded.interaction_feedback_volume,
-        has_finished_tutorial = excluded.has_finished_tutorial,
-        has_migrated_preferred_microphone = excluded.has_migrated_preferred_microphone,
-        cohort = excluded.cohort,
-        styling_mode = excluded.styling_mode,
-        selected_tone_id = excluded.selected_tone_id,
-        active_tone_ids = excluded.active_tone_ids,
-         streak = excluded.streak,
-         streak_recorded_at = excluded.streak_recorded_at,
-         referral_source = excluded.referral_source,
-         created_at = excluded.created_at,
-         onboarded_at = excluded.onboarded_at",
-    )
+        {}",
+        user_profile_column_list(),
+        positional_placeholders(USER_PROFILE_COLUMNS.len()),
+        user_profile_conflict_assignments(),
+    ))
     .bind(&user.id)
     .bind(&user.name)
     .bind(&user.bio)
@@ -97,35 +111,12 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
 }
 
 pub async fn fetch_user(pool: SqlitePool) -> Result<Option<User>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT
-            id,
-            name,
-            bio,
-            company,
-            title,
-            onboarded,
-            preferred_microphone,
-            preferred_language,
-            words_this_month,
-            words_this_month_month,
-            words_total,
-            play_interaction_chime,
-            interaction_feedback_volume,
-            has_finished_tutorial,
-            has_migrated_preferred_microphone,
-            cohort,
-            styling_mode,
-            selected_tone_id,
-            active_tone_ids,
-            streak,
-            streak_recorded_at,
-            referral_source,
-            created_at,
-            onboarded_at
+    let row = sqlx::query(&format!(
+        "SELECT {}
          FROM user_profiles
          LIMIT 1",
-    )
+        user_profile_column_list(),
+    ))
     .fetch_optional(&pool)
     .await?;
 

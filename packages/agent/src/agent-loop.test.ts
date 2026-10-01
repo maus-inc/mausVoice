@@ -409,6 +409,127 @@ describe("AgentLoop", () => {
     },
   );
 
+  it("runs one tool call at a time and keeps the model's order", async () => {
+    // A single assistant message can carry several tool calls. Each one has to
+    // run on its own and in the order the model wrote them: the results share
+    // one history that the provider reads back, and a tool that is halfway
+    // through writing state must finish before the next one reads it.
+    const trace: string[] = [];
+    const ordered: AgentTool = {
+      name: "ordered",
+      description: "records when it starts and finishes",
+      parameters: { type: "object", properties: {} },
+      execute: async ({ params }) => {
+        const tag = String(params.tag ?? "");
+        trace.push(`enter:${tag}`);
+        await Promise.resolve();
+        trace.push(`exit:${tag}`);
+        return { success: true, result: tag };
+      },
+    };
+    const { provider, calls } = scriptedProvider([
+      [
+        {
+          type: "tool-call",
+          id: "call_a",
+          name: "ordered",
+          arguments: '{"reason":"r","tag":"a"}',
+        },
+        {
+          type: "tool-call",
+          id: "call_b",
+          name: "nope",
+          arguments: '{"reason":"r"}',
+        },
+        {
+          type: "tool-call",
+          id: "call_c",
+          name: "ordered",
+          arguments: "not json",
+        },
+        {
+          type: "tool-call",
+          id: "call_d",
+          name: "ordered",
+          arguments: '{"reason":"r","tag":"d"}',
+        },
+      ],
+      [{ type: "text-delta", text: "Finished." }],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [ordered],
+      systemPrompt: "sys",
+      maxIterations: 3,
+    });
+
+    const events = await runLoop(loop);
+
+    // Never two tools in flight at once.
+    expect(trace).toEqual(["enter:a", "exit:a", "enter:d", "exit:d"]);
+
+    // Every call is paired with a result, in the model's order, and the two
+    // that could not run still report why.
+    const flow = events
+      .filter(
+        (e) => e.type === "tool-call-start" || e.type === "tool-call-result",
+      )
+      .map((e) => `${e.type}:${e.toolCallId}${e.isError ? ":error" : ""}`);
+    expect(flow).toEqual([
+      "tool-call-start:call_a",
+      "tool-call-result:call_a",
+      "tool-call-start:call_b",
+      "tool-call-result:call_b:error",
+      "tool-call-start:call_c",
+      "tool-call-result:call_c:error",
+      "tool-call-start:call_d",
+      "tool-call-result:call_d",
+    ]);
+
+    // The history the provider reads back keeps the same order.
+    const toolMessages = calls[1].messages.filter((m) => m.role === "tool");
+    expect(toolMessages).toMatchObject([
+      { toolCallId: "call_a", content: "a" },
+      { toolCallId: "call_b" },
+      { toolCallId: "call_c" },
+      { toolCallId: "call_d", content: "d" },
+    ]);
+  });
+
+  it("handles a large batch of tool calls from one message", async () => {
+    // The walk delegates to the next call with `yield*`, which holds a frame per
+    // call until the batch drains. A model can emit a long list, so the walk has
+    // to stay inside the engine's delegation depth rather than assuming a
+    // handful. 400 is far more than any provider emits in one message.
+    const count = 400;
+    const { provider } = scriptedProvider([
+      [
+        ...Array.from({ length: count }, (_unused, index) => ({
+          type: "tool-call" as const,
+          id: `bulk_${index}`,
+          name: "echo",
+          arguments: JSON.stringify({ reason: "r" }),
+        })),
+      ],
+      [{ type: "text-delta", text: "done" }],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [echoTool()],
+      systemPrompt: "sys",
+      maxIterations: 3,
+    });
+
+    const events = await runLoop(loop);
+    const results = events.filter((e) => e.type === "tool-call-result");
+    expect(results).toHaveLength(count);
+    expect(results[0]).toMatchObject({ toolCallId: "bulk_0" });
+    expect(results[count - 1]).toMatchObject({
+      toolCallId: `bulk_${count - 1}`,
+    });
+    expectFinish(events, { reason: "stop", text: "done" });
+  });
+
   it("renders a plain text answer without tools as a single stop", async () => {
     const loop = new AgentLoop({
       provider: textProvider(["Hello", " there"]),

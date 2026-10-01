@@ -101,12 +101,13 @@ export class BatchTranscriptionSession implements TranscriptionSession {
   /** Per recording, not per session instance: `onRecordingStart` re-arms it. */
   private abortScope = new SessionAbortScope();
 
-  async onRecordingStart(sampleRate: number): Promise<void> {
+  onRecordingStart(sampleRate: number): Promise<void> {
     this.resetForRecording();
     this.pretranscriber = createActionPretranscriber(sampleRate, {
       config: CLOUD_PRETRANSCRIPTION,
       selectText: (result) => result.rawTranscript,
     });
+    return Promise.resolve();
   }
 
   /**

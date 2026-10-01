@@ -95,8 +95,8 @@ const checksumSamples = (samples: Float32Array): number => {
     samples.byteLength,
   );
   let hash = 0x811c9dc5;
-  for (let index = 0; index < bytes.length; index += 1) {
-    hash = Math.imul(hash ^ bytes[index], 0x01000193);
+  for (const byte of bytes) {
+    hash = Math.imul(hash ^ byte, 0x01000193);
   }
   return hash >>> 0;
 };

@@ -437,6 +437,26 @@ describe("applyTranscriptionEdits", () => {
     });
   });
 
+  it("treats a letter outside the basic plane as a word character", () => {
+    // A letter above the basic plane is one character that offsets into the
+    // text by two, so both ends of it have to be read from the right place. A
+    // find pinned against a letter on either side lands inside one word, and a
+    // find standing between spaces is a whole word.
+    expect(
+      applyTranscriptionEdits("I had a𐐀 there", [{ find: "𐐀", replace: "X" }]),
+    ).toMatchObject({ applied: 0, skipped: 1 });
+
+    expect(
+      applyTranscriptionEdits("I had a𐐀a there", [{ find: "𐐀", replace: "X" }]),
+    ).toMatchObject({ applied: 0, skipped: 1 });
+
+    expect(
+      applyTranscriptionEdits("I had a 𐐀 there", [
+        { find: "𐐀", replace: "tea" },
+      ]),
+    ).toMatchObject({ text: "I had a tea there", applied: 1, skipped: 0 });
+  });
+
   it("applies a find that spans whole words", () => {
     const result = applyTranscriptionEdits("he could not come", [
       { find: "could", replace: "can" },
@@ -500,6 +520,154 @@ describe("applyTranscriptionEdits", () => {
 
     expect(result.applied).toBe(MAX_TRANSCRIPTION_EDITS);
     expect(result.skipped).toBe(2);
+  });
+
+  // The word-edge check reads the ends of `find` with a character scan rather
+  // than with the two edge patterns it replaced, so equivalence is proved
+  // against those patterns rather than assumed. They are kept here, in an
+  // excluded-from-analysis file, so the patterns Sonar flags are never
+  // reintroduced into the module. Only the word-edge check is under test: the
+  // uniqueness guard below is the one the module still owns unchanged.
+  const REFERENCE_WORD_CHARACTER = /[\p{L}\p{N}]/u;
+  const REFERENCE_LEADING_NON_WORD = /^[^\p{L}\p{N}]+/u;
+  const REFERENCE_TRAILING_NON_WORD = /[^\p{L}\p{N}]+$/u;
+
+  const referenceSplitsWord = (
+    text: string,
+    find: string,
+    index: number,
+  ): boolean => {
+    const leading = find.match(REFERENCE_LEADING_NON_WORD)?.[0].length ?? 0;
+    const trailing = find.match(REFERENCE_TRAILING_NON_WORD)?.[0].length ?? 0;
+    const start = index + leading;
+    const end = index + find.length - trailing;
+    if (start >= end) return false;
+    return (
+      (text[start - 1] !== undefined &&
+        REFERENCE_WORD_CHARACTER.test(text[start - 1])) ||
+      (text[end] !== undefined && REFERENCE_WORD_CHARACTER.test(text[end]))
+    );
+  };
+
+  const referenceApplied = (text: string, find: string): boolean => {
+    const index = find.length > 0 ? text.indexOf(find) : -1;
+    if (index === -1 || index !== text.lastIndexOf(find)) return false;
+    return !referenceSplitsWord(text, find, index);
+  };
+
+  const expectSameDecisionAsPatterns = (text: string, find: string): void => {
+    const applied = referenceApplied(text, find);
+    const index = applied ? text.indexOf(find) : -1;
+    expect(
+      applyTranscriptionEdits(text, [{ find, replace: "X" }]),
+      `word-edge check disagreed with the patterns on text ${JSON.stringify(text)} find ${JSON.stringify(find)}`,
+    ).toEqual({
+      text: applied
+        ? text.slice(0, index) + "X" + text.slice(index + find.length)
+        : text,
+      applied: applied ? 1 : 0,
+      skipped: applied ? 0 : 1,
+    });
+  };
+
+  it("reads the same word edges off every script it did before", () => {
+    // Every script the check has an opinion on, plus the shapes that decide
+    // whether a character counts as part of a word at all: a combining mark is
+    // not a letter, so a decomposed accent is a word boundary, and a character
+    // outside the basic plane is one character that offsets into the text by
+    // two.
+    const WORDS = [
+      "cat",
+      "café",
+      "Grüße",
+      "日本語",
+      "привет",
+      "123",
+      "🎉",
+      "𐐀",
+      "café",
+      "a",
+      "  ",
+      "cat🎉",
+      "🎉cat",
+      "cat\u0301",
+    ];
+    // The same word on its own, and with a letter or punctuation against it,
+    // so a span of it is tested both on a word edge and inside a word.
+    const CONTEXTS = (word: string): string[] => [
+      word,
+      `a${word}`,
+      `${word}a`,
+      `a${word}a`,
+      `. ${word} .`,
+    ];
+    let compared = 0;
+    for (const word of WORDS) {
+      // Every span of the word, so every interior landing is covered.
+      for (let start = 0; start <= word.length; start += 1) {
+        for (let end = start; end <= word.length; end += 1) {
+          const find = word.slice(start, end);
+          for (const text of CONTEXTS(word)) {
+            compared += 1;
+            expectSameDecisionAsPatterns(text, find);
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(300);
+  });
+
+  it("reads the same word edges off a find that carries punctuation and space", () => {
+    // The prompt asks the model to copy the space around a word when deleting
+    // it, so the runs at either end of `find` are ordinary rather than
+    // unusual, and they are what the two edge patterns used to trim.
+    const EDGES = [
+      "",
+      " ",
+      "  ",
+      ".",
+      "!",
+      "…",
+      "-",
+      "'",
+      "\n",
+      "   .  ",
+      // A character outside the basic plane is one character that the run it
+      // sits in counts as two, and a combining mark is no letter at all, so
+      // neither belongs in a word.
+      "🎉",
+      "\u0301",
+      "a",
+      "🎉  ",
+    ];
+    const WORDS = ["café", "日本語", "🎉", "𐐀", "cat"];
+    let compared = 0;
+    for (const word of WORDS) {
+      for (const before of EDGES) {
+        for (const after of EDGES) {
+          for (let start = 0; start <= word.length; start += 1) {
+            for (let end = start; end <= word.length; end += 1) {
+              const find = `${before}${word.slice(start, end)}${after}`;
+              for (const text of [`${word}`, `a ${word} a`]) {
+                compared += 1;
+                expectSameDecisionAsPatterns(text, find);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(1_000);
+  });
+
+  it("reads a find of nothing but punctuation as no word at all", () => {
+    // The scan reports the same length from both ends for a find with no word
+    // character in it, which is what makes the match unable to land inside a
+    // word.
+    for (const find of [" ", "  ", "...", " . ", "\n", "!!", ""]) {
+      expectSameDecisionAsPatterns("a cat sat", find);
+      expectSameDecisionAsPatterns("a café sat", find);
+    }
   });
 });
 

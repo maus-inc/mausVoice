@@ -211,36 +211,44 @@ const readFieldText = async (): Promise<string | null> => {
  *
  * A failed read is expected rather than fatal: the native command rejects on a
  * timeout, which is the normal outcome while the target app is busy inserting.
- * The loop spends its remaining attempts instead of ending the capture, because
+ * The capture spends its remaining attempts instead of ending early, because
  * the settled-poll fallback cannot cover the same gap. It only sees samples
  * from at least one poll after the field went quiet, by which time a fast
  * correction has already replaced the dictation.
+ *
+ * The passes recurse rather than loop over an await: each one is separated from
+ * the last by a fixed interval, and a timer that measured the target app after
+ * it settled has no reason to be measured twice at once.
  */
-const captureBaseline = async (snapshot: WatchSnapshot): Promise<void> => {
-  for (let attempt = 0; attempt < BASELINE_CAPTURE_ATTEMPTS; attempt += 1) {
+const captureBaseline = async (
+  snapshot: WatchSnapshot,
+  attemptsLeft = BASELINE_CAPTURE_ATTEMPTS,
+): Promise<void> => {
+  if (activeWatch !== snapshot) {
+    return;
+  }
+
+  try {
+    const fieldText = await readFieldText();
     if (activeWatch !== snapshot) {
       return;
     }
-
-    try {
-      const fieldText = await readFieldText();
-      if (activeWatch !== snapshot) {
-        return;
+    if (fieldText) {
+      const occurrences = countDictationOccurrences(snapshot.text, fieldText);
+      const isNewerPaste =
+        !snapshot.baselineText || occurrences > snapshot.baselineOccurrences;
+      if (occurrences > 0 && isNewerPaste) {
+        snapshot.baselineText = fieldText;
+        snapshot.baselineOccurrences = occurrences;
       }
-      if (fieldText) {
-        const occurrences = countDictationOccurrences(snapshot.text, fieldText);
-        const isNewerPaste =
-          !snapshot.baselineText || occurrences > snapshot.baselineOccurrences;
-        if (occurrences > 0 && isNewerPaste) {
-          snapshot.baselineText = fieldText;
-          snapshot.baselineOccurrences = occurrences;
-        }
-      }
-    } catch (error) {
-      getLogger().warning(`Edit watch baseline capture failed: ${error}`);
     }
+  } catch (error) {
+    getLogger().warning(`Edit watch baseline capture failed: ${error}`);
+  }
 
-    await delayed(BASELINE_CAPTURE_INTERVAL_MS);
+  await delayed(BASELINE_CAPTURE_INTERVAL_MS);
+  if (attemptsLeft > 1) {
+    await captureBaseline(snapshot, attemptsLeft - 1);
   }
 };
 

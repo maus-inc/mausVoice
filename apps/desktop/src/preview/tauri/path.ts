@@ -1,14 +1,20 @@
 const root = "preview://mausvoice";
 
-export const appDataDir = async (): Promise<string> => `${root}/data`;
-export const appLogDir = async (): Promise<string> => `${root}/logs`;
-export const appCacheDir = async (): Promise<string> => `${root}/cache`;
-export const resourceDir = async (): Promise<string> => `${root}/resources`;
-export const resolveResource = async (resourcePath: string): Promise<string> =>
-  `${root}/resources/${resourcePath}`;
-export const join = async (...paths: string[]): Promise<string> =>
-  paths.filter(Boolean).join("/");
-export const basename = async (path: string): Promise<string> =>
-  path.split("/").reverse().find(Boolean) ?? "";
-export const dirname = async (path: string): Promise<string> =>
-  path.split("/").slice(0, -1).join("/");
+// Every helper in `@tauri-apps/api/path` is promise-returning because it reads
+// from the OS. These resolve synchronously behind a promise so callers can keep
+// awaiting them unchanged.
+export const appDataDir = (): Promise<string> =>
+  Promise.resolve(`${root}/data`);
+export const appLogDir = (): Promise<string> => Promise.resolve(`${root}/logs`);
+export const appCacheDir = (): Promise<string> =>
+  Promise.resolve(`${root}/cache`);
+export const resourceDir = (): Promise<string> =>
+  Promise.resolve(`${root}/resources`);
+export const resolveResource = (resourcePath: string): Promise<string> =>
+  Promise.resolve(`${root}/resources/${resourcePath}`);
+export const join = (...paths: string[]): Promise<string> =>
+  Promise.resolve(paths.filter(Boolean).join("/"));
+export const basename = (path: string): Promise<string> =>
+  Promise.resolve(path.split("/").reverse().find(Boolean) ?? "");
+export const dirname = (path: string): Promise<string> =>
+  Promise.resolve(path.split("/").slice(0, -1).join("/"));

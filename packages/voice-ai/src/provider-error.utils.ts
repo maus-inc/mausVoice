@@ -48,21 +48,121 @@ export const readProviderCode = (error: unknown): string | undefined => {
   return typeof nested === "string" ? nested : undefined;
 };
 
+const REDACTED = "[redacted]";
+
 const PROVIDER_SECRET_PATTERNS: RegExp[] = [
   // Groq issues `gsk_`, Cerebras `csk_`, and the OpenAI-compatible providers
   // `sk-` or `sk_`. The leading \b keeps `task-123` from matching `sk-`.
   /\b(?:gsk|csk|sk)[-_][a-z0-9_-]+/gi,
   /bearer\s+[a-z0-9._~+/=-]+/gi,
   /authorization:\s*[^\s;,]+/gi,
-  // The optional quote before the separator is what makes a JSON body work.
-  // Without it the label has to be followed straight by `:` or `=`, so
-  // `{"api_key":"..."}` never reached this pattern at all, and a key whose
-  // prefix the lines above do not know went into the log whole. The value's
-  // own quote is optional for the same reason: `api_key = "..."` is as
-  // ordinary as the JSON form. Only the value is secret, and the whole match
-  // including the label is replaced, so nothing is left to identify the key.
-  /api[_-]?key["']?\s*[:=]\s*["']?\s*[a-z0-9._~+/=-]+/gi,
 ];
+
+const WHITESPACE = /\s/;
+
+const isWhitespace = (character: string | undefined): boolean =>
+  character !== undefined && WHITESPACE.exec(character) !== null;
+
+// The value class of the `api_key` shape, lowercased. Held as one string
+// rather than a pattern because the scanner below matches it a character at a
+// time, and a per-character pattern would be the backtracking this replaced.
+const API_KEY_VALUE_CHARACTERS =
+  "abcdefghijklmnopqrstuvwxyz0123456789._~+/=-";
+
+/** One end of the whitespace run at `index`. */
+const whitespaceEnd = (message: string, index: number): number => {
+  let end = index;
+  while (isWhitespace(message[end])) end += 1;
+  return end;
+};
+
+/** One end of the run of value characters at `index`. */
+const valueEnd = (message: string, index: number): number => {
+  let end = index;
+  while (
+    message[end] !== undefined &&
+    API_KEY_VALUE_CHARACTERS.includes(message[end].toLowerCase())
+  ) {
+    end += 1;
+  }
+  return end;
+};
+
+const matchesAt = (
+  message: string,
+  index: number,
+  literal: string,
+): boolean =>
+  message.slice(index, index + literal.length).toLowerCase() === literal;
+
+/**
+ * Where the `api_key` assignment starting at `index` ends, or null when there
+ * is none. Only the value is secret and the whole match including the label is
+ * replaced, so nothing is left to identify the key.
+ *
+ * The optional quote on either side of the separator is what makes a JSON body
+ * work. Without it the label has to be followed straight by `:` or `=`, so
+ * `{"api_key":"..."}` never reached this shape at all, and a key whose prefix
+ * the patterns above do not know went into the log whole. The value's own quote
+ * is optional for the same reason: `api_key = "..."` is as ordinary as the JSON
+ * form.
+ *
+ * This is a scanner where the shape used to be a pattern, because of the two
+ * whitespace runs it needs. A remote end chooses the text and no caller of this
+ * module bounds its length, and a pattern whose two unbounded whitespace runs
+ * can split one run of whitespace between them lets that end choose input the
+ * engine retries every split of, which is quadratic. A quote is not whitespace
+ * and a value character is not whitespace, so each run and each optional
+ * character here has exactly one reading and a single pass decides the match the
+ * pattern decided.
+ */
+const apiKeyAssignmentEnd = (
+  message: string,
+  index: number,
+): number | null => {
+  if (!matchesAt(message, index, "api")) return null;
+  let cursor = index + "api".length;
+  if (message[cursor] === "-" || message[cursor] === "_") cursor += 1;
+  if (!matchesAt(message, cursor, "key")) return null;
+  cursor += "key".length;
+
+  if (message[cursor] === '"' || message[cursor] === "'") cursor += 1;
+  cursor = whitespaceEnd(message, cursor);
+  if (message[cursor] !== ":" && message[cursor] !== "=") return null;
+  cursor += 1;
+
+  cursor = whitespaceEnd(message, cursor);
+  if (message[cursor] === '"' || message[cursor] === "'") cursor += 1;
+  cursor = whitespaceEnd(message, cursor);
+  const end = valueEnd(message, cursor);
+  // The value class needs at least one character, so a label with nothing
+  // after its separator is not an assignment.
+  return end > cursor ? end : null;
+};
+
+/**
+ * Replace every `api_key`-shaped assignment in a message, left to right. Runs
+ * after `PROVIDER_SECRET_PATTERNS`, which is the order the combined pattern
+ * list applied them in.
+ */
+const redactApiKeyAssignments = (message: string): string => {
+  const parts: string[] = [];
+  let copied = 0;
+  let index = 0;
+  while (index < message.length) {
+    const end = apiKeyAssignmentEnd(message, index);
+    if (end === null) {
+      index += 1;
+      continue;
+    }
+    parts.push(message.slice(copied, index), REDACTED);
+    copied = end;
+    index = end;
+  }
+  if (parts.length === 0) return message;
+  parts.push(message.slice(copied));
+  return parts.join("");
+};
 
 /**
  * Replace the literal API key and common authorization material anywhere in a
@@ -73,7 +173,9 @@ const PROVIDER_SECRET_PATTERNS: RegExp[] = [
  * whole token.
  */
 export const redactProviderMessage = (message: string): string =>
-  PROVIDER_SECRET_PATTERNS.reduce(
-    (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
-    message,
+  redactApiKeyAssignments(
+    PROVIDER_SECRET_PATTERNS.reduce(
+      (cleaned, pattern) => cleaned.replace(pattern, REDACTED),
+      message,
+    ),
   );

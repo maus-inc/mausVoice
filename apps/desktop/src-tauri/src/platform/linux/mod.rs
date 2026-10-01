@@ -19,10 +19,12 @@ pub mod volume;
 pub mod window;
 
 pub fn get_hotkey_strategy() -> &'static str {
+    use crate::platform::common::{BRIDGE_HOTKEY_STRATEGY, LISTENER_HOTKEY_STRATEGY};
+
     if detect::is_wayland() {
-        "bridge"
+        BRIDGE_HOTKEY_STRATEGY
     } else {
-        "listener"
+        LISTENER_HOTKEY_STRATEGY
     }
 }
 

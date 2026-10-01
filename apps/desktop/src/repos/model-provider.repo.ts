@@ -56,6 +56,20 @@ export abstract class BaseModelProviderRepo extends BaseRepo {
   ): Promise<string[]>;
 }
 
+/**
+ * A provider that offers no model of a kind resolves with an empty list rather
+ * than rejecting, so every caller's fetch path is the same for every provider.
+ * Discovery is async because the providers that talk to a /models endpoint
+ * declare that shape; these keep it without an async function that never
+ * awaits, which would turn a synchronous failure into a synchronous throw that
+ * a `.catch()` upstream never sees.
+ */
+const noModels = (): Promise<string[]> => Promise.resolve([]);
+
+/** The same shape for a provider whose catalogue is fixed at build time. */
+const staticModels = (models: readonly string[]): Promise<string[]> =>
+  Promise.resolve([...models]);
+
 const logModelDiscoveryFailure = (provider: string, reason: string): void => {
   // Do not log request URLs or caught errors: some providers put credentials
   // in the query string, and native transport errors may echo those URLs.
@@ -182,8 +196,8 @@ export class GroqModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
       "Groq",
       "https://api.groq.com/openai/v1/models",
@@ -215,8 +229,8 @@ export class OpenAIModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
       "OpenAI",
       "https://api.openai.com/v1/models",
@@ -276,8 +290,8 @@ export class ClaudeModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...CLAUDE_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -290,8 +304,8 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
       "Cerebras",
       "https://api.cerebras.ai/v1/models",
@@ -306,8 +320,8 @@ export class CerebrasModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...CEREBRAS_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -320,8 +334,8 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  private fetchModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
       "DeepSeek",
       "https://api.deepseek.com/models",
@@ -336,8 +350,8 @@ export class DeepSeekModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...DEEPSEEK_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -426,8 +440,8 @@ export class AzureModelProviderRepo extends BaseModelProviderRepo {
     return fetched.length > 0 ? fetched : [...AZURE_OPENAI_MODELS];
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
@@ -458,14 +472,12 @@ export class OllamaModelProviderRepo extends BaseModelProviderRepo {
     return false;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 
   private async fetchModels(options: FetchModelsOptions): Promise<string[]> {
@@ -495,13 +507,11 @@ export class OpenAICompatibleModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
-  async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
+  getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
     return this.fetchModels(options);
   }
 
@@ -529,8 +539,8 @@ export class SpeachesModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
   async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
@@ -549,10 +559,8 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(
-    options: FetchModelsOptions,
-  ): Promise<string[]> {
-    if (!options.apiKey) return [];
+  getGenerativeTextModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     return fetchOpenAICompatibleModels(
       "OpenRouter",
       "https://openrouter.ai/api/v1/models",
@@ -560,8 +568,8 @@ export class OpenRouterModelProviderRepo extends BaseModelProviderRepo {
     );
   }
 
-  async getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
-    if (!options.apiKey) return [];
+  getTranscriptionModels(options: FetchModelsOptions): Promise<string[]> {
+    if (!options.apiKey) return noModels();
     // OpenRouter deliberately omits STT models from its default text-model
     // catalog. Request its transcription modality explicitly so a provider
     // advertised in the transcription selector has a usable model picker.
@@ -582,12 +590,12 @@ export class AldeaModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -600,12 +608,12 @@ export class AssemblyAIModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [...ASSEMBLYAI_TRANSCRIPTION_MODELS];
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(ASSEMBLYAI_TRANSCRIPTION_MODELS);
   }
 }
 
@@ -618,12 +626,12 @@ export class ElevenLabsModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [];
+  getTranscriptionModels(): Promise<string[]> {
+    return noModels();
   }
 }
 
@@ -636,12 +644,12 @@ export class GladiaModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [...GLADIA_TRANSCRIPTION_MODELS];
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(GLADIA_TRANSCRIPTION_MODELS);
   }
 }
 
@@ -654,13 +662,13 @@ export class XaiModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
+  getTranscriptionModels(): Promise<string[]> {
     // xAI's dedicated /v1/stt API does not accept a model parameter.
-    return [];
+    return noModels();
   }
 }
 
@@ -673,11 +681,11 @@ export class DeepgramModelProviderRepo extends BaseModelProviderRepo {
     return true;
   }
 
-  async getGenerativeTextModels(): Promise<string[]> {
-    return [];
+  getGenerativeTextModels(): Promise<string[]> {
+    return noModels();
   }
 
-  async getTranscriptionModels(): Promise<string[]> {
-    return [...DEEPGRAM_TRANSCRIPTION_MODELS];
+  getTranscriptionModels(): Promise<string[]> {
+    return staticModels(DEEPGRAM_TRANSCRIPTION_MODELS);
   }
 }
