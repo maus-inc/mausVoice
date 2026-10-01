@@ -184,17 +184,7 @@ describe("redactProviderMessage", () => {
   ];
   const BEFORE_SEPARATOR = ["", " ", "  ", "\t", "\n", '"', "'", ' "', " ' "];
   const SEPARATORS = [":", "=", " = ", "\t=\t", ":=", "::", "", " - ", "=>"];
-  const AFTER_SEPARATOR = [
-    "",
-    " ",
-    "  ",
-    "\n",
-    '"',
-    "'",
-    ' "',
-    " ' ",
-    ' " ',
-  ];
+  const AFTER_SEPARATOR = ["", " ", "  ", "\n", '"', "'", ' "', " ' ", ' " '];
   const VALUES = [
     "",
     "abc123",
@@ -226,7 +216,9 @@ describe("redactProviderMessage", () => {
           for (const after of AFTER_SEPARATOR) {
             for (const value of VALUES) {
               compared += 1;
-              expectSameAsPattern(`${label}${before}${separator}${after}${value}`);
+              expectSameAsPattern(
+                `${label}${before}${separator}${after}${value}`,
+              );
             }
           }
         }
@@ -234,8 +226,13 @@ describe("redactProviderMessage", () => {
     }
     // A sweep that silently degenerated into a handful of cases would pass
     // while proving nothing.
-    expect(compared).toBe(LABELS.length * BEFORE_SEPARATOR.length *
-      SEPARATORS.length * AFTER_SEPARATOR.length * VALUES.length);
+    expect(compared).toBe(
+      LABELS.length *
+        BEFORE_SEPARATOR.length *
+        SEPARATORS.length *
+        AFTER_SEPARATOR.length *
+        VALUES.length,
+    );
     expect(compared).toBeGreaterThan(80_000);
   });
 

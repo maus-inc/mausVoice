@@ -66,8 +66,7 @@ const isWhitespace = (character: string | undefined): boolean =>
 // The value class of the `api_key` shape, lowercased. Held as one string
 // rather than a pattern because the scanner below matches it a character at a
 // time, and a per-character pattern would be the backtracking this replaced.
-const API_KEY_VALUE_CHARACTERS =
-  "abcdefghijklmnopqrstuvwxyz0123456789._~+/=-";
+const API_KEY_VALUE_CHARACTERS = "abcdefghijklmnopqrstuvwxyz0123456789._~+/=-";
 
 /** One end of the whitespace run at `index`. */
 const whitespaceEnd = (message: string, index: number): number => {
@@ -88,11 +87,7 @@ const valueEnd = (message: string, index: number): number => {
   return end;
 };
 
-const matchesAt = (
-  message: string,
-  index: number,
-  literal: string,
-): boolean =>
+const matchesAt = (message: string, index: number, literal: string): boolean =>
   message.slice(index, index + literal.length).toLowerCase() === literal;
 
 /**
@@ -116,10 +111,7 @@ const matchesAt = (
  * character here has exactly one reading and a single pass decides the match the
  * pattern decided.
  */
-const apiKeyAssignmentEnd = (
-  message: string,
-  index: number,
-): number | null => {
+const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   if (!matchesAt(message, index, "api")) return null;
   let cursor = index + "api".length;
   if (message[cursor] === "-" || message[cursor] === "_") cursor += 1;
