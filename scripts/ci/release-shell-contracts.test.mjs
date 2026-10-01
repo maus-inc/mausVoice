@@ -209,6 +209,51 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  it("passes every dispatch input through env, never into a run body", () => {
+    // CKV_GHA_7 exists for a real reason: `${{ inputs.x }}` written into a
+    // `run:` block is substituted before the shell sees it, so a dispatch input
+    // can inject shell. This workflow passes each one through `env:` and reads
+    // it as a shell variable, which is what the rule is asking for. Pin the
+    // property that makes that true: an `inputs.` interpolation may only appear
+    // as an environment entry or in an `if:` condition, never in a script.
+    for (const [index, line] of release.split("\n").entries()) {
+      if (!line.includes("${{ inputs.")) continue;
+      const isEnvEntry = /^\s+[A-Za-z_][A-Za-z0-9_]*:\s*\$\{\{\s*inputs\./.test(
+        line,
+      );
+      const isCondition = /^\s*(if|!if):/.test(line.trimStart());
+      assert.ok(
+        isEnvEntry || isCondition,
+        `release.yml:${index + 1} interpolates a dispatch input outside env or an if:`,
+      );
+    }
+  });
+
+  it("grants the workflow token read-only unless a job asks for more", () => {
+    // The token defaults to write-all when nothing says otherwise, so a
+    // workflow with no grant at all is the widest grant available. Every
+    // workflow declares a read-only default and every job that needs more
+    // declares its own block, which replaces the default.
+    for (const file of [
+      "release.yml",
+      "lint-desktop.yml",
+      "test-desktop-unit.yml",
+      "build-desktop.yml",
+      "secret-scan.yml",
+      "test-package-rust-transcription.yml",
+      "test-desktop-integration.yml",
+      "test-docs.yml",
+    ]) {
+      const workflow = read(`.github/workflows/${file}`);
+      const beforeJobs = workflow.split(/^jobs:$/m)[0];
+      assert.match(
+        beforeJobs,
+        /^permissions:\n {2}contents: read$/m,
+        `${file} must default the token to read-only before its jobs`,
+      );
+    }
+  });
+
   it("builds both channels through one manifest step", () => {
     const builders = extractSteps(release).filter((step) =>
       step.run

@@ -12,13 +12,9 @@ pub mod position;
 pub mod volume;
 pub mod window;
 
-pub fn get_hotkey_strategy() -> &'static str {
-    crate::platform::common::LISTENER_HOTKEY_STRATEGY
-}
-
-pub fn supports_app_detection() -> bool {
-    true
-}
+pub use crate::platform::common::{
+    listener_hotkey_strategy as get_hotkey_strategy, supports_app_detection,
+};
 
 pub fn supports_paste_keybinds() -> crate::platform::PasteKeybindSupport {
     crate::platform::PasteKeybindSupport::Disabled

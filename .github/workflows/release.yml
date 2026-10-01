@@ -46,6 +46,9 @@ on:
 # access to any job added later without an explicit `permissions:` block, which
 # is the opposite of the intent when each job narrows to read.
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-mausvoice
   cancel-in-progress: false

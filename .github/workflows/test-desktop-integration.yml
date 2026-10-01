@@ -8,6 +8,9 @@ on:
       - ".github/workflows/test-desktop-integration.yml"
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

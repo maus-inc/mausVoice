@@ -61,6 +61,19 @@ impl Rect {
 /// This is the whole placement rule and it does not vary by platform: the
 /// platforms differ only in the coordinate space their monitor and cursor
 /// values arrive in, which the caller converts before calling this.
+/// The anchored rectangle for a monitor, and the same bounds used for a
+/// hit test. Callers that only differ in how they read the cursor position
+/// share this so the placement arithmetic is written once.
+pub fn anchored_bounds(
+    monitor: &MonitorAtCursor,
+    anchor: OverlayAnchor,
+    width: f64,
+    height: f64,
+    margin: f64,
+) -> Rect {
+    anchor_rect(Rect::visible_area_of(monitor), anchor, width, height, margin)
+}
+
 pub fn anchor_rect(
     visible: Rect,
     anchor: OverlayAnchor,
@@ -99,6 +112,18 @@ pub fn anchor_rect(
 // ── Hotkey and capability values ────────────────────────────────────────
 
 /// Strategy for platforms that get global hotkeys from an OS-level listener.
+/// `get_hotkey_strategy` for the platforms whose hotkeys are the listener's:
+/// every one except Linux on Wayland, which uses the bridge.
+pub fn listener_hotkey_strategy() -> &'static str {
+    LISTENER_HOTKEY_STRATEGY
+}
+
+/// Whether the platform can report which app is frontmost. Every platform this
+/// ships on can, so the answer is not a per-platform question.
+pub fn supports_app_detection() -> bool {
+    true
+}
+
 pub const LISTENER_HOTKEY_STRATEGY: &str = "listener";
 
 /// Strategy for Wayland, which has no global hotkey source: input is read

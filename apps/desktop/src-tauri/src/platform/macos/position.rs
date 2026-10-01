@@ -1,5 +1,5 @@
 use crate::domain::{MonitorAtCursor, OverlayAnchor};
-use crate::platform::common::{anchor_rect, Rect};
+use crate::platform::common::anchored_bounds;
 use tauri::WebviewWindow;
 
 pub fn set_overlay_position(
@@ -16,13 +16,7 @@ pub fn set_overlay_position(
     //
     // For macOS, we use LogicalPosition with coordinates relative to the
     // monitor's frame, and Tauri handles the platform-specific conversion.
-    let target = anchor_rect(
-        Rect::visible_area_of(monitor),
-        anchor,
-        window_width,
-        window_height,
-        margin,
-    );
+    let target = anchored_bounds(monitor, anchor, window_width, window_height, margin);
 
     // macOS uses LogicalPosition - Tauri handles the coordinate conversion
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
@@ -37,13 +31,7 @@ pub fn is_cursor_in_bounds(
     bounds_height: f64,
     margin: f64,
 ) -> bool {
-    let bounds = anchor_rect(
-        Rect::visible_area_of(monitor),
-        anchor,
-        bounds_width,
-        bounds_height,
-        margin,
-    );
+    let bounds = anchored_bounds(monitor, anchor, bounds_width, bounds_height, margin);
 
     // macOS cursor coordinates are in Cocoa system (Y=0 at bottom)
     // Convert to standard coordinates (Y=0 at top) to match bounds position

@@ -1,5 +1,5 @@
 use crate::domain::{MonitorAtCursor, OverlayAnchor};
-use crate::platform::common::{anchor_rect, Rect};
+use crate::platform::common::anchored_bounds;
 use tauri::WebviewWindow;
 
 pub fn set_overlay_position(
@@ -12,13 +12,7 @@ pub fn set_overlay_position(
 ) {
     // GDK returns coordinates in logical (application) pixels already,
     // so we use them directly without dividing by scale
-    let target = anchor_rect(
-        Rect::visible_area_of(monitor),
-        anchor,
-        window_width,
-        window_height,
-        margin,
-    );
+    let target = anchored_bounds(monitor, anchor, window_width, window_height, margin);
 
     let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
         target.x, target.y,
@@ -32,13 +26,7 @@ pub fn is_cursor_in_bounds(
     bounds_height: f64,
     margin: f64,
 ) -> bool {
-    let bounds = anchor_rect(
-        Rect::visible_area_of(monitor),
-        anchor,
-        bounds_width,
-        bounds_height,
-        margin,
-    );
+    let bounds = anchored_bounds(monitor, anchor, bounds_width, bounds_height, margin);
 
     // GDK cursor coordinates are also in logical pixels
     bounds.contains(monitor.cursor_x, monitor.cursor_y)
