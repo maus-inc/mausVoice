@@ -58,7 +58,7 @@ export const OpenAICompatibleModelPicker = ({
    * ever fail. They go through the normal private fetch instead, which accepts
    * the same loopback and RFC1918 targets.
    */
-  const hasSavedEndpoint = Boolean(baseUrl && baseUrl.trim());
+  const hasSavedEndpoint = Boolean(baseUrl?.trim());
   const fetchForEndpoint = useMemo(
     () =>
       hasSavedEndpoint ? createOpenAICompatibleFetch(apiKeyId) : secureFetch,
