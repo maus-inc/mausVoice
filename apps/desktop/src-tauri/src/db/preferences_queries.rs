@@ -546,7 +546,6 @@ mod tests {
         assert!(loaded.ignore_update_dialog);
     }
 
-    #[test]
     /// The `.bind()` chain cannot be generated from a column list, so this is
     /// what holds it to one. SQLite reports a bind count that exceeds the
     /// placeholder count as an error, and one that falls short writes a
@@ -582,6 +581,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn expansion_flags_update_sql_targets_only_the_flag_column() {
         let sql = expansion_flags_update_sql();
         assert!(sql.contains("SET expansion_flags = ?1"));

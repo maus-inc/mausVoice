@@ -34,6 +34,16 @@ describe("toSelectableDictationLanguage", () => {
     expect(toSelectableDictationLanguage("qq-ZZ")).toBe(AUTO_LANGUAGE);
   });
 
+  // The catalogue is a plain object, so a name inherited from
+  // `Object.prototype` reads as a present entry. A Select handed `toString`
+  // renders blank, which is the bug the own-property check removes.
+  it("does not accept a name inherited from Object.prototype", () => {
+    expect(toSelectableDictationLanguage("toString")).toBe(AUTO_LANGUAGE);
+    expect(toSelectableDictationLanguage("constructor")).toBe(AUTO_LANGUAGE);
+    expect(toSelectableDictationLanguage("valueOf")).toBe(AUTO_LANGUAGE);
+    expect(toSelectableDictationLanguage("hasOwnProperty")).toBe(AUTO_LANGUAGE);
+  });
+
   it("only ever returns a value the language Select offers", () => {
     const offered = new Set<string>([
       AUTO_LANGUAGE,

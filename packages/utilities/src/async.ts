@@ -132,6 +132,7 @@ export const retry = <T>(args: {
   // server's hint before the next request goes out, which is the whole reason
   // this helper exists. Recursion says that outright, where a loop that awaits
   // would read as an accidental serialisation of work that could overlap.
+  const attempts = Number(retries);
   const attemptAt = async (attempt: number): Promise<T> => {
     try {
       return await fn();
@@ -139,7 +140,7 @@ export const retry = <T>(args: {
       if (!shouldRetry(error)) {
         throw error;
       }
-      if (attempt >= retries - 1) {
+      if (attempt >= attempts - 1) {
         throw error;
       }
       await delayed(getRetryDelayMs(error, delay, maxRetryDelayMs), signal);
@@ -155,10 +156,11 @@ export const retry = <T>(args: {
   };
 
   // `retries` is typed, but it arrives from JSON and config in practice, where a
-  // non-numeric value becomes NaN. `NaN < 1` is false and every `attempt >=
+  // malformed value becomes NaN. `NaN < 1` is false and every `attempt >=
   // retries - 1` is false too, so the check would let it retry until the process
-  // stopped. Number.isFinite rejects that alongside the ordinary too-small case.
-  if (!Number.isFinite(retries) || retries < 1) {
+  // stopped. The normalisation above runs first, so a value that arrived as a
+  // numeric string still means what it says and the comparison is on a number.
+  if (!Number.isFinite(attempts) || attempts < 1) {
     return Promise.reject(new Error("Retry limit exceeded"));
   }
   return attemptAt(0);

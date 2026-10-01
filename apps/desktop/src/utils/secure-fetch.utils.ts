@@ -180,13 +180,12 @@ const followHttpsRedirects = async (
   };
   // A `Request` input carries its body on the object rather than in `init`, and
   // every hop after the first is issued against a URL, so a 307 or 308 would
-  // replay with no body at all. Cloning tees the stream, which leaves the
-  // original for hop one, and the clone is read only if a hop has to keep a
-  // body it cannot otherwise get.
-  const requestBody =
-    chain.body === undefined && input instanceof Request && input.body !== null
-      ? input.clone()
-      : undefined;
+  // replay with no body at all. A clone tees the stream, which leaves the
+  // original for hop one -- and tee-ing is only free while one branch is
+  // unread, so it happens only once a redirect has actually been seen. Before
+  // that, `chain.url` is still the caller's Request and hop one carries the
+  // body itself.
+  let requestBody: Request | null = null;
 
   // The chain is walked recursively rather than in a loop, because a hop's own
   // body has to be read before the next request goes out and a loop that awaits
@@ -219,8 +218,10 @@ const followHttpsRedirects = async (
     // 307 or 308 does and what a downgrading 301/302/303 does not. Reading the
     // caller's Request body here is the only point where it is needed, so a
     // chain that never redirects never pays for it.
-    if (next.body === undefined && chain.body === undefined && requestBody) {
-      next.body = await requestBody.arrayBuffer();
+    if (next.body === undefined && chain.body === undefined) {
+      requestBody ??=
+        input instanceof Request && input.body !== null ? input.clone() : null;
+      if (requestBody) next.body = await requestBody.arrayBuffer();
     }
     chain.method = next.method;
     chain.body = next.body;

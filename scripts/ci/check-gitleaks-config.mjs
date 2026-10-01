@@ -280,11 +280,8 @@ export function updaterRulePattern(rules) {
   // `regexes` in a free-text value.
   const keyStart = findKeyOutsideStrings(afterId, "regex");
   if (keyStart === -1) return null;
-  let afterEquals = keyStart + "regex".length;
-  while (afterId[afterEquals] === " " || afterId[afterEquals] === "\t") {
-    afterEquals += 1;
-  }
-  if (afterId[afterEquals] !== "=") return null;
+  // `findKeyOutsideStrings` already consumed the `=` it matched.
+  const afterEquals = keyStart + "regex=".length;
   let valueStart = afterEquals + 1;
   while (afterId[valueStart] === " " || afterId[valueStart] === "\t") {
     valueStart += 1;

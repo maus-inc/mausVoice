@@ -568,7 +568,7 @@ jobs:
           done < <(find dist -type f -name '*.sig' -print0)
           rm -f "$PUBLIC_KEY_FILE"
           if [ "$verified" -eq 0 ]; then
-            echo "::error::No updater bundles found to verify" >&2
+            echo "::error::No updater signatures found to verify; a signed release ships an artifact no client can check" >&2
             exit 1
           fi
 

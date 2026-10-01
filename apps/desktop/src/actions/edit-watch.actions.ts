@@ -483,12 +483,13 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
     if (!lapsed || Date.now() - lapsed.at > LAPSED_PROPOSAL_GRACE_MS) {
       return;
     }
-    // The held term belongs to the watch that proposed it. If a different
-    // watch is running now, this click belongs to a prompt from that later
-    // dictation and must not add this one's term to the dictionary; the grace
-    // window exists to cover a late click on the same prompt, not to carry a
-    // term across dictations.
-    if (lapsed.watch !== activeWatch) {
+    // The held term belongs to the watch that proposed it. A *different* watch
+    // running now means this click belongs to a later dictation, and adding this
+    // one's term would put a correction in the dictionary for a prompt the user
+    // never answered. A watch that has merely ended is the case the grace window
+    // exists for: the dictation finished, the pill was still on screen, and the
+    // click was already on its way.
+    if (activeWatch !== null && activeWatch !== lapsed.watch) {
       return;
     }
     recentlyLapsedProposal = null;

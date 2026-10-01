@@ -58,10 +58,14 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         // quoted value before falling back to a bare token. The quoted arm
         // consumes escape sequences so a JSON-encoded credential whose value
         // contains a quote (`"tok\"en"`) is taken whole; stopping at that
-        // quote would leave the rest of the secret in the log.
+        // quote would leave the rest of the secret in the log. The second
+        // quoted arm covers a value whose closing quote never arrived -- a
+        // truncated log line, or one ending in a lone backslash -- where the
+        // escape-aware arm has no closing quote to reach and the bare-token
+        // arm cannot start on a quote.
         SanitizeRule {
             pattern: Regex::new(
-                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("(?:[^"\\]|\\.)*"|'[^']*'|[^\s"']+)"#,
+                r#"(?m)(Connector (?:token|credential|secret|api[_-]?key):)\s*("(?:[^"\\]|\\.)*"|"[^"\r\n]*|'[^']*'|[^\s"']+)"#,
             )
             .unwrap(),
             replacement: "$1 [REDACTED]",
@@ -401,6 +405,17 @@ mod tests {
         assert!(result.contains("Connector token: [REDACTED]"));
         assert!(!result.contains("ret-fixture-7k2m"), "got: {result}");
         assert!(!result.contains("sec"), "got: {result}");
+    }
+
+    // The escape-aware arm stops at the closing quote, so a value whose text
+    // ends in a lone backslash has no closing quote for it to reach and the
+    // alternative arm takes over. What must not survive either way is the
+    // credential itself.
+    #[test]
+    fn test_redacts_a_quoted_token_whose_value_ends_in_a_backslash() {
+        let input = "[2026-01-15][14:30:45.123][DEBUG][webview] Connector token: \"trailing-fixture-9k2m\\";
+        let result = sanitize_log_content(input);
+        assert!(!result.contains("trailing-fixture-9k2m"), "got: {result}");
     }
 
     #[test]

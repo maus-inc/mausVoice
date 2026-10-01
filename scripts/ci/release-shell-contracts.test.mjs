@@ -181,7 +181,7 @@ describe("release workflow shell contracts", () => {
       command,
       /minisign -Vm "\$bundle" -x "\$signature_file" -p "\$PUBLIC_KEY_FILE"/,
     );
-    assert.match(command, /No updater bundles found to verify/);
+    assert.match(command, /No updater signatures found to verify/);
 
     // The signed set is the pinned CLI's updater artifacts plus the `.dmg` the
     // job signs itself. The bare `.msi`, `.exe` and `.deb` next to them are the
