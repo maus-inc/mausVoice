@@ -170,14 +170,13 @@ export const batchAsync = <T = void>(
   // until the one before it has drained. That barrier is the bound this helper
   // exists to state, so the chunks are chained rather than looped over: an
   // await in a loop would read as serialisation nobody chose.
+  const drain = async (chunk: (() => Promise<T>)[]): Promise<void> => {
+    const chunkResults = await Promise.all(chunk.map((fn) => fn()));
+    results.push(...chunkResults);
+  };
   return chunked
-    .reduce(
-      (chain, chunk) =>
-        chain.then(() =>
-          Promise.all(chunk.map((fn) => fn())).then((chunkResults) => {
-            results.push(...chunkResults);
-          }),
-        ),
+    .reduce<Promise<void>>(
+      (chain, chunk) => chain.then(() => drain(chunk)),
       Promise.resolve(),
     )
     .then(() => results);
