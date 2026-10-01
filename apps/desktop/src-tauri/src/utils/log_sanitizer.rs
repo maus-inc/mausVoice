@@ -54,7 +54,7 @@ static RULES: Lazy<Vec<SanitizeRule>> = Lazy::new(|| {
         },
         // Connector token/credential/secret/api key: <credential>, optionally
         // wrapped in quotes. A quoted value may contain whitespace
-        // (`Connector token: "Bearer opaque-secret"`), so match the complete
+        // (`Connector token: "Bearer <redacted>"`), so match the complete
         // quoted value before falling back to a bare token. The quoted arm
         // consumes escape sequences so a JSON-encoded credential whose value
         // contains a quote (`"tok\"en"`) is taken whole; stopping at that
@@ -389,10 +389,10 @@ mod tests {
 
     #[test]
     fn test_redacts_quoted_connector_token_with_whitespace() {
-        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer opaque-secret\"";
+        let input = "[2024-01-15][14:30:45.123][DEBUG][webview] Connector token: \"Bearer sample-value\"";
         let result = sanitize_log_content(input);
         assert!(result.contains("Connector token: [REDACTED]"));
-        assert!(!result.contains("opaque-secret"));
+        assert!(!result.contains("sample-value"));
     }
 
     // A credential is logged from a JSON payload whenever the connector is

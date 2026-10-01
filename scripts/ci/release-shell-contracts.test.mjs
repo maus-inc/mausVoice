@@ -326,8 +326,8 @@ describe("release workflow shell contracts", () => {
             ...process.env,
             RELEASE_VERSION: version,
             RELEASE_PRERELEASE: prerelease,
-            UPDATER_PRIVATE_KEY: "fixture-private",
-            UPDATER_PUBLIC_KEY: "fixture-public",
+            UPDATER_PRIVATE_KEY: "placeholder-not-a-key",
+            UPDATER_PUBLIC_KEY: "placeholder-not-a-key",
             GITHUB_OUTPUT: output,
           };
           if (missingKey) env[missingKey] = "";

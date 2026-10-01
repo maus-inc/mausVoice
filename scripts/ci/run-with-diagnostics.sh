@@ -3,7 +3,16 @@
 set +e
 set -u
 set -o pipefail
-if (( $# < 2 )) || [[ ! "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+# A `case` glob rather than `[[ ... =~ ... ]]`: regex matching is undefined in
+# POSIX sh, and this script has to behave the same however it is invoked.
+label_is_safe() {
+  case "$1" in
+    "" | *[!a-zA-Z0-9_-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+if [ "$#" -lt 2 ] || ! label_is_safe "$1"; then
   echo "Usage: run-with-diagnostics.sh LABEL COMMAND [ARG ...]" >&2
   exit 2
 fi

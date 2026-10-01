@@ -79,7 +79,7 @@ def wait_for_health(port: int, timeout: float = 15.0) -> dict:
     while time.time() < deadline:
         try:
             with urlopen(url, timeout=2) as resp:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
-                return json.loads(resp.read())
+                return json.load(resp)
         except (URLError, OSError):
             time.sleep(0.2)
     raise TimeoutError(f"Sidecar on port {port} did not become healthy in {timeout}s")
@@ -140,7 +140,7 @@ def transcribe(port: int, samples: list[float], sample_rate: int, model: str, de
 
     start = time.time()
     with urlopen(req, timeout=600) as resp:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
-        result = json.loads(resp.read())
+        result = json.load(resp)
     result["roundTripMs"] = round((time.time() - start) * 1000)
     return result
 
@@ -181,7 +181,7 @@ def run_benchmark(audio_path: Path, binary_dir: Path, models_dir: Path, model: s
             devices_url = f"http://127.0.0.1:{GPU_PORT}/v1/devices"
             assert_http_url(devices_url)
             with urlopen(devices_url, timeout=5) as devices_fh:  # nosec B310 -- loopback URL, scheme validated by assert_http_url
-                devices_resp = json.loads(devices_fh.read())
+                devices_resp = json.load(devices_fh)
             devices = devices_resp["devices"]
             print(f"  Devices: {', '.join(d['name'] + ' (' + d['id'] + ')' for d in devices)}\n")
 
