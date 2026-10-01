@@ -496,17 +496,47 @@ describe("secureFetch", () => {
     expect(hop(1).body ?? null).toBeNull();
   });
 
-  it("does not read a Request input's body when no hop needs it", async () => {
+  // A `Request` input carries its body on the object, and the chain issues every
+  // hop against a URL with `body` set explicitly, so the first hop is where the
+  // body's bytes have to be named. Reading them only when a redirect needs them
+  // meant a POST built from a Request reached the server with no body at all.
+  it("sends a Request input's body on the first hop", async () => {
     serveHops([new Response("ok")]);
 
     await secureFetch(
-      new Request("https://api.openai.com/v1/models", {
+      new Request("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        body: '{"unused":true}',
+        headers: { "content-type": "application/json" },
+        body: '{"model":"gpt-4o"}',
       }),
     );
 
-    expect(hop(0).body).toBeUndefined();
+    expect(hop(0).method).toBe("POST");
+    expect(hop(0).body).toBeInstanceOf(ArrayBuffer);
+    expect(new TextDecoder().decode(hop(0).body as ArrayBuffer)).toBe(
+      '{"model":"gpt-4o"}',
+    );
+  });
+
+  it("leaves a Request input readable for the caller after sending it", async () => {
+    serveHops([new Response("ok")]);
+
+    const request = new Request("https://api.openai.com/v1/models", {
+      method: "POST",
+      body: '{"mine":true}',
+    });
+
+    await secureFetch(request);
+
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it("sends no body for a Request input that has none", async () => {
+    serveHops([new Response("ok")]);
+
+    await secureFetch(new Request("https://api.openai.com/v1/models"));
+
+    expect(hop(0).body ?? null).toBeNull();
   });
 
   it("preserves every byte value in a private-network response body", async () => {

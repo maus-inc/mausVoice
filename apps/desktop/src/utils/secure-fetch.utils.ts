@@ -173,19 +173,24 @@ const followHttpsRedirects = async (
   const chain = {
     headers: requestHeaders(input, init),
     method: requestMethod(input, init),
-    // `undefined` means the caller gave no body in `init`, so a Request input
-    // keeps supplying its own; `null` means the body has been discarded.
+    // `null` means a hop discarded the body; `undefined` means the caller gave
+    // none in `init`.
     body: init?.body,
     url: startUrl,
   };
+  const requestSignal = input instanceof Request ? input.signal : null;
   // A `Request` input carries its body on the object rather than in `init`, and
-  // every hop after the first is issued against a URL, so a 307 or 308 would
-  // replay with no body at all. A clone tees the stream, which leaves the
-  // unread, so the clone is taken only once a redirect has actually been seen.
-  // Every hop, including the first, is issued against a URL with `body` set
-  // explicitly, because `init` has no body to name when the caller passed a
-  // Request instead.
-  let requestBody: Request | null = null;
+  // the chain walks URLs, so without the read below the body is dropped on the
+  // first hop and a 307 or 308 replays with nothing at all. Cloned, so the
+  // caller can still read its own Request afterwards. A GET or HEAD Request has
+  // no body, so the common case reads nothing.
+  if (
+    chain.body === undefined &&
+    input instanceof Request &&
+    input.body !== null
+  ) {
+    chain.body = await input.clone().arrayBuffer();
+  }
 
   // The chain is walked recursively rather than in a loop, because a hop's own
   // body has to be read before the next request goes out and a loop that awaits
@@ -199,6 +204,11 @@ const followHttpsRedirects = async (
       );
     }
     const response = await tauriFetch(chain.url.href, {
+      // A `Request` input's own signal and redirect mode are part of the
+      // request; `init` alone would drop them, and an HTTPS request that
+      // ignored its abort signal would outlive the screen that started it.
+      signal: init?.signal ?? requestSignal ?? undefined,
+      redirect: init?.redirect ?? "follow",
       ...init,
       method: chain.method,
       headers: chain.headers,
@@ -218,11 +228,8 @@ const followHttpsRedirects = async (
     // 307 or 308 does and what a downgrading 301/302/303 does not. Reading the
     // caller's Request body here is the only point where it is needed, so a
     // chain that never redirects never pays for it.
-    if (next.body === undefined && chain.body === undefined) {
-      requestBody ??=
-        input instanceof Request && input.body !== null ? input.clone() : null;
-      if (requestBody) next.body = await requestBody.arrayBuffer();
-    }
+    // `undefined` on both sides means this hop kept the body, which is what a
+    // 307 or 308 does and what a downgrading 301/302/303 does not.
     chain.method = next.method;
     chain.body = next.body;
     chain.url = targetUrl;
