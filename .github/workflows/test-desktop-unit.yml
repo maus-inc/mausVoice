@@ -184,10 +184,11 @@ jobs:
         working-directory: .
         shell: bash
         run: |
-          for crate in \
-            apps/desktop/src-tauri \
-            packages/rust_pill_shared \
-            packages/rust_gtk_pill; do
+          # `rust_gtk_pill` is deliberately absent: it needs
+          # `gtk-layer-shell-0`, which this job does not install and the Linux
+          # desktop build does. Linting it here failed on a missing system
+          # library rather than on anything in the code.
+          for crate in apps/desktop/src-tauri packages/rust_pill_shared; do
             echo "::group::$crate"
             (cd "$crate" && TAURI_CONFIG='{"bundle":{"externalBin":[]}}' \
               cargo clippy --locked --all-targets -- -D warnings) || exit 1

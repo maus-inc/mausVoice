@@ -6578,11 +6578,13 @@ mod tests {
         std::fs::write(&real_file, b"safe real content").unwrap();
         std::fs::write(&evil_file, b"evil replaced content").unwrap();
 
-        // Authorize the root before attacker attempts replacement
-        let allowed = vec![AuthorizedAudioRoot::open(&real_root).unwrap()];
-
         #[cfg(unix)]
         {
+            // Authorize the root before attacker attempts replacement. The
+            // capability is only read inside this block, so it is opened here:
+            // as an outer `let` it is dead on Windows and the compiler says so.
+            let allowed = [AuthorizedAudioRoot::open(&real_root).unwrap()];
+
             // Now attacker renames real_root and replaces path with symlink to evil_root
             let renamed_root = tmp.join("renamed_root");
             std::fs::rename(&real_root, &renamed_root).unwrap();

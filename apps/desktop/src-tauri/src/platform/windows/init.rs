@@ -340,6 +340,8 @@ fn windows_quote(arg: &str) -> String {
     quoted
 }
 
+pub fn ensure_background_services() {}
+
 #[cfg(test)]
 mod tests {
     use super::windows_quote;
@@ -467,5 +469,3 @@ mod tests {
         }
     }
 }
-
-pub fn ensure_background_services() {}

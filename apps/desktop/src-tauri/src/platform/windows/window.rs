@@ -173,30 +173,6 @@ fn keepalive_can_be_released(is_visible: bool, is_minimized: bool) -> bool {
     is_visible && !is_minimized
 }
 
-#[cfg(test)]
-mod tests {
-    use super::keepalive_can_be_released;
-
-    #[test]
-    fn a_minimized_window_keeps_the_keepalive_running() {
-        // The regression: a minimized window reports WS_VISIBLE, so
-        // visibility on its own released the keepalive for a window that was
-        // not on screen.
-        assert!(!keepalive_can_be_released(true, true));
-    }
-
-    #[test]
-    fn a_restored_visible_window_releases_the_keepalive() {
-        assert!(keepalive_can_be_released(true, false));
-    }
-
-    #[test]
-    fn a_hidden_window_keeps_the_keepalive_running() {
-        assert!(!keepalive_can_be_released(false, false));
-        assert!(!keepalive_can_be_released(false, true));
-    }
-}
-
 pub fn find_pid_by_window_title(title_substring: &str) -> Option<i32> {
     use windows::Win32::UI::WindowsAndMessaging::{
         FindWindowExW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
@@ -235,4 +211,28 @@ pub fn find_pid_by_window_title(title_substring: &str) -> Option<i32> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keepalive_can_be_released;
+
+    #[test]
+    fn a_minimized_window_keeps_the_keepalive_running() {
+        // The regression: a minimized window reports WS_VISIBLE, so
+        // visibility on its own released the keepalive for a window that was
+        // not on screen.
+        assert!(!keepalive_can_be_released(true, true));
+    }
+
+    #[test]
+    fn a_restored_visible_window_releases_the_keepalive() {
+        assert!(keepalive_can_be_released(true, false));
+    }
+
+    #[test]
+    fn a_hidden_window_keeps_the_keepalive_running() {
+        assert!(!keepalive_can_be_released(false, false));
+        assert!(!keepalive_can_be_released(false, true));
+    }
 }
