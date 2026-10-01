@@ -44,6 +44,7 @@ mod imp {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Power::{
         RegisterPowerSettingNotification, UnregisterPowerSettingNotification, HPOWERNOTIFY,
+        POWERBROADCAST_SETTING,
     };
     use windows::Win32::System::RemoteDesktop::{
         WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
@@ -62,6 +63,14 @@ mod imp {
 
     const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
     const PBT_APMRESUMESUSPEND: usize = 0x0007;
+    /// What a registered power setting arrives as. Every message for a
+    /// `RegisterPowerSettingNotification` setting is this one, so the
+    /// APM constants above are never seen for the console display state.
+    const PBT_POWERSETTINGCHANGE: usize = 0x8013;
+
+    /// `GUID_CONSOLE_DISPLAY_STATE` reports 0 when the display is off and 1 when
+    /// it is on again. Any other value is a different display state change.
+    const CONSOLE_DISPLAY_ON: u32 = 1;
 
     const WTS_SESSION_UNLOCK: u32 = 0x8;
 
@@ -113,6 +122,15 @@ mod imp {
                     "lifecycle: WM_POWERBROADCAST resume (event={event}); emitting desktop_resume"
                 );
                 emit_resume();
+            } else if event == PBT_POWERSETTINGCHANGE && console_display_is_on(lparam) {
+                // The wake this watcher is registered for. Display-off/suspend
+                // reports no APM resume on many machines, so the registered
+                // notification was the only signal available and nothing above
+                // ever matched it.
+                log::info!(
+                    "lifecycle: console display power setting returned to on; emitting desktop_resume"
+                );
+                emit_resume();
             }
             return LRESULT(0);
         }
@@ -125,6 +143,27 @@ mod imp {
             return LRESULT(0);
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    /// Whether a `PBT_POWERSETTINGCHANGE` reports the registered console display
+    /// setting has come back on. The payload is a borrowed
+    /// `POWERBROADCAST_SETTING`; it is validated for the expected GUID and data
+    /// length before the value is read, so a message from another registered
+    /// setting cannot be answered with this one's answer.
+    fn console_display_is_on(lparam: LPARAM) -> bool {
+        if lparam.0 == 0 {
+            return false;
+        }
+        let setting = unsafe { &*(lparam.0 as *const POWERBROADCAST_SETTING) };
+        if setting.PowerSetting != GUID_CONSOLE_DISPLAY_STATE {
+            return false;
+        }
+        if setting.DataLength as usize != std::mem::size_of::<u32>() {
+            return false;
+        }
+        // `Data` is a `[u8; 1]`, so read the byte rather than casting to a
+        // `*const u32`: the array is only byte-aligned and the value is small.
+        u32::from(setting.Data[0]) == CONSOLE_DISPLAY_ON
     }
 
     /// `Send + Sync` closure target for the resume emission. We stash a
