@@ -575,7 +575,8 @@ describe("edit-watch proposal lifecycle", () => {
     expect(state.autoLearn.proposal).toBeNull();
 
     // A new dictation starts and has nothing to correct, so no proposal is
-    // pending when the old toast's click lands.
+    // pending when the old toast's click lands. The term is dropped at the start
+    // of the watch, not compared against it at accept time.
     beginEditWatch("my wife's name is Marisol");
     await settleBaseline("my wife's name is Marisol");
     await advanceAndPoll(1_500);

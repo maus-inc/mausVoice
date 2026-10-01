@@ -283,6 +283,10 @@ export const beginEditWatch = (text: string): void => {
     settledAt: 0,
   };
   activeWatch = snapshot;
+  // A new dictation starts a new question. The held term belongs to the watch
+  // that proposed it, so it is dropped here rather than left for the accept
+  // path to compare against: nothing the user is now looking at refers to it.
+  recentlyLapsedProposal = null;
   // Fire and forget. captureBaseline swallows its own errors, so this cannot
   // surface as an unhandled rejection.
   void captureBaseline(snapshot);

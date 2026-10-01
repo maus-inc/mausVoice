@@ -181,10 +181,10 @@ const followHttpsRedirects = async (
   // A `Request` input carries its body on the object rather than in `init`, and
   // every hop after the first is issued against a URL, so a 307 or 308 would
   // replay with no body at all. A clone tees the stream, which leaves the
-  // original for hop one -- and tee-ing is only free while one branch is
-  // unread, so it happens only once a redirect has actually been seen. Before
-  // that, `chain.url` is still the caller's Request and hop one carries the
-  // body itself.
+  // unread, so the clone is taken only once a redirect has actually been seen.
+  // Every hop, including the first, is issued against a URL with `body` set
+  // explicitly, because `init` has no body to name when the caller passed a
+  // Request instead.
   let requestBody: Request | null = null;
 
   // The chain is walked recursively rather than in a loop, because a hop's own
