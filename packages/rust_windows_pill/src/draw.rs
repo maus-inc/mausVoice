@@ -60,14 +60,12 @@ pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
         // Long-press outline indicator. `ring_alpha` stays pinned for the whole
         // hold and eases out after release, so the outline survives the
         // press→drag hand-off and never vanishes under an inflated pill.
-        if state.ring_alpha.get() > 0.0
-            || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
+        if state.ring_alpha.get() > 0.0 || rust_pill_shared::pulse_is_running(state.arm_pulse.get())
         {
             paint_pill_attached(gfx, state, ww, wh, |gfx| {
                 draw_long_press_ring(gfx, state, ww, wh);
             });
         }
-
     }
 
     gfx.restore();
@@ -112,7 +110,12 @@ pub(crate) fn pill_position(state: &PillState, ww: f64, wh: f64) -> (f64, f64, f
 
     let center_x = base_x + base_w / 2.0;
     let center_y = base_y + base_h / 2.0;
-    (center_x - pill_w / 2.0, center_y - pill_h / 2.0, pill_w, pill_h)
+    (
+        center_x - pill_w / 2.0,
+        center_y - pill_h / 2.0,
+        pill_w,
+        pill_h,
+    )
 }
 
 /// Corner radius for the pill at its *current* size.
@@ -133,7 +136,10 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
 /// Share the exact paint-only transform between the body and attached outlines.
 /// Register click regions in unscaled coordinates and preserve overlay order.
 fn paint_pill_attached(
-    gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64,
+    gfx: &mut Gfx,
+    state: &PillState,
+    ww: f64,
+    wh: f64,
     paint: impl FnOnce(&mut Gfx),
 ) {
     let (dsx, dsy) = state.crossing.borrow().scales();
@@ -167,8 +173,15 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 
     gfx.fill_rounded_rect(rx, ry, pill_w, pill_h, radius, [0.0, 0.0, 0.0, bg_alpha]);
-    gfx.stroke_rounded_rect(rx + 0.5, ry + 0.5, pill_w - 1.0, pill_h - 1.0, radius - 0.5,
-        [1.0, 1.0, 1.0, BORDER_ALPHA], 1.0);
+    gfx.stroke_rounded_rect(
+        rx + 0.5,
+        ry + 0.5,
+        pill_w - 1.0,
+        pill_h - 1.0,
+        radius - 0.5,
+        [1.0, 1.0, 1.0, BORDER_ALPHA],
+        1.0,
+    );
 
     match state.phase.get() {
         Phase::Recording | Phase::Paused if expand_t > 0.1 => {
@@ -193,23 +206,37 @@ fn draw_pill(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     }
 
     state.click_regions.borrow_mut().push(ClickRegion {
-        x: rx, y: ry, w: pill_w, h: pill_h,
+        x: rx,
+        y: ry,
+        w: pill_w,
+        h: pill_h,
         action: ClickAction::Pill,
     });
-
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, fade: f64, state: &PillState,
+    gfx: &mut Gfx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    fade: f64,
+    state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    gfx.clip_rounded_rect(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
 
     for config in WAVE_CONFIGS {
         let amplitude_factor = (level * config.multiplier).clamp(MIN_AMPLITUDE, MAX_AMPLITUDE);
@@ -239,42 +266,70 @@ fn draw_waveform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_edge_gradient(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, state: &PillState,
+    gfx: &mut Gfx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    state: &PillState,
 ) {
     let alpha = 0.9 * expand_t;
 
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    gfx.clip_rounded_rect(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
 
     gfx.fill_gradient_rect(
-        rx, ry, pill_w * 0.18, pill_h,
-        rx, 0.0, rx + pill_w * 0.18, 0.0,
-        &[
-            (0.0, [0.0, 0.0, 0.0, alpha]),
-            (1.0, [0.0, 0.0, 0.0, 0.0]),
-        ],
+        rx,
+        ry,
+        pill_w * 0.18,
+        pill_h,
+        rx,
+        0.0,
+        rx + pill_w * 0.18,
+        0.0,
+        &[(0.0, [0.0, 0.0, 0.0, alpha]), (1.0, [0.0, 0.0, 0.0, 0.0])],
     );
 
     let right_start = rx + pill_w * 0.85;
     gfx.fill_gradient_rect(
-        right_start, ry, pill_w * 0.15, pill_h,
-        right_start, 0.0, rx + pill_w, 0.0,
-        &[
-            (0.0, [0.0, 0.0, 0.0, 0.0]),
-            (1.0, [0.0, 0.0, 0.0, alpha]),
-        ],
+        right_start,
+        ry,
+        pill_w * 0.15,
+        pill_h,
+        right_start,
+        0.0,
+        rx + pill_w,
+        0.0,
+        &[(0.0, [0.0, 0.0, 0.0, 0.0]), (1.0, [0.0, 0.0, 0.0, alpha])],
     );
 
     gfx.restore();
 }
 
 fn draw_loading(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, state: &PillState,
+    gfx: &mut Gfx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    state: &PillState,
 ) {
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    gfx.clip_rounded_rect(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
 
     if let Some(stage) = state.stage_text.borrow().as_deref() {
         gfx.draw_text_centered(
@@ -300,7 +355,13 @@ fn draw_loading(
     let track_w = pill_w - pad * 2.0;
 
     // Track line
-    gfx.fill_rect(track_x, bar_y, track_w, bar_h, [1.0, 1.0, 1.0, 0.15 * expand_t]);
+    gfx.fill_rect(
+        track_x,
+        bar_y,
+        track_w,
+        bar_h,
+        [1.0, 1.0, 1.0, 0.15 * expand_t],
+    );
 
     // Moving indicator
     let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
@@ -310,7 +371,13 @@ fn draw_loading(
     let draw_left = ind_x.max(track_x);
     let draw_right = (ind_x + indicator_w).min(track_x + track_w);
     if draw_right > draw_left {
-        gfx.fill_rect(draw_left, bar_y, draw_right - draw_left, bar_h, [1.0, 1.0, 1.0, 0.7 * expand_t]);
+        gfx.fill_rect(
+            draw_left,
+            bar_y,
+            draw_right - draw_left,
+            bar_h,
+            [1.0, 1.0, 1.0, 0.7 * expand_t],
+        );
     }
 
     gfx.restore();
@@ -318,7 +385,15 @@ fn draw_loading(
     draw_edge_gradient(gfx, rx, ry, pill_w, pill_h, expand_t, state);
 }
 
-fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64, state: &PillState) {
+fn draw_idle_label(
+    gfx: &Gfx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    state: &PillState,
+) {
     let drag_t = state.drag_label_t.get();
     let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
 
@@ -357,7 +432,14 @@ fn draw_idle_label(gfx: &Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand
 
 fn tooltip_rendered_origin(pill: (f64, f64, f64, f64), blend: f64, tooltip_t: f64) -> (f64, f64) {
     let (x, y) = rust_pill_shared::placement::tooltip_origin(
-        pill.0, pill.1, pill.2, pill.3, TOOLTIP_FIXED_WIDTH, TOOLTIP_HEIGHT, TOOLTIP_GAP, blend,
+        pill.0,
+        pill.1,
+        pill.2,
+        pill.3,
+        TOOLTIP_FIXED_WIDTH,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
     );
     (x, y + (1.0 - tooltip_t) * 4.0 * (1.0 - 2.0 * blend))
 }
@@ -366,43 +448,76 @@ fn tooltip_rendered_origin(pill: (f64, f64, f64, f64), blend: f64, tooltip_t: f6
 /// still contain the previous frame's regions while placement is advancing.
 pub(crate) fn refresh_selector_click_regions(state: &PillState) {
     let mut regions = state.click_regions.borrow_mut();
-    regions.retain(|r| !matches!(r.action, ClickAction::StyleBackward | ClickAction::StyleForward));
-    if state.owns_panel() || state.panel_open_t.get() > 0.01
-        || state.flash_t.get() >= 0.01 || state.tooltip_opacity() < 0.01
-        || state.style_count.get() <= 1 || state.style_name.borrow().is_empty()
+    regions.retain(|r| {
+        !matches!(
+            r.action,
+            ClickAction::StyleBackward | ClickAction::StyleForward
+        )
+    });
+    if state.owns_panel()
+        || state.panel_open_t.get() > 0.01
+        || state.flash_t.get() >= 0.01
+        || state.tooltip_opacity() < 0.01
+        || state.style_count.get() <= 1
+        || state.style_name.borrow().is_empty()
         || state.tooltip_width.get() <= 0.0
     {
         return;
     }
     let (x, y) = tooltip_rendered_origin(
         pill_position(state, state.draw_width.get(), state.draw_height.get()),
-        state.selector_placement.borrow().blend(), state.tooltip_t.get(),
+        state.selector_placement.borrow().blend(),
+        state.tooltip_t.get(),
     );
     let width = TOOLTIP_FIXED_WIDTH;
-    regions.splice(0..0, [
-        ClickRegion { x, y, w: width / 2.0, h: TOOLTIP_HEIGHT, action: ClickAction::StyleBackward },
-        ClickRegion { x: x + width / 2.0, y, w: width / 2.0, h: TOOLTIP_HEIGHT, action: ClickAction::StyleForward },
-    ]);
+    regions.splice(
+        0..0,
+        [
+            ClickRegion {
+                x,
+                y,
+                w: width / 2.0,
+                h: TOOLTIP_HEIGHT,
+                action: ClickAction::StyleBackward,
+            },
+            ClickRegion {
+                x: x + width / 2.0,
+                y,
+                w: width / 2.0,
+                h: TOOLTIP_HEIGHT,
+                action: ClickAction::StyleForward,
+            },
+        ],
+    );
 }
 
 fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
     let alpha = state.tooltip_opacity();
-    if alpha < 0.01 { return; }
+    if alpha < 0.01 {
+        return;
+    }
 
     let style_name = state.style_name.borrow();
-    if state.style_count.get() <= 1 || style_name.is_empty() { return; }
+    if state.style_count.get() <= 1 || style_name.is_empty() {
+        return;
+    }
 
     let tooltip_w = TOOLTIP_FIXED_WIDTH;
     state.tooltip_width.set(tooltip_w);
 
     let blend = state.selector_placement.borrow().blend();
-    let (tooltip_rx, tooltip_ry) = tooltip_rendered_origin(
-        pill_position(state, ww, wh), blend, tooltip_t,
-    );
+    let (tooltip_rx, tooltip_ry) =
+        tooltip_rendered_origin(pill_position(state, ww, wh), blend, tooltip_t);
 
-    gfx.fill_rounded_rect(tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS,
-        [0.0, 0.0, 0.0, 0.92 * alpha]);
+    gfx.fill_rounded_rect(
+        tooltip_rx,
+        tooltip_ry,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_RADIUS,
+        [0.0, 0.0, 0.0, 0.92 * alpha],
+    );
 
     let center_y = tooltip_ry + TOOLTIP_HEIGHT / 2.0;
     let chevron_area = 28.0;
@@ -411,20 +526,56 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     // Left chevron — clean, centered arrow
     let left_cx = tooltip_rx + padding_h + 6.0;
     let ca = [1.0, 1.0, 1.0, 0.7 * alpha];
-    gfx.draw_line(left_cx + 3.0, center_y - 5.0, left_cx - 2.0, center_y, ca, 1.5);
-    gfx.draw_line(left_cx - 2.0, center_y, left_cx + 3.0, center_y + 5.0, ca, 1.5);
+    gfx.draw_line(
+        left_cx + 3.0,
+        center_y - 5.0,
+        left_cx - 2.0,
+        center_y,
+        ca,
+        1.5,
+    );
+    gfx.draw_line(
+        left_cx - 2.0,
+        center_y,
+        left_cx + 3.0,
+        center_y + 5.0,
+        ca,
+        1.5,
+    );
 
     // Right chevron
     let right_cx = tooltip_rx + tooltip_w - padding_h - 6.0;
-    gfx.draw_line(right_cx - 3.0, center_y - 5.0, right_cx + 2.0, center_y, ca, 1.5);
-    gfx.draw_line(right_cx + 2.0, center_y, right_cx - 3.0, center_y + 5.0, ca, 1.5);
+    gfx.draw_line(
+        right_cx - 3.0,
+        center_y - 5.0,
+        right_cx + 2.0,
+        center_y,
+        ca,
+        1.5,
+    );
+    gfx.draw_line(
+        right_cx + 2.0,
+        center_y,
+        right_cx - 3.0,
+        center_y + 5.0,
+        ca,
+        1.5,
+    );
 
     // Style name text — larger font, centered in remaining area
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
     let text_area_w = text_area_right - text_area_left;
-    gfx.draw_text_centered(&style_name, text_area_left, tooltip_ry, text_area_w, TOOLTIP_HEIGHT,
-        13.0, false, [1.0, 1.0, 1.0, 0.95 * alpha]);
+    gfx.draw_text_centered(
+        &style_name,
+        text_area_left,
+        tooltip_ry,
+        text_area_w,
+        TOOLTIP_HEIGHT,
+        13.0,
+        false,
+        [1.0, 1.0, 1.0, 0.95 * alpha],
+    );
 
     refresh_selector_click_regions(state);
 }
@@ -433,10 +584,14 @@ fn draw_tooltip(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
 
 fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let flash_t = state.flash_t.get();
-    if flash_t < 0.01 { return; }
+    if flash_t < 0.01 {
+        return;
+    }
 
     let message = state.flash_message.borrow();
-    if message.is_empty() { return; }
+    if message.is_empty() {
+        return;
+    }
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
@@ -484,19 +639,43 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     gfx.scale_around(center_x, center_y, scale, scale);
 
     // Background
-    let (bg_r, bg_g, bg_b) = if is_error { (0.35, 0.05, 0.05) } else { (0.0, 0.0, 0.0) };
-    gfx.fill_rounded_rect(full_x, full_y, flash_w, FLASH_HEIGHT, FLASH_RADIUS,
-        [bg_r, bg_g, bg_b, 0.92 * alpha]);
+    let (bg_r, bg_g, bg_b) = if is_error {
+        (0.35, 0.05, 0.05)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+    gfx.fill_rounded_rect(
+        full_x,
+        full_y,
+        flash_w,
+        FLASH_HEIGHT,
+        FLASH_RADIUS,
+        [bg_r, bg_g, bg_b, 0.92 * alpha],
+    );
 
     // Message text
     if has_action || has_reject {
         let (_, th) = gfx.measure_text(&message, 12.0, true);
-        gfx.draw_text_top_left(&message, full_x + FLASH_PADDING_H,
+        gfx.draw_text_top_left(
+            &message,
+            full_x + FLASH_PADDING_H,
             full_y + (FLASH_HEIGHT - th) / 2.0,
-            12.0, true, false, [1.0, 1.0, 1.0, 0.9 * alpha]);
+            12.0,
+            true,
+            false,
+            [1.0, 1.0, 1.0, 0.9 * alpha],
+        );
     } else {
-        gfx.draw_text_centered(&message, full_x, full_y, flash_w, FLASH_HEIGHT,
-            12.0, true, [1.0, 1.0, 1.0, 0.9 * alpha]);
+        gfx.draw_text_centered(
+            &message,
+            full_x,
+            full_y,
+            flash_w,
+            FLASH_HEIGHT,
+            12.0,
+            true,
+            [1.0, 1.0, 1.0, 0.9 * alpha],
+        );
     }
 
     // Reject button (drawn to the left of the accept button)
@@ -509,11 +688,25 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
         let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
 
-        gfx.fill_rounded_rect(btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS,
-            [1.0, 1.0, 1.0, 0.2 * alpha]);
+        gfx.fill_rounded_rect(
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            FLASH_ACTION_RADIUS,
+            [1.0, 1.0, 1.0, 0.2 * alpha],
+        );
 
-        gfx.draw_text_centered(label, btn_x, btn_y, reject_w, FLASH_ACTION_HEIGHT,
-            11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+        gfx.draw_text_centered(
+            label,
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            11.0,
+            true,
+            [1.0, 1.0, 1.0, 0.95 * alpha],
+        );
 
         let sx = center_x + (btn_x - center_x) * scale;
         let sy = center_y + (btn_y - center_y) * scale;
@@ -534,11 +727,25 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
         let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
 
-        gfx.fill_rounded_rect(btn_x, btn_y, action_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS,
-            [1.0, 1.0, 1.0, 0.2 * alpha]);
+        gfx.fill_rounded_rect(
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            FLASH_ACTION_RADIUS,
+            [1.0, 1.0, 1.0, 0.2 * alpha],
+        );
 
-        gfx.draw_text_centered(label, btn_x, btn_y, action_w, FLASH_ACTION_HEIGHT,
-            11.0, true, [1.0, 1.0, 1.0, 0.95 * alpha]);
+        gfx.draw_text_centered(
+            label,
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            11.0,
+            true,
+            [1.0, 1.0, 1.0, 0.95 * alpha],
+        );
 
         let sx = center_x + (btn_x - center_x) * scale;
         let sy = center_y + (btn_y - center_y) * scale;
@@ -585,14 +792,19 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway = tongue.phase.sin() * FLAME_SWAY
-            + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway =
+            tongue.phase.sin() * FLAME_SWAY + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
 
         // Layer 1: outer glow — wide, soft, dim
-        gfx.fill_flame_tongue(cx, base_y, h * 1.2, hw * 1.5, sway * 1.1,
+        gfx.fill_flame_tongue(
+            cx,
+            base_y,
+            h * 1.2,
+            hw * 1.5,
+            sway * 1.1,
             &[
                 (0.0, 0.7, 0.7, 0.7, alpha * 0.15),
                 (0.4, 0.4, 0.4, 0.4, alpha * 0.08),
@@ -601,7 +813,12 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Layer 2: main flame body
-        gfx.fill_flame_tongue(cx, base_y, h, hw, sway,
+        gfx.fill_flame_tongue(
+            cx,
+            base_y,
+            h,
+            hw,
+            sway,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.85),
                 (0.25, 1.0, 1.0, 1.0, alpha * 0.65),
@@ -611,7 +828,12 @@ fn draw_flame(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Layer 3: inner bright core — narrow, hot white
-        gfx.fill_flame_tongue(cx, base_y, h * 0.55, hw * 0.35, sway * 0.5,
+        gfx.fill_flame_tongue(
+            cx,
+            base_y,
+            h * 0.55,
+            hw * 0.35,
+            sway * 0.5,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.95),
                 (0.5, 1.0, 1.0, 1.0, alpha * 0.5),
@@ -645,14 +867,22 @@ fn draw_flash_blue(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
     let (gr, gg, gb) = FLASH_BLUE_GLOW_COLOR;
     gfx.stroke_rounded_rect(
-        rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, radius + 1.5,
+        rx - 1.5,
+        ry - 1.5,
+        rw + 3.0,
+        rh + 3.0,
+        radius + 1.5,
         [gr, gg, gb, 0.35 * alpha],
         FLASH_BLUE_BORDER_WIDTH + 2.0,
     );
 
     let (r, g, b) = FLASH_BLUE_COLOR;
     gfx.stroke_rounded_rect(
-        rx, ry, rw, rh, radius,
+        rx,
+        ry,
+        rw,
+        rh,
+        radius,
         [r, g, b, alpha],
         FLASH_BLUE_BORDER_WIDTH,
     );
@@ -679,18 +909,31 @@ fn draw_broadcast_transcript(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64)
     let box_y = pill_y - TRANSCRIPT_GAP - TRANSCRIPT_HEIGHT + rise;
 
     gfx.fill_rounded_rect(
-        box_x, box_y, box_w, TRANSCRIPT_HEIGHT, TRANSCRIPT_RADIUS,
+        box_x,
+        box_y,
+        box_w,
+        TRANSCRIPT_HEIGHT,
+        TRANSCRIPT_RADIUS,
         [0.0, 0.0, 0.0, alpha],
     );
     gfx.stroke_rounded_rect(
-        box_x + 0.5, box_y + 0.5, box_w - 1.0, TRANSCRIPT_HEIGHT - 1.0, TRANSCRIPT_RADIUS - 0.5,
+        box_x + 0.5,
+        box_y + 0.5,
+        box_w - 1.0,
+        TRANSCRIPT_HEIGHT - 1.0,
+        TRANSCRIPT_RADIUS - 0.5,
         [0.45, 0.75, 1.0, 0.35 * alpha],
         1.0,
     );
 
     gfx.draw_text_centered(
-        &text, box_x, box_y, box_w, TRANSCRIPT_HEIGHT,
-        TRANSCRIPT_FONT_SIZE, false,
+        &text,
+        box_x,
+        box_y,
+        box_w,
+        TRANSCRIPT_HEIGHT,
+        TRANSCRIPT_FONT_SIZE,
+        false,
         [1.0, 1.0, 1.0, 0.95 * alpha],
     );
 }
@@ -708,9 +951,12 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
             for i in 1..n {
                 let alpha = (i as f64 / n as f64) * rocket.trail_alpha * 0.8;
                 gfx.draw_line(
-                    rocket.trail[i - 1].0, rocket.trail[i - 1].1,
-                    rocket.trail[i].0, rocket.trail[i].1,
-                    [rc, gc, bc, alpha], FIREWORKS_ROCKET_LINE_WIDTH,
+                    rocket.trail[i - 1].0,
+                    rocket.trail[i - 1].1,
+                    rocket.trail[i].0,
+                    rocket.trail[i].1,
+                    [rc, gc, bc, alpha],
+                    FIREWORKS_ROCKET_LINE_WIDTH,
                 );
             }
         }
@@ -718,14 +964,19 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
         if rocket.phase == RocketPhase::Rising {
             let hs = FIREWORKS_HEAD_SIZE / 2.0;
             gfx.fill_rounded_rect(
-                rocket.x - hs, rocket.y - hs,
-                FIREWORKS_HEAD_SIZE, FIREWORKS_HEAD_SIZE, hs,
+                rocket.x - hs,
+                rocket.y - hs,
+                FIREWORKS_HEAD_SIZE,
+                FIREWORKS_HEAD_SIZE,
+                hs,
                 [rc, gc, bc, 0.95],
             );
         }
 
         for spark in &rocket.sparks {
-            if spark.life <= 0.0 { continue; }
+            if spark.life <= 0.0 {
+                continue;
+            }
             let alpha = spark.life.clamp(0.0, 1.0) * 0.9;
             let speed = (spark.vx * spark.vx + spark.vy * spark.vy).sqrt();
             let line_len = (speed * 0.04).clamp(2.0, 10.0);
@@ -735,9 +986,12 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
                 (0.0, -1.0)
             };
             gfx.draw_line(
-                spark.x - nx * line_len, spark.y - ny * line_len,
-                spark.x, spark.y,
-                [rc, gc, bc, alpha], FIREWORKS_SPARK_LINE_WIDTH,
+                spark.x - nx * line_len,
+                spark.y - ny * line_len,
+                spark.x,
+                spark.y,
+                [rc, gc, bc, alpha],
+                FIREWORKS_SPARK_LINE_WIDTH,
             );
         }
     }
@@ -747,7 +1001,9 @@ fn draw_fireworks(gfx: &Gfx, state: &PillState) {
 
 fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let panel_t = state.panel_open_t.get();
-    if panel_t < 0.01 { return; }
+    if panel_t < 0.01 {
+        return;
+    }
 
     // A pending review always needs the full panel: the transcript and its
     // buttons do not fit the compact surface.
@@ -755,9 +1011,17 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let is_compact = state.assistant_compact.get() && review_id.is_none();
     // A review types into the same entry the assistant uses.
     let is_typing = state.is_typing();
-    let review_actions_h = if review_id.is_some() { REVIEW_ACTIONS_HEIGHT } else { 0.0 };
+    let review_actions_h = if review_id.is_some() {
+        REVIEW_ACTIONS_HEIGHT
+    } else {
+        0.0
+    };
 
-    let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
+    let panel_w = if is_compact {
+        PANEL_COMPACT_WIDTH
+    } else {
+        PANEL_EXPANDED_WIDTH
+    };
     let panel_x = (ww - panel_w) / 2.0;
     let panel_y = PANEL_TOP_MARGIN;
     let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
@@ -765,10 +1029,23 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let alpha = panel_t;
     let y_shift = (1.0 - panel_t) * 12.0;
 
-    gfx.fill_rounded_rect(panel_x, panel_y + y_shift, panel_w, panel_h, PANEL_RADIUS,
-        [0.0, 0.0, 0.0, PANEL_BG_ALPHA * alpha]);
-    gfx.stroke_rounded_rect(panel_x + 0.5, panel_y + y_shift + 0.5, panel_w - 1.0, panel_h - 1.0,
-        PANEL_RADIUS - 0.5, [1.0, 1.0, 1.0, PANEL_BORDER_ALPHA * alpha], 1.0);
+    gfx.fill_rounded_rect(
+        panel_x,
+        panel_y + y_shift,
+        panel_w,
+        panel_h,
+        PANEL_RADIUS,
+        [0.0, 0.0, 0.0, PANEL_BG_ALPHA * alpha],
+    );
+    gfx.stroke_rounded_rect(
+        panel_x + 0.5,
+        panel_y + y_shift + 0.5,
+        panel_w - 1.0,
+        panel_h - 1.0,
+        PANEL_RADIUS - 0.5,
+        [1.0, 1.0, 1.0, PANEL_BORDER_ALPHA * alpha],
+        1.0,
+    );
 
     let py = panel_y + y_shift;
     let pill_top_in_panel = panel_h - PILL_BOTTOM_INSET - EXPANDED_PILL_HEIGHT;
@@ -797,13 +1074,21 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
         };
 
-        draw_transcript(gfx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad);
+        draw_transcript(
+            gfx, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+        );
 
         // Top gradient
         let grad_h = PANEL_TRANSCRIPT_TOP_OFFSET + 16.0;
         gfx.fill_gradient_rect(
-            panel_x, py, panel_w, grad_h,
-            0.0, py, 0.0, py + grad_h,
+            panel_x,
+            py,
+            panel_w,
+            grad_h,
+            0.0,
+            py,
+            0.0,
+            py + grad_h,
             &[
                 (0.0, [0.0, 0.0, 0.0, 0.98 * alpha]),
                 (0.38, [0.0, 0.0, 0.0, 0.82 * alpha]),
@@ -812,12 +1097,22 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         );
 
         // Bottom gradient
-        let bot_area = if is_typing { 0.0 } else { PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT };
+        let bot_area = if is_typing {
+            0.0
+        } else {
+            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
+        };
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         gfx.fill_gradient_rect(
-            panel_x, bot_y, panel_w, bot_grad_h,
-            0.0, bot_y, 0.0, scroll_bottom,
+            panel_x,
+            bot_y,
+            panel_w,
+            bot_grad_h,
+            0.0,
+            bot_y,
+            0.0,
+            scroll_bottom,
             &[
                 (0.0, [0.0, 0.0, 0.0, 0.0]),
                 (0.28, [0.0, 0.0, 0.0, 0.82 * alpha]),
@@ -834,11 +1129,27 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
         let open_x = panel_x + PANEL_HEADER_OFFSET_LEFT + HEADER_BUTTON_SIZE + 4.0;
         let open_y = py + PANEL_HEADER_OFFSET_TOP;
-        let open_hovered = is_mouse_over(state, open_x, open_y, HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE);
-        draw_panel_button(gfx, open_x, open_y, HEADER_BUTTON_SIZE, alpha, ButtonIcon::OpenInNew, open_hovered);
+        let open_hovered = is_mouse_over(
+            state,
+            open_x,
+            open_y,
+            HEADER_BUTTON_SIZE,
+            HEADER_BUTTON_SIZE,
+        );
+        draw_panel_button(
+            gfx,
+            open_x,
+            open_y,
+            HEADER_BUTTON_SIZE,
+            alpha,
+            ButtonIcon::OpenInNew,
+            open_hovered,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: open_x, y: open_y,
-            w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+            x: open_x,
+            y: open_y,
+            w: HEADER_BUTTON_SIZE,
+            h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
 
@@ -860,9 +1171,12 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
         if is_typing {
             let input_y = py + panel_h - PANEL_INPUT_HEIGHT;
             gfx.draw_line(
-                panel_x + PANEL_CONTENT_SIDE_INSET, input_y,
-                panel_x + panel_w - PANEL_CONTENT_SIDE_INSET, input_y,
-                [1.0, 1.0, 1.0, 0.1 * alpha], 1.0,
+                panel_x + PANEL_CONTENT_SIDE_INSET,
+                input_y,
+                panel_x + panel_w - PANEL_CONTENT_SIDE_INSET,
+                input_y,
+                [1.0, 1.0, 1.0, 0.1 * alpha],
+                1.0,
             );
 
             // Send button
@@ -870,8 +1184,15 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             let send_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - send_btn_size;
             let send_y = input_y + (PANEL_INPUT_HEIGHT - send_btn_size) / 2.0;
             let has_text = !state.entry_text.borrow().trim().is_empty();
-            let send_hovered = has_text && is_mouse_over(state, send_x, send_y, send_btn_size, send_btn_size);
-            let text_alpha = if send_hovered { 1.0 } else if has_text { 0.82 } else { 0.2 };
+            let send_hovered =
+                has_text && is_mouse_over(state, send_x, send_y, send_btn_size, send_btn_size);
+            let text_alpha = if send_hovered {
+                1.0
+            } else if has_text {
+                0.82
+            } else {
+                0.2
+            };
             let ca = [1.0, 1.0, 1.0, text_alpha * alpha];
 
             let cx = send_x + send_btn_size / 2.0;
@@ -889,13 +1210,19 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
             // Click region for cursor (IDC_IBEAM) and focus
             state.click_regions.borrow_mut().push(ClickRegion {
-                x: input_x, y: input_y + 1.0, w: input_w, h: PANEL_INPUT_HEIGHT - 1.0,
+                x: input_x,
+                y: input_y + 1.0,
+                w: input_w,
+                h: PANEL_INPUT_HEIGHT - 1.0,
                 action: ClickAction::InputField,
             });
 
             if has_text {
                 state.click_regions.borrow_mut().push(ClickRegion {
-                    x: send_x, y: send_y, w: send_btn_size, h: send_btn_size,
+                    x: send_x,
+                    y: send_y,
+                    w: send_btn_size,
+                    h: send_btn_size,
                     action: ClickAction::SendButton,
                 });
             }
@@ -905,37 +1232,78 @@ fn draw_assistant_panel(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     // Close button
     let close_x = panel_x + PANEL_HEADER_OFFSET_LEFT;
     let close_y = py + PANEL_HEADER_OFFSET_TOP;
-    let close_hovered = is_mouse_over(state, close_x, close_y, HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE);
-    draw_panel_button(gfx, close_x, close_y, HEADER_BUTTON_SIZE, alpha, ButtonIcon::Close, close_hovered);
+    let close_hovered = is_mouse_over(
+        state,
+        close_x,
+        close_y,
+        HEADER_BUTTON_SIZE,
+        HEADER_BUTTON_SIZE,
+    );
+    draw_panel_button(
+        gfx,
+        close_x,
+        close_y,
+        HEADER_BUTTON_SIZE,
+        alpha,
+        ButtonIcon::Close,
+        close_hovered,
+    );
     state.click_regions.borrow_mut().push(ClickRegion {
-        x: close_x, y: close_y,
-        w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+        x: close_x,
+        y: close_y,
+        w: HEADER_BUTTON_SIZE,
+        h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
 }
 
 fn draw_compact_content(
-    gfx: &Gfx, panel_x: f64, panel_y: f64, panel_w: f64,
-    content_height: f64, alpha: f64, state: &PillState,
+    gfx: &Gfx,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    content_height: f64,
+    alpha: f64,
+    state: &PillState,
 ) {
     let text = "What can I help you with?";
-    let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
-    gfx.draw_text_centered(text, panel_x, panel_y, panel_w, content_height,
-        18.0, false, [1.0, 1.0, 1.0, text_alpha * alpha]);
+    let text_alpha = if state.phase.get() == Phase::Recording {
+        0.96
+    } else {
+        0.8
+    };
+    gfx.draw_text_centered(
+        text,
+        panel_x,
+        panel_y,
+        panel_w,
+        content_height,
+        18.0,
+        false,
+        [1.0, 1.0, 1.0, text_alpha * alpha],
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_transcript(
-    gfx: &mut Gfx, state: &PillState,
-    area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,
-    top_pad: f64, bottom_pad: f64,
+    gfx: &mut Gfx,
+    state: &PillState,
+    area_x: f64,
+    area_y: f64,
+    area_w: f64,
+    area_h: f64,
+    alpha: f64,
+    top_pad: f64,
+    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
     let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() && review.is_none() { return; }
+    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        return;
+    }
 
     gfx.save();
     gfx.clip_rect(area_x, area_y, area_w, area_h);
@@ -953,7 +1321,14 @@ fn draw_transcript(
     for (i, msg) in messages.iter().enumerate() {
         if i > 0 {
             y += 16.0;
-            gfx.draw_line(area_x, y, area_x + 36.0, y, [1.0, 1.0, 1.0, 0.45 * alpha], 1.0);
+            gfx.draw_line(
+                area_x,
+                y,
+                area_x + 36.0,
+                y,
+                [1.0, 1.0, 1.0, 0.45 * alpha],
+                1.0,
+            );
             y += 8.0;
         }
 
@@ -964,7 +1339,9 @@ fn draw_transcript(
         }
 
         if msg.is_tool_result {
-            let tool_desc = msg.tool_description.as_deref()
+            let tool_desc = msg
+                .tool_description
+                .as_deref()
                 .or(msg.tool_name.as_deref())
                 .unwrap_or("Tool");
             let reason = msg.reason.as_deref().unwrap_or("");
@@ -975,17 +1352,35 @@ fn draw_transcript(
             };
 
             draw_wrench_icon(gfx, area_x, y + 2.0, 12.0, 0.5 * alpha);
-            gfx.draw_text_top_left(&display, area_x + 18.0, y,
-                12.0, false, false, [1.0, 1.0, 1.0, 0.5 * alpha]);
+            gfx.draw_text_top_left(
+                &display,
+                area_x + 18.0,
+                y,
+                12.0,
+                false,
+                false,
+                [1.0, 1.0, 1.0, 0.5 * alpha],
+            );
             y += 18.0;
         } else if let Some(ref content) = msg.content {
-            let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
+            let (r, g, b) = if msg.is_error {
+                (1.0, 0.4, 0.4)
+            } else {
+                (1.0, 1.0, 1.0)
+            };
             let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
 
             let lines = wrap_text(gfx, content, area_w);
             for line in &lines {
-                gfx.draw_text_top_left(line, area_x, y,
-                    14.0, false, false, [r, g, b, color_alpha * alpha]);
+                gfx.draw_text_top_left(
+                    line,
+                    area_x,
+                    y,
+                    14.0,
+                    false,
+                    false,
+                    [r, g, b, color_alpha * alpha],
+                );
                 y += line_height;
             }
         } else {
@@ -1015,8 +1410,7 @@ fn draw_transcript(
         let mut regions = state.click_regions.borrow_mut();
         let scrolled = regions.split_off(region_start);
         regions.extend(scrolled.into_iter().filter_map(|mut region| {
-            let (y, h) =
-                rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
             region.y = y;
             region.h = h;
             Some(region)
@@ -1027,8 +1421,11 @@ fn draw_transcript(
 }
 
 fn draw_streaming_activity(
-    gfx: &Gfx, streaming: &PillStreaming,
-    x: f64, mut y: f64, alpha: f64,
+    gfx: &Gfx,
+    streaming: &PillStreaming,
+    x: f64,
+    mut y: f64,
+    alpha: f64,
 ) -> f64 {
     for tc in &streaming.tool_calls {
         let text = if tc.done {
@@ -1041,7 +1438,11 @@ fn draw_streaming_activity(
     }
 
     if !streaming.reasoning.is_empty() {
-        let label = if streaming.is_streaming { "Thinking…" } else { "Thought process" };
+        let label = if streaming.is_streaming {
+            "Thinking…"
+        } else {
+            "Thought process"
+        };
         gfx.draw_text_top_left(label, x, y, 12.0, false, true, [1.0, 1.0, 1.0, 0.5 * alpha]);
         y += 16.0;
     }
@@ -1049,9 +1450,7 @@ fn draw_streaming_activity(
     y
 }
 
-fn draw_thinking_text(
-    gfx: &Gfx, x: f64, y: f64, alpha: f64, state: &PillState,
-) -> f64 {
+fn draw_thinking_text(gfx: &Gfx, x: f64, y: f64, alpha: f64, state: &PillState) -> f64 {
     let text = "Thinking";
     let (full_width, _) = gfx.measure_text(text, 14.0, false);
 
@@ -1064,12 +1463,23 @@ fn draw_thinking_text(
     for ch in text.chars() {
         let ch_str = ch.to_string();
         let (ch_w, _) = gfx.measure_text(&ch_str, 14.0, false);
-        let pos = if full_width > 0.0 { (char_x - x) / full_width } else { 0.0 };
+        let pos = if full_width > 0.0 {
+            (char_x - x) / full_width
+        } else {
+            0.0
+        };
         let dist = (pos - grad_center).abs();
         let ch_alpha = lerp(0.92, 0.34, (dist * 2.0).clamp(0.0, 1.0));
 
-        gfx.draw_text_top_left(&ch_str, char_x, y, 14.0, false, false,
-            [1.0, 1.0, 1.0, ch_alpha * alpha]);
+        gfx.draw_text_top_left(
+            &ch_str,
+            char_x,
+            y,
+            14.0,
+            false,
+            false,
+            [1.0, 1.0, 1.0, ch_alpha * alpha],
+        );
         char_x += ch_w;
     }
 
@@ -1077,22 +1487,48 @@ fn draw_thinking_text(
 }
 
 fn draw_permission_card(
-    gfx: &Gfx, state: &PillState, perm: &PillPermission,
-    x: f64, y: f64, w: f64, alpha: f64,
+    gfx: &Gfx,
+    state: &PillState,
+    perm: &PillPermission,
+    x: f64,
+    y: f64,
+    w: f64,
+    alpha: f64,
 ) -> f64 {
     let card_h = PERM_CARD_HEIGHT;
 
     gfx.fill_rounded_rect(x, y, w, card_h, 12.0, [1.0, 1.0, 1.0, 0.06 * alpha]);
-    gfx.stroke_rounded_rect(x + 0.5, y + 0.5, w - 1.0, card_h - 1.0, 11.5,
-        [1.0, 1.0, 1.0, 0.12 * alpha], 1.0);
+    gfx.stroke_rounded_rect(
+        x + 0.5,
+        y + 0.5,
+        w - 1.0,
+        card_h - 1.0,
+        11.5,
+        [1.0, 1.0, 1.0, 0.12 * alpha],
+        1.0,
+    );
 
     let tool_label = perm.description.as_deref().unwrap_or(&perm.tool_name);
-    gfx.draw_text_top_left(tool_label, x + 12.0, y + 6.0, 12.0, true, false,
-        [1.0, 1.0, 1.0, 0.82 * alpha]);
+    gfx.draw_text_top_left(
+        tool_label,
+        x + 12.0,
+        y + 6.0,
+        12.0,
+        true,
+        false,
+        [1.0, 1.0, 1.0, 0.82 * alpha],
+    );
 
     if let Some(ref reason) = perm.reason {
-        gfx.draw_text_top_left(reason, x + 12.0, y + 22.0, 11.0, false, false,
-            [1.0, 1.0, 1.0, 0.5 * alpha]);
+        gfx.draw_text_top_left(
+            reason,
+            x + 12.0,
+            y + 22.0,
+            11.0,
+            false,
+            false,
+            [1.0, 1.0, 1.0, 0.5 * alpha],
+        );
     }
 
     let btn_y = y + card_h - PERM_BUTTON_HEIGHT - 8.0;
@@ -1100,20 +1536,45 @@ fn draw_permission_card(
     let mut btn_x = x + w - 12.0;
 
     for (i, (label, text_alpha)) in btn_labels.iter().rev().enumerate() {
-        let btn_w = if i == 0 { PERM_BUTTON_WIDTH + 16.0 } else { PERM_BUTTON_WIDTH };
+        let btn_w = if i == 0 {
+            PERM_BUTTON_WIDTH + 16.0
+        } else {
+            PERM_BUTTON_WIDTH
+        };
         btn_x -= btn_w;
 
         let hovered = is_mouse_over(state, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT);
         let bg_alpha = if hovered { 0.18 } else { 0.08 };
         let border_alpha = if hovered { 0.25 } else { 0.15 };
-        gfx.fill_rounded_rect(btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0,
-            [1.0, 1.0, 1.0, bg_alpha * alpha]);
-        gfx.stroke_rounded_rect(btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5,
-            [1.0, 1.0, 1.0, border_alpha * alpha], 1.0);
+        gfx.fill_rounded_rect(
+            btn_x,
+            btn_y,
+            btn_w,
+            PERM_BUTTON_HEIGHT,
+            6.0,
+            [1.0, 1.0, 1.0, bg_alpha * alpha],
+        );
+        gfx.stroke_rounded_rect(
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+            [1.0, 1.0, 1.0, border_alpha * alpha],
+            1.0,
+        );
 
         let text_a = if hovered { 1.0 } else { *text_alpha };
-        gfx.draw_text_centered(label, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT,
-            11.0, false, [1.0, 1.0, 1.0, text_a * alpha]);
+        gfx.draw_text_centered(
+            label,
+            btn_x,
+            btn_y,
+            btn_w,
+            PERM_BUTTON_HEIGHT,
+            11.0,
+            false,
+            [1.0, 1.0, 1.0, text_a * alpha],
+        );
 
         let action = match 2 - i {
             0 => ClickAction::PermissionDeny(perm.id.clone()),
@@ -1121,7 +1582,11 @@ fn draw_permission_card(
             _ => ClickAction::PermissionAlwaysAllow(perm.id.clone()),
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
         });
 
         btn_x -= PERM_BUTTON_GAP;
@@ -1135,12 +1600,16 @@ fn draw_permission_card(
 /// when the review arrives, so what is shown here is exactly what will be
 /// inserted, edits included. It scrolls with the rest of the panel, so there is
 /// no cap on its length.
-fn draw_review_text(
-    gfx: &Gfx, state: &PillState,
-    x: f64, y: f64, w: f64, alpha: f64,
-) -> f64 {
-    gfx.draw_text_top_left("REVIEW TRANSCRIPT", x, y, 11.0, true, false,
-        [1.0, 1.0, 1.0, 0.5 * alpha]);
+fn draw_review_text(gfx: &Gfx, state: &PillState, x: f64, y: f64, w: f64, alpha: f64) -> f64 {
+    gfx.draw_text_top_left(
+        "REVIEW TRANSCRIPT",
+        x,
+        y,
+        11.0,
+        true,
+        false,
+        [1.0, 1.0, 1.0, 0.5 * alpha],
+    );
 
     let mut text_y = y + REVIEW_TITLE_HEIGHT;
     let text = state.entry_text.borrow();
@@ -1149,8 +1618,15 @@ fn draw_review_text(
         .into_iter()
         .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
     {
-        gfx.draw_text_top_left(&line, x, text_y, 14.0, false, false,
-            [1.0, 1.0, 1.0, 0.92 * alpha]);
+        gfx.draw_text_top_left(
+            &line,
+            x,
+            text_y,
+            14.0,
+            false,
+            false,
+            [1.0, 1.0, 1.0, 0.92 * alpha],
+        );
         text_y += REVIEW_LINE_HEIGHT;
     }
 
@@ -1162,26 +1638,48 @@ fn draw_review_text(
 /// taking the buttons with it.
 #[allow(clippy::too_many_arguments)]
 fn draw_review_actions(
-    gfx: &Gfx, state: &PillState, review_id: &str,
-    panel_x: f64, y: f64, panel_w: f64, alpha: f64,
+    gfx: &Gfx,
+    state: &PillState,
+    review_id: &str,
+    panel_x: f64,
+    y: f64,
+    panel_w: f64,
+    alpha: f64,
 ) {
     gfx.draw_text_top_left(
         "Edit below, then press Enter to insert",
         panel_x + PANEL_CONTENT_SIDE_INSET,
         y + (REVIEW_ACTIONS_HEIGHT - 14.0) / 2.0,
-        11.0, false, false,
+        11.0,
+        false,
+        false,
         [1.0, 1.0, 1.0, 0.45 * alpha],
     );
 
     // Rendered right to left so "Insert" (the default action) sits closest to
     // the edge of the panel, matching the permission card's layout.
     let review = state.assistant_review.borrow();
-    let edit_label = review.as_ref().and_then(|review| review.edit_label.as_deref()).unwrap_or("Edit");
+    let edit_label = review
+        .as_ref()
+        .and_then(|review| review.edit_label.as_deref())
+        .unwrap_or("Edit");
     let buttons = [
-        ("Insert", ClickAction::ReviewInsert(review_id.to_string()), 0.92),
-        (edit_label, ClickAction::ReviewEdit(review_id.to_string()), 0.8),
+        (
+            "Insert",
+            ClickAction::ReviewInsert(review_id.to_string()),
+            0.92,
+        ),
+        (
+            edit_label,
+            ClickAction::ReviewEdit(review_id.to_string()),
+            0.8,
+        ),
         ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
-        ("Cancel", ClickAction::ReviewCancel(review_id.to_string()), 0.5),
+        (
+            "Cancel",
+            ClickAction::ReviewCancel(review_id.to_string()),
+            0.5,
+        ),
     ];
     let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
     let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
@@ -1195,17 +1693,42 @@ fn draw_review_actions(
         let hovered = is_mouse_over(state, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT);
         let bg_alpha = if hovered { 0.18 } else { 0.08 };
         let border_alpha = if hovered { 0.25 } else { 0.15 };
-        gfx.fill_rounded_rect(btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0,
-            [1.0, 1.0, 1.0, bg_alpha * alpha]);
-        gfx.stroke_rounded_rect(btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5,
-            [1.0, 1.0, 1.0, border_alpha * alpha], 1.0);
+        gfx.fill_rounded_rect(
+            btn_x,
+            btn_y,
+            btn_w,
+            PERM_BUTTON_HEIGHT,
+            6.0,
+            [1.0, 1.0, 1.0, bg_alpha * alpha],
+        );
+        gfx.stroke_rounded_rect(
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+            [1.0, 1.0, 1.0, border_alpha * alpha],
+            1.0,
+        );
 
         let text_a = if hovered { 1.0 } else { text_alpha };
-        gfx.draw_text_centered(label, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT,
-            11.0, false, [1.0, 1.0, 1.0, text_a * alpha]);
+        gfx.draw_text_centered(
+            label,
+            btn_x,
+            btn_y,
+            btn_w,
+            PERM_BUTTON_HEIGHT,
+            11.0,
+            false,
+            [1.0, 1.0, 1.0, text_a * alpha],
+        );
 
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
         });
 
         btn_x -= PERM_BUTTON_GAP;
@@ -1213,14 +1736,20 @@ fn draw_review_actions(
 }
 
 fn draw_user_prompt_preview(
-    gfx: &Gfx, panel_x: f64, panel_y: f64, panel_w: f64,
-    prompt: &str, alpha: f64,
+    gfx: &Gfx,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    prompt: &str,
+    alpha: f64,
 ) {
     let max_w = panel_w * 0.5;
     let mut display = prompt.to_string();
     loop {
         let (tw, _) = gfx.measure_text(&display, 14.0, false);
-        if tw <= max_w || display.len() < 4 { break; }
+        if tw <= max_w || display.len() < 4 {
+            break;
+        }
         display.truncate(display.len() - 4);
         display.push('…');
     }
@@ -1228,7 +1757,15 @@ fn draw_user_prompt_preview(
     let (tw, th) = gfx.measure_text(&display, 14.0, false);
     let tx = panel_x + panel_w - PANEL_HEADER_OFFSET_RIGHT - tw;
     let ty = panel_y + PANEL_HEADER_OFFSET_TOP + (HEADER_BUTTON_SIZE - th) / 2.0;
-    gfx.draw_text_top_left(&display, tx, ty, 14.0, false, false, [1.0, 1.0, 1.0, 0.5 * alpha]);
+    gfx.draw_text_top_left(
+        &display,
+        tx,
+        ty,
+        14.0,
+        false,
+        false,
+        [1.0, 1.0, 1.0, 0.5 * alpha],
+    );
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1237,9 +1774,24 @@ enum ButtonIcon {
     OpenInNew,
 }
 
-fn draw_panel_button(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64, icon: ButtonIcon, hovered: bool) {
+fn draw_panel_button(
+    gfx: &Gfx,
+    x: f64,
+    y: f64,
+    size: f64,
+    alpha: f64,
+    icon: ButtonIcon,
+    hovered: bool,
+) {
     let bg_alpha = if hovered { 0.16 } else { 0.06 };
-    gfx.fill_rounded_rect(x, y, size, size, size / 4.0, [1.0, 1.0, 1.0, bg_alpha * alpha]);
+    gfx.fill_rounded_rect(
+        x,
+        y,
+        size,
+        size,
+        size / 4.0,
+        [1.0, 1.0, 1.0, bg_alpha * alpha],
+    );
 
     let cx = x + size / 2.0;
     let cy = y + size / 2.0;
@@ -1271,7 +1823,9 @@ fn draw_panel_button(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64, icon: But
 /// assistant's keyboard button spring is active.
 fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let kb_t = state.kb_button_t.get();
-    if kb_t < 0.01 { return; }
+    if kb_t < 0.01 {
+        return;
+    }
 
     let (_, pill_y, _, _) = pill_position(state, ww, wh);
     let pill_center_x = ww / 2.0;
@@ -1291,10 +1845,19 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
     let kb_hovered = is_mouse_over(state, btn_x, btn_y, KB_BUTTON_SIZE, KB_BUTTON_SIZE);
     let kb_bg = if kb_hovered { 1.0 } else { 0.92 };
     let kb_border = if kb_hovered { 0.5 } else { BORDER_ALPHA };
-    gfx.fill_circle(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0,
-        [0.0, 0.0, 0.0, kb_bg * alpha]);
-    gfx.stroke_circle(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0 - 0.5,
-        [1.0, 1.0, 1.0, kb_border * alpha], 1.0);
+    gfx.fill_circle(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        [0.0, 0.0, 0.0, kb_bg * alpha],
+    );
+    gfx.stroke_circle(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0 - 0.5,
+        [1.0, 1.0, 1.0, kb_border * alpha],
+        1.0,
+    );
 
     let cx = KB_BUTTON_SIZE / 2.0;
     let cy = KB_BUTTON_SIZE / 2.0;
@@ -1321,7 +1884,10 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 
     if kb_t > 0.5 {
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: KB_BUTTON_SIZE, h: KB_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: KB_BUTTON_SIZE,
+            h: KB_BUTTON_SIZE,
             action: ClickAction::KeyboardButton,
         });
     }
@@ -1331,12 +1897,24 @@ fn draw_keyboard_button(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
 /// crossfading in with `fade`.
 #[allow(clippy::too_many_arguments)]
 fn draw_paused(
-    gfx: &mut Gfx, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, fade: f64, state: &PillState,
+    gfx: &mut Gfx,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    fade: f64,
+    state: &PillState,
 ) {
     // Same loading bar as the loading phase, but static/dimmed to convey "held".
     gfx.save();
-    gfx.clip_rounded_rect(rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    gfx.clip_rounded_rect(
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -1345,19 +1923,33 @@ fn draw_paused(
     let track_w = pill_w - pad * 2.0;
 
     // Dimmed track line
-    gfx.fill_rect(track_x, bar_y, track_w, bar_h, [1.0, 1.0, 1.0, 0.1 * expand_t * fade]);
+    gfx.fill_rect(
+        track_x,
+        bar_y,
+        track_w,
+        bar_h,
+        [1.0, 1.0, 1.0, 0.1 * expand_t * fade],
+    );
 
     // Static indicator bar centered — same width as loading bar but dimmed
     let indicator_w = track_w * LOADING_BAR_WIDTH_FRAC;
     let ind_x = track_x + (track_w - indicator_w) / 2.0;
-    gfx.fill_rect(ind_x, bar_y, indicator_w, bar_h, [1.0, 1.0, 1.0, 0.45 * expand_t * fade]);
+    gfx.fill_rect(
+        ind_x,
+        bar_y,
+        indicator_w,
+        bar_h,
+        [1.0, 1.0, 1.0, 0.45 * expand_t * fade],
+    );
 
     gfx.restore();
 }
 
 fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let t = state.cancel_t.get();
-    if t < 0.01 { return; }
+    if t < 0.01 {
+        return;
+    }
 
     let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
     let phase = state.phase.get();
@@ -1368,17 +1960,49 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let (pause_x, pause_y) = pause_button_origin(pill_x, pill_y, pill_h);
     let pause_cx = pause_x + CANCEL_BUTTON_SIZE / 2.0;
     let pause_cy = pause_y + CANCEL_BUTTON_SIZE / 2.0;
-    let pause_hovered = is_mouse_over(state, pause_x, pause_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
+    let pause_hovered = is_mouse_over(
+        state,
+        pause_x,
+        pause_y,
+        CANCEL_BUTTON_SIZE,
+        CANCEL_BUTTON_SIZE,
+    );
     let pause_brightness = if pause_hovered { 0.72 } else { 0.52 };
-    gfx.fill_circle(pause_cx, pause_cy, r, [pause_brightness, pause_brightness, pause_brightness, t]);
+    gfx.fill_circle(
+        pause_cx,
+        pause_cy,
+        r,
+        [pause_brightness, pause_brightness, pause_brightness, t],
+    );
 
     if phase == Phase::Paused {
         // Resume: small play triangle via lines
         let s = 4.0 * scale;
         let col = [1.0, 1.0, 1.0, t];
-        gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx + s * 0.75, pause_cy, col, 1.8);
-        gfx.draw_line(pause_cx + s * 0.75, pause_cy, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
-        gfx.draw_line(pause_cx - s * 0.35, pause_cy - s, pause_cx - s * 0.35, pause_cy + s, col, 1.8);
+        gfx.draw_line(
+            pause_cx - s * 0.35,
+            pause_cy - s,
+            pause_cx + s * 0.75,
+            pause_cy,
+            col,
+            1.8,
+        );
+        gfx.draw_line(
+            pause_cx + s * 0.75,
+            pause_cy,
+            pause_cx - s * 0.35,
+            pause_cy + s,
+            col,
+            1.8,
+        );
+        gfx.draw_line(
+            pause_cx - s * 0.35,
+            pause_cy - s,
+            pause_cx - s * 0.35,
+            pause_cy + s,
+            col,
+            1.8,
+        );
     } else {
         // Pause: two bars, sized as a proportion of the control so the glyph
         // stays balanced (previously the bars read as a thin, wide-set pair).
@@ -1386,8 +2010,22 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         let bh = CANCEL_BUTTON_SIZE * 0.42 * scale;
         // Centre-to-centre distance; keeps a bar-width gutter between the bars.
         let offset = bw;
-        gfx.fill_rounded_rect(pause_cx - offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh, bw / 2.0, [1.0, 1.0, 1.0, t]);
-        gfx.fill_rounded_rect(pause_cx + offset - bw / 2.0, pause_cy - bh / 2.0, bw, bh, bw / 2.0, [1.0, 1.0, 1.0, t]);
+        gfx.fill_rounded_rect(
+            pause_cx - offset - bw / 2.0,
+            pause_cy - bh / 2.0,
+            bw,
+            bh,
+            bw / 2.0,
+            [1.0, 1.0, 1.0, t],
+        );
+        gfx.fill_rounded_rect(
+            pause_cx + offset - bw / 2.0,
+            pause_cy - bh / 2.0,
+            bw,
+            bh,
+            bw / 2.0,
+            [1.0, 1.0, 1.0, t],
+        );
     }
 
     // Cancel (X) on the RIGHT side, fully clear of the pill body.
@@ -1396,7 +2034,12 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
     let cy = btn_y + CANCEL_BUTTON_SIZE / 2.0;
     let cancel_hovered = is_mouse_over(state, btn_x, btn_y, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
     let cancel_brightness = if cancel_hovered { 0.6 } else { 0.46 };
-    gfx.fill_circle(cx, cy, r, [cancel_brightness, cancel_brightness, cancel_brightness, t]);
+    gfx.fill_circle(
+        cx,
+        cy,
+        r,
+        [cancel_brightness, cancel_brightness, cancel_brightness, t],
+    );
     let s = 3.0 * scale;
     gfx.draw_line(cx - s, cy - s, cx + s, cy + s, [1.0, 1.0, 1.0, t], 1.8);
     gfx.draw_line(cx + s, cy - s, cx - s, cy + s, [1.0, 1.0, 1.0, t], 1.8);
@@ -1408,11 +2051,17 @@ fn draw_cancel_button(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             ClickAction::PauseDictation
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: pause_x,
+            y: pause_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action: pause_action,
         });
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,
         });
     }
@@ -1425,7 +2074,14 @@ fn draw_wrench_icon(gfx: &Gfx, x: f64, y: f64, size: f64, alpha: f64) {
     // Wrench: circle head + angled handle
     let r = size * 0.28;
     gfx.stroke_circle(cx - r * 0.3, cy - r * 0.3, r, ca, 1.2);
-    gfx.draw_line(cx + r * 0.3, cy + r * 0.3, cx + size * 0.42, cy + size * 0.42, ca, 1.2);
+    gfx.draw_line(
+        cx + r * 0.3,
+        cy + r * 0.3,
+        cx + size * 0.42,
+        cy + size * 0.42,
+        ca,
+        1.2,
+    );
 }
 
 // ── Text wrapping ─────────────────────────────────────────────────
@@ -1555,9 +2211,9 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         // block is only entered when `head_len > 0`), but the shadow slice
         // and head placement below must never index an empty buffer — which
         // `RingLayers::new` reports as `None`.
-        if let Some(layers) = rust_pill_shared::RingLayers::new(
-            &points, head_len, total_len, progress, arm_t, alpha,
-        ) {
+        if let Some(layers) =
+            rust_pill_shared::RingLayers::new(&points, head_len, total_len, progress, arm_t, alpha)
+        {
             // Shadow layer: a soft dark halo behind the silver ring so it stays
             // readable on light backdrops. Direct2D has no cheap blur on the
             // render path, so the ring path is stroked several times with
@@ -1668,8 +2324,6 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
         }
     }
 }
-
-
 
 /// Progress of the long-press gesture, in `0.0..=1.0`.
 ///

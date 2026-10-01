@@ -1,6 +1,6 @@
+use crate::constants::*;
 use crate::ipc::{self, OutMessage};
 use crate::state::{ClickAction, PillState};
-use crate::constants::*;
 
 /// A23: Dispatch haptic/audio feedback to the desktop process.
 pub(crate) fn send_haptic(kind: &str) {
@@ -81,11 +81,15 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::StyleForward => {
                     send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch { direction: "forward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "forward".to_string(),
+                    });
                 }
                 ClickAction::StyleBackward => {
                     send_haptic("deep");
-                    ipc::send(&OutMessage::StyleSwitch { direction: "backward".to_string() });
+                    ipc::send(&OutMessage::StyleSwitch {
+                        direction: "backward".to_string(),
+                    });
                 }
                 ClickAction::AssistantClose => {
                     // Closing the panel while a transcript is under review is
@@ -132,7 +136,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         send_review_decision(&review_id, "open", Some(text));
                     } else {
                         if let Some(ref id) = *state.assistant_conversation_id.borrow() {
-                            ipc::send(&OutMessage::OpenConversation { conversation_id: id.clone() });
+                            ipc::send(&OutMessage::OpenConversation {
+                                conversation_id: id.clone(),
+                            });
                         }
                         ipc::send(&OutMessage::AssistantClose);
                     }
@@ -152,17 +158,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::PermissionAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionDeny(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "denied".to_string(), always_allow: false,
+                        permission_id: id.clone(),
+                        status: "denied".to_string(),
+                        always_allow: false,
                     });
                 }
                 ClickAction::PermissionAlwaysAllow(id) => {
                     ipc::send(&OutMessage::ResolvePermission {
-                        permission_id: id.clone(), status: "allowed".to_string(), always_allow: true,
+                        permission_id: id.clone(),
+                        status: "allowed".to_string(),
+                        always_allow: true,
                     });
                 }
                 ClickAction::SendButton => {
@@ -175,7 +187,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     rust_pill_shared::clear_flash_state(
                         &state.flash_visible,
@@ -188,7 +202,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                 }
                 ClickAction::FlashReject => {
                     if let Some(ref action) = *state.flash_reject_action.borrow() {
-                        ipc::send(&OutMessage::ToastAction { action: action.clone() });
+                        ipc::send(&OutMessage::ToastAction {
+                            action: action.clone(),
+                        });
                     }
                     rust_pill_shared::clear_flash_state(
                         &state.flash_visible,

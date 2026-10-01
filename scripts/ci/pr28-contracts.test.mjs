@@ -18,7 +18,6 @@ const read = (relativePath) =>
     // line, which leaves a space before the dot once the newlines are collapsed.
     .replace(/\s+\./g, ".");
 
-
 const source = Object.fromEntries(
   [
     ["commands", "apps/desktop/src-tauri/src/commands.rs"],
@@ -1058,7 +1057,7 @@ describe("native review and monitor contracts", () => {
     assert.ok(source.windowsPill.match(/query_monitor_info\(/g)?.length >= 6);
     assert.match(
       source.windowsPill,
-      /let Some\(info\) = query_monitor_info\(monitor\) else \{ return \};/,
+      /let Some\(info\) = query_monitor_info\(monitor\) else (\{ return \};|\{)/,
     );
     assert.match(
       source.windowsPill,

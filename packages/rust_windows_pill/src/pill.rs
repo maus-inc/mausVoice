@@ -565,7 +565,8 @@ fn query_client_area_animation() -> Option<bool> {
             0,
             Some((&mut enabled as *mut BOOL).cast()),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        ).ok()?;
+        )
+        .ok()?;
     }
     Some(enabled.as_bool())
 }
@@ -584,9 +585,8 @@ fn reduced_motion() -> bool {
     if !stale {
         return REDUCED_MOTION_CACHED.with(|c| c.get());
     }
-    let off = REDUCED_MOTION_CACHED.with(|cache| {
-        update_reduced_motion_cache(cache, query_client_area_animation())
-    });
+    let off = REDUCED_MOTION_CACHED
+        .with(|cache| update_reduced_motion_cache(cache, query_client_area_animation()));
     REDUCED_MOTION_CHECKED.with(|c| c.set(Some(now)));
     off
 }
@@ -631,7 +631,9 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             }
             let prev = state.phase.get();
             state.phase.set(phase);
-            state.style_tooltip_gate.set_take_running(phase == Phase::Recording);
+            state
+                .style_tooltip_gate
+                .set_take_running(phase == Phase::Recording);
             // A new take sweeps any banner parked above the pill (for example
             // the retranscribing toast) so it cannot sit on the style selector
             // for the whole take. A resume from Paused keeps toasts raised
@@ -758,8 +760,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
             *state.assistant_messages.borrow_mut() = messages;
             *state.assistant_streaming.borrow_mut() = streaming;
             *state.assistant_permissions.borrow_mut() = permissions;
-            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id)
-            {
+            if (active && !was_active) || (review_id.is_some() && review_id != previous_review_id) {
                 state.should_stick.set(true);
                 state.scroll_offset.set(0.0);
             }
@@ -897,8 +898,18 @@ fn tick(state: &PillState, dt: f64) {
         dt,
     );
 
-    let drag_target = if state.dragging.get() || state.long_press_active.get() { 1.0 } else { 0.0 };
-    rust_pill_shared::spring::spring_01(&state.drag_label_t, &state.drag_label_velocity, drag_target, rust_pill_shared::LABEL_SPRING_STIFFNESS, dt);
+    let drag_target = if state.dragging.get() || state.long_press_active.get() {
+        1.0
+    } else {
+        0.0
+    };
+    rust_pill_shared::spring::spring_01(
+        &state.drag_label_t,
+        &state.drag_label_velocity,
+        drag_target,
+        rust_pill_shared::LABEL_SPRING_STIFFNESS,
+        dt,
+    );
 
     if is_loading {
         state
@@ -914,7 +925,13 @@ fn tick(state: &PillState, dt: f64) {
         hovered,
         state.expand_t.get(),
     );
-    rust_pill_shared::spring::spring_01(&state.tooltip_t, &state.tooltip_velocity, tooltip_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.tooltip_t,
+        &state.tooltip_velocity,
+        tooltip_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     let panel_target = if state.owns_panel() { 1.0 } else { 0.0 };
     rust_pill_shared::spring::spring_01(
@@ -979,7 +996,13 @@ fn tick(state: &PillState, dt: f64) {
         state.flash_action.borrow().is_some() || state.flash_reject_action.borrow().is_some(),
         tooltip_target > 0.5,
     );
-    rust_pill_shared::spring::spring_01(&state.flash_t, &state.flash_velocity, flash_target, SPRING_STIFFNESS, dt);
+    rust_pill_shared::spring::spring_01(
+        &state.flash_t,
+        &state.flash_velocity,
+        flash_target,
+        SPRING_STIFFNESS,
+        dt,
+    );
 
     // Recording <-> paused crossfade driven by the same critically damped
     // spring as the other pill transitions (settles, never overshoots).
@@ -1390,7 +1413,11 @@ fn query_monitor_info(monitor: HMONITOR) -> Option<MONITORINFO> {
         cbSize: std::mem::size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
-    unsafe { GetMonitorInfoW(monitor, &mut info).as_bool().then_some(info) }
+    unsafe {
+        GetMonitorInfoW(monitor, &mut info)
+            .as_bool()
+            .then_some(info)
+    }
 }
 
 fn initial_position(win_h: i32) -> (i32, i32) {
@@ -1398,7 +1425,9 @@ fn initial_position(win_h: i32) -> (i32, i32) {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
         let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
-        let Some(info) = query_monitor_info(monitor) else { return (0, 0) };
+        let Some(info) = query_monitor_info(monitor) else {
+            return (0, 0);
+        };
         let wa = info.rcWork;
         let wa_w = wa.right - wa.left;
         let wa_h = wa.bottom - wa.top;
@@ -1473,7 +1502,9 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
             };
             MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST)
         };
-        let Some(info) = query_monitor_info(monitor) else { return };
+        let Some(info) = query_monitor_info(monitor) else {
+            return;
+        };
         if reset_to_cursor {
             // Consume the one-shot re-home only after lookup succeeds.
             state.reset_strategy.set(ResetStrategy::Current);
@@ -1486,10 +1517,7 @@ fn reposition_to_cursor_monitor(hwnd: HWND, state: &PillState) {
         let (x, y) = if state.has_saved_position.get() {
             // Use persisted position from last drag, clamped into the work area
             // of the monitor that position belongs to.
-            bounds.clamp_point(
-                state.saved_x.get() as f64,
-                state.saved_y.get() as f64,
-            )
+            bounds.clamp_point(state.saved_x.get() as f64, state.saved_y.get() as f64)
         } else {
             let x = default_pill_x(wa.left, wa_w, win_w);
             let y = default_pill_y(wa.top, wa_h, win_h);
@@ -1528,23 +1556,27 @@ fn window_clamp_bounds(state: &PillState, wa: RECT, win_w: i32, win_h: i32) -> D
     let (px, py, pw, ph) =
         draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
     let (cox, coy) = state.content_offset();
-    let (min_x, min_y, max_x, max_y) =
-        if state.effective_window_mode() == WindowMode::Dictation
-            && !state.assistant_active.get()
-        {
-            let fx = (cox + px).round() as i32;
-            let fy = (coy + py).round() as i32;
-            let fw = pw.round().max(1.0) as i32;
-            let fh = ph.round().max(1.0) as i32;
-            (
-                wa.left - fx,
-                wa.top - fy,
-                wa.right - fx - fw,
-                wa.bottom - fy - fh,
-            )
-        } else {
-            (wa.left, wa.top, wa.right - win_w, wa.bottom - content_canvas_height(win_h))
-        };
+    let (min_x, min_y, max_x, max_y) = if state.effective_window_mode() == WindowMode::Dictation
+        && !state.assistant_active.get()
+    {
+        let fx = (cox + px).round() as i32;
+        let fy = (coy + py).round() as i32;
+        let fw = pw.round().max(1.0) as i32;
+        let fh = ph.round().max(1.0) as i32;
+        (
+            wa.left - fx,
+            wa.top - fy,
+            wa.right - fx - fw,
+            wa.bottom - fy - fh,
+        )
+    } else {
+        (
+            wa.left,
+            wa.top,
+            wa.right - win_w,
+            wa.bottom - content_canvas_height(win_h),
+        )
+    };
 
     // Preserve inverted bounds here: drag placement may use them to collapse
     // toward a shared seam, while parked placement normalizes in clamp_point.
@@ -1597,7 +1629,10 @@ unsafe extern "system" fn collect_monitor_rect(
 /// Any callback or API failure marks the snapshot unknown; callers must not
 /// interpret a partial list as a monitor being unplugged.
 fn enumerate_monitor_topology(current: MonitorRect) -> Option<Vec<MonitorRect>> {
-    let mut snapshot = MonitorEnumeration { monitors: Vec::new(), failed: false };
+    let mut snapshot = MonitorEnumeration {
+        monitors: Vec::new(),
+        failed: false,
+    };
     let data = LPARAM(&mut snapshot as *mut _ as isize);
     // SAFETY: EnumDisplayMonitors completes callbacks synchronously, so `data`
     // remains a valid pointer to `snapshot` for the entire enumeration.
@@ -1627,7 +1662,11 @@ fn retain_monitor_topology(
 /// non-adjacent monitors so partial-overlap hysteresis can survive the pill
 /// center briefly leaving a neighbor's shared span.
 fn other_monitor_rects(current: MonitorRect, topology: &[MonitorRect]) -> Vec<MonitorRect> {
-    topology.iter().copied().filter(|monitor| *monitor != current).collect()
+    topology
+        .iter()
+        .copied()
+        .filter(|monitor| *monitor != current)
+        .collect()
 }
 
 fn drag_monitor_neighbors(state: &PillState, current: MonitorRect) -> Vec<MonitorRect> {
@@ -1649,16 +1688,19 @@ fn drag_placement(
         let _ = GetCursorPos(&mut cursor);
         let mut current = RECT::default();
         let _ = GetWindowRect(hwnd, &mut current);
-        let (anchor_x, anchor_y) = state.drag_motion.borrow().monitor_anchor(
-            (cursor.x as f64, cursor.y as f64), state.dragging.get(),
-        );
-        let anchor = POINT { x: anchor_x.round() as i32, y: anchor_y.round() as i32 };
+        let (anchor_x, anchor_y) = state
+            .drag_motion
+            .borrow()
+            .monitor_anchor((cursor.x as f64, cursor.y as f64), state.dragging.get());
+        let anchor = POINT {
+            x: anchor_x.round() as i32,
+            y: anchor_y.round() as i32,
+        };
         let monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTOPRIMARY);
         let info = query_monitor_info(monitor)?;
         let work_rect = monitor_rect(info.rcWork);
-        let (px, py, pw, ph) = draw::pill_position(
-            state, state.draw_width.get(), state.draw_height.get(),
-        );
+        let (px, py, pw, ph) =
+            draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
         let (content_x, content_y) = state.content_offset();
         let center_x = current.left as f64 + content_x + px + pw / 2.0;
         let center_y = current.top as f64 + content_y + py + ph / 2.0;
@@ -1692,14 +1734,14 @@ fn drag_placement(
         if state.dragging.get() {
             bounds.apply_shared_seam_bounds(
                 area.bounds,
-                (center_x - current.left as f64, center_y - current.top as f64),
+                (
+                    center_x - current.left as f64,
+                    center_y - current.top as f64,
+                ),
                 area.edge_mask,
             );
         }
-        bounds.collapse_inverted(
-            area.edge_mask,
-            (current.left as f64, current.top as f64),
-        );
+        bounds.collapse_inverted(area.edge_mask, (current.left as f64, current.top as f64));
         let work = rust_pill_shared::edge::EdgeWork {
             width: work_rect.width,
             height: work_rect.height,
@@ -1719,7 +1761,9 @@ fn tick_drag_frame(hwnd: HWND, state: &PillState, dt: f64) {
     if !dragging && !settling {
         return;
     }
-    let Some((bounds, cursor, current, work)) = drag_placement(hwnd, state) else { return };
+    let Some((bounds, cursor, current, work)) = drag_placement(hwnd, state) else {
+        return;
+    };
     let output = state.drag_motion.borrow_mut().advance(&DragFrame {
         pointer_x: cursor.x as f64,
         pointer_y: cursor.y as f64,
@@ -1762,9 +1806,8 @@ fn selector_space_above(window_y: f64, work_y: f64, content_y: f64, pill_y: f64)
 /// flapping it.
 fn tick_selector_placement(hwnd: HWND, state: &PillState, dt: f64) {
     let (rect, monitor) = current_pill_geometry(hwnd);
-    let (_, pill_y, _, _) = draw::pill_position(
-        state, state.draw_width.get(), state.draw_height.get(),
-    );
+    let (_, pill_y, _, _) =
+        draw::pill_position(state, state.draw_width.get(), state.draw_height.get());
     let space_above = monitor.map_or(f64::INFINITY, |work| {
         selector_space_above(rect.y, work.y, state.content_offset().1, pill_y)
     });
@@ -1802,7 +1845,10 @@ fn monitor_geometry_at(x: f64, y: f64) -> Option<Rect> {
     }
     unsafe {
         let monitor = MonitorFromPoint(
-            POINT { x: x.round() as i32, y: y.round() as i32 },
+            POINT {
+                x: x.round() as i32,
+                y: y.round() as i32,
+            },
             MONITOR_DEFAULTTONULL,
         );
         query_monitor_info(monitor).map(|info| Rect {
@@ -1826,7 +1872,10 @@ fn tick_crossing(hwnd: HWND, state: &PillState, dt: f64) {
     let cx = rect.x + ox + px + pw / 2.0;
     let cy = rect.y + oy + py + ph / 2.0;
     let monitor = monitor_geometry_at(cx, cy).unwrap_or(Rect {
-        x: f64::NAN, y: f64::NAN, width: f64::NAN, height: f64::NAN,
+        x: f64::NAN,
+        y: f64::NAN,
+        width: f64::NAN,
+        height: f64::NAN,
     });
     let rm = reduced_motion();
     let (out, changed) = advance_crossing(
@@ -2274,7 +2323,9 @@ fn handle_edit_message(msg: &MSG) -> bool {
                 // Escape while a transcript is under review is a cancel
                 // decision: the desktop is waiting for an answer.
                 let review_id = STATE.with(|s| {
-                    s.borrow().as_ref().and_then(|state| state.pending_review_id())
+                    s.borrow()
+                        .as_ref()
+                        .and_then(|state| state.pending_review_id())
                 });
                 match review_id {
                     Some(review_id) => input::send_review_decision(&review_id, "cancel", None),
@@ -2461,9 +2512,16 @@ mod tests {
         use rust_pill_shared::deform::{CrossingDeform, CrossingFrame};
         let mut crossing = CrossingDeform::new();
         let mut frame = CrossingFrame {
-            monitor_x: 0.0, monitor_y: 0.0, monitor_width: 1920.0, monitor_height: 1080.0,
-            pill_cx: 100.0, pill_cy: 500.0,
-            now: 0.0, dt: 1.0 / 60.0, stiffness: SPRING_STIFFNESS, reduced_motion: false,
+            monitor_x: 0.0,
+            monitor_y: 0.0,
+            monitor_width: 1920.0,
+            monitor_height: 1080.0,
+            pill_cx: 100.0,
+            pill_cy: 500.0,
+            now: 0.0,
+            dt: 1.0 / 60.0,
+            stiffness: SPRING_STIFFNESS,
+            reduced_motion: false,
         };
         assert!(!advance_crossing(&mut crossing, &frame).1);
         frame.monitor_x = 1920.0;
@@ -2495,8 +2553,11 @@ mod tests {
         use rust_pill_shared::placement::{PlacementFrame, SelectorPlacement};
         let mut placement = SelectorPlacement::new();
         let mut frame = PlacementFrame {
-            space_above: 0.0, tooltip_h: TOOLTIP_HEIGHT,
-            stiffness: SPRING_STIFFNESS, dt: 0.02, reduced_motion: true,
+            space_above: 0.0,
+            tooltip_h: TOOLTIP_HEIGHT,
+            stiffness: SPRING_STIFFNESS,
+            dt: 0.02,
+            reduced_motion: true,
         };
         assert!(advance_selector_placement(&mut placement, &frame));
         assert_eq!(placement.blend_velocity(), 0.0);
@@ -2509,22 +2570,10 @@ mod tests {
     #[test]
     fn selector_headroom_uses_the_painted_anchor_across_monitor_origins() {
         // Content origin plus the live pill top, across both canvas modes.
-        assert_eq!(
-            selector_space_above(20.0, 0.0, 120.0, 80.0),
-            220.0
-        );
-        assert_eq!(
-            selector_space_above(20.0, 0.0, 0.0, 200.0),
-            220.0
-        );
-        assert_eq!(
-            selector_space_above(-530.0, -550.0, 120.0, 80.0),
-            220.0
-        );
-        assert_eq!(
-            selector_space_above(-250.0, 0.0, 120.0, 80.0),
-            -50.0
-        );
+        assert_eq!(selector_space_above(20.0, 0.0, 120.0, 80.0), 220.0);
+        assert_eq!(selector_space_above(20.0, 0.0, 0.0, 200.0), 220.0);
+        assert_eq!(selector_space_above(-530.0, -550.0, 120.0, 80.0), 220.0);
+        assert_eq!(selector_space_above(-250.0, 0.0, 120.0, 80.0), -50.0);
     }
 
     #[test]
@@ -2565,36 +2614,71 @@ mod tests {
 
     #[test]
     fn failed_monitor_enumeration_reuses_last_complete_topology() {
-        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        let neighbor = MonitorRect { x: 1920.0, y: 0.0, width: 1280.0, height: 900.0 };
-        let non_adjacent = MonitorRect { x: 5000.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let current = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let neighbor = MonitorRect {
+            x: 1920.0,
+            y: 0.0,
+            width: 1280.0,
+            height: 900.0,
+        };
+        let non_adjacent = MonitorRect {
+            x: 5000.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
         let mut last_known = Some(vec![current, neighbor, non_adjacent]);
 
         let topology = retain_monitor_topology(&mut last_known, current, None);
 
         assert_eq!(topology, vec![current, neighbor, non_adjacent]);
-        assert_eq!(other_monitor_rects(current, &topology), vec![neighbor, non_adjacent]);
+        assert_eq!(
+            other_monitor_rects(current, &topology),
+            vec![neighbor, non_adjacent]
+        );
     }
 
     #[test]
     fn complete_monitor_enumeration_replaces_removed_neighbors() {
-        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
-        let removed = MonitorRect { x: 1920.0, y: 0.0, width: 1280.0, height: 900.0 };
-        let connected = MonitorRect { x: 0.0, y: 1080.0, width: 1920.0, height: 1080.0 };
+        let current = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let removed = MonitorRect {
+            x: 1920.0,
+            y: 0.0,
+            width: 1280.0,
+            height: 900.0,
+        };
+        let connected = MonitorRect {
+            x: 0.0,
+            y: 1080.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
         let mut last_known = Some(vec![current, removed]);
 
-        let topology = retain_monitor_topology(
-            &mut last_known,
-            current,
-            Some(vec![current, connected]),
-        );
+        let topology =
+            retain_monitor_topology(&mut last_known, current, Some(vec![current, connected]));
 
         assert_eq!(other_monitor_rects(current, &topology), vec![connected]);
     }
 
     #[test]
     fn an_incomplete_snapshot_without_a_cache_only_uses_the_known_monitor() {
-        let current = MonitorRect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        let current = MonitorRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
         let mut last_known = None;
 
         let topology = retain_monitor_topology(&mut last_known, current, None);
@@ -2623,8 +2707,8 @@ mod tests {
     #[test]
     fn selector_reserve_does_not_lift_the_parked_windows_canvas() {
         PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_BOTTOM));
-        let full_h = WINDOW_H_TYPING
-            + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
+        let full_h =
+            WINDOW_H_TYPING + rust_pill_shared::placement::below_slot_extra(TOOLTIP_HEIGHT) as i32;
         for work_top in [-1080, 0, 50] {
             let y = default_pill_y(work_top, 1080, full_h);
             assert_eq!(y, default_pill_y(work_top, 1080, WINDOW_H_TYPING));
@@ -2638,8 +2722,14 @@ mod tests {
     fn default_pill_y_top_anchors_to_top() {
         PILL_PLACEMENT.with(|c| c.set(PILL_PLACEMENT_TOP));
         let expected_offset = WINDOW_H_TYPING - DICTATION_WINDOW_HEIGHT;
-        assert_eq!(default_pill_y(0, 1080, 362), MARGIN_BOTTOM - expected_offset);
-        assert_eq!(default_pill_y(50, 1080, 362), 50 + MARGIN_BOTTOM - expected_offset);
+        assert_eq!(
+            default_pill_y(0, 1080, 362),
+            MARGIN_BOTTOM - expected_offset
+        );
+        assert_eq!(
+            default_pill_y(50, 1080, 362),
+            50 + MARGIN_BOTTOM - expected_offset
+        );
     }
 }
 

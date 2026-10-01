@@ -1,9 +1,9 @@
 use std::cell::{Cell, RefCell};
 
+use crate::constants::*;
 use crate::ipc::{
     Phase, PillMessage, PillPermission, PillReview, PillStreaming, ResetStrategy, Visibility,
 };
-use crate::constants::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum RocketPhase {
@@ -116,7 +116,6 @@ pub(crate) struct FlameTongue {
 
 #[derive(Debug, Clone)]
 
-
 pub(crate) struct PillState {
     pub(crate) phase: Cell<Phase>,
     pub(crate) visibility: Cell<Visibility>,
@@ -225,8 +224,7 @@ pub(crate) struct PillState {
     /// Last complete Win32 monitor snapshot for the active drag. A failed or
     /// partial enumeration must not look like a monitor hot-unplug to the seam
     /// tracker and clear its hysteresis latch.
-    pub(crate) last_monitor_topology:
-        RefCell<Option<Vec<rust_pill_shared::edge::MonitorRect>>>,
+    pub(crate) last_monitor_topology: RefCell<Option<Vec<rust_pill_shared::edge::MonitorRect>>>,
     /// Hover-intent state machine: dwells before arming hover and lingers
     /// through a grace before exiting, so fast pass-throughs never flicker
     /// the pill. See rust_pill_shared::hover.
@@ -291,7 +289,8 @@ impl PillState {
     /// Shared paint/input visibility during a selector side transition.
     pub(crate) fn tooltip_opacity(&self) -> f64 {
         rust_pill_shared::placement::tooltip_opacity(
-            self.tooltip_t.get(), self.selector_placement.borrow().blend(),
+            self.tooltip_t.get(),
+            self.selector_placement.borrow().blend(),
         )
     }
 
@@ -341,52 +340,109 @@ impl PillState {
     pub(crate) fn content_offset(&self) -> (f64, f64) {
         let dw = self.draw_width.get();
         let dh = self.draw_height.get();
-        ((WINDOW_W_TYPING as f64 - dw) / 2.0, WINDOW_H_TYPING as f64 - dh)
+        (
+            (WINDOW_W_TYPING as f64 - dw) / 2.0,
+            WINDOW_H_TYPING as f64 - dh,
+        )
     }
 
     pub(crate) fn needs_redraw(&self) -> bool {
-        if self.dirty.get() { return true; }
+        if self.dirty.get() {
+            return true;
+        }
 
         // Continuous animations driven by phase
-        if self.phase.get() != Phase::Idle { return true; }
+        if self.phase.get() != Phase::Idle {
+            return true;
+        }
 
         // Spring animations still in motion
-        if self.expand_velocity.get() != 0.0 { return true; }
-        if self.tooltip_velocity.get() != 0.0 { return true; }
-        if self.selector_placement.borrow().blend_velocity() != 0.0 { return true; }
-        if self.crossing.borrow().animating() { return true; }
-        if self.panel_open_velocity.get() != 0.0 { return true; }
-        if self.kb_button_velocity.get() != 0.0 { return true; }
-        if self.draw_w_velocity.get() != 0.0 { return true; }
-        if self.draw_h_velocity.get() != 0.0 { return true; }
-        if self.flash_velocity.get() != 0.0 { return true; }
-        if self.cancel_velocity.get() != 0.0 { return true; }
-        if self.pause_velocity.get() != 0.0 { return true; }
-        if self.inflate_velocity.get() != 0.0 { return true; }
+        if self.expand_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.tooltip_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.selector_placement.borrow().blend_velocity() != 0.0 {
+            return true;
+        }
+        if self.crossing.borrow().animating() {
+            return true;
+        }
+        if self.panel_open_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.kb_button_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.draw_w_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.draw_h_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.flash_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.cancel_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.pause_velocity.get() != 0.0 {
+            return true;
+        }
+        if self.inflate_velocity.get() != 0.0 {
+            return true;
+        }
 
         // Active visual effects
-        if self.fireworks_active.get() { return true; }
-        if self.flame_active.get() { return true; }
-        if self.flash_visible.get() { return true; }
-        if self.flash_blue_active.get() { return true; }
-        if self.transcript_has_message.get() { return true; }
-        if self.transcript_opacity.get() > 0.001 { return true; }
+        if self.fireworks_active.get() {
+            return true;
+        }
+        if self.flame_active.get() {
+            return true;
+        }
+        if self.flash_visible.get() {
+            return true;
+        }
+        if self.flash_blue_active.get() {
+            return true;
+        }
+        if self.transcript_has_message.get() {
+            return true;
+        }
+        if self.transcript_opacity.get() > 0.001 {
+            return true;
+        }
 
         // Long-press balloon pop + drag (ring_alpha keeps drawing while the
         // release fade is in flight).
-        if self.long_press_active.get() { return true; }
-        if self.dragging.get() { return true; }
-        if self.ring_alpha.get() > 0.0 { return true; }
+        if self.long_press_active.get() {
+            return true;
+        }
+        if self.dragging.get() {
+            return true;
+        }
+        if self.ring_alpha.get() > 0.0 {
+            return true;
+        }
         // The arm-confirmation halo outlives the ring's own alpha, so it needs
         // its own liveness check or the pulse would be culled mid-flight.
-        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) { return true; }
-        if self.arm_t.get() > 0.0 { return true; }
+        if rust_pill_shared::pulse_is_running(self.arm_pulse.get()) {
+            return true;
+        }
+        if self.arm_t.get() > 0.0 {
+            return true;
+        }
 
         // Assistant panel has shimmer and streaming content
-        if self.assistant_active.get() { return true; }
+        if self.assistant_active.get() {
+            return true;
+        }
 
         // A pending review keeps the panel on screen until it is answered.
-        if self.assistant_review.borrow().is_some() { return true; }
+        if self.assistant_review.borrow().is_some() {
+            return true;
+        }
 
         false
     }

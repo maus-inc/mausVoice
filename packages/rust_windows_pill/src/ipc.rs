@@ -276,9 +276,9 @@ mod review_localization_tests {
     fn review_edit_label_accepts_legacy_and_localized_payloads() {
         let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
         assert!(legacy.edit_label.is_none());
-        let localized: PillReview = serde_json::from_str(
-            r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#,
-        ).unwrap();
+        let localized: PillReview =
+            serde_json::from_str(r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#)
+                .unwrap();
         assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
         assert_eq!(localized.text, "draft");
     }

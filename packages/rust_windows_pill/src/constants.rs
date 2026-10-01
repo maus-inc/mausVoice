@@ -48,9 +48,24 @@ pub(crate) struct WaveConfig {
 }
 
 pub(crate) const WAVE_CONFIGS: &[WaveConfig] = &[
-    WaveConfig { frequency: 0.8, multiplier: 1.6, phase_offset: 0.0, opacity: 1.0 },
-    WaveConfig { frequency: 1.0, multiplier: 1.35, phase_offset: 0.85, opacity: 0.78 },
-    WaveConfig { frequency: 1.25, multiplier: 1.05, phase_offset: 1.7, opacity: 0.56 },
+    WaveConfig {
+        frequency: 0.8,
+        multiplier: 1.6,
+        phase_offset: 0.0,
+        opacity: 1.0,
+    },
+    WaveConfig {
+        frequency: 1.0,
+        multiplier: 1.35,
+        phase_offset: 0.85,
+        opacity: 0.78,
+    },
+    WaveConfig {
+        frequency: 1.25,
+        multiplier: 1.05,
+        phase_offset: 1.7,
+        opacity: 0.56,
+    },
 ];
 
 // ── Loading ──────────────────────────────────────────────────────
@@ -155,16 +170,76 @@ pub(crate) const FIREWORK_COLORS: &[(f64, f64, f64)] = &[
 ];
 
 pub(crate) const FIREWORK_LAUNCHES: &[FireworkLaunch] = &[
-    FireworkLaunch { time: 0.2, angle_deg: -25.0, speed: 140.0, fuse: 0.50, num_sparks: 12 },
-    FireworkLaunch { time: 0.8, angle_deg:  30.0, speed: 125.0, fuse: 0.55, num_sparks: 10 },
-    FireworkLaunch { time: 1.5, angle_deg: -15.0, speed: 150.0, fuse: 0.45, num_sparks: 14 },
-    FireworkLaunch { time: 2.2, angle_deg:  40.0, speed: 115.0, fuse: 0.60, num_sparks: 12 },
-    FireworkLaunch { time: 3.0, angle_deg: -35.0, speed: 130.0, fuse: 0.50, num_sparks: 11 },
-    FireworkLaunch { time: 3.7, angle_deg:  20.0, speed: 145.0, fuse: 0.50, num_sparks: 13 },
-    FireworkLaunch { time: 4.5, angle_deg: -40.0, speed: 120.0, fuse: 0.55, num_sparks: 10 },
-    FireworkLaunch { time: 5.2, angle_deg:  15.0, speed: 150.0, fuse: 0.45, num_sparks: 14 },
-    FireworkLaunch { time: 5.9, angle_deg: -30.0, speed: 125.0, fuse: 0.50, num_sparks: 12 },
-    FireworkLaunch { time: 6.4, angle_deg:  35.0, speed: 140.0, fuse: 0.55, num_sparks: 11 },
+    FireworkLaunch {
+        time: 0.2,
+        angle_deg: -25.0,
+        speed: 140.0,
+        fuse: 0.50,
+        num_sparks: 12,
+    },
+    FireworkLaunch {
+        time: 0.8,
+        angle_deg: 30.0,
+        speed: 125.0,
+        fuse: 0.55,
+        num_sparks: 10,
+    },
+    FireworkLaunch {
+        time: 1.5,
+        angle_deg: -15.0,
+        speed: 150.0,
+        fuse: 0.45,
+        num_sparks: 14,
+    },
+    FireworkLaunch {
+        time: 2.2,
+        angle_deg: 40.0,
+        speed: 115.0,
+        fuse: 0.60,
+        num_sparks: 12,
+    },
+    FireworkLaunch {
+        time: 3.0,
+        angle_deg: -35.0,
+        speed: 130.0,
+        fuse: 0.50,
+        num_sparks: 11,
+    },
+    FireworkLaunch {
+        time: 3.7,
+        angle_deg: 20.0,
+        speed: 145.0,
+        fuse: 0.50,
+        num_sparks: 13,
+    },
+    FireworkLaunch {
+        time: 4.5,
+        angle_deg: -40.0,
+        speed: 120.0,
+        fuse: 0.55,
+        num_sparks: 10,
+    },
+    FireworkLaunch {
+        time: 5.2,
+        angle_deg: 15.0,
+        speed: 150.0,
+        fuse: 0.45,
+        num_sparks: 14,
+    },
+    FireworkLaunch {
+        time: 5.9,
+        angle_deg: -30.0,
+        speed: 125.0,
+        fuse: 0.50,
+        num_sparks: 12,
+    },
+    FireworkLaunch {
+        time: 6.4,
+        angle_deg: 35.0,
+        speed: 140.0,
+        fuse: 0.55,
+        num_sparks: 11,
+    },
 ];
 
 // ── Flame ───────────────────────────────────────────────────────
@@ -215,6 +290,5 @@ pub(crate) const LONG_PRESS_OUTLINE_WIDTH: f64 = 2.0;
 // Ring + drag tuning constants live in `rust_pill_shared` so every platform
 // draws the long-press ring from one source of truth.
 pub(crate) use rust_pill_shared::{DRAG_INFLATE_SCALE, DRAG_INFLATE_STIFFNESS};
-
 
 // Particle physics constants
