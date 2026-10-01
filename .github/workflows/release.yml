@@ -541,14 +541,23 @@ jobs:
             echo "::error::UPDATER_PUBLIC_KEY is not a valid Tauri public-key value" >&2
             exit 1
           fi
+          # Walk the signatures, not the bundles. The pinned Tauri CLI signs its
+          # updater artifacts (`.app.tar.gz`, `.msi.zip`, `.nsis.zip`,
+          # `.AppImage`) and the job signs `.dmg` itself; the bare `.msi`, `.exe`
+          # and `.deb` beside them are the installers published for manual
+          # download and carry no `.sig`. Requiring a signature for those made
+          # every stable publication fail before it published anything.
+          # Requiring one per signed artifact instead: every signature present
+          # must verify, and a signature without the file it covers is an error.
           verified=0
-          while IFS= read -r -d '' bundle; do
-            if [ ! -f "$bundle.sig" ]; then
-              echo "::error::Missing signature for updater bundle $bundle" >&2
+          while IFS= read -r -d '' signature; do
+            bundle="${signature%.sig}"
+            if [ ! -f "$bundle" ]; then
+              echo "::error::Signature $signature has no artifact beside it" >&2
               exit 1
             fi
             signature_file="$(mktemp "$RUNNER_TEMP/mausvoice-updater-signature.XXXXXX")"
-            if ! base64 --decode < "$bundle.sig" > "$signature_file"; then
+            if ! base64 --decode < "$signature" > "$signature_file"; then
               rm -f "$signature_file"
               echo "::error::Signature for updater bundle $bundle is not valid Tauri minisign data" >&2
               exit 1
@@ -556,10 +565,7 @@ jobs:
             minisign -Vm "$bundle" -x "$signature_file" -p "$PUBLIC_KEY_FILE"
             rm -f "$signature_file"
             verified=$((verified + 1))
-          done < <(find dist -type f \( \
-            -name '*.app.tar.gz' -o -name '*.dmg' -o -name '*.msi' -o -name '*.msi.zip' -o \
-            -name '*.nsis.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.AppImage.tar.gz' \
-          \) -print0)
+          done < <(find dist -type f -name '*.sig' -print0)
           rm -f "$PUBLIC_KEY_FILE"
           if [ "$verified" -eq 0 ]; then
             echo "::error::No updater bundles found to verify" >&2

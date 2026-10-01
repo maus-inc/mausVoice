@@ -170,13 +170,34 @@ describe("release workflow shell contracts", () => {
     );
     assert.match(
       command,
-      /base64 --decode < "\$bundle\.sig" > "\$signature_file"/,
+      /bundle="\$\{signature%\.sig\}"/,
+      "the artifact a signature covers is the signature path minus its suffix",
+    );
+    assert.match(
+      command,
+      /base64 --decode < "\$signature" > "\$signature_file"/,
     );
     assert.match(
       command,
       /minisign -Vm "\$bundle" -x "\$signature_file" -p "\$PUBLIC_KEY_FILE"/,
     );
     assert.match(command, /No updater bundles found to verify/);
+
+    // The signed set is the pinned CLI's updater artifacts plus the `.dmg` the
+    // job signs itself. The bare `.msi`, `.exe` and `.deb` next to them are the
+    // manual-download installers and carry no `.sig`, so demanding one per
+    // recognized suffix failed every stable release before it published. The
+    // loop has to start from the signatures and check each one instead.
+    assert.match(
+      command,
+      /find dist -type f -name '\*\.sig' -print0/,
+      "verification must walk the signatures, not the installer suffixes",
+    );
+    assert.doesNotMatch(
+      command,
+      /-name '\*\.msi' -o|-name '\*\.exe' -o/,
+      "unsigned manual-download installers must not be required to have a signature",
+    );
 
     const verificationOffset = release.indexOf(
       "- name: Verify updater signatures against the shipped trust anchor",
@@ -216,8 +237,13 @@ describe("release workflow shell contracts", () => {
 
   it("enforces ref guard rejecting refs other than refs/heads/main", () => {
     const steps = extractSteps(release);
-    const refGuardSteps = steps.filter((s) => s.name === "Assert release ref is main");
-    assert.ok(refGuardSteps.length >= 3, "release workflow must enforce ref guard across jobs");
+    const refGuardSteps = steps.filter(
+      (s) => s.name === "Assert release ref is main",
+    );
+    assert.ok(
+      refGuardSteps.length >= 3,
+      "release workflow must enforce ref guard across jobs",
+    );
     for (const step of refGuardSteps) {
       assert.equal(step.shell, "bash");
       const cmd = step.run.join("\n");

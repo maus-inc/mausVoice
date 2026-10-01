@@ -229,6 +229,47 @@ describe("updater manifest builder", () => {
     );
   });
 
+  // The pinned CLI signs `.msi.zip` and `.nsis.zip`, and publishes the bare
+  // `.msi` and `.exe` beside them for manual download. Both the installer and
+  // the updater bundle match one installer type, and only one has a signature,
+  // so choosing the first match made the result depend on directory order — and
+  // on the wrong order it refused the release for a missing `.msi.sig`.
+  it("uses the signed archive when an unsigned installer shares its prefix", () => {
+    const manifest = buildManifestWithPlatforms(
+      {
+        "win/mausVoice_0.1.7_x64_en-US.msi": "bare-installer",
+        "win/mausVoice_0.1.7_x64_en-US.msi.zip": "msi-zip-bundle",
+        "win/mausVoice_0.1.7_x64_en-US.msi.zip.sig": "msi-zip-signature\n",
+        "win/mausVoice_0.1.7_x64-setup.exe": "bare-installer",
+        "win/mausVoice_0.1.7_x64-setup.nsis.zip": "nsis-bundle",
+        "win/mausVoice_0.1.7_x64-setup.nsis.zip.sig": "nsis-signature\n",
+      },
+      ["windows-x86_64", "windows-x86_64-msi", "windows-x86_64-nsis"],
+    );
+    assert.equal(
+      manifest.platforms["windows-x86_64-msi"].signature,
+      "msi-zip-signature",
+    );
+    assert.equal(
+      manifest.platforms["windows-x86_64-nsis"].signature,
+      "nsis-signature",
+    );
+    assert.match(manifest.platforms["windows-x86_64"].url, /\.msi\.zip$/);
+  });
+
+  it("still refuses a bundle that exists with no signature at all", () => {
+    assert.throws(
+      () =>
+        buildManifestWithPlatforms(
+          {
+            "win/mausVoice_0.1.7_x64_en-US.msi.zip": "msi-zip-bundle",
+          },
+          ["windows-x86_64-msi"],
+        ),
+      /missing their \.sig signature/,
+    );
+  });
+
   it("matches .msi.zip archive names emitted by pinned Tauri CLI for Windows MSI", () => {
     const manifest = buildManifestWithPlatforms(
       {

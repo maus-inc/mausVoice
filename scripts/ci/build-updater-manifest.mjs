@@ -132,16 +132,29 @@ export function buildPlatforms(files, { repository, tag }) {
   const missing = [];
 
   for (const type of INSTALLER_TYPES) {
-    const bundle = bundles.find((file) => type.match(path.basename(file)));
+    // Prefer a candidate that actually has a signature beside it. The installer
+    // and the updater bundle share a prefix, so both a bare `.msi` and a
+    // `.msi.zip` match this type and only one of them is signed; picking the
+    // first match instead made the outcome depend on the order the directory
+    // walk happened to produce.
+    const bundle = bundles.find((file) => {
+      const candidate = path.basename(file);
+      return type.match(candidate) && signatures.has(`${file}.sig`);
+    });
     if (!bundle) {
+      // No candidate at all means this platform simply produced nothing, which
+      // is normal for a matrix job that did not run. Only a candidate that
+      // exists without a signature is the error the manifest must refuse.
+      const unsigned = bundles
+        .filter((file) => type.match(path.basename(file)))
+        .map((file) => path.basename(file));
+      if (unsigned.length > 0) {
+        missing.push(...unsigned);
+      }
       continue;
     }
 
     const signaturePath = `${bundle}.sig`;
-    if (!signatures.has(signaturePath)) {
-      missing.push(path.basename(bundle));
-      continue;
-    }
 
     const entry = {
       signature: signaturePath,
