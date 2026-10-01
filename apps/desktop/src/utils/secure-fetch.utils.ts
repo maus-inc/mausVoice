@@ -179,18 +179,16 @@ const followHttpsRedirects = async (
     url: startUrl,
   };
   const requestSignal = input instanceof Request ? input.signal : null;
-  // A `Request` input carries its body on the object rather than in `init`, and
-  // the chain walks URLs, so without the read below the body is dropped on the
-  // first hop and a 307 or 308 replays with nothing at all. Cloned, so the
-  // caller can still read its own Request afterwards. A GET or HEAD Request has
-  // no body, so the common case reads nothing.
-  if (
-    chain.body === undefined &&
-    input instanceof Request &&
-    input.body !== null
-  ) {
-    chain.body = await input.clone().arrayBuffer();
-  }
+  // A `Request` input carries its body on the object rather than in `init`, and a
+  // URL cannot name one. So hop one is issued against that Request and lets the
+  // plugin stream it as it always has; only a redirect needs the bytes spelled
+  // out, and only then is the body read (see `walkChain`). Buffering it up front
+  // would duplicate every streamed upload in memory to serve a case that mostly
+  // never arrives.
+  const requestWithBody =
+    input instanceof Request && init?.body === undefined && input.body !== null
+      ? input
+      : null;
 
   // The chain is walked recursively rather than in a loop, because a hop's own
   // body has to be read before the next request goes out and a loop that awaits
@@ -203,18 +201,21 @@ const followHttpsRedirects = async (
         `Refusing to follow more than ${MAX_HTTPS_REDIRECTS} HTTPS redirects`,
       );
     }
-    const response = await tauriFetch(chain.url.href, {
-      // A `Request` input's own signal and redirect mode are part of the
-      // request; `init` alone would drop them, and an HTTPS request that
-      // ignored its abort signal would outlive the screen that started it.
-      signal: init?.signal ?? requestSignal ?? undefined,
-      redirect: init?.redirect ?? "follow",
-      ...init,
-      method: chain.method,
-      headers: chain.headers,
-      body: chain.body,
-      maxRedirections: 0,
-    });
+    const response = await tauriFetch(
+      hop === 0 && requestWithBody ? requestWithBody : chain.url.href,
+      {
+        ...init,
+        method: chain.method,
+        headers: chain.headers,
+        body: chain.body,
+        maxRedirections: 0,
+        // A `Request` input's own signal and redirect mode are part of the
+        // request; `init` alone would drop them, and an HTTPS request that
+        // ignored its abort signal would outlive the screen that started it.
+        signal: init?.signal ?? requestSignal ?? undefined,
+        redirect: init?.redirect ?? "follow",
+      },
+    );
     const targetUrl = nextHopUrl(response, chain.url);
     if (!targetUrl) return response;
 
@@ -225,11 +226,16 @@ const followHttpsRedirects = async (
       headers: chain.headers,
     });
     // `undefined` on both sides means this hop kept the body, which is what a
-    // 307 or 308 does and what a downgrading 301/302/303 does not. Reading the
-    // caller's Request body here is the only point where it is needed, so a
-    // chain that never redirects never pays for it.
-    // `undefined` on both sides means this hop kept the body, which is what a
-    // 307 or 308 does and what a downgrading 301/302/303 does not.
+    // 307 or 308 does and what a downgrading 301/302/303 does not. This is the
+    // only point the bytes are read; the clone leaves the caller's Request
+    // readable, and a chain that never redirects never pays for it.
+    if (
+      next.body === undefined &&
+      chain.body === undefined &&
+      requestWithBody
+    ) {
+      next.body = await requestWithBody.clone().arrayBuffer();
+    }
     chain.method = next.method;
     chain.body = next.body;
     chain.url = targetUrl;

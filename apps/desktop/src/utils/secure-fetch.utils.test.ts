@@ -500,22 +500,29 @@ describe("secureFetch", () => {
   // hop against a URL with `body` set explicitly, so the first hop is where the
   // body's bytes have to be named. Reading them only when a redirect needs them
   // meant a POST built from a Request reached the server with no body at all.
-  it("sends a Request input's body on the first hop", async () => {
+  it("hands a Request input's body to hop one unbuffered", async () => {
+    // The Request itself is hop one's target, so the plugin streams its body as
+    // it always has. Buffering it here would duplicate every streamed upload to
+    // serve the redirect case, which mostly never arrives.
+    const targets: unknown[] = [];
+    const responses = [new Response("ok")];
     serveHops([new Response("ok")]);
+    pluginFetchMock.mockImplementation((input: unknown) => {
+      targets.push(input);
+      const next = responses.shift();
+      return Promise.resolve(next ?? new Response("ok"));
+    });
 
-    await secureFetch(
-      new Request("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: '{"model":"gpt-4o"}',
-      }),
-    );
+    const request = new Request("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
 
-    expect(hop(0).method).toBe("POST");
-    expect(hop(0).body).toBeInstanceOf(ArrayBuffer);
-    expect(new TextDecoder().decode(hop(0).body as ArrayBuffer)).toBe(
-      '{"model":"gpt-4o"}',
-    );
+    await secureFetch(request);
+
+    expect(targets[0]).toBe(request);
+    expect(request.bodyUsed).toBe(false);
   });
 
   it("leaves a Request input readable for the caller after sending it", async () => {
