@@ -109,6 +109,22 @@ const render = async () => {
   });
 };
 
+/** Re-renders the same bubble, as any parent re-render would. */
+const rerender = async () => {
+  await act(async () => {
+    root?.render(createElement(ChatMessageBubble, { id: "pending" }));
+  });
+};
+
+const resolveReview = (status: "copied" | "canceled") => {
+  h.state.chatMessageById = {
+    pending: {
+      ...pendingMessage,
+      metadata: { ...pendingMessage.metadata, status },
+    },
+  };
+};
+
 describe("pending paste review messages", () => {
   it("renders the review card for an empty system message", async () => {
     await render();
@@ -150,5 +166,49 @@ describe("pending paste review messages", () => {
     // Only the review's own routing lifts an empty row into view; without it the
     // generic guards still hide empty non-assistant messages.
     expect(container.textContent).not.toContain("Paste action waiting for you");
+  });
+
+  it("focuses the outcome when the pending instructions are replaced", async () => {
+    await render();
+    resolveReview("copied");
+    await rerender();
+
+    // The Copy and Cancel buttons unmount with the instructions, so focus has to
+    // land on the outcome rather than on a removed node.
+    const outcome = container.querySelector<HTMLElement>(
+      '[role="status"][tabindex="0"]',
+    );
+    expect(outcome?.textContent).toBe("Copied for manual paste");
+    expect(document.activeElement).toBe(outcome);
+  });
+
+  it("does not pull focus back on a later re-render", async () => {
+    await render();
+    resolveReview("copied");
+    await rerender();
+
+    // The user moves on to something else entirely while the card stays on
+    // screen. Every keystroke elsewhere re-renders this bubble, and a ref
+    // callback that is a new function each render would drag focus back into
+    // the resolved card on all of them.
+    const elsewhere = document.createElement("button");
+    container.appendChild(elsewhere);
+    elsewhere.focus();
+    expect(document.activeElement).toBe(elsewhere);
+
+    await rerender();
+
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it("does not focus anything while the review is still pending", async () => {
+    await render();
+    const elsewhere = document.createElement("button");
+    container.appendChild(elsewhere);
+    elsewhere.focus();
+
+    await rerender();
+
+    expect(document.activeElement).toBe(elsewhere);
   });
 });

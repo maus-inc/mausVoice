@@ -262,6 +262,58 @@ describe("OpenAICompatibleModelPicker polling", () => {
     }
   });
 
+  it("ignores an abandoned probe that settles after its own deadline", async () => {
+    // The deadline has to abandon the run, not just stop waiting on it: a
+    // request that answers minutes later still resumes its continuation, and
+    // that continuation is the only thing standing between its stale verdict
+    // and the state the retry has already written.
+    vi.useFakeTimers();
+    try {
+      let resolveAbandoned: ((value: boolean) => void) | undefined;
+      checkAvailabilityMock.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveAbandoned = resolve;
+          }),
+      );
+      // Every later probe reports the endpoint as unavailable.
+      checkAvailabilityMock.mockResolvedValue(false);
+      renderPicker("http://127.0.0.1:8080");
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(checkAvailabilityMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(checkAvailabilityMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(document.body.textContent).toContain(
+        "doesn't support model listing",
+      );
+
+      // The abandoned run finally answers "available", with a model list.
+      await act(async () => {
+        resolveAbandoned?.(true);
+        await Promise.resolve();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      // The retry's verdict stands: no models are fetched, and the picker keeps
+      // the fallback the newer run established.
+      expect(getAvailableModelsMock).not.toHaveBeenCalled();
+      expect(document.body.textContent).toContain(
+        "doesn't support model listing",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("probes a key with no saved base URL through the private fetch", async () => {
     // `createOpenAICompatibleFetch` authorizes against the base URL stored on
     // the API-key row and rejects the call outright when that column is null. A

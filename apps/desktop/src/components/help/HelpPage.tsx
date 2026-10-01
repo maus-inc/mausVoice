@@ -38,6 +38,11 @@ export default function HelpPage() {
                 key={tip.id}
                 title={copy.title}
                 body={copy.body}
+                // This list is where dismissed tips are browsed, so the dimming
+                // is the only signal distinguishing them from live ones. It
+                // belongs to the card rather than to `TipCardFrame`, which also
+                // serves first-run tips that cannot be dismissed at all.
+                sx={{ opacity: isDismissed ? 0.65 : 1 }}
                 actions={
                   <Stack direction="row" spacing={1}>
                     {tip.href && (

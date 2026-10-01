@@ -80,6 +80,12 @@ export const OpenAICompatibleModelPicker = ({
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    // Counts the runs this effect has started. The deadline does not merely stop
+    // waiting on a run: it retires it by advancing this counter, so a request
+    // that answers minutes later resumes into a guard that is already false and
+    // writes nothing. Without the retirement the late continuation would clear
+    // the newer run's deadline and overwrite its verdict.
+    let currentRun = 0;
 
     /** Ends this run's deadline, which a settled run no longer needs. */
     const clearDeadline = () => {
@@ -90,10 +96,14 @@ export const OpenAICompatibleModelPicker = ({
     const run = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
+      const runId = ++currentRun;
+      /** False once this run has been retired by its deadline or a config change. */
+      const isCurrent = () => !cancelled && runId === currentRun;
       setIsLoading(true);
       // Armed before the first await, so a request that never settles is
       // abandoned on time rather than blocking the retry indefinitely.
       deadline = setTimeout(() => {
+        currentRun += 1;
         inFlight = false;
         setIsAvailable(false);
         setModels([]);
@@ -109,13 +119,13 @@ export const OpenAICompatibleModelPicker = ({
           fetchForEndpoint,
         );
         const available = await repo.checkAvailability();
-        if (cancelled) return;
+        if (!isCurrent()) return;
         clearDeadline();
 
         setIsAvailable(available);
         if (available) {
           const fetchedModels = await repo.getAvailableModels();
-          if (cancelled) return;
+          if (!isCurrent()) return;
           setModels(fetchedModels);
           setUseManualInput(false);
           // Endpoint answered: stop polling until the next config change.
@@ -128,17 +138,21 @@ export const OpenAICompatibleModelPicker = ({
         // run settles).
         timer = setTimeout(() => void run(), PROBE_RETRY_MS);
       } catch (error) {
-        clearDeadline();
         console.error("Failed to fetch OpenAI-compatible models", error);
-        if (!cancelled) {
-          setIsAvailable(false);
-          setModels([]);
-          setUseManualInput(true);
-          timer = setTimeout(() => void run(), PROBE_RETRY_MS);
-        }
+        if (!isCurrent()) return;
+        clearDeadline();
+        setIsAvailable(false);
+        setModels([]);
+        setUseManualInput(true);
+        timer = setTimeout(() => void run(), PROBE_RETRY_MS);
       } finally {
-        inFlight = false;
-        if (!cancelled) setIsLoading(false);
+        // Only the live run owns `inFlight` and the loading indicator; a retired
+        // run must not release the newer run's hold on either, which would let a
+        // third probe start alongside it.
+        if (isCurrent()) {
+          inFlight = false;
+          setIsLoading(false);
+        }
       }
     };
 

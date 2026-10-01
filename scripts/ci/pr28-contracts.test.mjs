@@ -18,8 +18,6 @@ const read = (relativePath) =>
     // line, which leaves a space before the dot once the newlines are collapsed.
     .replace(/\s+\./g, ".");
 
-const readRaw = (relativePath) =>
-  readFileSync(resolve(repoRoot, relativePath), "utf8");
 
 const source = Object.fromEntries(
   [

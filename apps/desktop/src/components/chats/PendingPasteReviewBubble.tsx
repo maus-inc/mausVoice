@@ -1,7 +1,7 @@
 import { ContentCopyRounded, DoNotDisturbRounded } from "@mui/icons-material";
 import { Box, Button, Stack, TextField, Typography } from "@mui/material";
 import type { ChatMessage } from "@maus-inc/types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import {
   cancelPendingPasteReview,
@@ -21,10 +21,21 @@ export const PendingPasteReviewBubble = ({
   const pending = getPendingPasteReview(message.metadata);
   const [text, setText] = useState(pending?.text ?? "");
   const [busy, setBusy] = useState(false);
+  const outcomeNode = useRef<HTMLParagraphElement | null>(null);
 
   useEffect(() => {
     setText(pending?.text ?? "");
   }, [pending?.text]);
+
+  // Focus the outcome the moment the pending instructions are replaced by it,
+  // so focus lands on the result instead of on the row whose buttons just
+  // unmounted. An inline `ref={node => node?.focus()}` cannot do this: it is a
+  // new function identity on every render, so React re-invokes it on every
+  // render and the card steals focus back from whatever the user moved on to.
+  const status = pending?.status;
+  useEffect(() => {
+    if (status && status !== "pending") outcomeNode.current?.focus();
+  }, [status]);
 
   if (!pending) return null;
 
@@ -87,19 +98,15 @@ export const PendingPasteReviewBubble = ({
               outcome, and both the Copy and Cancel buttons unmount at that
               point. Without a live region the replacement is silent: a screen
               reader user hears nothing, and focus is left on a removed node.
-              `role="status"` announces the change, and the region takes focus
-              so it lands on the outcome rather than being dropped. */}
+              `role="status"` announces the change, and the focus effect above
+              lands on the outcome rather than dropping it. */}
           <Typography
             variant="body2"
             color="text.secondary"
             role="status"
             aria-live="polite"
             tabIndex={pending.status === "pending" ? undefined : 0}
-            ref={
-              pending.status === "pending"
-                ? undefined
-                : (node: HTMLParagraphElement | null) => node?.focus()
-            }
+            ref={outcomeNode}
           >
             {pending.status === "pending" ? (
               <FormattedMessage defaultMessage="Opening Chats changes the focused app. Copy this text, then focus the destination and paste it there." />

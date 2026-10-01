@@ -2,8 +2,9 @@
 //!
 //! `PBT_POWERSETTINGCHANGE` arrives as a borrowed `POWERBROADCAST_SETTING`
 //! whose `Data` tail is only `DataLength` bytes long. The watcher that receives
-//! it is a `cfg(windows)` message pump, and no CI job runs `cargo test` on
-//! Windows, so anything decided there is decided with no test at all.
+//! it is a `cfg(windows)` message pump, and no CI job could run `cargo test`
+//! there -- the test binary links WebView2, which a bare runner does not have --
+//! so anything decided in that module was decided with no test at all.
 //!
 //! This module holds that decision and nothing else. It has no `cfg` gate and no
 //! Windows dependency, so it compiles and is unit-tested on every platform the

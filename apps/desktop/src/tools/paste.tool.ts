@@ -6,8 +6,12 @@ import {
   setToolAlwaysAllow,
 } from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
+import { getLogger } from "../utils/log.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
+
+/** Mirrors the Rust `PasteOutcome`, serialized snake_case. */
+type PasteOutcome = "pasted" | "copied_to_clipboard";
 
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
@@ -26,12 +30,22 @@ export class PasteTool extends BaseTool {
     if (!text?.trim()) {
       return { canceled: true };
     }
-    // Saved before the native insert, not after: opening Chats to read the
-    // saved review moves focus to mausVoice, so the insert below still lands in
-    // whatever the agent was pasting into, and the durable record is what lets
-    // the user recover the text once focus has moved.
-    await createPendingPasteReview(context?.conversationId ?? "", text);
-    await invoke("paste", { text, keybind: null });
+    let outcome: PasteOutcome;
+    try {
+      outcome = await invoke<PasteOutcome>("paste", { text, keybind: null });
+    } catch (error) {
+      // The insert never reached the target, so this is exactly the case the
+      // saved review exists for: the text is only recoverable by hand. The
+      // save is best-effort, and the insert's own failure is what the caller
+      // has to see, so a failed write is logged rather than reported.
+      await savePendingPasteReview(context?.conversationId ?? "", text);
+      throw error;
+    }
+    if (outcome === "copied_to_clipboard") {
+      // The focused target could not take the text, so nothing landed and the
+      // clipboard fallback has to be turned into a deliberate hand-off.
+      await savePendingPasteReview(context?.conversationId ?? "", text);
+    }
     return {};
   }
 
@@ -47,3 +61,23 @@ export class PasteTool extends BaseTool {
     setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }
+
+/**
+ * Record the paste for a manual hand-off, without ever failing the caller.
+ *
+ * The card is bookkeeping about a paste the user may already be able to
+ * complete another way: on the clipboard fallback the text is in the clipboard,
+ * and on a failed insert the insert's own error is the failure worth surfacing.
+ * A chat-message write that rejects must not swallow either, or the user ends
+ * up with neither the paste nor its record and only a bookkeeping error.
+ */
+const savePendingPasteReview = async (
+  conversationId: string,
+  text: string,
+): Promise<void> => {
+  try {
+    await createPendingPasteReview(conversationId, text);
+  } catch (error) {
+    getLogger().error(`Failed to save the pending Paste review: ${error}`);
+  }
+};
