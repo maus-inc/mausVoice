@@ -17,6 +17,11 @@ import {
 vi.mock("../store");
 vi.mock("../repos");
 vi.mock("../types/expansion-flags.types");
+const ephemeralSessionMock = vi.hoisted(() => ({
+  startEphemeralSession: vi.fn(async () => undefined),
+  endEphemeralSession: vi.fn(async () => undefined),
+}));
+vi.mock("../actions/ephemeral-session.actions", () => ephemeralSessionMock);
 const logger = vi.hoisted(() => ({
   error: vi.fn(),
   info: vi.fn(),
@@ -70,6 +75,61 @@ describe("featureFlags", () => {
         JSON.stringify({ meetingNotesEnabled: true }),
       );
       expect(produceAppState).toHaveBeenCalled();
+    });
+
+    it("starts an ephemeral session when its flag is turned on", async () => {
+      const mockUpdated = withFlags('{"ephemeralSessionEnabled":true}');
+      const mockRepo = createRepoMock();
+      mockRepo.compareAndSetExpansionFlags.mockResolvedValue(mockUpdated);
+      vi.mocked(getUserPreferencesRepo).mockReturnValue(mockRepo);
+
+      await setExpansionFlag("ephemeralSessionEnabled", true);
+
+      // Without this the preference offers a session that never begins, so
+      // persistence is never actually suppressed.
+      expect(ephemeralSessionMock.startEphemeralSession).toHaveBeenCalledTimes(
+        1,
+      );
+      expect(ephemeralSessionMock.endEphemeralSession).not.toHaveBeenCalled();
+    });
+
+    it("ends the ephemeral session when its flag is turned off", async () => {
+      const mockUpdated = withFlags('{"ephemeralSessionEnabled":false}');
+      const mockRepo = createRepoMock();
+      mockRepo.compareAndSetExpansionFlags.mockResolvedValue(mockUpdated);
+      vi.mocked(getUserPreferencesRepo).mockReturnValue(mockRepo);
+
+      await setExpansionFlag("ephemeralSessionEnabled", false);
+
+      expect(ephemeralSessionMock.endEphemeralSession).toHaveBeenCalledTimes(1);
+      expect(ephemeralSessionMock.startEphemeralSession).not.toHaveBeenCalled();
+    });
+
+    it("does not run a session when another expansion flag is toggled", async () => {
+      const mockUpdated = withFlags('{"meetingNotesEnabled":true}');
+      const mockRepo = createRepoMock();
+      mockRepo.compareAndSetExpansionFlags.mockResolvedValue(mockUpdated);
+      vi.mocked(getUserPreferencesRepo).mockReturnValue(mockRepo);
+
+      await setExpansionFlag("meetingNotesEnabled", true);
+
+      expect(ephemeralSessionMock.startEphemeralSession).not.toHaveBeenCalled();
+      expect(ephemeralSessionMock.endEphemeralSession).not.toHaveBeenCalled();
+    });
+
+    it("does not run a session for a compare-and-set that never won", async () => {
+      const mockRepo = createRepoMock();
+      mockRepo.compareAndSetExpansionFlags.mockResolvedValue(null);
+      vi.mocked(getUserPreferencesRepo).mockReturnValue(mockRepo);
+
+      await expect(
+        setExpansionFlag("ephemeralSessionEnabled", true),
+      ).rejects.toThrow("changed repeatedly");
+
+      // The flag was never persisted, so a session must not be left running
+      // behind a preference that still reads off.
+      expect(ephemeralSessionMock.startEphemeralSession).not.toHaveBeenCalled();
+      expect(ephemeralSessionMock.endEphemeralSession).not.toHaveBeenCalled();
     });
 
     it("returns a rejected promise when the repo throws", async () => {

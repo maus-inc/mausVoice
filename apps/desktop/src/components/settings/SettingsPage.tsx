@@ -115,7 +115,10 @@ import {
   getMyUserPreferences,
   getTranscriptionPrefs,
 } from "../../utils/user.utils";
-import { PillPlacementSetting } from "./PillPlacementSetting";
+import {
+  isPillPlacementAvailable,
+  PillPlacementSetting,
+} from "./PillPlacementSetting";
 import { UpdateChannelSetting } from "./UpdateChannelSetting";
 import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { UpdateSettingSection } from "./UpdateSettingSection";
@@ -509,6 +512,9 @@ export default function SettingsPage() {
       include_incognito_in_stats: incognitoModeEnabled,
       learn_from_corrections: supportsCorrectionWatch,
       always_run_as_administrator: platform === "windows",
+      // Search and `?setting=` deep links read this snapshot, so a control the
+      // platform does not render has to read unavailable here too.
+      pill_placement: isPillPlacementAvailable(),
       elevenlabs_keyterms: transcriptionProvider === "elevenlabs",
       where_your_dictation_audio_goes: showAudioDisclosure,
     }),

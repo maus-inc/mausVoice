@@ -19,7 +19,10 @@ import {
   getIsPowerModeEnabled,
 } from "../../utils/assistant-mode.utils";
 import { AGENT_DICTATE_HOTKEY } from "../../utils/keyboard.utils";
-import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import {
+  DialogTitleWithClose,
+  useDialogTitleId,
+} from "../common/DialogTitleWithClose";
 import { SettingSection } from "../common/SettingSection";
 import { AIAgentModeConfiguration } from "./AIAgentModeConfiguration";
 import { HotkeySetting } from "./HotkeySetting";
@@ -65,6 +68,7 @@ const ToggleRow = ({
 export const AIAgentModeDialog = () => {
   const intl = useIntl();
   const open = useAppStore((state) => state.settings.agentModeDialogOpen);
+  const titleId = useDialogTitleId();
   const assistantModeEnabled = useAppStore(getIsAssistantModeEnabled);
   const powerModeEnabled = useAppStore(getIsPowerModeEnabled);
   const handleClose = () => {
@@ -152,8 +156,14 @@ export const AIAgentModeDialog = () => {
           </Button>
         </DialogActions>
       </Dialog>
-      <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-        <DialogTitleWithClose onClose={handleClose}>
+      <Dialog
+        open={open}
+        onClose={handleClose}
+        maxWidth="sm"
+        fullWidth
+        aria-labelledby={titleId}
+      >
+        <DialogTitleWithClose onClose={handleClose} titleId={titleId}>
           <FormattedMessage defaultMessage="Assistant mode" />
           <Chip label="Beta" size="small" color="primary" />
         </DialogTitleWithClose>

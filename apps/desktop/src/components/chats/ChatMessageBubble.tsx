@@ -6,6 +6,7 @@ import {
   editAndResend,
   laterMessagesHaveToolActivity,
 } from "../../actions/chat.actions";
+import { getPendingPasteReview } from "../../actions/pending-paste-review.actions";
 import { getLogger } from "../../utils/log.utils";
 import { useAppStore } from "../../store";
 import {
@@ -13,6 +14,7 @@ import {
   useContextMenu,
   type ContextMenuItem,
 } from "../common/ContextMenu";
+import { PendingPasteReviewBubble } from "./PendingPasteReviewBubble";
 import { ToolResultPart, useMessageParts } from "./ChatMessageParts";
 import {
   ChatMessageContent,
@@ -70,6 +72,16 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   const onlyPart = parts.length === 1 ? parts[0] : undefined;
   if (onlyPart?.kind === "tool-result") {
     return <ToolResultPart part={onlyPart} />;
+  }
+
+  // The saved Paste review owns its whole row: it is stored as an empty system
+  // message, so both the empty-message guards below and the generic content
+  // renderer would leave it invisible. Routed ahead of both, and before the
+  // context menu, which offers nothing meaningful for a message the user cannot
+  // edit and whose content is empty.
+  const pendingPasteReview = getPendingPasteReview(message.metadata);
+  if (pendingPasteReview) {
+    return <PendingPasteReviewBubble message={message} />;
   }
 
   if (!shouldRenderMessage(message, parts, isStreaming, canRetry)) return null;

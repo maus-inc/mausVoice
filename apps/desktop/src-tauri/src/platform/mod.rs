@@ -30,6 +30,11 @@ pub enum PasteKeybindSupport {
 
 pub mod common;
 
+// Deliberately not `cfg`-gated. The decision the Windows resume watcher makes
+// from a `PBT_POWERSETTINGCHANGE` payload is pure data, and no CI job runs
+// `cargo test` on Windows, so it lives where it is tested on every platform.
+pub mod power_broadcast;
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "linux")]

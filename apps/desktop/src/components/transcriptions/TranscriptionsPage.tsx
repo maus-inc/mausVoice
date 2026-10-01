@@ -39,7 +39,10 @@ import {
   chromeSelectMenuProps,
   selectedOptionLabel,
 } from "../common/chromeMenu";
-import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import {
+  DialogTitleWithClose,
+  useDialogTitleId,
+} from "../common/DialogTitleWithClose";
 
 const languageOptions = (
   [
@@ -66,6 +69,7 @@ export default function TranscriptionsPage() {
       .filter((tone): tone is Tone => Boolean(tone)),
   );
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const importDialogTitleId = useDialogTitleId();
   const [selectedToneId, setSelectedToneId] = useState<string | null>(null);
   const [selectedLanguage, setSelectedLanguage] =
     useState<DictationLanguageCode>(
@@ -218,9 +222,13 @@ export default function TranscriptionsPage() {
         onClose={closeImport}
         maxWidth="xs"
         fullWidth
+        aria-labelledby={importDialogTitleId}
         slotProps={{ paper: { sx: chromeDialogPaperSx } }}
       >
-        <DialogTitleWithClose onClose={closeImport}>
+        <DialogTitleWithClose
+          onClose={closeImport}
+          titleId={importDialogTitleId}
+        >
           <FormattedMessage defaultMessage="Import audio" />
         </DialogTitleWithClose>
         <DialogContent>

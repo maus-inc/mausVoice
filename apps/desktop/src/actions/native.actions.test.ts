@@ -60,7 +60,7 @@ afterEach(() => {
 });
 
 describe("requestAdminRelaunch", () => {
-  it("opens the elevation-declined dialog on cancelled without releasing the startup gate", async () => {
+  it("reports cancelled without opening the dialog, which its caller owns", async () => {
     nativeRepoMock.requestAdminRelaunch.mockResolvedValueOnce("cancelled");
 
     // Simulate the pre-flight gate still holding full init.
@@ -75,9 +75,12 @@ describe("requestAdminRelaunch", () => {
     const result = await requestAdminRelaunch();
 
     expect(result).toBe("cancelled");
-    expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(true);
-    // Gate stays pending so the decline dialog is the helper's final state
-    // until the user chooses Launch normally or Close mausVoice.
+    // The pre-flight is the only caller that knows whether the result arrived
+    // inside the window it is waiting for, so it opens the decline dialog; a
+    // result that settles after the watchdog would otherwise raise it. Gate
+    // stays pending: the decline dialog is the helper's final state until the
+    // user picks Launch normally or Close mausVoice.
+    expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(false);
     expect(getAppState().settings.elevationStartupPending).toBe(true);
   });
 

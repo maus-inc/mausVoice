@@ -194,10 +194,31 @@ describe("runStartupElevationPreflight", () => {
 
     expect(requestAdminRelaunchMock).toHaveBeenCalledTimes(1);
     expect(getAppState().settings.elevationStartupPending).toBe(true);
+    // The pre-flight is the decline dialog's owner: only it knows the result
+    // arrived while the gate was still being held for it.
+    expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(true);
 
     launchNormallyAfterElevationDecline();
     expect(getAppState().settings.elevationStartupPending).toBe(false);
+    expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(false);
   });
+
+  it.each(["success", "failed", null] as const)(
+    "leaves the decline dialog closed after relaunch result %s",
+    async (result) => {
+      prefsRepoMock.getUserPreferences.mockResolvedValueOnce(
+        prefsWithAdmin(true),
+      );
+      requestAdminRelaunchMock.mockResolvedValueOnce(result);
+
+      await runStartupElevationPreflight({
+        isMainWindow: true,
+        platform: "windows",
+      });
+
+      expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(false);
+    },
+  );
 
   it("holds the gate on require-restart until process exit", async () => {
     prefsRepoMock.getUserPreferences.mockResolvedValueOnce(
@@ -275,10 +296,14 @@ describe("runStartupElevationPreflight", () => {
       expect(loggerMock.warning).toHaveBeenCalled();
 
       // A relaunch result that arrives after the watchdog must not reopen the
-      // gate or relaunch a session that already launched unelevated.
+      // gate or relaunch a session that already launched unelevated, and it
+      // must not raise the decline dialog: that dialog holds the gate closed,
+      // so opening it for a discarded result would hand the user a prompt about
+      // a UAC request this run has already given up on.
       resolveLate?.("cancelled");
       await vi.advanceTimersByTimeAsync(1_000);
       expect(getAppState().settings.elevationStartupPending).toBe(false);
+      expect(getAppState().settings.elevationDeclinedDialogOpen).toBe(false);
     } finally {
       vi.useRealTimers();
     }

@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolInfo } from "@maus-inc/types";
-import { BaseTool } from "./base.tool";
+import { BaseTool, type ToolExecutionContext } from "./base.tool";
 import {
   getToolAlwaysAllow,
   setToolAlwaysAllow,
 } from "../utils/tool-permission.utils";
 import { getAppState } from "../store";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
+import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
 
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
@@ -15,6 +16,7 @@ export class PasteTool extends BaseTool {
 
   async execute(
     params: Record<string, unknown>,
+    context?: ToolExecutionContext,
   ): Promise<Record<string, unknown>> {
     const requestedText = typeof params.text === "string" ? params.text : "";
     const text =
@@ -24,6 +26,11 @@ export class PasteTool extends BaseTool {
     if (!text?.trim()) {
       return { canceled: true };
     }
+    // Saved before the native insert, not after: opening Chats to read the
+    // saved review moves focus to mausVoice, so the insert below still lands in
+    // whatever the agent was pasting into, and the durable record is what lets
+    // the user recover the text once focus has moved.
+    await createPendingPasteReview(context?.conversationId ?? "", text);
     await invoke("paste", { text, keybind: null });
     return {};
   }

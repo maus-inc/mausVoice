@@ -28,6 +28,22 @@ export const launchNormallyAfterElevationDecline = (): void => {
   });
 };
 
+/**
+ * Open the helper dialog for a UAC prompt the user dismissed.
+ *
+ * The decision belongs here rather than inside `requestAdminRelaunch` because
+ * only this pre-flight knows whether the result is still wanted. A relaunch
+ * that settles after the watchdog has already released the gate and let the app
+ * start unelevated; opening the decline dialog for it then would strand the
+ * user in a dialog about a prompt they answered long ago. `requestAdminRelaunch`
+ * therefore reports the outcome and leaves the UI to whoever can still act.
+ */
+const openElevationDeclinedDialog = (): void => {
+  produceAppState((draft) => {
+    draft.settings.elevationDeclinedDialogOpen = true;
+  });
+};
+
 /** "Close mausVoice" — process exit, not hide-to-tray. */
 export const quitAfterElevationDecline = (): Promise<void> => quitApp();
 
@@ -144,12 +160,19 @@ export const runStartupElevationPreflight = async (opts: {
   let relaunchLapsed = false;
   const relaunch = requestAdminRelaunch().then((result) => {
     // A result arriving after the watchdog must not reopen the gate or
-    // restart an app that already launched unelevated.
+    // restart an app that already launched unelevated. It must not open the
+    // decline dialog either: that dialog is where a live decline is answered,
+    // and it holds the gate closed, so showing it for a result the pre-flight
+    // has already discarded would put the user in a dialog about a prompt this
+    // run is no longer waiting on.
     if (relaunchLapsed) {
       getLogger().warning(
         "Ignoring administrator relaunch result that arrived after the startup watchdog",
       );
       return null;
+    }
+    if (result === "cancelled") {
+      openElevationDeclinedDialog();
     }
     return result;
   });

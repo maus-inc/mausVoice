@@ -8,6 +8,10 @@ import {
   serializeExpansionFlags,
 } from "../types/expansion-flags.types";
 import { getUserPreferencesRepo } from "../repos";
+import {
+  endEphemeralSession,
+  startEphemeralSession,
+} from "../actions/ephemeral-session.actions";
 
 let togglePromise: Promise<void> = Promise.resolve();
 
@@ -54,6 +58,15 @@ export const setExpansionFlag = (
         produceAppState((draft) => {
           draft.userPrefs = updated;
         });
+        // The flag is the only writer of `ephemeralSessionActive`, so the run
+        // has to start and stop here or the preference and the session it
+        // offers disagree: persistence would stay on for a session the user
+        // turned on. Only after the compare-and-set succeeded -- a rejected
+        // update must not leave a session running behind a flag that says it is
+        // off.
+        if (name === "ephemeralSessionEnabled") {
+          await (enabled ? startEphemeralSession() : endEphemeralSession());
+        }
         return;
       }
       throw new Error("Expansion flags changed repeatedly; retry the update");

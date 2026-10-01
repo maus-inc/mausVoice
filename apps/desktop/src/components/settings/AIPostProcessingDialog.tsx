@@ -8,13 +8,17 @@ import {
 } from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
-import { DialogTitleWithClose } from "../common/DialogTitleWithClose";
+import {
+  DialogTitleWithClose,
+  useDialogTitleId,
+} from "../common/DialogTitleWithClose";
 import { AIPostProcessingConfiguration } from "./AIPostProcessingConfiguration";
 
 export const AIPostProcessingDialog = () => {
   const open = useAppStore(
     (state) => state.settings.aiPostProcessingDialogOpen,
   );
+  const titleId = useDialogTitleId();
 
   const handleClose = () => {
     produceAppState((draft) => {
@@ -23,8 +27,14 @@ export const AIPostProcessingDialog = () => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitleWithClose onClose={handleClose}>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      aria-labelledby={titleId}
+    >
+      <DialogTitleWithClose onClose={handleClose} titleId={titleId}>
         <FormattedMessage defaultMessage="AI post processing" />
       </DialogTitleWithClose>
       <DialogContent dividers>

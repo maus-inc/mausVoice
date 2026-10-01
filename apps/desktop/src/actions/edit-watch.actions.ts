@@ -315,6 +315,9 @@ export const beginEditWatch = (text: string): void => {
   // that proposed it, so it is dropped here rather than left for the accept
   // path to compare against: nothing the user is now looking at refers to it.
   recentlyLapsedProposal = null;
+  // The prompt from the previous dictation may still be on the pill, but it
+  // answered a question this watch no longer owns.
+  clearVisibleProposalId();
   // Fire and forget. captureBaseline swallows its own errors, so this cannot
   // surface as an unhandled rejection.
   void captureBaseline(snapshot);
@@ -326,6 +329,9 @@ export const endEditWatch = (): void => {
   // watch, so a surviving proposal could never be answered and would only
   // block future polls.
   clearAutoLearnProposal();
+  // The listener is gone too, so a click that is already on its way must not be
+  // answered by whatever proposal is current when it lands.
+  clearVisibleProposalId();
 };
 
 const isWatchActive = (): boolean => {
@@ -378,8 +384,47 @@ const resolveBaseline = (
 
 const collectExistingTerms = (): string[] => collectTermValues(getAppState());
 
+/**
+ * The id of the proposal the on-screen prompt belongs to, or null when no
+ * prompt of ours is showing.
+ *
+ * The toast outlives both the store proposal and the watch: the pill dismisses
+ * it on its own timer, and a TTL expiry clears the proposal while the prompt is
+ * still there. A click on such a prompt must answer the prompt the user is
+ * looking at, not whatever proposal has taken its place since, so the id is
+ * held here for as long as the prompt could still be clicked.
+ */
+let visibleProposalId: string | null = null;
+
+let nextProposalId = 1;
+
+/**
+ * The proposal id a click answers, or null when no prompt is outstanding.
+ *
+ * Read by the toast listener before it acts on a click, so the click can be
+ * checked against the prompt it was actually raised for.
+ */
+export const getVisibleProposalId = (): string | null => visibleProposalId;
+
+/**
+ * Forget the on-screen prompt.
+ *
+ * Deliberately not part of `clearAutoLearnProposal`: a TTL expiry clears the
+ * store proposal while the prompt is still on the pill, and the click it is
+ * holding a grace window for has to stay answerable. Call this where the prompt
+ * itself is gone or superseded.
+ */
+const clearVisibleProposalId = (): void => {
+  visibleProposalId = null;
+};
+
 const proposeAutoLearnTerm = async (term: string): Promise<void> => {
   const intl = getIntl();
+  // Minted per prompt, not per term: a term proposed twice in one watch is two
+  // different prompts, and only the newest one may be answered.
+  const proposalId = String(nextProposalId);
+  nextProposalId += 1;
+  visibleProposalId = proposalId;
   await showToast({
     message: intl.formatMessage(
       { defaultMessage: 'Add "{term}" to your dictionary?' },
@@ -389,6 +434,7 @@ const proposeAutoLearnTerm = async (term: string): Promise<void> => {
     duration: PROPOSAL_TOAST_DURATION_MS,
     action: "auto_learn_accept",
     rejectAction: "auto_learn_reject",
+    proposalId,
   });
 };
 
@@ -538,12 +584,15 @@ export const acceptAutoLearnProposal = async (): Promise<void> => {
       return;
     }
     recentlyLapsedProposal = null;
+    // The prompt has been answered; nothing on the pill refers to it now.
+    clearVisibleProposalId();
     await createGlossaryTerms([lapsed.term]);
     return;
   }
 
   const { term } = proposal;
   recentlyLapsedProposal = null;
+  clearVisibleProposalId();
   clearAutoLearnProposal();
   await createGlossaryTerms([term]);
 };
@@ -555,5 +604,6 @@ export const rejectAutoLearnProposal = (): void => {
   }
 
   rememberDeniedTerm(proposal.term);
+  clearVisibleProposalId();
   clearAutoLearnProposal();
 };

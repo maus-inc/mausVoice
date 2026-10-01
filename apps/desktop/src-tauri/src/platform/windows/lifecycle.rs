@@ -58,6 +58,10 @@ mod imp {
     };
 
     use crate::domain::EVT_DESKTOP_RESUME;
+    use crate::platform::power_broadcast::{
+        console_display_power, ConsoleDisplayPower, CONSOLE_DISPLAY_STATE_DATA_LENGTH,
+        CONSOLE_DISPLAY_STATE_GUID,
+    };
 
     const WM_POWERBROADCAST: u32 = 0x0218;
     const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
@@ -69,14 +73,12 @@ mod imp {
     /// APM constants above are never seen for the console display state.
     const PBT_POWERSETTINGCHANGE: usize = 0x8013;
 
-    /// `GUID_CONSOLE_DISPLAY_STATE` reports 0 when the display is off and 1 when
-    /// it is on again. Any other value is a different display state change.
-    const CONSOLE_DISPLAY_ON: u32 = 1;
-
     const WTS_SESSION_UNLOCK: u32 = 0x8;
 
+    /// Built from the shared constant rather than restated, so the setting this
+    /// watcher registers for and the one it answers cannot drift apart.
     const GUID_CONSOLE_DISPLAY_STATE: windows::core::GUID =
-        windows::core::GUID::from_u128(0x6FE69556_704A_47A0_8F24_C28D936FDA47);
+        windows::core::GUID::from_u128(CONSOLE_DISPLAY_STATE_GUID);
 
     const LIFECYCLE_CLASS_NAME: &str = "MausVoiceLifecycleWindow";
 
@@ -156,31 +158,34 @@ mod imp {
     /// `&POWERBROADCAST_SETTING` asserts all 24 are readable and that the
     /// address carries the struct's alignment. So each field is read from the
     /// raw pointer with `read_unaligned` instead, and the `Data` byte is
-    /// touched only after the length says it is there. The expected GUID is
-    /// checked first, so a message from another registered setting cannot be
-    /// answered with this one's answer.
+    /// touched only after the length says it is there.
+    ///
+    /// The decision itself — the GUID check, the length check, and what the
+    /// byte means — lives in [`crate::platform::power_broadcast`], which
+    /// compiles and is unit-tested on every platform. Only the unaligned reads
+    /// stay here, because only this module knows the message is truncated.
     fn console_display_is_on(lparam: LPARAM) -> bool {
         if lparam.0 == 0 {
             return false;
         }
         let base = lparam.0 as *const u8;
-        let power_setting = unsafe { std::ptr::read_unaligned(base.cast::<GUID>()) };
-        if power_setting != GUID_CONSOLE_DISPLAY_STATE {
-            return false;
-        }
-        let data_length = unsafe {
+        let setting: [u8; 16] = unsafe { std::ptr::read_unaligned(base.cast()) };
+        let data_length: u32 = unsafe {
             std::ptr::read_unaligned(
                 base.add(std::mem::offset_of!(POWERBROADCAST_SETTING, DataLength))
                     .cast::<u32>(),
             )
         };
-        if data_length as usize != std::mem::size_of::<u32>() {
-            return false;
-        }
         // `Data` is a `[u8; 1]`, so read the byte rather than casting to a
         // `*const u32`: the array is only byte-aligned and the value is small.
-        unsafe { *base.add(std::mem::offset_of!(POWERBROADCAST_SETTING, Data)) }
-            == CONSOLE_DISPLAY_ON as u8
+        // Read only once the length says it is there; the message guarantees
+        // nothing past it.
+        let data = if data_length == CONSOLE_DISPLAY_STATE_DATA_LENGTH {
+            Some(unsafe { *base.add(std::mem::offset_of!(POWERBROADCAST_SETTING, Data)) })
+        } else {
+            None
+        };
+        console_display_power(&setting, data_length, data) == ConsoleDisplayPower::On
     }
 
     /// `Send + Sync` closure target for the resume emission. We stash a
@@ -354,7 +359,8 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{console_display_is_on, CONSOLE_DISPLAY_ON, GUID_CONSOLE_DISPLAY_STATE};
+        use super::{console_display_is_on, GUID_CONSOLE_DISPLAY_STATE};
+        use crate::platform::power_broadcast::CONSOLE_DISPLAY_ON;
         use windows::core::GUID;
         use windows::Win32::Foundation::LPARAM;
         use windows::Win32::System::Power::POWERBROADCAST_SETTING;

@@ -10,7 +10,13 @@ vi.mock("../i18n/intl", () => ({
   }),
 }));
 
-const { dismissToast, showPersistentToast } = await import("./toast.actions");
+import {
+  decodeToastActionToken,
+  encodeToastActionToken,
+} from "../types/toast.types";
+
+const { dismissToast, showPersistentToast, showToast } =
+  await import("./toast.actions");
 
 const payloadTypes = () =>
   invoke.mock.calls.map(
@@ -89,5 +95,79 @@ describe("queue isolation across sequential callers", () => {
       "dismiss_toast",
       "toast",
     ]);
+  });
+});
+
+describe("toast action proposal correlation", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  const payloadOf = (call: number) =>
+    JSON.parse((invoke.mock.calls[call][1] as { payload: string }).payload);
+
+  it("carries the proposal id on both actions and labels the buttons from the bare action", async () => {
+    await showToast({
+      message: 'Add "Soniya" to your dictionary?',
+      action: "auto_learn_accept",
+      rejectAction: "auto_learn_reject",
+      proposalId: "7",
+    });
+
+    const payload = payloadOf(0);
+    // The pill echoes the action token verbatim and renders `action_label`
+    // separately, so the id rides in the token and the label stays the plain
+    // word the user reads.
+    expect(payload.action).toBe("auto_learn_accept#7");
+    expect(payload.action_label).toBe("Add");
+    expect(payload.reject_action).toBe("auto_learn_reject#7");
+    expect(payload.reject_action_label).toBe("Ignore");
+  });
+
+  it("leaves an action with no proposal id exactly as it was", async () => {
+    await showToast({ message: "Upgrading", action: "upgrade" });
+
+    const payload = payloadOf(0);
+    expect(payload.action).toBe("upgrade");
+    expect(payload.action_label).toBe("Upgrade");
+  });
+
+  it("reads a clicked token back into the action and the proposal it named", () => {
+    expect(decodeToastActionToken("auto_learn_accept#7")).toEqual({
+      action: "auto_learn_accept",
+      proposalId: "7",
+    });
+  });
+
+  it.each([
+    ["upgrade", { action: "upgrade" }],
+    [
+      "confirm_cancel_transcription",
+      { action: "confirm_cancel_transcription" },
+    ],
+  ])("round-trips %s through the token without an id", (action, expected) => {
+    const token = encodeToastActionToken(
+      action as Parameters<typeof encodeToastActionToken>[0],
+    );
+    expect(token).toBe(action);
+    expect(decodeToastActionToken(token)).toEqual(expected);
+  });
+
+  it("does not mistake a token for an action it does not know", () => {
+    // A pill that predates the id, or a token this app never sent, must not be
+    // read as one of our actions: it is passed through whole, so it matches no
+    // action and the click is discarded rather than attributed to a proposal.
+    expect(decodeToastActionToken("some_future_action#7")).toEqual({
+      action: "some_future_action#7",
+    });
+  });
+
+  it("does not split a token whose id contains the separator", () => {
+    // Ids are minted as decimal counters, so this token cannot be one of ours.
+    // Splitting at the last separator would name a half-action, so the token is
+    // passed through whole and matches nothing.
+    expect(decodeToastActionToken("auto_learn_accept#a#b")).toEqual({
+      action: "auto_learn_accept#a#b",
+    });
   });
 });

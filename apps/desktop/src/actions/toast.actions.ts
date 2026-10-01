@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getIntl } from "../i18n/intl";
-import { ToastAction, ToastType } from "../types/toast.types";
+import {
+  encodeToastActionToken,
+  type ToastAction,
+  type ToastType,
+} from "../types/toast.types";
 
 function getActionLabel(action: ToastAction): string {
   const intl = getIntl();
@@ -29,6 +33,12 @@ export type ShowToastOptions = {
   action?: ToastAction;
   /** Optional second (reject) action, rendered beside the primary action. */
   rejectAction?: ToastAction;
+  /**
+   * The proposal this prompt belongs to, echoed back on a click so the handler
+   * can tell a prompt the user is still looking at from one the app has already
+   * moved past. Both actions carry it: Add and Ignore answer the same prompt.
+   */
+  proposalId?: string;
 };
 
 /**
@@ -63,9 +73,13 @@ export async function showToast(options: ShowToastOptions): Promise<void> {
     message: options.message,
     toast_type: options.toastType ?? "info",
     duration: durationSec,
-    action: options.action ?? null,
+    action: options.action
+      ? encodeToastActionToken(options.action, options.proposalId)
+      : null,
     action_label: options.action ? getActionLabel(options.action) : null,
-    reject_action: options.rejectAction ?? null,
+    reject_action: options.rejectAction
+      ? encodeToastActionToken(options.rejectAction, options.proposalId)
+      : null,
     reject_action_label: options.rejectAction
       ? getActionLabel(options.rejectAction)
       : null,

@@ -9,8 +9,10 @@ import { createRoot, type Root } from "react-dom/client";
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 import {
+  EDIT_QUIESCENCE_MS,
   beginEditWatch,
   endEditWatch,
+  getVisibleProposalId,
   pollEditWatch,
 } from "../../actions/edit-watch.actions";
 import { EditWatchSideEffects } from "./EditWatchSideEffects";
@@ -41,14 +43,31 @@ vi.mock("../../actions/toast.actions", () => ({
   runToast: (work: Promise<unknown>) => {
     void work;
   },
+  showToast: vi.fn(async () => undefined),
 }));
 
-// Keep the probe observation-only: decide no corrections so the poll exits
-// before toasts/localStorage are touched. The mock must cover the whole module
-// surface the watcher imports, or a second poll would call into undefined.
+// Keep the probe observation-only by default: decide no corrections so the poll
+// exits before toasts/localStorage are touched. The mock must cover the whole
+// module surface the watcher imports, or a second poll would call into undefined.
+const corrections = vi.hoisted(() => ({
+  value: [] as string[],
+  calls: 0,
+}));
 vi.mock("../../utils/edit-watch.utils", () => ({
   countDictationOccurrences: () => 1,
-  findEditCorrections: () => [],
+  findEditCorrections: () => {
+    corrections.calls += 1;
+    return corrections.value;
+  },
+}));
+
+// The only observable effect `acceptAutoLearnProposal` has, so a click that
+// reached the accept path is visible here.
+const createGlossaryTerms = vi.hoisted(() =>
+  vi.fn(async () => ({ created: [] })),
+);
+vi.mock("../../actions/dictionary.actions", () => ({
+  createGlossaryTerms,
 }));
 
 vi.mock("../../utils/log.utils", () => ({
@@ -61,18 +80,29 @@ vi.mock("../../utils/log.utils", () => ({
   }),
 }));
 
+// Real, not a no-op: `acceptAutoLearnProposal` reads the proposal back out of
+// the store, so a stubbed `produceAppState` would make every click look like it
+// had nothing to accept and the test could not tell "ignored" from "accepted
+// nothing".
 vi.mock("../../store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(storeState),
-  getAppState: () => ({ autoLearn: { proposal: null } }),
-  produceAppState: vi.fn(),
+  getAppState: () => storeState,
+  produceAppState: (recipe: (draft: typeof storeState) => void) =>
+    recipe(storeState),
 }));
 
+type TestProposal = { term: string; proposedAt: number };
+
 const storeState: {
-  autoLearn: { proposal: unknown };
+  autoLearn: { proposal: TestProposal | null };
   userPrefs: { autoLearnFromEditsEnabled: boolean };
+  // Read by the scan when it picks a term to propose, so the poll cannot fail
+  // on a store slice this mock never declared.
+  termById: Record<string, unknown>;
 } = {
   autoLearn: { proposal: null },
   userPrefs: { autoLearnFromEditsEnabled: true },
+  termById: {},
 };
 
 let container: HTMLDivElement;
@@ -81,6 +111,8 @@ let root: Root;
 beforeEach(() => {
   toastHandlers.length = 0;
   dismissToastMock.mockClear();
+  createGlossaryTerms.mockClear();
+  corrections.calls = 0;
   storeState.autoLearn.proposal = null;
   storeState.userPrefs.autoLearnFromEditsEnabled = true;
   invokeMock.mockReset();
@@ -102,6 +134,28 @@ const mount = () => {
   act(() => {
     root.render(createElement(EditWatchSideEffects));
   });
+};
+
+/**
+ * Drive the watcher far enough to raise a real proposal, and return the id the
+ * prompt it showed carries.
+ *
+ * The poll only proposes once the focused field has stopped changing, which
+ * takes two samples a full `EDIT_QUIESCENCE_MS` apart, so the field is fed
+ * unchanged and the clock is advanced past that window.
+ */
+const raiseProposal = async (): Promise<string | null> => {
+  corrections.value = ["Soniya"];
+  beginEditWatch("Hello world");
+  await act(async () => {
+    await pollEditWatch();
+    await new Promise((resolve) =>
+      setTimeout(resolve, EDIT_QUIESCENCE_MS + 50),
+    );
+    await pollEditWatch();
+  });
+  expect(storeState.autoLearn.proposal?.term).toBe("Soniya");
+  return getVisibleProposalId();
 };
 
 describe("EditWatchSideEffects unmount cleanup (thread 18)", () => {
@@ -154,8 +208,7 @@ describe("EditWatchSideEffects disabled with a visible proposal", () => {
   });
 
   it("ignores an auto-learn click that arrives after the setting is turned off", async () => {
-    storeState.userPrefs.autoLearnFromEditsEnabled = true;
-    storeState.autoLearn.proposal = { term: "Soniya", proposedAt: 1 };
+    const proposalId = await raiseProposal();
     mount();
 
     await act(async () => {
@@ -167,15 +220,119 @@ describe("EditWatchSideEffects disabled with a visible proposal", () => {
     const handler = toastHandlers.at(-1);
     expect(handler).toBeTypeOf("function");
     // A click already on its way when the setting flipped must not reach the
-    // accept path, where the grace window can still add the held term.
+    // accept path, where the grace window can still add the held term. It
+    // carries the live prompt's id, so the id check alone would let it through:
+    // this proves the disabled flag is what stops it.
+    await act(async () => {
+      await handler?.({
+        action: "auto_learn_accept",
+        proposalId: proposalId ?? "",
+      });
+    });
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+  });
+});
+
+describe("EditWatchSideEffects stale auto-learn click", () => {
+  it("does not answer a superseded prompt with the proposal now showing", async () => {
+    const staleId = await raiseProposal();
+
+    // The first prompt is superseded: its proposal ages out on the TTL (the pill
+    // keeps the toast on screen well past that) and the watcher raises a second
+    // one for a different correction. The user is now looking at the second
+    // prompt; the first one's buttons are still there.
+    corrections.value = ["Ralf"];
+    await act(async () => {
+      const proposal = storeState.autoLearn.proposal;
+      if (!proposal) throw new Error("a proposal must be showing");
+      proposal.proposedAt = 0;
+      await pollEditWatch();
+    });
+    expect(storeState.autoLearn.proposal?.term).toBe("Ralf");
+    const liveId = getVisibleProposalId();
+    expect(liveId).not.toBe(staleId);
+
+    mount();
+    const handler = toastHandlers.at(-1);
+    expect(handler).toBeTypeOf("function");
+
+    // A click that was already on its way when the second prompt replaced the
+    // first. It names the prompt it was raised for, so the term it offered is
+    // knowable and must not be confused with the one now showing.
+    await act(async () => {
+      await handler?.({
+        action: "auto_learn_accept",
+        proposalId: staleId ?? "",
+      });
+    });
+    // Answering it anyway would add "Ralf": a term the user never agreed to.
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+    expect(storeState.autoLearn.proposal?.term).toBe("Ralf");
+
+    // The prompt actually on screen still works, so the guard discriminates
+    // rather than dropping every click.
+    await act(async () => {
+      await handler?.({
+        action: "auto_learn_accept",
+        proposalId: liveId ?? "",
+      });
+    });
+    expect(createGlossaryTerms).toHaveBeenCalledExactlyOnceWith(["Ralf"]);
+  });
+
+  it("ignores a reject click that names a superseded prompt", async () => {
+    const staleId = await raiseProposal();
+
+    corrections.value = ["Ralf"];
+    await act(async () => {
+      const proposal = storeState.autoLearn.proposal;
+      if (!proposal) throw new Error("a proposal must be showing");
+      proposal.proposedAt = 0;
+      await pollEditWatch();
+    });
+    expect(storeState.autoLearn.proposal?.term).toBe("Ralf");
+
+    mount();
+    const handler = toastHandlers.at(-1);
+
+    await act(async () => {
+      await handler?.({
+        action: "auto_learn_reject",
+        proposalId: staleId ?? "",
+      });
+    });
+    // Denying the wrong prompt writes a lasting ignore for a term the user never
+    // chose to deny, and clears the one they were actually looking at.
+    expect(storeState.autoLearn.proposal?.term).toBe("Ralf");
+  });
+
+  it("ignores a click that names no prompt at all", async () => {
+    await raiseProposal();
+    mount();
+    const handler = toastHandlers.at(-1);
+
+    // A prompt raised before ids existed, or one whose id the pill could not
+    // read back, is uncorrelatable and must not be answered against whatever is
+    // current now.
     await act(async () => {
       await handler?.({ action: "auto_learn_accept" });
     });
-    // `acceptAutoLearnProposal` is only reachable through the module, so the
-    // observable proof is that no dictionary mutation was attempted: the
-    // mocked `produceAppState` is the only side effect it has.
-    expect(invokeMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("dictionary"),
-    );
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+  });
+
+  it("stops answering once the watch ends, even for the prompt it raised", async () => {
+    const proposalId = await raiseProposal();
+    mount();
+
+    await act(async () => {
+      endEditWatch();
+      await handlerAt(-1)?.({
+        action: "auto_learn_accept",
+        proposalId: proposalId ?? "",
+      });
+    });
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
   });
 });
+
+const handlerAt = (index: number) => toastHandlers.at(index);

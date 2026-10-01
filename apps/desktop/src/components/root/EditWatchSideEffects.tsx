@@ -3,6 +3,7 @@ import {
   EDIT_POLL_MS,
   acceptAutoLearnProposal,
   endEditWatch,
+  getVisibleProposalId,
   pollEditWatch,
   rejectAutoLearnProposal,
 } from "../../actions/edit-watch.actions";
@@ -69,6 +70,15 @@ export const EditWatchSideEffects = () => {
     // term from the prompt the user has just dismissed. The feature is off, so
     // there is nothing to add on its behalf.
     if (!enabledRef.current) {
+      return;
+    }
+    // The pill keeps the prompt on screen after the store has moved on, so the
+    // action alone cannot say which proposal the user was answering. A click
+    // that names a different proposal than the one now showing belongs to a
+    // prompt this app has superseded, and acting on it would add or deny a term
+    // the user was never shown. The id is also absent from a click raised before
+    // prompts carried one, which is equally uncorrelatable.
+    if (payload.proposalId !== getVisibleProposalId()) {
       return;
     }
     if (payload.action === "auto_learn_accept") {

@@ -1,7 +1,6 @@
 import { NativeSetupResult } from "@maus-inc/desktop-native-apis";
 import { getIntl } from "../i18n";
 import { getLogger } from "../utils/log.utils";
-import { produceAppState } from "../store";
 import { showErrorSnackbar } from "./app.actions";
 import { getNativeRepo } from "../repos";
 
@@ -12,8 +11,9 @@ import { getNativeRepo } from "../repos";
  * Outcomes:
  * - elevated already / non-Windows → `"success"` (no-op)
  * - UAC accepted → process exits via `app.exit(0)` after the helper spawns
- * - UAC declined → `"cancelled"` and the decline dialog is opened; the
- *   elevation startup gate stays pending until the user picks an action
+ * - UAC declined → `"cancelled"`; the caller owns the decline dialog, because
+ *   only the caller knows whether the result still arrives inside the window it
+ *   is waiting for (see `openElevationDeclinedDialog`)
  * - other failure → snackbar; caller should release the startup gate
  */
 export async function requestAdminRelaunch(): Promise<NativeSetupResult | null> {
@@ -35,11 +35,7 @@ export async function requestAdminRelaunch(): Promise<NativeSetupResult | null> 
   }
 
   getLogger().info(`Administrator relaunch result: ${result}`);
-  if (result === "cancelled") {
-    produceAppState((draft) => {
-      draft.settings.elevationDeclinedDialogOpen = true;
-    });
-  } else if (result === "failed") {
+  if (result === "failed") {
     showErrorSnackbar(
       getIntl().formatMessage({
         defaultMessage: "Failed to restart mausVoice as administrator.",
