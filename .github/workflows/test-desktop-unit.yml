@@ -232,14 +232,18 @@ jobs:
         with:
           workspaces: |
             apps/desktop/src-tauri -> target
-      - name: Lint and test the Windows-gated code
+      - name: Lint the Windows-gated code
+        # Lint, not test: the desktop crate links WebView2, and a bare
+        # windows-2022 runner has no WebView2 runtime, so the test binary exits
+        # with STATUS_ENTRYPOINT_NOT_FOUND before a single test runs. Clippy
+        # with `--all-targets` still compiles the `cfg(windows)` code *and* its
+        # `cfg(test)` modules, which is the coverage that matters here -- it is
+        # what found the dead binding that only `#[cfg(unix)]` reads.
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'
         shell: bash
-        run: |
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked --lib
+        run: cargo clippy --locked --all-targets -- -D warnings
       - name: Check Windows-gated formatting
         working-directory: apps/desktop/src-tauri
         shell: bash
