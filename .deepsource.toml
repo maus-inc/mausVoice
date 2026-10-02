@@ -11,6 +11,24 @@ enabled = true
   [analyzers.meta]
   module_system = "es-modules"
 
+# 261 of the 855 TypeScript files in this repository are tests, and a
+# bug-detection rule set aimed at shipped code reads them as defects: mocked SDKs
+# that are never awaited on purpose, fixtures that are intentionally malformed,
+# long table-driven cases. A gate that counts those is a gate nobody reads, and
+# the test suites are already the strictest check these files get -- they run.
+#
+# This is deliberately a path exclusion and not a severity reduction: the
+# analyzer's opinion about test code is not worth a red status, but nothing about
+# first-party shipped code is being relaxed. The guard in
+# `scripts/ci/check-workspace-hygiene.test.mjs` fails if either pattern below
+# stops matching a tracked file, so this cannot rot into a silent no-op.
+[[overrides]]
+paths = ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/__tests__/**"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false
+
 # Minified vendor bundles are third-party code checked into the marketing site:
 # three of them, tens of thousands of characters each, none of them written here.
 # An analyzer that reads them reports line lengths, nested ternaries and missing
