@@ -97,7 +97,7 @@ const useWindowWidth = (): number | null => {
           if (!canceled) setWidth(size.width / (scale || 1));
         })
         .catch(() => undefined);
-    read();
+    void read();
 
     win
       .onResized(read)

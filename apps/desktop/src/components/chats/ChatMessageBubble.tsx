@@ -127,6 +127,10 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   );
 
   // Both affordances read from one list, so they cannot drift apart.
+  // The row would fight the open editor for the same space, and an empty
+  // message has nothing to copy or resend.
+  const showActions = !editing && actions.length > 0;
+
   const contextMenuItems = useMemo<ContextMenuItem[]>(
     () =>
       actions.map((action) => ({
@@ -213,9 +217,7 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           ) : null
         }
       />
-      {editing ? null : actions.length > 0 ? (
-        <MessageActions items={actions} />
-      ) : null}
+      {showActions ? <MessageActions items={actions} /> : null}
       {ctxMenu.renderMenu()}
     </Stack>
   );

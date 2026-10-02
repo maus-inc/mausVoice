@@ -1,6 +1,12 @@
 import { Stack, Typography, type StackProps } from "@mui/material";
 import { Logo } from "./Logo";
 
+/**
+ * Default rule for the wordmark: hidden on the smallest breakpoint, shown above
+ * it. Used only when no `compact` prop is supplied.
+ */
+const WORDMARK_BREAKPOINT_DISPLAY = { xs: "none", sm: "block" } as const;
+
 export type LogoWithTextProps = StackProps & {
   /**
    * Hide the wordmark and keep only the mark.
@@ -14,6 +20,15 @@ export type LogoWithTextProps = StackProps & {
 };
 
 export const LogoWithText = ({ sx, compact, ...rest }: LogoWithTextProps) => {
+  // An explicit `compact` wins outright, so passing `false` shows the wordmark
+  // at every width rather than falling back to the viewport breakpoint. With no
+  // prop, the breakpoint stays the default for every other call site.
+  const wordmarkDisplay =
+    compact === undefined
+      ? WORDMARK_BREAKPOINT_DISPLAY
+      : compact
+        ? "none"
+        : "block";
   return (
     <Stack
       direction="row"
@@ -38,16 +53,7 @@ export const LogoWithText = ({ sx, compact, ...rest }: LogoWithTextProps) => {
           // Explicit so the wordmark tracks the text ramp on both schemes
           // instead of inheriting whatever surface it happens to sit on.
           color: "text.primary",
-          // An explicit `compact` wins outright, so passing `false` shows the
-          // wordmark at every width rather than falling back to the breakpoint.
-          // Without the prop, the breakpoint stays the default for every other
-          // call site.
-          display:
-            compact === undefined
-              ? { xs: "none", sm: "block" }
-              : compact
-                ? "none"
-                : "block",
+          display: wordmarkDisplay,
         }}
       >
         mausVoice

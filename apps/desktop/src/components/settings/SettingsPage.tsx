@@ -123,10 +123,6 @@ import { UpdateChannelSetting } from "./UpdateChannelSetting";
 import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { UpdateSettingSection } from "./UpdateSettingSection";
 import {
-  SETTING_SECTIONS,
-  type SettingSectionId,
-} from "../../utils/settings-registry";
-import {
   sectionAnchorId,
   sectionFromScrollTop,
   SettingsSectionNav,
@@ -135,7 +131,9 @@ import { SegmentedControl } from "../common/SegmentedControl";
 import {
   searchSettings,
   SETTING_ENTRIES,
+  SETTING_SECTIONS,
   type SettingAvailability,
+  type SettingSectionId,
 } from "../../utils/settings-registry";
 import { produceAppState, useAppStore } from "../../store";
 import { getAdditionalLanguageEntries } from "../../utils/keyboard.utils";
