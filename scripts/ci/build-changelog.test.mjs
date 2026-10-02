@@ -81,6 +81,12 @@ describe("build-changelog helpers", () => {
       date: "2026-09-09T00:00:00.000Z",
     });
     assert.equal(entry.channel, "beta");
+    // With no RELEASE_NAME, the entry falls back to `mausVoice ${tag}`. That is
+    // the same string the workflow builds for an explicitly supplied tag
+    // (`release_name=mausVoice $INPUT_TAG`, release.yml), which is why the
+    // product name appears twice here. The fallback and the pipeline agree; if
+    // one of them changes, the other has to change with it, so this assertion
+    // pins the pair rather than blessing the doubled prefix on its own.
     assert.equal(entry.name, "mausVoice mausVoice-v0.2.0-rc.1");
   });
 

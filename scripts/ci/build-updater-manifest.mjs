@@ -100,9 +100,17 @@ async function collectFiles(dir) {
   const queue = [dir];
   while (queue.length) {
     const current = queue.pop();
+    // A directory that is gone is not an error: the artifact root itself may be
+    // absent, and a matrix job that produced nothing leaves nothing to walk. Any
+    // other failure means the bundles in there exist but cannot be read, and
+    // treating that as an empty directory would publish a manifest missing
+    // platforms rather than failing the release.
     const entries = await fs
       .readdir(current, { withFileTypes: true })
-      .catch(() => []);
+      .catch((error) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      });
     for (const entry of entries) {
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) {
@@ -132,24 +140,20 @@ export function buildPlatforms(files, { repository, tag }) {
   const missing = [];
 
   for (const type of INSTALLER_TYPES) {
-    // Prefer a candidate that actually has a signature beside it. The installer
-    // and the updater bundle share a prefix, so both a bare `.msi` and a
-    // `.msi.zip` match this type and only one of them is signed; picking the
-    // first match instead made the outcome depend on the order the directory
-    // walk happened to produce.
-    const bundle = bundles.find((file) => {
-      const candidate = path.basename(file);
-      return type.match(candidate) && signatures.has(`${file}.sig`);
-    });
+    // The candidates for this type, partitioned once. The installer and the
+    // updater bundle share a prefix, so both a bare `.msi` and a `.msi.zip`
+    // match this type and only one of them is signed; picking the first match
+    // instead made the outcome depend on the order the directory walk happened
+    // to produce.
+    const candidates = bundles.filter((file) => type.match(path.basename(file)));
+    // Prefer a candidate that actually has a signature beside it.
+    const bundle = candidates.find((file) => signatures.has(`${file}.sig`));
     if (!bundle) {
       // No candidate at all means this platform simply produced nothing, which
       // is normal for a matrix job that did not run. Only a candidate that
       // exists without a signature is the error the manifest must refuse.
-      const unsigned = bundles
-        .filter((file) => type.match(path.basename(file)))
-        .map((file) => path.basename(file));
-      if (unsigned.length > 0) {
-        missing.push(...unsigned);
+      if (candidates.length > 0) {
+        missing.push(...candidates.map((file) => path.basename(file)));
       }
       continue;
     }

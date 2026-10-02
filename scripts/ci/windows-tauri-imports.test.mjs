@@ -6,13 +6,22 @@ import { describe, it } from "node:test";
 
 // `apps/desktop/src-tauri/src/platform/windows/**` is `cfg(windows)` and is
 // never compiled by the Linux, macOS or Windows-lint jobs that run here, so a
-// name it calls without importing it is invisible until a Windows build. These
-// two files are the only ones in that tree whose imports changed when the
-// placement arithmetic was shared, so check them explicitly.
+// name it calls without importing it is invisible until a Windows build.
+// `position.rs` is the module that lost its own copy of the placement helpers to
+// the shared `platform::common` ones, so it is the one whose imports this guard
+// reads; the other files in that tree never imported them.
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (p) => readFileSync(resolve(repoRoot, p), "utf8");
 
 const MODULES = ["apps/desktop/src-tauri/src/platform/windows/position.rs"];
+
+// The shared placement helpers and the rectangle type, in every shape a call
+// site can take them: `Rect::visible_area_of(...)` and the bare
+// `anchor_rect(...)` and `anchored_bounds(...)` the module actually calls.
+// The `::` is optional on purpose. Written as `::?` it would require the colon
+// and match only the qualified form, so unimporting either bare helper left the
+// guard green.
+const CALLED = /\b(Rect|anchor_rect|anchored_bounds)(?:::)?[a-zA-Z_]*\b/g;
 
 describe("windows-only Rust modules import what they call", () => {
   for (const module of MODULES) {
@@ -29,15 +38,8 @@ describe("windows-only Rust modules import what they call", () => {
       const body = source
         .replace(/^use\s+[^;]+;$/gm, "")
         .replace(/\/\/.*$/gm, "");
-      const called = new Set(
-        [
-          ...body.matchAll(
-            /\b(Rect|anchor_rect|anchored_bounds)::?[a-zA-Z_]*\b/g,
-          ),
-        ].map((m) => m[0]),
-      );
+      const called = new Set([...body.matchAll(CALLED)].map((m) => m[0]));
       for (const name of called) {
-        if (name.endsWith("::")) continue;
         const symbol = name.split("::")[0];
         assert.ok(
           available.has(symbol),
@@ -53,4 +55,22 @@ describe("windows-only Rust modules import what they call", () => {
       }
     });
   }
+
+  // The guard is only as good as its view of the module, and a call site the
+  // regex cannot see is one it cannot check. Pin that the view covers every
+  // shape the module uses today: the qualified type call and the two bare
+  // helper calls.
+  it("sees the qualified and the bare call sites it has to check", () => {
+    const body = read(MODULES[0])
+      .replace(/^use\s+[^;]+;$/gm, "")
+      .replace(/\/\/.*$/gm, "");
+    const seen = new Set(
+      [...body.matchAll(CALLED)].map((m) => m[0].split("::")[0]),
+    );
+    assert.deepEqual(
+      [...seen].sort(),
+      ["Rect", "anchor_rect", "anchored_bounds"],
+      "a call shape the regex cannot match is a call shape the guard cannot check",
+    );
+  });
 });

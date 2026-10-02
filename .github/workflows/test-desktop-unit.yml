@@ -20,12 +20,13 @@ on:
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
       - "scripts/ci/check-workflow-pins.test.mjs"
+      - "scripts/ci/windows-tauri-imports.test.mjs"
       - ".github/workflows/**"
-# These workflows run on branch pushes or manual requests, not PR events.
-# Cancel superseded runs for the same branch.
 permissions:
   contents: read
 
+# These workflows run on branch pushes or manual requests, not PR events.
+# Cancel superseded runs for the same branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -137,8 +138,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
+          # One entry per crate this job compiles. `workspaces` replaces the
+          # default rather than extending it, so a crate left out of this list
+          # has no cache at all and the lint below rebuilds its dependency tree
+          # on every push.
           workspaces: |
             apps/desktop/src-tauri -> target
+            packages/rust_pill_shared -> packages/rust_pill_shared/target
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -203,6 +209,12 @@ jobs:
         run: node --test scripts/ci/check-bindings-guard.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
+      - name: Test Windows-only Rust module imports
+        # No runner in this repository compiles
+        # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an
+        # undeclared name in that tree is invisible to every other guard until
+        # a Windows build. This one reads the source, so it runs here.
+        run: node --test scripts/ci/windows-tauri-imports.test.mjs
       - name: Verify generated bindings are in sync
         # Regenerates packages/desktop-native-apis/src/bindings.ts from the
         # generator example and fails on any diff. Guards against a command
@@ -215,10 +227,12 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" bindings bash scripts/check-bindings.sh
 
   # The `cfg(windows)` half of the desktop crate is compiled by the Windows app
-  # build, but nothing linted it outside the binary, and nothing could test it:
-  # `console_display_is_on` was unreachable from the Ubuntu job for exactly that
-  # reason, and the missing import that broke the Windows build sat in code no
-  # Linux command could see. This job closes that.
+  # build, but nothing linted it outside the binary: the missing import that
+  # broke the Windows build sat in code no Linux command could see, and
+  # `console_display_is_on` was unreachable from the Ubuntu job for that same
+  # reason. This job closes that by compiling and linting it on a Windows
+  # runner. It does not execute those tests, because the test binary links
+  # WebView2 and a bare runner has no runtime for it; see the lint step below.
   #
   # The standalone macOS pill crate needed nothing: `lint-desktop.yml` already
   # lints and tests it on `macos-14`. Its gap was formatting, and that is

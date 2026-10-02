@@ -217,6 +217,40 @@ describe("updaterRulePattern", () => {
     ].join("\n");
     assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
   });
+
+  // Both of the next two are the same defect seen from each side: the id was
+  // found by trimming lines, so a quoted id line inside a description looked
+  // like the rule, and the search for `regex` then began mid-description with
+  // the description's own string still open.
+  it("ignores an id line that only appears inside a description", () => {
+    const toml = [
+      "[[rules]]",
+      'description = """',
+      "The rule below is the one CI looks for:",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${PREAMBLE_B64}'`,
+      '"""',
+      "entropy = 3.5",
+    ].join("\n");
+    assert.equal(
+      updaterRulePattern(toml),
+      null,
+      "prose must not supply the rule's detector",
+    );
+  });
+
+  it("still finds the detector when a description quotes the rule's own id", () => {
+    const toml = [
+      "[[rules]]",
+      'description = """',
+      "The rule below is the one CI looks for:",
+      'id = "tauri-minisign-updater-private-key"',
+      '"""',
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${PREAMBLE_B64}'`,
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), PREAMBLE_B64);
+  });
 });
 
 describe("hasUseDefaultFalse quoted keys", () => {
@@ -252,7 +286,11 @@ describe("tomlTableBody [extend]", () => {
 });
 
 describe("CLI requires explicit built-in rule extension", () => {
-  for (const [name, extension, status] of [
+  // The rule block is a column so a case can replace it: the point of the last
+  // case is a config whose only `regex =` line is inside a description, which
+  // the shared trailing rule would otherwise satisfy.
+  const realRule = `[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n`;
+  for (const [name, extension, status, rules = realRule] of [
     ["missing extension", "", 1],
     ["ignored top-level option", "useDefault = true\n", 1],
     [
@@ -267,6 +305,12 @@ describe("CLI requires explicit built-in rule extension", () => {
     ],
     ["explicit extension", "[extend]\nuseDefault = true\n", 0],
     ["quoted option", '[extend]\n"useDefault" = true\n', 0],
+    [
+      "a detector written only inside a description",
+      "[extend]\nuseDefault = true\n",
+      1,
+      `[[rules]]\ndescription = """\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n"""\nentropy = 3.5\n`,
+    ],
   ]) {
     it(name, (t) => {
       const root = mkdtempSync(join(tmpdir(), "gitleaks-config-"));
@@ -280,7 +324,7 @@ describe("CLI requires explicit built-in rule extension", () => {
       );
       writeFileSync(
         join(root, "gitleaks.toml"),
-        `${extension}\n[allowlist]\ndescription = "test"\n[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n`,
+        `${extension}\n[allowlist]\ndescription = "test"\n${rules}`,
       );
       const result = spawnSync(process.execPath, [script], {
         encoding: "utf8",

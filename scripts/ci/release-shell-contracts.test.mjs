@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const workflowDir = resolve(repoRoot, ".github/workflows");
 const read = (relativePath) =>
   readFileSync(resolve(repoRoot, relativePath), "utf8");
 
@@ -63,6 +70,28 @@ const extractSteps = (workflowText) => {
   if (current) steps.push(current);
   return steps;
 };
+
+// The key of the mapping a line sits inside, or "" at the top level. Found by
+// walking up past blank lines to the first line indented less than `indent`.
+function enclosingKey(lines, index, indent) {
+  for (let above = index - 1; above >= 0; above -= 1) {
+    const line = lines[above];
+    if (line.trim() === "") continue;
+    const aboveIndent = line.length - line.trimStart().length;
+    if (aboveIndent >= indent) continue;
+    return line.trim().replace(/:.*$/, "");
+  }
+  return "";
+}
+
+// The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
+function enclosingUsesPin(lines, index) {
+  for (let above = index - 1; above >= 0; above -= 1) {
+    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(lines[above]);
+    if (uses) return uses[1];
+  }
+  return null;
+}
 
 describe("release workflow shell contracts", () => {
   const release = read(".github/workflows/release.yml");
@@ -193,9 +222,13 @@ describe("release workflow shell contracts", () => {
       /find dist -type f -name '\*\.sig' -print0/,
       "verification must walk the signatures, not the installer suffixes",
     );
+    // `.deb` belongs in that list as much as `.msi` and `.exe`: Tauri v2 emits
+    // no detached signature for it (see the INSTALLER_TYPES note in
+    // build-updater-manifest.mjs), so a `-name '*.deb'` arm would fail every
+    // stable release for a signature nobody produces.
     assert.doesNotMatch(
       command,
-      /-name '\*\.msi' -o|-name '\*\.exe' -o/,
+      /-name '\*\.(?:msi|exe|deb)'/,
       "unsigned manual-download installers must not be required to have a signature",
     );
 
@@ -214,17 +247,32 @@ describe("release workflow shell contracts", () => {
     // `run:` block is substituted before the shell sees it, so a dispatch input
     // can inject shell. This workflow passes each one through `env:` and reads
     // it as a shell variable, which is what the rule is asking for. Pin the
-    // property that makes that true: an `inputs.` interpolation may only appear
-    // as an environment entry or in an `if:` condition, never in a script.
-    for (const [index, line] of release.split("\n").entries()) {
+    // property that makes that true: an `inputs.` interpolation may reach an
+    // `env:` entry, an `if:` condition, or the `with:` block of an action that
+    // is pinned to a commit, and nothing else.
+    //
+    // The shape of the line is not enough to tell those apart, because a `with:`
+    // entry looks exactly like an `env:` entry:
+    // `prerelease: ${{ inputs.prerelease }}` at release.yml:620 is a parameter of
+    // `softprops/action-gh-release`, which is handed the value as an argument and
+    // never splices it into a script. So the enclosing block is read from the
+    // line above, at the key's own indentation, and a `with:` entry has to prove
+    // that the action it belongs to is pinned before it counts as safe.
+    const lines = release.split("\n");
+    for (const [index, line] of lines.entries()) {
       if (!line.includes("${{ inputs.")) continue;
-      const isEnvEntry = /^\s+[A-Za-z_][A-Za-z0-9_]*:\s*\$\{\{\s*inputs\./.test(
-        line,
-      );
+      const indent = line.length - line.trimStart().length;
+      const key = line.trim().replace(/\s*:.*$/, "");
+      const block = enclosingKey(lines, index, indent);
+      const isEnvEntry =
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && block === "env";
       const isCondition = /^\s*(if|!if):/.test(line.trimStart());
+      const isPinnedStepParameter =
+        block === "with" &&
+        /@[0-9a-f]{40}$/.test(enclosingUsesPin(lines, index) ?? "");
       assert.ok(
-        isEnvEntry || isCondition,
-        `release.yml:${index + 1} interpolates a dispatch input outside env or an if:`,
+        isEnvEntry || isCondition || isPinnedStepParameter,
+        `release.yml:${index + 1} interpolates a dispatch input outside an env: entry, an if:, or a pinned action parameter`,
       );
     }
   });
@@ -234,17 +282,20 @@ describe("release workflow shell contracts", () => {
     // workflow with no grant at all is the widest grant available. Every
     // workflow declares a read-only default and every job that needs more
     // declares its own block, which replaces the default.
-    for (const file of [
-      "release.yml",
-      "lint-desktop.yml",
-      "test-desktop-unit.yml",
-      "build-desktop.yml",
-      "secret-scan.yml",
-      "test-package-rust-transcription.yml",
-      "test-desktop-integration.yml",
-      "test-docs.yml",
-    ]) {
-      const workflow = read(`.github/workflows/${file}`);
+    //
+    // The list comes from the directory rather than from a hand-maintained
+    // array: a workflow added later is then covered the day it lands, and the
+    // one added a moment ago, `format-and-i18n.yml`, cannot be the one that
+    // quietly loses its default.
+    const workflows = readdirSync(workflowDir).filter((file) =>
+      /\.ya?ml$/.test(file),
+    );
+    assert.ok(
+      workflows.length > 0,
+      "expected at least one workflow in .github/workflows",
+    );
+    for (const file of workflows) {
+      const workflow = readFileSync(join(workflowDir, file), "utf8");
       const beforeJobs = workflow.split(/^jobs:$/m)[0];
       assert.match(
         beforeJobs,

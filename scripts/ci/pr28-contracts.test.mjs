@@ -6,64 +6,174 @@ import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-// These guards assert on Rust source text. `cargo fmt` is now a CI gate across
-// every crate, and rustfmt reflows a long signature across lines, so matching the
-// raw text made every guard a formatting change could break. Collapsing runs of
-// whitespace keeps each assertion reading as the code it means while leaving it
-// indifferent to how rustfmt wraps it.
-const read = (relativePath) =>
-  readFileSync(resolve(repoRoot, relativePath), "utf8")
+const rawText = new Map();
+
+// Verbatim bytes, memoized per path.
+const readRaw = (relativePath) => {
+  if (!rawText.has(relativePath)) {
+    rawText.set(
+      relativePath,
+      readFileSync(resolve(repoRoot, relativePath), "utf8"),
+    );
+  }
+  return rawText.get(relativePath);
+};
+
+// rustfmt is a CI gate across every crate and reflows a long signature across
+// lines, so matching the raw text made every guard a formatting change could
+// break. Collapsing runs of whitespace keeps each assertion reading as the code
+// it means while leaving it indifferent to how rustfmt wraps it.
+const collapse = (text) =>
+  text
     .replace(/\s+/g, " ")
     // rustfmt breaks a method chain across lines with the `.` leading the next
     // line, which leaves a space before the dot once the newlines are collapsed.
     .replace(/\s+\./g, ".");
 
-const source = Object.fromEntries(
+// Only the Rust sources are collapsed. rustfmt is what reflows them, while
+// prettier leaves the YAML, HTML, MDX and TypeScript files this file also reads
+// alone; collapsing those would match text no file holds, since `- .github/**`
+// reads as `-.github/**` and a multi-line YAML block becomes one line.
+const read = (relativePath) =>
+  relativePath.endsWith(".rs")
+    ? collapse(readRaw(relativePath))
+    : readRaw(relativePath);
+
+// The lines of the item declared at `marker`, up to and including the line that
+// closes it, collapsed as `read` collapses a whole file. A guard that inspects
+// one function cannot use the collapsed text: a `//` comment runs to the end of
+// its line, so collapsing first lets it swallow everything after it, and the
+// scope it then computes is the rest of the file rather than the function. The
+// first `}` at the item's own indentation is the item's, because rustfmt aligns
+// a function's closing brace with its `fn`.
+const scopeOf = (relativePath, marker) => {
+  const lines = readRaw(relativePath).split("\n");
+  const start = lines.findIndex((line) => line.includes(marker));
+  if (start === -1) return "";
+  const indent = /^ */.exec(lines[start])[0].length;
+  const closes = new RegExp(`^ {${indent}}\\}`);
+  let end = start + 1;
+  while (end < lines.length && !closes.test(lines[end])) end += 1;
+  return collapse(lines.slice(start, end + 1).join("\n"));
+};
+
+const PATHS = [
+  ["commands", "apps/desktop/src-tauri/src/commands.rs"],
+  ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
+  ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
+  ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
+  ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
   [
-    ["commands", "apps/desktop/src-tauri/src/commands.rs"],
-    ["tray", "apps/desktop/src-tauri/src/system/tray.rs"],
-    ["effects", "apps/desktop/src/components/root/AppSideEffects.tsx"],
-    ["macOverlay", "apps/desktop/src-tauri/src/platform/macos/overlay.rs"],
-    ["linuxOverlay", "apps/desktop/src-tauri/src/platform/linux/overlay.rs"],
-    [
-      "windowsOverlay",
-      "apps/desktop/src-tauri/src/platform/windows/overlay.rs",
-    ],
-    ["commonPlatform", "apps/desktop/src-tauri/src/platform/common.rs"],
-    ["macPill", "packages/rust_macos_pill/src/app.rs"],
-    ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
-    ["gtkInput", "packages/rust_gtk_pill/src/input.rs"],
-    ["gtkX11", "packages/rust_gtk_pill/src/x11.rs"],
-    ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
-    ["macApp", "packages/rust_macos_pill/src/app.rs"],
-    ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
-    ["macState", "packages/rust_macos_pill/src/state.rs"],
-    ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
-    ["windowsState", "packages/rust_windows_pill/src/state.rs"],
-    ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
-    ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
-    ["sharedDrag", "packages/rust_pill_shared/src/drag.rs"],
-    ["sharedSpring", "packages/rust_pill_shared/src/spring.rs"],
-    ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
-    ["macInput", "packages/rust_macos_pill/src/input.rs"],
-    ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
-    ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
-    ["windowsGfx", "packages/rust_windows_pill/src/gfx.rs"],
-    ["recording", "apps/desktop/src-tauri/src/domain/recording.rs"],
-    ["audioChunks", "apps/desktop/src/sessions/audio-chunk-events.ts"],
-    [
-      "intake",
-      "apps/desktop/src/components/root/dictation-recording-intake.ts",
-    ],
-    ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
-    ["docsWorkflow", ".github/workflows/test-docs.yml"],
-    ["index", "index.html"],
-    ["astro", "apps/docs/astro.config.mjs"],
-    ["docsIndex", "apps/docs/src/content/docs/index.mdx"],
-    ["docsLlms", "apps/docs/public/llms.txt"],
-    ["docsRobots", "apps/docs/public/robots.txt"],
-  ].map(([name, path]) => [name, read(path)]),
+    "windowsOverlay",
+    "apps/desktop/src-tauri/src/platform/windows/overlay.rs",
+  ],
+  ["commonPlatform", "apps/desktop/src-tauri/src/platform/common.rs"],
+  ["macPill", "packages/rust_macos_pill/src/app.rs"],
+  ["gtkPill", "packages/rust_gtk_pill/src/pill.rs"],
+  ["gtkInput", "packages/rust_gtk_pill/src/input.rs"],
+  ["gtkX11", "packages/rust_gtk_pill/src/x11.rs"],
+  ["windowsPill", "packages/rust_windows_pill/src/pill.rs"],
+  ["macApp", "packages/rust_macos_pill/src/app.rs"],
+  ["pillProcess", "apps/desktop/src-tauri/src/pill_process.rs"],
+  ["macState", "packages/rust_macos_pill/src/state.rs"],
+  ["gtkState", "packages/rust_gtk_pill/src/state.rs"],
+  ["windowsState", "packages/rust_windows_pill/src/state.rs"],
+  ["sharedPill", "packages/rust_pill_shared/src/lib.rs"],
+  ["sharedHover", "packages/rust_pill_shared/src/hover.rs"],
+  ["sharedDrag", "packages/rust_pill_shared/src/drag.rs"],
+  ["sharedSpring", "packages/rust_pill_shared/src/spring.rs"],
+  ["macDraw", "packages/rust_macos_pill/src/draw.rs"],
+  ["macInput", "packages/rust_macos_pill/src/input.rs"],
+  ["gtkDraw", "packages/rust_gtk_pill/src/draw.rs"],
+  ["windowsDraw", "packages/rust_windows_pill/src/draw.rs"],
+  ["windowsGfx", "packages/rust_windows_pill/src/gfx.rs"],
+  ["recording", "apps/desktop/src-tauri/src/domain/recording.rs"],
+  ["audioChunks", "apps/desktop/src/sessions/audio-chunk-events.ts"],
+  [
+    "intake",
+    "apps/desktop/src/components/root/dictation-recording-intake.ts",
+  ],
+  ["integrationWorkflow", ".github/workflows/test-desktop-integration.yml"],
+  ["docsWorkflow", ".github/workflows/test-docs.yml"],
+  ["index", "index.html"],
+  ["astro", "apps/docs/astro.config.mjs"],
+  ["docsIndex", "apps/docs/src/content/docs/index.mdx"],
+  ["docsLlms", "apps/docs/public/llms.txt"],
+  ["docsRobots", "apps/docs/public/robots.txt"],
+];
+
+const pathOf = new Map(PATHS);
+const source = Object.fromEntries(
+  PATHS.map(([name, path]) => [name, read(path)]),
 );
+// One function's body, for the guards that read code rather than the file.
+const scope = (name, marker) => scopeOf(pathOf.get(name), marker);
+
+// The `jobs:` table of a workflow as { name, body } records. A guard that has to
+// prove a secret is inside a guarded job cannot scan the file as one string:
+// the guard and the secret are the same text wherever they both appear.
+const workflowJobs = (workflowText) => {
+  const lines = workflowText.split("\n");
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  const jobs = [];
+  let name = null;
+  let body = [];
+  for (const line of lines.slice(jobsAt + 1)) {
+    const job = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (job) {
+      if (name) jobs.push({ name, body: body.join("\n") });
+      name = job[1];
+      body = [];
+      continue;
+    }
+    if (name) body.push(line);
+  }
+  if (name) jobs.push({ name, body: body.join("\n") });
+  return jobs;
+};
+
+// Every job that reads a provider secret is behind the origin guard. Asserting
+// the guard and the secret separately proves only that both exist somewhere in
+// the file, which is what a secret moved into an unguarded job, or an unguarded
+// job added next to a guarded one, would pass.
+const assertSecretsStayInsideTheGuardedJob = (workflowText, secret) => {
+  const jobs = workflowJobs(workflowText);
+  assert.ok(jobs.length > 0, "the workflow must declare at least one job");
+  const readers = jobs.filter((job) => job.body.includes(`secrets.${secret}`));
+  assert.ok(readers.length > 0, `the workflow must still read ${secret}`);
+  for (const { name, body } of readers) {
+    assert.match(
+      body,
+      /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+      `job ${name} reads ${secret} without the fork guard that protects it`,
+    );
+  }
+};
+
+// The Linux and Windows overlays do not call `pill_process` themselves. Both
+// glob-re-export the shared notifier module, so the reset route reaches them
+// only through that glob, and the glob carries `notify_reset_position` only if
+// the module re-exports the name itself. Asserting the name anywhere in
+// `common.rs` would not prove either half: a doc comment on the module, or the
+// name left off the list, both read the same. Two tests below depend on this
+// route, so it is asserted once, here, rather than copied into each.
+const assertGlobReexportCarriesReset = () => {
+  for (const [platform, overlay] of [
+    ["linux", source.linuxOverlay],
+    ["windows", source.windowsOverlay],
+  ]) {
+    assert.match(
+      overlay,
+      /pub use crate::platform::common::notifications::\*/,
+      `the ${platform} overlay must re-export the shared reset notifier`,
+    );
+  }
+  assert.match(
+    source.commonPlatform,
+    /pub use crate::pill_process::\{[^}]*\bnotify_reset_position\b[^}]*\};/,
+    "the shared notifier module must re-export the reset command to the platforms that glob-import it",
+  );
+};
 
 describe("PR28 native reset contracts", () => {
   it("routes the reset command through every platform overlay", () => {
@@ -75,28 +185,7 @@ describe("PR28 native reset contracts", () => {
       source.macOverlay,
       /pill\.send\(InMessage::ResetPosition \{ strategy \}\)/,
     );
-    // The Linux and Windows overlays re-export the shared notifiers rather than
-    // calling `pill_process` themselves, so the contract is that each platform
-    // module still exposes the reset route — not which line it is written on.
-    // Both overlays re-export the shared notifiers with a glob rather than
-    // naming each one, so the route lives in the module they pull from. What the
-    // contract needs is that the name resolves for a caller of the platform
-    // overlay module, which is what these check together.
-    assert.match(
-      source.linuxOverlay,
-      /pub use crate::platform::common::notifications::\*/,
-      "the linux overlay must re-export the shared reset notifier",
-    );
-    assert.match(
-      source.windowsOverlay,
-      /pub use crate::platform::common::notifications::\*/,
-      "the windows overlay must re-export the shared reset notifier",
-    );
-    assert.match(
-      source.commonPlatform,
-      /notify_reset_position/,
-      "the shared notifier module must still export the reset command",
-    );
+    assertGlobReexportCarriesReset();
     assert.match(source.macPill, /InMessage::ResetPosition \{ strategy \}/);
   });
 
@@ -119,9 +208,12 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     );
     // The Rust command emits a typed reset_position payload to the pill
     // process and returns an error (not a panic) when no pill is managed.
+    // `commands.rs` returns that `Result` straight out of a `#[tauri::command]`,
+    // so the return type is part of the contract and is pinned with the
+    // parameters.
     assert.match(
       source.pillProcess,
-      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\)/,
+      /pub fn notify_reset_position\(app: &tauri::AppHandle, strategy: &str\) -> Result<\(\), String>/,
     );
     assert.match(source.pillProcess, /"type":"reset_position"/);
     assert.match(
@@ -141,21 +233,7 @@ describe("PR28 reset IPC execution and missing-overlay handling", () => {
     // naming each one, so the route lives in the module they pull from. What the
     // contract needs is that the name resolves for a caller of the platform
     // overlay module, which is what these check together.
-    assert.match(
-      source.linuxOverlay,
-      /pub use crate::platform::common::notifications::\*/,
-      "the linux overlay must re-export the shared reset notifier",
-    );
-    assert.match(
-      source.windowsOverlay,
-      /pub use crate::platform::common::notifications::\*/,
-      "the windows overlay must re-export the shared reset notifier",
-    );
-    assert.match(
-      source.commonPlatform,
-      /notify_reset_position/,
-      "the shared notifier module must still export the reset command",
-    );
+    assertGlobReexportCarriesReset();
     assert.match(
       source.gtkPill,
       // The X11 drop position is still persisted through the shared
@@ -292,7 +370,8 @@ describe("PR28 ring-alpha render-loop policy", () => {
     // The gate must be `pointer_down`, NOT the gesture flags. Moving past the
     // cancel threshold before the hold completes clears `long_press_active`
     // without setting `dragging`, so a gesture-keyed gate drops the pin while
-    // the button is still down — the "drag across without releasing" collapse.
+    // the button is still down, which is the "drag across without releasing"
+    // collapse.
     assert.match(source.sharedHover, /fn release_outside_exits_after_grace/);
     assert.match(source.sharedHover, /pub probed: bool/);
     assert.match(source.sharedHover, /pub pointer_down: bool/);
@@ -350,7 +429,7 @@ describe("PR28 ring-alpha render-loop policy", () => {
     assert.match(source.sharedPill, /pub fn pulse_armed/);
     // Every source must keep the pulse alive for its full duration, since it
     // outlives the ring's own alpha. Each platform therefore needs a liveness
-    // check; Windows is the strictest case — it culls frames aggressively, so
+    // check. Windows is the strictest case: it culls frames aggressively, so
     // without its own check the pulse would be dropped mid-flight.
     for (const src of [
       source.windowsState,
@@ -402,7 +481,10 @@ describe("PR28 fork-workflow secret isolation", () => {
       /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
     );
     // Secrets are only referenced inside that guarded job.
-    assert.match(source.integrationWorkflow, /GROQ_API_KEY/);
+    assertSecretsStayInsideTheGuardedJob(
+      source.integrationWorkflow,
+      "GROQ_API_KEY",
+    );
     assert.match(
       source.integrationWorkflow,
       /if:\s*\|\s*github\.event_name == 'push' \|\|\s*\(github\.event_name == 'pull_request' && github\.event\.pull_request\.head\.repo\.full_name == github\.repository\)/,
@@ -478,11 +560,10 @@ describe("PR28 native placement contracts", () => {
 
 describe("PR28 workflow and public-asset contracts", () => {
   it("does not expose provider secrets to fork pull requests", () => {
-    assert.match(
+    assertSecretsStayInsideTheGuardedJob(
       source.integrationWorkflow,
-      /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/,
+      "GROQ_API_KEY",
     );
-    assert.match(source.integrationWorkflow, /GROQ_API_KEY/);
   });
 
   it("keeps docs checks non-executable at install time and checks internal links", () => {
@@ -587,9 +668,7 @@ describe("native gesture adapter contracts", () => {
 
   it("holds spring state before applying zero-time snap rules", () => {
     for (const name of ["spring_01", "spring_px"]) {
-      const body = source.sharedSpring
-        .split(`pub fn ${name}(`)[1]
-        .split("\n}")[0];
+      const body = scope("sharedSpring", `pub fn ${name}(`);
       assert.match(
         body,
         /if !target\.is_finite\(\) \|\| step_dt == 0\.0 \{\s*return;/,
@@ -601,9 +680,7 @@ describe("native gesture adapter contracts", () => {
   });
 
   it("recovers invalid spring state without propagating it through integration", () => {
-    const pure = source.sharedSpring
-      .split("pub fn spring_integrate(")[1]
-      .split("\n}")[0];
+    const pure = scope("sharedSpring", "pub fn spring_integrate(");
     assert.match(
       pure,
       /if !value\.is_finite\(\) \{\s*return \(target, 0\.0\);/,
@@ -628,7 +705,7 @@ describe("native gesture adapter contracts", () => {
           `${platform}:${overlay}`,
         );
       }
-      const body = draw.split("fn draw_pill(")[1].split("\nfn ")[0];
+      const body = scope(`${platform}Draw`, "fn draw_pill(");
       assert.doesNotMatch(body, /crossing\.borrow\(\)/);
     });
   }
@@ -782,18 +859,20 @@ describe("native gesture adapter contracts", () => {
       2,
     );
     for (const name of ["is_on_pill_at", "handle_click"]) {
-      const body = source.gtkInput.split(`fn ${name}(`)[1].split("\n}")[0];
-      assert.ok(
-        body.indexOf("refresh_selector_click_regions") <
-          body.indexOf("state.click_regions.borrow()"),
-      );
+      // Scoped to the function, and both names asserted present inside it:
+      // `indexOf` alone reports -1 for an absent name, which would satisfy the
+      // ordering below on any body that dropped the refresh.
+      const body = scope("gtkInput", `fn ${name}(`);
+      const refresh = body.indexOf("refresh_selector_click_regions");
+      const borrow = body.indexOf("state.click_regions.borrow()");
+      assert.notEqual(refresh, -1, `${name} must refresh the click regions`);
+      assert.notEqual(borrow, -1, `${name} must read the click regions`);
+      assert.ok(refresh < borrow, `${name} must refresh before it reads`);
     }
   });
 
   it("invalidates Windows painting when selector placement changes without velocity", () => {
-    const body = source.windowsPill
-      .split("fn tick_selector_placement(")[1]
-      .split("\n}")[0];
+    const body = scope("windowsPill", "fn tick_selector_placement(");
     assert.match(body, /let changed = advance_selector_placement/);
     assert.match(body, /if changed \{\s*state\.dirty\.set\(true\)/);
   });
@@ -803,9 +882,7 @@ describe("native gesture adapter contracts", () => {
       source.windowsPill,
       /let \(wx, wy\) = initial_position\(win_h\)/,
     );
-    const body = source.windowsPill
-      .split("fn initial_position(")[1]
-      .split("\n}")[0];
+    const body = scope("windowsPill", "fn initial_position(");
     assert.match(body, /default_pill_y\(wa\.top, wa_h, win_h\)/);
   });
 
@@ -1062,15 +1139,23 @@ describe("native review and monitor contracts", () => {
     // `?`, or a let-else whose block returns. Counting the two guarded shapes
     // separately is what makes this bite -- a new binding with neither leaves
     // one of them short of the total, and matching either shape on its own
-    // proved nothing about the other call sites.
+    // proved nothing about the other call sites. The argument is matched as an
+    // identifier rather than as the name `monitor`, because this same file
+    // already calls the wrapper with `mon` in one place: pinning the name
+    // would fail a guard that is proving the right thing about a renamed local.
+    const argument = "\\([A-Za-z_][A-Za-z0-9_]*\\)";
     const bindings =
       (pill.match(/let Some\(info\) = query_monitor_info\(/g)?.length ?? 0) +
       (pill.match(/let info = query_monitor_info\(/g)?.length ?? 0);
     const guarded =
-      (pill.match(/let info = query_monitor_info\(monitor\)\?;/g)?.length ??
-        0) +
       (pill.match(
-        /let Some\(info\) = query_monitor_info\(monitor\) else \{[^}]*return[^}]*\};?/g,
+        new RegExp(`let info = query_monitor_info${argument}\\?;`, "g"),
+      )?.length ?? 0) +
+      (pill.match(
+        new RegExp(
+          `let Some\\(info\\) = query_monitor_info${argument} else \\{[^}]*return[^}]*\\};?`,
+          "g",
+        ),
       )?.length ?? 0);
     assert.ok(bindings > 0, "the wrapper's callers bind the info");
     assert.equal(
