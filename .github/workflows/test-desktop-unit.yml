@@ -52,6 +52,12 @@ jobs:
         run: node --test scripts/ci/run-with-diagnostics.test.mjs
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the dev surface config guards
+        # `smol-toml` is a workspace devDependency, so this guard needs the
+        # install above and cannot live on the `node --test`-only job that runs
+        # the rest of `scripts/ci`. It guards `scripts/ci/dev-surface-config.mjs`,
+        # which `package.json` scripts call, and its tests had never run anywhere.
+        run: node --test scripts/ci/dev-surface-contracts.test.mjs
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Run desktop unit tests
@@ -218,7 +224,6 @@ jobs:
         run: |
           node --test scripts/ci/validate-release-inputs.test.mjs
           node --test scripts/ci/release-notes.test.mjs
-          node --test scripts/ci/dev-surface-contracts.test.mjs
           node --test scripts/ci/verify-sherpa-archives.test.mjs
       - name: Test workspace hygiene guards
         # This suite reads the repository rather than a build output: it refuses
