@@ -424,8 +424,10 @@ describe("AgentLoop", () => {
       name: "hangs",
       description: "never settles",
       parameters: { type: "object", properties: {} },
-      execute: () => new Promise<{ success: true; result: string }>(() => {}),
-    };
+      execute: vi.fn(
+        () => new Promise<{ success: true; result: string }>(() => {}),
+      ),
+    } as unknown as AgentTool;
     const { provider } = scriptedProvider([
       [
         {
@@ -447,15 +449,23 @@ describe("AgentLoop", () => {
     expect((await gen.next()).value).toMatchObject({
       type: "iteration-start",
     });
+    // Resume without awaiting: this step yields `tool-call-start` and the next
+    // `next()` is the one that suspends inside `await this.executeTool(...)`.
+    // Aborting before that point only sets the flag the guard already reads, so
+    // the tool is never awaited and the race below is not exercised at all.
     expect((await gen.next()).value).toMatchObject({
       type: "tool-call-start",
       toolCallId: "call_hang",
+    });
+    const suspended = gen.next();
+    await vi.waitFor(() => {
+      expect(hanging.execute).toHaveBeenCalled();
     });
     loop.abort();
 
     // The generator has to resume on its own, with nothing but the abort to
     // release it.
-    const result = await gen.next();
+    const result = await suspended;
     expect(result.value).toMatchObject({
       type: "tool-call-result",
       toolCallId: "call_hang",
@@ -503,15 +513,19 @@ describe("AgentLoop", () => {
     const gen = loop.run([{ role: "user", content: "go" }]);
     await gen.next();
     await gen.next();
+    // Suspend inside the tool, let it answer, then abort: the result is already
+    // in hand, so it is the model's answer and not a cancelled call. Aborting
+    // without ever entering the tool would leave this a plain execution test.
+    const suspended = gen.next();
     release();
-
-    const result = await gen.next();
+    const result = await suspended;
     expect(result.value).toMatchObject({
       type: "tool-call-result",
       toolCallId: "call_slow",
       result: "done",
       isError: false,
     });
+    loop.abort();
   });
 
   it("runs one tool call at a time and keeps the model's order", async () => {
@@ -662,5 +676,46 @@ describe("AgentLoop", () => {
       errorFragment: JSON.stringify({ code: "E_BOOM", detail: "secret" }),
       finalText: "done",
     });
+  });
+
+  it("keeps the run alive when a tool throws before returning a promise", async () => {
+    // `execute` is typed as returning a promise. A tool that throws before
+    // returning one escapes that contract, and the throw used to propagate out
+    // of `executeTool`: the run rejected with no tool-result and no finish event,
+    // so the caller waited forever on a call the loop had already failed.
+    const thrower: AgentTool = {
+      name: "boom",
+      description: "throws before returning",
+      parameters: { type: "object", properties: {} },
+      execute: () => {
+        throw new Error("threw before returning");
+      },
+    } as AgentTool;
+    const { provider } = scriptedProvider([
+      [
+        {
+          type: "tool-call",
+          id: "call_boom",
+          name: "boom",
+          arguments: JSON.stringify({ reason: "r" }),
+        },
+      ],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [thrower],
+      systemPrompt: "sys",
+      maxIterations: 2,
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+    const seen: unknown[] = [];
+    for (let step = 0; step < 6; step += 1) {
+      const next = await gen.next();
+      if (next.done) break;
+      seen.push((next.value as { type: string }).type);
+      if ((next.value as { type: string }).type === "finish") break;
+    }
+    expect(seen).toContain("tool-call-result");
+    expect(seen).toContain("finish");
   });
 });

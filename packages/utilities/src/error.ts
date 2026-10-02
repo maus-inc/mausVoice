@@ -47,7 +47,7 @@ const LABELED_SECRET_BARE = new RegExp(
 // text (`Authorization: Basic <credential>` -> `Authorization:[redacted]
 // <credential>`). Consume the scheme and its credential together, or drop both.
 const AUTHORIZATION_SCHEME = new RegExp(
-  String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEME_WORDS})\s+)?(\S+)?`,
+  String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEME_WORDS})\s+)?([^\r\n]*)`,
   "gi",
 );
 const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {
@@ -79,6 +79,51 @@ const PLACEHOLDER_VALUES = new Set([
 
 const describesField = (value: string): boolean =>
   PLACEHOLDER_VALUES.has(value.toLowerCase());
+
+/**
+ * Where a scheme's credential ends inside `text`, which is the text following
+ * the scheme word: the offset is relative to `text` and covers the credential.
+ *
+ * A scheme is the header's syntax, not the credential, so `Basic dXNlcjpwYXNz`
+ * is one secret in two tokens and the run has to cross the space. It also has to
+ * cross the parameters of `Digest username="u", realm="r", response="s"`, where
+ * stopping at the first token redacted `username="u"` and handed the rest on to
+ * the callers that log the message and persist it as error metadata.
+ *
+ * What ends a credential is the surrounding document, not the next space: a
+ * closing quote, a record separator, or a bracket ends it, and so does a word
+ * with no `=` after it -- which is what keeps `Digest abc is not authorized`
+ * from swallowing the diagnosis the line exists to carry. Anything shaped like
+ * `name=value` is a parameter, so it extends the run.
+ */
+const SCHEME_VALUE_TOKEN = /[^\s"',;)\]}]+/;
+const SCHEME_VALUE_PARAMETER =
+  /^\s*,?\s*[A-Za-z0-9_-]+=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s,]*)/;
+const SCHEME_VALUE_CLOSERS = "\"',;)]}";
+
+export const schemeValueEnd = (text: string): number => {
+  let end = 0;
+  while (end < text.length) {
+    const rest = text.slice(end);
+    if (/^\s/.test(rest)) {
+      end += 1;
+      continue;
+    }
+    const parameter = SCHEME_VALUE_PARAMETER.exec(rest);
+    if (parameter) {
+      end += parameter[0].length;
+      continue;
+    }
+    const token = SCHEME_VALUE_TOKEN.exec(rest);
+    // A closer that ends the document is not part of any credential.
+    if (!token || SCHEME_VALUE_CLOSERS.includes(text[end])) return end;
+    end += token[0].length;
+    // A bare token is the credential only when no parameter follows it;
+    // otherwise it is a parameter name and the list continues.
+    if (!SCHEME_VALUE_PARAMETER.test(text.slice(end))) return end;
+  }
+  return end;
+};
 
 const SECRET_KEY_ALIASES = new Set([
   "apikey",
@@ -131,7 +176,7 @@ const splitTrailingClosers = (value: string): [string, string] => {
   return [value.slice(0, end), value.slice(end)];
 };
 
-const redactSensitiveTokens = (message: string): string =>
+export const redactSensitiveTokens = (message: string): string =>
   message
     // Before the labelled passes: those match the `authorization` label and
     // would otherwise consume only the scheme word, leaving the credential
@@ -146,14 +191,18 @@ const redactSensitiveTokens = (message: string): string =>
           // placeholder values.
           return match;
         }
-        if (value !== undefined && describesField(value)) {
+        if (value === undefined) return match;
+        const end = schemeValueEnd(value);
+        const credential = value.slice(0, end);
+        const tail = value.slice(end);
+        if (describesField(credential)) {
           // `authorization: token missing` describes the field in front of the
           // scheme, so defer rather than redact a value the caller needs to
           // read. LABELED_SECRET_BARE steps over the scheme word to judge the
           // word behind it, so this text survives both passes.
           return match;
         }
-        return `${header}: ${scheme} ${REDACTED}`;
+        return `${header}: ${scheme} ${REDACTED}${tail}`;
       },
     )
     .replace(BEARER_TOKEN, "Bearer [redacted]")

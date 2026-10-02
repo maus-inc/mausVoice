@@ -349,3 +349,36 @@ describe("redactProviderMessage", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   }, 1000);
 });
+
+describe("an authorization label with a scheme-prefixed value", () => {
+  // The label pattern stops at the first space, so `authorization: Digest
+  // username="u", realm="r", response="s"` used to redact the scheme word and
+  // leave every parameter of the challenge in the string these callers log and
+  // persist as error metadata. `response` is what a server computes, and it is
+  // as sensitive as the nonce next to it.
+  const CHALLENGE = 'response="' + "s3cr3t" + '"';
+
+  it("redacts the whole Digest challenge after a bare authorization label", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      'authorization: Digest username="u", realm="r", ' + CHALLENGE,
+    );
+    expect(output).not.toContain(CHALLENGE);
+    expect(output).not.toContain('realm="r"');
+    expect(output).toContain("[redacted]");
+  });
+
+  it("redacts a proxy-authorization challenge the same way", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      "proxy-authorization: Digest nonce=" + CHALLENGE,
+    );
+    expect(output).not.toContain(CHALLENGE);
+  });
+
+  it("keeps the diagnosis that follows the credential", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      "authorization: Digest abc is not authorized for this request",
+    );
+    expect(output).not.toContain("Digest abc ");
+    expect(output).toContain("is not authorized for this request");
+  });
+});

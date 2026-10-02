@@ -1,4 +1,7 @@
-import { AUTHORIZATION_SCHEMES as UTIL_AUTHORIZATION_SCHEMES } from "@maus-inc/utilities";
+import {
+  AUTHORIZATION_SCHEMES as UTIL_AUTHORIZATION_SCHEMES,
+  schemeValueEnd,
+} from "@maus-inc/utilities";
 
 /**
  * Shared classification for provider HTTP failures.
@@ -62,7 +65,6 @@ const PROVIDER_SECRET_PATTERNS: RegExp[] = [
   // `sk-` or `sk_`. The leading \b keeps `task-123` from matching `sk-`.
   /\b(?:gsk|csk|sk)[-_][a-z0-9_-]+/gi,
   /bearer\s+[a-z0-9._~+/=-]+/gi,
-  /authorization:\s*[^\s;,]+/gi,
 ];
 
 const WHITESPACE = /\s/;
@@ -89,51 +91,6 @@ const valueEnd = (message: string, index: number): number => {
     message[end] !== undefined &&
     API_KEY_VALUE_CHARACTERS.includes(message[end].toLowerCase())
   ) {
-    end += 1;
-  }
-  return end;
-};
-
-/**
- * The characters that close a scheme-prefixed value: a record separator or a
- * closing bracket, whatever is inside them.
- */
-const SCHEME_VALUE_STOPS = `,;)]}`;
-
-/**
- * The end of a value that opened with an authorization scheme.
- *
- * A scheme is the header's syntax, not the credential: `Basic dXNlcjpwYXNz` is
- * one secret in two tokens, and a value class that stops at whitespace redacts
- * the scheme and leaves the credential in the string this module hands to the
- * callers that log it and persist it as error metadata. So once the first token
- * is a scheme, the run continues past its parameters — the nonce in a Digest
- * header, the reason in a token scheme — to the first record separator or
- * closing bracket. This is the same rule `azure.utils.ts` applies to an
- * `authorization` label.
- *
- * A quote only ends the run when it does not open a parameter: the quote in
- * `nonce="x"` has to be walked through to reach the credential, while the quote
- * that closes `api_key="Basic <credential>"` ends it. A value the provider
- * quotes *after* the scheme (`Basic "<credential>"`) is the one shape this does
- * not reach; every provider body this module exists for quotes the value at the
- * separator.
- *
- * Gated on the scheme being one this module knows rather than run to the end of
- * the line for every value: a bare `api_key=<token>` in a provider message is
- * routinely followed by the diagnosis the user needs, and redacting that costs
- * the reason the log line exists. The scheme list is shared with the utilities
- * scrubber so the two cannot disagree about which words are syntax.
- */
-const schemeValueEnd = (message: string, from: number): number => {
-  let end = whitespaceEnd(message, from);
-  while (end < message.length && !SCHEME_VALUE_STOPS.includes(message[end])) {
-    if (
-      (message[end] === '"' || message[end] === "'") &&
-      message[end - 1] !== "="
-    ) {
-      break;
-    }
     end += 1;
   }
   return end;
@@ -189,11 +146,68 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
     AUTHORIZATION_SCHEMES.has(
       message.slice(cursor, firstTokenEnd).toLowerCase(),
     )
-      ? schemeValueEnd(message, firstTokenEnd)
+      ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
       : firstTokenEnd;
   // The value class needs at least one character, so a label with nothing
   // after its separator is not an assignment.
   return end > cursor ? end : null;
+};
+
+const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
+
+/**
+ * Redact the value of every `authorization` label, scheme and credential both.
+ *
+ * This was a pattern that matched the value as one token, which is right for
+ * `authorization: gsk_abc` and wrong for every scheme that puts the credential
+ * somewhere else: `Digest username="u", realm="r", response="s"` lost the scheme
+ * word and kept the whole challenge, including the `response` the server
+ * computed. It is a scanner now because the run's end is chosen by the text --
+ * a scheme extends it past its parameters, a bare token does not -- which no
+ * single pattern expresses.
+ */
+const redactAuthorizationLabels = (message: string): string => {
+  const parts: string[] = [];
+  let copied = 0;
+  let index = 0;
+  while (index < message.length) {
+    const label = AUTHORIZATION_LABELS.find((candidate) =>
+      matchesAt(message, index, candidate),
+    );
+    if (
+      label === undefined ||
+      // A label inside a longer word is not a label: `unauthorization` and the
+      // middle of `my_authorization_header` must survive untouched.
+      /[A-Za-z0-9_-]/.test(message[index - 1] ?? "")
+    ) {
+      index += 1;
+      continue;
+    }
+    let cursor = whitespaceEnd(message, index + label.length);
+    if (message[cursor] !== ":") {
+      index += 1;
+      continue;
+    }
+    cursor = whitespaceEnd(message, cursor + 1);
+    const valueStart = cursor;
+    const firstTokenEnd = valueEnd(message, cursor);
+    if (firstTokenEnd === valueStart) {
+      index += 1;
+      continue;
+    }
+    const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
+    const end = AUTHORIZATION_SCHEMES.has(scheme)
+      ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
+      : firstTokenEnd;
+    // The label goes with the value, as it does for `api_key`: what identifies
+    // the credential is the label that named it.
+    parts.push(message.slice(copied, index), REDACTED);
+    copied = end;
+    index = end;
+  }
+  if (parts.length === 0) return message;
+  parts.push(message.slice(copied));
+  return parts.join("");
 };
 
 /**
@@ -229,9 +243,11 @@ const redactApiKeyAssignments = (message: string): string => {
  * whole token.
  */
 export const redactProviderMessage = (message: string): string =>
-  redactApiKeyAssignments(
-    PROVIDER_SECRET_PATTERNS.reduce(
-      (cleaned, pattern) => cleaned.replace(pattern, REDACTED),
-      message,
+  redactAuthorizationLabels(
+    redactApiKeyAssignments(
+      PROVIDER_SECRET_PATTERNS.reduce(
+        (cleaned, pattern) => cleaned.replace(pattern, REDACTED),
+        message,
+      ),
     ),
   );

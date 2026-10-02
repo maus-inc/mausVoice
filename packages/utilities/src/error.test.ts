@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { unknownToMessage } from "./error";
+import { redactSensitiveTokens, unknownToMessage } from "./error";
+
+// `redactSensitiveTokens` is the pass that knows about authorization schemes;
+// the exported entry point needs an error object to unwrap first.
 
 describe("unknownToMessage", () => {
   it("returns Error.message", () => {
@@ -198,5 +201,36 @@ describe("unknownToMessage labeled-secret edge cases", () => {
     expect(
       unknownToMessage('private_key="' + "-----BEGIN " + 'PRIVATE KEY-----"'),
     ).toBe("private_key=[redacted]");
+  });
+});
+
+describe("authorization scheme credentials", () => {
+  it("redacts a Digest parameter list whole, not just its first token", () => {
+    const out = redactSensitiveTokens(
+      'authorization: Digest username="u", realm="r", nonce="n", response="s"',
+    );
+    expect(out).not.toContain('response="s"');
+    expect(out).not.toContain('realm="r"');
+    expect(out).not.toContain('nonce="n"');
+    expect(out).toContain("[redacted]");
+  });
+
+  it("keeps the diagnosis that follows a Digest credential", () => {
+    const out = redactSensitiveTokens(
+      "authorization: Digest abc is not authorized for this request",
+    );
+    expect(out).not.toContain("Digest abc ");
+    expect(out).toContain("is not authorized for this request");
+  });
+
+  it("still redacts a plain Bearer token whole", () => {
+    const out = redactSensitiveTokens("authorization: Bearer abc.def.ghi");
+    expect(out).not.toContain("abc.def.ghi");
+  });
+
+  it("leaves a field description alone", () => {
+    expect(redactSensitiveTokens("authorization: token missing")).toContain(
+      "token missing",
+    );
   });
 });

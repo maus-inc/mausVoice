@@ -33,21 +33,8 @@ export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
   private readonly abortController = new AbortController();
-  /**
-   * Settles once, when `abort()` fires. Created next to the controller so every
-   * tool call races the same promise instead of adding a listener of its own.
-   */
-  private readonly toolCallAborted: Promise<AgentToolOutput>;
-
   constructor(config: AgentConfig) {
     this.config = config;
-    this.toolCallAborted = new Promise<AgentToolOutput>((resolve) => {
-      this.abortController.signal.addEventListener(
-        "abort",
-        () => resolve(ABORTED_TOOL_OUTPUT),
-        { once: true },
-      );
-    });
   }
 
   abort(): void {
@@ -200,18 +187,46 @@ export class AgentLoop {
     if (this.aborted) {
       return ABORTED_TOOL_OUTPUT;
     }
-    const run = tool
-      .execute({
-        params: toolParams,
-        reason: typeof reason === "string" ? reason : "",
-        toolCallId,
-      })
-      .catch((err: unknown) => {
+    // `execute` is typed as returning a promise, but a tool that throws before
+    // returning one escapes: `.catch` is never reached, the throw propagates out
+    // of `executeTool`, and the run rejects without a tool-result or a finish
+    // event. So the call itself is inside the try.
+    let run: Promise<AgentToolOutput>;
+    try {
+      run = Promise.resolve(
+        tool.execute({
+          params: toolParams,
+          reason: typeof reason === "string" ? reason : "",
+          toolCallId,
+        }),
+      ).catch((err: unknown) => {
         // A tool must never abort the whole agent loop. Surface the failure
         // as a tool-result message so the model can recover or end cleanly.
         return { success: false, failureReason: unknownToMessage(err) };
       });
-    return Promise.race([run, this.toolCallAborted]);
+    } catch (err) {
+      return { success: false, failureReason: unknownToMessage(err) };
+    }
+
+    // The abort waiter is per call, not per loop: a shared promise resolves once
+    // and its reaction then sits on every result this loop ever produced, which
+    // keeps each tool's output alive until the run ends.
+    const waitForAbort = (): Promise<AgentToolOutput> =>
+      new Promise<AgentToolOutput>((resolve) => {
+        if (this.aborted) {
+          resolve(ABORTED_TOOL_OUTPUT);
+          return;
+        }
+        this.abortController.signal.addEventListener(
+          "abort",
+          () => resolve(ABORTED_TOOL_OUTPUT),
+          { once: true },
+        );
+      });
+
+    // Whichever settles first wins; the loser stops mattering because nothing
+    // here holds a reference to it once this frame returns.
+    return Promise.race([run, waitForAbort()]);
   }
 
   private async *processToolCalls(
