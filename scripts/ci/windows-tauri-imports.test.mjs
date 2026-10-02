@@ -124,7 +124,7 @@ function matrixValues(jobText, key) {
   // the trailing value is wanted, and only from inside the matrix block -- a
   // `key:` elsewhere in the job is not what `matrix.key` resolves to.
   const values = [];
-  let depth = /^ {6}matrix:/.test(lines[matrixAt]) ? 6 : 6;
+  const depth = 6; // the indent of the `matrix:` key this block sits under
   for (let index = matrixAt + 1; index < lines.length; index += 1) {
     const line = lines[index];
     const indent = /^ */.exec(line)[0].length;

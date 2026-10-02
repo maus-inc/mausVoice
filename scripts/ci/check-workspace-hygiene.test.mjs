@@ -91,13 +91,17 @@ describe("workspace hygiene contracts", () => {
     );
 
     for (const block of overrides) {
-      const paths = [...block.matchAll(/^\s*paths\s*=\s*\[(.*)\]\s*$/gm)]
+      // Joined before matching, so a `paths = [` array spread over several lines
+      // is read rather than reported as an exclusion that lists nothing.
+      const joined = block.replace(/\s+/g, " ");
+      const paths = [...joined.matchAll(/paths\s*=\s*\[(.*?)\]/g)]
         .flatMap((matched) => matched[1].split(","))
         .map((path) => path.trim().replace(/^["']|["']$/g, ""))
         .filter(Boolean);
       assert.ok(
         paths.length > 0,
-        "an [[overrides]] block must list the paths it skips",
+        "an [[overrides]] block must list the paths it skips, as a `paths = [...]` " +
+          "array (one line or several)",
       );
       const matchers = paths.map((pattern) => globToRegExp(pattern));
       const hit = tracked.filter((file) =>
@@ -131,7 +135,50 @@ describe("workspace hygiene contracts", () => {
     );
 
     assert.ok(suites.length > 0, "scripts/ci must hold at least one guard");
-    const unwired = suites.filter((suite) => !workflows.includes(suite));
+    // Matched on a command, not on a substring: a suite named in a `paths:`
+    // trigger filter, or in a comment, is not a suite anything executes, and a
+    // check that accepted those would report a guard as wired while it is dead.
+    const executed = new Set(
+      [
+        ...workflows.matchAll(
+          /node\s+--test\s+(?:\S*\/)?([\w.-]+\.test\.mjs)/g,
+        ),
+      ].map((matched) => matched[1]),
+    );
+
+    // A suite can also be reached by being imported: `pr28-contracts` pulls in
+    // `pr37-contracts` and both run from one `node --test`. Following the
+    // imports keeps the check from calling a suite that genuinely executes
+    // every day dead, which would be the fastest way to teach everyone to
+    // ignore it.
+    const imported = new Map();
+    for (const suite of readdirSync(resolve(repoRoot, "scripts/ci"))) {
+      if (!suite.endsWith(".mjs")) continue;
+      const source = readFileSync(
+        resolve(repoRoot, "scripts/ci", suite),
+        "utf8",
+      );
+      imported.set(
+        suite,
+        [...source.matchAll(/(?:from|import\()\s*"\.\/([\w.-]+\.mjs)"/g)].map(
+          (matched) => matched[1],
+        ),
+      );
+    }
+    const reached = new Set(executed);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const suite of [...reached]) {
+        for (const next of imported.get(suite) ?? []) {
+          if (!reached.has(next)) {
+            reached.add(next);
+            grew = true;
+          }
+        }
+      }
+    }
+
+    const unwired = suites.filter((suite) => !reached.has(suite));
     assert.deepStrictEqual(
       unwired,
       [],

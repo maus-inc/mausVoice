@@ -347,7 +347,6 @@ describe("release workflow shell contracts", () => {
       "expected at least one workflow in .github/workflows",
     );
 
-    const undeclared = [];
     for (const file of workflows) {
       const workflow = readFileSync(join(workflowDir, file), "utf8");
       assert.match(
@@ -356,17 +355,7 @@ describe("release workflow shell contracts", () => {
         `${file} must default the token to no permissions before its jobs`,
       );
       assertEveryJobDeclaresPermissions(workflow, file);
-      for (const job of jobBlocks(workflow)) {
-        if (!/^ {4}permissions:/m.test(job.body)) {
-          undeclared.push(`${file}:${job.name}`);
-        }
-      }
     }
-    assert.deepStrictEqual(
-      undeclared,
-      [],
-      `every job must declare its own permissions, or it inherits none: ${undeclared.join(", ")}`,
-    );
   });
 
   // A guard that cannot fail is worse than no guard, because it is read as

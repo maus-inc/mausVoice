@@ -234,8 +234,11 @@ export const azureTranscribeAudio = async ({
       );
     };
     if (signal?.aborted) {
-      // Checked before the recognizer exists: a call that arrives already
-      // cancelled should not open a connection it is about to close.
+      // A call that arrives already cancelled settles here rather than waiting
+      // for a recognizer it will never want. The recognizer and the push stream
+      // are built by the time this runs, so this saves the round trip rather
+      // than the construction -- which is what still happens on a cancellation
+      // that arrives later.
       onAbort();
       return;
     }
