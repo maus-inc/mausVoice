@@ -596,8 +596,11 @@ pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32
 
 #[cfg(test)]
 mod tests {
+    // `open_checked_component` is imported by the test that uses it rather than
+    // here: every test that touches it is `#[cfg(unix)]`, so a module-level
+    // import is dead code on Windows and that lint job runs with `-D warnings`.
     use super::{
-        audio_file_name_for, delete_audio_file, open_audio_file_for_read, open_checked_component,
+        audio_file_name_for, delete_audio_file, open_audio_file_for_read,
         open_managed_audio_dir_at, AUDIO_DIR_NAME,
     };
     use std::fs;
@@ -825,6 +828,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_checked_component_is_opened_link_free_rather_than_canonicalized() {
+        use super::open_checked_component;
         use std::os::unix::fs::symlink;
 
         let base = TemporaryDirectory::create();
