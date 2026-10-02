@@ -39,10 +39,20 @@ const render = (child: ReactNode) =>
     root.render(createElement(IntlProvider, { locale: "en" }, child));
   });
 
+/** The rail entry with this visible label, or undefined when absent. */
 const railButton = (label: string) =>
   Array.from(container.querySelectorAll("button")).find(
     (node) => node.textContent === label,
-  ) as HTMLElement | undefined;
+  );
+
+const requireRailButton = (label: string) => {
+  const button = railButton(label);
+  if (!button) throw new Error(`No rail entry labelled "${label}"`);
+  return button;
+};
+
+/** A spy, so an unused `onSelect` still records that it was never called. */
+const noop = () => vi.fn();
 
 describe("sectionFromScrollTop", () => {
   const tops = [
@@ -85,7 +95,7 @@ describe("sectionFromScrollTop", () => {
 describe("SettingsSectionNav", () => {
   it("lists every registry section, so one cannot exist in the registry and be missing from the rail", () => {
     render(
-      createElement(SettingsSectionNav, { active: null, onSelect: () => {} }),
+      createElement(SettingsSectionNav, { active: null, onSelect: noop() }),
     );
     const labels = Array.from(container.querySelectorAll("button")).map(
       (node) => node.textContent,
@@ -104,7 +114,7 @@ describe("SettingsSectionNav", () => {
     const onSelect = vi.fn();
     render(createElement(SettingsSectionNav, { active: null, onSelect }));
     act(() => {
-      railButton("Updates")!.click();
+      requireRailButton("Updates").click();
     });
     expect(onSelect).toHaveBeenCalledWith("updates");
   });
@@ -113,7 +123,7 @@ describe("SettingsSectionNav", () => {
     render(
       createElement(SettingsSectionNav, {
         active: "privacy-data",
-        onSelect: () => {},
+        onSelect: noop(),
       }),
     );
     const current = Array.from(container.querySelectorAll("button")).filter(
@@ -125,7 +135,7 @@ describe("SettingsSectionNav", () => {
 
   it("exposes the rail as navigation with an accessible name", () => {
     render(
-      createElement(SettingsSectionNav, { active: null, onSelect: () => {} }),
+      createElement(SettingsSectionNav, { active: null, onSelect: noop() }),
     );
     const nav = container.querySelector("nav");
     expect(nav?.getAttribute("aria-label")).toBe("Settings sections");

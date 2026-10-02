@@ -7,6 +7,23 @@ import { Logo } from "./Logo";
  */
 const WORDMARK_BREAKPOINT_DISPLAY = { xs: "none", sm: "block" } as const;
 
+/**
+ * Resolve the wordmark's display rule.
+ *
+ * An explicit `compact` wins outright, so passing `false` shows the wordmark at
+ * every width rather than falling back to the viewport breakpoint. With no
+ * prop, the breakpoint stays the default for every other call site.
+ *
+ * Written as a guard rather than a nested ternary so the two cases stay
+ * readable side by side.
+ */
+const wordmarkDisplayFor = (compact: boolean | undefined) => {
+  if (compact === undefined) {
+    return WORDMARK_BREAKPOINT_DISPLAY;
+  }
+  return compact ? "none" : "block";
+};
+
 export type LogoWithTextProps = StackProps & {
   /**
    * Hide the wordmark and keep only the mark.
@@ -20,15 +37,7 @@ export type LogoWithTextProps = StackProps & {
 };
 
 export const LogoWithText = ({ sx, compact, ...rest }: LogoWithTextProps) => {
-  // An explicit `compact` wins outright, so passing `false` shows the wordmark
-  // at every width rather than falling back to the viewport breakpoint. With no
-  // prop, the breakpoint stays the default for every other call site.
-  const wordmarkDisplay =
-    compact === undefined
-      ? WORDMARK_BREAKPOINT_DISPLAY
-      : compact
-        ? "none"
-        : "block";
+  const wordmarkDisplay = wordmarkDisplayFor(compact);
   return (
     <Stack
       direction="row"

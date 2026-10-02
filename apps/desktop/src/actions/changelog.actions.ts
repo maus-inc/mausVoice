@@ -63,6 +63,18 @@ const toChangelogEntry = (
 const isAbortError = (error: unknown): boolean =>
   isRecord(error) && error.name === "AbortError";
 
+/**
+ * Re-throw an abort, and swallow nothing else.
+ *
+ * Both the request and the body read need this, and the two cases differ only
+ * in which typed failure they raise when the failure was *not* an abort.
+ */
+const rethrowIfAborted = (error: unknown, signal?: AbortSignal): void => {
+  if (signal?.aborted || isAbortError(error)) {
+    throw error;
+  }
+};
+
 const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
   let response: Response;
   try {
@@ -71,9 +83,7 @@ const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
       signal,
     });
   } catch (error) {
-    if (signal?.aborted || isAbortError(error)) {
-      throw error;
-    }
+    rethrowIfAborted(error, signal);
     throw new ChangelogFetchError("network");
   }
   // The releases endpoint is unauthenticated, so GitHub caps it per IP. A 403
@@ -89,9 +99,7 @@ const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
   try {
     return await response.json();
   } catch (error) {
-    if (signal?.aborted || isAbortError(error)) {
-      throw error;
-    }
+    rethrowIfAborted(error, signal);
     throw new ChangelogFetchError("invalid-response");
   }
 };

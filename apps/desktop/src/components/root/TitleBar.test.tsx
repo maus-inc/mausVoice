@@ -14,8 +14,8 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       close: vi.fn(async () => undefined),
       isMaximized: vi.fn(async () => false),
       onResized: vi.fn(async (): Promise<() => void> => vi.fn()),
-      outerSize: vi.fn(async () => ({ width: 1280, height: 800 })),
-      scaleFactor: vi.fn(async () => 1),
+      outerSize: vi.fn(() => Promise.resolve({ width: 1280, height: 800 })),
+      scaleFactor: vi.fn(() => Promise.resolve(1)),
       isFocused: vi.fn(async () => true),
       onFocusChanged: vi.fn(async (..._args: unknown[]): Promise<() => void> =>
         vi.fn(),
@@ -115,6 +115,16 @@ const pxOf = (element: HTMLElement, property: "width" | "height"): number =>
 const buttonByLabel = (label: string) =>
   document.querySelector(`button[aria-label="${label}"]`) as HTMLElement | null;
 
+/**
+ * The same lookup, but failing with a readable message instead of a TypeError
+ * on null when the control is not rendered.
+ */
+const requireByLabel = (label: string) => {
+  const button = buttonByLabel(label);
+  if (!button) throw new Error(`No button with aria-label "${label}"`);
+  return button;
+};
+
 describe("TitleBar on Windows and Linux", () => {
   it("does not let a late initial focus query overwrite a live focus event", async () => {
     let resolve!: (value: boolean) => void;
@@ -154,7 +164,8 @@ describe("TitleBar on Windows and Linux", () => {
     async (platform) => {
       platformState.value = platform;
       await renderBar();
-      const bar = document.querySelector("[data-focused]")!;
+      const bar = document.querySelector("[data-focused]");
+      if (!bar) throw new Error("the title bar did not render");
       expect(Number.parseFloat(getComputedStyle(bar).paddingRight)).toBe(0);
     },
   );
@@ -164,7 +175,7 @@ describe("TitleBar on Windows and Linux", () => {
     expect(document.body.textContent).toContain("mausVoice");
     expect(windowMocks.isMaximized).not.toHaveBeenCalled();
     expect(windowMocks.isFocused).not.toHaveBeenCalled();
-    await act(async () => buttonByLabel("Minimize")!.click());
+    await act(async () => requireByLabel("Minimize").click());
     expect(windowMocks.minimize).not.toHaveBeenCalled();
   });
   it("shows caption buttons, not traffic lights, in the browser preview", async () => {
@@ -178,7 +189,7 @@ describe("TitleBar on Windows and Linux", () => {
   it("uses the shared reduced-motion-aware timing for both caption colors", async () => {
     await renderBar();
     expect(
-      getComputedStyle(buttonByLabel("Minimize")!)
+      getComputedStyle(requireByLabel("Minimize"))
         .transition.split(",")
         .map((value) => value.trim()),
     ).toEqual([
@@ -293,11 +304,13 @@ describe("TitleBar on macOS", () => {
     platformState.value = "macos";
     await renderBar();
 
-    const dot = document.querySelector(".traffic-dot") as HTMLElement | null;
-    expect(dot).not.toBeNull();
+    const dot = document.querySelector(".traffic-dot");
+    if (!(dot instanceof HTMLElement)) {
+      throw new Error("the macOS traffic-light dot did not render");
+    }
     // The 12px dot is the native proportion and stays; only the hit area grew.
-    expect(pxOf(dot!, "width")).toBe(TRAFFIC_DOT_SIZE);
-    expect(pxOf(dot!, "height")).toBe(TRAFFIC_DOT_SIZE);
+    expect(pxOf(dot, "width")).toBe(TRAFFIC_DOT_SIZE);
+    expect(pxOf(dot, "height")).toBe(TRAFFIC_DOT_SIZE);
     expect(TRAFFIC_HIT_SIZE).toBeGreaterThan(TRAFFIC_DOT_SIZE);
   });
 
@@ -305,17 +318,17 @@ describe("TitleBar on macOS", () => {
     await renderBar();
 
     await act(async () => {
-      buttonByLabel("Close")!.click();
+      requireByLabel("Close").click();
     });
     expect(windowMocks.close).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      buttonByLabel("Minimize")!.click();
+      requireByLabel("Minimize").click();
     });
     expect(windowMocks.minimize).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      buttonByLabel("Maximize")!.click();
+      requireByLabel("Maximize").click();
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
   });
@@ -328,7 +341,7 @@ it("narrows the caption buttons and hides the wordmark on a narrow window", asyn
   const wordmark = [...document.querySelectorAll("span")].find(
     (node) => node.textContent === "mausVoice",
   );
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_WIDTH,
   );
   // The wordmark is the first thing to go on a narrow bar.
@@ -342,7 +355,7 @@ it("keeps the roomy bar on a wide window", async () => {
   const wordmark = [...document.querySelectorAll("span")].find(
     (node) => node.textContent === "mausVoice",
   );
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
   expect(getComputedStyle(wordmark!).display).not.toBe("none");
 });
 
@@ -360,13 +373,13 @@ it("re-evaluates density when the window is resized", async () => {
   }) as never);
   windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
   await renderBar();
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
 
   windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
   await act(async () => {
     fireResize?.();
   });
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_WIDTH,
   );
 });
@@ -378,7 +391,7 @@ it("compares against logical pixels, so a scaled display still compacts", async 
   windowMocks.outerSize.mockResolvedValue({ width: 1640, height: 1200 });
   await renderBar();
 
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
     COMPACT_CAPTION_BUTTON_WIDTH,
   );
 });
@@ -388,7 +401,7 @@ it("keeps the roomy bar when the window size is not known yet", async () => {
   platformState.native = false;
   await renderBar();
 
-  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
 });
 
 it.each([
@@ -405,7 +418,7 @@ it.each([
     const error = new Error("window command failed");
     windowMocks[command].mockRejectedValueOnce(error);
     await renderBar();
-    await act(async () => buttonByLabel(label)!.click());
+    await act(async () => requireByLabel(label).click());
     expect(showError).toHaveBeenCalledWith(error);
   },
 );
