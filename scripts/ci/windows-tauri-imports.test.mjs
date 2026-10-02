@@ -19,31 +19,129 @@ const MODULES = ["apps/desktop/src-tauri/src/platform/windows/position.rs"];
 const WINDOWS_JOB_WORKFLOW = ".github/workflows/test-desktop-unit.yml";
 const WINDOWS_JOB = "rust-windows-gated";
 
-// Every `cargo test` line in a job pinned to a Windows runner, across every
-// workflow. The claim being checked is about the runner, not about the line: a
-// `cargo test` in the same file under `ubuntu-latest` runs the desktop crate's
-// Linux-gated tests and is wanted, so the scan has to know the job's `runs-on`.
+// The crate whose `cfg(windows)` unit tests this record is about. The scan is
+// scoped to it because "no job runs them" is a claim about this crate: a Windows
+// runner running the pill crates' own tests is not the step this record says
+// does not exist, and `lint-desktop.yml` runs several of those under a Windows
+// matrix entry. Without the scope, resolving that matrix -- which the previous
+// version could not see at all -- would fail the guard on correct work.
+const GATED_CRATE_MANIFEST = "apps/desktop/src-tauri";
+
+// Every `cargo test` against that crate in a job pinned to a Windows runner,
+// across every workflow. The claim being checked is about the runner, not just
+// the line: a `cargo test` in the same file under `ubuntu-latest` runs the
+// desktop crate's Linux-gated tests and is wanted.
 function windowsRunnerCargoTests(workflowDir) {
   const found = [];
   for (const file of readdirSync(workflowDir).filter((f) =>
     /\.ya?ml$/.test(f),
   )) {
-    const lines = read(`${workflowDir}/${file}`).split("\n");
-    let job = null;
-    let onWindows = false;
-    for (const line of lines) {
-      const start = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
-      if (start) {
-        job = start[1];
-        onWindows = false;
+    found.push(
+      ...windowsRunnerCargoTestsIn(read(`${workflowDir}/${file}`), file),
+    );
+  }
+  return found;
+}
+
+// The same scan over one workflow's text, so a synthetic workflow can be fed
+// to it. `label` names the source in each record.
+function windowsRunnerCargoTestsIn(text, label) {
+  const found = [];
+  const lines = text.split("\n");
+  const jobs = [];
+  let start = lines.findIndex((line) => /\S/.test(line));
+  for (let index = start; index < lines.length; index += 1) {
+    const opened = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[index]);
+    if (opened) {
+      let end = index + 1;
+      while (
+        end < lines.length &&
+        !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[end]) &&
+        !/^\S/.test(lines[end])
+      ) {
+        end += 1;
       }
-      if (/^ {4}runs-on:/.test(line)) onWindows = /windows/.test(line);
-      if (onWindows && /cargo test\b/.test(line)) {
-        found.push(`${file}:${job}: ${line.trim()}`);
+      jobs.push({ name: opened[1], text: lines.slice(index, end).join("\n") });
+      index = end - 1;
+    }
+  }
+  for (const job of jobs) {
+    if (!runsOnWindows(job.text)) continue;
+    for (const line of job.text.split("\n")) {
+      if (/cargo test\b/.test(line) && line.includes(GATED_CRATE_MANIFEST)) {
+        found.push(`${label}:${job.name}: ${line.trim()}`);
       }
     }
   }
   return found;
+}
+
+// Whether a job body can run on a Windows runner.
+//
+// `runs-on: ${{ matrix.os }}` was invisible to the previous version, so a
+// `cargo test` added under one of these jobs would not have been found and the
+// guard would have kept passing. A matrix value is therefore resolved against
+// the job's own `strategy.matrix`, through both spellings a workflow can use:
+// the `include:` list of whole entries and a bare `key: [a, b]` list.
+//
+// An expression that cannot be resolved from the job body -- one fed by a
+// `needs` output, say -- reads as "not Windows", because guessing would invent
+// a run that may not exist. `unresolvedRunnerExpressions` counts them so a test
+// can assert the resolver is not simply blind, and so a job that changes shape
+// is visible rather than silent.
+const unresolvedRunnerExpressions = [];
+function runsOnWindows(jobText) {
+  const runsOn = /^ {4}runs-on:\s*(.+)$/m.exec(jobText);
+  if (!runsOn) return false;
+  const value = runsOn[1].trim();
+  if (!/windows/i.test(value)) {
+    // The only expression this resolves is a matrix reference; anything else in
+    // `${{ }}` is fed from somewhere the job body does not carry.
+    const matrix = /\bmatrix\.([A-Za-z0-9_-]+)/.exec(value);
+    if (!matrix || !/\$\{\{/.test(value)) {
+      if (/\$\{\{/.test(value)) unresolvedRunnerExpressions.push(value);
+      return false;
+    }
+    const values = matrixValues(jobText, matrix[1]);
+    if (values === null) {
+      unresolvedRunnerExpressions.push(value);
+      return false;
+    }
+    return values.some((entry) => /windows/i.test(entry));
+  }
+  return true;
+}
+
+// Every value `matrix.<key>` can take in this job, from an `include:` entry list
+// or a bare list. Null when the key appears in neither.
+function matrixValues(jobText, key) {
+  const lines = jobText.split("\n");
+  const matrixAt = lines.findIndex((line) => /^ {6}matrix:\s*$/.test(line));
+  if (matrixAt === -1) return null;
+  // One rule for both spellings, because they are the same fact written twice:
+  // `include:` entries carry `- label: Windows` then `  os: windows-latest` at a
+  // deeper indent, and a bare list is `os: [ubuntu-22.04, windows-latest]`. Only
+  // the trailing value is wanted, and only from inside the matrix block -- a
+  // `key:` elsewhere in the job is not what `matrix.key` resolves to.
+  const values = [];
+  let depth = /^ {6}matrix:/.test(lines[matrixAt]) ? 6 : 6;
+  for (let index = matrixAt + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const indent = /^ */.exec(line)[0].length;
+    if (indent <= depth) break;
+    if (line.trim() === "") continue;
+    const assignment = new RegExp(`^ *-? *${key}: *(.*)$`).exec(line);
+    if (!assignment) continue;
+    for (const part of assignment[1].split(",")) {
+      const value = part
+        .trim()
+        .replace(/^\[/, "")
+        .replace(/\]$/, "")
+        .replace(/^["']|["']$/g, "");
+      if (value) values.push(value);
+    }
+  }
+  return values.length > 0 ? values : null;
 }
 
 // The shared placement helpers and the rectangle type, in every shape a call
@@ -164,6 +262,122 @@ describe("Windows-gated coverage is recorded, not silent", () => {
       note.join("\n"),
       /WebView2/,
       "the compile-only record has to live in the workflow, not in a commit message",
+    );
+  });
+
+  // The scan used to read a job's runner off its own `runs-on:` line and nothing
+  // else, so `runs-on: ${{ matrix.os }}` was invisible: `lint-desktop.yml` and
+  // `test-package-rust-transcription.yml` both use it, and both carry a
+  // `windows-latest` matrix entry. A `cargo test` added under such a job would
+  // have gone unnoticed while this guard kept passing, which is the one way a
+  // record like this rots -- silently, in the direction that reassures.
+  it("sees a Windows runner that arrives through a matrix", () => {
+    const workflow = [
+      "jobs:",
+      "  build:",
+      "    runs-on: ${{ matrix.os }}",
+      "    strategy:",
+      "      matrix:",
+      "        include:",
+      "          - label: Linux",
+      "            os: ubuntu-22.04",
+      "          - label: Windows",
+      "            os: windows-latest",
+      "    steps:",
+      "      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --lib",
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      windowsRunnerCargoTestsIn(workflow, "synthetic.yml"),
+      [
+        // The whole step line, `- run:` and all: this record is read by a
+        // person deciding whether the note above the job is still true, and a
+        // rewritten line would not match what they see in the workflow.
+        "synthetic.yml:build: - run: cargo test --locked --manifest-path " +
+          "apps/desktop/src-tauri/Cargo.toml --lib",
+      ],
+      "a Windows runner expressed as a matrix value is still a Windows runner",
+    );
+  });
+
+  it("resolves a matrix given as a bare list", () => {
+    const workflow = [
+      "jobs:",
+      "  build:",
+      "    runs-on: ${{ matrix.os }}",
+      "    strategy:",
+      "      matrix:",
+      "        os: [ubuntu-22.04, windows-latest]",
+      "    steps:",
+      "      - run: cargo test --locked --working-directory: apps/desktop/src-tauri",
+      "",
+    ].join("\n");
+    assert.equal(
+      windowsRunnerCargoTestsIn(workflow, "synthetic.yml").length,
+      1,
+    );
+  });
+
+  it("calls a matrix with no Windows entry a non-Windows job", () => {
+    const workflow = [
+      "jobs:",
+      "  build:",
+      "    runs-on: ${{ matrix.os }}",
+      "    strategy:",
+      "      matrix:",
+      "        include:",
+      "          - os: ubuntu-22.04",
+      "          - os: macos-14",
+      "    steps:",
+      "      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      windowsRunnerCargoTestsIn(workflow, "synthetic.yml"),
+      [],
+      "a matrix with no Windows runner runs nothing on Windows",
+    );
+  });
+
+  it("ignores a Windows job that tests a crate this record is not about", () => {
+    // `lint-desktop.yml` runs the pill crates' tests under its Windows matrix
+    // entry. Those are wanted, and the scan has to be scoped to the desktop
+    // crate for the guard to be able to resolve that matrix at all -- otherwise
+    // fixing the blindness would fail the guard on correct work.
+    const workflow = [
+      "jobs:",
+      "  lint:",
+      "    runs-on: ${{ matrix.os }}",
+      "    strategy:",
+      "      matrix:",
+      "        include:",
+      "          - os: windows-latest",
+      "    steps:",
+      "      - run: cargo test --locked --manifest-path packages/rust_windows_pill/Cargo.toml",
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      windowsRunnerCargoTestsIn(workflow, "synthetic.yml"),
+      [],
+      "the pill crates' Windows tests are not the step this record says is absent",
+    );
+  });
+
+  it("records a runner expression it cannot resolve instead of guessing", () => {
+    const before = unresolvedRunnerExpressions.length;
+    const workflow = [
+      "jobs:",
+      "  build:",
+      "    runs-on: ${{ needs.setup.outputs.os }}",
+      "    steps:",
+      "      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+      "",
+    ].join("\n");
+    assert.deepEqual(windowsRunnerCargoTestsIn(workflow, "synthetic.yml"), []);
+    assert.ok(
+      unresolvedRunnerExpressions.length > before,
+      "a runner fed by a `needs` output must be visible to a reader, not silently " +
+        "counted as a non-Windows job",
     );
   });
 
