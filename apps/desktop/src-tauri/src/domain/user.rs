@@ -71,10 +71,12 @@ const fn default_play_interaction_chime() -> bool {
 /// This is the single Rust-side home for the number. `audio_feedback` keeps the
 /// live value in a lock-free `AtomicU32`, which has to be seeded from a
 /// `const`, so it holds the same value as
-/// [`DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS`] rather than a second literal;
-/// the two are pinned against each other by the test below, because the sink
-/// and the database disagreeing means a fresh install plays back at one volume
-/// and reports another.
+/// [`DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS`] rather than a second literal.
+/// That constant is derived from this one by `to_bits` in a `const`
+/// initializer, so the two cannot drift: the seed is this literal's bit
+/// pattern, fixed at compile time, with nothing to keep in step at run time.
+/// The agreement matters because the sink and the database disagreeing means a
+/// fresh install plays back at one volume and reports another.
 pub const DEFAULT_INTERACTION_FEEDBACK_VOLUME: f32 = 0.35;
 
 /// [`DEFAULT_INTERACTION_FEEDBACK_VOLUME`] in the bit pattern the playback sink
