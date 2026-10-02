@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { LlmChatInput } from "@maus-inc/types";
 import {
   geminiGenerateTextResponse,
   geminiStreamChat,
@@ -1174,7 +1175,13 @@ describe("Gemini tool choice", () => {
     },
   ];
 
-  const streamOnce = async (toolChoice: string | { name: string }) => {
+  // Every case in this block asserts on the request body that came out, and they
+  // differ only in the `input` they hand the stream, so the mock, the drain and
+  // the parse live here once. A second copy of that plumbing can only drift from
+  // the first, and a case that forgot to assert would then read as a pass.
+  const streamOnce = async (
+    input: Partial<LlmChatInput> = {},
+  ): Promise<Record<string, unknown>> => {
     const customFetch = vi
       .fn()
       .mockResolvedValue(
@@ -1188,7 +1195,7 @@ describe("Gemini tool choice", () => {
       input: {
         messages: [{ role: "user", content: "Hello" }],
         tools,
-        toolChoice: toolChoice as never,
+        ...input,
       },
       customFetch,
     })) {
@@ -1207,12 +1214,12 @@ describe("Gemini tool choice", () => {
     ["none", "NONE"],
     ["required", "ANY"],
   ])("maps toolChoice %s onto mode %s", async (choice, mode) => {
-    const body = await streamOnce(choice);
+    const body = await streamOnce({ toolChoice: choice as never });
     expect(body.toolConfig).toEqual({ functionCallingConfig: { mode } });
   });
 
   it("restricts a named tool choice to that function", async () => {
-    const body = await streamOnce({ name: "lookup" });
+    const body = await streamOnce({ toolChoice: { name: "lookup" } as never });
     expect(body.toolConfig).toEqual({
       functionCallingConfig: {
         mode: "ANY",
@@ -1222,47 +1229,14 @@ describe("Gemini tool choice", () => {
   });
 
   it("sends no toolConfig when the caller expressed no choice", async () => {
-    const customFetch = vi
-      .fn()
-      .mockResolvedValue(
-        sseResponse([
-          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
-        ]),
-      );
-    for await (const _event of geminiStreamChat({
-      apiKey: "gemini-key",
-      model: "gemini-3.8-flash",
-      input: { messages: [{ role: "user", content: "Hello" }], tools },
-      customFetch,
-    })) {
-      // drain
-    }
-    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    const body = await streamOnce();
     expect(body).not.toHaveProperty("toolConfig");
   });
 
   it("sends no toolConfig when there are no tools to choose between", async () => {
     // Gemini rejects a `toolConfig` on a request that declares no function, so
     // the choice is only expressible once `tools` is present.
-    const customFetch = vi
-      .fn()
-      .mockResolvedValue(
-        sseResponse([
-          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
-        ]),
-      );
-    for await (const _event of geminiStreamChat({
-      apiKey: "gemini-key",
-      model: "gemini-3.8-flash",
-      input: {
-        messages: [{ role: "user", content: "Hello" }],
-        toolChoice: "required",
-      },
-      customFetch,
-    })) {
-      // drain
-    }
-    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    const body = await streamOnce({ toolChoice: "required", tools: undefined });
     expect(body).not.toHaveProperty("toolConfig");
     expect(body).not.toHaveProperty("tools");
   });

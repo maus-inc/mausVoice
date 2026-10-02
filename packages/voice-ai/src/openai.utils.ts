@@ -77,13 +77,11 @@ export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
  */
 const buildMaxTokensParams = (
   model: string,
-  maxTokens: number | undefined,
-): Record<string, number> => {
-  const limit = maxTokens ?? 1024;
-  return isOpenAIJsonObjectOnlyModel(model)
-    ? { max_tokens: limit }
-    : { max_completion_tokens: limit };
-};
+  maxTokens: number = 1024,
+): Record<string, number> =>
+  isOpenAIJsonObjectOnlyModel(model)
+    ? { max_tokens: maxTokens }
+    : { max_completion_tokens: maxTokens };
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
   buildJsonSchemaResponseFormat(

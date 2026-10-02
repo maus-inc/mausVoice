@@ -111,12 +111,6 @@ const geminiModelPath = (model: string): string => {
 };
 
 /**
- * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
- * can distinguish a permanent client error (400/401/403/404) from a transient
- * rate limit or server failure. Extends the shared `HttpError` so every
- * provider in this package reports failures with the same shape.
- */
-/**
  * The upload reached a terminal FAILED state.
  *
  * Its own type so `pollGeminiFileState` can tell it apart from a transient
