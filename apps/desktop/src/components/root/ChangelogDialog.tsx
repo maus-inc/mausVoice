@@ -219,7 +219,11 @@ export const ChangelogDialog = ({
               <Button
                 variant="text"
                 size="small"
-                onClick={() => void openUrl(GITHUB_RELEASES_PAGE_URL)}
+                onClick={() => {
+                  // `openUrl` rejects when no browser handler is available, and
+                  // discarding the promise would leave that unhandled.
+                  openUrl(GITHUB_RELEASES_PAGE_URL).catch(() => undefined);
+                }}
               >
                 <FormattedMessage defaultMessage="Open releases page" />
               </Button>

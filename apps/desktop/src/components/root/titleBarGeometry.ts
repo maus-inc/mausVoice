@@ -49,13 +49,16 @@ export const TRAFFIC_DOT_SIZE = 12;
 export const TRAFFIC_HIT_SIZE = Math.max(MIN_TARGET_SIZE, TRAFFIC_DOT_SIZE);
 
 /**
- * Window width at or below which the bar drops to its compact form.
+ * Logical CSS-pixel width at or below which the bar drops to its compact form.
  *
- * Below this width the wordmark is already hidden, so the bar carries nothing
- * but the controls. That is the moment to tighten the caption buttons too,
- * otherwise the controls occupy a large share of a narrow window.
+ * The window's configured `minWidth` is 800, so any threshold below that can
+ * never fire and the compact form would be dead code. 900 sits above the
+ * minimum and below the 1100 default, which is the range a user actually
+ * reaches when they narrow the window.
+ *
+ * Compare this against a logical width, not the physical width Tauri reports.
  */
-export const COMPACT_WIDTH = 520;
+export const COMPACT_WIDTH = 900;
 
 /** Caption button width in the compact form. Still above `MIN_TARGET_SIZE`. */
 export const COMPACT_CAPTION_BUTTON_WIDTH = 34;
@@ -63,8 +66,9 @@ export const COMPACT_CAPTION_BUTTON_WIDTH = 34;
 /**
  * Whether the bar should render compact for a given window width.
  *
- * `null` means the size is not known yet, which renders the roomy default so
- * the bar never flashes compact on first paint.
+ * `width` is in logical CSS pixels. `null` means the size is not known yet,
+ * which renders the roomy default so the bar never flashes compact on first
+ * paint.
  */
 export const isCompactWidth = (width: number | null): boolean =>
   width !== null && width > 0 && width <= COMPACT_WIDTH;

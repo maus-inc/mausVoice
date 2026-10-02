@@ -895,9 +895,6 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-install-update", () => {
     if (!isMainWindow) return;
-    // Fire-and-forget: the listener body is not async, so it never receives the
-    // promise from `installAvailableUpdate`. The `.catch` is what keeps a failed
-    // install from becoming an unhandled rejection.
     // Route through the dialog rather than installing straight from the tray.
     // The dialog is the only surface that shows the release notes before an
     // update applies, so installing from here would make the notes unreachable

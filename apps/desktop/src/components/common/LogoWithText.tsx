@@ -38,9 +38,16 @@ export const LogoWithText = ({ sx, compact, ...rest }: LogoWithTextProps) => {
           // Explicit so the wordmark tracks the text ramp on both schemes
           // instead of inheriting whatever surface it happens to sit on.
           color: "text.primary",
-          // The title bar overrides this with its measured width. The
-          // breakpoint stays as the default for every other call site.
-          display: compact ? "none" : { xs: "none", sm: "block" },
+          // An explicit `compact` wins outright, so passing `false` shows the
+          // wordmark at every width rather than falling back to the breakpoint.
+          // Without the prop, the breakpoint stays the default for every other
+          // call site.
+          display:
+            compact === undefined
+              ? { xs: "none", sm: "block" }
+              : compact
+                ? "none"
+                : "block",
         }}
       >
         mausVoice

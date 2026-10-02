@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Open **Settings** from the bottom of the left navigation rail. Every control on the page saves as you change it, so there is no separate Save or Close action. The page has a search field at the top that matches setting names, section names, and common synonyms.
+Open **Settings** from the bottom of the left navigation rail. Most controls save as you change them. The exceptions are the API key forms for Deepgram and Groq, which open a dialog with explicit **Save** and **Cancel** buttons. The page has a search field at the top that matches setting names, section names, and common synonyms.
 
 A rail on the left lists the eight sections and follows you as you scroll. Selecting one jumps to it, so you can reach Advanced without reading everything above it.
 
@@ -57,7 +57,7 @@ A credential can appear for more than one task only when its provider supports t
 - **Show menu bar icon** controls the tray or menu-bar icon. Keep another reliable way to open the app before hiding it.
 - **Dictation pill visibility** chooses **Persistent**, **While active**, or **Hidden**.
 - **Pill placement** anchors the dictation pill to the top or bottom of the screen and defaults to bottom. Windows only for now; the setting is hidden on macOS and Linux until their native pills support repositioning.
-- **Reset pill position** chooses which display the tray's reset action returns to: **Current monitor**, the one holding the pill, or **Monitor under cursor**, the one holding the pointer. It does not move the pill immediately.
+- **Reset pill position** chooses which display the tray's reset action returns to. **Current monitor** is the one holding the pill, and **Cursor monitor** is the one holding the pointer. It does not move the pill immediately.
 - **Streak celebrations** controls the flame and firework animation in the pill. It does not change stored transcription content.
 
 ## Shortcuts
@@ -85,7 +85,7 @@ A credential can appear for more than one task only when its provider supports t
 ## Advanced
 
 - **Input permissions** runs a platform-specific helper: uinput or udev setup on Linux, administrator-assisted input capture on Windows, and Accessibility plus Microphone requests on macOS.
-- **Configure input permissions** re-runs that helper and then restarts the app.
+- **Configure input permissions** re-runs that helper and then restarts the app for you.
 - **Always run as administrator** on Windows makes the app ask for elevation at the next launch. If you decline, a dialog offers to continue without elevation or to close the app.
 - **Terms & conditions** opens the repository's AGPL license.
 

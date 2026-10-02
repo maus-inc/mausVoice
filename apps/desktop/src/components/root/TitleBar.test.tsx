@@ -15,6 +15,7 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       isMaximized: vi.fn(async () => false),
       onResized: vi.fn(async (): Promise<() => void> => vi.fn()),
       outerSize: vi.fn(async () => ({ width: 1280, height: 800 })),
+      scaleFactor: vi.fn(async () => 1),
       isFocused: vi.fn(async () => true),
       onFocusChanged: vi.fn(async (..._args: unknown[]): Promise<() => void> =>
         vi.fn(),
@@ -80,6 +81,7 @@ beforeEach(() => {
   focusHandlers.length = 0;
   windowMocks.isMaximized.mockResolvedValue(false);
   windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  windowMocks.scaleFactor.mockResolvedValue(1);
   windowMocks.onFocusChanged.mockImplementation(async (handler: unknown) => {
     focusHandlers.push(handler as (event: { payload: boolean }) => void);
     return vi.fn();
@@ -295,6 +297,7 @@ describe("TitleBar on macOS", () => {
     expect(dot).not.toBeNull();
     // The 12px dot is the native proportion and stays; only the hit area grew.
     expect(pxOf(dot!, "width")).toBe(TRAFFIC_DOT_SIZE);
+    expect(pxOf(dot!, "height")).toBe(TRAFFIC_DOT_SIZE);
     expect(TRAFFIC_HIT_SIZE).toBeGreaterThan(TRAFFIC_DOT_SIZE);
   });
 
@@ -341,6 +344,43 @@ it("keeps the roomy bar on a wide window", async () => {
   );
   expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
   expect(getComputedStyle(wordmark!).display).not.toBe("none");
+});
+
+it("re-evaluates density when the window is resized", async () => {
+  // Every other density test sets the size before mount, so only the initial
+  // read is covered. The resize path is the one that runs in real use.
+  let fireResize: (() => void) | undefined;
+  // Tauri's `onResized` hands the callback to the runtime, but its published
+  // type takes no arguments, so the captured handler needs a cast here.
+  windowMocks.onResized.mockImplementation(((
+    handler: () => void,
+  ): Promise<() => void> => {
+    fireResize = handler;
+    return Promise.resolve(() => undefined);
+  }) as never);
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  await renderBar();
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
+
+  windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
+  await act(async () => {
+    fireResize?.();
+  });
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+});
+
+it("compares against logical pixels, so a scaled display still compacts", async () => {
+  // A 200% display reports twice the physical width for the same window. The
+  // threshold is in CSS pixels, so a narrow window must still compact.
+  windowMocks.scaleFactor.mockResolvedValue(2);
+  windowMocks.outerSize.mockResolvedValue({ width: 1640, height: 1200 });
+  await renderBar();
+
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
 });
 
 it("keeps the roomy bar when the window size is not known yet", async () => {

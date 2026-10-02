@@ -87,14 +87,16 @@ const useWindowWidth = (): number | null => {
     let canceled = false;
     const win = getCurrentWindow();
 
-    const read = () => {
-      win
-        .outerSize()
-        .then((size) => {
-          if (!canceled) setWidth(size.width);
+    // `outerSize()` reports physical device pixels, but every length in the
+    // bar is a logical CSS pixel. Comparing the two directly would make the
+    // threshold fire late on a scaled display: at 200% scaling a 1000px window
+    // measures 2000, so a 900px threshold would never trigger.
+    const read = () =>
+      Promise.all([win.outerSize(), win.scaleFactor()])
+        .then(([size, scale]) => {
+          if (!canceled) setWidth(size.width / (scale || 1));
         })
         .catch(() => undefined);
-    };
     read();
 
     win
@@ -269,10 +271,9 @@ const TrafficButton = ({
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: "transparent",
-      transition: "background-color 120ms ease",
-      "&:hover": {
-        backgroundColor: "action.hover",
-      },
+      // No hover backplate here. The dot already shows a hover treatment, and
+      // painting one on the 24px box as well makes a single hover read as two
+      // separate highlights. The dot reacting is also what macOS does.
       "&:focus-visible": {
         outline: "2px solid",
         outlineColor: "primary.main",
