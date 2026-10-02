@@ -228,6 +228,64 @@ const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
  * their surroundings -- `{"authorization": "..."}` becomes
  * `{"[redacted]"}` -- rather than leaving a quote dangling in front of it.
  */
+/**
+ * The end of the value a label starting at `index` names, or null when there is
+ * no assignment here at all.
+ *
+ * Split out of the scan below because every step of it is a question about the
+ * text and none of them changes what the scan should do next: a reader of the
+ * loop wants to see the label, the redaction and the step forward, and the walk
+ * from a label to a value is the same walk whichever label it was.
+ */
+const labelValueEnd = (
+  message: string,
+  index: number,
+  label: string,
+): number | null => {
+  let cursor = whitespaceEnd(message, index + label.length);
+  // The JSON key form, where the label's own closing quote precedes the
+  // separator.
+  if (isQuote(message[cursor])) cursor += 1;
+  cursor = whitespaceEnd(message, cursor);
+  if (message[cursor] !== ":") return null;
+  cursor = whitespaceEnd(message, cursor + 1);
+  const quote = message[cursor];
+  if (isQuote(quote)) cursor += 1;
+  cursor = whitespaceEnd(message, cursor);
+  const firstTokenEnd = valueEnd(message, cursor);
+  // The value class needs at least one character, so a label with nothing after
+  // its separator is not an assignment.
+  if (firstTokenEnd === cursor) return null;
+  return credentialEnd(message, cursor, firstTokenEnd, quote);
+};
+
+/**
+ * Where the credential after a value's first token ends.
+ *
+ * A scheme is the header's syntax rather than the credential, so its parameters
+ * belong to the redaction: a bare token has no parameters for `schemeValueEnd` to
+ * disambiguate quotes with, so a quoted one runs to its closing quote here for
+ * the same reason the `api_key` scanner does it. The scheme branch is left alone:
+ * it already ends at a quote, and a `Digest` challenge carries quotes of its own
+ * (`nonce="u"`), which only the parameter walk can step over.
+ */
+const credentialEnd = (
+  message: string,
+  valueStart: number,
+  firstTokenEnd: number,
+  quote: string,
+): number => {
+  const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
+  if (AUTHORIZATION_SCHEMES.has(scheme)) {
+    return firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd));
+  }
+  if (!isQuote(quote)) return firstTokenEnd;
+  const closingQuoteEnd = quotedValueEnd(message, valueStart, quote);
+  return closingQuoteEnd === null
+    ? firstTokenEnd
+    : Math.max(firstTokenEnd, closingQuoteEnd);
+};
+
 const redactAuthorizationLabels = (message: string): string => {
   const parts: string[] = [];
   let copied = 0;
@@ -236,46 +294,16 @@ const redactAuthorizationLabels = (message: string): string => {
     const label = AUTHORIZATION_LABELS.find((candidate) =>
       matchesAt(message, index, candidate),
     );
-    if (
-      label === undefined ||
-      // A label inside a longer word is not a label: `unauthorization` and the
-      // middle of `my_authorization_header` must survive untouched.
-      /[A-Za-z0-9_-]/.test(message[index - 1] ?? "")
-    ) {
+    // A label inside a longer word is not a label: `unauthorization` and the
+    // middle of `my_authorization_header` must survive untouched.
+    const inside = /[A-Za-z0-9_-]/.test(message[index - 1] ?? "");
+    const end =
+      label === undefined || inside
+        ? null
+        : labelValueEnd(message, index, label);
+    if (end === null) {
       index += 1;
       continue;
-    }
-    let cursor = whitespaceEnd(message, index + label.length);
-    // The JSON key form, where the label's own closing quote precedes the
-    // separator.
-    if (isQuote(message[cursor])) cursor += 1;
-    cursor = whitespaceEnd(message, cursor);
-    if (message[cursor] !== ":") {
-      index += 1;
-      continue;
-    }
-    cursor = whitespaceEnd(message, cursor + 1);
-    const quote = message[cursor];
-    if (isQuote(quote)) cursor += 1;
-    cursor = whitespaceEnd(message, cursor);
-    const valueStart = cursor;
-    const firstTokenEnd = valueEnd(message, cursor);
-    if (firstTokenEnd === valueStart) {
-      index += 1;
-      continue;
-    }
-    const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
-    let end = firstTokenEnd;
-    if (AUTHORIZATION_SCHEMES.has(scheme)) {
-      end = firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd));
-    } else if (isQuote(quote)) {
-      // A bare token has no parameters for `schemeValueEnd` to disambiguate the
-      // quotes with, so a quoted one runs to its closing quote here for the same
-      // reason the `api_key` scanner does it. The scheme branch is left alone: it
-      // already ends at a quote, and a `Digest` challenge carries quotes of its
-      // own (`nonce="u"`), which only the parameter walk can step over.
-      const closingQuoteEnd = quotedValueEnd(message, cursor, quote);
-      if (closingQuoteEnd !== null) end = Math.max(end, closingQuoteEnd);
     }
     // The label goes with the value, as it does for `api_key`: what identifies
     // the credential is the label that named it.

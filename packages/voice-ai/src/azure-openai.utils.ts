@@ -6,13 +6,15 @@ import {
   OPENAI_LEGACY_CHAT_MODELS,
 } from "./response-format.utils";
 import { buildJsonObjectPrompt } from "./openai-compatible-generate.utils";
-import { isOpenAIOReasoningModel } from "./openai.utils";
 import type {
   JsonResponse,
   LlmChatInput,
   LlmStreamEvent,
 } from "@maus-inc/types";
-import { openaiCompatibleStreamChat } from "./openai.utils";
+import {
+  isOpenAIOReasoningModel,
+  openaiCompatibleStreamChat,
+} from "./openai.utils";
 import type { CustomFetch } from "./types";
 
 export const AZURE_OPENAI_MODELS = [

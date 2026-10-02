@@ -516,4 +516,36 @@ describe("an authorization label inside a JSON body", () => {
     expect(output).not.toContain(DIGEST_NONCE);
     expect(output).toBe('{"[redacted]", "model": "llama-3"}');
   });
+
+  describe("an authorization value that is quoted and is not a bare token", () => {
+    // Found by mutating the scanner: with the quoted branch disabled this suite
+    // still passed, because a bare token inside quotes ends at the closing quote
+    // anyway and the value class excludes it. The branch only earns its keep when
+    // the quoted value holds something the value class stops at -- which is the
+    // same leak the `api_key` scanner was fixed for, on the other label.
+    it("redacts a quoted value holding a space whole", () => {
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "tok en-secret-tail"}',
+      );
+      expect(output).not.toContain("en-secret-tail");
+      expect(output).toContain("[redacted]");
+    });
+
+    it("redacts a quoted value holding punctuation whole", () => {
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "abc:def/ghi"}',
+      );
+      expect(output).not.toContain("def/ghi");
+    });
+
+    it("still answers the question the log line exists to answer", () => {
+      // Over-redacting the diagnosis would cost the reason the message was kept,
+      // so the redaction stops at the value's own closing quote.
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "tok en", "model":"llama-3"}',
+      );
+      expect(output).not.toContain("tok en");
+      expect(output).toContain('"model":"llama-3"');
+    });
+  });
 });

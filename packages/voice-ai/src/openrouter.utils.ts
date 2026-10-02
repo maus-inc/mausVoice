@@ -2,7 +2,6 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
-import { isOpenAIOReasoningModel } from "./openai.utils";
 import {
   buildJsonSchemaResponseFormat,
   OPENAI_LEGACY_CHAT_MODELS,
@@ -20,7 +19,10 @@ import type {
   OpenRouterProvider,
   OpenRouterProviderRouting,
 } from "@maus-inc/types";
-import { openaiCompatibleStreamChat } from "./openai.utils";
+import {
+  isOpenAIOReasoningModel,
+  openaiCompatibleStreamChat,
+} from "./openai.utils";
 import type { CustomFetch } from "./types";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
