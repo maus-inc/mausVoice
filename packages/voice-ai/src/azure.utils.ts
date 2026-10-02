@@ -514,6 +514,19 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // reaching this is an Azure failure reason, where no such field exists, and a
   // redaction control that hides one harmless value is far cheaper than one that
   // lets a key through because a new vendor prefix was not enumerated.
+  //
+  // The 24 bounds how much LABEL text the engine inspects before the credential
+  // word, and it is sized above every label that reaches this code: the longest
+  // one this app's own gateway sends, `Ocp-Apim-Subscription-Key`, puts 22
+  // characters in front of `Key`. It cannot put a credential back, which is the
+  // only property the number has to have, and the reason is structural: the
+  // `(?:key|token|...)` alternation is what makes the whole pattern match, so a
+  // value is redacted only once that word has been read inside the budgeted
+  // run. A label longer than the budget is simply re-matched from the next word
+  // boundary inside it -- `-` is one -- and the run it skips over is label text
+  // rather than value text, so the match still spans the credential and the
+  // label reads back whole. `a-f-o-o-bar-baz-qux-quux-corge-Key: v` is redacted
+  // from `baz-Key` and prints as the label it started from.
   /\b[a-z0-9_.-]{0,24}(?:key|token|secret|password|credential)\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
   // `Authorization: <scheme> <credential>`, for any scheme. The value runs to
   // the end of the line rather than to the next space, because the scheme is

@@ -61,95 +61,119 @@ describe("openrouter production paths thread the caller's fetch", () => {
     return mod;
   };
 
-  it("builds the transcription client with the caller's fetch", async () => {
-    setupOpenAIMock();
+  type OpenRouterModule = Awaited<ReturnType<typeof loadOpenRouter>>;
+
+  /**
+   * The call under test, in the shape both helpers below want: the freshly
+   * imported module and the caller's fetch. Passing the entry point in rather
+   * than repeating it per test is what keeps a new entry point from arriving as
+   * another copy of this file's mock-and-assert block.
+   */
+  type EntryUnderTest = (
+    module: OpenRouterModule,
+    customFetch: CustomFetch,
+  ) => Promise<unknown>;
+
+  /** Runs `entry` and asserts the client it built was given that fetch. */
+  const expectClientBuiltWithCallerFetch = async (
+    entry: EntryUnderTest,
+    completion?: () => unknown,
+  ): Promise<void> => {
+    setupOpenAIMock(completion);
     const customFetch: CustomFetch = vi.fn();
 
-    const { openrouterTranscribeAudio } = await loadOpenRouter();
-    await openrouterTranscribeAudio({
-      apiKey: "test-key",
-      model: "openai/whisper-large-v3",
-      blob: new ArrayBuffer(8),
-      ext: "wav",
-      customFetch,
-    });
+    await entry(await loadOpenRouter(), customFetch);
 
     const [clientOptions] = clientOptionsSeen();
-    expect(clientOptions.fetch).toBe(customFetch);
+    expect(clientOptions).toBeDefined();
+    expect(clientOptions?.fetch).toBe(customFetch);
+  };
+
+  /**
+   * The same for the two entry points that do not go through the SDK, so there
+   * is no constructor to read. What matters is the same either way: the caller's
+   * instance is the one that makes the request, not the global it would
+   * otherwise fall back to. The mock answers a catalog-shaped body so a path that
+   * parsed it differently would raise rather than pass vacuously.
+   */
+  const expectFetchedOverCallerFetch = async (
+    entry: EntryUnderTest,
+  ): Promise<void> => {
+    const customFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await entry(await loadOpenRouter(), customFetch as CustomFetch);
+
+    expect(customFetch).toHaveBeenCalledTimes(1);
+  };
+
+  it("builds the transcription client with the caller's fetch", async () => {
+    await expectClientBuiltWithCallerFetch(
+      async ({ openrouterTranscribeAudio }, customFetch) => {
+        await openrouterTranscribeAudio({
+          apiKey: "test-key",
+          model: "openai/whisper-large-v3",
+          blob: new ArrayBuffer(8),
+          ext: "wav",
+          customFetch,
+        });
+      },
+    );
   });
 
   it("builds the generate-text client with the caller's fetch", async () => {
-    setupOpenAIMock();
-    const customFetch: CustomFetch = vi.fn();
-
-    const { openrouterGenerateTextResponse } = await loadOpenRouter();
-    await openrouterGenerateTextResponse({
-      apiKey: "test-key",
-      prompt: "hi",
-      customFetch,
-    });
-
-    const [clientOptions] = clientOptionsSeen();
-    expect(clientOptions.fetch).toBe(customFetch);
+    await expectClientBuiltWithCallerFetch(
+      async ({ openrouterGenerateTextResponse }, customFetch) => {
+        await openrouterGenerateTextResponse({
+          apiKey: "test-key",
+          prompt: "hi",
+          customFetch,
+        });
+      },
+    );
   });
 
   it("builds the integration-probe client with the caller's fetch", async () => {
-    setupOpenAIMock();
-    const customFetch: CustomFetch = vi.fn();
-
-    const { openrouterTestIntegration } = await loadOpenRouter();
-    await openrouterTestIntegration({ apiKey: "test-key", customFetch });
-
-    const [clientOptions] = clientOptionsSeen();
-    expect(clientOptions.fetch).toBe(customFetch);
+    await expectClientBuiltWithCallerFetch(
+      async ({ openrouterTestIntegration }, customFetch) => {
+        await openrouterTestIntegration({ apiKey: "test-key", customFetch });
+      },
+    );
   });
 
   it("builds the stream-chat client with the caller's fetch", async () => {
-    setupOpenAIMock(() => sseChunk());
-    const customFetch: CustomFetch = vi.fn();
-
-    const { openrouterStreamChat } = await loadOpenRouter();
-    for await (const _event of openrouterStreamChat({
-      apiKey: "test-key",
-      model: "openai/gpt-oss-20b",
-      input: { messages: [{ role: "user", content: "Hello" }] },
-      customFetch,
-    })) {
-      // drain
-    }
-
-    const [clientOptions] = clientOptionsSeen();
-    expect(clientOptions.fetch).toBe(customFetch);
+    await expectClientBuiltWithCallerFetch(
+      async ({ openrouterStreamChat }, customFetch) => {
+        for await (const _event of openrouterStreamChat({
+          apiKey: "test-key",
+          model: "openai/gpt-oss-20b",
+          input: { messages: [{ role: "user", content: "Hello" }] },
+          customFetch,
+        })) {
+          // drain
+        }
+      },
+      () => sseChunk(),
+    );
   });
 
-  // These two do not go through the SDK, so there is no constructor to read.
-  // What matters is the same either way: the caller's instance is the one that
-  // makes the request, not the global it would otherwise fall back to.
   it("fetches the model catalog over the caller's fetch", async () => {
-    const customFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ data: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    await expectFetchedOverCallerFetch(
+      async ({ openrouterFetchModels }, customFetch) => {
+        await openrouterFetchModels({ apiKey: "test-key", customFetch });
+      },
     );
-
-    const { openrouterFetchModels } = await loadOpenRouter();
-    await openrouterFetchModels({ apiKey: "test-key", customFetch });
-
-    expect(customFetch).toHaveBeenCalledTimes(1);
   });
 
   it("fetches the provider catalog over the caller's fetch", async () => {
-    const customFetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ data: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    await expectFetchedOverCallerFetch(
+      async ({ openrouterFetchProviders }, customFetch) => {
+        await openrouterFetchProviders({ customFetch });
+      },
     );
-
-    const { openrouterFetchProviders } = await loadOpenRouter();
-    await openrouterFetchProviders({ customFetch });
-
-    expect(customFetch).toHaveBeenCalledTimes(1);
   });
 });

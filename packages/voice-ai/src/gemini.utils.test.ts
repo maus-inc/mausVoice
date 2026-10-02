@@ -952,6 +952,86 @@ describe("Gemini Files API edge cases", () => {
     ).rejects.toThrow();
   }, 10000);
 
+  it("releases a stalled cleanup DELETE when the caller cancels", async () => {
+    // The cleanup request was the one call on this path that took no signal, so
+    // a stalled deletion kept the transcription awaiting a response that was
+    // never coming. The cancellation that should release it had already been
+    // spent on the request before it: every other call here carries the signal,
+    // so the deadline that ended the operation had nothing left to hand the
+    // DELETE, and a stalled deletion then blocked transcription forever after
+    // the operation deadline expired. The mock below settles only on an abort,
+    // which is what a real transport does with a request it is told to abandon.
+    const controller = new AbortController();
+    let cleanupSignal: AbortSignal | undefined;
+    const customFetch = vi
+      .fn()
+      .mockImplementation((url: string, init?: RequestInit) => {
+        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+          return Promise.resolve(
+            new Response(JSON.stringify({}), {
+              status: 200,
+              headers: {
+                "x-goog-upload-url": "https://upload.example.com/resumable",
+              },
+            }),
+          );
+        }
+        if (url.includes("upload.example.com")) {
+          return Promise.resolve(
+            jsonResponse({
+              file: {
+                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                mimeType: "audio/wav",
+              },
+            }),
+          );
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
+          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
+        }
+        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+          cleanupSignal = init?.signal ?? undefined;
+          // The cancel lands while the deletion is in flight, so the request has
+          // to already be listening for it.
+          queueMicrotask(() => controller.abort());
+          return new Promise((_resolve, reject) => {
+            const onAbort = () =>
+              reject(new DOMException("aborted", "AbortError"));
+            if (cleanupSignal?.aborted) onAbort();
+            else
+              cleanupSignal?.addEventListener("abort", onAbort, { once: true });
+          });
+        }
+        return Promise.resolve(
+          jsonResponse({
+            candidates: [{ content: { parts: [{ text: "cleaned up" }] } }],
+          }),
+        );
+      });
+
+    const pending = geminiTranscribeAudio({
+      apiKey: "k",
+      model: "gemini-3.5-transcribe",
+      blob: new Uint8Array([1, 2, 3]).buffer,
+      signal: controller.signal,
+      customFetch,
+    });
+    // A real clock rather than fake timers: the failure being guarded against is
+    // an await that never settles, so the only way to see it is to stop waiting.
+    const outcome = await Promise.race([
+      pending.then(
+        () => "settled",
+        () => "rejected",
+      ),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve("hung"), 1_000),
+      ),
+    ]);
+
+    expect(cleanupSignal).toBeDefined();
+    expect(outcome).toBe("settled");
+  }, 10000);
+
   it("validates upload URL is https", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {

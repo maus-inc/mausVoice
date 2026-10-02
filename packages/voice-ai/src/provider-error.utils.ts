@@ -96,6 +96,47 @@ const valueEnd = (message: string, index: number): number => {
   return end;
 };
 
+const isQuote = (character: string | undefined): boolean =>
+  character === '"' || character === "'";
+
+/**
+ * One end of the run of a quoted value's characters, or null when the closing
+ * quote never arrives. The offset is the index OF the closing quote, so it is
+ * the end of the secret rather than of the document: the quote belongs to the
+ * text around the value and stays readable, which is what keeps
+ * `{"api_key":"...","model":"..."}` parseable after redaction.
+ *
+ * `API_KEY_VALUE_CHARACTERS` is the unquoted token's character set and has no
+ * way to say "a quote opened a string", so a value holding a space or a comma
+ * stopped at it and the rest of the key went on to the log line and the
+ * persisted error metadata in the clear. This is the same rule the shared
+ * `parameterEnd` applies to a quoted `name=value` inside an authorization
+ * scheme; it is mirrored here rather than imported because that one reads its
+ * offsets inside the text handed to `schemeValueEnd` and is not parameterised
+ * for a whole message.
+ *
+ * A backslash escapes the next character, so a `\"` inside a JSON string is one
+ * character of the value and not the quote that ends it. A quote that never
+ * closes returns null and the caller falls back to the unquoted run: an
+ * unterminated quote is not evidence that a value was ever quoted, and the
+ * equivalence sweep in the test pins that fallback on the shapes the pattern
+ * this scanner replaced matched.
+ */
+const quotedValueEnd = (
+  message: string,
+  index: number,
+  quote: string,
+): number | null => {
+  for (let cursor = index; cursor < message.length; cursor += 1) {
+    if (message[cursor] === "\\" && cursor + 1 < message.length) {
+      cursor += 1;
+      continue;
+    }
+    if (message[cursor] === quote) return cursor;
+  }
+  return null;
+};
+
 const matchesAt = (message: string, index: number, literal: string): boolean =>
   message.slice(index, index + literal.length).toLowerCase() === literal;
 
@@ -120,10 +161,13 @@ const matchesAt = (message: string, index: number, literal: string): boolean =>
  * character here has exactly one reading and a single pass decides the match the
  * pattern decided.
  *
- * It now reads one shape the pattern did not: a value whose first token is an
+ * It now reads two shapes the pattern did not: a value whose first token is an
  * authorization scheme runs to the end of the value rather than to the next
- * space, so the credential after the scheme is redacted with it. The equivalence
- * sweep in the test proves the two agree on every shape the pattern matched.
+ * space, so the credential after the scheme is redacted with it; and a quoted
+ * value runs to its closing quote, because the character class has no way to
+ * say a quote opened a string and stopped at the first space or comma inside
+ * one. The equivalence sweep in the test proves the two agree on every shape
+ * the pattern matched.
  */
 const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   if (!matchesAt(message, index, "api")) return null;
@@ -138,18 +182,28 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   cursor += 1;
 
   cursor = whitespaceEnd(message, cursor);
-  if (message[cursor] === '"' || message[cursor] === "'") cursor += 1;
+  const quote = message[cursor];
+  if (isQuote(quote)) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
   const firstTokenEnd = valueEnd(message, cursor);
-  const end =
-    firstTokenEnd > cursor &&
-    AUTHORIZATION_SCHEMES.has(
-      message.slice(cursor, firstTokenEnd).toLowerCase(),
-    )
-      ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
-      : firstTokenEnd;
   // The value class needs at least one character, so a label with nothing
-  // after its separator is not an assignment.
+  // after its separator is not an assignment. Checked before the quoted run is
+  // consulted so an empty quoted value (`api_key=""`) stays a non-assignment.
+  if (firstTokenEnd === cursor) return null;
+  const schemeEnd = AUTHORIZATION_SCHEMES.has(
+    message.slice(cursor, firstTokenEnd).toLowerCase(),
+  )
+    ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
+    : firstTokenEnd;
+  // A quoted value can hold characters the class does not, so it runs to its
+  // closing quote. The scheme run already stops at one -- `schemeValueEnd`
+  // treats a quote as the document resuming -- so this only widens the run for
+  // the bare-token case.
+  const closingQuoteEnd = isQuote(quote)
+    ? quotedValueEnd(message, cursor, quote)
+    : null;
+  const end =
+    closingQuoteEnd === null ? schemeEnd : Math.max(schemeEnd, closingQuoteEnd);
   return end > cursor ? end : null;
 };
 
@@ -165,6 +219,14 @@ const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
  * computed. It is a scanner now because the run's end is chosen by the text --
  * a scheme extends it past its parameters, a bare token does not -- which no
  * single pattern expresses.
+ *
+ * The separator may be quoted. A header echo or a request body arrives as JSON,
+ * where a closing quote sits between the label and the `:` and another one opens
+ * the value; requiring a bare `:` skipped the whole field, so the challenge went
+ * into the log line and the persisted error metadata in the clear. Both quotes
+ * are the document's, so they are consumed as syntax and the redaction keeps
+ * their surroundings -- `{"authorization": "..."}` becomes
+ * `{"[redacted]"}` -- rather than leaving a quote dangling in front of it.
  */
 const redactAuthorizationLabels = (message: string): string => {
   const parts: string[] = [];
@@ -184,11 +246,18 @@ const redactAuthorizationLabels = (message: string): string => {
       continue;
     }
     let cursor = whitespaceEnd(message, index + label.length);
+    // The JSON key form, where the label's own closing quote precedes the
+    // separator.
+    if (isQuote(message[cursor])) cursor += 1;
+    cursor = whitespaceEnd(message, cursor);
     if (message[cursor] !== ":") {
       index += 1;
       continue;
     }
     cursor = whitespaceEnd(message, cursor + 1);
+    const quote = message[cursor];
+    if (isQuote(quote)) cursor += 1;
+    cursor = whitespaceEnd(message, cursor);
     const valueStart = cursor;
     const firstTokenEnd = valueEnd(message, cursor);
     if (firstTokenEnd === valueStart) {
@@ -196,9 +265,18 @@ const redactAuthorizationLabels = (message: string): string => {
       continue;
     }
     const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
-    const end = AUTHORIZATION_SCHEMES.has(scheme)
-      ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
-      : firstTokenEnd;
+    let end = firstTokenEnd;
+    if (AUTHORIZATION_SCHEMES.has(scheme)) {
+      end = firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd));
+    } else if (isQuote(quote)) {
+      // A bare token has no parameters for `schemeValueEnd` to disambiguate the
+      // quotes with, so a quoted one runs to its closing quote here for the same
+      // reason the `api_key` scanner does it. The scheme branch is left alone: it
+      // already ends at a quote, and a `Digest` challenge carries quotes of its
+      // own (`nonce="u"`), which only the parameter walk can step over.
+      const closingQuoteEnd = quotedValueEnd(message, cursor, quote);
+      if (closingQuoteEnd !== null) end = Math.max(end, closingQuoteEnd);
+    }
     // The label goes with the value, as it does for `api_key`: what identifies
     // the credential is the label that named it.
     parts.push(message.slice(copied, index), REDACTED);

@@ -84,3 +84,69 @@ describe("openaiTranscribeAudio response_format", () => {
     vi.doUnmock("openai");
   });
 });
+
+describe("openaiGenerateTextResponse sampling parameters", () => {
+  const generateTextParams = async (
+    model: string,
+  ): Promise<Record<string, unknown>> => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: "rewritten" } }],
+      usage: { total_tokens: 4 },
+    });
+
+    vi.resetModules();
+    vi.doMock("openai", () => ({
+      default: class MockOpenAI {
+        chat = { completions: { create } };
+      },
+      toFile: vi.fn().mockResolvedValue({}),
+    }));
+
+    const { openaiGenerateTextResponse } = await import("../src/openai.utils");
+    const result = await openaiGenerateTextResponse({
+      apiKey: "test-key",
+      model,
+      prompt: "hi",
+    });
+
+    expect(result.text).toBe("rewritten");
+    expect(create).toHaveBeenCalledTimes(1);
+    const params = create.mock.calls[0][0] as Record<string, unknown>;
+    vi.doUnmock("openai");
+    return params;
+  };
+
+  // The o-series rejects `temperature` as an unsupported parameter rather than
+  // ignoring it, so a discovered o-series id -- which this endpoint accepts,
+  // because the model list is what the app offers -- answered every request
+  // with a 400 before generating a single token. `top_p` goes with it: the same
+  // documentation lists both as unsupported on those models.
+  it.each(["o1", "o1-mini", "o3-mini", "o4-mini", "o1-preview-2024-09-12"])(
+    "sends no sampling parameters to the o-series model %s",
+    async (model) => {
+      const params = await generateTextParams(model);
+      expect(params).not.toHaveProperty("temperature");
+      expect(params).not.toHaveProperty("top_p");
+      // The rest of the request is unchanged, so an o-series call is the same
+      // call with the two rejected fields removed rather than a different shape.
+      expect(params).toMatchObject({
+        model,
+        max_completion_tokens: 1024,
+        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      });
+    },
+  );
+
+  it.each([
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-5.6-sol",
+    "gpt-oss-20b",
+    // A real id that starts with `o` and is not a reasoning model, which is
+    // what keeps the family test from being a bare "starts with o".
+    "omni-moderation-latest",
+  ])("still pins the sampling parameters on %s", async (model) => {
+    const params = await generateTextParams(model);
+    expect(params).toMatchObject({ temperature: 1, top_p: 1 });
+  });
+});

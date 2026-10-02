@@ -649,6 +649,30 @@ describe("azureTestIntegration message bounds", () => {
     expect(message).toMatch(/could not confirm the key/);
   });
 
+  it("redacts a label longer than the 24-character budget in front of its value", async () => {
+    // `[a-z0-9_.-]{0,24}` bounds how much label text the pattern inspects before
+    // the credential word, which reads as if it could cut a long label short and
+    // leave the value outside the match. It cannot, and this is what says so:
+    // the `(?:key|token|...)` alternation is what makes the pattern match, so a
+    // value is only ever redacted once that word was read inside the budgeted
+    // run, and a label too long for the budget is re-matched from the next word
+    // boundary inside it -- which skips label text, not value text.
+    const key = azureKeyFixture();
+    const label = "a-f-o-o-bar-baz-qux-quux-corge-Key";
+    expect(label.length).toBeGreaterThan(24);
+    speech.error = ["StatusCode: 0", `${label}: ${key}`].join("\n");
+
+    const message = await raisedMessage();
+    const logged = loggedLine();
+
+    for (const text of [message, logged]) {
+      expect(text).not.toContain(key);
+      // The whole label still reads back, because the part the budget skipped is
+      // copied through in front of the match rather than dropped.
+      expect(text).toContain(`${label}: [redacted]`);
+    }
+  });
+
   it("redacts a gateway header and a JWT the shared redactor leaves alone", async () => {
     // unknownToMessage in packages/utilities/src/error.ts covers a Bearer
     // token, the labels on its own list (api_key, authorization, credential

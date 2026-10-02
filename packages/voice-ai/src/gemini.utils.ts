@@ -481,15 +481,32 @@ const uploadGeminiFile = async (
   };
 };
 
+/**
+ * Remove an uploaded file from the Files API, best effort.
+ *
+ * The signal is threaded in because this runs in a `finally` and on the fallback
+ * path, which is where a cancellation has already been spent on the request
+ * that preceded it. Without one, a stalled deletion kept the transcription
+ * awaiting a response that was never coming, with nothing left to release it:
+ * the five-minute operation deadline expires, `deleteGeminiFile` is still
+ * awaiting, and the caller waits forever. Every other request on this path
+ * carries the signal for the same reason.
+ *
+ * A failed or abandoned cleanup is only logged. It is a leaked provider-side
+ * file, and turning that into a failed dictation the user has to see would be a
+ * worse outcome than the leak.
+ */
 const deleteGeminiFile = async (
   fileUri: string,
   apiKey: string,
   customFetch: CustomFetch,
+  signal?: AbortSignal,
 ): Promise<void> => {
   try {
     await customFetch(fileUri, {
       method: "DELETE",
       headers: { "x-goog-api-key": apiKey.trim() },
+      signal,
     });
   } catch (error) {
     console.warn(
@@ -768,7 +785,12 @@ const tryUploadWithFallback = async (args: {
     return { uri: uploaded.uri, mimeType: uploaded.mimeType };
   } catch (error) {
     if (uploadedUri) {
-      await deleteGeminiFile(uploadedUri, args.apiKey, args.customFetch);
+      await deleteGeminiFile(
+        uploadedUri,
+        args.apiKey,
+        args.customFetch,
+        args.signal,
+      );
     }
     if (args.signal?.aborted) throw error;
     // For upload path, fallback to inlineData on any failure except abort,
@@ -854,7 +876,12 @@ const transcribeWithDedicatedModel = async (args: {
     return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
-      await deleteGeminiFile(uploaded.uri, args.apiKey, args.customFetch);
+      await deleteGeminiFile(
+        uploaded.uri,
+        args.apiKey,
+        args.customFetch,
+        args.signal,
+      );
     }
   }
 };
