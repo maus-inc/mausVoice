@@ -16,24 +16,79 @@ fn map_hound_error(err: hound::Error) -> io::Error {
     io::Error::other(err.to_string())
 }
 
-fn sanitize_id(id: &str) -> String {
-    let mut sanitized = id
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
-        .collect::<String>();
+/// FNV-1a over the whole id.
+///
+/// The readable prefix alone cannot keep two ids apart: the prefix exists to
+/// keep a filename to one safe component, and everything outside that alphabet
+/// is dropped from it, so `a.b` and `ab` — and `""` and `"!!!"` — used to name
+/// the same WAV. Hashing the full id means a difference anywhere in it changes
+/// the name, so one recording's audio cannot be played back as another's and
+/// deleting either transcription cannot remove the other's file.
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
 
-    if sanitized.is_empty() {
-        sanitized = "transcription".to_string();
+    let mut hash = OFFSET_BASIS;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+/// The characters a transcription id may be built from for its name to stand
+/// on its own. Every id this app mints is a UUID, so this is the normal case.
+fn is_self_describing(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
+}
+
+/// How much of a lossy id's readable characters lead the filename. Long enough
+/// to recognise a recording in a directory listing, short enough to leave the
+/// whole name inside every filesystem's component limit once the digest and the
+/// extension are added.
+const AUDIO_NAME_STEM_CHARS: usize = 48;
+
+/// One stem that says which transcription it belongs to, and never two.
+///
+/// The readable characters alone cannot do that. Everything outside
+/// `[A-Za-z0-9_-]` is dropped from them, so `a.b` and `ab` — and `""` and
+/// `"!!!"` — would name the same WAV, and one recording's audio could then be
+/// played back as another's and deleted with it. So the name is the id itself
+/// when the id is entirely within that alphabet, because that is already unique
+/// *and* already the name the file has on disk, and otherwise the readable part
+/// followed by the digest of the whole id.
+///
+/// The digest is appended after `~`, which the alphabet cannot produce, so the
+/// two forms have disjoint name spaces and neither can be written to look like
+/// the other.
+fn audio_file_stem(transcription_id: &str) -> String {
+    if transcription_id.chars().all(is_self_describing) {
+        return transcription_id.to_string();
     }
 
-    sanitized
+    let readable: String = transcription_id
+        .chars()
+        .filter(|ch| is_self_describing(*ch))
+        .take(AUDIO_NAME_STEM_CHARS)
+        .collect();
+    let readable = if readable.is_empty() {
+        "transcription"
+    } else {
+        readable.as_str()
+    };
+
+    format!("{readable}~{:016x}", fnv1a_64(transcription_id.as_bytes()))
 }
 
 /// Derive the only filename that may represent this transcription's managed
 /// snapshot. Database `audio_path` values are descriptive data, never
 /// authority to select a file for deletion.
+///
+/// The name is a safe filename component that no two ids share, and an id that
+/// was already safe keeps the name its snapshot was written under, so no
+/// existing recording is renamed out from under the transcript it belongs to.
 pub(crate) fn audio_file_name_for(transcription_id: &str) -> String {
-    format!("{}.wav", sanitize_id(transcription_id))
+    format!("{}.wav", audio_file_stem(transcription_id))
 }
 
 fn audio_dir_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
@@ -48,7 +103,14 @@ fn audio_dir_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
 fn reject_managed_audio_reparse_point() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
-        "Refusing a linked or reparse-point managed audio directory",
+        "Refusing a linked or reparse-point directory on the managed audio path",
+    )
+}
+
+fn invalid_managed_audio_path(reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("Managed audio path cannot be used: {reason}"),
     )
 }
 
@@ -73,40 +135,116 @@ pub(crate) fn is_windows_reparse_point(_file: &std::fs::File) -> io::Result<bool
     Ok(false)
 }
 
+/// Open one directory component below `parent` without following a link.
+///
+/// `maybe_dir` also makes the Windows handle deny delete sharing, so Windows
+/// cannot rename or delete the held directory while a cleanup batch is running.
+/// Windows opens a reparse point itself in no-follow mode, so its generic file
+/// type can still look like a directory: the native reparse bit has to be read
+/// before the handle is turned into a directory capability.
+fn open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .follow(FollowSymlinks::No)
+        .maybe_dir(true);
+    let child = parent.open_with(name, &options)?;
+    let metadata = child.metadata()?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(reject_managed_audio_reparse_point());
+    }
+    let child = child.into_std();
+    if is_windows_reparse_point(&child)? {
+        return Err(reject_managed_audio_reparse_point());
+    }
+
+    Ok(Dir::from_std_file(child))
+}
+
+/// Create `name` under `parent` if it is absent, then open it link-free. The
+/// post-open check is the one that matters: a component that was replaced with
+/// a link between the `create_dir` and the `open` — or one that was already
+/// there — is only visible on the handle.
+fn create_or_open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
+    if let Err(err) = parent.create_dir(name.as_ref()) {
+        if err.kind() != io::ErrorKind::AlreadyExists {
+            return Err(err);
+        }
+    }
+
+    open_dir_no_follow(parent, name)
+}
+
+/// Open `path` as a directory, creating the components that are missing, and
+/// refuse to descend through a link anywhere in it.
+///
+/// A path is only a name until something is opened through it, and both
+/// `create_dir_all` and an ambient path open traverse whatever they meet, so a
+/// component replaced with a link moves every later read, write and delete to
+/// wherever it points. The components from the deepest one that already exists
+/// downwards are therefore opened one at a time, no-follow, from a held handle:
+/// the missing ones are created by this call so they cannot already be links,
+/// and the ones that were there have to be real directories.
+///
+/// Everything *above* that point is resolved once, because the app-data path
+/// the platform hands over may legitimately sit under a link — `/var` is one on
+/// macOS, and a user's home directory can be one. That is the limit of what a
+/// path alone can say: a link above the root and an attacker link above a root
+/// the attacker pre-created look identical, and telling them apart would need
+/// the intended root, which `app_data_dir()` does not carry.
+fn open_dir_chain(path: &Path) -> io::Result<Dir> {
+    let mut missing: Vec<&std::ffi::OsStr> = Vec::new();
+    let mut cursor = path;
+    let base = loop {
+        match fs::symlink_metadata(cursor) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() && !missing.is_empty() {
+                    return Err(reject_managed_audio_reparse_point());
+                }
+                if !metadata.is_dir() && !metadata.file_type().is_symlink() {
+                    return Err(invalid_managed_audio_path(&format!(
+                        "{} is not a directory",
+                        cursor.to_string_lossy()
+                    )));
+                }
+                break fs::canonicalize(cursor)?;
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                let name = cursor
+                    .file_name()
+                    .ok_or_else(|| invalid_managed_audio_path("it has no name to create"))?;
+                missing.push(name);
+                cursor = cursor.parent().ok_or_else(|| {
+                    invalid_managed_audio_path("it has no parent directory to create it under")
+                })?;
+            }
+            Err(err) => return Err(err),
+        }
+    };
+    if !fs::metadata(&base)?.is_dir() {
+        return Err(invalid_managed_audio_path(&format!(
+            "{} does not name a directory",
+            base.to_string_lossy()
+        )));
+    }
+
+    let mut handle = Dir::open_ambient_dir(&base, cap_std::ambient_authority())?;
+    for name in missing.into_iter().rev() {
+        handle = create_or_open_dir_no_follow(&handle, name)?;
+    }
+
+    Ok(handle)
+}
+
 /// Open the managed directory as a capability, rather than resolving its path
 /// and using that path later. The held handle stays bound to the directory that
 /// was checked even if another process replaces its name. `maybe_dir` also
 /// makes the Windows handle deny delete sharing, so Windows cannot rename or
 /// delete the held directory while a cleanup batch is running.
 fn open_managed_audio_dir_at(app_data_dir: &Path) -> io::Result<Dir> {
-    fs::create_dir_all(app_data_dir)?;
-    let app_data = Dir::open_ambient_dir(app_data_dir, cap_std::ambient_authority())?;
+    let app_data = open_dir_chain(app_data_dir)?;
 
-    if let Err(err) = app_data.create_dir(AUDIO_DIR_NAME) {
-        if err.kind() != io::ErrorKind::AlreadyExists {
-            return Err(err);
-        }
-    }
-
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .follow(FollowSymlinks::No)
-        .maybe_dir(true);
-    let managed_directory = app_data.open_with(AUDIO_DIR_NAME, &options)?;
-    let metadata = managed_directory.metadata()?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(reject_managed_audio_reparse_point());
-    }
-    let managed_directory = managed_directory.into_std();
-    // Windows opens a reparse point itself in no-follow mode. Its generic
-    // file type can still look like a directory, so inspect the native
-    // reparse bit before converting the handle into a directory capability.
-    if is_windows_reparse_point(&managed_directory)? {
-        return Err(reject_managed_audio_reparse_point());
-    }
-
-    Ok(Dir::from_std_file(managed_directory))
+    create_or_open_dir_no_follow(&app_data, AUDIO_DIR_NAME)
 }
 
 pub(crate) fn open_managed_audio_dir(app: &tauri::AppHandle) -> io::Result<Dir> {
@@ -446,9 +584,149 @@ mod tests {
 
     #[test]
     fn generated_audio_filename_is_one_sanitized_component() {
-        assert_eq!(audio_file_name_for("session-42"), "session-42.wav");
-        assert_eq!(audio_file_name_for("../../outside"), "outside.wav");
-        assert_eq!(audio_file_name_for(""), "transcription.wav");
+        // The name is one filename component and nothing else: the id is data
+        // from the database, and the managed directory handle is the only thing
+        // that decides which file a read or a delete touches.
+        for id in [
+            "session-42",
+            "../../outside",
+            "..",
+            "/etc/passwd",
+            "a\\b",
+            "",
+            "!!!",
+            "a.b",
+        ] {
+            let name = audio_file_name_for(id);
+            assert!(!name.contains('/'), "{id:?} produced a separator: {name}");
+            assert!(!name.contains('\\'), "{id:?} produced a separator: {name}");
+            assert!(
+                !name.contains(".."),
+                "{id:?} produced a parent reference: {name}"
+            );
+            assert!(name.ends_with(".wav"), "{id:?} produced {name}");
+        }
+    }
+
+    #[test]
+    fn the_readable_part_of_the_id_leads_the_name_in_both_forms() {
+        // Whichever form the name takes, the part a person recognises in a
+        // directory listing comes first.
+        assert!(
+            audio_file_name_for("session-42").starts_with("session-42"),
+            "a self-describing id is its own readable part"
+        );
+        let hashed = audio_file_name_for("../../session-42");
+        assert!(
+            hashed.starts_with("session-42"),
+            "a lossy id's readable part must lead its name: {hashed}"
+        );
+    }
+
+    /// An id made only of `[A-Za-z0-9_-]` is already its own unique name — that
+    /// covers every UUID this app mints — so adding a digest of it renames a
+    /// recording for nothing and leaves the file it already has on disk
+    /// unreachable by id. The readable prefix is the whole name here.
+    #[test]
+    fn a_self_describing_id_keeps_the_name_its_snapshot_already_has() {
+        assert_eq!(
+            audio_file_name_for("session-42"),
+            "session-42.wav",
+            "an unambiguous id must not be renamed"
+        );
+        assert_eq!(
+            audio_file_name_for("3f2a9c1e-4b7d-4e6f-8a1c-9d0e2f3a4b5c"),
+            "3f2a9c1e-4b7d-4e6f-8a1c-9d0e2f3a4b5c.wav",
+            "a UUID id must keep the filename its snapshot was written under"
+        );
+    }
+
+    /// The two cases cannot land on each other's names: the hashed form always
+    /// carries the separator, and a self-describing id cannot produce one.
+    #[test]
+    fn a_hashed_name_cannot_be_mistaken_for_a_self_describing_one() {
+        let separator = '~';
+        let hashed = audio_file_name_for("a.b");
+        assert!(
+            hashed.contains(separator),
+            "a lossy id's name must carry the separator: {hashed}"
+        );
+        for id in ["session-42", "a", "A_1-2", "3f2a9c1e-4b7d"] {
+            assert!(
+                !audio_file_name_for(id).contains(separator),
+                "{id:?} is self-describing and must not take the hashed form"
+            );
+        }
+    }
+
+    /// `sanitize_id` used to keep only `[A-Za-z0-9_-]` and drop everything
+    /// else, so two different transcription ids could name the same WAV. The
+    /// recording saved under one was then playable as the other's, and
+    /// deleting either transcription deleted the other's file.
+    ///
+    /// The colliding pairs are found by brute force over a short alphabet
+    /// rather than hard-coded, so the test keeps describing the property
+    /// instead of one example of it.
+    #[test]
+    fn ids_that_differ_only_in_dropped_characters_do_not_share_a_file() {
+        const ALPHABET: [char; 5] = ['a', 'b', '.', '/', '-'];
+        let mut ids: Vec<String> = vec![String::new()];
+        for first in ALPHABET {
+            ids.push(first.to_string());
+            for second in ALPHABET {
+                ids.push(format!("{first}{second}"));
+            }
+        }
+
+        for (index, left) in ids.iter().enumerate() {
+            for right in ids.iter().skip(index + 1) {
+                assert_ne!(
+                    audio_file_name_for(left),
+                    audio_file_name_for(right),
+                    "{left:?} and {right:?} must not share a managed audio file"
+                );
+            }
+        }
+    }
+
+    /// A path is only a name until something is opened through it. The managed
+    /// root used to be built with `create_dir_all` and then opened by name, and
+    /// both traverse whatever they meet, so a replaced component moved every
+    /// later read, write and delete to wherever the link pointed.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_managed_root_path_is_refused_rather_than_followed() {
+        use std::os::unix::fs::symlink;
+
+        let base = TemporaryDirectory::create();
+        let outside = base.0.join("outside-root");
+        fs::create_dir(&outside).expect("the link target must be creatable");
+        symlink(&outside, base.0.join("redirected")).expect("the redirect link must be creatable");
+        let app_data_dir = base.0.join("redirected").join("app-data");
+
+        assert!(
+            open_managed_audio_dir_at(&app_data_dir).is_err(),
+            "a managed root reached through a link must be refused, not followed"
+        );
+        assert!(
+            !outside.join(AUDIO_DIR_NAME).exists(),
+            "a refused root must not create anything in the directory it pointed at"
+        );
+    }
+
+    #[test]
+    fn a_missing_root_chain_is_created_without_traversing_a_link() {
+        let base = TemporaryDirectory::create();
+        let app_data_dir = base.0.join("a").join("b").join("c");
+
+        let held = open_managed_audio_dir_at(&app_data_dir)
+            .expect("a root that does not exist yet must still be creatable");
+
+        assert!(app_data_dir.join(AUDIO_DIR_NAME).is_dir());
+        assert!(
+            held.dir_metadata().expect("held metadata").is_dir(),
+            "the managed capability must be the directory that was created"
+        );
     }
 
     #[test]
@@ -471,13 +749,13 @@ mod tests {
         let root = TemporaryDirectory::create();
         let held_audio_dir =
             open_managed_audio_dir_at(&root.0).expect("managed audio directory must be openable");
-        let expected = root.audio_dir().join("known-id.wav");
+        let expected = root.audio_dir().join(audio_file_name_for("known-id"));
         let outside = root.0.join("outside.wav");
         fs::write(&expected, b"managed").expect("managed fixture must be writable");
         fs::write(&outside, b"do not delete").expect("outside fixture must be writable");
 
         // A mutable `audio_path` could claim `outside.wav`; cleanup has no API
-        // that accepts it, and instead derives `known-id.wav` from the ID.
+        // that accepts it, and instead derives the filename from the ID.
         delete_audio_file(&held_audio_dir, "known-id")
             .expect("derived managed file must be removable");
 
