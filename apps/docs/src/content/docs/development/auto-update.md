@@ -55,8 +55,8 @@ If `UPDATER_PRIVATE_KEY` or `UPDATER_PUBLIC_KEY` is missing, the build job emits
 3. **Build.** Each platform runs `tauri build`, producing installers plus, when signing is on, the updater bundles (`.app.tar.gz`, `.nsis.zip`, `.AppImage`) and a detached `.sig` beside each.
 4. **Resolve manifest eligibility.** The publish job derives the channel from the version itself. A version whose prerelease identifier disagrees with the workflow's prerelease input fails the job; a prerelease writes `latest-beta.json` and a stable release writes `latest.json`; either channel missing the signing secrets fails closed rather than publishing without a manifest.
 5. **Verify signatures.** For a stable release, the workflow decodes Tauri's Base64 key and `.sig` values to temporary files, then has `minisign` verify every signature present against the artifact it sits beside, before a manifest is written. The bare `.msi`, `.exe` and `.deb` next to the updater bundles are the installers published for manual download: Tauri signs only the updater artifacts, so requiring a signature for those too would fail every stable release.
-6. **Build the manifest.** After artifacts are downloaded and verified, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes `latest.json`.
-7. **Publish.** `latest.json` and the `.sig` files are uploaded as release assets alongside the installers.
+6. **Build the manifest.** After artifacts are downloaded and verified, `scripts/ci/build-updater-manifest.mjs` pairs every updater bundle with its signature and writes the channel's manifest: `latest.json` for a stable release, `latest-beta.json` for a prerelease.
+7. **Publish.** The channel's manifest and the `.sig` files are uploaded as release assets alongside the installers. A beta manifest goes to the rolling `beta-channel` release, where it replaces the previous one in place.
 8. **Homebrew.** The cask job runs for stable releases only.
 
 The app resolves the manifest from `https://github.com/maus-inc/mausVoice/releases/latest/download/latest.json`. GitHub's `releases/latest` always points at the newest **non-prerelease** release, so the endpoint is stable across versions and a pre-release cannot become the update target.
@@ -82,4 +82,4 @@ Background checks run every six hours from `AppSideEffects` and are skipped in d
 
 ## Verifying a release
 
-After a signed run, confirm that `latest.json` is attached to the release and lists every platform you built, that each `url` resolves against the release tag, and that a previous version of the app offered and installed the update. If you rotated the key, verify with a build carrying the new public key. An older build will correctly reject the new signature.
+After a signed run, confirm that the channel's manifest (`latest.json`, or `latest-beta.json` on a prerelease) is attached to the release and lists every platform you built, that each `url` resolves against the release tag, and that a previous version of the app offered and installed the update. If you rotated the key, verify with a build carrying the new public key. An older build will correctly reject the new signature.

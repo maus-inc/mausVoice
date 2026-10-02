@@ -296,14 +296,18 @@ const TrafficButton = ({
         backgroundColor: color,
         color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
         transition: "filter 120ms ease",
-        "&:hover": {
+        // The hover rule lives on the button, not on the dot. The hit target is
+        // six pixels larger on each side than the painted dot, so a `:hover`
+        // scoped to the dot left the outer ring of a perfectly reachable target
+        // dead.
+        ".traffic-btn:hover &": {
           filter: "brightness(1.08)",
         },
         "& .traffic-glyph": {
           opacity: 0,
           display: "flex",
         },
-        "&:hover .traffic-glyph": {
+        ".traffic-btn:hover & .traffic-glyph": {
           opacity: 0.85,
         },
       }}
