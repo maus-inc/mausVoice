@@ -318,8 +318,7 @@ mod entry_submit_tests {
     #[test]
     fn a_failed_review_submit_keeps_the_edited_transcript() {
         let entry_text = RefCell::new("an edited transcript".to_string());
-        let sent =
-            submit_entry_inner(&entry_text, Some("review-7".to_string()), |_| false);
+        let sent = submit_entry_inner(&entry_text, Some("review-7".to_string()), |_| false);
         assert!(!sent, "a failed write is not a send");
         assert_eq!(entry_text.borrow().as_str(), "an edited transcript");
     }
@@ -357,11 +356,10 @@ mod entry_submit_tests {
     fn a_review_submit_sends_an_insert_decision_carrying_the_text() {
         let entry_text = RefCell::new("  spaced transcript  ".to_string());
         let sent_json = RefCell::new(None);
-        let sent =
-            submit_entry_inner(&entry_text, Some("review-9".to_string()), |msg| {
-                *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
-                true
-            });
+        let sent = submit_entry_inner(&entry_text, Some("review-9".to_string()), |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
         assert!(sent);
         assert_eq!(
             sent_json.borrow().as_deref(),

@@ -1578,7 +1578,11 @@ fn draw_review_actions(
             ClickAction::ReviewEdit(review_id.to_string()),
             0.8,
         ),
-        (copy_label, ClickAction::ReviewCopy(review_id.to_string()), 0.7),
+        (
+            copy_label,
+            ClickAction::ReviewCopy(review_id.to_string()),
+            0.7,
+        ),
         (
             cancel_label,
             ClickAction::ReviewCancel(review_id.to_string()),

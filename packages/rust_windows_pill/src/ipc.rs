@@ -330,7 +330,8 @@ mod review_localization_tests {
                 "cancel_label":"Abbrechen",
                 "hint":"Unten bearbeiten, dann Enter druecken"
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
         assert_eq!(localized.insert_label.as_deref(), Some("Einfuegen"));
         assert_eq!(localized.copy_label.as_deref(), Some("Kopieren"));
