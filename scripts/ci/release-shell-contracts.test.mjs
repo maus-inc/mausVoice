@@ -89,6 +89,10 @@ function enclosingKey(lines, index, indent) {
 function jobBlocks(workflowText) {
   const lines = workflowText.split("\n");
   const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  // A workflow with no `jobs:` section has nothing to check, and a scanner that
+  // silently returned an empty list would let the caller conclude every job
+  // declared its permissions -- including for a file that has no jobs at all.
+  if (jobsAt === -1) return [];
   const jobs = [];
   let current = null;
   for (const line of lines.slice(jobsAt + 1)) {
@@ -101,6 +105,31 @@ function jobBlocks(workflowText) {
     current?.body.push(line);
   }
   return jobs.map((job) => ({ ...job, body: job.body.join("\n") }));
+}
+
+// This is the guard: every job declares its own permissions, and a scan that
+// found no jobs at all is a failure rather than an empty result.
+//
+// It takes the workflow text rather than reading a file so a test can hand it a
+// shape the repository does not currently contain. That is the whole point: a
+// guard whose only exercise is today's workflows cannot be shown to fail, and a
+// guard that has never been seen to fail is a guard nobody can rely on.
+function assertEveryJobDeclaresPermissions(workflowText, label) {
+  const jobs = jobBlocks(workflowText);
+  assert.ok(
+    jobs.length > 0,
+    `${label} has a jobs: section this scan cannot read, so its jobs' ` +
+      "permissions blocks were never verified",
+  );
+  const undeclared = jobs
+    .filter((job) => !/^ {4}permissions:/m.test(job.body))
+    .map((job) => job.name);
+  assert.deepStrictEqual(
+    undeclared,
+    [],
+    `${label}: every job must declare its own permissions, or it inherits ` +
+      `none: ${undeclared.join(", ")}`,
+  );
 }
 
 // The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
@@ -326,6 +355,7 @@ describe("release workflow shell contracts", () => {
         /^permissions: \{\}$/m,
         `${file} must default the token to no permissions before its jobs`,
       );
+      assertEveryJobDeclaresPermissions(workflow, file);
       for (const job of jobBlocks(workflow)) {
         if (!/^ {4}permissions:/m.test(job.body)) {
           undeclared.push(`${file}:${job.name}`);
@@ -336,6 +366,73 @@ describe("release workflow shell contracts", () => {
       undeclared,
       [],
       `every job must declare its own permissions, or it inherits none: ${undeclared.join(", ")}`,
+    );
+  });
+
+  // A guard that cannot fail is worse than no guard, because it is read as
+  // evidence. Both shapes below pass a naive `deepStrictEqual(undeclared, [])`
+  // while checking nothing at all.
+  it("refuses a workflow whose jobs it cannot see", () => {
+    // Jobs indented four spaces instead of two. Every job here declares nothing,
+    // and the old comparison saw an empty list, compared it to an empty list and
+    // passed -- so a workflow reformatted by a well-meaning edit would have
+    // switched this guard off without a word.
+    const deep = [
+      "permissions: {}",
+      "jobs:",
+      "    build:",
+      "      runs-on: ubuntu-latest",
+      "      steps:",
+      "        - run: echo hi",
+      "",
+    ].join("\n");
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions(deep, "deep.yml"),
+      /cannot read/,
+      "no readable job means no verified job, which has to be a failure",
+    );
+    // And the reason it used to pass is still true of the scan itself: the
+    // blindness is in `jobBlocks`, not in the assertion.
+    assert.deepStrictEqual(jobBlocks(deep), []);
+  });
+
+  it("refuses a workflow with no jobs section at all", () => {
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions("name: nothing\n", "empty.yml"),
+      /cannot read/,
+    );
+  });
+
+  it("reports a job with no permissions block, and only that job", () => {
+    const workflow = [
+      "permissions: {}",
+      "jobs:",
+      "  declared:",
+      "    runs-on: ubuntu-latest",
+      "    permissions:",
+      "      contents: read",
+      "    steps:",
+      "      - run: echo hi",
+      "  bare:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo hi",
+      "",
+    ].join("\n");
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions(workflow, "mixed.yml"),
+      /bare/,
+      "the job that inherits the workflow default is the one to name",
+    );
+    // And the same workflow passes once that job declares its own.
+    assert.doesNotThrow(() =>
+      assertEveryJobDeclaresPermissions(
+        workflow.replace(
+          "  bare:\n    runs-on: ubuntu-latest\n",
+          "  bare:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
+        ),
+        "fixed.yml",
+      ),
     );
   });
 
