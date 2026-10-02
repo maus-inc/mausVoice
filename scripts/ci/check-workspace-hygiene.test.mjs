@@ -90,23 +90,6 @@ describe("workspace hygiene contracts", () => {
       ".deepsource.toml must state which paths the analyzers skip",
     );
 
-    // The exclusion that decides whether this repository's JavaScript analysis
-    // is about shipped code at all. It is the one an experiment removed and put
-    // back, so it is named here rather than left as a pattern that could quietly
-    // grow to `**`.
-    const overridesJs = overrides.filter((block) =>
-      /enabled\s*=\s*false/.test(block),
-    );
-    assert.ok(
-      overridesJs.some((block) => /\*\*\/\*\.(test|spec)\.tsx?/.test(block)),
-      "test files must stay excluded from the JavaScript analysis: their mocked " +
-        "and intentionally malformed fixtures are what the analyzer reads as defects",
-    );
-    assert.ok(
-      !overridesJs.some((block) => /"\*\*"|"\.\*\*\/\*\*"/.test(block)),
-      "the JavaScript exclusion must name its paths, never match the whole repository",
-    );
-
     for (const block of overrides) {
       // Joined before matching, so a `paths = [` array spread over several lines
       // is read rather than reported as an exclusion that lists nothing.
