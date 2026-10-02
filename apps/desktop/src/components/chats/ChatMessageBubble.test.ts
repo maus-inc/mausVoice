@@ -561,3 +561,54 @@ describe("retrying the latest completed assistant reply", () => {
     expect(retry()).toBeUndefined();
   });
 });
+
+describe("the visible action row", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.append(container);
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    container.remove();
+  });
+
+  const renderBubble = async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          StrictMode,
+          null,
+          createElement(ChatMessageBubble, { id: "msg-1" }),
+        ),
+      );
+    });
+  };
+
+  const copyAction = () =>
+    [...container.querySelectorAll("button")].find((node) =>
+      (node.textContent ?? "").includes("Copy message"),
+    );
+
+  it("keeps the actions reachable instead of hiding them from the pointer", async () => {
+    await renderBubble();
+    const copy = copyAction();
+    if (!copy) throw new Error("the Copy message action did not render");
+
+    // The row used to be `visibility: hidden` while idle, which removes its hit
+    // box entirely: no hover could ever reveal it and no keyboard could reach
+    // it. Fading keeps the button present and focusable at every moment.
+    expect(copy.hasAttribute("disabled")).toBe(false);
+    expect(getComputedStyle(copy).visibility).not.toBe("hidden");
+  });
+
+  it("is still rendered while idle rather than unmounted", async () => {
+    await renderBubble();
+    // Unmounting would drop it from the accessibility tree and from tab order.
+    expect(copyAction()).toBeTruthy();
+  });
+});

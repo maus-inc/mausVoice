@@ -363,7 +363,7 @@
   "general": "Allgemein",
   "get_started": "Loslegen",
   "getting_started": "Erste Schritte",
-  "github_is_rate_limiting_release_history_requests_from_this_n": "GitHub drosselt die Anfragen für den Release-Verlauf in diesem Netzwerk. Versuche es später erneut oder lies die Notes auf der Release-Seite.",
+  "github_is_rate_limiting_release_history_requests_from_this_n": "GitHub drosselt die Anfragen für den Versionsverlauf in diesem Netzwerk. Versuche es später erneut oder lies die Versionshinweise auf der Release-Seite.",
   "give_it_a_try": "Probieren Sie es aus!",
   "give_the_style_a_name": "Geben Sie dem Stil einen Namen.",
   "glossary_term": "Glossarbegriff",

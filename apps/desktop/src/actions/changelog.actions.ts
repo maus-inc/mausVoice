@@ -64,6 +64,22 @@ const isAbortError = (error: unknown): boolean =>
   isRecord(error) && error.name === "AbortError";
 
 /**
+ * Whether a 403 or 429 from the releases endpoint is actually a rate limit.
+ *
+ * GitHub answers 403 for several unrelated conditions: a primary or secondary
+ * rate limit, an abuse block, a private or renamed repository, a policy block.
+ * Only the first is fixed by waiting, so telling every 403 to wait sends the
+ * user down the wrong path for the rest. The rate-limit responses carry
+ * `x-ratelimit-remaining: 0` or a `retry-after`, which is what separates them.
+ */
+const isRateLimitResponse = (response: Response): boolean => {
+  if (response.headers.get("retry-after")) {
+    return true;
+  }
+  return response.headers.get("x-ratelimit-remaining") === "0";
+};
+
+/**
  * Re-throw an abort, and swallow nothing else.
  *
  * Both the request and the body read need this, and the two cases differ only
@@ -86,11 +102,13 @@ const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
     rethrowIfAborted(error, signal);
     throw new ChangelogFetchError("network");
   }
-  // The releases endpoint is unauthenticated, so GitHub caps it per IP. A 403
-  // on this URL is far more likely the rate limit than a real permission
-  // problem, and telling the user to check their connection would send them
-  // down the wrong path.
-  if (response.status === 403 || response.status === 429) {
+  // The releases endpoint is unauthenticated, so GitHub caps it per IP, and a
+  // rate limit on this URL would otherwise read as a failed connection check.
+  // Only responses that identify themselves as rate limits get that label.
+  if (
+    (response.status === 403 || response.status === 429) &&
+    isRateLimitResponse(response)
+  ) {
     throw new ChangelogFetchError("rate-limited", response.status);
   }
   if (!response.ok) {

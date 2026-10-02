@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Button, Stack, useMediaQuery } from "@mui/material";
+import { Button, Stack } from "@mui/material";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
@@ -7,7 +7,7 @@ import {
   laterMessagesHaveToolActivity,
 } from "../../actions/chat.actions";
 import { getPendingPasteReview } from "../../actions/pending-paste-review.actions";
-import { noHoverQuery } from "../../styles/motion";
+import { useNoHoverPointer } from "../../styles/motion";
 import { getLogger } from "../../utils/log.utils";
 import { useAppStore } from "../../store";
 import {
@@ -34,28 +34,26 @@ import {
  */
 const MessageActions = ({
   items,
+  visible,
 }: {
   items: ReadonlyArray<{ key: string; label: string; run: () => void }>;
+  visible: boolean;
 }) => {
-  const noHover = useMediaQuery(noHoverQuery);
-  const [visible, setVisible] = useState(false);
+  const noHover = useNoHoverPointer();
   return (
     <Stack
       direction="row"
       spacing={0.25}
       sx={{
         mt: 0.5,
-        // Revealed rather than unmounted so keyboard focus can reach it, and so
-        // a touch device sees it at rest. `visibility` keeps it out of the
-        // pointer path while hidden but preserves it in the accessibility tree.
-        visibility: visible || noHover ? "visible" : "hidden",
+        // Faded, never hidden. `visibility: hidden` removes the element's hit
+        // box, which makes the row impossible to hover, impossible to focus,
+        // and invisible to assistive technology. Fading keeps the row laid out
+        // and focusable; only the pointer path is closed while it is idle.
         opacity: visible || noHover ? 1 : 0,
+        pointerEvents: visible || noHover ? "auto" : "none",
         transition: "opacity 120ms ease",
       }}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-      onFocus={() => setVisible(true)}
-      onBlur={() => setVisible(false)}
     >
       {items.map((item) => (
         <Button
@@ -127,6 +125,10 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   );
 
   // Both affordances read from one list, so they cannot drift apart.
+  // Hover and focus are tracked on the bubble, not on the action row. An idle
+  // row has no pointer events, so a handler attached to it could never fire;
+  // the bubble is always a hit target.
+  const [actionsVisible, setActionsVisible] = useState(false);
   // The row would fight the open editor for the same space, and an empty
   // message has nothing to copy or resend.
   const showActions = !editing && actions.length > 0;
@@ -185,6 +187,10 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
 
   return (
     <Stack
+      onMouseEnter={() => setActionsVisible(true)}
+      onMouseLeave={() => setActionsVisible(false)}
+      onFocus={() => setActionsVisible(true)}
+      onBlur={() => setActionsVisible(false)}
       onContextMenu={(e) => {
         // Yield right-clicks on editable text to the provider's clipboard menu.
         if (isEditableTarget(e.target)) return;
@@ -217,7 +223,9 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           ) : null
         }
       />
-      {showActions ? <MessageActions items={actions} /> : null}
+      {showActions ? (
+        <MessageActions items={actions} visible={actionsVisible} />
+      ) : null}
       {ctxMenu.renderMenu()}
     </Stack>
   );

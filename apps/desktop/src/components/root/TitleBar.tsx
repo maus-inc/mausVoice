@@ -71,15 +71,14 @@ const useMaximized = () => {
 };
 
 /**
- * Live window width, or `null` while it is unknown.
+ * Whether the bar should render in its compact form.
  *
- * The bar needs the width to pick a density, and `null` is meaningful: it
- * renders the roomy default rather than guessing compact and then flashing.
- * Browser preview has no window to measure, so it stays `null` and always
- * renders the roomy bar.
+ * Storing the decision rather than the raw width means a resize drag re-renders
+ * the bar only when the density actually changes, not on every tick. An unknown
+ * window size reads as not compact, so browser preview keeps the roomy bar.
  */
-const useWindowWidth = (): number | null => {
-  const [width, setWidth] = useState<number | null>(null);
+const useWindowWidthDensity = (): boolean => {
+  const [compact, setCompact] = useState(false);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -91,10 +90,14 @@ const useWindowWidth = (): number | null => {
     // bar is a logical CSS pixel. Comparing the two directly would make the
     // threshold fire late on a scaled display: at 200% scaling a 1000px window
     // measures 2000, so a 900px threshold would never trigger.
+    // `onResized` fires on every tick of a resize drag. Each tick used to
+    // change the stored width, so the bar re-rendered for the whole drag even
+    // though only the density matters. Storing the density instead means the
+    // component re-renders only when it actually flips.
     const read = () =>
       Promise.all([win.outerSize(), win.scaleFactor()])
         .then(([size, scale]) => {
-          if (!canceled) setWidth(size.width / (scale || 1));
+          if (!canceled) setCompact(isCompactWidth(size.width / (scale || 1)));
         })
         .catch(() => undefined);
     void read();
@@ -119,7 +122,7 @@ const useWindowWidth = (): number | null => {
     };
   }, []);
 
-  return width;
+  return compact;
 };
 
 const useWindowFocused = () => {
@@ -482,7 +485,7 @@ export const TitleBar = () => {
   // Density follows the measured window width. `null` renders the roomy bar, so
   // the chrome never flashes narrow on first paint and browser preview keeps
   // the roomy default it has always shown.
-  const compact = isCompactWidth(useWindowWidth());
+  const compact = useWindowWidthDensity();
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized
