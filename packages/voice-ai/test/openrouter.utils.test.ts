@@ -154,3 +154,50 @@ createJsonResponseFormatTests({
   jsonObjectModels: ["openai/gpt-4-turbo", "openai/gpt-4-1106-preview"],
   jsonSchemaModels: ["openai/o3-mini", "openai/gpt-oss-20b"],
 });
+
+describe("openrouter o-series parameters", () => {
+  // OpenRouter routes `openai/o1` and `openai/o3-mini` to models that reject
+  // `temperature` and `top_p` as unsupported, and answer HTTP 400 before
+  // generating anything. The id carries a vendor prefix, so the check has to see
+  // through it rather than treating every OpenRouter id as a third-party model.
+  const paramsFor = async (model: string) => {
+    const create = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: "hi" } }],
+      usage: { total_tokens: 5 },
+    });
+    vi.resetModules();
+    vi.doMock("openai", () => ({
+      default: class MockOpenAI {
+        chat = { completions: { create } };
+      },
+      toFile: vi.fn().mockResolvedValue({}),
+    }));
+    const { openrouterGenerateTextResponse } =
+      await import("../src/openrouter.utils");
+    await openrouterGenerateTextResponse({
+      apiKey: "test-key",
+      model,
+      prompt: "hi",
+    });
+    return create.mock.calls[0]?.[0] as Record<string, unknown>;
+  };
+
+  it.each([["openai/o1"], ["openai/o3-mini"], ["openai/o4-mini"]])(
+    "sends neither temperature nor top_p to %s",
+    async (model) => {
+      const params = await paramsFor(model);
+      expect(params).not.toHaveProperty("temperature");
+      expect(params).not.toHaveProperty("top_p");
+      expect(params).toMatchObject({ model });
+    },
+  );
+
+  it.each([
+    ["anthropic/claude-3"],
+    ["meta-llama/llama-3-70b"],
+    ["openai/gpt-4o"],
+  ])("still sends both to %s", async (model) => {
+    const params = await paramsFor(model);
+    expect(params).toMatchObject({ temperature: 1, top_p: 1 });
+  });
+});

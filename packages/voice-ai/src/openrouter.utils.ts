@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { retry } from "@maus-inc/utilities";
 import { openaiCompatibleTranscribeAudio } from "./openai-compatible-transcribe.utils";
+import { isOpenAIOReasoningModel } from "./openai.utils";
 import {
   buildJsonSchemaResponseFormat,
   OPENAI_LEGACY_CHAT_MODELS,
@@ -224,14 +225,17 @@ export const openrouterGenerateTextResponse = async ({
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
+      // OpenRouter routes `openai/o1` and `openai/o3-mini` to the same models
+      // that reject `temperature` and `top_p`, so the id is checked through its
+      // routing prefix rather than being assumed to be a third-party model.
+      const reasoning = isOpenAIOReasoningModel(model);
       const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
         model,
-        temperature: 1,
         max_tokens: maxTokens ?? 1024,
-        top_p: 1,
+        ...(reasoning ? {} : { temperature: 1, top_p: 1 }),
         ...(response_format ? { response_format } : {}),
       };
 

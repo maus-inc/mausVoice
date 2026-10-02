@@ -6,6 +6,7 @@ import {
   OPENAI_LEGACY_CHAT_MODELS,
 } from "./response-format.utils";
 import { buildJsonObjectPrompt } from "./openai-compatible-generate.utils";
+import { isOpenAIOReasoningModel } from "./openai.utils";
 import type {
   JsonResponse,
   LlmChatInput,
@@ -156,16 +157,18 @@ export const azureOpenAIGenerateText = async ({
 
       const response_format = buildResponseFormat(deploymentName, jsonResponse);
 
-      const response = await client.chat.completions.create(
-        {
-          messages,
-          model: deploymentName,
-          temperature: 1,
-          max_completion_tokens: maxTokens ?? 1024,
-          response_format,
-        },
-        { signal },
-      );
+      // An o-series deployment rejects `temperature` outright, which is an HTTP
+      // 400 before any tokens are generated -- so a user who picked a reasoning
+      // model got no dictation and no explanation.
+      const params = {
+        messages,
+        model: deploymentName,
+        max_completion_tokens: maxTokens ?? 1024,
+        response_format,
+        ...(isOpenAIOReasoningModel(deploymentName) ? {} : { temperature: 1 }),
+      };
+
+      const response = await client.chat.completions.create(params, { signal });
 
       const content = response.choices?.[0]?.message?.content || "";
       return {

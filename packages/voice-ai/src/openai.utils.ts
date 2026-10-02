@@ -106,7 +106,15 @@ const OPENAI_O_SERIES_MODEL_ID = /(?:^|\/)o\d/;
  * list returned, so an o-series id is reachable here and the request has to be
  * built for it rather than sent and corrected.
  */
-const isOpenAIOReasoningModel = (model: string): boolean =>
+/**
+ * Whether a model id names an OpenAI o-series (or gpt-5-style reasoning) model.
+ *
+ * Exported because two other providers serve these model ids and hit the same
+ * 400: Azure by deployment name, OpenRouter by routing prefix (`openai/o3-mini`).
+ * A duplicate of this test in each file is a fourth thing to forget when the
+ * family grows.
+ */
+export const isOpenAIOReasoningModel = (model: string): boolean =>
   OPENAI_O_SERIES_MODEL_ID.test(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
