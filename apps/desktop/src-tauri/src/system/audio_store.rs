@@ -51,18 +51,23 @@ const AUDIO_NAME_STEM_CHARS: usize = 48;
 /// One stem that says which transcription it belongs to, and never two.
 ///
 /// The readable characters alone cannot do that. Everything outside
-/// `[A-Za-z0-9_-]` is dropped from them, so `a.b` and `ab` — and `""` and
-/// `"!!!"` — would name the same WAV, and one recording's audio could then be
+/// `[A-Za-z0-9_-]` is dropped from them, so `a.b` and `ab` — and `"!!!"` and
+/// `""` — would name the same WAV, and one recording's audio could then be
 /// played back as another's and deleted with it. So the name is the id itself
-/// when the id is entirely within that alphabet, because that is already unique
-/// *and* already the name the file has on disk, and otherwise the readable part
-/// followed by the digest of the whole id.
+/// when the id is non-empty and entirely within that alphabet, because that is
+/// already unique *and* already the name the file has on disk, and otherwise
+/// the readable part followed by the digest of the whole id.
+///
+/// An empty id is not self-describing even though it has no character outside
+/// the alphabet: `chars().all(..)` is vacuously true for it, so the early
+/// return would name the recording `.wav` — a hidden file that the read-back
+/// path skips — and skip the digest that keeps it apart from every other id.
 ///
 /// The digest is appended after `~`, which the alphabet cannot produce, so the
 /// two forms have disjoint name spaces and neither can be written to look like
 /// the other.
 fn audio_file_stem(transcription_id: &str) -> String {
-    if transcription_id.chars().all(is_self_describing) {
+    if !transcription_id.is_empty() && transcription_id.chars().all(is_self_describing) {
         return transcription_id.to_string();
     }
 
@@ -176,7 +181,8 @@ fn create_or_open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Res
 }
 
 /// Open `path` as a directory, creating the components that are missing, and
-/// refuse to descend through a link anywhere in it.
+/// refuse to descend through a link at or below the component that already
+/// exists.
 ///
 /// A path is only a name until something is opened through it, and both
 /// `create_dir_all` and an ambient path open traverse whatever they meet, so a
@@ -184,30 +190,42 @@ fn create_or_open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Res
 /// wherever it points. The components from the deepest one that already exists
 /// downwards are therefore opened one at a time, no-follow, from a held handle:
 /// the missing ones are created by this call so they cannot already be links,
-/// and the ones that were there have to be real directories.
+/// and the one that was there has to be a real directory.
 ///
-/// Everything *above* that point is resolved once, because the app-data path
-/// the platform hands over may legitimately sit under a link — `/var` is one on
-/// macOS, and a user's home directory can be one. That is the limit of what a
-/// path alone can say: a link above the root and an attacker link above a root
-/// the attacker pre-created look identical, and telling them apart would need
-/// the intended root, which `app_data_dir()` does not carry.
+/// What this closes: every component at and below the deepest one that already
+/// exists is proved to be a directory on the handle the caller is given, not on
+/// a name that was checked earlier, so a component swapped for a link after the
+/// check is refused rather than followed.
+///
+/// What it does not close, deliberately: everything *above* that component is
+/// resolved once, because the app-data path the platform hands over may
+/// legitimately sit under a link — `/var` is one on macOS, and a user's home
+/// directory can be one. That is the limit of what a path alone can say: a link
+/// above the root and an attacker link above a root the attacker pre-created
+/// look identical, and telling them apart would need the intended root, which
+/// `app_data_dir()` does not carry. The residual is therefore one component
+/// resolution of the prefix above the managed root, and nothing below it.
 fn open_dir_chain(path: &Path) -> io::Result<Dir> {
     let mut missing: Vec<&std::ffi::OsStr> = Vec::new();
     let mut cursor = path;
-    let base = loop {
+    let existing = loop {
         match fs::symlink_metadata(cursor) {
             Ok(metadata) => {
-                if metadata.file_type().is_symlink() && !missing.is_empty() {
+                // A link is refused here whether or not anything below it is
+                // still missing. The guard used to require `missing` to be
+                // non-empty, which made a fully existing root — the ordinary
+                // case, because the platform hands over a path that is already
+                // there — the one shape that let a link through to be resolved.
+                if metadata.file_type().is_symlink() {
                     return Err(reject_managed_audio_reparse_point());
                 }
-                if !metadata.is_dir() && !metadata.file_type().is_symlink() {
+                if !metadata.is_dir() {
                     return Err(invalid_managed_audio_path(&format!(
                         "{} is not a directory",
                         cursor.to_string_lossy()
                     )));
                 }
-                break fs::canonicalize(cursor)?;
+                break cursor;
             }
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 let name = cursor
@@ -221,19 +239,48 @@ fn open_dir_chain(path: &Path) -> io::Result<Dir> {
             Err(err) => return Err(err),
         }
     };
-    if !fs::metadata(&base)?.is_dir() {
-        return Err(invalid_managed_audio_path(&format!(
-            "{} does not name a directory",
-            base.to_string_lossy()
-        )));
-    }
 
-    let mut handle = Dir::open_ambient_dir(&base, cap_std::ambient_authority())?;
+    let mut handle = open_checked_component(existing)?;
     for name in missing.into_iter().rev() {
         handle = create_or_open_dir_no_follow(&handle, name)?;
     }
 
     Ok(handle)
+}
+
+/// Open the deepest component that already exists, so the handle returned is
+/// the directory that was checked rather than a second resolution of its name.
+///
+/// `canonicalize(existing)` would resolve that component again: a component
+/// replaced with a link between the check and the resolve is followed, and the
+/// resolved directory is the link's target rather than the one that was
+/// examined. Only the prefix *above* it is canonicalized — the residual the
+/// caller documents — and the component itself is then opened no-follow from
+/// that handle, so the check and the open see the same directory.
+fn open_checked_component(existing: &Path) -> io::Result<Dir> {
+    let Some(parent_path) = existing.parent() else {
+        // A filesystem root has no parent to descend from and nothing above it
+        // to resolve. The walk in `open_dir_chain` has already refused it if it
+        // was a link.
+        return Dir::open_ambient_dir(&fs::canonicalize(existing)?, cap_std::ambient_authority());
+    };
+    let Some(name) = existing.file_name() else {
+        return Err(invalid_managed_audio_path("it has no name to open"));
+    };
+    // `parent` of a one-component relative path is empty, which names the
+    // working directory rather than nothing at all.
+    let parent_source = if parent_path.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent_path
+    };
+
+    let parent = Dir::open_ambient_dir(
+        &fs::canonicalize(parent_source)?,
+        cap_std::ambient_authority(),
+    )?;
+
+    open_dir_no_follow(&parent, name)
 }
 
 /// Open the managed directory as a capability, rather than resolving its path
@@ -550,7 +597,7 @@ pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32
 #[cfg(test)]
 mod tests {
     use super::{
-        audio_file_name_for, delete_audio_file, open_audio_file_for_read,
+        audio_file_name_for, delete_audio_file, open_audio_file_for_read, open_checked_component,
         open_managed_audio_dir_at, AUDIO_DIR_NAME,
     };
     use std::fs;
@@ -689,6 +736,33 @@ mod tests {
         }
     }
 
+    /// `chars().all(..)` is vacuously true for an empty id, so the
+    /// self-describing early return used to name that recording `.wav` — a
+    /// hidden file — and skip the digest that keeps it apart from every other
+    /// id. The empty id is the one id the readable alphabet says nothing
+    /// about, so it has to take the hashed form like any other lossy id.
+    #[test]
+    fn an_empty_id_takes_the_hashed_form_rather_than_naming_a_hidden_file() {
+        let name = audio_file_name_for("");
+        assert_ne!(
+            name, ".wav",
+            "an empty id must not take the self-describing early return"
+        );
+        assert!(
+            !name.starts_with('.'),
+            "an empty id must not produce a hidden filename: {name}"
+        );
+        assert!(
+            name.contains('~'),
+            "an empty id has no readable characters, so it needs the digest: {name}"
+        );
+        assert_ne!(
+            audio_file_name_for(""),
+            audio_file_name_for("!!!"),
+            "the empty id and a lossy id differ only in dropped characters, so the digest is what keeps them apart"
+        );
+    }
+
     /// A path is only a name until something is opened through it. The managed
     /// root used to be built with `create_dir_all` and then opened by name, and
     /// both traverse whatever they meet, so a replaced component moved every
@@ -711,6 +785,92 @@ mod tests {
         assert!(
             !outside.join(AUDIO_DIR_NAME).exists(),
             "a refused root must not create anything in the directory it pointed at"
+        );
+    }
+
+    /// The managed root the platform hands over is normally already there, so
+    /// there is nothing to create and nothing missing below it. That is the
+    /// case where an `app_data_dir` that *is* a link used to be let through:
+    /// the guard that refuses a linked component was only reached once at least
+    /// one component below it was missing, and a fully existing root skipped
+    /// it entirely. `canonicalize` then resolved the link and the managed audio
+    /// directory was created inside whatever it pointed at.
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_managed_root_that_is_a_link_is_refused() {
+        use std::os::unix::fs::symlink;
+
+        let base = TemporaryDirectory::create();
+        let outside = base.0.join("outside-root");
+        fs::create_dir(&outside).expect("the link target must be creatable");
+        let app_data_dir = base.0.join("redirected");
+        symlink(&outside, &app_data_dir).expect("the redirect link must be creatable");
+
+        assert!(
+            open_managed_audio_dir_at(&app_data_dir).is_err(),
+            "an existing managed root reached through a link must be refused, not followed"
+        );
+        assert!(
+            !outside.join(AUDIO_DIR_NAME).exists(),
+            "a refused root must not create anything in the directory it pointed at"
+        );
+    }
+
+    /// Reached with a link directly, only the no-follow open can refuse it:
+    /// `canonicalize` resolves the component it is given, so a component that
+    /// was swapped for a link between the walk checking it and the code opening
+    /// it would be handed back as its target. That is the window the walk's
+    /// own guard cannot close, because the swap happens after the guard has
+    /// already said the component was a directory.
+    #[cfg(unix)]
+    #[test]
+    fn the_checked_component_is_opened_link_free_rather_than_canonicalized() {
+        use std::os::unix::fs::symlink;
+
+        let base = TemporaryDirectory::create();
+        let outside = base.0.join("outside-root");
+        fs::create_dir(&outside).expect("the link target must be creatable");
+        let linked = base.0.join("redirected");
+        symlink(&outside, &linked).expect("the redirect link must be creatable");
+        assert!(
+            fs::metadata(&linked)
+                .expect("a link to a directory still resolves")
+                .is_dir(),
+            "the link is valid, so a refusal is about not following it rather than it being broken"
+        );
+
+        assert!(
+            open_checked_component(&linked).is_err(),
+            "the component that was checked has to be opened, not resolved to a second name"
+        );
+    }
+
+    /// The residual `open_dir_chain` accepts on purpose, pinned here so it
+    /// cannot be tightened by accident: only the component that is actually
+    /// opened is required not to be a link. A link *above* it is resolved,
+    /// because `/var` is one on macOS and a user's home directory can be one,
+    /// and refusing those would mean the app could not open its own directory
+    /// on the platforms it ships to.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_above_the_managed_root_is_resolved_rather_than_refused() {
+        use std::os::unix::fs::symlink;
+
+        let base = TemporaryDirectory::create();
+        let home = base.0.join("real-home");
+        fs::create_dir(&home).expect("the home directory must be creatable");
+        fs::create_dir(home.join("app-data")).expect("the app-data directory must be creatable");
+        symlink(&home, base.0.join("home")).expect("the home link must be creatable");
+        let app_data_dir = base.0.join("home").join("app-data");
+
+        let held = open_managed_audio_dir_at(&app_data_dir).expect(
+            "a link above the managed root is the platform's own shape, not a redirect of it",
+        );
+
+        assert!(held.dir_metadata().expect("held metadata").is_dir());
+        assert!(
+            home.join("app-data").join(AUDIO_DIR_NAME).is_dir(),
+            "the managed directory belongs beside the resolved app-data directory, not beside its link"
         );
     }
 
