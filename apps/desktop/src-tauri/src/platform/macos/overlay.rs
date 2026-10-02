@@ -12,7 +12,10 @@ use rust_macos_pill::ipc::{InMessage, OutMessage, Phase, ResetStrategy, Visibili
 static PHASE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct MacosPill {
-    sender: Mutex<mpsc::Sender<InMessage>>,
+    /// `None` once the pill's channel has closed. Tauri's manager cannot forget
+    /// a managed state, so the sender is the only thing that says the pill is
+    /// still there; see `retire`.
+    sender: Mutex<Option<mpsc::Sender<InMessage>>>,
     /// Set by the first message that could not be handed over. Audio levels
     /// are sent on every frame, so a pill that has gone away would otherwise
     /// write a warning sixty times a second.
@@ -30,6 +33,9 @@ impl MacosPill {
             .sender
             .lock()
             .map_err(|_| "macOS pill channel is poisoned".to_string())?;
+        let sender = sender
+            .as_ref()
+            .ok_or_else(|| "macOS pill is no longer running".to_string())?;
         sender
             .send(msg)
             .map_err(|_| "macOS pill is no longer receiving messages".to_string())
@@ -47,6 +53,24 @@ impl MacosPill {
             }
         }
     }
+
+    /// Report the pill as gone and take the sender out.
+    ///
+    /// The pill thread owns the receiver, so the channel closing is the end of
+    /// the pill. The managed state outlives it, and leaving the sender
+    /// installed meant every later update failed one message at a time while
+    /// the frontend went on treating the native pill as available: the
+    /// position commands kept reporting a pill they could not reach, and the
+    /// other notifiers looked as delivered when nothing was. Clearing the
+    /// sender is what makes one state answer both questions. The warning flag
+    /// goes with it, because the failure is reported here — a later update
+    /// that finds no sender is expected and stays at debug.
+    fn retire(&self) {
+        if let Ok(mut sender) = self.sender.lock() {
+            sender.take();
+        }
+        self.delivery_failed.store(true, Ordering::Relaxed);
+    }
 }
 
 pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
@@ -57,7 +81,7 @@ pub fn try_create_native_overlays(app: &tauri::AppHandle) -> bool {
     rust_macos_pill::start(out_tx, in_rx);
 
     let pill = std::sync::Arc::new(MacosPill {
-        sender: Mutex::new(in_tx),
+        sender: Mutex::new(Some(in_tx)),
         delivery_failed: AtomicBool::new(false),
     });
     app.manage(pill);
@@ -276,6 +300,13 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                     let _ = app.emit_to("main", "pill-position-changed", payload);
                 }
             }
+        }
+        // The pill thread holds the receiver, so this loop ending is the pill
+        // ending. Clear the sender before logging it, so a notify that races
+        // this thread reports the pill as gone rather than failing on a closed
+        // channel while the frontend still believes it is available.
+        if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
+            pill.retire();
         }
         log::info!("Native macOS pill channel closed");
     });
