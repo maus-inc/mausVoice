@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Stack } from "@mui/material";
+import { useCallback, useMemo, useState } from "react";
+import { Button, Stack, useMediaQuery } from "@mui/material";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
 import {
@@ -7,6 +7,7 @@ import {
   laterMessagesHaveToolActivity,
 } from "../../actions/chat.actions";
 import { getPendingPasteReview } from "../../actions/pending-paste-review.actions";
+import { noHoverQuery } from "../../styles/motion";
 import { getLogger } from "../../utils/log.utils";
 import { useAppStore } from "../../store";
 import {
@@ -22,6 +23,55 @@ import {
   shouldRenderMessage,
 } from "./ChatMessageContent";
 
+/**
+ * Visible per-message actions.
+ *
+ * These used to live only in the right-click menu, which made them
+ * undiscoverable and unreachable without a pointer. The context menu is kept
+ * for the same actions, but this row is the primary affordance: it appears on
+ * hover, on keyboard focus, and at rest under `noHoverQuery` so a touch device
+ * is not left with an invisible control.
+ */
+const MessageActions = ({
+  items,
+}: {
+  items: ReadonlyArray<{ key: string; label: string; run: () => void }>;
+}) => {
+  const noHover = useMediaQuery(noHoverQuery);
+  const [visible, setVisible] = useState(false);
+  return (
+    <Stack
+      direction="row"
+      spacing={0.25}
+      sx={{
+        mt: 0.5,
+        // Revealed rather than unmounted so keyboard focus can reach it, and so
+        // a touch device sees it at rest. `visibility` keeps it out of the
+        // pointer path while hidden but preserves it in the accessibility tree.
+        visibility: visible || noHover ? "visible" : "hidden",
+        opacity: visible || noHover ? 1 : 0,
+        transition: "opacity 120ms ease",
+      }}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
+    >
+      {items.map((item) => (
+        <Button
+          key={item.key}
+          size="small"
+          variant="text"
+          sx={{ minWidth: 0, px: 0.75, py: 0.25, color: "text.secondary" }}
+          onClick={item.run}
+        >
+          {item.label}
+        </Button>
+      ))}
+    </Stack>
+  );
+};
+
 type ChatMessageBubbleProps = { id: string };
 
 export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
@@ -34,36 +84,57 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
   const [confirmDrop, setConfirmDrop] = useState(false);
 
   const content = message?.content ?? "";
-  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
-    const items: ContextMenuItem[] = [];
-    if (content.trim()) {
-      items.push({
-        label: intl.formatMessage({ defaultMessage: "Copy message" }),
-        onClick: async () => {
-          try {
-            await navigator.clipboard.writeText(content);
-            showSnackbar(
-              intl.formatMessage({ defaultMessage: "Copied successfully" }),
-              { mode: "success" },
-            );
-          } catch (error) {
-            showErrorSnackbar(error);
-          }
-        },
-      });
-    }
-    if (message?.role === "user") {
-      items.push({
-        label: intl.formatMessage({ defaultMessage: "Edit and resend" }),
-        onClick: () => {
-          setDraft(content);
-          setConfirmDrop(false);
-          setEditing(true);
-        },
-      });
-    }
-    return items;
-  }, [content, intl, message?.role]);
+  const copyAction = useMemo(() => {
+    if (!content.trim()) return null;
+    return async () => {
+      try {
+        await navigator.clipboard.writeText(content);
+        showSnackbar(
+          intl.formatMessage({ defaultMessage: "Copied successfully" }),
+          { mode: "success" },
+        );
+      } catch (error) {
+        showErrorSnackbar(error);
+      }
+    };
+  }, [content, intl]);
+
+  const startEdit = useCallback(() => {
+    setDraft(content);
+    setConfirmDrop(false);
+    setEditing(true);
+  }, [content]);
+
+  const actions = useMemo(
+    () =>
+      [
+        copyAction
+          ? {
+              key: "copy",
+              label: intl.formatMessage({ defaultMessage: "Copy message" }),
+              run: copyAction,
+            }
+          : null,
+        message?.role === "user"
+          ? {
+              key: "edit",
+              label: intl.formatMessage({ defaultMessage: "Edit and resend" }),
+              run: startEdit,
+            }
+          : null,
+      ].filter((item): item is NonNullable<typeof item> => item !== null),
+    [copyAction, intl, message?.role, startEdit],
+  );
+
+  // Both affordances read from one list, so they cannot drift apart.
+  const contextMenuItems = useMemo<ContextMenuItem[]>(
+    () =>
+      actions.map((action) => ({
+        label: action.label,
+        onClick: () => void action.run(),
+      })),
+    [actions],
+  );
 
   if (!message) {
     return null;
@@ -142,6 +213,9 @@ export const ChatMessageBubble = ({ id }: ChatMessageBubbleProps) => {
           ) : null
         }
       />
+      {editing ? null : actions.length > 0 ? (
+        <MessageActions items={actions} />
+      ) : null}
       {ctxMenu.renderMenu()}
     </Stack>
   );

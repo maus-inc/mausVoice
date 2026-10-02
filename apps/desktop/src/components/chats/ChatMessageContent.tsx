@@ -92,7 +92,18 @@ export const MessageEditForm = ({
 }) => {
   const intl = useIntl();
   return (
-    <Stack spacing={1}>
+    <Stack
+      spacing={1}
+      onKeyDown={(event) => {
+        // Escape cancels the edit, matching every other dismissible surface in
+        // the app. Without it the only way out is hunting for the Cancel button
+        // with a pointer, which strands keyboard and screen-reader users.
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
       <TextField
         multiline
         autoFocus
