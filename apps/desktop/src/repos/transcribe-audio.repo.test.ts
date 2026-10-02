@@ -1137,6 +1137,48 @@ describe("ElevenLabs keyterms gating", () => {
   });
 });
 
+describe("every transcription provider goes through the app's fetch", () => {
+  // The providers that take an injected fetch only get the redaction and the
+  // certificate checks the app relies on when the production factory hands one
+  // over. OpenRouter's repository took no fetch at all, so the SDK used its own
+  // transport in production while its unit tests were the ones running through
+  // the secure wrapper -- the same green suite, a different runtime.
+  it("the OpenRouter repository built by the factory still binds a caller fetch", async () => {
+    const seen: unknown[] = [];
+    vi.spyOn(voiceAi, "openrouterTranscribeAudio").mockImplementation(
+      async (args) => {
+        seen.push(args.customFetch);
+        return { text: "hello", wordsUsed: 1 };
+      },
+    );
+    const state = structuredClone(INITIAL_APP_STATE);
+    state.settings.aiTranscription.mode = "api";
+    state.settings.aiTranscription.selectedApiKeyId = "openrouter-key";
+    state.apiKeyById["openrouter-key"] = {
+      id: "openrouter-key",
+      name: "OpenRouter",
+      provider: "openrouter",
+      createdAt: "2026-06-03T00:00:00.000Z",
+      keyFull: "or-key",
+      transcriptionModel: "openai/whisper-1",
+    };
+    setAppState(state, true);
+
+    const { repo } = getTranscribeAudioRepo();
+    expect(repo).toBeInstanceOf(OpenRouterTranscribeAudioRepo);
+
+    await repo.transcribeAudio({
+      samples: createSamples(1, 16000),
+      sampleRate: 16000,
+    });
+
+    // The repository's own fetch, not a default the SDK invented for itself.
+    // `undefined` here is the bug: the SDK falls back to its own transport,
+    // which is not the app's, so nothing downstream sees this request at all.
+    expect(seen[0]).toBeTypeOf("function");
+  });
+});
+
 describe("provider requests honor the abort signal", () => {
   it("binds the caller's signal into every provider fetch", async () => {
     const baseFetch = vi.fn<typeof fetch>(async () => new Response("{}"));

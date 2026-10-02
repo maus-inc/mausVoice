@@ -416,6 +416,7 @@ const buildOpenRouterTranscribeRepo = (
   return new OpenRouterTranscribeAudioRepo(
     prefs.apiKeyValue,
     prefs.transcriptionModel,
+    secureFetch,
   );
 };
 

@@ -919,11 +919,17 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
 export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "openai/whisper-large-v3";
+    this.customFetch = customFetch ?? undefined;
   }
 
   protected async transcribeSegment(
@@ -938,6 +944,11 @@ export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       prompt: input.prompt ?? undefined,
       language: input.language,
       signal: input.signal,
+      // Without an injected fetch the SDK keeps its own transport, and the
+      // redaction and certificate checks this app relies on never run against
+      // the response.
+      customFetch:
+        this.customFetch && withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
