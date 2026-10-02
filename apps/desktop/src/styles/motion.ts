@@ -107,8 +107,11 @@ const canMatchMedia = (): boolean =>
 const readNoHover = (): boolean => {
   if (!noHoverMediaQuery && canMatchMedia()) {
     noHoverMediaQuery = globalThis.matchMedia(noHoverQuery);
-    // Older engines, and the jsdom harness, expose only the deprecated pair.
-    const notify = (event: { matches: boolean }) => {
+    // Older engines, and the jsdom harness, expose only the deprecated pair,
+    // so both registration styles are supported. The listener takes the real
+    // event type rather than a structural stand-in, so the two call sites are
+    // checked against the same signature the browser actually uses.
+    const notify: (event: MediaQueryListEvent) => void = (event) => {
       for (const each of noHoverListeners) each(event.matches);
     };
     if (typeof noHoverMediaQuery.addEventListener === "function") {
