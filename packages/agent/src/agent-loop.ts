@@ -29,10 +29,23 @@ const ABORTED_TOOL_OUTPUT: AgentToolOutput = {
   failureReason: "Tool execution aborted",
 };
 
+/**
+ * One conversation with a provider: stream a reply, run the tools it asks for,
+ * feed the results back, until the model stops asking, the iteration budget runs
+ * out, or `abort()` is called.
+ *
+ * `abort()` means "stop this run". It is scoped to the run rather than to the
+ * instance, so the controller and the flag are reset when `run()` starts: a
+ * permanently aborted `AbortSignal` handed to a second run is a request that
+ * silently does nothing, and the caller sees an empty conversation with no
+ * error. Every caller today constructs a loop per request and abandons the
+ * aborted one, so this changes nothing for them; it means a loop that *is* reused
+ * gets what it looks like it gets.
+ */
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
-  private readonly abortController = new AbortController();
+  private abortController = new AbortController();
   constructor(config: AgentConfig) {
     this.config = config;
   }
@@ -43,6 +56,11 @@ export class AgentLoop {
   }
 
   async *run(messages: LlmMessage[]): AsyncGenerator<AgentEvent> {
+    // A run starts live. An abort left over from a previous run describes that
+    // run, and a signal that is already aborted is one the provider and every
+    // tool will refuse before doing any work.
+    this.aborted = false;
+    this.abortController = new AbortController();
     const history: LlmMessage[] = [...messages];
     const maxIterations = this.config.maxIterations ?? 30;
 

@@ -273,6 +273,38 @@ describe("AgentLoop", () => {
     },
   );
 
+  it("starts a later run live after an earlier one was aborted", async () => {
+    // `abort()` is scoped to the run it interrupts. Left permanent, the second
+    // run inherited an already-aborted `AbortSignal` and the `aborted` flag, so
+    // every provider turn and every tool was refused before doing any work --
+    // and the caller saw an empty conversation rather than an error, because
+    // nothing had failed. A loop that is reused has to work.
+    const seen: AbortSignal[] = [];
+    const provider: AgentLlmProvider = {
+      async *streamChat(input) {
+        seen.push(input.signal as AbortSignal);
+        yield { type: "text-delta", text: "hello" };
+      },
+    };
+    const loop = new AgentLoop({
+      provider,
+      tools: [],
+      systemPrompt: "s",
+    });
+
+    loop.abort();
+    const events = [];
+    for await (const event of loop.run([{ role: "user", content: "go" }])) {
+      events.push(event);
+    }
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].aborted).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "finish", reason: "stop" }),
+    );
+  });
+
   it("aborts mid-loop and reports the aborted reason", async () => {
     let resolveAbort!: () => void;
     const abortGate = new Promise<void>((resolve) => {
