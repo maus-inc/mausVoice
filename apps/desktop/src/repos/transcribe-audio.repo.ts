@@ -716,6 +716,7 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       phrases: this.phrases,
       language: input.language,
+      signal: input.signal,
     });
 
     return {

@@ -897,3 +897,90 @@ describe("writeWavChunkId", () => {
     );
   });
 });
+
+describe("cancelling an Azure recognition", () => {
+  // The SDK's `recognizeOnceAsync` is callback-only: it takes no signal and has
+  // no deadline of its own, so a caller that gave up keeps waiting on a
+  // recognizer nobody is listening to. That is what makes a cancelled
+  // dictation look hung, so the signal has to reach the recognizer itself.
+  beforeEach(() => {
+    speech.hang = true;
+    speech.error = null;
+  });
+
+  it("rejects when the caller's signal fires mid-recognition", async () => {
+    const controller = new AbortController();
+    const pending = azureTranscribeAudio({
+      subscriptionKey: "key",
+      region: "eastus",
+      blob: wavBlob(),
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/cancelled/i);
+  });
+
+  it("rejects without reaching the recognizer when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    speech.hang = false;
+    speech.calls = 0;
+
+    await expect(
+      azureTranscribeAudio({
+        subscriptionKey: "key",
+        region: "eastus",
+        blob: wavBlob(),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/cancelled/i);
+    // A call that arrives already cancelled should not open a connection it is
+    // about to close.
+    expect(speech.calls).toBe(0);
+  });
+
+  it("leaves no abort listener behind once the call has settled", async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let live = 0;
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = (...args: Parameters<typeof add>) => {
+      live += 1;
+      return add(...args);
+    };
+    signal.removeEventListener = (...args: Parameters<typeof remove>) => {
+      live -= 1;
+      return remove(...args);
+    };
+    speech.hang = false;
+
+    await azureTranscribeAudio({
+      subscriptionKey: "key",
+      region: "eastus",
+      blob: wavBlob(),
+      signal,
+    });
+
+    // A listener that outlives the call keeps the recognizer, the decoded
+    // samples and this whole closure alive for as long as the signal does --
+    // for a session controller, the life of the app.
+    expect(live).toBe(0);
+  });
+
+  it("still answers normally when nothing cancels it", async () => {
+    speech.hang = false;
+    const controller = new AbortController();
+
+    await expect(
+      azureTranscribeAudio({
+        subscriptionKey: "key",
+        region: "eastus",
+        blob: wavBlob(),
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({ text: "hello world" });
+  });
+});

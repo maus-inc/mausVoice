@@ -14,6 +14,13 @@ export type AzureTranscriptionArgs = {
    * `azureTestIntegration` for the probe that needs one.
    */
   timeoutMs?: number;
+  /**
+   * Cancels the recognition. The Azure SDK's `recognizeOnceAsync` is
+   * callback-only and takes neither a signal nor a deadline, so without this a
+   * caller that gave up still waits for a recognizer nobody is listening to --
+   * a stop button that does not stop anything until the service answers.
+   */
+  signal?: AbortSignal;
 };
 
 export type AzureTranscribeAudioOutput = {
@@ -158,6 +165,7 @@ export const azureTranscribeAudio = async ({
   language = "en-US",
   phrases,
   timeoutMs,
+  signal,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -208,8 +216,30 @@ export const azureTranscribeAudio = async ({
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      // A listener left on the caller's signal keeps this whole closure -- the
+      // recognizer, the audio buffer, the decoded samples -- alive for as long
+      // as the signal does, which for a session controller is the app's lifetime.
+      signal?.removeEventListener("abort", onAbort);
       settle();
     };
+    const onAbort = (): void => {
+      recognizer.close();
+      settleOnce(() =>
+        reject(
+          new AzureRecognitionError(
+            "Azure recognition cancelled by the caller",
+            "cancelled before Azure answered",
+          ),
+        ),
+      );
+    };
+    if (signal?.aborted) {
+      // Checked before the recognizer exists: a call that arrives already
+      // cancelled should not open a connection it is about to close.
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     if (timeoutMs !== undefined) {
       timer = setTimeout(() => {
