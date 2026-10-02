@@ -203,10 +203,21 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
 /// whenever the Audio dialog slider commits. The read path clamps to a
 /// conservative safe range so an out-of-range or attacker-controlled value
 /// can never break audio.
-pub static INTERACTION_FEEDBACK_VOLUME: AtomicU32 = AtomicU32::new(0.35_f32.to_bits());
+pub static INTERACTION_FEEDBACK_VOLUME: AtomicU32 =
+    AtomicU32::new(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS);
 
-const MIN_SAFE_VOLUME: f32 = 0.05;
-const MAX_SAFE_VOLUME: f32 = 0.5;
+pub const MIN_SAFE_VOLUME: f32 = 0.05;
+pub const MAX_SAFE_VOLUME: f32 = 0.5;
+
+/// A `0.35` typed into the sink, or a window that no longer contains the
+/// default, is invisible to every test that runs in a shared process: the
+/// static is mutable, so whichever test writes it last decides what a later
+/// reader sees. Asserting it at compile time is the only form that cannot be
+/// reordered.
+const _: () = assert!(
+    MIN_SAFE_VOLUME <= crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME
+        && crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME <= MAX_SAFE_VOLUME
+);
 
 fn current_interaction_feedback_volume() -> f32 {
     f32::from_bits(INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed))
@@ -262,6 +273,25 @@ mod thock_limiter {
     mod tests {
         use super::super::{current_interaction_feedback_volume, set_interaction_feedback_volume};
         use super::*;
+
+        /// The persistence boundary clamps to this same window, so a value
+        /// stored on one side is played back at the volume it was stored as.
+        /// The seed itself is guarded by a `const` assertion above rather than
+        /// here: reading a mutable static from a test that shares a process with
+        /// `sink_volume_clamp_keeps_values_in_range` passes or fails on the
+        /// order the runner happened to pick.
+        #[test]
+        fn a_volume_round_trips_through_the_shared_window() {
+            let default = crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME;
+            set_interaction_feedback_volume(default);
+            assert_eq!(current_interaction_feedback_volume(), default);
+            set_interaction_feedback_volume(1.0);
+            assert_eq!(
+                current_interaction_feedback_volume(),
+                crate::system::audio_feedback::MAX_SAFE_VOLUME,
+                "the sink clamps what it is given, so an out-of-range value cannot be played",
+            );
+        }
 
         #[test]
         fn first_thock_is_not_throttled() {

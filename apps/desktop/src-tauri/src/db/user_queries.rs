@@ -100,7 +100,10 @@ pub async fn upsert_user(pool: SqlitePool, user: &User) -> Result<User, sqlx::Er
         // clamp so what is stored is always what would be played.
         user.interaction_feedback_volume
             .unwrap_or(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME)
-            .clamp(0.05, 0.5) as f64,
+            .clamp(
+                crate::system::audio_feedback::MIN_SAFE_VOLUME,
+                crate::system::audio_feedback::MAX_SAFE_VOLUME,
+            ) as f64,
     )
     .bind(if user.has_finished_tutorial { 1 } else { 0 })
     .bind(if user.has_migrated_preferred_microphone {
