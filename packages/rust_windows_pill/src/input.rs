@@ -14,12 +14,18 @@ pub(crate) fn send_haptic(kind: &str) {
 /// Report a review decision back to the desktop. The id travels with the
 /// decision so a late click on a card that has already been replaced is
 /// discarded instead of applied to the next transcript.
-pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) {
+/// Report a review decision back to the desktop. The id travels with the
+/// decision so a late click on a card that has already been replaced is
+/// discarded instead of applied to the next transcript.
+///
+/// Returns whether the desktop received it, so a caller holding the only copy
+/// of an edited transcript can keep it when the write fails.
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) -> bool {
     ipc::send(&OutMessage::ReviewDecision {
         review_id: review_id.to_string(),
         action: action.to_string(),
         text,
-    });
+    })
 }
 
 /// Send whatever the entry holds.
@@ -135,8 +141,12 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         .as_ref()
                         .map(|review| review.id.clone());
                     match review_id {
-                        Some(review_id) => send_review_decision(&review_id, "cancel", None),
-                        None => ipc::send(&OutMessage::AssistantClose),
+                        Some(review_id) => {
+                            send_review_decision(&review_id, "cancel", None);
+                        }
+                        None => {
+                            ipc::send(&OutMessage::AssistantClose);
+                        }
                     }
                 }
                 ClickAction::ReviewInsert(id) => {
@@ -156,7 +166,9 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     let text = state.entry_text.borrow().clone();
                     send_review_decision(id, "edit", Some(text));
                 }
-                ClickAction::ReviewCancel(id) => send_review_decision(id, "cancel", None),
+                ClickAction::ReviewCancel(id) => {
+                    send_review_decision(id, "cancel", None);
+                }
                 ClickAction::OpenInNew => {
                     let review_id = state
                         .assistant_review
