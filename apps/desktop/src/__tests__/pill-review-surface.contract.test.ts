@@ -95,6 +95,31 @@ describe("native pill review surface", () => {
     );
   });
 
+  it("clears the Windows entry text only when the desktop received it", () => {
+    const input = readRepoSource("packages/rust_windows_pill/src/input.rs");
+    const submit = extractRustBlock(input, "fn submit_entry_inner(");
+
+    // The Windows pill used to clear the entry unconditionally, so a write that
+    // never reached the desktop destroyed the user's only copy of an edited
+    // transcript, and the pipe to re-send it on was the pipe that just failed.
+    expect(submit).toMatch(/if !send\(&msg\) \{\s*return false;/);
+    expect(submit).toContain("entry_text.borrow_mut().clear();");
+    // The clear must come after the send, not before it.
+    expect(submit.indexOf("send(&msg)")).toBeLessThan(
+      submit.indexOf("entry_text.borrow_mut().clear()"),
+    );
+  });
+
+  it("reports whether the Windows write actually reached the desktop", () => {
+    const ipc = readRepoSource("packages/rust_windows_pill/src/ipc.rs");
+    const send = extractRustBlock(ipc, "pub fn send(");
+
+    // Swallowing every write error is what made the unconditional clear
+    // invisible: the caller had no way to know nobody had received the text.
+    expect(send).toContain("stdout.flush().is_ok()");
+    expect(send).not.toContain("let _ = stdout.flush()");
+  });
+
   it("keeps the Windows entry text when nothing was sent", () => {
     const pill = readRepoSource("packages/rust_windows_pill/src/pill.rs");
     const handler = extractRustBlock(pill, "fn handle_edit_message(msg: &MSG)");

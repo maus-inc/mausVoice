@@ -305,6 +305,7 @@
   "earlier": "이전",
   "edit": "편집",
   "edit_and_resend": "편집 후 다시 보내기",
+  "edit_below_then_press_enter_to_insert": "아래에서 수정한 뒤 Enter 키를 눌러 삽입하세요",
   "edit_failed": "편집에 실패했습니다.",
   "edit_key": "키 편집",
   "edit_message": "메시지 편집",

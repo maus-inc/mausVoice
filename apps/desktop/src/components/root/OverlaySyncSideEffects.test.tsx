@@ -24,6 +24,14 @@ vi.mock("@tauri-apps/api/window", () => ({
 vi.mock("../../utils/log.utils", () => ({
   getLogger: () => ({ error: vi.fn() }),
 }));
+// Keep real locale formatting and supply the IDs the Vite build injects, so
+// `formatMessage({ defaultMessage })` resolves against the real catalog the
+// same way it does in the running app.
+vi.mock("react-intl", async (importOriginal) => {
+  const { reactIntlWithIdsModule } =
+    await import("../../../test/helpers/react-intl-mock");
+  return reactIntlWithIdsModule(importOriginal);
+});
 
 ensureUiHarness();
 let container: HTMLDivElement;
@@ -62,13 +70,41 @@ const lastPayload = () => {
 };
 
 describe("native pill review localization", () => {
-  it("sends the active locale's Edit label without changing the transcript", async () => {
+  it("sends every caption the pill draws, in the active locale", async () => {
     await renderLocale("de");
+    const de = getMessagesForLocale("de");
     expect(lastPayload().review).toEqual({
       id: "review-1",
       text: "Keep this transcript",
-      edit_label: getMessagesForLocale("de").edit,
+      edit_label: de.edit,
+      insert_label: de.insert,
+      copy_label: de.copy,
+      cancel_label: de.cancel,
+      hint: de.edit_below_then_press_enter_to_insert,
     });
+  });
+
+  it("sends no English literals for a locale that translated every caption", async () => {
+    await renderLocale("de");
+    const review = lastPayload().review;
+    const de = getMessagesForLocale("de");
+    const en = getMessagesForLocale("en");
+    // The pill draws these itself and has no catalog of its own. If one is left
+    // as an English literal, the only place to catch it is this payload, so
+    // assert each matches its translated catalog entry and differs from English.
+    const captions = {
+      edit_label: "edit",
+      insert_label: "insert",
+      copy_label: "copy",
+      cancel_label: "cancel",
+      hint: "edit_below_then_press_enter_to_insert",
+    } as const;
+    for (const [field, catalogKey] of Object.entries(captions)) {
+      const value = review[field];
+      expect(value, field).toBeTruthy();
+      expect(value, field).toBe(de[catalogKey]);
+      expect(value, field).not.toBe(en[catalogKey]);
+    }
   });
 
   it("republishes translated labels when only the locale changes", async () => {

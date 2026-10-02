@@ -663,7 +663,8 @@ pub fn run(receiver: Receiver<InMessage>) {
                         .map(|r| r.id.clone());
                     let review_id = review.as_ref().map(|r| r.id.clone());
                     let review_text = review.as_ref().map(|r| r.text.clone());
-                    *state_tick.assistant_review.borrow_mut() = review;
+                    *state_tick.assistant_review.borrow_mut() =
+                        review.map(|review| *review);
 
                     // The entry is the review surface: a new transcript loads
                     // into it for editing, and answering the review empties it

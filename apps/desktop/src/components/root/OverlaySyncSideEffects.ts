@@ -44,7 +44,16 @@ type NativePillPayload = {
     reason: string | null;
   }[];
   /** Transcript awaiting a review decision on the pill, if any. */
-  review: { id: string; text: string; edit_label: string } | null;
+  review: {
+    id: string;
+    text: string;
+    /** Localized captions for every control the pill draws for this review. */
+    edit_label: string;
+    insert_label: string;
+    copy_label: string;
+    cancel_label: string;
+    hint: string;
+  } | null;
 };
 
 const formatPromptPreview = (text: string): string | null => {
@@ -235,9 +244,19 @@ const useNativePillAssistantSync = () => {
       review: review
         ? {
             ...review,
+            // The pill draws these captions itself, so every one of them has to
+            // cross the bridge. Shipping them as literals left a German user
+            // reading "Insert" and "Cancel" on the one surface that asks them
+            // to accept or reject their own dictation.
             edit_label: intl.formatMessage({
               id: "edit",
               defaultMessage: "Edit",
+            }),
+            insert_label: intl.formatMessage({ defaultMessage: "Insert" }),
+            copy_label: intl.formatMessage({ defaultMessage: "Copy" }),
+            cancel_label: intl.formatMessage({ defaultMessage: "Cancel" }),
+            hint: intl.formatMessage({
+              defaultMessage: "Edit below, then press Enter to insert",
             }),
           }
         : null,

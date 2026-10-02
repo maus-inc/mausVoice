@@ -1,6 +1,8 @@
 use crate::constants::*;
 use crate::ipc::{self, OutMessage};
 use crate::state::{ClickAction, PillState};
+use std::cell::RefCell;
+use std::io::{self, Write};
 
 /// A23: Dispatch haptic/audio feedback to the desktop process.
 pub(crate) fn send_haptic(kind: &str) {
@@ -30,18 +32,50 @@ pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<S
 /// Returns true when something was sent, so the caller can clear the platform
 /// text control only then.
 pub(crate) fn submit_entry(state: &PillState) -> bool {
+    submit_entry_inner(&state.entry_text, state.pending_review_id(), |msg| {
+        let mut stdout = io::stdout().lock();
+        if serde_json::to_writer(&mut stdout, msg).is_err() {
+            return false;
+        }
+        if stdout.write_all(b"\n").is_err() {
+            return false;
+        }
+        stdout.flush().is_ok()
+    })
+}
+
+/// The submit decision, isolated from the platform write so the contract is
+/// testable: a send that fails must leave the entry untouched.
+///
+/// The parameter is named `entry_text` to match the other two pills, which the
+/// cross-crate contract test asserts against.
+fn submit_entry_inner(
+    entry_text: &RefCell<String>,
+    pending_review_id: Option<String>,
+    send: impl FnOnce(&OutMessage) -> bool,
+) -> bool {
     // Send the text exactly as the user left it. Spacing at either end can be
     // deliberate when the transcript lands in a document, so trimming is only
     // ever used to decide whether there is anything to send.
-    let text = state.entry_text.borrow().clone();
+    let text = entry_text.borrow().clone();
     if text.trim().is_empty() {
         return false;
     }
-    match state.pending_review_id() {
-        Some(review_id) => send_review_decision(&review_id, "insert", Some(text)),
-        None => ipc::send(&OutMessage::TypedMessage { text }),
+    let msg = match pending_review_id {
+        Some(review_id) => OutMessage::ReviewDecision {
+            review_id,
+            action: "insert".to_string(),
+            text: Some(text),
+        },
+        None => OutMessage::TypedMessage { text },
+    };
+    // Clear only once the desktop has the text. Clearing after a failed write
+    // loses the user's only copy, and the pipe to re-send it on is the pipe
+    // that just failed.
+    if !send(&msg) {
+        return false;
     }
-    *state.entry_text.borrow_mut() = String::new();
+    entry_text.borrow_mut().clear();
     true
 }
 
@@ -271,4 +305,85 @@ pub(crate) fn handle_scroll(state: &PillState, delta: f64) {
     let new_offset = (current + delta).clamp(0.0, max_scroll);
     state.scroll_offset.set(new_offset);
     state.should_stick.set(max_scroll - new_offset <= 32.0);
+}
+
+#[cfg(test)]
+mod entry_submit_tests {
+    use super::*;
+
+    /// The entry is the user's only copy of an edited transcript. Clearing it
+    /// after a write that never reached the desktop destroys text that cannot
+    /// be recovered, because the pipe it would be re-sent on is the one that
+    /// just failed.
+    #[test]
+    fn a_failed_review_submit_keeps_the_edited_transcript() {
+        let entry_text = RefCell::new("an edited transcript".to_string());
+        let sent =
+            submit_entry_inner(&entry_text, Some("review-7".to_string()), |_| false);
+        assert!(!sent, "a failed write is not a send");
+        assert_eq!(entry_text.borrow().as_str(), "an edited transcript");
+    }
+
+    #[test]
+    fn a_failed_plain_submit_keeps_the_entry_text() {
+        let entry_text = RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry_text, None, |_| false);
+        assert!(!sent);
+        assert_eq!(entry_text.borrow().as_str(), "a typed message");
+    }
+
+    #[test]
+    fn a_successful_submit_clears_the_entry() {
+        let entry_text = RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry_text, None, |_| true);
+        assert!(sent);
+        assert!(entry_text.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_empty_entry_sends_nothing_and_is_never_cleared() {
+        for text in ["", "   ", "\n\t "] {
+            let entry_text = RefCell::new(text.to_string());
+            let sent = submit_entry_inner(&entry_text, None, |_| true);
+            assert!(!sent, "whitespace-only entry {text:?} must not be sent");
+            assert_eq!(entry_text.borrow().as_str(), text);
+        }
+    }
+
+    /// A review submit is an insert decision that carries the text exactly as
+    /// the user left it, including surrounding spacing, which can be deliberate
+    /// when the transcript lands in a document.
+    #[test]
+    fn a_review_submit_sends_an_insert_decision_carrying_the_text() {
+        let entry_text = RefCell::new("  spaced transcript  ".to_string());
+        let sent_json = RefCell::new(None);
+        let sent =
+            submit_entry_inner(&entry_text, Some("review-9".to_string()), |msg| {
+                *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+                true
+            });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(
+                r#"{"type":"review_decision","review_id":"review-9","action":"insert","text":"  spaced transcript  "}"#
+            )
+        );
+        assert!(entry_text.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_plain_submit_sends_a_typed_message() {
+        let entry_text = RefCell::new("hello".to_string());
+        let sent_json = RefCell::new(None);
+        let sent = submit_entry_inner(&entry_text, None, |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(r#"{"type":"typed_message","text":"hello"}"#)
+        );
+    }
 }
