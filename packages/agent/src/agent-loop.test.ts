@@ -273,6 +273,46 @@ describe("AgentLoop", () => {
     },
   );
 
+  it("refuses a second run while the first is still going", async () => {
+    // The abort state is a pair of fields rather than a parameter carried
+    // through every frame, so two concurrent runs would share them: the second
+    // would reset the first's controller, and `abort()` would then cancel the
+    // second while the first kept waiting on a provider nobody cancelled.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loop = new AgentLoop({
+      provider: {
+        async *streamChat() {
+          await held;
+          yield { type: "text-delta", text: "one" };
+        },
+      },
+      tools: [],
+      systemPrompt: "s",
+    });
+
+    // The first run is started and left suspended inside the provider, which is
+    // the state two overlapping runs actually collide in.
+    const first = loop.run([{ role: "user", content: "one" }]);
+    await first.next();
+
+    await expect(
+      loop.run([{ role: "user", content: "two" }]).next(),
+    ).rejects.toThrow(/already running/i);
+
+    // Disposing the suspended run releases the loop, so the refusal is about
+    // overlap and not about a loop that is simply never reusable again.
+    release();
+    await first.return(undefined);
+    // Usable again: the flag is cleared in a `finally`, so disposing a run the
+    // caller walked away from does not leave the loop refusing forever.
+    const third = loop.run([{ role: "user", content: "three" }]);
+    await expect(third.next()).resolves.toBeDefined();
+    await third.return(undefined);
+  });
+
   it("starts a later run live after an earlier one was aborted", async () => {
     // `abort()` is scoped to the run it interrupts. Left permanent, the second
     // run inherited an already-aborted `AbortSignal` and the `aborted` flag, so

@@ -38,14 +38,20 @@ const ABORTED_TOOL_OUTPUT: AgentToolOutput = {
  * instance, so the controller and the flag are reset when `run()` starts: a
  * permanently aborted `AbortSignal` handed to a second run is a request that
  * silently does nothing, and the caller sees an empty conversation with no
- * error. Every caller today constructs a loop per request and abandons the
- * aborted one, so this changes nothing for them; it means a loop that *is* reused
- * gets what it looks like it gets.
+ * error.
+ *
+ * One loop carries one run at a time, and a second `run()` while the first is
+ * still going is refused rather than interleaved. The abort state is a pair of
+ * fields, not a parameter threaded through fifteen frames, so two runs sharing
+ * them would mean `abort()` cancelling whichever started last while the first
+ * kept waiting on a provider that was never cancelled. Refusing says that plainly
+ * at the call site; every caller constructs a loop per conversation anyway.
  */
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
   private abortController = new AbortController();
+  private running = false;
   constructor(config: AgentConfig) {
     this.config = config;
   }
@@ -56,11 +62,32 @@ export class AgentLoop {
   }
 
   async *run(messages: LlmMessage[]): AsyncGenerator<AgentEvent> {
+    if (this.running) {
+      throw new Error(
+        "AgentLoop.run: this loop is already running a conversation. One loop " +
+          "carries one run at a time; construct another for a second one rather " +
+          "than sharing this one, or abort this run first.",
+      );
+    }
+    this.running = true;
     // A run starts live. An abort left over from a previous run describes that
     // run, and a signal that is already aborted is one the provider and every
     // tool will refuse before doing any work.
     this.aborted = false;
     this.abortController = new AbortController();
+    try {
+      yield* this.runConversation(messages);
+    } finally {
+      // `finally` rather than a success path: a consumer that stops iterating
+      // early -- `break` out of a `for await` -- disposes the generator, and a
+      // loop stuck "running" would refuse every later conversation.
+      this.running = false;
+    }
+  }
+
+  private async *runConversation(
+    messages: LlmMessage[],
+  ): AsyncGenerator<AgentEvent> {
     const history: LlmMessage[] = [...messages];
     const maxIterations = this.config.maxIterations ?? 30;
 
