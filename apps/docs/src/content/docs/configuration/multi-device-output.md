@@ -5,7 +5,7 @@ sidebar:
   order: 10
 ---
 
-**Settings → General → More settings → Multi-device** can make one mausVoice desktop receive text from another. This changes the delivery stage only: recording, transcription, replacements, and any post-processing still run on the sender. When remote output is enabled, normal dictation goes to the selected receiver instead of being inserted on the sender. Bulk dictation sends the completed result; Verbatim real-time output can send committed text segments as they arrive. Microphone audio is never routed to the receiver.
+**Settings → Privacy and data → Multi-device** can make one mausVoice desktop receive text from another. This changes the delivery stage only: recording, transcription, replacements, and any post-processing still run on the sender. When remote output is enabled, normal dictation goes to the selected receiver instead of being inserted on the sender. Bulk dictation sends the completed result; Verbatim real-time output can send committed text segments as they arrive. Microphone audio is never routed to the receiver.
 
 ## Pair with an invite
 

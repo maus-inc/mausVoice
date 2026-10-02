@@ -5,11 +5,11 @@ sidebar:
   order: 16
 ---
 
-Real-time output inserts completed speech segments while you are still recording instead of waiting to paste one final block. It is off by default. Enable it under **Settings → General → More settings → Real-time output**.
+Real-time output inserts completed speech segments while you are still recording instead of waiting to paste one final block. It is off by default. Enable it under **Settings → Dictation → Real-time output**.
 
 Three conditions must be true in the current implementation:
 
-1. Set **Styling mode** to **Manual** under **Settings → General → More settings**.
+1. Set **Styling mode** to **Manual** under **Settings → AI and processing**.
 2. Select the built-in **Verbatim** writing style.
 3. Use an API transcription key for **AssemblyAI**, **Deepgram**, **ElevenLabs**, or **Gladia**.
 

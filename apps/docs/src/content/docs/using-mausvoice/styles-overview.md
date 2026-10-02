@@ -7,7 +7,7 @@ sidebar:
 
 A writing style is an instruction for the optional post-processing stage. It can clean punctuation, remove fillers, or reshape a transcript, but it does not train speech recognition or recover audio the transcription model missed.
 
-Open **Writing Styles** from the main navigation. Which layout appears depends on **Settings → General → More settings → Styling mode**:
+Open **Writing Styles** from the main navigation. Which layout appears depends on **Settings → AI and processing → Styling mode**:
 
 - **Based on app** is the default. The page lists registered applications and lets each app have a style.
 - **Manual** shows a selected set of styles. Click a row or use the style-cycle shortcuts while dictating.

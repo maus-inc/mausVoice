@@ -13,8 +13,12 @@ import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import {
   CAPTION_BUTTON_WIDTH,
+  COMPACT_CAPTION_BUTTON_WIDTH,
   hasRightCaptionButtons,
+  isCompactWidth,
   TITLE_BAR_HEIGHT,
+  TRAFFIC_DOT_SIZE,
+  TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
@@ -64,6 +68,56 @@ const useMaximized = () => {
   }, []);
 
   return [maximized, setMaximized] as const;
+};
+
+/**
+ * Live window width, or `null` while it is unknown.
+ *
+ * The bar needs the width to pick a density, and `null` is meaningful: it
+ * renders the roomy default rather than guessing compact and then flashing.
+ * Browser preview has no window to measure, so it stays `null` and always
+ * renders the roomy bar.
+ */
+const useWindowWidth = (): number | null => {
+  const [width, setWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    let canceled = false;
+    const win = getCurrentWindow();
+
+    const read = () => {
+      win
+        .outerSize()
+        .then((size) => {
+          if (!canceled) setWidth(size.width);
+        })
+        .catch(() => undefined);
+    };
+    read();
+
+    win
+      .onResized(read)
+      .then((fn) => {
+        // `onResized` resolves asynchronously. If the effect cleaned up before
+        // it resolved (StrictMode double-invoke, or fast navigation), release
+        // the listener immediately instead of storing a value nothing reads.
+        if (canceled) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      canceled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return width;
 };
 
 const useWindowFocused = () => {
@@ -155,24 +209,34 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
   return { minimize, toggleMax, close };
 };
 
-const captionButtonSx = {
-  width: CAPTION_BUTTON_WIDTH,
-  height: TITLE_BAR_HEIGHT,
-  borderRadius: 0,
-  color: "text.secondary",
-  transition:
-    "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
-  "&:hover": {
-    backgroundColor: "action.hover",
-    color: "text.primary",
-  },
-  "&:focus-visible": {
-    outline: "2px solid",
-    outlineColor: "primary.main",
-    outlineOffset: -2,
-  },
-} as const;
+const captionButtonSx = (compact: boolean) =>
+  ({
+    width: compact ? COMPACT_CAPTION_BUTTON_WIDTH : CAPTION_BUTTON_WIDTH,
+    height: TITLE_BAR_HEIGHT,
+    borderRadius: 0,
+    color: "text.secondary",
+    transition:
+      "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
+    "&:hover": {
+      backgroundColor: "action.hover",
+      color: "text.primary",
+    },
+    "&:focus-visible": {
+      outline: "2px solid",
+      outlineColor: "primary.main",
+      outlineOffset: -2,
+    },
+  }) as const;
 
+/**
+ * A macOS-style traffic light.
+ *
+ * The painted dot stays at `TRAFFIC_DOT_SIZE` because that is the native
+ * proportion, but the button itself is `TRAFFIC_HIT_SIZE` square so the target
+ * meets the WCAG 2.2 minimum target size. A 12px target is close to
+ * unacquirable on a trackpad, which is the "poor icon clarity on small
+ * windows" complaint stated as a hit-area problem rather than a glyph problem.
+ */
 const TrafficButton = ({
   label,
   color,
@@ -194,8 +258,9 @@ const TrafficButton = ({
     onClick={onClick}
     className="traffic-btn"
     sx={{
-      width: 12,
-      height: 12,
+      // The hit target, not the visible dot.
+      width: TRAFFIC_HIT_SIZE,
+      height: TRAFFIC_HIT_SIZE,
       borderRadius: "50%",
       border: "none",
       padding: 0,
@@ -203,27 +268,44 @@ const TrafficButton = ({
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: color,
-      color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
-      transition: "filter 120ms ease",
+      backgroundColor: "transparent",
+      transition: "background-color 120ms ease",
       "&:hover": {
-        filter: "brightness(1.08)",
+        backgroundColor: "action.hover",
       },
       "&:focus-visible": {
         outline: "2px solid",
         outlineColor: "primary.main",
         outlineOffset: 2,
       },
-      "& .traffic-glyph": {
-        opacity: 0,
-        display: "flex",
-      },
-      "&:hover .traffic-glyph": {
-        opacity: 0.85,
-      },
     }}
   >
-    <span className="traffic-glyph">{glyph}</span>
+    <Box
+      className="traffic-dot"
+      sx={{
+        width: TRAFFIC_DOT_SIZE,
+        height: TRAFFIC_DOT_SIZE,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: color,
+        color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
+        transition: "filter 120ms ease",
+        "&:hover": {
+          filter: "brightness(1.08)",
+        },
+        "& .traffic-glyph": {
+          opacity: 0,
+          display: "flex",
+        },
+        "&:hover .traffic-glyph": {
+          opacity: 0.85,
+        },
+      }}
+    >
+      <span className="traffic-glyph">{glyph}</span>
+    </Box>
   </Box>
 );
 
@@ -290,6 +372,7 @@ const MacTrafficLights = ({
 
 type CaptionButtonProps = {
   focused: boolean;
+  compact: boolean;
   minimizeLabel: string;
   maximizeLabel: string;
   closeLabel: string;
@@ -301,6 +384,7 @@ type CaptionButtonProps = {
 
 const CaptionButtons = ({
   focused,
+  compact,
   minimizeLabel,
   maximizeLabel,
   closeLabel,
@@ -308,54 +392,57 @@ const CaptionButtons = ({
   onMinimize,
   onToggleMax,
   onClose,
-}: CaptionButtonProps) => (
-  <Stack
-    direction="row"
-    spacing={0}
-    sx={{
-      alignItems: "stretch",
-      alignSelf: "stretch",
-      position: "relative",
-      zIndex: 1,
-      opacity: focused ? 1 : 0.6,
-    }}
-  >
-    <IconButton
-      size="small"
-      onClick={onMinimize}
-      aria-label={minimizeLabel}
-      sx={captionButtonSx}
-    >
-      <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
-    </IconButton>
-    <IconButton
-      size="small"
-      onClick={onToggleMax}
-      aria-label={maximizeLabel}
-      sx={captionButtonSx}
-    >
-      {maximized ? (
-        <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
-      ) : (
-        <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
-      )}
-    </IconButton>
-    <IconButton
-      size="small"
-      onClick={onClose}
-      aria-label={closeLabel}
+}: CaptionButtonProps) => {
+  const sx = captionButtonSx(compact);
+  return (
+    <Stack
+      direction="row"
+      spacing={0}
       sx={{
-        ...captionButtonSx,
-        "&:hover": {
-          backgroundColor: "rgba(232, 77, 77, 0.92)",
-          color: chalkSolid.base,
-        },
+        alignItems: "stretch",
+        alignSelf: "stretch",
+        position: "relative",
+        zIndex: 1,
+        opacity: focused ? 1 : 0.6,
       }}
     >
-      <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
-    </IconButton>
-  </Stack>
-);
+      <IconButton
+        size="small"
+        onClick={onMinimize}
+        aria-label={minimizeLabel}
+        sx={sx}
+      >
+        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+      </IconButton>
+      <IconButton
+        size="small"
+        onClick={onToggleMax}
+        aria-label={maximizeLabel}
+        sx={sx}
+      >
+        {maximized ? (
+          <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
+        ) : (
+          <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
+        )}
+      </IconButton>
+      <IconButton
+        size="small"
+        onClick={onClose}
+        aria-label={closeLabel}
+        sx={{
+          ...sx,
+          "&:hover": {
+            backgroundColor: "rgba(232, 77, 77, 0.92)",
+            color: chalkSolid.base,
+          },
+        }}
+      >
+        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+      </IconButton>
+    </Stack>
+  );
+};
 const titleBarSx = (dark: boolean, trafficLights: boolean) =>
   ({
     height: TITLE_BAR_HEIGHT,
@@ -391,6 +478,10 @@ export const TitleBar = () => {
   const [maximized, setMaximized] = useMaximized();
   const focused = useWindowFocused();
   const { minimize, toggleMax, close } = useWindowControls(setMaximized);
+  // Density follows the measured window width. `null` renders the roomy bar, so
+  // the chrome never flashes narrow on first paint and browser preview keeps
+  // the roomy default it has always shown.
+  const compact = isCompactWidth(useWindowWidth());
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized
@@ -443,7 +534,7 @@ export const TitleBar = () => {
           }}
         >
           <ThemeModeToggle />
-          <LogoWithText />
+          <LogoWithText compact={compact} />
         </Stack>
 
         <Box
@@ -455,6 +546,7 @@ export const TitleBar = () => {
         {trafficLights ? null : (
           <CaptionButtons
             focused={focused}
+            compact={compact}
             minimizeLabel={minimizeLabel}
             maximizeLabel={maximizeLabel}
             closeLabel={closeLabel}

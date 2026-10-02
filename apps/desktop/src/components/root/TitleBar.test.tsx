@@ -14,6 +14,7 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       close: vi.fn(async () => undefined),
       isMaximized: vi.fn(async () => false),
       onResized: vi.fn(async (): Promise<() => void> => vi.fn()),
+      outerSize: vi.fn(async () => ({ width: 1280, height: 800 })),
       isFocused: vi.fn(async () => true),
       onFocusChanged: vi.fn(async (..._args: unknown[]): Promise<() => void> =>
         vi.fn(),
@@ -56,6 +57,13 @@ vi.mock("./WindowResizeHandles", () => ({
 }));
 
 import { TitleBar } from "./TitleBar";
+import {
+  CAPTION_BUTTON_WIDTH,
+  COMPACT_CAPTION_BUTTON_WIDTH,
+  MIN_TARGET_SIZE,
+  TRAFFIC_DOT_SIZE,
+  TRAFFIC_HIT_SIZE,
+} from "./titleBarGeometry";
 
 import {
   ensureUiHarness,
@@ -71,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   focusHandlers.length = 0;
   windowMocks.isMaximized.mockResolvedValue(false);
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
   windowMocks.onFocusChanged.mockImplementation(async (handler: unknown) => {
     focusHandlers.push(handler as (event: { payload: boolean }) => void);
     return vi.fn();
@@ -96,6 +105,10 @@ const renderBar = async () => {
     root.render(createElement(TitleBar));
   });
 };
+
+/** Read a px dimension off MUI's emotion classes; jsdom reports 0 for layout. */
+const pxOf = (element: HTMLElement, property: "width" | "height"): number =>
+  Number.parseFloat(getComputedStyle(element)[property]) || 0;
 
 const buttonByLabel = (label: string) =>
   document.querySelector(`button[aria-label="${label}"]`) as HTMLElement | null;
@@ -257,6 +270,34 @@ describe("TitleBar on macOS", () => {
     );
   });
 
+  it("gives every macOS traffic light a hit target at or above the WCAG 2.2 minimum", async () => {
+    platformState.value = "macos";
+    await renderBar();
+
+    for (const label of ["Close", "Minimize", "Maximize"]) {
+      const button = buttonByLabel(label);
+      expect(button, `${label} should render`).not.toBeNull();
+      // jsdom reports 0 for unlaid-out boxes, so assert against the computed
+      // inline sizing MUI applies rather than a layout-derived measurement.
+      expect(
+        pxOf(button!, "width"),
+        `${label} hit target must be >= ${MIN_TARGET_SIZE}px`,
+      ).toBeGreaterThanOrEqual(MIN_TARGET_SIZE);
+      expect(pxOf(button!, "height")).toBeGreaterThanOrEqual(MIN_TARGET_SIZE);
+    }
+  });
+
+  it("keeps the painted dot smaller than the hit target on macOS", async () => {
+    platformState.value = "macos";
+    await renderBar();
+
+    const dot = document.querySelector(".traffic-dot") as HTMLElement | null;
+    expect(dot).not.toBeNull();
+    // The 12px dot is the native proportion and stays; only the hit area grew.
+    expect(pxOf(dot!, "width")).toBe(TRAFFIC_DOT_SIZE);
+    expect(TRAFFIC_HIT_SIZE).toBeGreaterThan(TRAFFIC_DOT_SIZE);
+  });
+
   it("wires traffic buttons to window actions", async () => {
     await renderBar();
 
@@ -275,6 +316,39 @@ describe("TitleBar on macOS", () => {
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
   });
+});
+
+it("narrows the caption buttons and hides the wordmark on a narrow window", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 400, height: 600 });
+  await renderBar();
+
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+  // The wordmark is the first thing to go on a narrow bar.
+  expect(getComputedStyle(wordmark!).display).toBe("none");
+});
+
+it("keeps the roomy bar on a wide window", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  await renderBar();
+
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
+});
+
+it("keeps the roomy bar when the window size is not known yet", async () => {
+  // Browser preview has no window to measure. It must not flash compact.
+  platformState.native = false;
+  await renderBar();
+
+  expect(pxOf(buttonByLabel("Close")!, "width")).toBe(CAPTION_BUTTON_WIDTH);
 });
 
 it.each([

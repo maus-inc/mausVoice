@@ -588,9 +588,12 @@ jobs:
           node scripts/ci/build-updater-manifest.mjs
           cat "$OUTPUT_PATH"
 
-      # The in-app changelog history reads the per-release changelog.json
-      # asset, so every release — stable or beta — publishes one built from
-      # the same notes input as the release body and the updater manifest.
+      # Provenance artifact: every release — stable or beta — publishes a
+      # changelog.json built from the same notes input as the release body and
+      # the updater manifest, so the normalized notes can be diffed against a
+      # release later. The in-app release history reads the GitHub releases API
+      # rather than this file, because history needs every past release and
+      # this asset describes only the one being published.
       - name: Build changelog artifact
         env:
           RELEASE_VERSION: ${{ inputs.version }}

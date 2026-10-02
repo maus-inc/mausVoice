@@ -20,7 +20,7 @@ When a newer version exists you will see:
 
 ## Check on demand
 
-Open **Settings → More settings → Software update**. The section shows the version you are running and when the app last checked, and the **Check now** button runs a check immediately. A manual check reports its outcome inline: _You're up to date_, the version that is available, or a connection error. It also ignores the three-day dismissal window, so it will show you an update you previously snoozed.
+Open **Settings → Updates**. The section shows the version you are running and when the app last checked, and the **Check now** button runs a check immediately. A manual check reports its outcome inline: _You're up to date_, the version that is available, or a connection error. It also ignores the three-day dismissal window, so it will show you an update you previously snoozed.
 
 ## Installing
 

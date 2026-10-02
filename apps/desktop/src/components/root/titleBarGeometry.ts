@@ -27,3 +27,44 @@ export const CAPTION_BUTTON_WIDTH = 46;
  */
 export const hasRightCaptionButtons = (platform: Platform): boolean =>
   platform !== "macos";
+
+/**
+ * Minimum target size in px. WCAG 2.2 Success Criterion 2.5.8 requires every
+ * pointer target to be at least 24 by 24, measured on the clickable box rather
+ * than the painted glyph.
+ */
+export const MIN_TARGET_SIZE = 24;
+
+/**
+ * Diameter of a macOS traffic light's painted dot. This is the native
+ * proportion and stays small on purpose; only the hit area has to be large.
+ */
+export const TRAFFIC_DOT_SIZE = 12;
+
+/**
+ * Clickable box around each traffic light. Must be at least `MIN_TARGET_SIZE`
+ * so the controls are acquirable on a trackpad and pass the WCAG 2.2 target
+ * size minimum.
+ */
+export const TRAFFIC_HIT_SIZE = Math.max(MIN_TARGET_SIZE, TRAFFIC_DOT_SIZE);
+
+/**
+ * Window width at or below which the bar drops to its compact form.
+ *
+ * Below this width the wordmark is already hidden, so the bar carries nothing
+ * but the controls. That is the moment to tighten the caption buttons too,
+ * otherwise the controls occupy a large share of a narrow window.
+ */
+export const COMPACT_WIDTH = 520;
+
+/** Caption button width in the compact form. Still above `MIN_TARGET_SIZE`. */
+export const COMPACT_CAPTION_BUTTON_WIDTH = 34;
+
+/**
+ * Whether the bar should render compact for a given window width.
+ *
+ * `null` means the size is not known yet, which renders the roomy default so
+ * the bar never flashes compact on first paint.
+ */
+export const isCompactWidth = (width: number | null): boolean =>
+  width !== null && width > 0 && width <= COMPACT_WIDTH;
