@@ -191,22 +191,23 @@ export class AgentLoop {
     // returning one escapes: `.catch` is never reached, the throw propagates out
     // of `executeTool`, and the run rejects without a tool-result or a finish
     // event. So the call itself is inside the try.
-    let run: Promise<AgentToolOutput>;
+    let started: Promise<AgentToolOutput>;
     try {
-      run = Promise.resolve(
+      started = Promise.resolve(
         tool.execute({
           params: toolParams,
           reason: typeof reason === "string" ? reason : "",
           toolCallId,
         }),
-      ).catch((err: unknown) => {
-        // A tool must never abort the whole agent loop. Surface the failure
-        // as a tool-result message so the model can recover or end cleanly.
-        return { success: false, failureReason: unknownToMessage(err) };
-      });
+      );
     } catch (err) {
       return { success: false, failureReason: unknownToMessage(err) };
     }
+    const run = started.catch((err: unknown) => {
+      // A tool must never abort the whole agent loop. Surface the failure
+      // as a tool-result message so the model can recover or end cleanly.
+      return { success: false, failureReason: unknownToMessage(err) };
+    });
 
     // The abort waiter is per call, not per loop: a shared promise resolves once
     // and its reaction then sits on every result this loop ever produced, which

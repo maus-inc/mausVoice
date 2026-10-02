@@ -96,31 +96,88 @@ const describesField = (value: string): boolean =>
  * from swallowing the diagnosis the line exists to carry. Anything shaped like
  * `name=value` is a parameter, so it extends the run.
  */
-const SCHEME_VALUE_TOKEN = /[^\s"',;)\]}]+/;
-const SCHEME_VALUE_PARAMETER =
-  /^\s*,?\s*[A-Za-z0-9_-]+=(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s,]*)/;
 const SCHEME_VALUE_CLOSERS = "\"',;)]}";
+const SCHEME_VALUE_NAME_CHARACTERS = /[A-Za-z0-9_-]/;
+const SCHEME_WHITESPACE = /\s/;
+
+const isCloser = (character: string | undefined): boolean =>
+  character !== undefined && SCHEME_VALUE_CLOSERS.includes(character);
+
+const spaceEnd = (text: string, index: number): number => {
+  let end = index;
+  while (end < text.length && SCHEME_WHITESPACE.test(text[end])) end += 1;
+  return end;
+};
+
+/** One end of the run of token characters at `index`, stopping at whitespace or a closer. */
+const tokenEnd = (text: string, index: number): number => {
+  let end = index;
+  while (
+    end < text.length &&
+    !SCHEME_WHITESPACE.test(text[end]) &&
+    !isCloser(text[end])
+  ) {
+    end += 1;
+  }
+  return end;
+};
+
+/**
+ * One end of the `name=value` entry starting at `index`, or `index` when there is
+ * none there. A leading comma and any whitespace belong to the entry, so a
+ * parameter list is consumed one entry at a time.
+ *
+ * This is a scanner rather than a pattern for a reason this repo has already
+ * paid for once: the value alternative `(?:"..."|'...'|[^\s,]*)` is ambiguous
+ * against the rest of the line, so the engine retries it against every prefix of
+ * a long value, and the two whitespace runs either side of the optional comma can
+ * split a single run between them and multiply that further. Each character here
+ * has exactly one reading.
+ */
+const parameterEnd = (text: string, index: number): number => {
+  let cursor = spaceEnd(text, index);
+  if (text[cursor] === ",") cursor = spaceEnd(text, cursor + 1);
+  const nameStart = cursor;
+  while (
+    cursor < text.length &&
+    SCHEME_VALUE_NAME_CHARACTERS.test(text[cursor])
+  ) {
+    cursor += 1;
+  }
+  if (cursor === nameStart || text[cursor] !== "=") return index;
+  cursor += 1;
+  const quote = text[cursor];
+  if (quote === '"' || quote === "'") {
+    for (cursor += 1; cursor < text.length; cursor += 1) {
+      if (text[cursor] === "\\" && cursor + 1 < text.length) {
+        cursor += 1;
+        continue;
+      }
+      if (text[cursor] === quote) return cursor + 1;
+    }
+    return text.length;
+  }
+  return tokenEnd(text, cursor);
+};
 
 export const schemeValueEnd = (text: string): number => {
   let end = 0;
   while (end < text.length) {
-    const rest = text.slice(end);
-    if (/^\s/.test(rest)) {
+    if (SCHEME_WHITESPACE.test(text[end])) {
       end += 1;
       continue;
     }
-    const parameter = SCHEME_VALUE_PARAMETER.exec(rest);
-    if (parameter) {
-      end += parameter[0].length;
+    const parameter = parameterEnd(text, end);
+    if (parameter !== end) {
+      end = parameter;
       continue;
     }
-    const token = SCHEME_VALUE_TOKEN.exec(rest);
     // A closer that ends the document is not part of any credential.
-    if (!token || SCHEME_VALUE_CLOSERS.includes(text[end])) return end;
-    end += token[0].length;
+    if (isCloser(text[end])) return end;
+    end = tokenEnd(text, end);
     // A bare token is the credential only when no parameter follows it;
     // otherwise it is a parameter name and the list continues.
-    if (!SCHEME_VALUE_PARAMETER.test(text.slice(end))) return end;
+    if (parameterEnd(text, end) === end) return end;
   }
   return end;
 };
