@@ -18,7 +18,7 @@ enabled = true
 # those is a gate nobody reads. The JavaScript analyzer is switched off for those
 # paths rather than for the repository, so first-party JS is still analysed.
 [[overrides]]
-paths = ["marketing/assets/vendor/**", "**/*.min.js"]
+paths = ["marketing/assets/vendor/**"]
 
   [[overrides.analyzers]]
   name = "javascript"

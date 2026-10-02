@@ -208,6 +208,25 @@ jobs:
         run: node --test scripts/ci/check-bindings-guard.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
+      - name: Test the release script guards
+        # `release.yml` runs these four scripts but none of their guards, so a
+        # change to the release input validation, the notes builder, the dev
+        # surface config or the sherpa archive check would have shipped on the
+        # strength of the script's own exit code alone. All four are plain
+        # `node --test` with no workspace dependency, which is why they belong
+        # on this job rather than one that installs pnpm.
+        run: |
+          node --test scripts/ci/validate-release-inputs.test.mjs
+          node --test scripts/ci/release-notes.test.mjs
+          node --test scripts/ci/dev-surface-contracts.test.mjs
+          node --test scripts/ci/verify-sherpa-archives.test.mjs
+      - name: Test workspace hygiene guards
+        # This suite reads the repository rather than a build output: it refuses
+        # a captured transcript in the tree, and it fails when a `.deepsource.toml`
+        # exclusion has rotted into matching nothing -- the one way an analyzer
+        # stops being skipped without anyone being told. A guard that no job runs
+        # is documentation, so it is run here like the others.
+        run: node --test scripts/ci/check-workspace-hygiene.test.mjs
       - name: Test Windows-only Rust module imports
         # No runner in this repository compiles
         # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an
