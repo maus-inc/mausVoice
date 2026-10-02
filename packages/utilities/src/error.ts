@@ -18,8 +18,19 @@ const LABELED_SECRET_QUOTED = new RegExp(
   "gi",
 );
 // The scheme words, shared by the two labelled passes so the one that redacts
-// and the one that judges a placeholder cannot drift apart.
-const AUTHORIZATION_SCHEMES = "bearer|basic|token";
+// and the one that judges a placeholder cannot drift apart, and exported because
+// a provider scrubber has to judge the same words: it decides whether the token
+// it read is a whole credential or only the syntax in front of one.
+export const AUTHORIZATION_SCHEMES: ReadonlySet<string> = new Set([
+  "bearer",
+  "basic",
+  "token",
+  "digest",
+  "negotiate",
+  "apikey",
+  "api-key",
+]);
+const AUTHORIZATION_SCHEME_WORDS = Array.from(AUTHORIZATION_SCHEMES).join("|");
 // The bare value runs to the next whitespace/`,`/`;`. Closing brackets
 // that belong to the surrounding text (`{api_key=abc}`) are split off
 // afterwards by `splitTrailingClosers`, so a value that contains its own
@@ -28,7 +39,7 @@ const AUTHORIZATION_SCHEMES = "bearer|basic|token";
 // `authorization: token missing` is judged on `missing`; the scheme word is the
 // label's syntax, not a credential.
 const LABELED_SECRET_BARE = new RegExp(
-  String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEMES})\s+)?([^\s,;]+)`,
+  String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEME_WORDS})\s+)?([^\s,;]+)`,
   "gi",
 );
 // A labelled scheme carries a second token after it, so matching the label
@@ -36,7 +47,7 @@ const LABELED_SECRET_BARE = new RegExp(
 // text (`Authorization: Basic <credential>` -> `Authorization:[redacted]
 // <credential>`). Consume the scheme and its credential together, or drop both.
 const AUTHORIZATION_SCHEME = new RegExp(
-  String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEMES})\s+)?(\S+)?`,
+  String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEME_WORDS})\s+)?(\S+)?`,
   "gi",
 );
 const CLOSER_TO_OPENER: Readonly<Record<string, string>> = {

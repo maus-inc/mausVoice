@@ -1302,6 +1302,12 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // The scroll bounds go with the content. Nothing sets them on this path
+        // below, so a panel that has just been emptied keeps the height of the
+        // transcript it used to hold: the wheel can then scroll the next
+        // transcript past its own last line, and the content is not visible even
+        // though it is there. An empty panel has no scrollable content at all.
+        state.content_height.set(0.0);
         return;
     }
 

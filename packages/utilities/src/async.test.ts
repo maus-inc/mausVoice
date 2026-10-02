@@ -75,6 +75,36 @@ describe("retry", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  // `Number()` coerces a boolean or an object to a number as well, so a plain
+  // coercion read `retries: true` as one attempt and reported whatever the call
+  // threw instead of refusing a budget it cannot read. Both spellings are
+  // refused before the first attempt, which is what the guard above promises.
+  it.each([
+    ["a boolean", true],
+    ["a false flag", false],
+    ["an object", {}],
+    ["an array", [3]],
+    ["null", null],
+  ])("refuses to run when the retry count is %s", async (_label, malformed) => {
+    const fn = vi.fn().mockRejectedValue(new Error("transient"));
+    await expect(
+      retry({ fn, retries: malformed as unknown as number, delay: 1 }),
+    ).rejects.toThrow("Retry limit exceeded");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  // The other half of the same guard: a numeric string has always been a
+  // working budget, because `attempt >= "3" - 1` compares numerically. It has
+  // to keep meaning three attempts, or a value read out of JSON is refused for
+  // the one spelling it arrived in.
+  it("reads a numeric string as the budget it spells", async () => {
+    const fn = vi.fn().mockRejectedValue(new Error("transient"));
+    await expect(
+      retry({ fn, retries: "3" as unknown as number, delay: 1 }),
+    ).rejects.toThrow("transient");
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
   it("retries a transient failure while isRetryable stays true", async () => {
     const fn = vi
       .fn()

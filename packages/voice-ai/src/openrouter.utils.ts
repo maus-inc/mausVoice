@@ -283,6 +283,14 @@ export type OpenRouterTranscriptionArgs = {
   prompt?: string;
   language?: string;
   signal?: AbortSignal;
+  /**
+   * The transport to run the request over. Every other entry point in this file
+   * takes one, and every other transcription provider in the desktop app is
+   * wired with the app's own native or secure fetch. Without it this call was
+   * the one transcription path that could not use the configured request path
+   * and always fell back to the SDK's default transport.
+   */
+  customFetch?: CustomFetch;
 };
 
 export type OpenRouterTranscribeAudioOutput = {
@@ -298,9 +306,10 @@ export const openrouterTranscribeAudio = async ({
   prompt,
   language,
   signal,
+  customFetch,
 }: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
   return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
+    client: createClient(apiKey, customFetch),
     blob,
     model,
     ext,

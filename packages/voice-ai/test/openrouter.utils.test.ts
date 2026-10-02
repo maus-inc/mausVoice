@@ -14,10 +14,19 @@ createOpenAICompatibleGenerateTests({
 });
 
 describe("openrouterTranscribeAudio", () => {
+  /** The options each constructed client was given, so the fetch can be read. */
+  const clientOptionsSeen = (): Array<Record<string, unknown>> =>
+    clientOptionsSeenRaw.mock.calls.map(([options]) => options);
+  const clientOptionsSeenRaw = vi.hoisted(() => vi.fn());
+
   const setupTranscriptionMock = (create: ReturnType<typeof vi.fn>) => {
     vi.resetModules();
+    clientOptionsSeenRaw.mockClear();
     vi.doMock("openai", () => ({
       default: class MockOpenAI {
+        constructor(options: Record<string, unknown>) {
+          clientOptionsSeenRaw(options);
+        }
         audio = {
           transcriptions: {
             create,
@@ -105,6 +114,31 @@ describe("openrouterTranscribeAudio", () => {
         ext: "wav",
       }),
     ).rejects.toThrow("Transcription failed");
+  });
+
+  it("builds its client with the caller's fetch", async () => {
+    // Every other OpenRouter entry point takes a `customFetch`, and the desktop
+    // app wires each of its transcription providers with the app's own native
+    // or secure request path. This call dropped it, so OpenRouter transcription
+    // was the one provider that could not use the configured transport and
+    // always went out over the SDK's default one.
+    const customFetch = vi.fn().mockResolvedValue({ text: "unused" });
+    const create = vi.fn().mockResolvedValue({ text: "hello world" });
+    setupTranscriptionMock(create);
+
+    const { openrouterTranscribeAudio } =
+      await import("../src/openrouter.utils");
+
+    await openrouterTranscribeAudio({
+      apiKey: "test-key",
+      model: "openai/whisper-1",
+      blob: new ArrayBuffer(8),
+      ext: "wav",
+      customFetch,
+    });
+
+    const [clientOptions] = clientOptionsSeen();
+    expect(clientOptions.fetch).toBe(customFetch);
   });
 });
 

@@ -463,6 +463,17 @@ fn collect_transcription(
 /// loud window at the end of a long clip stays well inside this fraction.
 const MIN_SPEECH_WINDOW_FRACTION: f64 = 0.02;
 
+/// Loud windows a clip always counts as speech, whatever its length.
+///
+/// The fraction alone scales the speech a clip needs with the number of windows
+/// in it, so the same two-second utterance is 1 window in 34 at fifteen seconds
+/// -- kept -- and 7 windows in 1000 at five minutes, where 0.02 asks for twenty
+/// and the clip is dropped with an empty transcript and no visible reason. The
+/// floor is what makes the gate independent of how long the hotkey was held:
+/// once more than one window is loud, that is a person talking, not a hot-plug
+/// click, and how long they were silent afterwards cannot change it.
+const MIN_SPEECH_WINDOWS: u64 = 2;
+
 /// True when too little of the clip is loud to be speech.
 ///
 /// A window of only non-finite samples counts as quiet, so a clip the filter in
@@ -488,6 +499,12 @@ fn is_near_silent(samples: &[f32], sample_rate: NonZeroU32, threshold: f32) -> b
     }
     if window_count == 0 || loud_windows == 0 {
         return true;
+    }
+    // One loud window is still judged against the fraction, which is what keeps
+    // a transient inside a silent minute out of the decoder. More than one is
+    // speech on any timeline.
+    if loud_windows >= MIN_SPEECH_WINDOWS {
+        return false;
     }
     (loud_windows as f64) / (window_count as f64) < MIN_SPEECH_WINDOW_FRACTION
 }
@@ -666,6 +683,37 @@ mod filter_contract_tests {
             }
         }
         assert!(!is_near_silent(&samples, RATE_16K, SILENCE_RMS_THRESHOLD));
+    }
+
+    #[test]
+    fn a_fixed_utterance_is_kept_however_long_the_clip_runs_on() {
+        // Two seconds of speech at the start of a five-minute recording. The
+        // fraction gate scales what a clip needs with its length: 0.02 of 1000
+        // windows is twenty windows, six seconds, so this was dropped and the
+        // transcript came back empty with nothing inserted and no reason shown.
+        // The same utterance at fifteen seconds is 7 windows of 34, well inside
+        // 2%, so the gate kept it and dropped the long one — the user could not
+        // tell which part of the rule decided it. More than one loud window is
+        // speech on any timeline.
+        let mut samples = vec![0.0_f32; 16_000 * 300];
+        samples[..32_000].fill(0.01);
+
+        assert!(!is_near_silent(&samples, RATE_16K, SILENCE_RMS_THRESHOLD));
+    }
+
+    #[test]
+    fn the_same_utterance_is_kept_at_every_length() {
+        // The floor has to be the rule rather than a special case, so the same
+        // two seconds of speech is judged the same whether it sits in a short
+        // clip or a long one.
+        for seconds in [15_usize, 60, 300] {
+            let mut samples = vec![0.0_f32; 16_000 * seconds];
+            samples[..32_000].fill(0.01);
+            assert!(
+                !is_near_silent(&samples, RATE_16K, SILENCE_RMS_THRESHOLD),
+                "{seconds}s of clip holding two seconds of speech was gated as near-silent"
+            );
+        }
     }
 
     #[test]

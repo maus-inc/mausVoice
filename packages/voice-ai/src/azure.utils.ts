@@ -8,6 +8,12 @@ export type AzureTranscriptionArgs = {
   language?: string;
   /** Vocabulary terms fed to the recognizer's phrase list. */
   phrases?: string[];
+  /**
+   * Deadline for the whole recognition round trip, in milliseconds. Omitted by
+   * every streaming and batch caller, which have their own lifecycle; see
+   * `azureTestIntegration` for the probe that needs one.
+   */
+  timeoutMs?: number;
 };
 
 export type AzureTranscribeAudioOutput = {
@@ -151,6 +157,7 @@ export const azureTranscribeAudio = async ({
   blob,
   language = "en-US",
   phrases,
+  timeoutMs,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -189,29 +196,65 @@ export const azureTranscribeAudio = async ({
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     applyPhraseList(recognizer, phrases);
 
+    // `recognizeOnceAsync` is callback-only: it takes no signal and has no
+    // deadline of its own, so a connection that never answers leaves this
+    // promise pending for the life of the process. The recognizer's two
+    // callbacks and the timer race for the one settle, so whichever loses must
+    // not write the promise a second time — and the timer is always cleared, so
+    // a probe that answered in time is not rejected afterwards.
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settleOnce = (settle: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      settle();
+    };
+
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        recognizer.close();
+        // Worded so the transport rules read it as unreachable, which is what a
+        // blackholed connection is: nothing came back over the network, and the
+        // key was never judged.
+        const reason = `Timed out after ${timeoutMs}ms: no answer arrived from the network.`;
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${reason}`,
+              reason,
+            ),
+          ),
+        );
+      }, timeoutMs);
+    }
+
     recognizer.recognizeOnceAsync(
       (result) => {
         recognizer.close();
-
-        if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-          resolve({ text: result.text });
-        } else if (result.reason === sdk.ResultReason.NoMatch) {
-          resolve({ text: "" });
-        } else {
-          reject(
-            new AzureRecognitionError(
-              `Azure recognition failed: ${result.errorDetails}`,
-              result.errorDetails,
-            ),
-          );
-        }
+        settleOnce(() => {
+          if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+            resolve({ text: result.text });
+          } else if (result.reason === sdk.ResultReason.NoMatch) {
+            resolve({ text: "" });
+          } else {
+            reject(
+              new AzureRecognitionError(
+                `Azure recognition failed: ${result.errorDetails}`,
+                result.errorDetails,
+              ),
+            );
+          }
+        });
       },
       (error) => {
         recognizer.close();
-        reject(
-          new AzureRecognitionError(
-            `Azure API request failed: ${error}`,
-            error,
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${error}`,
+              error,
+            ),
           ),
         );
       },
@@ -576,6 +619,20 @@ const azureReasonExcerpt = (
  */
 const AZURE_REASON_LOG_CHARS = 240;
 
+/**
+ * How long the credential probe waits before it stops waiting.
+ *
+ * The probe used to hand the recognizer a 0-byte buffer, which threw a
+ * `RangeError` while the header was being parsed, so it always resolved without
+ * a request leaving the process and never needed a deadline. It now sends a real
+ * silent WAV and really talks to Azure, and the SDK's one-shot API has neither a
+ * signal nor a timeout: a captive portal or a firewall DROP leaves the promise
+ * pending forever. `ApiKeyList` holds `setTestingApiKeyId` for the whole promise,
+ * so the card would spin with no cancel path. This is the same budget
+ * `gladiaTestIntegration` gives its probe.
+ */
+const AZURE_PROBE_TIMEOUT_MS = 10_000;
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
@@ -585,6 +642,7 @@ export const azureTestIntegration = async ({
       subscriptionKey,
       region,
       blob: buildSilentProbeWav(),
+      timeoutMs: AZURE_PROBE_TIMEOUT_MS,
     });
     return true;
   } catch (error) {

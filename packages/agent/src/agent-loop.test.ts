@@ -388,12 +388,17 @@ describe("AgentLoop", () => {
       loop.abort();
       resolveTool({ success: true, result: "done-after-abort" });
 
+      // The pairing is the invariant this test exists for, and it is unchanged.
+      // Which result fills the pair is not: the abort now ends the wait, so a
+      // tool that had not answered by then reports as cancelled rather than as a
+      // result the loop kept waiting for. The sibling test below covers the tool
+      // that settles first, which still carries its own result.
       const resultEvent = await gen.next();
       expect(resultEvent.value).toMatchObject({
         type: "tool-call-result",
         toolCallId: "call_abort",
-        result: "done-after-abort",
-        isError: false,
+        result: "Tool execution aborted",
+        isError: true,
       });
 
       const finish = await gen.next();
@@ -403,11 +408,111 @@ describe("AgentLoop", () => {
       ).messages;
       expect(
         finishMessages?.some(
-          (m) => m.role === "tool" && m.content === "done-after-abort",
+          (m) => m.role === "tool" && m.content === "Tool execution aborted",
         ),
       ).toBe(true);
     },
   );
+
+  // `abort()` sets the flag the rest of the loop reads, but the tool call was
+  // awaited without consulting it, and the SDK's one-shot callback API has no
+  // signal to hand the tool. A tool that never settles therefore held the
+  // generator open with no `finish` event ever emitted, so the caller waited
+  // forever on a stop it had already asked for.
+  it("stops waiting on a tool that never settles once the caller aborts", async () => {
+    const hanging: AgentTool = {
+      name: "hangs",
+      description: "never settles",
+      parameters: { type: "object", properties: {} },
+      execute: () => new Promise<{ success: true; result: string }>(() => {}),
+    };
+    const { provider } = scriptedProvider([
+      [
+        {
+          type: "tool-call",
+          id: "call_hang",
+          name: "hangs",
+          arguments: JSON.stringify({ reason: "r" }),
+        },
+      ],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [hanging],
+      systemPrompt: "sys",
+      maxIterations: 2,
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+
+    expect((await gen.next()).value).toMatchObject({
+      type: "iteration-start",
+    });
+    expect((await gen.next()).value).toMatchObject({
+      type: "tool-call-start",
+      toolCallId: "call_hang",
+    });
+    loop.abort();
+
+    // The generator has to resume on its own, with nothing but the abort to
+    // release it.
+    const result = await gen.next();
+    expect(result.value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "call_hang",
+      isError: true,
+    });
+    const finish = await gen.next();
+    expect(finish.value).toMatchObject({ type: "finish", reason: "aborted" });
+    // The tool call is still paired in the history the provider would read
+    // back, so the context stays valid.
+    const messages = (finish.value as { messages?: LlmMessage[] }).messages;
+    expect(
+      messages?.some((m) => m.role === "tool" && m.toolCallId === "call_hang"),
+    ).toBe(true);
+  });
+
+  it("keeps waiting on a tool that settles before the abort", async () => {
+    // The abort must not turn a slow tool into a failure: a result that arrived
+    // before it fired is the model's answer, not a cancelled call.
+    let release = () => {};
+    const gate = new Promise<{ success: true; result: string }>((resolve) => {
+      release = () => resolve({ success: true, result: "done" });
+    });
+    const slowTool: AgentTool = {
+      name: "slow",
+      description: "resolves on demand",
+      parameters: { type: "object", properties: {} },
+      execute: () => gate,
+    };
+    const { provider } = scriptedProvider([
+      [
+        {
+          type: "tool-call",
+          id: "call_slow",
+          name: "slow",
+          arguments: JSON.stringify({ reason: "r" }),
+        },
+      ],
+    ]);
+    const loop = new AgentLoop({
+      provider,
+      tools: [slowTool],
+      systemPrompt: "sys",
+      maxIterations: 2,
+    });
+    const gen = loop.run([{ role: "user", content: "go" }]);
+    await gen.next();
+    await gen.next();
+    release();
+
+    const result = await gen.next();
+    expect(result.value).toMatchObject({
+      type: "tool-call-result",
+      toolCallId: "call_slow",
+      result: "done",
+      isError: false,
+    });
+  });
 
   it("runs one tool call at a time and keeps the model's order", async () => {
     // A single assistant message can carry several tool calls. Each one has to

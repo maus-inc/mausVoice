@@ -129,6 +129,62 @@ describe("redactProviderMessage", () => {
     }
   });
 
+  // A scheme is the header's syntax and the credential is the token after it, so
+  // `Basic dXNlcjpwYXNz` is one secret in two tokens. The value class stops at
+  // whitespace, so the redaction used to end at the scheme word and hand the
+  // credential on in the clear to `normalizeGroqError`, whose own contract is
+  // that this scrubber is what keeps the key out of logs and persisted
+  // `postProcessError` metadata. Split at the label so the fixture never holds a
+  // contiguous `label=value` token.
+  const SCHEME_CREDENTIAL = "dXNlcjpw" + "YXNz";
+  it.each([
+    [
+      "a basic scheme in a JSON body",
+      `{"api_key":"Basic ${SCHEME_CREDENTIAL}"}`,
+    ],
+    ["a token scheme quoted", `api_key="token ${SCHEME_CREDENTIAL}"`],
+    ["an apikey scheme unquoted", `api_key=ApiKey ${SCHEME_CREDENTIAL}`],
+    [
+      "a bearer scheme with the label spaced out",
+      `API-KEY : Bearer ${SCHEME_CREDENTIAL}`,
+    ],
+    [
+      "a digest scheme with its parameters",
+      `api_key=Digest nonce="${SCHEME_CREDENTIAL}", realm="x"`,
+    ],
+    [
+      "a scheme inside a sentence",
+      `upstream said api_key=Basic ${SCHEME_CREDENTIAL} and gave up`,
+    ],
+  ])("scrubs %s whole", (_label, body) => {
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(SCHEME_CREDENTIAL);
+    expect(output).toContain("[redacted]");
+  });
+
+  it("stops a scheme-prefixed value where the surrounding document resumes", () => {
+    // The run goes to the end of the value, not to the end of the message: a
+    // record separator or a closing quote still ends it, so the rest of a JSON
+    // document stays readable and a second field is not swallowed.
+    const output = providerErrorUtils.redactProviderMessage(
+      `{"api_key":"Basic ${SCHEME_CREDENTIAL}","model":"llama-3"}`,
+    );
+    expect(output).not.toContain(SCHEME_CREDENTIAL);
+    expect(output).toContain('"model":"llama-3"');
+  });
+
+  it("still keeps the prose that follows a bare token value", () => {
+    // The scheme rule is what widens the run, and it is deliberately gated on
+    // the first token being a scheme. A bare `api_key=<token>` is routinely
+    // followed by the reason the message carries, and redacting that would cost
+    // the diagnosis the log line exists to give.
+    const output = providerErrorUtils.redactProviderMessage(
+      "api_key=" + "abc123XYZnotaprefix" + " is not configured on this account",
+    );
+    expect(output).not.toContain("abc123XYZnotaprefix");
+    expect(output).toContain("is not configured on this account");
+  });
+
   it("leaves an ordinary hyphenated token alone", () => {
     // The documented intent of the leading \b: `sk-` must not match inside a
     // longer word, or every hyphenated identifier in a log line would be

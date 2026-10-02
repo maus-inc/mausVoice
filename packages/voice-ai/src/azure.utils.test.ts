@@ -15,6 +15,7 @@ const capturedPhrases: string[] = vi.hoisted(() => []);
 // unrecognised result, and a rejected one.
 const speech = vi.hoisted(() => ({
   error: null as string | null,
+  hang: false,
   result: { reason: "recognized", text: "hello world" } as {
     reason: string;
     text?: string;
@@ -64,6 +65,11 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       onError: (message: string) => void,
     ) {
       speech.calls += 1;
+      // What a blackholed connection looks like to this API: neither callback
+      // ever arrives, because `recognizeOnceAsync` has no signal of its own.
+      if (speech.hang) {
+        return;
+      }
       if (speech.error !== null) {
         onError(speech.error);
         return;
@@ -95,6 +101,7 @@ const wavBlob = (): ArrayBuffer => {
 
 beforeEach(() => {
   speech.error = null;
+  speech.hang = false;
   speech.result = { reason: "recognized", text: "hello world" };
   speech.subscriptions = [];
   speech.formats = [];
@@ -370,6 +377,68 @@ describe("azureTestIntegration", () => {
     await expect(
       azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
     ).resolves.toBe(false);
+  });
+
+  it("gives up on a connection that never answers", async () => {
+    // The probe used to hand the recognizer a 0-byte buffer, which threw a
+    // RangeError locally before any request left the process, so it never
+    // needed a deadline. It now sends a real silent WAV and really talks to
+    // Azure, and `recognizeOnceAsync` reports a blackholed connection — a
+    // captive portal, a firewall DROP — by never calling back at all.
+    // `ApiKeyList` holds `setTestingApiKeyId` for the whole promise, so without
+    // a deadline the card spins with no cancel path at all.
+    speech.hang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = azureTestIntegration({
+        subscriptionKey: "key",
+        region: "eastus",
+      });
+      const raised = expect(pending).rejects.toThrow(/could not be reached/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await raised;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not report a blackholed connection as a bad key", async () => {
+    // The deadline has to reach the same diagnosis a transport failure gets: a
+    // key that cannot be confirmed because nothing came back is not a rejected
+    // credential, and telling the user to replace a working key is the one
+    // outcome that makes the problem worse.
+    speech.hang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = azureTestIntegration({
+        subscriptionKey: "key",
+        region: "eastus",
+      });
+      const outcome = pending.then(
+        () => "resolved" as const,
+        () => "raised" as const,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await outcome).toBe("raised");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles the probe normally inside the deadline", async () => {
+    // The deadline must not fire on a healthy round trip, and must not leave a
+    // timer behind that rejects after the probe already answered.
+    vi.useFakeTimers();
+    try {
+      await expect(
+        azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+      ).resolves.toBe(true);
+      // Past the deadline, a settled probe must not be written to again.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(speech.calls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

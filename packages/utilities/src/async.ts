@@ -79,6 +79,24 @@ const getRetryDelayMs = (
   return Math.max(fallbackMs, Math.min(hintedMs, maxDelayMs));
 };
 
+/**
+ * The attempt budget, read from a value that is typed as a number but reaches
+ * this helper from JSON and config.
+ *
+ * A numeric string is one of the two spellings that are honoured, because
+ * `attempt >= "3" - 1` always worked: `"3"` has meant three attempts for as
+ * long as this helper existed, and refusing it would point a debugging user at
+ * the wrong cause. `Number` alone coerces far more than that, though: a boolean
+ * or an object becomes a number too, so `retries: true` would run a single
+ * attempt and report the failure the caller gave it instead of refusing a
+ * budget it cannot read. Anything that is not a number or a string is read as
+ * NaN, and NaN is what the caller's guard below refuses.
+ */
+const readRetryAttempts = (retries: unknown): number =>
+  typeof retries === "number" || typeof retries === "string"
+    ? Number(retries)
+    : Number.NaN;
+
 export const retry = <T>(args: {
   fn: () => Promise<T>;
   retries?: number;
@@ -132,7 +150,7 @@ export const retry = <T>(args: {
   // server's hint before the next request goes out, which is the whole reason
   // this helper exists. Recursion says that outright, where a loop that awaits
   // would read as an accidental serialisation of work that could overlap.
-  const attempts = Number(retries);
+  const attempts = readRetryAttempts(retries);
   const attemptAt = async (attempt: number): Promise<T> => {
     try {
       return await fn();

@@ -145,6 +145,24 @@ pub const MAX_REVIEW_PREVIEW_LINES: usize = 60;
 /// truncating the preview for.
 const REVIEW_PREVIEW_TRIM_WINDOW: usize = 64;
 
+/// Byte offset where the character-budget scan stops, or `None` when the whole
+/// text fits inside the budget.
+///
+/// `char_indices().nth` returns the position of the first character *past* the
+/// budget, so `None` is the same `chars().count() <= limit` comparison the
+/// budget documents without walking the rest of a transcript that can be
+/// thousands of times longer than the preview. `chars().count()` did walk all
+/// of it, which made every rendered frame cost time proportional to the full
+/// text; this returns the offset the scan reached, which is a property of the
+/// budget and not of the input's length, so a test can assert the bound without
+/// timing a sub-microsecond call.
+fn review_preview_scan_end(full_text: &str) -> Option<usize> {
+    full_text
+        .char_indices()
+        .nth(MAX_REVIEW_PREVIEW_CHARS)
+        .map(|(byte_index, _)| byte_index)
+}
+
 /// Prepare a bounded slice of review text for rendering.
 /// Ensures that huge inputs (e.g. long audio imports or transcripts)
 /// do not cause unbounded text layout, wrapping, or allocation overhead on every frame.
@@ -152,17 +170,7 @@ pub fn bound_review_preview_text(full_text: &str) -> (String, bool) {
     // The budget is documented in characters, so it is measured in characters:
     // `str::len` is bytes, and 3000 bytes of Japanese is about 1000
     // characters.
-    //
-    // One scan, and it stops at the budget. `chars().count()` walked the whole
-    // transcript just to compare against the limit, so every rendered frame
-    // cost time proportional to the full text; `char_indices().nth` returns
-    // `None` exactly when the text fits, which is the same comparison without
-    // the scan. `None` also means there is no byte offset to cut at.
-    let Some(end) = full_text
-        .char_indices()
-        .nth(MAX_REVIEW_PREVIEW_CHARS)
-        .map(|(byte_index, _)| byte_index)
-    else {
+    let Some(end) = review_preview_scan_end(full_text) else {
         return (full_text.to_string(), false);
     };
 
@@ -199,6 +207,37 @@ pub fn clip_span_to_band(y: f64, h: f64, band_y: f64, band_h: f64) -> Option<(f6
     } else {
         None
     }
+}
+
+/// The rectangle a click target has to cover when the draw code painted it
+/// inside a scale transform about `(center_x, center_y)`.
+///
+/// Pointer coordinates and the input shape are both in unscaled window space,
+/// so a target registered with the rectangle's own coordinates covers a
+/// different part of the window than the pixels drawn there. The toast banner
+/// is scaled about its centre from half size up to full, and for the whole
+/// animation that leaves a button's registered rectangle offset from the button
+/// the user can see: a click on the visible half misses. Scaling the rectangle
+/// about the same centre, with the same factor the transform used, is what puts
+/// the target and the paint back in step.
+///
+/// A `scale` of 1 leaves the rectangle where it was, so this is safe for a
+/// caller that is unsure whether the transform was degenerate.
+pub fn scaled_click_rect(
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+) -> (f64, f64, f64, f64) {
+    (
+        center_x + (x - center_x) * scale,
+        center_y + (y - center_y) * scale,
+        w * scale,
+        h * scale,
+    )
 }
 
 /// How many line segments to use for each corner arc.
@@ -2176,6 +2215,49 @@ mod tests {
     }
 
     #[test]
+    fn an_unscaled_transform_leaves_the_rectangle_where_it_was() {
+        assert_eq!(
+            scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 1.0),
+            (300.0, 40.0, 60.0, 22.0)
+        );
+    }
+
+    #[test]
+    fn a_scaled_button_is_registered_where_it_is_painted() {
+        // The toast banner is drawn from half size up, about its centre, so the
+        // button on the banner's right edge is painted 50 points further left
+        // and half as wide while the banner is half size. A rectangle left at 300
+        // covers the empty space to the right of the button the user can see.
+        let (x, y, w, h) = scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 0.5);
+        assert_eq!((x, y, w, h), (250.0, 45.5, 30.0, 11.0));
+    }
+
+    #[test]
+    fn scaling_a_button_gives_the_rectangle_the_transform_paints() {
+        // The property the call sites rely on: the rectangle this returns, put
+        // back through the same transform, is the rectangle the draw code laid
+        // out. A rectangle left unscaled does not survive that round trip at any
+        // step of the animation, which is the whole defect.
+        let (x, y, w, h) = (300.0, 40.0, 60.0, 22.0);
+        let (cx, cy) = (200.0, 51.0);
+        for step in 0..=10 {
+            let scale = 0.5 + 0.5 * f64::from(step) / 10.0;
+            let (rx, ry, rw, rh) = scaled_click_rect(x, y, w, h, cx, cy, scale);
+            for (corner_x, corner_y) in [(rx, ry), (rx + rw, ry + rh)] {
+                let painted_x = cx + (corner_x - cx) / scale;
+                let painted_y = cy + (corner_y - cy) / scale;
+                let expected_x = if corner_x == rx { x } else { x + w };
+                let expected_y = if corner_y == ry { y } else { y + h };
+                assert!(
+                    (painted_x - expected_x).abs() < 1e-9 && (painted_y - expected_y).abs() < 1e-9,
+                    "at scale {scale} the painted corner came back at ({painted_x}, {painted_y}) \
+                     instead of ({expected_x}, {expected_y})"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_button_touching_a_band_edge_is_dropped() {
         // Zero visible height is nothing to click.
         assert_eq!(clip_span_to_band(56.0, 44.0, 100.0, 200.0), None);
@@ -2194,18 +2276,22 @@ mod tests {
     fn review_preview_bounding_truncates_huge_transcripts_cleanly() {
         let word = "transcription ";
         let huge_text = word.repeat(10_000); // ~140,000 characters
-        let start = std::time::Instant::now();
         let (preview, truncated) = bound_review_preview_text(&huge_text);
-        let elapsed = start.elapsed();
 
         assert!(truncated);
         // In characters: the budget is a character budget, and a byte assertion
         // would pass for a preview that kept a fraction of it.
         assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
         assert!(preview.contains("Full transcript preserved"));
+        // The range the function read is the budget's, not the transcript's:
+        // an offset proportional to the input is what made every rendered frame
+        // cost time proportional to the whole transcript.
+        let end =
+            review_preview_scan_end(&huge_text).expect("a transcript of this size is over budget");
         assert!(
-            elapsed.as_millis() < 50,
-            "Bounding huge text must be nearly instantaneous"
+            end < MAX_REVIEW_PREVIEW_CHARS * 8,
+            "the scan read {end} bytes of a {} byte transcript",
+            huge_text.len()
         );
     }
 
@@ -2279,33 +2365,45 @@ mod tests {
     }
 
     #[test]
-    fn review_preview_bounding_cost_does_not_grow_with_the_transcript() {
+    fn review_preview_bounding_reads_the_same_range_at_every_length() {
         // The preview is bounded on the render path, once per drawn frame, so
-        // `chars().count()` walking the entire transcript made every frame
-        // linear in the full text size. Measured as a ratio against a
-        // barely-over-budget input, which is the same work either way, so the
-        // assertion does not depend on how fast the machine is.
-        fn fastest_bound(text: &str) -> std::time::Duration {
-            let mut fastest = std::time::Duration::MAX;
-            for _ in 0..3 {
-                let start = std::time::Instant::now();
-                std::hint::black_box(bound_review_preview_text(text));
-                fastest = fastest.min(start.elapsed());
-            }
-            fastest
-        }
-
+        // `chars().count()` walking the entire transcript made every frame linear
+        // in the full text size.
+        //
+        // What is asserted here is the range the function reads, not how long it
+        // takes: a stopwatch around a sub-microsecond call is a test that fails
+        // on a contended runner and under a sanitizer, and the range is the thing
+        // that actually bounds the work. It is a property of the budget and not
+        // of the input's length, so the same two fixtures must produce the same
+        // offset and the same preview whether one is barely over budget and the
+        // other is ten million characters.
         let barely_over = "word ".repeat(MAX_REVIEW_PREVIEW_CHARS / 5 + 2);
         let huge = "word ".repeat(2_000_000); // 10M characters
         assert!(
             barely_over.chars().count() > MAX_REVIEW_PREVIEW_CHARS,
             "the baseline must itself be over budget or it would return early"
         );
-        let (baseline, huge_cost) = (fastest_bound(&barely_over), fastest_bound(&huge));
+
+        let small_end = review_preview_scan_end(&barely_over);
+        let huge_end = review_preview_scan_end(&huge);
         assert!(
-            huge_cost < baseline * 4,
-            "bounding 10M characters took {huge_cost:?} against {baseline:?} for a barely-over-budget \
-             transcript: the cost still scales with the input"
+            small_end.is_some() && huge_end.is_some(),
+            "both fixtures must be over the budget"
+        );
+        assert_eq!(
+            small_end, huge_end,
+            "the scan stopped at a different offset for a longer transcript, so its \
+             cost still scales with the input"
+        );
+
+        let (small_preview, small_truncated) = bound_review_preview_text(&barely_over);
+        let (huge_preview, huge_truncated) = bound_review_preview_text(&huge);
+        assert!(small_truncated && huge_truncated);
+        assert_eq!(
+            small_preview.chars().count(),
+            huge_preview.chars().count(),
+            "a ten-million character transcript produced a different preview length than a \
+             barely-over-budget one"
         );
     }
 }

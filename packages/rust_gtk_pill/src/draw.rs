@@ -867,7 +867,12 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     );
     cr.set_font_size(12.0);
     // Skip the tooltip rather than unwrap: see the note in `draw_idle_label`.
+    // The width goes with it, for the reason the branch above gives: an unpainted
+    // tooltip that keeps its measured width is an invisible rectangle the input
+    // shape still carries, and the draw callback only rebuilds that shape when
+    // the width changes.
     let Ok(text_extents) = cr.text_extents(&style_name) else {
+        state.tooltip_width.set(0.0);
         return;
     };
     let text_w = text_extents.width().clamp(20.0, 100.0);
@@ -1083,11 +1088,23 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         cr.move_to(lx, ly);
         pangocairo::functions::show_layout(cr, &rl);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: reject_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
             action: ClickAction::FlashReject,
         });
     }
@@ -1115,11 +1132,23 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         cr.move_to(lx, ly);
         pangocairo::functions::show_layout(cr, &al);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
             action: ClickAction::FlashAction,
         });
     }
@@ -1582,6 +1611,12 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // The scroll bounds go with the content. Nothing sets them on this path
+        // below, so a panel that has just been emptied keeps the height of the
+        // transcript it used to hold: the wheel can then scroll the next
+        // transcript past its own last line, and the content is not visible even
+        // though it is there. An empty panel has no scrollable content at all.
+        state.content_height.set(0.0);
         return;
     }
 
@@ -1757,11 +1792,13 @@ fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &P
         cairo::FontWeight::Normal,
     );
     cr.set_font_size(14.0);
-    // The returned height is what the caller lays out after. A font that cannot
-    // be measured draws nothing, so reporting zero is the honest answer and keeps
-    // the caller's arithmetic from being handed a number nothing was drawn at.
+    // The returned height is what the caller lays out after, and the caller
+    // assigns it to the panel's cursor, so this cannot answer with a number
+    // nothing was drawn at: zero would move every later message, permission and
+    // review card back to the top of the panel. A font that cannot be measured
+    // leaves the cursor where it was, which is where the label would have gone.
     let Ok(extents) = cr.text_extents(text) else {
-        return 0.0;
+        return y;
     };
 
     let shimmer = state.shimmer_phase.get();

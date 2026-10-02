@@ -17,13 +17,37 @@ import { parseJsonObject, unknownToMessage } from "@maus-inc/utilities";
 const stringifyToolResult = (result: unknown): string =>
   typeof result === "string" ? result : JSON.stringify(result ?? {});
 
+/**
+ * The result a tool call reports when the caller aborts before it answers.
+ *
+ * A tool call is only ever omitted when it never started; one that started is
+ * always paired with a result, or the next provider turn carries an assistant
+ * tool call with no matching tool message and the conversation is rejected.
+ */
+const ABORTED_TOOL_OUTPUT: AgentToolOutput = {
+  success: false,
+  failureReason: "Tool execution aborted",
+};
+
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
   private readonly abortController = new AbortController();
+  /**
+   * Settles once, when `abort()` fires. Created next to the controller so every
+   * tool call races the same promise instead of adding a listener of its own.
+   */
+  private readonly toolCallAborted: Promise<AgentToolOutput>;
 
   constructor(config: AgentConfig) {
     this.config = config;
+    this.toolCallAborted = new Promise<AgentToolOutput>((resolve) => {
+      this.abortController.signal.addEventListener(
+        "abort",
+        () => resolve(ABORTED_TOOL_OUTPUT),
+        { once: true },
+      );
+    });
   }
 
   abort(): void {
@@ -155,26 +179,39 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  /**
+   * Run a tool, or give the wait up when the caller aborts.
+   *
+   * `abort()` sets the flag every other part of the loop reads, but this await
+   * was not one of them: a tool that never settles held the generator open, so
+   * no `finish` event was ever emitted and whoever was driving the loop waited
+   * forever on a stop it had already asked for. The tool's own promise is not
+   * cancellable — `AgentToolInput` carries no signal — so racing the abort is
+   * what releases the loop. A tool that ignores the cancellation keeps running
+   * in the background, which is no worse than before, and the call is still
+   * paired with a result so the provider's context stays valid.
+   */
   private async executeTool(
     tool: AgentTool,
     toolCallId: string,
     toolParams: Record<string, unknown>,
     reason: unknown,
   ): Promise<AgentToolOutput> {
-    try {
-      return await tool.execute({
+    if (this.aborted) {
+      return ABORTED_TOOL_OUTPUT;
+    }
+    const run = tool
+      .execute({
         params: toolParams,
         reason: typeof reason === "string" ? reason : "",
         toolCallId,
+      })
+      .catch((err: unknown) => {
+        // A tool must never abort the whole agent loop. Surface the failure
+        // as a tool-result message so the model can recover or end cleanly.
+        return { success: false, failureReason: unknownToMessage(err) };
       });
-    } catch (err) {
-      // A tool must never abort the whole agent loop. Surface the failure
-      // as a tool-result message so the model can recover or end cleanly.
-      return {
-        success: false,
-        failureReason: unknownToMessage(err),
-      };
-    }
+    return Promise.race([run, this.toolCallAborted]);
   }
 
   private async *processToolCalls(

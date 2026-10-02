@@ -10,6 +10,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
+  LlmToolChoice,
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import { buildGeminiThinkingConfig } from "./reasoning.utils";
@@ -62,6 +63,17 @@ type GeminiContent = {
   parts: GeminiPart[];
 };
 
+type GeminiFunctionCallingConfig = {
+  /** `ANY` is Gemini's "must call a tool", `NONE` its "must not". */
+  mode: "AUTO" | "ANY" | "NONE";
+  /** Restricts `ANY` to named functions. */
+  allowedFunctionNames?: string[];
+};
+
+type GeminiToolConfig = {
+  functionCallingConfig: GeminiFunctionCallingConfig;
+};
+
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
     content?: GeminiContent;
@@ -78,6 +90,7 @@ type GeminiGenerateContentRequest = {
   contents: GeminiContent[];
   systemInstruction?: GeminiContent;
   tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
+  toolConfig?: GeminiToolConfig;
   generationConfig?: Record<string, unknown>;
 };
 
@@ -103,7 +116,7 @@ const geminiModelPath = (model: string): string => {
  * rate limit or server failure. Extends the shared `HttpError` so every
  * provider in this package reports failures with the same shape.
  */
-export /**
+/**
  * The upload reached a terminal FAILED state.
  *
  * Its own type so `pollGeminiFileState` can tell it apart from a transient
@@ -119,6 +132,12 @@ class GeminiFileProcessingError extends Error {
   }
 }
 
+/**
+ * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
+ * can distinguish a permanent client error (400/401/403/404) from a transient
+ * rate limit or server failure. Extends the shared `HttpError` so every
+ * provider in this package reports failures with the same shape.
+ */
 class GeminiHttpError extends HttpError {
   constructor(status: number, detail: string, retryAfter?: string | null) {
     super(
@@ -414,8 +433,7 @@ const uploadGeminiFile = async (
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<{ uri: string; mimeType: string }> => {
-  const bytes =
-    blob instanceof Uint8Array ? blob : new Uint8Array(blob as ArrayBuffer);
+  const bytes = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
 
   const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
     method: "POST",
@@ -1199,6 +1217,41 @@ const buildGeminiTools = (
   }));
 };
 
+/**
+ * Map the shared tool choice onto Gemini's `toolConfig`.
+ *
+ * The three options exist on both sides, under different names, and Gemini
+ * expresses "only this one" as an allow-list inside `ANY` rather than as a
+ * fourth mode. Leaving the field off is not neutral: Gemini then defaults to
+ * `AUTO`, so a caller that selected `none` can still get a tool call and one
+ * that selected `required` can still get prose instead of the call it asked
+ * for.
+ */
+const buildGeminiToolConfig = (
+  toolChoice: LlmToolChoice | undefined,
+  hasTools: boolean,
+): GeminiToolConfig | undefined => {
+  // Nothing to choose between, and nothing to forbid: Gemini rejects a
+  // `toolConfig` on a request that declares no function at all.
+  if (!toolChoice || !hasTools) return undefined;
+  if (typeof toolChoice === "string") {
+    switch (toolChoice) {
+      case "auto":
+        return { functionCallingConfig: { mode: "AUTO" } };
+      case "required":
+        return { functionCallingConfig: { mode: "ANY" } };
+      case "none":
+        return { functionCallingConfig: { mode: "NONE" } };
+    }
+  }
+  return {
+    functionCallingConfig: {
+      mode: "ANY",
+      allowedFunctionNames: [toolChoice.name],
+    },
+  };
+};
+
 const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
   state: GeminiChunkState,
@@ -1340,6 +1393,7 @@ export async function* geminiStreamChat({
 }: GeminiStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
   const tools = buildGeminiTools(input);
+  const toolConfig = buildGeminiToolConfig(input.toolChoice, Boolean(tools));
   const generationConfig = {
     maxOutputTokens: input.maxTokens,
     temperature: input.temperature,
@@ -1359,6 +1413,7 @@ export async function* geminiStreamChat({
         ? { parts: [{ text: systemInstruction }] }
         : undefined,
       tools: tools ? [{ functionDeclarations: tools }] : undefined,
+      toolConfig,
       generationConfig: hasGenerationConfig ? generationConfig : undefined,
     },
     customFetch,

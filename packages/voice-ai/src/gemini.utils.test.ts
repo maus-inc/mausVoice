@@ -1159,3 +1159,111 @@ describe("Gemini Files API edge cases", () => {
     expect(body.contents[0].parts[0].inlineData.data).toBe("AQID");
   });
 });
+
+describe("Gemini tool choice", () => {
+  const tools = [
+    {
+      name: "lookup",
+      description: "looks something up",
+      parameters: { type: "object" as const, properties: {} },
+    },
+    {
+      name: "other",
+      description: "does something else",
+      parameters: { type: "object" as const, properties: {} },
+    },
+  ];
+
+  const streamOnce = async (toolChoice: string | { name: string }) => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+    for await (const _event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools,
+        toolChoice: toolChoice as never,
+      },
+      customFetch,
+    })) {
+      // drain
+    }
+    return JSON.parse(customFetch.mock.calls[0]![1].body as string);
+  };
+
+  // `input.toolChoice` decides whether the model may call a tool at all. Gemini
+  // spells the same three options in `toolConfig.functionCallingConfig.mode`,
+  // and "only this one" as an allow-list inside `ANY`. Sending the request
+  // without it leaves Gemini on its default of AUTO for every caller: a `none`
+  // turn can still call a tool, and a `required` turn can still answer in prose.
+  it.each([
+    ["auto", "AUTO"],
+    ["none", "NONE"],
+    ["required", "ANY"],
+  ])("maps toolChoice %s onto mode %s", async (choice, mode) => {
+    const body = await streamOnce(choice);
+    expect(body.toolConfig).toEqual({ functionCallingConfig: { mode } });
+  });
+
+  it("restricts a named tool choice to that function", async () => {
+    const body = await streamOnce({ name: "lookup" });
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["lookup"],
+      },
+    });
+  });
+
+  it("sends no toolConfig when the caller expressed no choice", async () => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+    for await (const _event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: { messages: [{ role: "user", content: "Hello" }], tools },
+      customFetch,
+    })) {
+      // drain
+    }
+    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    expect(body).not.toHaveProperty("toolConfig");
+  });
+
+  it("sends no toolConfig when there are no tools to choose between", async () => {
+    // Gemini rejects a `toolConfig` on a request that declares no function, so
+    // the choice is only expressible once `tools` is present.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+    for await (const _event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "required",
+      },
+      customFetch,
+    })) {
+      // drain
+    }
+    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    expect(body).not.toHaveProperty("toolConfig");
+    expect(body).not.toHaveProperty("tools");
+  });
+});

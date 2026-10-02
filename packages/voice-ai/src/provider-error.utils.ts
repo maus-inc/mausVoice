@@ -1,3 +1,5 @@
+import { AUTHORIZATION_SCHEMES as UTIL_AUTHORIZATION_SCHEMES } from "@maus-inc/utilities";
+
 /**
  * Shared classification for provider HTTP failures.
  *
@@ -50,6 +52,11 @@ export const readProviderCode = (error: unknown): string | undefined => {
 
 const REDACTED = "[redacted]";
 
+// The authorization scheme words, from the shared utilities scrubber. Judged here
+// rather than spelled out again so the two scrubbers cannot disagree about which
+// words are a header's syntax and which are a credential.
+const AUTHORIZATION_SCHEMES: ReadonlySet<string> = UTIL_AUTHORIZATION_SCHEMES;
+
 const PROVIDER_SECRET_PATTERNS: RegExp[] = [
   // Groq issues `gsk_`, Cerebras `csk_`, and the OpenAI-compatible providers
   // `sk-` or `sk_`. The leading \b keeps `task-123` from matching `sk-`.
@@ -87,6 +94,51 @@ const valueEnd = (message: string, index: number): number => {
   return end;
 };
 
+/**
+ * The characters that close a scheme-prefixed value: a record separator or a
+ * closing bracket, whatever is inside them.
+ */
+const SCHEME_VALUE_STOPS = `,;)]}`;
+
+/**
+ * The end of a value that opened with an authorization scheme.
+ *
+ * A scheme is the header's syntax, not the credential: `Basic dXNlcjpwYXNz` is
+ * one secret in two tokens, and a value class that stops at whitespace redacts
+ * the scheme and leaves the credential in the string this module hands to the
+ * callers that log it and persist it as error metadata. So once the first token
+ * is a scheme, the run continues past its parameters — the nonce in a Digest
+ * header, the reason in a token scheme — to the first record separator or
+ * closing bracket. This is the same rule `azure.utils.ts` applies to an
+ * `authorization` label.
+ *
+ * A quote only ends the run when it does not open a parameter: the quote in
+ * `nonce="x"` has to be walked through to reach the credential, while the quote
+ * that closes `api_key="Basic <credential>"` ends it. A value the provider
+ * quotes *after* the scheme (`Basic "<credential>"`) is the one shape this does
+ * not reach; every provider body this module exists for quotes the value at the
+ * separator.
+ *
+ * Gated on the scheme being one this module knows rather than run to the end of
+ * the line for every value: a bare `api_key=<token>` in a provider message is
+ * routinely followed by the diagnosis the user needs, and redacting that costs
+ * the reason the log line exists. The scheme list is shared with the utilities
+ * scrubber so the two cannot disagree about which words are syntax.
+ */
+const schemeValueEnd = (message: string, from: number): number => {
+  let end = whitespaceEnd(message, from);
+  while (end < message.length && !SCHEME_VALUE_STOPS.includes(message[end])) {
+    if (
+      (message[end] === '"' || message[end] === "'") &&
+      message[end - 1] !== "="
+    ) {
+      break;
+    }
+    end += 1;
+  }
+  return end;
+};
+
 const matchesAt = (message: string, index: number, literal: string): boolean =>
   message.slice(index, index + literal.length).toLowerCase() === literal;
 
@@ -110,6 +162,11 @@ const matchesAt = (message: string, index: number, literal: string): boolean =>
  * and a value character is not whitespace, so each run and each optional
  * character here has exactly one reading and a single pass decides the match the
  * pattern decided.
+ *
+ * It now reads one shape the pattern did not: a value whose first token is an
+ * authorization scheme runs to the end of the value rather than to the next
+ * space, so the credential after the scheme is redacted with it. The equivalence
+ * sweep in the test proves the two agree on every shape the pattern matched.
  */
 const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   if (!matchesAt(message, index, "api")) return null;
@@ -126,7 +183,14 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
   cursor = whitespaceEnd(message, cursor);
   if (message[cursor] === '"' || message[cursor] === "'") cursor += 1;
   cursor = whitespaceEnd(message, cursor);
-  const end = valueEnd(message, cursor);
+  const firstTokenEnd = valueEnd(message, cursor);
+  const end =
+    firstTokenEnd > cursor &&
+    AUTHORIZATION_SCHEMES.has(
+      message.slice(cursor, firstTokenEnd).toLowerCase(),
+    )
+      ? schemeValueEnd(message, firstTokenEnd)
+      : firstTokenEnd;
   // The value class needs at least one character, so a label with nothing
   // after its separator is not an assignment.
   return end > cursor ? end : null;

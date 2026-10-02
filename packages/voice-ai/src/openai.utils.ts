@@ -64,6 +64,27 @@ export function supportsOpenAIJsonSchema(model: string): boolean {
 export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
   JSON_OBJECT_ONLY_MODELS.has(model);
 
+/**
+ * The field that caps the completion length for `model`.
+ *
+ * `max_completion_tokens` arrived with the o-series and is the only spelling
+ * those models and everything after gpt-4o-2024-08-06 accept. The pre-turbo
+ * GPT-4 and GPT-3.5 line rejects it as an unrecognised request argument, so it
+ * answers a request that carries it with a 400 instead of a transcript. Those
+ * ids are the same `OPENAI_LEGACY_CHAT_MODELS` set the `json_object` branch
+ * above serves, and they are reachable as discovered model ids, so the same
+ * request shape that works on gpt-4o-mini has to keep working on them.
+ */
+const buildMaxTokensParams = (
+  model: string,
+  maxTokens: number | undefined,
+): Record<string, number> => {
+  const limit = maxTokens ?? 1024;
+  return isOpenAIJsonObjectOnlyModel(model)
+    ? { max_tokens: limit }
+    : { max_completion_tokens: limit };
+};
+
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
   buildJsonSchemaResponseFormat(
     model,
@@ -223,7 +244,7 @@ export const openaiGenerateTextResponse = async ({
           messages,
           model,
           temperature: 1,
-          max_completion_tokens: maxTokens ?? 1024,
+          ...buildMaxTokensParams(model, maxTokens),
           top_p: 1,
           ...(response_format ? { response_format } : {}),
         },

@@ -713,11 +713,23 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.move_to(lx, ly);
         ctx.show_text(label);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: reject_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
             action: ClickAction::FlashReject,
         });
     }
@@ -747,11 +759,23 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.move_to(lx, ly);
         ctx.show_text(label);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
             action: ClickAction::FlashAction,
         });
     }
@@ -1300,6 +1324,12 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // The scroll bounds go with the content. Nothing sets them on this path
+        // below, so a panel that has just been emptied keeps the height of the
+        // transcript it used to hold: the wheel can then scroll the next
+        // transcript past its own last line, and the content is not visible even
+        // though it is there. An empty panel has no scrollable content at all.
+        state.content_height.set(0.0);
         return;
     }
 
