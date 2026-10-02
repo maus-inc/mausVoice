@@ -1,4 +1,9 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import {
+  BETA_CHANNEL_TAG,
+  GITHUB_RELEASES_API_URL,
+  githubReleasePageUrl,
+} from "@maus-inc/desktop-utils";
 
 export type ChangelogEntry = {
   version: string;
@@ -9,7 +14,8 @@ export type ChangelogEntry = {
   url: string;
 };
 
-type ChangelogErrorCode = "network" | "http" | "invalid-response";
+type ChangelogErrorCode =
+  "network" | "http" | "rate-limited" | "invalid-response";
 
 export class ChangelogFetchError extends Error {
   readonly code: ChangelogErrorCode;
@@ -22,9 +28,6 @@ export class ChangelogFetchError extends Error {
     this.status = status;
   }
 }
-
-const RELEASES_URL =
-  "https://api.github.com/repos/maus-inc/mausVoice/releases?per_page=20";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -43,7 +46,7 @@ const toChangelogEntry = (
   row: Record<string, unknown>,
 ): ChangelogEntry | null => {
   const tag = asString(row.tag_name);
-  if (!tag || tag === "beta-channel") {
+  if (!tag || tag === BETA_CHANNEL_TAG) {
     return null;
   }
   return {
@@ -52,9 +55,7 @@ const toChangelogEntry = (
     date: asString(row.published_at),
     body: asString(row.body) ?? "",
     prerelease: row.prerelease === true,
-    url:
-      asString(row.html_url) ??
-      `https://github.com/maus-inc/mausVoice/releases/tag/${tag}`,
+    url: asString(row.html_url) ?? githubReleasePageUrl(tag),
   };
 };
 
@@ -65,7 +66,7 @@ const isAbortError = (error: unknown): boolean =>
 const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
   let response: Response;
   try {
-    response = await tauriFetch(RELEASES_URL, {
+    response = await tauriFetch(GITHUB_RELEASES_API_URL, {
       headers: { Accept: "application/vnd.github+json" },
       signal,
     });
@@ -74,6 +75,13 @@ const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
       throw error;
     }
     throw new ChangelogFetchError("network");
+  }
+  // The releases endpoint is unauthenticated, so GitHub caps it per IP. A 403
+  // on this URL is far more likely the rate limit than a real permission
+  // problem, and telling the user to check their connection would send them
+  // down the wrong path.
+  if (response.status === 403 || response.status === 429) {
+    throw new ChangelogFetchError("rate-limited", response.status);
   }
   if (!response.ok) {
     throw new ChangelogFetchError("http", response.status);

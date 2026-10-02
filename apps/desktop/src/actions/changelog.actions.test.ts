@@ -100,12 +100,33 @@ describe("fetchChangelog", () => {
     expect(entries[0]?.tag).toBe("mausVoice-v0.1.7");
   });
 
-  it("returns the HTTP status as structured error data", async () => {
+  it("reports a rate limit as its own failure, not as a transport error", async () => {
+    // The releases endpoint is unauthenticated, so GitHub caps it per IP. A
+    // 403 here is the rate limit far more often than a permissions problem,
+    // and the dialog must not send the user to check their connection.
     fetchMock.mockResolvedValue({ ok: false, status: 403 });
 
     await expect(fetchChangelog()).rejects.toMatchObject({
-      code: "http",
+      code: "rate-limited",
       status: 403,
+    });
+  });
+
+  it("treats a 429 as a rate limit too", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 429 });
+
+    await expect(fetchChangelog()).rejects.toMatchObject({
+      code: "rate-limited",
+      status: 429,
+    });
+  });
+
+  it("returns the HTTP status as structured error data for other failures", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+
+    await expect(fetchChangelog()).rejects.toMatchObject({
+      code: "http",
+      status: 500,
     });
   });
 
