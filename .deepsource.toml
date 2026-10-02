@@ -10,3 +10,16 @@ enabled = true
 
   [analyzers.meta]
   module_system = "es-modules"
+
+# Minified vendor bundles are third-party code checked into the marketing site:
+# three of them, tens of thousands of characters each, none of them written here.
+# An analyzer that reads them reports line lengths, nested ternaries and missing
+# semicolons in code no one in this repository can change, and a gate that counts
+# those is a gate nobody reads. The JavaScript analyzer is switched off for those
+# paths rather than for the repository, so first-party JS is still analysed.
+[[overrides]]
+paths = ["marketing/assets/vendor/**", "**/*.min.js"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false
