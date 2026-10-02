@@ -208,14 +208,49 @@ describe("updaterRulePattern", () => {
     assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
   });
 
-  it("ignores a regex key that only appears inside a single-line string", () => {
-    const toml = [
-      'id = "tauri-minisign-updater-private-key"',
-      "description = 'use regex = not-the-rule here'",
-      'keywords = ["regex = also-not-the-rule"]',
+  // The offset of the value is derived from where the key starts, so an
+  // implementation that assumes exactly one space before the `=` reads a valid
+  // config as "no regex at all" and the guard fails on a shipped, working
+  // gitleaks.toml. TOML allows any run of spaces and tabs on either side, so
+  // every one of these has to resolve to the same value.
+  it("resolves the value whatever the spacing around the `=` is", () => {
+    for (const assignment of [
       "regex = 'dW50cnVzdGVk'",
-    ].join("\n");
-    assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
+      "regex='dW50cnVzdGVk'",
+      "regex\t=\t'dW50cnVzdGVk'",
+      "regex   =    'dW50cnVzdGVk'",
+    ]) {
+      assert.equal(
+        updaterRulePattern(`${idLine}\n${assignment}\n`),
+        "dW50cnVzdGVk",
+        assignment,
+      );
+    }
+  });
+
+  // A `regex =` at the start of a line is the shape a line-anchored search
+  // finds, so the multi-line fixture above is what decides whether the search
+  // tracks string state. Both delimiters are here because `stringEnd` treats
+  // them differently: a literal string has no escapes, so a quote inside one
+  // closes it and the text after it is structure again.
+  it("ignores a regex key that only appears inside a quoted string", () => {
+    for (const fixture of [
+      [
+        idLine,
+        "description = 'use regex = not-the-rule here'",
+        'keywords = ["regex = also-not-the-rule"]',
+        "regex = 'dW50cnVzdGVk'",
+      ],
+      [
+        idLine,
+        "description = '''",
+        "regex = 'not-the-rule'",
+        "'''",
+        "regex = 'dW50cnVzdGVk'",
+      ],
+    ]) {
+      assert.equal(updaterRulePattern(fixture.join("\n")), "dW50cnVzdGVk");
+    }
   });
 
   // Both of the next two are the same defect seen from each side: the id was

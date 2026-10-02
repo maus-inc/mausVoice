@@ -23,8 +23,7 @@ on:
       - ".github/workflows/test-package-rust-transcription.yml"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

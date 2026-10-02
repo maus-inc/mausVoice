@@ -17,8 +17,7 @@ on:
       - ".github/workflows/build-desktop.yml"
       - "branding/mausvoice-sidebar-installerimg.png"
       - "scripts/generate-windows-installer-sidebar.mjs"
-permissions:
-  contents: read
+permissions: {}
 
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.

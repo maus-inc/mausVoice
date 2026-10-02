@@ -84,6 +84,25 @@ function enclosingKey(lines, index, indent) {
   return "";
 }
 
+// The jobs of a workflow as { name, body } records, so a guard can prove a
+// property of one job instead of of the whole file read as a single string.
+function jobBlocks(workflowText) {
+  const lines = workflowText.split("\n");
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  const jobs = [];
+  let current = null;
+  for (const line of lines.slice(jobsAt + 1)) {
+    const start = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (start) {
+      current = { name: start[1], body: [] };
+      jobs.push(current);
+      continue;
+    }
+    current?.body.push(line);
+  }
+  return jobs.map((job) => ({ ...job, body: job.body.join("\n") }));
+}
+
 // The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
 function enclosingUsesPin(lines, index) {
   for (let above = index - 1; above >= 0; above -= 1) {
@@ -277,11 +296,15 @@ describe("release workflow shell contracts", () => {
     }
   });
 
-  it("grants the workflow token read-only unless a job asks for more", () => {
-    // The token defaults to write-all when nothing says otherwise, so a
-    // workflow with no grant at all is the widest grant available. Every
-    // workflow declares a read-only default and every job that needs more
-    // declares its own block, which replaces the default.
+  it("grants each job only the token scope it declares", () => {
+    // Per-job least privilege, which is the rule the repository states: every
+    // job declares what it needs, and the workflow-level default grants
+    // nothing at all. The default has to be `{}` rather than `contents: read`
+    // because a read default still hands a token to a job that needs none, and
+    // it has to be `{}` rather than nothing because GitHub's own default is
+    // write-all: a job added tomorrow without a `permissions:` block would
+    // otherwise inherit write access. `{}` is what makes the missing block fail
+    // loudly instead of quietly.
     //
     // The list comes from the directory rather than from a hand-maintained
     // array: a workflow added later is then covered the day it lands, and the
@@ -294,15 +317,26 @@ describe("release workflow shell contracts", () => {
       workflows.length > 0,
       "expected at least one workflow in .github/workflows",
     );
+
+    const undeclared = [];
     for (const file of workflows) {
       const workflow = readFileSync(join(workflowDir, file), "utf8");
-      const beforeJobs = workflow.split(/^jobs:$/m)[0];
       assert.match(
-        beforeJobs,
-        /^permissions:\n {2}contents: read$/m,
-        `${file} must default the token to read-only before its jobs`,
+        workflow.split(/^jobs:$/m)[0],
+        /^permissions: \{\}$/m,
+        `${file} must default the token to no permissions before its jobs`,
       );
+      for (const job of jobBlocks(workflow)) {
+        if (!/^ {4}permissions:/m.test(job.body)) {
+          undeclared.push(`${file}:${job.name}`);
+        }
+      }
     }
+    assert.deepStrictEqual(
+      undeclared,
+      [],
+      `every job must declare its own permissions, or it inherits none: ${undeclared.join(", ")}`,
+    );
   });
 
   it("builds both channels through one manifest step", () => {

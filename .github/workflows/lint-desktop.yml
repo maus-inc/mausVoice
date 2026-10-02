@@ -14,10 +14,10 @@ on:
       - "patches/**"
       - "scripts/generate-app-icons.mjs"
       - ".github/workflows/lint-desktop.yml"
+permissions: {}
+
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.
-permissions:
-  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

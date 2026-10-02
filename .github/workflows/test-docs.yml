@@ -23,10 +23,10 @@ on:
       - ".github/workflows/test-docs.yml"
   workflow_dispatch:
 
+permissions: {}
+
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.
-permissions:
-  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

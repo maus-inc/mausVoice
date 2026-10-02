@@ -41,13 +41,12 @@ on:
         default: ""
         type: string
 
-# The workflow-level default is read-only, which is the narrowest grant GitHub
-# offers: a workflow with no `permissions:` block at all hands every job write
-# access. A job that needs more declares its own block, which replaces this
-# default rather than adding to it.
+# The workflow-level default grants nothing. GitHub's own default is write-all
+# for every scope, so a workflow with no `permissions:` block hands write access
+# to any job added later; `{}` leaves a job that declares nothing inert instead
+# of privileged, and every job below names the one scope it needs.
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: release-mausvoice
