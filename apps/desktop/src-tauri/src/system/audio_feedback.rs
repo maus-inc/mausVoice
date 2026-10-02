@@ -350,15 +350,22 @@ mod thock_limiter {
         /// it found rather than keeping its own last value.
         #[test]
         fn a_guarded_test_hands_the_volume_back_unchanged() {
-            {
+            let before = {
                 let _volume = ExclusiveVolume::take();
+                let before = INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed);
                 set_interaction_feedback_volume(MAX_SAFE_VOLUME);
                 assert_eq!(current_interaction_feedback_volume(), MAX_SAFE_VOLUME);
-                // `_volume` drops at the end of this block.
-            }
+                before
+                // `_volume` drops here, on the way out, restoring `before`.
+            };
+            // The read is taken under a guard of its own. Releasing the first one
+            // and then reading the global is the same unguarded read that made
+            // this file flaky in the first place: between the two statements any
+            // other test on this thread can store whatever it likes.
+            let _check = ExclusiveVolume::take();
             assert_eq!(
                 INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed),
-                crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS,
+                before,
                 "a guarded test must not leave its last write behind for the next one to read"
             );
         }
