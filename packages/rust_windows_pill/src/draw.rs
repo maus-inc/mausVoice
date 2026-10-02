@@ -708,10 +708,21 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             [1.0, 1.0, 1.0, 0.95 * alpha],
         );
 
-        let sx = center_x + (btn_x - center_x) * scale;
-        let sy = center_y + (btn_y - center_y) * scale;
-        let sw = reject_w * scale;
-        let sh = FLASH_ACTION_HEIGHT * scale;
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one. The transform lives in the
+        // shared crate so this cannot drift from the GTK and macOS pills on the
+        // one number the painted pixels and the registered hit target have to
+        // agree on.
+        let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
 
         state.click_regions.borrow_mut().push(ClickRegion {
             x: sx,
@@ -747,10 +758,21 @@ fn draw_flash_message(gfx: &mut Gfx, state: &PillState, ww: f64, wh: f64) {
             [1.0, 1.0, 1.0, 0.95 * alpha],
         );
 
-        let sx = center_x + (btn_x - center_x) * scale;
-        let sy = center_y + (btn_y - center_y) * scale;
-        let sw = action_w * scale;
-        let sh = FLASH_ACTION_HEIGHT * scale;
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one. The transform lives in the
+        // shared crate so this cannot drift from the GTK and macOS pills on the
+        // one number the painted pixels and the registered hit target have to
+        // agree on.
+        let (sx, sy, sw, sh) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
 
         state.click_regions.borrow_mut().push(ClickRegion {
             x: sx,
@@ -1302,11 +1324,16 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
-        // The scroll bounds go with the content. Nothing sets them on this path
-        // below, so a panel that has just been emptied keeps the height of the
-        // transcript it used to hold: the wheel can then scroll the next
-        // transcript past its own last line, and the content is not visible even
-        // though it is there. An empty panel has no scrollable content at all.
+        // Both halves of the scroll state go with the content. Nothing sets
+        // them on this path below, so a panel that has just been emptied keeps
+        // the height of the transcript it used to hold: the wheel can then
+        // scroll the next transcript past its own last line, and the content is
+        // not visible even though it is there. The offset is the other half of
+        // the same state, and it is what the next transcript is laid out from —
+        // a panel emptied while scrolled drew the following transcript starting
+        // above its own first line, and its opening lines were off the top.
+        // An empty panel has no scrollable content and no place in it.
+        state.scroll_offset.set(0.0);
         state.content_height.set(0.0);
         return;
     }

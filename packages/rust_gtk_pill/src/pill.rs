@@ -462,7 +462,14 @@ pub fn run(receiver: Receiver<InMessage>) {
         // and build_input_region() left the tooltip out. Rebuild the region
         // here when the width changes, so the tooltip is never painted outside
         // its own input shape.
+        //
+        // The toast buttons need the same treatment for the same reason, and
+        // for one more: draw_flash_message() scales the banner about its centre
+        // from half size up to full, so it re-registers both buttons at new
+        // coordinates every frame of the animation. A shape left to the next
+        // tick is a whole frame of the animation behind the painted button.
         let width_before = state_draw.tooltip_width.get();
+        let flash_before = input::flash_click_signature(&state_draw);
         draw::draw_all(cr, &state_draw);
         if let Err(error) = cr.status() {
             let now = Instant::now();
@@ -474,8 +481,9 @@ pub fn run(receiver: Receiver<InMessage>) {
                 last_draw_error.set(Some(now));
             }
         }
-        let width_changed = state_draw.tooltip_width.get() != width_before;
-        if let Some(gdk_win) = win_draw.window().filter(|_| width_changed) {
+        let shape_is_stale = state_draw.tooltip_width.get() != width_before
+            || input::flash_click_signature(&state_draw) != flash_before;
+        if let Some(gdk_win) = win_draw.window().filter(|_| shape_is_stale) {
             input::update_input_region(&gdk_win, &state_draw);
         }
         glib::Propagation::Proceed

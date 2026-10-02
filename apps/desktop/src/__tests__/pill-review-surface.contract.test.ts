@@ -90,9 +90,15 @@ describe("native pill review surface", () => {
 
     // A failed write means the pipe is gone, so the one copy of the user's text
     // must survive: clearing it would destroy a transcript nothing can re-send.
+    // The decision is reached through `send_review_decision_with` now, so the
+    // guard is on the boolean it returns rather than on the send call itself --
+    // both a bare insert and a review decision have to clear on success.
     expect(submit).toMatch(
-      /if send\(&msg\) \{\s*\*entry_text\.borrow_mut\(\) = String::new\(\);/,
+      /if sent \{\s*\*entry_text\.borrow_mut\(\) = String::new\(\);/,
     );
+    // And the send has to be captured, not discarded, or the guard above would
+    // be testing a value nothing assigned.
+    expect(submit).toMatch(/let sent = match review_id \{/);
   });
 
   it("keeps the Windows entry text when nothing was sent", () => {

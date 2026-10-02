@@ -547,6 +547,31 @@ fn union_side_controls(
     }
 }
 
+/// The toast buttons' hit rectangles, as the plain numbers
+/// `update_input_region` reads them back out of `click_regions`.
+///
+/// The draw callback clears and re-registers `click_regions` itself, so an input
+/// shape built before a frame describes the previous frame's buttons. The toast
+/// is scaled about its centre from half size up to full, which moves both
+/// buttons every frame of the animation, so for the whole animation the shape
+/// would be one frame behind the painted button and a click on the part the user
+/// can see would miss. Comparing this before and after the draw is how the
+/// callback knows the shape it just built is stale.
+pub(crate) fn flash_click_signature(state: &PillState) -> Vec<(f64, f64, f64, f64)> {
+    state
+        .click_regions
+        .borrow()
+        .iter()
+        .filter(|region| {
+            matches!(
+                region.action,
+                ClickAction::FlashAction | ClickAction::FlashReject
+            )
+        })
+        .map(|region| (region.x, region.y, region.w, region.h))
+        .collect()
+}
+
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {
     let hovered = state.hovered.get();
     let is_active = state.phase.get() != Phase::Idle;

@@ -1611,11 +1611,16 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
-        // The scroll bounds go with the content. Nothing sets them on this path
-        // below, so a panel that has just been emptied keeps the height of the
-        // transcript it used to hold: the wheel can then scroll the next
-        // transcript past its own last line, and the content is not visible even
-        // though it is there. An empty panel has no scrollable content at all.
+        // Both halves of the scroll state go with the content. Nothing sets
+        // them on this path below, so a panel that has just been emptied keeps
+        // the height of the transcript it used to hold: the wheel can then
+        // scroll the next transcript past its own last line, and the content is
+        // not visible even though it is there. The offset is the other half of
+        // the same state, and it is what the next transcript is laid out from —
+        // a panel emptied while scrolled drew the following transcript starting
+        // above its own first line, and its opening lines were off the top.
+        // An empty panel has no scrollable content and no place in it.
+        state.scroll_offset.set(0.0);
         state.content_height.set(0.0);
         return;
     }
