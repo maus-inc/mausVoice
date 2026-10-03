@@ -121,9 +121,14 @@ export const postProcessErrorReason = (
 /**
  * Reduce any provider message to one of the fixed categories above.
  *
- * The order matters: a 401 body also contains the word "quota" in some
- * providers, and a timeout also contains "abort", so the specific statuses are
- * checked before the generic ones.
+ * The order is the behaviour, and two of these branches overlap on purpose. A
+ * billing failure can arrive as HTTP 401 with `insufficient_quota` in the body,
+ * which is why the generic `quota` test runs ahead of the 401 branch: a user
+ * with an exhausted balance belongs on the billing screen and a user with a good
+ * balance and a dead key belongs on the key screen, and sending the first to
+ * replace a key that works is the more expensive of the two mistakes. A timed-out
+ * request is also an aborted one, so the timeout test runs ahead of `abort` for
+ * the same reason — nobody cancelled anything.
  */
 export const classifyPostProcessErrorCategory = (message: string): string => {
   const lower = message.toLowerCase();
