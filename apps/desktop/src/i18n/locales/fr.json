@@ -879,6 +879,7 @@
   "transcript_copied_to_clipboard": "Transcription copiée dans le presse-papiers",
   "transcript_updated": "Transcription mise à jour",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "Transcription mise à jour, mais les mots corrigés n’ont pas pu être ajoutés à votre dictionnaire.",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
   "transcription": "Transcription",
   "transcription_details": "Détails de la transcription",
   "transcription_duration": "Durée de la transcription",

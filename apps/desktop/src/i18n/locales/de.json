@@ -879,6 +879,7 @@
   "transcript_copied_to_clipboard": "Transkript in die Zwischenablage kopiert",
   "transcript_updated": "Transkript aktualisiert",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "Transkript aktualisiert, aber die korrigierten Wörter konnten nicht zu deinem Wörterbuch hinzugefügt werden.",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
   "transcription": "Transkription",
   "transcription_details": "Transkriptionsdetails",
   "transcription_duration": "Transkriptionsdauer",

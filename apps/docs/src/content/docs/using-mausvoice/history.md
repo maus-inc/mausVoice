@@ -19,7 +19,7 @@ Export opens a file picker and writes a ZIP named from the record ID. It contain
 
 ## Edit and auto-learn
 
-The **Final transcription** block in the details dialog has an Edit action. Use it to fix a misspelled name or term, then save. mausVoice persists the corrected text. When **Settings → Privacy and data → Auto-learn dictionary** is on, it also adds the corrected words to your glossary terms automatically. A toast names the learned words so you can review or remove them in **Dictionary**. With [Incognito mode](/configuration/incognito-mode/) on, the correction stays in memory and no glossary terms are added; the toast says that instead of naming words.
+The **Final transcription** block in the details dialog has an Edit action. Use it to fix a misspelled name or term, then save. mausVoice persists the corrected text. When **Settings → Privacy and data → Auto-learn dictionary** is on, it also adds the corrected words to your glossary terms automatically. A toast names the learned words so you can review or remove them in **Dictionary**. With [Incognito mode](../configuration/incognito-mode/) on, the correction stays in memory and no glossary terms are added; the toast says that instead of naming words.
 
 Auto-learn is conservative. It only adds words that are new in the correction, look like a proper noun, and are not already in your dictionary. A large rewrite adds nothing.
 

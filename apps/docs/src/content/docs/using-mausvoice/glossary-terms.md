@@ -15,7 +15,7 @@ After adding a term, make three normal-speed test recordings with it in differen
 
 mausVoice can also add terms for you. Turn on **Settings → Privacy and data → Auto-learn dictionary**, then correct a transcription in History. The corrected names become glossary terms automatically. The heuristic adds proper nouns, skips common words, and never creates a replacement rule.
 
-Terms are not added while [Incognito mode](/configuration/incognito-mode/) is on. Learned terms are proper nouns copied out of what you said, so a correction in Incognito updates the transcript in memory and leaves the dictionary untouched. The confirmation toast says so rather than reporting words that were never saved.
+Terms are not added while [Incognito mode](../configuration/incognito-mode/) is on. Learned terms are proper nouns copied out of what you said, so a correction in Incognito updates the transcript in memory and leaves the dictionary untouched. The confirmation toast says so rather than reporting words that were never saved.
 
 With **Settings → Privacy and data → Learn from corrections** you can also let mausVoice watch the target app after dictation. When you fix a name in place, the dictation pill offers to add the corrected spelling. You confirm each addition, so nothing enters the dictionary without your approval.
 

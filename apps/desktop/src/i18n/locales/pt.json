@@ -879,6 +879,7 @@
   "transcript_copied_to_clipboard": "Transcrição copiada para a área de transferência",
   "transcript_updated": "Transcrição atualizada",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "Transcrição atualizada, mas os nomes corrigidos não puderam ser adicionados ao seu dicionário.",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
   "transcription": "Transcrição",
   "transcription_details": "Detalhes da transcrição",
   "transcription_duration": "Duração da transcrição",

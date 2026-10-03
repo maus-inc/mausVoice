@@ -879,6 +879,7 @@
   "transcript_copied_to_clipboard": "已复制转录到剪贴板",
   "transcript_updated": "转录已更新",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "转录已更新，但无法将纠正后的名称添加到词典。",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
   "transcription": "转录",
   "transcription_details": "转录详情",
   "transcription_duration": "转录持续时间",
