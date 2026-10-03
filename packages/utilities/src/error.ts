@@ -243,6 +243,22 @@ const LABEL_EDGE = /^["'\s]+|["'\s]+$/g;
  * `maxTokens` still do not, because folding turns the last two into `sort_key`
  * and `max_tokens`, which the holder rule rejects for the same reason the
  * snake_case ones are rejected.
+ *
+ * WHAT THE TEXT FORM STILL DOES NOT CATCH, and why it is left that way: a
+ * QUALIFIED camelCase label. Measured, all five of `openaiApiKey`, `azureApiKey`,
+ * `authToken`, `signingKey` and `userPassword` reach `unknownToMessage` in the
+ * clear in a message, while none leak as an object key. An unqualified
+ * camelCase name -- `apiKey`, `secretKey`, `clientSecret` -- matches on both.
+ *
+ * The obvious way to close it is to let the text form's tier-1 qualifier take a
+ * separator-less prefix, i.e. `(?:[a-z0-9]+[_-]*)*`. Measured: that does not fail
+ * a test, it HANGS the suite. The separator is what bounds each iteration, and
+ * making it optional turns the qualifier into a nested quantifier that
+ * backtracks catastrophically on ordinary input. So the gap is not held open by
+ * an oversight and `monkey` is not the only reason -- removing the separator is
+ * worse than the leak, and the pinned test
+ * `leaves the text half of that gap exactly as it is today` is what will catch
+ * anyone trying it and finding out the slow way.
  */
 const CAMEL_BOUNDARY = /([a-z0-9])([A-Z])/g;
 const foldCamelLabel = (label: string): string =>

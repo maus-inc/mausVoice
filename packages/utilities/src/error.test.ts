@@ -657,6 +657,25 @@ describe("authorization scheme credentials", () => {
   ];
   // camelCase words that are not credentials, including the two that only fail
   // because folding produces a form the holder rule rejects.
+  // A qualified camelCase label: the qualifier needs a separator to be seen, and
+  // in free text it has none.
+  const QUALIFIED_CAMEL_KEYS = [
+    ["openai", "Api", "Key"].join(""),
+    ["azure", "Api", "Key"].join(""),
+    ["auth", "Token"].join(""),
+    ["signing", "Key"].join(""),
+    ["user", "Password"].join(""),
+  ];
+  // An unqualified camelCase name: a tier-1 name with an optional separator and a
+  // case-insensitive match, so it is recognised as itself on both paths.
+  const PLAIN_CAMEL_KEYS = [
+    ["api", "Key"].join(""),
+    ["secret", "Key"].join(""),
+    ["client", "Secret"].join(""),
+    ["private", "Key"].join(""),
+    ["access", "Token"].join(""),
+    ["refresh", "Token"].join(""),
+  ];
   const CAMEL_NON_SECRET_KEYS = [
     ["secretary", ""].join(""),
     ["keyboard", ""].join(""),
@@ -827,6 +846,28 @@ describe("authorization scheme credentials", () => {
     for (const key of CAMEL_CREDENTIAL_KEYS) {
       expect(unknownToMessage({ [key]: TWELVE_CHARS })).toBe(
         `{"${key}":"[redacted]"}`,
+      );
+    }
+  });
+
+  it("leaves the text half of that gap exactly as it is today", () => {
+    // The camelCase qualifier is accepted for an OBJECT KEY and not in free
+    // text, because a label inside a message has no boundary to be captured at
+    // and a bare camel prefix there lets `monkey` donate its `key`. That is a
+    // documented trade, so it is pinned here as a behaviour rather than left to
+    // be discovered: a future change that widens the text form, or narrows it
+    // back into over-redacting `press the key`, moves an assertion below.
+    //
+    // Measured, and both halves are deliberate: these five leak in text and none
+    // leak as object keys; the unqualified names match on both.
+    for (const key of QUALIFIED_CAMEL_KEYS) {
+      expect(redactSensitiveTokens(`${key}: ${TWELVE_CHARS}`)).toBe(
+        `${key}: ${TWELVE_CHARS}`,
+      );
+    }
+    for (const key of PLAIN_CAMEL_KEYS) {
+      expect(redactSensitiveTokens(`${key}: ${TWELVE_CHARS}`)).toBe(
+        `${key}:[redacted]`,
       );
     }
   });
