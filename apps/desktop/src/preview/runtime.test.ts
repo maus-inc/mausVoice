@@ -326,4 +326,65 @@ describe("browser preview transport", () => {
       command: "simulate_type",
     } satisfies Partial<PreviewOperationError>);
   });
+
+  it("acknowledges every accepted no-op system command with undefined", async () => {
+    // Listed by name rather than read off the module, because the point is to
+    // pin the set: drop any one of these from SYSTEM_NO_OP_COMMANDS and its
+    // `undefined` answer turns into a PreviewOperationError, which fails here.
+    const accepted = [
+      "notify_pill_style_info",
+      "open_app_settings",
+      "pause_recording",
+      "quit_app",
+      "remote_sender_disconnect",
+      "reset_key_listener_state",
+      "reset_native_setup",
+      "restart_app",
+      "restart_key_listener",
+      "resume_recording",
+      "retry_key_listener",
+      "set_auto_launch",
+      "set_dashboard_menu_labels",
+      "set_interaction_chime_enabled",
+      "set_interaction_feedback_volume",
+      "set_menu_icon",
+      "set_phase",
+      "set_pill_placement",
+      "set_pill_visibility",
+      "set_pill_visibility_menu_state",
+      "set_pill_window_size",
+      "set_register_app_label",
+      "set_reset_pill_position_enabled",
+      "set_tray_language_menu",
+      "set_tray_title",
+      "set_tray_visible",
+      "show_in_folder",
+      "show_notification",
+      "start_key_listener",
+      "stop_key_listener",
+      "sync_compositor_hotkeys",
+      "sync_hotkey_combos",
+    ];
+
+    for (const command of accepted) {
+      await expect(
+        invokePreviewCommand(command),
+        command,
+      ).resolves.toBeUndefined();
+    }
+  });
+
+  it("still refuses an unknown system command, so the no-op list is not a catch-all", async () => {
+    // The guard in invokeSystem runs before the switch, so this is the assertion
+    // that keeps it from swallowing every unrecognised command.
+    for (const command of ["resize_pill_window", "quit", "set_phase_now"]) {
+      await expect(
+        invokePreviewCommand(command),
+        command,
+      ).rejects.toMatchObject({
+        name: "PreviewOperationError",
+        command,
+      } satisfies Partial<PreviewOperationError>);
+    }
+  });
 });

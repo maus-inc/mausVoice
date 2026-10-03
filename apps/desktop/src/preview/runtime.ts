@@ -27,6 +27,53 @@ export class PreviewOperationError extends Error {
   }
 }
 
+/**
+ * System commands the preview accepts and answers with `undefined`.
+ *
+ * They are the write-side and lifecycle commands a page fires to make the
+ * desktop look busy: pausing a recording, moving the pill, quitting, opening a
+ * folder. None of them can be honoured without the native app, and none of them
+ * reports a value, so `invokeSystem` answers them from this list rather than
+ * spending a `case` arm apiece. A command that is NOT here and returns nothing
+ * useful either is a privileged operation, and still raises
+ * `PreviewOperationError` — this list is an acknowledgement set, not a
+ * silent-success catch-all.
+ */
+const SYSTEM_NO_OP_COMMANDS = new Set([
+  "notify_pill_style_info",
+  "open_app_settings",
+  "pause_recording",
+  "quit_app",
+  "remote_sender_disconnect",
+  "reset_key_listener_state",
+  "reset_native_setup",
+  "restart_app",
+  "restart_key_listener",
+  "resume_recording",
+  "retry_key_listener",
+  "set_auto_launch",
+  "set_dashboard_menu_labels",
+  "set_interaction_chime_enabled",
+  "set_interaction_feedback_volume",
+  "set_menu_icon",
+  "set_phase",
+  "set_pill_placement",
+  "set_pill_visibility",
+  "set_pill_visibility_menu_state",
+  "set_pill_window_size",
+  "set_register_app_label",
+  "set_reset_pill_position_enabled",
+  "set_tray_language_menu",
+  "set_tray_title",
+  "set_tray_visible",
+  "show_in_folder",
+  "show_notification",
+  "start_key_listener",
+  "stop_key_listener",
+  "sync_compositor_hotkeys",
+  "sync_hotkey_combos",
+]);
+
 type WireRecord = Record<string, unknown>;
 type PreviewDatabase = {
   user: WireRecord | null;
@@ -530,6 +577,11 @@ class PreviewRuntime {
   }
 
   private invokeSystem(command: string): unknown {
+    // These 32 commands exist only so a page can drive the same call sequence
+    // the desktop does. None of them reports anything back, so they share one
+    // `undefined` answer; naming them in one list says what they are instead of
+    // spending a case arm each.
+    if (SYSTEM_NO_OP_COMMANDS.has(command)) return undefined;
     switch (command) {
       // Safe, deterministic desktop-information and configuration responses.
       case "check_microphone_permission":
@@ -582,39 +634,6 @@ class PreviewRuntime {
         return { sampleRate: 16_000 };
       case "stop_recording":
         return { samples: [], sampleRate: 16_000 };
-      case "pause_recording":
-      case "resume_recording":
-      case "stop_key_listener":
-      case "start_key_listener":
-      case "restart_key_listener":
-      case "reset_key_listener_state":
-      case "sync_hotkey_combos":
-      case "sync_compositor_hotkeys":
-      case "set_dashboard_menu_labels":
-      case "set_phase":
-      case "set_pill_placement":
-      case "set_pill_visibility":
-      case "set_pill_visibility_menu_state":
-      case "set_pill_window_size":
-      case "set_register_app_label":
-      case "set_reset_pill_position_enabled":
-      case "set_menu_icon":
-      case "set_tray_language_menu":
-      case "set_tray_title":
-      case "set_tray_visible":
-      case "set_interaction_chime_enabled":
-      case "set_interaction_feedback_volume":
-      case "notify_pill_style_info":
-      case "open_app_settings":
-      case "show_in_folder":
-      case "show_notification":
-      case "set_auto_launch":
-      case "restart_app":
-      case "quit_app":
-      case "reset_native_setup":
-      case "retry_key_listener":
-      case "remote_sender_disconnect":
-        return undefined;
       case "run_native_setup":
         return "success";
       case "export_diagnostics":

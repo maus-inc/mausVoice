@@ -531,7 +531,7 @@ export const pollEditWatch = async (): Promise<void> => {
         snapshot.unalignableReported = true;
         getLogger().warning(
           `Edit watch skipped a ${tokenCount} token field: above the ` +
-            `alignment bound, so a correction in it cannot be located`,
+            "alignment bound, so a correction in it cannot be located",
         );
       },
     });
