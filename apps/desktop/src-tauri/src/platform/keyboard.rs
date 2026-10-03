@@ -904,6 +904,25 @@ pub(crate) fn matches_any_combo(pressed: &HashSet<String>, combos: &[Vec<String>
     false
 }
 
+/// Whether this key is a member of any configured combo.
+///
+/// `matches_any_combo` asks whether the pressed SET is a combo; this asks whether
+/// the key is PART OF one, which is a different question and is what decides
+/// whether a press should stay swallowed after the combo has fired. Normalized
+/// the same way, so a combo spelled `KeyZ` matches a press spelled `keyz`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn key_in_any_combo(key_label: &str, combos: &[Vec<String>]) -> bool {
+    let normalized = key_label.to_ascii_lowercase();
+    combos
+        .iter()
+        .filter(|combo| !combo.is_empty())
+        .any(|combo| {
+            combo
+                .iter()
+                .any(|key| key.to_ascii_lowercase() == normalized)
+        })
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn is_modifier_like_key_label(key_label: &str) -> bool {
     let normalized = key_label.to_ascii_lowercase();
@@ -984,8 +1003,23 @@ pub(crate) fn update_grab_hotkey_state(
                 }
                 return GrabDecision::PassThrough;
             }
-            state.suppressed_keys.insert(key_label.to_string());
-            return GrabDecision::Suppress;
+            // The combo has already fired, so the keys that make it up stay
+            // swallowed -- but nothing else does.
+            //
+            // This used to suppress every press unconditionally once
+            // `suppressed_keys` was non-empty, so a key in no combo was swallowed
+            // too, and swallowed *inconsistently*: holding a modifier and
+            // pressing an unrelated key passed through when `suppressed_keys`
+            // happened to be empty, and was suppressed once any suppressed key
+            // was still held. The same keystroke gave different answers
+            // depending on unrelated state, which is not a policy, it is a
+            // fallthrough. An exhaustive search over the reachable states found
+            // eleven distinct swallowed presses from one combo.
+            if key_in_any_combo(key_label, combos) {
+                state.suppressed_keys.insert(key_label.to_string());
+                return GrabDecision::Suppress;
+            }
+            return GrabDecision::PassThrough;
         }
 
         return GrabDecision::PassThrough;
