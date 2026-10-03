@@ -395,7 +395,16 @@ const assertGeminiUrl = (url: string, strict: boolean): void => {
         `Refusing to send the Gemini API key to unexpected host ${parsed.hostname}`,
       );
     }
-    // Log but don't block for forward-compatibility; real enforcement is in secureFetch capability.
+    // Warn rather than refuse, because the upload URL is whatever Google put in
+    // `x-goog-upload-url` and refusing would break dictation the day they add a
+    // host. The control that actually stops the key reaching an unexpected host
+    // is NOT here and NOT `secureFetch`: it is the Tauri `http:default`
+    // capability's host allow-list, which blocks the request before it leaves the
+    // process. That allow-list is itself pinned by
+    // `apps/desktop/src/__tests__/csp-capability.contract.test.ts`, so this hedge
+    // rests on a checked fact rather than on a claim -- if `*.googleapis.com`
+    // were ever dropped from the capability, that test fails and this reasoning
+    // has to be revisited rather than inherited.
     console.warn(`Gemini Files API: unexpected upload host ${parsed.hostname}`);
   }
 };

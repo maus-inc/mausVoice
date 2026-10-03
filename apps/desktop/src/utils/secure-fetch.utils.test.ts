@@ -155,6 +155,66 @@ describe("secureFetch", () => {
     expect(pluginFetchMock).toHaveBeenCalledTimes(2);
   });
 
+  // The caller's redirect mode has to be enforced by the hand-walked chain.
+  // It used to be forwarded to plugin-http, which ignores `RequestInit.redirect`
+  // and forwards only `maxRedirections` to reqwest -- so `error` and `manual`
+  // were inert and a caller asking not to follow redirects got them followed.
+  it("refuses a redirect the caller asked not to follow", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+    );
+
+    await expect(
+      secureFetch("https://api.openai.com/v1/models", { redirect: "error" }),
+    ).rejects.toThrow(/Redirect not allowed: 302/);
+    // One hop, not two: the whole point is that the chain was not walked.
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands a redirect back to the caller who asked to handle it", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 301,
+        headers: { location: "https://api.openai.com/v1/moved" },
+      }),
+    );
+
+    const response = await secureFetch("https://api.openai.com/v1/models", {
+      redirect: "manual",
+    });
+
+    // `manual` is only useful if the caller can still see where it was sent.
+    expect(response.status).toBe(301);
+    expect(response.headers.get("location")).toBe(
+      "https://api.openai.com/v1/moved",
+    );
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The positive control. Without it the two above would also pass if `error`
+  // and `manual` were treated exactly like `follow` and the walker simply threw
+  // on every response, so this is what makes them mean what they say.
+  it("still follows a redirect when the caller asks to follow it", async () => {
+    pluginFetchMock
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("followed"));
+
+    const response = await secureFetch("https://api.openai.com/v1/models", {
+      redirect: "follow",
+    });
+
+    expect(await response.text()).toBe("followed");
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("asks plugin-http to follow no redirects itself on every hop", async () => {
     pluginFetchMock.mockResolvedValue(new Response("ok"));
 

@@ -170,6 +170,7 @@ const followHttpsRedirects = async (
   init: RequestInit | undefined,
   startUrl: URL,
 ): Promise<Response> => {
+  const redirectMode = init?.redirect ?? "follow";
   const chain = {
     headers: requestHeaders(input, init),
     method: requestMethod(input, init),
@@ -213,11 +214,23 @@ const followHttpsRedirects = async (
         // request; `init` alone would drop them, and an HTTPS request that
         // ignored its abort signal would outlive the screen that started it.
         signal: init?.signal ?? requestSignal ?? undefined,
-        redirect: init?.redirect ?? "follow",
       },
     );
     const targetUrl = nextHopUrl(response, chain.url);
     if (!targetUrl) return response;
+
+    // The caller's redirect mode is decided here rather than handed to the
+    // plugin, which drops `RequestInit.redirect`. `manual` hands the redirect
+    // response back so the caller can read `Location` itself; `error` refuses
+    // it. Both used to be forwarded to a plugin that ignored them, so a caller
+    // asking for `redirect: "error"` — `gladia.utils.ts` does — silently got
+    // follow behaviour instead.
+    if (redirectMode === "manual") return response;
+    if (redirectMode === "error") {
+      throw new TypeError(
+        `Redirect not allowed: ${response.status} from ${chain.url.href} to ${targetUrl.href}`,
+      );
+    }
 
     const from = chain.url;
     const next = rewriteForRedirect(response.status, from, targetUrl, {
@@ -517,10 +530,12 @@ export const secureFetch: typeof globalThis.fetch = async (input, init) => {
     // `https://*`), enforced by `csp-capability.contract.test.ts`.
     // Redirects are explicitly confined so they cannot downgrade from HTTPS
     // to an insecure protocol or arbitrary non-HTTPS scheme.
-    const redirectMode = init?.redirect ?? "follow";
-    if (redirectMode === "manual" || redirectMode === "error") {
-      return tauriFetch(input, { ...init, redirect: redirectMode });
-    }
+    // All three redirect modes go through the hand-walked chain. The `manual`
+    // and `error` branches that used to sit here forwarded the mode to
+    // plugin-http, which ignores `RequestInit.redirect` and forwards only
+    // `maxRedirections` — so the mode was inert and a caller who asked not to
+    // follow redirects got them followed. `followHttpsRedirects` enforces the
+    // mode itself, so there is no path here that can only look correct.
     return followHttpsRedirects(input, init, url);
   }
   // Reject unsupported schemes (e.g. file:, data:) rather than forwarding

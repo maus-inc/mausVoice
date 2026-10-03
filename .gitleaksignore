@@ -1,8 +1,13 @@
 # This file is used as a Gitleaks *baseline* (fingerprint allowlist). Entries
 # MUST be finding FINGERPRINTS, not path globs. Path-based exclusions live in
 # gitleaks.toml under [allowlist].paths (node_modules / dist / target), which
-# Gitleaks actually honors. Leave this file empty (or with fingerprints only) so
-# it does not silently mask real findings.
+# Gitleaks actually honors, and it does not silently mask real findings -- but
+# only for a reader who checks. So to be plain about what this file is: it ships
+# exactly one fingerprint, and the entry below is not a secret. The honest
+# version of "leave this empty" is "every entry here must be justifiable in one
+# sentence", which is what the note under the entry does. An empty file would be
+# tidier and would fail the scan, because the finding it suppresses is real to
+# gitleaks.
 #
 # The fingerprint format is the one the pinned Gitleaks emits and matches,
 # `<commit>:<path>:<ruleID>:<line>`, taken from its own report. An earlier
