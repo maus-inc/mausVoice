@@ -537,13 +537,15 @@ describe("the trigger filter check compares executed paths to filter entries", (
     // Compiling `!**` as though it were a path pattern cannot match it, so the
     // exclusion used to be dropped silently rather than honoured.
     //
-    // Both paths name real files, so the fixture cannot drift away from the tree
-    // without this test noticing. Worth being precise about why that matters,
-    // because my first draft of this comment claimed something untrue:
-    // `executedSuites` adds any non-glob `*.test.mjs` token unconditionally and
-    // only the glob branch touches the filesystem, so an invented path does NOT
-    // leave the set empty and does NOT make the function return early. Only a
-    // glob naming a missing directory does that.
+    // Both paths here name real files. Nothing enforces that, and the first draft
+    // of this comment claimed it did: `executedSuites` adds any non-glob
+    // `*.test.mjs` token unconditionally and only the glob branch touches the
+    // filesystem, so an invented path does NOT leave the set empty and does NOT
+    // make the function return early -- only a glob naming a missing directory
+    // does that. So editing either path below to something that does not exist
+    // would leave this test passing, and the exclusion would then be exercised
+    // against a path no workflow runs. Stated here so the next reader does not
+    // rely on a drift guard that is not there.
     assert.deepStrictEqual(
       missingFromTriggerFilter(
         workflow(
