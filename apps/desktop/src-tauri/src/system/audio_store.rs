@@ -140,6 +140,46 @@ pub(crate) fn is_windows_reparse_point(_file: &std::fs::File) -> io::Result<bool
     Ok(false)
 }
 
+/// Turn a just-opened no-follow handle into a plain file handle, after proving
+/// on the handle that it is the node the caller is about to use.
+///
+/// One copy of the sequence, on purpose. The directory walk, the snapshot write
+/// and the snapshot read each need the same three answers — not a link, the
+/// right kind of node, and on Windows not a reparse point — and a security fix
+/// that lands in two of the three call sites is the failure this exists to
+/// prevent. `directory` selects which node type counts as a match; `operation`
+/// names what the caller is doing so the two rejections stay distinguishable in
+/// a log without being written out three times.
+fn into_proved_std_file(
+    handle: cap_std::fs::File,
+    directory: bool,
+    operation: &str,
+) -> io::Result<std::fs::File> {
+    let metadata = handle.metadata()?;
+    let node = if directory { "directory" } else { "file" };
+    let right_kind = if directory {
+        metadata.is_dir()
+    } else {
+        metadata.is_file()
+    };
+    if metadata.file_type().is_symlink() || !right_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Refusing to {operation} a linked or non-{node} managed audio node"),
+        ));
+    }
+
+    let handle = handle.into_std();
+    if is_windows_reparse_point(&handle)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("Refusing to {operation} a Windows reparse-point managed audio node"),
+        ));
+    }
+
+    Ok(handle)
+}
+
 /// Open one directory component below `parent` without following a link.
 ///
 /// `maybe_dir` also makes the Windows handle deny delete sharing, so Windows
@@ -154,16 +194,12 @@ fn open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Result<Dir> {
         .follow(FollowSymlinks::No)
         .maybe_dir(true);
     let child = parent.open_with(name, &options)?;
-    let metadata = child.metadata()?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(reject_managed_audio_reparse_point());
-    }
-    let child = child.into_std();
-    if is_windows_reparse_point(&child)? {
-        return Err(reject_managed_audio_reparse_point());
-    }
 
-    Ok(Dir::from_std_file(child))
+    Ok(Dir::from_std_file(into_proved_std_file(
+        child,
+        true,
+        "open as a managed audio directory",
+    )?))
 }
 
 /// Create `name` under `parent` if it is absent, then open it link-free. The
@@ -181,8 +217,7 @@ fn create_or_open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Res
 }
 
 /// Open `path` as a directory, creating the components that are missing, and
-/// refuse to descend through a link at or below the component that already
-/// exists.
+/// refuse to descend through a link at `path` itself or below it.
 ///
 /// A path is only a name until something is opened through it, and both
 /// `create_dir_all` and an ambient path open traverse whatever they meet, so a
@@ -192,32 +227,60 @@ fn create_or_open_dir_no_follow(parent: &Dir, name: impl AsRef<Path>) -> io::Res
 /// the missing ones are created by this call so they cannot already be links,
 /// and the one that was there has to be a real directory.
 ///
-/// What this closes: every component at and below the deepest one that already
-/// exists is proved to be a directory on the handle the caller is given, not on
-/// a name that was checked earlier, so a component swapped for a link after the
-/// check is refused rather than followed.
+/// The boundary is `path` itself, the managed root, and it is a boundary
+/// because that is the one directory the platform named for this app:
 ///
-/// What it does not close, deliberately: everything *above* that component is
-/// resolved once, because the app-data path the platform hands over may
-/// legitimately sit under a link — `/var` is one on macOS, and a user's home
-/// directory can be one. That is the limit of what a path alone can say: a link
-/// above the root and an attacker link above a root the attacker pre-created
-/// look identical, and telling them apart would need the intended root, which
-/// `app_data_dir()` does not carry. The residual is therefore one component
-/// resolution of the prefix above the managed root, and nothing below it.
+/// * A link **at** `path` is refused. No supported platform hands a symlink
+///   over as its app-data directory, so following one can only be a
+///   substitution of the app's own directory. The guard that used to make this
+///   conditional on `missing` being non-empty could not be right in either
+///   direction: the same configuration was followed when only the audio
+///   directory was missing and refused once that directory existed, so a
+///   substituted root worked on the first launch and failed on every one after.
+/// * A link **strictly above** `path` is resolved once, because that is the
+///   shape the platform itself can hand over — `/var` is one on macOS,
+///   `$XDG_DATA_HOME` and `~/.local` routinely are on Linux, and a relocated
+///   `~/Library` can be. Refusing those would mean the app cannot create its
+///   own audio directory on the machines it ships to, and the refusal buys
+///   nothing: a process able to substitute an ancestor of the app-data
+///   directory is already able to read and write every recording inside it.
+///
+/// What this closes: every component at and below the managed root is proved
+/// to be a directory on the handle the caller is given, not on a name that was
+/// checked earlier, so a component swapped for a link after the check is
+/// refused rather than followed.
+///
+/// What it does not close, deliberately: the prefix above the managed root is
+/// resolved once. That is the limit of what a path alone can say — a link the
+/// platform put there and an attacker link above a root the attacker
+/// pre-created look identical, and telling them apart would need the intended
+/// root, which `app_data_dir()` does not carry.
 fn open_dir_chain(path: &Path) -> io::Result<Dir> {
     let mut missing: Vec<&std::ffi::OsStr> = Vec::new();
     let mut cursor = path;
     let existing = loop {
         match fs::symlink_metadata(cursor) {
             Ok(metadata) => {
-                // A link is refused here whether or not anything below it is
-                // still missing. The guard used to require `missing` to be
-                // non-empty, which made a fully existing root — the ordinary
-                // case, because the platform hands over a path that is already
-                // there — the one shape that let a link through to be resolved.
                 if metadata.file_type().is_symlink() {
-                    return Err(reject_managed_audio_reparse_point());
+                    if cursor == path {
+                        // The managed root itself. Refused whatever is missing
+                        // below it.
+                        return Err(reject_managed_audio_reparse_point());
+                    }
+                    // Above the managed root, so it is resolved once and the
+                    // walk restarts from the resolved name. Restarting matters:
+                    // the components still to be created have to be created
+                    // under the resolved root, not re-created through the link
+                    // name — creating them by name is what a no-follow open
+                    // would refuse, and is where following the link back in.
+                    // `canonicalize` returns a name with no link left in it, so
+                    // the restarted walk lands on a real directory, and each
+                    // restart strictly shortens the path, so this terminates.
+                    let mut reanchored = fs::canonicalize(cursor)?;
+                    for name in missing.iter().rev() {
+                        reanchored.push(name);
+                    }
+                    return open_dir_chain(&reanchored);
                 }
                 if !metadata.is_dir() {
                     return Err(invalid_managed_audio_path(&format!(
@@ -351,23 +414,10 @@ pub fn save_transcription_audio(
         .create(true)
         .follow(FollowSymlinks::No);
     let audio_file = managed_directory.open_with(&file_name, &options)?;
-    let metadata = audio_file.metadata()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Refusing to overwrite a linked or non-file audio snapshot",
-        ));
-    }
-    let audio_file = audio_file.into_std();
-    if is_windows_reparse_point(&audio_file)? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Refusing to overwrite a Windows reparse-point audio snapshot",
-        ));
-    }
     // Truncate through the opened handle only after proving it is a regular
     // file. This prevents Windows' reparse-point semantics from turning a
     // no-follow open into a destructive overwrite.
+    let audio_file = into_proved_std_file(audio_file, false, "overwrite")?;
     audio_file.set_len(0)?;
     let mut writer = WavWriter::new(
         audio_file,
@@ -420,22 +470,7 @@ pub(crate) fn open_audio_file_for_read(
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     let audio_file = audio_dir.open_with(audio_file_name_for(transcription_id), &options)?;
-    let metadata = audio_file.metadata()?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Refusing to read a linked or non-file audio snapshot",
-        ));
-    }
-    let audio_file = audio_file.into_std();
-    if is_windows_reparse_point(&audio_file)? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "Refusing to read a Windows reparse-point audio snapshot",
-        ));
-    }
-
-    Ok(audio_file)
+    into_proved_std_file(audio_file, false, "read")
 }
 
 pub fn load_audio_samples(file: &mut std::fs::File) -> io::Result<(Vec<f32>, u32)> {
@@ -600,10 +635,13 @@ mod tests {
     // here: every test that touches it is `#[cfg(unix)]`, so a module-level
     // import is dead code on Windows and that lint job runs with `-D warnings`.
     use super::{
-        audio_file_name_for, delete_audio_file, open_audio_file_for_read,
+        audio_file_name_for, delete_audio_file, into_proved_std_file, open_audio_file_for_read,
         open_managed_audio_dir_at, AUDIO_DIR_NAME,
     };
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+    use cap_std::fs::{Dir, OpenOptions};
     use std::fs;
+    use std::io;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -739,6 +777,45 @@ mod tests {
         }
     }
 
+    /// The ids this app mints are UUIDs, so the derivation has to agree with
+    /// the sanitizer that named every recording before it, or an upgrade would
+    /// orphan the files it already wrote. `pre_upgrade_sanitize_id` is that
+    /// sanitizer, copied from the version this replaced, and the check runs
+    /// over the shapes a stored id can have rather than over one example: the
+    /// two agree only because every character of a UUID survives the old filter
+    /// *and* the whole of it is inside the self-describing alphabet.
+    #[test]
+    fn a_minted_id_keeps_the_name_the_pre_upgrade_sanitizer_gave_it() {
+        fn pre_upgrade_sanitize_id(id: &str) -> String {
+            let mut sanitized = id
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+                .collect::<String>();
+            if sanitized.is_empty() {
+                sanitized = "transcription".to_string();
+            }
+            sanitized
+        }
+
+        for id in [
+            "3f2a9c1e-4b7d-4e6f-8a1c-9d0e2f3a4b5c",
+            "00000000-0000-4000-8000-000000000000",
+            "ffffffff-ffff-4fff-bfff-ffffffffffff",
+            // Upper case, which `crypto.randomUUID` never produces but a
+            // restored backup or an id typed in by hand can be.
+            "3F2A9C1E-4B7D-4E6F-8A1C-9D0E2F3A4B5C",
+            // Short ids, which the old sanitizer also passed through untouched.
+            "1",
+            "42",
+        ] {
+            assert_eq!(
+                audio_file_name_for(id),
+                format!("{}.wav", pre_upgrade_sanitize_id(id)),
+                "{id:?} must resolve to the file an earlier build already wrote for it"
+            );
+        }
+    }
+
     /// `chars().all(..)` is vacuously true for an empty id, so the
     /// self-describing early return used to name that recording `.wav` — a
     /// hidden file — and skip the digest that keeps it apart from every other
@@ -766,28 +843,141 @@ mod tests {
         );
     }
 
-    /// A path is only a name until something is opened through it. The managed
-    /// root used to be built with `create_dir_all` and then opened by name, and
-    /// both traverse whatever they meet, so a replaced component moved every
-    /// later read, write and delete to wherever the link pointed.
+    /// The directory walk, the snapshot write and the snapshot read all refuse
+    /// the same three things, through one function so a fix cannot land in two
+    /// of them. What is pinned here is that the shared function still refuses
+    /// each of them: deleting a branch from `into_proved_std_file` makes the
+    /// matching assertion below fail. The Windows reparse bit is the fourth
+    /// branch and cannot be reached from this host, so it is pinned on Windows
+    /// by `windows_reparse_attributes_are_detected`.
+    mod shared_validation {
+        use super::*;
+
+        /// Open `name` through `dir` the way every call site does: no-follow,
+        /// so the handle names the link itself rather than its target.
+        fn open_no_follow(dir: &Dir, name: &str) -> io::Result<cap_std::fs::File> {
+            let mut options = OpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No);
+            dir.open_with(name, &options)
+        }
+
+        fn opened(dir: &Dir, name: &str) -> cap_std::fs::File {
+            open_no_follow(dir, name)
+                .unwrap_or_else(|err| panic!("{name} must be openable for the fixture: {err}"))
+        }
+
+        fn held_dir(root: &PathBuf) -> Dir {
+            Dir::open_ambient_dir(root, cap_std::ambient_authority())
+                .expect("the temporary directory must be openable as a capability")
+        }
+
+        /// On Unix a link is refused by the *open*, not by the metadata check:
+        /// `O_NOFOLLOW` answers `ELOOP` for a link, so `open_with` never returns
+        /// a handle to one and `into_proved_std_file` is never reached. That is
+        /// what makes the whole scheme work here, so it is pinned — and it is
+        /// why the link branch inside the shared function cannot be exercised
+        /// from this host. It is load-bearing on Windows, where a reparse point
+        /// opens successfully in no-follow mode and its generic file type can
+        /// still look like a directory; that branch is pinned there by
+        /// `windows_reparse_attributes_are_detected`.
+        #[cfg(unix)]
+        #[test]
+        fn a_link_is_refused_by_the_open_itself_on_unix() {
+            use std::os::unix::fs::symlink;
+
+            let root = TemporaryDirectory::create();
+            let target = root.0.join("secret.wav");
+            fs::write(&target, b"do not read").expect("fixture must be writable");
+            symlink(&target, root.0.join("linked.wav")).expect("link must be creatable");
+            let dir = held_dir(&root.0);
+
+            let opened = open_no_follow(&dir, "linked.wav");
+            assert!(
+                opened.is_err(),
+                "a no-follow open must not hand back a handle to a link: {opened:?}"
+            );
+            // The read path refuses for the same reason, which is why the test
+            // that covers it needs no fixture of its own shape.
+            let held_audio_dir = open_managed_audio_dir_at(&root.0).expect("managed dir");
+            assert!(open_audio_file_for_read(&held_audio_dir, "linked").is_err());
+        }
+
+        #[test]
+        fn the_wrong_kind_of_node_is_refused() {
+            let root = TemporaryDirectory::create();
+            fs::create_dir(root.0.join("a-directory")).expect("fixture must be creatable");
+            fs::write(root.0.join("a-file"), b"bytes").expect("fixture must be writable");
+            let dir = held_dir(&root.0);
+
+            assert!(
+                into_proved_std_file(opened(&dir, "a-directory"), false, "test").is_err(),
+                "a directory opened where a file is wanted must be refused"
+            );
+            assert!(
+                into_proved_std_file(opened(&dir, "a-file"), true, "test").is_err(),
+                "a file opened where a directory is wanted must be refused"
+            );
+        }
+
+        /// The positive control, so the rejections above cannot be satisfied by
+        /// a helper that refuses everything: the ordinary shapes still come
+        /// through, and each comes back as the node that was opened.
+        #[test]
+        fn a_regular_node_of_the_requested_kind_is_accepted() {
+            let root = TemporaryDirectory::create();
+            fs::create_dir(root.0.join("a-directory")).expect("fixture must be creatable");
+            fs::write(root.0.join("a-file"), b"bytes").expect("fixture must be writable");
+            let dir = held_dir(&root.0);
+
+            let file = into_proved_std_file(opened(&dir, "a-file"), false, "test")
+                .expect("a regular file asked for as a file must be accepted");
+            assert!(file.metadata().expect("metadata").is_file());
+            let directory = into_proved_std_file(opened(&dir, "a-directory"), true, "test")
+                .expect("a regular directory asked for as a directory must be accepted");
+            assert!(directory.metadata().expect("metadata").is_dir());
+        }
+    }
+
+    /// A link above the managed root, with the whole subtree below it still to
+    /// be created. This is the first run, and it is the only shape in which the
+    /// link is ever seen by the walk: `symlink_metadata` resolves every
+    /// component except the last, so as soon as anything below the link exists
+    /// the walk never reaches the link as a component of its own.
+    ///
+    /// It failed here. The walk refused the link because refusing *every* link
+    /// it met was the rule, which meant a symlinked `$XDG_DATA_HOME`, a
+    /// dotfile-managed `~/.local` and a relocated `~/Library` could create the
+    /// managed audio directory on no launch at all — and, because the refusal
+    /// did not depend on what was missing, the same layout started working the
+    /// moment a later launch created the child. Refusing the managed root and
+    /// resolving what is above it is one rule rather than two, and this is the
+    /// half of it that had no coverage at all.
     #[cfg(unix)]
     #[test]
-    fn a_link_in_the_managed_root_path_is_refused_rather_than_followed() {
+    fn a_link_above_a_managed_root_that_does_not_exist_yet_is_resolved_rather_than_refused() {
         use std::os::unix::fs::symlink;
 
         let base = TemporaryDirectory::create();
-        let outside = base.0.join("outside-root");
+        let outside = base.0.join("linked-home");
         fs::create_dir(&outside).expect("the link target must be creatable");
-        symlink(&outside, base.0.join("redirected")).expect("the redirect link must be creatable");
-        let app_data_dir = base.0.join("redirected").join("app-data");
+        symlink(&outside, base.0.join("home")).expect("the home link must be creatable");
+        // Nothing below the link exists yet: this is the first run.
+        let app_data_dir = base.0.join("home").join("app-data");
 
+        let held = open_managed_audio_dir_at(&app_data_dir).expect(
+            "a link above a managed root that does not exist yet is the platform's own shape, \
+             not a substitution of it",
+        );
+
+        assert!(held.dir_metadata().expect("held metadata").is_dir());
         assert!(
-            open_managed_audio_dir_at(&app_data_dir).is_err(),
-            "a managed root reached through a link must be refused, not followed"
+            outside.join("app-data").join(AUDIO_DIR_NAME).is_dir(),
+            "the subtree the walk had to create belongs under the resolved root, not under \
+             the link name and not beside it"
         );
         assert!(
-            !outside.join(AUDIO_DIR_NAME).exists(),
-            "a refused root must not create anything in the directory it pointed at"
+            !base.0.join("app-data").exists(),
+            "the resolved link target is the only place the managed directory may be created"
         );
     }
 
@@ -850,11 +1040,17 @@ mod tests {
     }
 
     /// The residual `open_dir_chain` accepts on purpose, pinned here so it
-    /// cannot be tightened by accident: only the component that is actually
-    /// opened is required not to be a link. A link *above* it is resolved,
-    /// because `/var` is one on macOS and a user's home directory can be one,
-    /// and refusing those would mean the app could not open its own directory
-    /// on the platforms it ships to.
+    /// cannot be tightened by accident: only the managed root itself and what is
+    /// below it are required not to be a link. A link *above* the managed root is
+    /// resolved, because `/var` is one on macOS, a symlinked `$XDG_DATA_HOME` and
+    /// `~/.local` routinely are on Linux, and a user's home directory can be one
+    /// anywhere — refusing those would mean the app could not open its own
+    /// directory on the platforms it ships to.
+    ///
+    /// This is the already-exists shape, where the walk resolves the prefix and
+    /// finds a real component on its first probe. The first-run shape, where the
+    /// walk has to resolve the link itself and then create the subtree, is
+    /// `a_link_above_a_managed_root_that_does_not_exist_yet_is_resolved_rather_than_refused`.
     #[cfg(unix)]
     #[test]
     fn a_link_above_the_managed_root_is_resolved_rather_than_refused() {
@@ -878,15 +1074,28 @@ mod tests {
         );
     }
 
+    /// The plain shape: several components are missing and every one of them is
+    /// created. There is no link anywhere in this chain, so the name says what
+    /// the test asserts — that the walk creates a missing root one component at a
+    /// time rather than handing `create_dir_all` the whole path.
+    ///
+    /// The chain-with-a-link shapes are the two tests above, one per side of the
+    /// boundary: a link above the managed root is resolved, and a link at the
+    /// managed root is refused.
     #[test]
-    fn a_missing_root_chain_is_created_without_traversing_a_link() {
+    fn a_missing_root_chain_is_created_one_component_at_a_time() {
         let base = TemporaryDirectory::create();
         let app_data_dir = base.0.join("a").join("b").join("c");
 
         let held = open_managed_audio_dir_at(&app_data_dir)
             .expect("a root that does not exist yet must still be creatable");
 
-        assert!(app_data_dir.join(AUDIO_DIR_NAME).is_dir());
+        for created in ["a", "a/b", "a/b/c", "a/b/c/transcription-audio"] {
+            assert!(
+                base.0.join(created).is_dir(),
+                "{created} must have been created as a real directory"
+            );
+        }
         assert!(
             held.dir_metadata().expect("held metadata").is_dir(),
             "the managed capability must be the directory that was created"

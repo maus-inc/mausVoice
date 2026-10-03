@@ -28,17 +28,29 @@ impl MacosPill {
     /// Both failures are real: a poisoned lock means another thread panicked
     /// while holding the sender, and a closed channel means the pill is gone.
     /// Either way the message was not delivered, so the caller is told.
+    ///
+    /// A closed channel is also the only trustworthy end-of-pill signal the
+    /// desktop side has, so it is where the pill is retired — see
+    /// [`MacosPill::retire`] for why the out channel cannot be that signal.
     fn send(&self, msg: InMessage) -> Result<(), String> {
-        let sender = self
-            .sender
-            .lock()
-            .map_err(|_| "macOS pill channel is poisoned".to_string())?;
-        let sender = sender
-            .as_ref()
-            .ok_or_else(|| "macOS pill is no longer running".to_string())?;
-        sender
-            .send(msg)
-            .map_err(|_| "macOS pill is no longer receiving messages".to_string())
+        // The lock is released before the failure is handled: `retire` takes
+        // the same one and `std::sync::Mutex` is not reentrant.
+        let delivered = {
+            let sender = self
+                .sender
+                .lock()
+                .map_err(|_| "macOS pill channel is poisoned".to_string())?;
+            let sender = sender
+                .as_ref()
+                .ok_or_else(|| "macOS pill is no longer running".to_string())?;
+            sender.send(msg).is_ok()
+        };
+        if !delivered {
+            self.retire();
+            return Err("macOS pill is no longer receiving messages".to_string());
+        }
+
+        Ok(())
     }
 
     /// Send a message whose sender has nothing to do about a failure. The
@@ -56,15 +68,28 @@ impl MacosPill {
 
     /// Report the pill as gone and take the sender out.
     ///
-    /// The pill thread owns the receiver, so the channel closing is the end of
-    /// the pill. The managed state outlives it, and leaving the sender
-    /// installed meant every later update failed one message at a time while
-    /// the frontend went on treating the native pill as available: the
-    /// position commands kept reporting a pill they could not reach, and the
-    /// other notifiers looked as delivered when nothing was. Clearing the
-    /// sender is what makes one state answer both questions. The warning flag
-    /// goes with it, because the failure is reported here — a later update
-    /// that finds no sender is expected and stays at debug.
+    /// The pill's own receiver is `in_rx`, handed to `app::run_embedded` on the
+    /// main thread, and it is dropped when the pill's run loop dies. That
+    /// disconnect is the end of the pill, and [`MacosPill::send`] retires here
+    /// because it is the only observer of it that can fire while the app runs.
+    ///
+    /// The reader thread in `start_out_reader` cannot be: it waits on `out_rx`,
+    /// whose only `Sender` was handed to `ipc::set_out_sender`, which stores it
+    /// in a `thread_local!` on the main thread (`try_create_native_overlays`
+    /// calls `rust_macos_pill::start` there). That sender is dropped when the
+    /// main thread exits, so `out_rx.recv()` never returns during the app's
+    /// life. Hooking retirement to it — which is what this used to do — left the
+    /// hook unreachable and the managed state holding a sender that could never
+    /// be cleared.
+    ///
+    /// The managed state outlives the pill, and leaving the sender installed
+    /// meant every later update failed one message at a time while the frontend
+    /// went on treating the native pill as available: the position commands
+    /// kept reporting a pill they could not reach, and the other notifiers
+    /// looked as delivered when nothing was. Clearing the sender is what makes
+    /// one state answer both questions. The warning flag goes with it, because
+    /// the failure is reported here — a later update that finds no sender is
+    /// expected and stays at debug.
     fn retire(&self) {
         if let Ok(mut sender) = self.sender.lock() {
             sender.take();
@@ -301,13 +326,12 @@ fn start_out_reader(app: tauri::AppHandle, rx: mpsc::Receiver<OutMessage>) {
                 }
             }
         }
-        // The pill thread holds the receiver, so this loop ending is the pill
-        // ending. Clear the sender before logging it, so a notify that races
-        // this thread reports the pill as gone rather than failing on a closed
-        // channel while the frontend still believes it is available.
-        if let Some(pill) = app.try_state::<std::sync::Arc<MacosPill>>() {
-            pill.retire();
-        }
-        log::info!("Native macOS pill channel closed");
+        // The out channel closing is not the pill ending: its only `Sender` lives
+        // in a `thread_local!` on the main thread, so this loop normally only
+        // unwinds while the app is shutting down. The pill's own lifetime is
+        // observed in `MacosPill::send`, off the in-channel disconnect. Keep
+        // this as the teardown log it actually is, rather than a second and
+        // unreachable retirement hook.
+        log::info!("Native macOS pill out channel closed");
     });
 }
