@@ -90,14 +90,48 @@ function executedSuites(workflowsText, repoRoot) {
 // A `paths:` entry that names a whole directory, so it covers every suite under
 // it and is not an omission. No `g` flag: `.test` on a global regex carries
 // `lastIndex` between calls, and this is called once per workflow.
-const WHOLE_DIR_PATTERNS = [
-  /^\s*-\s*["']?scripts\/ci\/\*\*["']?\s*$/m,
-  /^\s*-\s*["']?scripts\/\*\*["']?\s*$/m,
-  /^\s*-\s*["']?\*\*["']?\s*$/m,
-  /^\s*-\s*["']?\.github\/\*\*["']?\s*$/m,
-];
-
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// The `paths:` entries of a workflow, as the patterns they are written in.
+// (This replaces a fixed list of "a whole directory" patterns, which had to be
+// kept in step with the matcher below by hand and drifted: one of the four
+// exempted the whole check for a directory that covered no suite.)
+//
+// A `paths:` filter is a glob list, so an entry is matched as one rather than
+// compared to a suite path as a string. Both of the halves of that matter, and
+// each of them was a way this check reported a correct workflow:
+//
+//   * `scripts/ci/**` covers `scripts/ci/foo.test.mjs`, and reading entries as
+//     literals called every suite in the tree an omission.
+//   * `.github/**` covers no path under `scripts/ci` at all, and treating any one
+//     entry as an exemption switched the check off for the whole file. A
+//     workflow carrying it and running a suite from `scripts/ci` had a real
+//     omission reported as none.
+//
+// So the two decisions collapse into one: glob the entry against the suite path
+// and let the matcher decide. There is no separate list of "exempt" patterns to
+// keep consistent with the matcher, which is the class of bug this file exists
+// to catch.
+function pathsEntries(text) {
+  const lines = text.split("\n");
+  const entries = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*paths:\s*$/.test(lines[index])) continue;
+    for (let scan = index + 1; scan < lines.length; scan += 1) {
+      const line = lines[scan];
+      // A list item of this block, or a deeper one -- `paths:` at four spaces
+      // puts its items at six, and a workflow is free to indent further.
+      const item = /^\s*-\s*(.+?)\s*$/.exec(line);
+      if (item) {
+        entries.push(item[1].replace(/^["']|["']$/g, ""));
+        continue;
+      }
+      // A line at or left of the `paths:` key, or a non-item sibling of one,
+      // ends the block. Blanks and comments sit inside blocks and do not.
+      if (line.trim() === "" || /^\s*#/.test(line)) continue;
+      if (/^\s*-\s/.test(line) || /^\s*\S/.test(line)) break;
+    }
+  }
+  return entries;
+}
 
 // The suites one workflow runs that its own `paths:` filter does not name.
 //
@@ -119,16 +153,11 @@ function missingFromTriggerFilter(text, repoRoot) {
   if (!/^\s*paths:\s*$/m.test(text)) return [];
   const executed = executedSuites(text, repoRoot);
   if (executed.size === 0) return [];
-  // Tested once rather than per suite, because none of the four says anything
-  // about any individual suite: they are a property of the file, and iterating
-  // them per suite only made that read as a per-suite check.
-  if (WHOLE_DIR_PATTERNS.some((pattern) => pattern.test(text))) return [];
+  // One matcher for the whole filter, because the question is per suite and not
+  // per entry: a suite is missing when no entry in any block names it.
+  const matchers = pathsEntries(text).map((entry) => globToRegExp(entry));
   return [...executed].filter(
-    (path) =>
-      !new RegExp(
-        `^\\s*-\\s*["']?${escapeRegExp(path)}["']?\\s*$`,
-        "m",
-      ).test(text),
+    (path) => !matchers.some((matcher) => matcher.test(path)),
   );
 }
 
@@ -467,9 +496,14 @@ describe("the trigger filter check compares executed paths to filter entries", (
   });
 
   it("exempts a filter that names any whole directory it could run", () => {
-    // One pattern per case, because the exemption is four independent literals
+    // One pattern per case, because the exemption is three independent literals
     // and a refactor that kept only the first would otherwise stay green.
-    for (const pattern of ["scripts/ci/**", "scripts/**", "**", ".github/**"]) {
+    //
+    // `.github/**` is not among them and cannot be: it matches no path under
+    // `scripts/ci`, so a workflow carrying it and running a suite from there has
+    // a real omission. `format-and-i18n.yml` lists it in both `paths:` blocks
+    // today, so the shape is already in this tree -- it only runs no suite yet.
+    for (const pattern of ["scripts/ci/**", "scripts/**", "**"]) {
       assert.deepStrictEqual(
         missingFromTriggerFilter(
           workflow(
@@ -482,6 +516,90 @@ describe("the trigger filter check compares executed paths to filter entries", (
         `${pattern} covers every suite in scripts/ci`,
       );
     }
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        workflow(
+          [".github/**"],
+          "node --test scripts/ci/windows-tauri-imports.test.mjs",
+        ),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "a `.github/**` entry covers no suite in scripts/ci, so it is not an " +
+        "exemption -- and one entry must not switch the check off for the file",
+    );
+  });
+
+  it("reads a paths entry that is a glob rather than the exact suite path", () => {
+    // GitHub's `paths:` filter is a glob list, so a workflow is entitled to name
+    // its suites by pattern. Reading only an exact-path line reported a legal
+    // filter as missing the suite, which is the false-positive direction: the
+    // only fix available to the reader is to widen the entry past what they
+    // meant, or to delete the guard.
+    //
+    // `*.test.mjs` is the control that keeps this from becoming a substring
+    // match: GitHub's `*` does not cross a separator, so a top-level-only glob
+    // genuinely does not cover `scripts/ci/`, and the guard has to say so.
+    for (const entry of [
+      "scripts/ci/*.test.mjs",
+      "**/windows-tauri-imports.test.mjs",
+      "scripts/ci/windows-tauri-imports.*",
+      "**/*.test.mjs",
+    ]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(
+          workflow([entry], "node --test scripts/ci/windows-tauri-imports.test.mjs"),
+          scanRoot,
+        ),
+        [],
+        `a filter naming ${JSON.stringify(entry)} covers the suite and is not an omission`,
+      );
+    }
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        workflow(["*.test.mjs"], "node --test scripts/ci/windows-tauri-imports.test.mjs"),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "`*` does not cross a separator in a GitHub path filter, so a top-level " +
+        "glob does not cover scripts/ci",
+    );
+  });
+
+  it("reads only the entries of a paths block, not every list item in the file", () => {
+    // `paths-ignore` is the inverse filter: a suite named there is one the
+    // workflow is written not to start for. Counting it as coverage would make
+    // the guard report "not missing" for a workflow that skips the suite
+    // entirely, which is the direction that reassures.
+    const text = [
+      "on:",
+      "  push:",
+      "    paths:",
+      '      - "scripts/**"',
+      "    paths-ignore:",
+      '      - "scripts/ci/windows-tauri-imports.test.mjs"',
+      "jobs:",
+      "  unit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+      "",
+    ].join("\n");
+    // `scripts/**` covers the suite, so the workflow is not missing an entry --
+    // but only because of the `paths:` block. The `paths-ignore:` item must not
+    // be what decided it, which is what the next case pins.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(text, scanRoot),
+      [],
+      "the paths block covers the suite, so this workflow is not missing it",
+    );
+    const ignored = text.replace('      - "scripts/**"\n', "");
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(ignored, scanRoot),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "a paths-ignore entry is not coverage: with no paths entry, the suite is " +
+        "still an omission",
+    );
   });
 
   it("one paths block naming the directory covers a second, narrower block", () => {
