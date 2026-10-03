@@ -8,13 +8,10 @@ const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 // boundary between the leading `c` and the `s`.
 const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
-// The secret labels this file recognises in a plain string, as opposed to the
-// broader `isSecretKey` check that gates object keys. Widening this to match
-// `isSecretKey` is not a one-line change: the capture groups are positional, so
-// a prefix inside the alternation shifts them and every `.replace` callback
-// silently receives the wrong arguments. `secret_key` and `my_secret` are
-// recognised as object keys and not as string labels; closing that gap means
-// giving the label its own capture group and re-testing all three passes.
+// The secret labels this file recognises in a plain string. Deliberately
+// narrower than the `isSecretKey` check that gates object keys -- `secret_key`
+// and `my_secret` are recognised there and not here -- and the reason it cannot
+// simply be widened is at `TOKEN_SHAPED_SECRET_ALIASES`, with the gap named.
 const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|password|passwd|pwd|credential|secret)\b"?`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
@@ -24,30 +21,6 @@ const LABELED_SECRET_QUOTED = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*${QUOTED_SECRET_VALUE}`,
   "gi",
 );
-/**
- * Labels whose value is free-form: a passphrase or a key blob, which routinely
- * contains whitespace and may span lines.
- *
- * This is a fact about the credential's format, not a preference about how much
- * prose to sacrifice. A `Bearer`/`Basic` credential and a provider API key are
- * single tokens by construction, so for `api_key`, `access_token`,
- * `refresh_token`, `id_token` and `session_token` the one token after the label
- * IS the whole credential and stopping at the space leaks nothing. A passphrase
- * and a PEM key are not: `password: correct horse battery staple` and a
- * multi-line `private_key` have a space in them, and reading only the first word
- * put the rest of the credential in the clear directly beside a marker saying
- * it had been redacted.
- *
- * Compared the way `isSecretKey` compares -- separators and quotes stripped --
- * so `client_secret`, `clientSecret` and `"private-key"` all reach the same
- * answer. The quotes matter because `SECRET_LABEL` lets the label itself be
- * quoted, which is how a JSON body arrives.
- *
- * A new label is a decision, not a default: adding one to `SECRET_LABEL` alone
- * extends the set of things recognised as secret while leaving it a single
- * token, which is right for a token and wrong for a passphrase. Adding it here
- * as well is what makes a multi-word value of that label redact whole.
- */
 
 // The scheme words, shared by the two labelled passes so the one that redacts
 // and the one that judges a placeholder cannot drift apart, and exported because
@@ -307,29 +280,29 @@ const isSecretKey = (key: string): boolean => {
 };
 
 /**
- * The secret aliases whose value is free-form: a passphrase or a key blob,
- * which routinely contains whitespace and may span lines.
+ * The secret aliases whose value is a single token, so the one token after the
+ * label is the whole credential.
  *
- * The other secret aliases are single tokens by construction -- an API key is
- * one word, an OAuth bearer is one word -- so for those the one token after the
- * label IS the whole credential and stopping at the space leaks nothing. A
- * passphrase and a PEM key are not: `password: correct horse battery staple`
- * and a multi-line `private_key` have spaces in them, and reading only the
- * first word put the rest of the credential in the clear directly beside a
- * marker saying it had been redacted.
+ * An API key is one word by construction and an OAuth bearer is one word by
+ * construction, so stopping at the space for those leaks nothing. A passphrase
+ * and a PEM key are not: `password: correct horse battery staple` and a
+ * multi-line `private_key` have spaces in them, and reading only the first word
+ * put the rest of the credential in the clear directly beside a marker saying it
+ * had been redacted. Those are the ones `isFreeFormSecretLabel` excludes from
+ * this set.
  *
- * Derived as the aliases that are NOT token-shaped rather than listed, because
- * the free-form set is a strict subset of `SECRET_KEY_ALIASES` and writing it
- * out repeated eight of those names. A new alias added above lands on the right
- * side of this line by construction instead of by a second edit nobody
+ * Stated as the complement rather than as a list of the free-form names,
+ * because the free-form set is a strict subset of `SECRET_KEY_ALIASES` and
+ * listing it repeated eight of those names. A new alias added above lands on the
+ * right side of this line by construction instead of by a second edit nobody
  * remembers.
  *
- * The result has to stay a subset of what `SECRET_LABEL` matches, or these
- * labels never reach this predicate: a label the pattern does not match is not
- * recognised at all. `isSecretKey` accepts more names than `SECRET_LABEL` does
- * (`secret_key`, `my_secret`, `credentials`), which is a real gap in the string
- * form of this scrubber and a separate piece of work -- it needs the label given
- * its own capture group, since these patterns take their arguments positionally.
+ * The result has to stay a subset of what `SECRET_LABEL` matches, or those
+ * labels never reach this predicate at all: a label the pattern does not match
+ * is not recognised in a string. `isSecretKey` accepts more names than
+ * `SECRET_LABEL` does, which is a real gap in the string form of this scrubber
+ * and a separate piece of work -- it needs the label given its own capture
+ * group, since these patterns take their arguments positionally.
  */
 const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   "apikey",
