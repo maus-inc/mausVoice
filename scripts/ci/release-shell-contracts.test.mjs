@@ -155,6 +155,33 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  it("secret-scan's policy-resolution note is placed where a reader will find it, and agrees with the code", () => {
+    // The 38-line rationale for the resolver is the only record of why `-c` on
+    // this repository's base policy detects nothing. It drifted twice: it sat
+    // inside the comment run of the "Strip an untrusted baseline" step, so it read
+    // as that step's documentation, and its last sentence still promised "the
+    // warning below" for the inert case after the code had started emitting
+    // `::error::` and `exit 1` for it. Both are comment-only faults, which is
+    // exactly why they need pinning -- nothing else in the suite can see them,
+    // and a mutation restoring the stale sentence leaves every test green.
+    const scan = read(".github/workflows/secret-scan.yml");
+    const noteAt = scan.indexOf("TRUSTED POLICY RESOLUTION");
+    const checkoutAt = scan.indexOf("- name: Checkout trusted scanner policy");
+    assert.ok(noteAt !== -1, "the policy-resolution note must exist");
+    assert.ok(
+      noteAt < checkoutAt,
+      "the policy-resolution note must sit above the trusted-policy checkout, " +
+        "not inside the comment run of a later step where it reads as that " +
+        "step's documentation",
+    );
+    assert.doesNotMatch(
+      scan,
+      /honest state is the warning below/,
+      "the note must not promise a warning for the inert case: the resolver " +
+        "emits ::error:: and exits 1 for it, so there is no warning to promise",
+    );
+  });
+
   it("secret-scan resolves its policy two ways, refuses an inert one, and never from the scanned tree", () => {
     // Two resolvers, not three. An intermediate version had a middle case -- pass
     // no `-c` at all when the trusted policy lacked the updater-key rule -- on the
@@ -229,16 +256,25 @@ describe("release workflow shell contracts", () => {
       // cannot detect anything, and the fixture at "Prove a built-in detector is
       // active" does not help either because it deliberately runs with no config.
       //
-      // Both halves of the proof are required, because each alone is fooled by a
-      // shape that occurs in real configs: `[[rules]]` alone rejects a policy that
-      // legitimately only extends the defaults, and a bare search for
+      // One property, not two. The previous version of this file asserted two,
+      // and that is where the error was: `[[rules]]` proves the ruleset is
+      // NON-EMPTY, which is not the same as proving the scan has any coverage.
+      // `-c` replaces the built-in rules, so a policy carrying one narrow
+      // `[[rules]]` table and no `[extend]` scans the whole range with that
+      // single regex and roughly 180 detectors switched off -- the same blind
+      // green as an empty policy, only narrower, passing a check whose error
+      // message talked about coverage. So a `[[rules]]` table must NOT be
+      // accepted as proof of anything here.
+      //
+      // What remains is one positive proof, scoped tightly: `useDefault = true`
+      // inside an `[extend]` body terminated by the next table header. The
+      // scoping is load-bearing rather than decorative, because a bare search for
       // `useDefault = true` is satisfied by the word appearing inside a
       // `description` string or inside `[allowlist]`, where Gitleaks ignores it.
-      // Matching inside an `[extend]` body terminated by the next table header is
-      // what excludes both.
       assert.ok(
-        run.includes("grep -qE '^[[:space:]]*\\[\\[rules\\]\\]'"),
-        `${step.name} must accept a [[rules]] table as one proof of an active ruleset`,
+        !run.includes("grep -qE '^[[:space:]]*\\[\\[rules\\]\\]'"),
+        `${step.name} must not treat a [[rules]] table as proof of coverage: -c ` +
+          "replaces the built-in detectors rather than adding to them",
       );
       assert.ok(
         run.includes("in_extend && /^[[:space:]]*useDefault"),
