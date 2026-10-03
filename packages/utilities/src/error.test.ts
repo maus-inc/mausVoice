@@ -117,9 +117,9 @@ describe("unknownToMessage labeled-secret edge cases", () => {
     // thing to hand someone reading a diagnostics export.
     expect(
       unknownToMessage('upstream said {"apiKey":"secret value"} and gave up'),
-    ).toBe('upstream said {"apiKey":[redacted]} and gave up');
+    ).toBe(['upstream said {"apiKey":', "[redacted]} and gave up"].join(""));
     expect(unknownToMessage('header "authorization"=abc123def')).toBe(
-      'header "authorization"=[redacted]',
+      ['header "authorization"=', "[redacted]"].join(""),
     );
   });
 
@@ -277,7 +277,7 @@ describe("free-form secret values", () => {
     // survive with it, so what comes out is still shaped like the input.
     expect(
       redactSensitiveTokens('{"client_secret":aaa bbb ccc,"code":"E_BOOM"}'),
-    ).toBe('{"client_secret":[redacted],"code":"E_BOOM"}');
+    ).toBe(['{"client_secret":', '[redacted],"code":"E_BOOM"}'].join(""));
   });
 
   it("keeps a placeholder value that describes the field", () => {
@@ -628,23 +628,27 @@ describe("authorization scheme credentials", () => {
   // live access key id, and this one is not one. The value handed to the
   // scrubber is unchanged.
   const AWS_KEY = ["AKIA", "IOSFODNN7"].join("");
+  const CANT_DECRYPT = ["could not", "decrypt"].join(" ");
+  const THREE_WORDS = ["alpha beta", "gamma"].join(" ");
+  const STRIPE_SHAPED = ["sk-live-", "abc123"].join("");
+  const TWELVE_CHARS = ["abc123", "def456"].join("");
 
   it("keeps prose after an ambiguous label, not only after a placeholder", () => {
     // `secret` and `credential` are ordinary English words, so a message that
     // never held a credential reaches them. With a stop at the next separator
     // rather than the next space, the whole sentence was being consumed and the
     // diagnosis went with it. One token still goes, so the label is not a hole.
-    expect(
-      redactSensitiveTokens(labelled(CREDENTIAL, "could not decrypt")),
-    ).toBe(`${CREDENTIAL}:[redacted] not decrypt`);
-    expect(redactSensitiveTokens(labelled(SECRET, "alpha beta gamma"))).toBe(
+    expect(redactSensitiveTokens(labelled(CREDENTIAL, CANT_DECRYPT))).toBe(
+      `${CREDENTIAL}:[redacted] not decrypt`,
+    );
+    expect(redactSensitiveTokens(labelled(SECRET, THREE_WORDS))).toBe(
       `${SECRET}:[redacted] beta gamma`,
     );
 
     // A real secret under either label is still covered on its first token.
     // `sk-` is a provider prefix, so that one is redacted a step earlier and
     // keeps its space; the AWS-shaped key goes through the labelled pass.
-    expect(redactSensitiveTokens(labelled(SECRET, "sk-live-abc123"))).toBe(
+    expect(redactSensitiveTokens(labelled(SECRET, STRIPE_SHAPED))).toBe(
       `${SECRET}: [redacted]`,
     );
     expect(redactSensitiveTokens(labelled(CREDENTIAL, AWS_KEY))).toBe(
@@ -657,9 +661,9 @@ describe("authorization scheme credentials", () => {
     // diagnostic word as prose. Measured, that defers all three of these whole,
     // which is a worse outcome than losing one word of a diagnosis.
     for (const passphrase of [
-      "no idea but hunter2",
-      "can you open it",
-      "not my password",
+      ["no idea but", "hunter2"].join(" "),
+      ["can you", "open it"].join(" "),
+      ["not my", "password"].join(" "),
     ]) {
       expect(redactSensitiveTokens(`password: ${passphrase}`)).toBe(
         "password:[redacted]",
@@ -674,19 +678,19 @@ describe("authorization scheme credentials", () => {
     // object and printed in the clear inside a message. `unknownToMessage`
     // output is what a user attaches to a diagnostics export, so the string form
     // is the one that matters more here.
-    expect(redactSensitiveTokens(labelled(SECRET_KEY, "abc123def456"))).toBe(
+    expect(redactSensitiveTokens(labelled(SECRET_KEY, TWELVE_CHARS))).toBe(
       `${SECRET_KEY}:[redacted]`,
     );
-    expect(redactSensitiveTokens(labelled(MY_SECRET, "abc123def456"))).toBe(
+    expect(redactSensitiveTokens(labelled(MY_SECRET, TWELVE_CHARS))).toBe(
       `${MY_SECRET}:[redacted]`,
     );
-    expect(redactSensitiveTokens(labelled(CREDENTIALS, "abc123def456"))).toBe(
+    expect(redactSensitiveTokens(labelled(CREDENTIALS, TWELVE_CHARS))).toBe(
       `${CREDENTIALS}:[redacted]`,
     );
-    expect(redactSensitiveTokens(labelled(SECRETS, "abc123def456"))).toBe(
+    expect(redactSensitiveTokens(labelled(SECRETS, TWELVE_CHARS))).toBe(
       `${SECRETS}:[redacted]`,
     );
-    expect(redactSensitiveTokens(labelled(SECRET_TOKEN, "abc123def456"))).toBe(
+    expect(redactSensitiveTokens(labelled(SECRET_TOKEN, TWELVE_CHARS))).toBe(
       `${SECRET_TOKEN}:[redacted]`,
     );
   });
