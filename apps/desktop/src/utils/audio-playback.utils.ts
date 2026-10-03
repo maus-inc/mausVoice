@@ -101,6 +101,16 @@ const startSourceAt = (
 };
 
 export const stopActivePlayback = (reason: PlaybackStopReason): void => {
+  // A stop is a claim on the generation as well as on whatever is playing.
+  // `playWebAudio` publishes `activePlayback` only once every await has
+  // settled, so a stop pressed while it is still suspended — inside
+  // `resume()`, or waiting on a previous context to close — finds nothing to
+  // tear down and used to return early. Advancing the generation is what tells
+  // that suspended call it has been superseded: the guard it checks on
+  // resumption still compared equal otherwise, so the audio started playing
+  // after the user had asked for it to stop.
+  playbackGeneration += 1;
+
   const current = activePlayback;
   if (!current) {
     return;
@@ -172,8 +182,11 @@ export const playWebAudio = async (
   onStop: (reason: PlaybackStopReason) => void,
   startProgress = 0,
 ): Promise<void> => {
-  const generation = ++playbackGeneration;
+  // Replacing the previous playback first, and reading the generation after it,
+  // because that stop advances the generation itself. Capturing it beforehand
+  // would make every call supersede its own request.
   stopActivePlayback("replaced");
+  const generation = ++playbackGeneration;
   if (closingContext) {
     await closingContext;
     if (generation === playbackGeneration) {

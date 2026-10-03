@@ -21,6 +21,13 @@ export const TERMINAL_CLIENT_STATUSES: ReadonlySet<number> = new Set([
  */
 export const MAX_RETRY_AFTER_MS = 30_000;
 
+/**
+ * RFC 9110 `delta-seconds`, spelled `1*DIGIT`. Anchored on purpose: the shape
+ * has to be the whole header value, so `Number` is only ever asked to read a
+ * string that is already known to be a run of decimal digits.
+ */
+const DELTA_SECONDS = /^\d+$/;
+
 export const isTerminalHttpStatus = (status: number): boolean =>
   TERMINAL_CLIENT_STATUSES.has(status);
 
@@ -57,11 +64,18 @@ export const parseRetryAfterMs = (
   if (!value) {
     return null;
   }
-  const seconds = Number(value);
+  // RFC 9110 spells the numeric form `delay-seconds = 1*DIGIT`, a run of digits
+  // and nothing else. `Number` is far wider than that grammar: it also reads a
+  // decimal ("1.5"), an exponent ("1e3"), a hex literal ("0x10") and a signed
+  // value ("+5") as seconds, so a header the server never sent as a delay
+  // became a delay to obey. Anything outside the grammar is handed to the
+  // HTTP-date branch below instead, which returns null for a header that is
+  // neither form and so leaves the caller on its own backoff. The digit run is
+  // tested first deliberately — it is also how a four-digit value like "3600"
+  // stays a capped half-minute rather than becoming the year 3600.
+  const seconds = DELTA_SECONDS.test(value) ? Number(value) : Number.NaN;
   if (Number.isFinite(seconds)) {
-    // A negative delta is not a date, and V8 parses it as one, so reject it
-    // here instead of falling through to a bogus "retry immediately".
-    return seconds < 0 ? null : Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
   }
   const targetMs = Date.parse(value);
   if (!Number.isFinite(targetMs) || targetMs <= now) {

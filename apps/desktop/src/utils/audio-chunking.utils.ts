@@ -115,7 +115,8 @@ export const createAudioChunkPump = ({
         break;
       }
 
-      const chunk = padChunkIfNeeded(drainSamples(chunkSize), force);
+      const drained = drainSamples(chunkSize);
+      const chunk = padChunkIfNeeded(drained, force);
       if (chunk.length === 0) {
         break;
       }
@@ -125,6 +126,14 @@ export const createAudioChunkPump = ({
         sendChunk(chunk, isLastChunk);
         sentTerminal = isLastChunk;
       } catch (error) {
+        // The samples left the queue before they went on the wire, so a failed
+        // send is a silent drop: the socket can recover, and the audio in hand
+        // is the only copy there is. Restoring them in front of the queue is
+        // what lets the next flush carry them instead of silence. They go back
+        // unpadded, because the padding is a send-time artefact and putting it
+        // back would inflate the buffered count a little more on every retry.
+        pendingChunks.unshift(drained);
+        pendingSampleCount += drained.length;
         onError(error);
         break;
       }

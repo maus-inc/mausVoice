@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  activePlayback,
   clampPlaybackProgress,
   formatDuration,
   playWebAudio,
@@ -84,5 +85,64 @@ describe("audio source cleanup", () => {
     expect(seekPlayback(0.5)).toBe(true);
     expect(original.disconnect).toHaveBeenCalledOnce();
     expect(replacement.start).toHaveBeenCalledWith(0, 0.5);
+  });
+
+  it("does not start audio for a stop pressed while the context was resuming", async () => {
+    // `playWebAudio` publishes `activePlayback` only after every await has
+    // settled, so a stop pressed inside that window finds nothing to tear down
+    // and returns early. The generation counter is the only thing that can tell
+    // the suspended call it has been superseded — and the guard it checks on
+    // resumption still compares equal unless the stop advanced it, which let
+    // the audio start after the user had already pressed stop.
+    let releaseResume = (): void => {};
+    const resumed = new Promise<void>((resolve) => {
+      releaseResume = resolve;
+    });
+    const start = vi.fn();
+    const source = {
+      stop: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      start,
+      onended: null,
+    };
+    vi.stubGlobal("window", {
+      requestAnimationFrame: vi.fn(() => 1),
+      cancelAnimationFrame: vi.fn(),
+    });
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "suspended";
+        currentTime = 0;
+        destination = {};
+        createBufferSource = () => source;
+        createBuffer() {
+          return { duration: 1, getChannelData: () => new Float32Array(2) };
+        }
+        resume() {
+          return resumed;
+        }
+        close() {
+          return Promise.resolve();
+        }
+      },
+    );
+
+    const playing = playWebAudio(
+      "t1",
+      { samples: [0, 0], sampleRate: 16000 },
+      vi.fn(),
+      vi.fn(),
+    );
+    // Parked inside `resume()`: nothing is active yet, so this is the window the
+    // stop has to be honoured in.
+    expect(activePlayback).toBeNull();
+    stopActivePlayback("stopped");
+    releaseResume();
+    await playing;
+
+    expect(start).not.toHaveBeenCalled();
+    expect(activePlayback).toBeNull();
   });
 });

@@ -40,6 +40,26 @@ describe("parseRetryAfterMs", () => {
     expect(parseRetryAfterMs("soon")).toBeNull();
     expect(parseRetryAfterMs("-5")).toBeNull();
   });
+
+  it("refuses a number that delta-seconds does not allow", () => {
+    // RFC 9110 spells the numeric form `delay-seconds = 1*DIGIT`: a run of
+    // digits and nothing else. `Number` is far wider than that grammar — it
+    // also reads a decimal, an exponent, a hex literal and a signed value as
+    // seconds — so a header the server did not send as a delay-seconds value
+    // became a delay to obey. Each of these is a malformed hint, and a
+    // malformed hint is what returns null and leaves the caller on its own
+    // backoff rather than parking on a number nobody chose.
+    expect(parseRetryAfterMs("1.5")).toBeNull();
+    expect(parseRetryAfterMs("1e3")).toBeNull();
+    expect(parseRetryAfterMs("0x10")).toBeNull();
+    expect(parseRetryAfterMs("+5")).toBeNull();
+    expect(parseRetryAfterMs(".5")).toBeNull();
+    // A digit run stays a delta-seconds value even where it also reads as a
+    // year: `Date.parse("3600")` is the year 3600, so letting this fall
+    // through to the HTTP-date branch would produce a hint centuries away
+    // rather than the capped half-minute the digits mean.
+    expect(parseRetryAfterMs("3600")).toBe(MAX_RETRY_AFTER_MS);
+  });
 });
 
 describe("toHttpError", () => {
