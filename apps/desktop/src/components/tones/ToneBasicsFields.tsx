@@ -1,4 +1,5 @@
 import { TextField } from "@mui/material";
+import { useEffect, useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { countLabel, MAX_NAME_LEN, MAX_CATEGORY_LEN } from "./tone-form.utils";
 
@@ -16,10 +17,21 @@ export const ToneBasicsFields = ({
   onCategoryChange,
 }: Props) => {
   const intl = useIntl();
+  // Focus the name field explicitly once it has mounted rather than with a DOM
+  // `autoFocus` prop: `autoFocus` fires as an attribute and cannot be deferred,
+  // so it races anything that moves focus in the same commit. This mirrors
+  // ContextMenu's own "focus after commit, not via autoFocus" rule.
+  // `TextField` forwards `inputRef` to the underlying `<input>`. This component
+  // itself only mounts with wizard step 0, so the mount effect lands at the same
+  // point the removed `autoFocus` attribute did.
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
   return (
     <>
       <TextField
-        autoFocus
+        inputRef={nameRef}
         label={<FormattedMessage defaultMessage="Name" />}
         value={name}
         onChange={(event) => onNameChange(event.target.value)}

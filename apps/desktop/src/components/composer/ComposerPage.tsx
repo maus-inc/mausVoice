@@ -51,6 +51,13 @@ const closeComposerWindow = async () => {
 export const ComposerPage = () => {
   const intl = useIntl();
   const disabledReasonId = useId();
+  // Focus the transcript field explicitly once it has mounted rather than with
+  // a DOM `autoFocus` prop: `autoFocus` fires as an attribute and cannot be
+  // deferred, so it races anything that moves focus in the same commit. This
+  // mirrors ContextMenu's own "focus after commit, not via autoFocus" rule.
+  // `TextField` forwards `inputRef` to the underlying `<textarea>` (it passes
+  // it straight to `Input`'s `inputRef`), so this reaches the real element.
+  const transcriptRef = useRef<HTMLTextAreaElement | null>(null);
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const requestId = params.get("requestId") ?? "";
   // Session original for the original-vs-edited view. Falls back to the
@@ -135,6 +142,10 @@ export const ComposerPage = () => {
       defaultMessage: "Voice editing is not supported on this platform",
     }),
   );
+  useEffect(() => {
+    transcriptRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     unsupportedMessageRef.current = intl.formatMessage({
       defaultMessage: "Voice editing is not supported on this platform",
@@ -326,7 +337,7 @@ export const ComposerPage = () => {
             </Typography>
           </Box>
           <TextField
-            autoFocus
+            inputRef={transcriptRef}
             multiline
             minRows={7}
             fullWidth

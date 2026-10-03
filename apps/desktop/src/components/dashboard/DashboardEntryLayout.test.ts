@@ -47,6 +47,11 @@ describe("DashboardEntryLayout", () => {
     expect(openDivs).toHaveLength(2);
   });
 
+  // `children` stays in the props object rather than as createElement's third
+  // argument (which is what JS-0438 asks for): `DashboardEntryLayoutProps`
+  // declares `children` as required, so a non-null props object is checked
+  // against the whole type and `{ maxWidth: "sm" }` is TS2769 "Property
+  // 'children' is missing". The two tests above pass `null` and never hit it.
   it("propagates the maxWidth prop to the Container element", () => {
     const htmlSm = renderToStaticMarkup(
       createElement(DashboardEntryLayout, {

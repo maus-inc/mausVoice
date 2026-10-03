@@ -9,7 +9,7 @@ const DMG =
 const EXPECTED_SIG = `${DMG}.sig`;
 
 describe("buildManualMacInstallerSignatureUrl", () => {
-  it("derives the signature url as `${dmgUrl}.sig` when no manifest signature exists", () => {
+  it("derives the signature url as `<dmgUrl>.sig` when no manifest signature exists", () => {
     const rawJson = {
       platforms: { "darwin-x86_64": { url: DMG } },
     };

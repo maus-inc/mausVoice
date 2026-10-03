@@ -33,6 +33,8 @@ const capturedInvoke = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => capturedInvoke(...args),
+  // The production module only ever constructs this; no test in this file
+  // calls anything on it, so an empty class is the whole stub.
   Resource: class {},
 }));
 

@@ -32,8 +32,8 @@ const drain = async (stream: AsyncGenerator<LlmStreamEvent>) => {
 const streamingFetch = (
   events: Array<{ type?: string; [key: string]: unknown }>,
 ) =>
-  vi.fn<CustomFetch>(
-    async () =>
+  vi.fn<CustomFetch>(() =>
+    Promise.resolve(
       new Response(
         events
           .map(
@@ -45,6 +45,7 @@ const streamingFetch = (
           headers: { "content-type": "text/event-stream" },
         },
       ),
+    ),
   );
 
 const requestBody = (fetch: ReturnType<typeof streamingFetch>) =>

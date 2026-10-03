@@ -37,6 +37,9 @@ class FakeSocket {
     FakeSocket.instances.push(this);
   }
 
+  // Deliberately empty: no test asserts on outbound frames, so this fake only
+  // has to be constructible by the SDK's `newWebSocket`. See `open`/`close`
+  // for the half of the protocol these tests actually drive.
   send(): void {}
 
   close(code = 1000, reason = ""): void {
@@ -72,6 +75,9 @@ class NetworkGuardWebSocket {
     NetworkGuardWebSocket.attempts.push(url);
   }
 
+  // Both deliberately empty: reaching this class at all is the failure. Its
+  // whole job is to record the construction in `attempts`, which every test
+  // asserts is empty, so there is nothing for `send`/`close` to act on.
   send(): void {}
   close(): void {}
 }
@@ -200,7 +206,7 @@ describe("Gladia live retry configuration", () => {
       config.closeCodes.some(
         (code) =>
           code === 1006 ||
-          (Array.isArray(code) && code[0] <= 1006 && 1006 <= code[1]),
+          (Array.isArray(code) && code[0] <= 1006 && code[1] >= 1006),
       ),
     ).toBe(true);
   });

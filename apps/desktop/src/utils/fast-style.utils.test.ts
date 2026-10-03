@@ -389,13 +389,13 @@ describe("applyFastStyle fast local transforms", () => {
     expect(out.length).toBeLessThan(16000);
     expect(out.toLowerCase()).toContain("store");
 
-    const fillerLong = "um ".repeat(8000) + "I went to the store.";
+    const fillerLong = `${"um ".repeat(8000)}I went to the store.`;
     const out2 = applyFastStyle(fillerLong, "default");
     expect(out2.length).toBeLessThan(16000);
   });
 
   it("graceful degradation: self-correction skipped on huge input", () => {
-    const huge = "a ".repeat(3000) + ", actually, the mall yesterday";
+    const huge = `${"a ".repeat(3000)}, actually, the mall yesterday`;
     const out = applyFastStyle(huge, "default");
     expect(out.length).toBeGreaterThan(0);
   });

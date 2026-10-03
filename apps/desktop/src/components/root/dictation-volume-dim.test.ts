@@ -68,7 +68,7 @@ const installVolumeWorld = (
       if (!gate) {
         world.volume = volume;
         world.landed.push(volume);
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }
       return gate.promise.then(() => {
         world.volume = volume;

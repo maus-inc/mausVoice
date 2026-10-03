@@ -93,13 +93,10 @@ class PreviewWindow {
       height: window.outerHeight,
     }));
   }
-  async emit<T>(event: string, payload?: T): Promise<void> {
+  emit<T>(event: string, payload?: T): Promise<void> {
     return emit(event, payload);
   }
-  async listen<T>(
-    event: string,
-    callback: EventCallback<T>,
-  ): Promise<UnlistenFn> {
+  listen<T>(event: string, callback: EventCallback<T>): Promise<UnlistenFn> {
     return listen(event, callback);
   }
 }

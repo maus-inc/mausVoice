@@ -30,6 +30,20 @@ createGeminiGenerateTests({
   extraParams: { customFetch: fetchMock },
 });
 
+/** The arguments of the nth transport call, failing with a message if absent. */
+const transportCall = <T>(
+  mocked: { mock: { calls: readonly unknown[][] } },
+  call = 0,
+): T => {
+  const args = mocked.mock.calls[call];
+  if (!args) {
+    throw new Error(
+      `Expected customFetch to be called at index ${call}, but it was called ${mocked.mock.calls.length} time(s)`,
+    );
+  }
+  return args as T;
+};
+
 describe("geminiGenerateTextResponse request shape", () => {
   afterEach(() => {
     fetchMock.mockReset();
@@ -108,7 +122,7 @@ describe("geminiTestIntegration", () => {
       geminiTestIntegration({ apiKey: " gemini-key ", customFetch: fetchMock }),
     ).resolves.toBe(true);
 
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = transportCall<[unknown, RequestInit?]>(fetchMock);
     expect(String(url)).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
     );

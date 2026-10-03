@@ -55,7 +55,7 @@ beforeEach(() => {
   // store. Without that write-back these tests could not detect a repeated
   // call re-issuing the same update on every app start.
   apiKeyActionsMock.updateApiKey.mockImplementation(
-    async (payload: { id: string; transcriptionModel?: string }) => {
+    (payload: { id: string; transcriptionModel?: string }) => {
       const state = getAppState();
       const index = state.settings.apiKeys.findIndex(
         (k) => k.id === payload.id,
@@ -69,10 +69,12 @@ beforeEach(() => {
         next.settings.apiKeys[index] = updated;
         setAppState(next, true);
       }
-      return updated;
+      return Promise.resolve(updated);
     },
   );
-  apiKeyActionsMock.createApiKey.mockImplementation(async () => deepgramKey());
+  apiKeyActionsMock.createApiKey.mockImplementation(() =>
+    Promise.resolve(deepgramKey()),
+  );
 });
 
 describe("savePersonalDeepgramApiKey", () => {

@@ -52,5 +52,5 @@ export const AudioTransmissionDisclosure = ({
     );
   }
 
-  return <>{message}</>;
+  return message;
 };

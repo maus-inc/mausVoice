@@ -129,7 +129,6 @@ function MenuPopoverSubMenuItem({
         open={submenuOpen}
         anchorEl={buttonRef.current}
         onClose={() => setSubmenuOpen(false)}
-        autoFocus={true}
         anchorOrigin={{ vertical: "top", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{

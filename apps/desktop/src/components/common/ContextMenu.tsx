@@ -389,6 +389,10 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
           }
           break;
         }
+        default:
+          // Any other key (Tab, printable characters, Escape — handled on
+          // document in capture phase) is not the menu's to act on.
+          break;
       }
     },
     [items, activeIndex],
@@ -430,9 +434,21 @@ export const ContextMenu = ({ items, sx }: ContextMenuProps) => {
     >
       {items.map((item, index) => {
         if (item.kind === "divider") {
-          // NOSONAR: a divider carries no identity — the array is rebuilt
-          // per open and never reordered, so the index is stable for the
-          // menu's lifetime.
+          // NOSONAR: a divider carries no identity — `ContextMenuDivider` is
+          // only `{ kind: "divider" }`, so there is no stable id to key on and
+          // any substitute would be as unstable as the index. The index is
+          // safe here because the array is fixed for the menu's lifetime:
+          // `renderMenu` returns null when closed (so the list unmounts between
+          // opens), `state.items` is only ever replaced wholesale by
+          // `handleContextMenu`, every action row's key also embeds its label,
+          // and `activeIndex` — the only state keyed by position — is reset to
+          // -1 by the effect above whenever `items` changes identity.
+          //
+          // This sits on the line ABOVE the keyed element, not up at the top of
+          // the block. `deepsource-disable-next-line` suppresses the line that
+          // FOLLOWS the comment, so placed at the top of the `if` it would
+          // suppress a comment and leave the real finding reported.
+          // deepsource-disable-next-line JS-0437
           return <Divider key={"divider-" + index} sx={{ my: 0.5 }} />;
         }
 

@@ -838,7 +838,7 @@ export default function SettingsPage() {
         <ListTile
           title={<FormattedMessage defaultMessage="Start on system startup" />}
           leading={<RocketLaunchOutlined />}
-          disableRipple={true}
+          disableRipple
           trailing={
             <Switch
               edge="end"
@@ -896,7 +896,7 @@ export default function SettingsPage() {
         <ListTile
           title={<FormattedMessage defaultMessage="Dictation language" />}
           leading={<LanguageOutlined />}
-          disableRipple={true}
+          disableRipple
           trailing={
             <Box
               onClick={(event) => event.stopPropagation()}

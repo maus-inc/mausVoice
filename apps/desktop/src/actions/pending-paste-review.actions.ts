@@ -79,7 +79,7 @@ export const createPendingPasteReview = async (
   });
 };
 
-const updatePendingPasteReview = async (
+const updatePendingPasteReview = (
   message: ChatMessage,
   pending: PendingPasteReviewMetadata,
   text: string,

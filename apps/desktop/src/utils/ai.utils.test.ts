@@ -563,7 +563,7 @@ describe("applyTranscriptionEdits", () => {
       `word-edge check disagreed with the patterns on text ${JSON.stringify(text)} find ${JSON.stringify(find)}`,
     ).toEqual({
       text: applied
-        ? text.slice(0, index) + "X" + text.slice(index + find.length)
+        ? `${text.slice(0, index)}X${text.slice(index + find.length)}`
         : text,
       applied: applied ? 1 : 0,
       skipped: applied ? 0 : 1,

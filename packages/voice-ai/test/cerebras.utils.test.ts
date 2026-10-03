@@ -21,12 +21,12 @@ describe("cerebrasGenerateTextResponse error contract", () => {
 
   it("surfaces a 402 as a provider error and does not retry", async () => {
     let attempts = 0;
-    const create = vi.fn().mockImplementation(async () => {
+    const create = vi.fn().mockImplementation(() => {
       attempts += 1;
       const error = Object.assign(new Error("402 status code (no body)"), {
         status: 402,
       });
-      throw error;
+      return Promise.reject(error);
     });
     mockOpenAIChatCreate(create);
 

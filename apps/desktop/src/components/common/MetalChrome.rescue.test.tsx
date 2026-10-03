@@ -191,7 +191,9 @@ describe("useFirstFrameRescue", () => {
   it("re-arms the rescue after the wrapper is revealed and then hidden again", async () => {
     const { METAL_CHROME_RESCUE_DELAY_MS, METAL_CHROME_RESCUED_CLASS } =
       await render();
-    const wrapper = fx.node!;
+    const wrapper = fx.node;
+    if (!wrapper)
+      throw new Error("Expected metal-fx to have rendered its wrapper");
 
     // No first frame ever arrives, so the rescue fires.
     act(() => vi.advanceTimersByTime(METAL_CHROME_RESCUE_DELAY_MS));

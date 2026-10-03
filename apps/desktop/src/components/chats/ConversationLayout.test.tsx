@@ -50,10 +50,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
 });
-const render = async (
-  child: ReactNode,
-  messages: Record<string, string> = de,
-) =>
+const render = (child: ReactNode, messages: Record<string, string> = de) =>
   act(async () => {
     root.render(
       <IntlProvider locale="de" messages={messages}>

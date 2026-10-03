@@ -31,8 +31,11 @@ const toRect = (p: Record<string, number>): Rect => {
 const overlaps = (a: Rect, b: Rect) =>
   a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 
-const gripRect = (grips: ReturnType<typeof getGrips>, direction: string) =>
-  toRect(grips.find((g) => g.direction === direction)!.position);
+const gripRect = (grips: ReturnType<typeof getGrips>, direction: string) => {
+  const grip = grips.find((g) => g.direction === direction);
+  if (!grip) throw new Error(`Expected a grip for direction "${direction}"`);
+  return toRect(grip.position);
+};
 
 describe("hasRightCaptionButtons", () => {
   it.each([
@@ -72,19 +75,19 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
       bottom: TITLE_BAR_HEIGHT,
     };
     for (const grip of grips) {
-      const r = toRect(grip.position);
-      if (!overlaps(r, captionRow)) continue;
-      expect(r.bottom, grip.direction).toBeLessThanOrEqual(FRAME);
+      const rect = toRect(grip.position);
+      if (!overlaps(rect, captionRow)) continue;
+      expect(rect.bottom, grip.direction).toBeLessThanOrEqual(FRAME);
     }
   });
 
   it("keeps top-right diagonal resize acquirable along the top edge", () => {
-    const r = gripRect(grips, "NorthEast");
+    const rect = gripRect(grips, "NorthEast");
     // A frame-sized square is too small to hit reliably; the strip spans the
     // full corner width (derived from the shared constant, not a literal).
-    expect(r.right - r.left).toBe(CORNER);
-    expect(r.right).toBe(WINDOW.width);
-    expect(r.top).toBe(0);
+    expect(rect.right - rect.left).toBe(CORNER);
+    expect(rect.right).toBe(WINDOW.width);
+    expect(rect.top).toBe(0);
   });
 
   it("starts the East grip directly below the caption row", () => {
@@ -104,9 +107,9 @@ describe("getGrips without right-side caption buttons (macOS)", () => {
   });
 
   it("keeps the regular square NorthEast corner", () => {
-    const r = gripRect(grips, "NorthEast");
-    expect(r.right - r.left).toBe(CORNER);
-    expect(r.bottom - r.top).toBe(CORNER);
+    const rect = gripRect(grips, "NorthEast");
+    expect(rect.right - rect.left).toBe(CORNER);
+    expect(rect.bottom - rect.top).toBe(CORNER);
   });
 });
 

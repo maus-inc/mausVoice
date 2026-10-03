@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+// A namespace import, deliberately: the first assertion in this file is
+// `Object.keys(...)` over the module, which is what pins the export surface.
+// Named imports would make that assertion impossible to write.
 import * as providerErrorUtils from "./provider-error.utils";
 
 describe("provider-error.utils", () => {
@@ -31,8 +34,8 @@ describe("readProviderStatus", () => {
     expect(providerErrorUtils.readProviderStatus({ status: "503" })).toBe(
       undefined,
     );
-    expect(providerErrorUtils.readProviderStatus(null)).toBe(undefined);
-    expect(providerErrorUtils.readProviderStatus("503")).toBe(undefined);
+    expect(providerErrorUtils.readProviderStatus(null)).toBeUndefined();
+    expect(providerErrorUtils.readProviderStatus("503")).toBeUndefined();
   });
 });
 
@@ -58,7 +61,7 @@ describe("readProviderCode", () => {
         error: { code: 7 },
       }),
     ).toBe("outer");
-    expect(providerErrorUtils.readProviderCode({ code: 7 })).toBe(undefined);
+    expect(providerErrorUtils.readProviderCode({ code: 7 })).toBeUndefined();
   });
 });
 
@@ -122,7 +125,7 @@ describe("redactProviderMessage", () => {
     // the right call for a real commit and the wrong one for a fixture, and it
     // is why the key-shaped strings above are written the same way.
     const UNPREFIXED = "abc123" + "XYZnotaprefix";
-    for (const body of ["api_key=" + UNPREFIXED, "API-KEY : " + UNPREFIXED]) {
+    for (const body of [`api_key=${UNPREFIXED}`, `API-KEY : ${UNPREFIXED}`]) {
       const output = providerErrorUtils.redactProviderMessage(body);
       expect(output).not.toContain(UNPREFIXED);
       expect(output).toContain("[redacted]");
@@ -460,7 +463,7 @@ describe("redactProviderMessage", () => {
     // 150,000 characters took about 11 seconds under the pattern and takes
     // single-digit milliseconds under the scanner, so the 1,000 ms budget is
     // not a close call in either direction.
-    const message = "api_key=" + " ".repeat(150_000) + "!";
+    const message = `api_key=${" ".repeat(150_000)}!`;
 
     const started = Date.now();
     expect(providerErrorUtils.redactProviderMessage(message)).toBe(message);
@@ -478,7 +481,7 @@ describe("an authorization label with a scheme-prefixed value", () => {
 
   it("redacts the whole Digest challenge after a bare authorization label", () => {
     const output = providerErrorUtils.redactProviderMessage(
-      'authorization: Digest username="u", realm="r", ' + CHALLENGE,
+      `authorization: Digest username="u", realm="r", ${CHALLENGE}`,
     );
     expect(output).not.toContain(CHALLENGE);
     expect(output).not.toContain('realm="r"');
@@ -487,7 +490,7 @@ describe("an authorization label with a scheme-prefixed value", () => {
 
   it("redacts a proxy-authorization challenge the same way", () => {
     const output = providerErrorUtils.redactProviderMessage(
-      "proxy-authorization: Digest nonce=" + CHALLENGE,
+      `proxy-authorization: Digest nonce=${CHALLENGE}`,
     );
     expect(output).not.toContain(CHALLENGE);
   });

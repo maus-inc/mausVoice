@@ -19,19 +19,25 @@ const jsonResponse = (
 /** A 429 for the first `rateLimited` attempts, then the usual happy path. */
 const rateLimitedFetch = (headers: Record<string, string>, rateLimited = 1) => {
   let seen = 0;
-  return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+  return vi.fn((url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     if (path.endsWith("/upload")) {
       seen += 1;
       if (seen <= rateLimited) {
-        return new Response("rate limited", { status: 429, headers });
+        return Promise.resolve(
+          new Response("rate limited", { status: 429, headers }),
+        );
       }
-      return jsonResponse({ upload_url: "https://cdn.assemblyai.com/u/abc" });
+      return Promise.resolve(
+        jsonResponse({ upload_url: "https://cdn.assemblyai.com/u/abc" }),
+      );
     }
     if (path.endsWith("/transcript") && init?.method === "POST") {
-      return jsonResponse({ id: "transcript-1" });
+      return Promise.resolve(jsonResponse({ id: "transcript-1" }));
     }
-    return jsonResponse({ status: "completed", text: "hello world" });
+    return Promise.resolve(
+      jsonResponse({ status: "completed", text: "hello world" }),
+    );
   });
 };
 

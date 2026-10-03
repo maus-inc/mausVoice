@@ -232,18 +232,20 @@ describe("production CSP connect-src covers every webview-fetched provider host"
     const violations = collectHosts().filter(
       ({ scheme, host }) => !isAllowed(scheme, host, connectSources),
     );
+    // One template literal rather than an eight-way `+` chain: the failure
+    // message reads as prose, and the only computed part is the host list.
+    const advice =
+      "Add a hosted HTTPS provider to connect-src and the curated " +
+      "http:default capability; route user-configured private HTTP through " +
+      "secureFetch/private_http_request instead of a capability hostname glob; or — " +
+      "only if it is genuinely not a connect-src target (openUrl link, " +
+      "iframe, comment) — classify it in NON_CONNECT_HOSTS (or " +
+      "KNOWN_NON_SOURCE_REFS) with a reason.";
     expect(
       violations,
-      `Hosts fetched by the webview but missing from connect-src in tauri.conf.json:\n` +
-        violations
-          .map((v) => `  ${v.scheme}://${v.host} (${v.file})`)
-          .join("\n") +
-        `\nAdd a hosted HTTPS provider to connect-src and the curated ` +
-        `http:default capability; route user-configured private HTTP through ` +
-        `secureFetch/private_http_request instead of a capability hostname glob; or — ` +
-        `only if it is genuinely not a connect-src target (openUrl link, ` +
-        `iframe, comment) — classify it in NON_CONNECT_HOSTS (or ` +
-        `KNOWN_NON_SOURCE_REFS) with a reason.`,
+      `Hosts fetched by the webview but missing from connect-src in tauri.conf.json:
+${violations.map((v) => `  ${v.scheme}://${v.host} (${v.file})`).join("\n")}
+${advice}`,
     ).toEqual([]);
   });
 

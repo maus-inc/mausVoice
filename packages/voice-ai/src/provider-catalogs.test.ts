@@ -8,6 +8,26 @@ import {
 } from "./gemini.utils";
 import { xaiTranscribeAudio } from "./xai.utils";
 
+/**
+ * The arguments of the nth transport call.
+ *
+ * `customFetch.mock.calls[0]!` is a forbidden non-null assertion, and when the
+ * provider stops calling the transport at all the `TypeError` it leaves behind
+ * is about destructuring `undefined` rather than about the missing request.
+ */
+const transportCall = <T>(
+  mocked: { mock: { calls: readonly unknown[][] } },
+  call = 0,
+): T => {
+  const args = mocked.mock.calls[call];
+  if (!args) {
+    throw new Error(
+      `Expected customFetch to be called at index ${call}, but it was called ${mocked.mock.calls.length} time(s)`,
+    );
+  }
+  return args as T;
+};
+
 describe("provider fallback catalogs", () => {
   it("contains current Claude, DeepSeek, and Gemini fallbacks", () => {
     expect(CLAUDE_MODELS).toEqual([
@@ -49,7 +69,7 @@ describe("current speech APIs", () => {
       }),
     ).resolves.toEqual({ text: "hello", wordsUsed: 1 });
 
-    const [url, init] = customFetch.mock.calls[0]!;
+    const [url, init] = transportCall<[unknown, RequestInit?]>(customFetch);
     expect(url).toBe("https://api.x.ai/v1/stt");
     const body = init?.body as FormData;
     expect(Array.from(body.keys())).toEqual(["format", "language", "file"]);

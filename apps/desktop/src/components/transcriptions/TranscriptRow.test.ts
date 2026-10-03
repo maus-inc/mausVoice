@@ -14,7 +14,7 @@ import { produceAppState, setAppState } from "../../store";
 import { ThemeProvider } from "@mui/material/styles";
 import { theme } from "../../theme";
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   deleteTranscription: vi.fn(),
   scheduleTranscriptionDelete: vi.fn(),
 }));
@@ -23,7 +23,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
   return {
     ...actual,
-    invoke: vi.fn(async () => null),
+    invoke: vi.fn(() => Promise.resolve(null)),
   };
 });
 
@@ -33,12 +33,12 @@ vi.mock("../../actions/remote-output.actions", () => ({
 
 vi.mock("../../repos", () => ({
   getTranscriptionRepo: () => ({
-    deleteTranscription: h.deleteTranscription,
+    deleteTranscription: mocks.deleteTranscription,
   }),
 }));
 
 vi.mock("../../utils/pending-transcription-delete", () => ({
-  scheduleTranscriptionDelete: h.scheduleTranscriptionDelete,
+  scheduleTranscriptionDelete: mocks.scheduleTranscriptionDelete,
   undoTranscriptionDelete: vi.fn(),
 }));
 
@@ -228,7 +228,7 @@ describe("TranscriptionRow unified hover region", () => {
     // action.hover wash.
     let hoverOwner: HTMLElement | null = null;
     for (
-      let node: HTMLElement | null = transcriptEl!;
+      let node: HTMLElement | null = transcriptEl ?? null;
       node && node !== container;
       node = node.parentElement
     ) {
@@ -239,16 +239,19 @@ describe("TranscriptionRow unified hover region", () => {
     }
 
     expect(hoverOwner).not.toBeNull();
-    expect(hoverOwner!.contains(dateEl)).toBe(true);
-    expect(hoverOwner!.contains(transcriptEl!)).toBe(true);
+    if (!hoverOwner) {
+      throw new Error("Expected an ancestor painting the action-hover wash");
+    }
+    expect(hoverOwner.contains(dateEl)).toBe(true);
+    expect(hoverOwner.contains(transcriptEl ?? null)).toBe(true);
     // Audio pill actions (retranscribe/export) sit inside the wash too.
-    expect(hoverOwner!.contains(retranscribeButton(container))).toBe(true);
+    expect(hoverOwner.contains(retranscribeButton(container))).toBe(true);
     // The divider stays outside the wash so rows keep a clean seam.
     const divider = container.querySelector("hr");
     expect(divider).not.toBeNull();
-    expect(hoverOwner!.contains(divider)).toBe(false);
+    expect(hoverOwner.contains(divider)).toBe(false);
     // Regression pin: the date/actions row itself must not own the hover.
-    const dateStack = dateEl!.closest(".MuiStack-root") as HTMLElement;
+    const dateStack = dateEl?.closest(".MuiStack-root") as HTMLElement;
     expect(hoverRulesFor(dateStack)).not.toContain("action-hover");
   });
 });
@@ -286,7 +289,7 @@ describe("TranscriptionRow context menu", () => {
       deleteItem?.click();
     });
 
-    expect(h.scheduleTranscriptionDelete).toHaveBeenCalledWith(
+    expect(mocks.scheduleTranscriptionDelete).toHaveBeenCalledWith(
       sampleTranscription,
       5000,
     );

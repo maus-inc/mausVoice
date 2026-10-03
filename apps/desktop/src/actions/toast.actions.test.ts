@@ -23,11 +23,16 @@ const payloadTypes = () =>
     (call) => JSON.parse((call[1] as { payload: string }).payload).type,
   );
 
+// `resolve` takes an optional value so a `deferred<undefined>()` signal can be
+// released with a bare `resolve()`, the way a bare `resolve()` reads at the
+// call site.
 const deferred = <T>() => {
-  let resolve!: (value: T | PromiseLike<T>) => void;
+  let resolve!: (value?: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
+    resolve = (value) => {
+      resolvePromise(value as T);
+    };
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
@@ -40,8 +45,11 @@ describe("native toast IPC ordering", () => {
 
   it("delivers a slow show before a later dismiss", async () => {
     const delivered: string[] = [];
-    const showArrived = deferred<void>();
-    const releaseShow = deferred<void>();
+    // These two signals carry no payload, so they are typed `undefined` rather
+    // than `void`: `deferred<void>()` reads as a bare generic `void`, which is
+    // the shape JS-0333 rejects.
+    const showArrived = deferred<undefined>();
+    const releaseShow = deferred<undefined>();
     invoke.mockImplementation(async (_cmd: string, args: unknown) => {
       const { type } = JSON.parse((args as { payload: string }).payload);
       if (type === "toast") {

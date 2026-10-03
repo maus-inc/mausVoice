@@ -20,10 +20,6 @@ import type {
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 
-// The SDK does not re-export MessageStream from its root, so derive the type
-// from the client's stream() method instead of a deep subpath import.
-type MessageStream = ReturnType<Anthropic["messages"]["stream"]>;
-
 export const CLAUDE_MODELS = [
   "claude-sonnet-5",
   "claude-haiku-4-5",
@@ -56,7 +52,7 @@ export type ClaudeGenerateResponseOutput = {
   tokensUsed: number;
 };
 
-export const claudeGenerateTextResponse = async ({
+export const claudeGenerateTextResponse = ({
   apiKey,
   model = CLAUDE_MODELS[0],
   system,
@@ -72,7 +68,7 @@ export const claudeGenerateTextResponse = async ({
     // A present-but-not-aborted signal is not an abort and must not disable
     // retries for transient failures.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: () => !signal?.aborted,
     // An abort during the wait is honoured: `retry` hands the signal to its
     // own wait, so a cancelled caller stops there instead of sitting it out.
     // That wait is the helper's own 20ms, because the helper only stretches
@@ -235,6 +231,20 @@ const mapClaudeToolChoice = (
       case "required":
         return { type: "any" };
       case "none":
+        return undefined;
+      // This arm is unreachable as far as the compiler is concerned, and that is
+      // exactly why it has to be here. `LlmToolChoice` is a closed union, so
+      // TypeScript narrows `choice` to those three strings above and reads the
+      // switch as exhaustive. `toolChoice` is read straight off the caller's
+      // `LlmChatInput` and crosses a persistence/IPC boundary where that union
+      // is not enforced, so an unrecognised string does arrive at runtime.
+      //
+      // Without this arm it falls out of the switch and reaches
+      // `{ type: "tool", name: choice.name }` with `choice` still a string, so
+      // `name` is `undefined` and the request is sent as a malformed
+      // `tool_choice` — a 400 from a paid endpoint, rather than the documented
+      // behaviour of omitting the field when there is nothing valid to choose.
+      default:
         return undefined;
     }
   }

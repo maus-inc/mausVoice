@@ -30,7 +30,7 @@ describe("openaiTranscribeAudio response_format", () => {
         toFile: vi.fn().mockResolvedValue({}),
       }));
 
-      const { openaiTranscribeAudio } = await import("../src/openai.utils");
+      const { openaiTranscribeAudio } = await import("./openai.utils");
 
       const result = await openaiTranscribeAudio({
         apiKey: "test-key",
@@ -68,7 +68,7 @@ describe("openaiTranscribeAudio response_format", () => {
       toFile: vi.fn().mockResolvedValue({}),
     }));
 
-    const { openaiTranscribeAudio } = await import("../src/openai.utils");
+    const { openaiTranscribeAudio } = await import("./openai.utils");
 
     const result = await openaiTranscribeAudio({
       apiKey: "test-key",
@@ -102,7 +102,7 @@ describe("openaiGenerateTextResponse sampling parameters", () => {
       toFile: vi.fn().mockResolvedValue({}),
     }));
 
-    const { openaiGenerateTextResponse } = await import("../src/openai.utils");
+    const { openaiGenerateTextResponse } = await import("./openai.utils");
     const result = await openaiGenerateTextResponse({
       apiKey: "test-key",
       model,
@@ -168,7 +168,7 @@ describe("openaiStreamChat sampling parameters", () => {
       },
     }));
 
-    const { openaiStreamChat } = await import("../src/openai.utils");
+    const { openaiStreamChat } = await import("./openai.utils");
     for await (const _event of openaiStreamChat({
       apiKey: "test-key",
       model,

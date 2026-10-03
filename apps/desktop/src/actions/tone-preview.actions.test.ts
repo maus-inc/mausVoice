@@ -8,7 +8,7 @@ import {
 } from "../utils/prompt.utils";
 
 const { generate } = vi.hoisted(() => ({
-  generate: vi.fn(async (_input: unknown) => ({ text: "" })),
+  generate: vi.fn((_input: unknown) => Promise.resolve({ text: "" })),
 }));
 vi.mock("../repos", () => ({
   getGenerateTextRepo: () => ({ repo: { generateText: generate } }),
@@ -16,7 +16,7 @@ vi.mock("../repos", () => ({
 vi.mock("../utils/user.utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../utils/user.utils")>()),
   getMyUserName: () => "Tester",
-  loadMyEffectiveDictationLanguage: async () => "en",
+  loadMyEffectiveDictationLanguage: () => Promise.resolve("en"),
 }));
 import {
   MAX_PREVIEW_SAMPLE_LEN,
@@ -60,9 +60,9 @@ beforeEach(() => {
 
 describe("style preview provider contract", () => {
   it.each([
-    ["a".repeat(8000) + "OVERFLOW", "a".repeat(8000)],
-    ["a".repeat(7999) + "😀OVERFLOW", "a".repeat(7999)],
-    ["a".repeat(7998) + "😀OVERFLOW", "a".repeat(7998) + "😀"],
+    [`${"a".repeat(8000)}OVERFLOW`, "a".repeat(8000)],
+    [`${"a".repeat(7999)}😀OVERFLOW`, "a".repeat(7999)],
+    [`${"a".repeat(7998)}😀OVERFLOW`, `${"a".repeat(7998)}😀`],
   ])(
     "bounds provider input without splitting a surrogate pair (%#)",
     async (sample, bounded) => {
@@ -75,7 +75,7 @@ describe("style preview provider contract", () => {
       const { prompt } = generate.mock.calls[0][0] as { prompt: string };
       expect(prompt).toContain(bounded);
       expect(prompt).not.toContain("OVERFLOW");
-      expect(prompt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      expect(prompt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
     },
   );
   it.each([
@@ -200,7 +200,7 @@ describe("style preview provider contract", () => {
 
   it.each(["empty", "unreadable-edits"] as const)(
     "builds the %s failure detail through the intl layer",
-    async (reason) => {
+    (reason) => {
       // Both editors render `error.message` verbatim, so prose authored in the
       // action would reach the user in English in every locale.
       const error = new TonePreviewUnusableError(reason);

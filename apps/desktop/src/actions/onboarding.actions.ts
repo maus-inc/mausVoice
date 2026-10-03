@@ -131,6 +131,15 @@ export const resetTip = (id: string): void => {
   });
 };
 
+const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
+  onboarding.name.trim() !== "" ||
+  onboarding.firstName.trim() !== "" ||
+  onboarding.lastName.trim() !== "" ||
+  onboarding.title.trim() !== "" ||
+  onboarding.company.trim() !== "" ||
+  onboarding.referralSource.trim() !== "" ||
+  onboarding.preferredMicrophone !== null;
+
 export const resumeOnboardingPage = (): void => {
   const state = getAppState();
   if (state.auth && !state.initialized) return;
@@ -299,15 +308,6 @@ export const setOnboardingPreferredMicrophone = (microphone: string | null) => {
 
 const getOptionalText = (value: string | null | undefined): string | null =>
   value?.trim() || null;
-
-const hasStaleOnboardingAccountState = (onboarding: OnboardingState): boolean =>
-  onboarding.name.trim() !== "" ||
-  onboarding.firstName.trim() !== "" ||
-  onboarding.lastName.trim() !== "" ||
-  onboarding.title.trim() !== "" ||
-  onboarding.company.trim() !== "" ||
-  onboarding.referralSource.trim() !== "" ||
-  onboarding.preferredMicrophone !== null;
 
 const createOnboardingPreferences = (
   userId: string,

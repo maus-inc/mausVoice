@@ -10,7 +10,7 @@ import { createRoot } from "react-dom/client";
 import type { StreamingMessageState } from "../../state/app.state";
 import type { ChatMessage } from "@maus-inc/types";
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   state: {
     chatMessageById: {
       user: {
@@ -44,7 +44,7 @@ vi.mock("../../utils/log.utils", () => ({
 }));
 
 vi.mock("../../store", () => ({
-  useAppStore: (selector: (s: unknown) => unknown) => selector(h.state),
+  useAppStore: (selector: (s: unknown) => unknown) => selector(mocks.state),
 }));
 
 vi.mock("../../actions/app.actions", () => ({
@@ -53,7 +53,7 @@ vi.mock("../../actions/app.actions", () => ({
 }));
 
 const chatActionsMock = vi.hoisted(() => ({
-  retryAssistant: vi.fn(async (_conversationId: string) => undefined),
+  retryAssistant: vi.fn((_conversationId: string) => Promise.resolve()),
   editAndResend: vi.fn((..._args: unknown[]) => Promise.resolve()),
   laterMessagesHaveToolActivity: vi.fn((..._args: unknown[]) => false),
 }));
@@ -154,7 +154,7 @@ describe("ChatMessageBubble context menu", () => {
   });
 
   it("offers only Edit and resend for an empty user message", async () => {
-    h.state.chatMessageById["msg-1"] = {
+    mocks.state.chatMessageById["msg-1"] = {
       id: "msg-1",
       conversationId: "conv-1",
       role: "user",
@@ -174,7 +174,7 @@ describe("ChatMessageBubble edit and resend", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
-    h.state.chatMessageById["msg-1"] = {
+    mocks.state.chatMessageById["msg-1"] = {
       id: "msg-1",
       conversationId: "conv-1",
       role: "user",
@@ -314,14 +314,14 @@ describe("empty assistant run notes", () => {
   it.each(["error", "stopped"] as const)(
     "retains the %s note without assistant text",
     async (outcome) => {
-      const previous = h.state.chatMessageById["msg-1"];
-      h.state.chatMessageById["msg-1"] = {
+      const previous = mocks.state.chatMessageById["msg-1"];
+      mocks.state.chatMessageById["msg-1"] = {
         ...previous,
         role: "assistant",
         content: "",
       };
-      h.state.chatMessageIdsByConversationId["conv-1"] = ["user", "msg-1"];
-      h.state.agentStateByConversationId["conv-1"] = {
+      mocks.state.chatMessageIdsByConversationId["conv-1"] = ["user", "msg-1"];
+      mocks.state.agentStateByConversationId["conv-1"] = {
         status: outcome === "error" ? "error" : "done",
         error: outcome === "error" ? "Provider failed." : undefined,
         aborted: outcome === "stopped",
@@ -353,9 +353,9 @@ describe("empty assistant run notes", () => {
       } finally {
         act(() => root.unmount());
         container.remove();
-        h.state.chatMessageById["msg-1"] = previous;
-        h.state.chatMessageIdsByConversationId = {};
-        h.state.agentStateByConversationId = {};
+        mocks.state.chatMessageById["msg-1"] = previous;
+        mocks.state.chatMessageIdsByConversationId = {};
+        mocks.state.agentStateByConversationId = {};
       }
     },
   );
@@ -370,14 +370,14 @@ describe("persisted run notes", () => {
   ] as const)(
     "shows %s after reload (tool tail: %s), but not during a new run",
     async (outcome, withTool) => {
-      const previous = h.state.chatMessageById["msg-1"];
-      h.state.chatMessageById["msg-1"] = {
+      const previous = mocks.state.chatMessageById["msg-1"];
+      mocks.state.chatMessageById["msg-1"] = {
         ...previous,
         role: "assistant",
         content: "",
         metadata: { runOutcome: outcome },
       };
-      h.state.chatMessageById.tool = {
+      mocks.state.chatMessageById.tool = {
         ...previous,
         id: "tool",
         role: "system",
@@ -388,12 +388,12 @@ describe("persisted run notes", () => {
           toolCallId: "call",
         },
       };
-      h.state.chatMessageIdsByConversationId["conv-1"] = [
+      mocks.state.chatMessageIdsByConversationId["conv-1"] = [
         "user",
         "msg-1",
         ...(withTool ? ["tool"] : []),
       ];
-      h.state.agentStateByConversationId = {};
+      mocks.state.agentStateByConversationId = {};
       const container = document.createElement("div");
       document.body.append(container);
       const root = createRoot(container);
@@ -406,7 +406,7 @@ describe("persisted run notes", () => {
         expect(container.textContent?.includes("Retry")).toBe(
           outcome === "error",
         );
-        h.state.agentStateByConversationId["conv-1"] = {
+        mocks.state.agentStateByConversationId["conv-1"] = {
           status: "idle",
           aborted: false,
           toolCalls: [],
@@ -414,17 +414,17 @@ describe("persisted run notes", () => {
         await renderMessage(root);
         expect(container.textContent).not.toContain(expected);
         expect(container.textContent).not.toContain("Retry");
-        h.state.agentStateByConversationId = {};
-        h.state.chatMessageIdsByConversationId["conv-1"].push("user");
+        mocks.state.agentStateByConversationId = {};
+        mocks.state.chatMessageIdsByConversationId["conv-1"].push("user");
         await renderMessage(root);
         expect(container.textContent).not.toContain(expected);
       } finally {
         act(() => root.unmount());
         container.remove();
-        h.state.chatMessageById["msg-1"] = previous;
-        delete h.state.chatMessageById.tool;
-        h.state.chatMessageIdsByConversationId = {};
-        h.state.agentStateByConversationId = {};
+        mocks.state.chatMessageById["msg-1"] = previous;
+        delete mocks.state.chatMessageById.tool;
+        mocks.state.chatMessageIdsByConversationId = {};
+        mocks.state.agentStateByConversationId = {};
       }
     },
   );
@@ -468,7 +468,7 @@ describe("retrying the latest completed assistant reply", () => {
   beforeEach(() => {
     chatActionsMock.retryAssistant.mockReset().mockResolvedValue(undefined);
     vi.mocked(showErrorSnackbar).mockClear();
-    h.state.chatMessageById["msg-1"] = {
+    mocks.state.chatMessageById["msg-1"] = {
       id: "msg-1",
       conversationId: "conv-1",
       role: "assistant",
@@ -476,9 +476,11 @@ describe("retrying the latest completed assistant reply", () => {
       metadata: null,
       createdAt: "2026-09-23T00:00:00.000Z",
     };
-    h.state.chatMessageIdsByConversationId = { "conv-1": ["user", "msg-1"] };
-    h.state.agentStateByConversationId = {};
-    h.state.streamingMessageById = {};
+    mocks.state.chatMessageIdsByConversationId = {
+      "conv-1": ["user", "msg-1"],
+    };
+    mocks.state.agentStateByConversationId = {};
+    mocks.state.streamingMessageById = {};
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -486,10 +488,10 @@ describe("retrying the latest completed assistant reply", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    delete h.state.chatMessageById.tool;
-    h.state.chatMessageIdsByConversationId = {};
-    h.state.agentStateByConversationId = {};
-    h.state.streamingMessageById = {};
+    delete mocks.state.chatMessageById.tool;
+    mocks.state.chatMessageIdsByConversationId = {};
+    mocks.state.agentStateByConversationId = {};
+    mocks.state.streamingMessageById = {};
   });
   const retry = () =>
     Array.from(container.querySelectorAll("button")).find(
@@ -502,10 +504,10 @@ describe("retrying the latest completed assistant reply", () => {
   ] as const)(
     "offers one-click retry (tool tail=%s, content=%s)",
     async (toolTail, content) => {
-      h.state.chatMessageById["msg-1"].content = content;
+      mocks.state.chatMessageById["msg-1"].content = content;
       if (toolTail) {
-        h.state.chatMessageById.tool = {
-          ...h.state.chatMessageById["msg-1"],
+        mocks.state.chatMessageById.tool = {
+          ...mocks.state.chatMessageById["msg-1"],
           id: "tool",
           role: "system",
           metadata: {
@@ -514,7 +516,7 @@ describe("retrying the latest completed assistant reply", () => {
             toolCallId: "call",
           },
         };
-        h.state.chatMessageIdsByConversationId["conv-1"].push("tool");
+        mocks.state.chatMessageIdsByConversationId["conv-1"].push("tool");
       }
       await renderMessage(root);
       expect(retry()).toBeDefined();
@@ -544,15 +546,15 @@ describe("retrying the latest completed assistant reply", () => {
     "older",
   ])("does not offer retry for %s replies", async (state) => {
     if (state === "streaming")
-      h.state.streamingMessageById = {
+      mocks.state.streamingMessageById = {
         "msg-1": { toolCalls: [], reasoning: "", isStreaming: true },
       };
     else if (state === "aborted")
-      h.state.chatMessageById["msg-1"].metadata = { runOutcome: "aborted" };
+      mocks.state.chatMessageById["msg-1"].metadata = { runOutcome: "aborted" };
     else if (state === "older")
-      h.state.chatMessageIdsByConversationId["conv-1"].push("user");
+      mocks.state.chatMessageIdsByConversationId["conv-1"].push("user");
     else
-      h.state.agentStateByConversationId["conv-1"] = {
+      mocks.state.agentStateByConversationId["conv-1"] = {
         status: state,
         aborted: false,
         toolCalls: [],

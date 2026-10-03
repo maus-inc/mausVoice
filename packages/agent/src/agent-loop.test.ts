@@ -278,6 +278,8 @@ describe("AgentLoop", () => {
     // through every frame, so two concurrent runs would share them: the second
     // would reset the first's controller, and `abort()` would then cancel the
     // second while the first kept waiting on a provider nobody cancelled.
+    // Placeholder for the resolver the gate promise's executor assigns
+    // immediately below.
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -379,6 +381,8 @@ describe("AgentLoop", () => {
 
   it("aborts a blocked provider request without waiting for another chunk", async () => {
     const capture = vi.fn<(input: LlmChatInput) => void>();
+    // Placeholder for the resolver the gate promise's executor assigns
+    // immediately below.
     let release = () => {};
     const provider: AgentLlmProvider = {
       async *streamChat(input) {
@@ -496,6 +500,8 @@ describe("AgentLoop", () => {
       name: "hangs",
       description: "never settles",
       parameters: { type: "object", properties: {} },
+      // Never settles: the empty executor is the behaviour under test, so the
+      // loop has to keep waiting on a tool that will never answer.
       execute: vi.fn(
         () => new Promise<{ success: true; result: string }>(() => {}),
       ),
@@ -556,6 +562,8 @@ describe("AgentLoop", () => {
   it("keeps waiting on a tool that settles before the abort", async () => {
     // The abort must not turn a slow tool into a failure: a result that arrived
     // before it fired is the model's answer, not a cancelled call.
+    // Placeholder for the resolver the gate promise's executor assigns
+    // immediately below.
     let release = () => {};
     const gate = new Promise<{ success: true; result: string }>((resolve) => {
       release = () => resolve({ success: true, result: "done" });

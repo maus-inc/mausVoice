@@ -336,7 +336,7 @@ export class DictationStrategy extends BaseStrategy {
     // outside the queue would let both snapshot and deliver the same backlog.
     await this.enqueuePasteWork(async () => {
       if (hasDictationBacklog()) {
-        getLogger().info(`Draining backlog segment(s) on finalize`);
+        getLogger().info("Draining backlog segment(s) on finalize");
         await this.drainBacklogAndAppendSpace();
       }
     });

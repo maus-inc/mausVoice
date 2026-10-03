@@ -280,15 +280,14 @@ describe("attachScrollListCollapse", () => {
     const cleanup = attach({ scroller, measureElements, mediaQuery });
 
     expect(MockResizeObserver.instances).toHaveLength(1);
-    expect([...MockResizeObserver.instances[0]!.observed]).toEqual(
-      measureElements,
-    );
+    const [observer] = MockResizeObserver.instances;
+    expect([...observer.observed]).toEqual(measureElements);
     expect(scroller.listenerCount()).toBe(1);
     expect(mediaQuery.listenerCount()).toBe(1);
 
     cleanup.disconnect();
 
-    expect(MockResizeObserver.instances[0]!.disconnected).toBe(true);
+    expect(observer.disconnected).toBe(true);
     expect(MockResizeObserver.live).toBe(0);
     expect(scroller.listenerCount()).toBe(0);
     expect(mediaQuery.listenerCount()).toBe(0);

@@ -226,7 +226,7 @@ export const ListTile = forwardRef(function ListTile<
               hover={leadingHover}
               hovered={hovered}
               onClick={handleClickLeading}
-              left={true}
+              left
             />
           )}
           <Box

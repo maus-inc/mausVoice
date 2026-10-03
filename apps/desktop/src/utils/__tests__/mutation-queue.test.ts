@@ -19,8 +19,16 @@ describe("createMutationQueue", () => {
     const a = deferred();
     const b = deferred();
 
-    const first = enqueue(() => a.promise.then(() => void order.push("A")));
-    const second = enqueue(() => b.promise.then(() => void order.push("B")));
+    const first = enqueue(() =>
+      a.promise.then(() => {
+        order.push("A");
+      }),
+    );
+    const second = enqueue(() =>
+      b.promise.then(() => {
+        order.push("B");
+      }),
+    );
 
     // Resolve B before A to prove ordering is not a side-effect of resolution.
     b.resolve();
@@ -47,7 +55,7 @@ describe("createMutationQueue", () => {
     const make =
       (
         start: { promise: Promise<void> },
-        entered: { resolve: (value: void) => void },
+        entered: { resolve: () => void },
         release: { promise: Promise<void> },
       ) =>
       async () => {

@@ -41,6 +41,30 @@ const requestBodyAt = (index: number): FormData => {
   return init.body;
 };
 
+/**
+ * The multipart body of the nth `fetch` call.
+ *
+ * Reading this used to be `fetchMock.mock.calls[i]![1]!.body`, two forbidden
+ * non-null assertions. They also hid the failure that matters: a dropped retry
+ * means the call never happened, and that surfaced as a `TypeError` on `.body`
+ * naming neither the attempt nor the call.
+ */
+const uploadedForm = (call: number): FormData => {
+  const args = fetchMock.mock.calls[call];
+  if (!args) {
+    throw new Error(
+      `Expected fetch to be called at index ${call}, but it was called ${fetchMock.mock.calls.length} time(s)`,
+    );
+  }
+  const init = args[1] as RequestInit | undefined;
+  if (!(init?.body instanceof FormData)) {
+    throw new Error(
+      `Expected fetch call ${call} to send a FormData body, got ${init?.body instanceof Blob ? "a Blob" : typeof init?.body}`,
+    );
+  }
+  return init.body;
+};
+
 describe("openaiCompatibleTranscribeAudio", () => {
   beforeEach(() => {
     fetchMock.mockReset();
@@ -187,15 +211,9 @@ describe("openaiCompatibleTranscribeAudio", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(
-      (fetchMock.mock.calls[0]![1]!.body as FormData).get("response_format"),
-    ).toBe("verbose_json");
-    expect(
-      (fetchMock.mock.calls[1]![1]!.body as FormData).get("response_format"),
-    ).toBe("json");
-    expect(
-      (fetchMock.mock.calls[2]![1]!.body as FormData).get("response_format"),
-    ).toBeNull();
+    expect(uploadedForm(0).get("response_format")).toBe("verbose_json");
+    expect(uploadedForm(1).get("response_format")).toBe("json");
+    expect(uploadedForm(2).get("response_format")).toBeNull();
     expect(result.text).toBe("recovered text");
   });
 

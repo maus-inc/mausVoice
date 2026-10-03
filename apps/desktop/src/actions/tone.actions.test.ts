@@ -28,7 +28,7 @@ const { setSelectedToneIdMock } = vi.hoisted(() => ({
 vi.mock("../repos", () => ({
   getToneRepo: () => ({
     listTones: vi.fn(() => Promise.resolve([])),
-    upsertTone: vi.fn(async (tone: unknown) => tone),
+    upsertTone: vi.fn((tone: unknown) => Promise.resolve(tone)),
     deleteTone: vi.fn(),
   }),
   getUserPreferencesRepo: () => ({
@@ -162,7 +162,11 @@ describe("writing style switch channels share one state transition", () => {
       toneId: "chat",
     });
     expect(selectedToneId()).toBe("chat");
-    void pending;
+    // Deliberately not awaited: the persist promise never settles (see the
+    // mock above), and the point under test is that the in-memory selection
+    // lands before persistence can resolve. `pending` is asserted as a promise
+    // so the test still fails loudly if the switch ever stops returning one.
+    expect(pending).toBeInstanceOf(Promise);
   });
 
   it("skips persist when there is no user so in-memory and disk stay aligned", async () => {

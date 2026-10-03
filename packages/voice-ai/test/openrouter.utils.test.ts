@@ -14,10 +14,10 @@ createOpenAICompatibleGenerateTests({
 });
 
 describe("openrouterTranscribeAudio", () => {
+  const clientOptionsSeenRaw = vi.hoisted(() => vi.fn());
   /** The options each constructed client was given, so the fetch can be read. */
   const clientOptionsSeen = (): Array<Record<string, unknown>> =>
     clientOptionsSeenRaw.mock.calls.map(([options]) => options);
-  const clientOptionsSeenRaw = vi.hoisted(() => vi.fn());
 
   const setupTranscriptionMock = (create: ReturnType<typeof vi.fn>) => {
     vi.resetModules();

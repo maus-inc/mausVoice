@@ -11,7 +11,9 @@ import { produceAppState, useAppStore } from "../../store";
 import { OverlaySyncSideEffects } from "./OverlaySyncSideEffects";
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(async (..._args: unknown[]) => undefined),
+  // `invoke` is promise-returning in the real module and is consumed with
+  // `.catch()`, so the fake has to hand back a promise too.
+  invoke: vi.fn((..._args: unknown[]) => Promise.resolve(undefined)),
   windowLabel: "main",
 }));
 vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
@@ -40,13 +42,17 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
 });
+// Both scopes are sync on purpose: the component's effect is fully
+// synchronous (it only calls `invoke` and attaches `.catch`), so there is no
+// promise continuation whose React state update an async scope would need to
+// capture. `flushActQueue` runs in both act branches.
 afterEach(async () => {
-  await act(async () => root.unmount());
+  await act(() => root.unmount());
   container.remove();
 });
 
 const renderLocale = async (locale: Locale) => {
-  await act(async () => {
+  await act(() => {
     root.render(
       <IntlProvider locale={locale} messages={getMessagesForLocale(locale)}>
         <OverlaySyncSideEffects />
@@ -89,7 +95,7 @@ describe("native pill review localization", () => {
 
   it("clears the native review when the queue is cleared", async () => {
     await renderLocale("de");
-    await act(async () => {
+    await act(() => {
       produceAppState((draft) => {
         draft.pendingPillReview = null;
       });

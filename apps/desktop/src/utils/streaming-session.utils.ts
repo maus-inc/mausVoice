@@ -1,4 +1,5 @@
 import { TranscriptionSessionResult } from "../types/transcription-session.types";
+import { getLogger } from "./log.utils";
 
 export type StreamingFinalize = {
   finalize: () => Promise<string>;
@@ -45,14 +46,13 @@ export const createStreamingFinalize = ({
 
   const finalize = (): Promise<string> =>
     new Promise((resolveFinalize) => {
-      console.log(
-        `${logPrefix} Finalize called, isFinalized:`,
-        getIsFinalized(),
-        "ws state:",
-        getWsState(),
+      getLogger().info(
+        `${logPrefix} Finalize called, isFinalized: ${getIsFinalized()} ws state: ${getWsState()}`,
       );
       if (getIsFinalized()) {
-        console.log(`${logPrefix} Already finalized, returning transcript`);
+        getLogger().info(
+          `${logPrefix} Already finalized, returning transcript`,
+        );
         resolveFinalize(getText());
         return;
       }
@@ -64,13 +64,12 @@ export const createStreamingFinalize = ({
 
       if (canSend()) {
         if (sendTermination) {
-          console.log(`${logPrefix} Sending termination message...`);
+          getLogger().info(`${logPrefix} Sending termination message...`);
           sendTermination();
         }
         finalizeTimeout = setTimeout(() => {
-          console.log(
-            `${logPrefix} Timeout reached, finalizing with transcript length:`,
-            getText().length,
+          getLogger().info(
+            `${logPrefix} Timeout reached, finalizing with transcript length: ${getText().length}`,
           );
           cleanup();
           if (finalizeResolver) {
@@ -91,9 +90,8 @@ export const createStreamingFinalize = ({
       finalizeTimeout = null;
     }
     if (finalizeResolver) {
-      console.log(
-        `${logPrefix} Completing finalize with transcript length:`,
-        getText().length,
+      getLogger().info(
+        `${logPrefix} Completing finalize with transcript length: ${getText().length}`,
       );
       cleanup();
       finalizeResolver(getText());

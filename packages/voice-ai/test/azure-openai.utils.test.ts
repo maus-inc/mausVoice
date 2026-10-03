@@ -109,6 +109,8 @@ describe("azureOpenAITestIntegration", () => {
       AzureOpenAI: class MockAzureOpenAI {
         models = { list };
       },
+      // The module's default export exists so `openai`'s shape is complete;
+      // these tests drive `AzureOpenAI`, and nothing constructs the default.
       default: class MockOpenAI {},
     }));
 
@@ -130,6 +132,8 @@ describe("azureOpenAITestIntegration", () => {
       AzureOpenAI: class MockAzureOpenAI {
         models = { list };
       },
+      // The module's default export exists so `openai`'s shape is complete;
+      // these tests drive `AzureOpenAI`, and nothing constructs the default.
       default: class MockOpenAI {},
     }));
 

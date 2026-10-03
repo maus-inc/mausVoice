@@ -11,17 +11,17 @@ vi.mock("react-intl", async (importOriginal) => {
   return reactIntlMockModule(importOriginal);
 });
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   state: { local: { dismissedTipIds: [] as string[] } },
   resetTip: vi.fn(),
 }));
 
 vi.mock("../../store", () => ({
-  useAppStore: (selector: (s: unknown) => unknown) => selector(h.state),
+  useAppStore: (selector: (s: unknown) => unknown) => selector(mocks.state),
 }));
 
 vi.mock("../../actions/onboarding.actions", () => ({
-  resetTip: h.resetTip,
+  resetTip: mocks.resetTip,
 }));
 
 import HelpPage from "./HelpPage";
@@ -53,7 +53,7 @@ const renderPage = async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.state.local.dismissedTipIds = [];
+  mocks.state.local.dismissedTipIds = [];
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -66,7 +66,7 @@ afterEach(() => {
 
 describe("HelpPage tip cards", () => {
   it("dims exactly the tips the user has dismissed", async () => {
-    h.state.local.dismissedTipIds = ["writing-styles", "update-channel"];
+    mocks.state.local.dismissedTipIds = ["writing-styles", "update-channel"];
     await renderPage();
 
     // The dimming is the only signal that a tip was dismissed: this list is
@@ -80,7 +80,7 @@ describe("HelpPage tip cards", () => {
   });
 
   it("dims a single dismissed tip and no other", async () => {
-    h.state.local.dismissedTipIds = ["writing-styles"];
+    mocks.state.local.dismissedTipIds = ["writing-styles"];
     await renderPage();
 
     expect(showAgainCount()).toBe(1);

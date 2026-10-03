@@ -16,7 +16,7 @@ vi.mock("./AIAgentModeConfiguration", () => ({
 }));
 vi.mock("./HotkeySetting", () => ({ HotkeySetting: () => null }));
 vi.mock("../../actions/transcriptions.actions", () => ({
-  importAudioFile: vi.fn(async () => undefined),
+  importAudioFile: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("../transcriptions/TranscriptionsSideEffects", () => ({
   TranscriptionsSideEffects: () => null,

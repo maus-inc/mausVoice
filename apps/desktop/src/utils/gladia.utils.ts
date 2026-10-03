@@ -13,7 +13,7 @@ const sanitizeValue = (value: string): string =>
   value
     .replaceAll("\0", "")
     // oxlint-disable-next-line no-control-regex
-    .replaceAll(/[\u0001-\u001f\u007f]/g, " ")
+    .replaceAll(/[\u0001-\u001f\u007f]/gu, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
 
@@ -190,9 +190,10 @@ export const createStreamingResampler = (
 
       const lower = Math.floor(localPosition);
       const fraction = localPosition - lower;
-      const a = buffer[lower] ?? 0;
-      const b = buffer[Math.min(lower + 1, buffer.length - 1)] ?? a;
-      output.push(a + fraction * (b - a));
+      const lowerSample = buffer[lower] ?? 0;
+      const upperSample =
+        buffer[Math.min(lower + 1, buffer.length - 1)] ?? lowerSample;
+      output.push(lowerSample + fraction * (upperSample - lowerSample));
       nextOutputSample++;
     }
 

@@ -4,6 +4,11 @@ import type { StopRecordingResponse } from "../types/transcription-session.types
 const HEADER_BYTES = 4;
 const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
+const EMPTY_RESULT = (): StopRecordingResponse => ({
+  samples: new Float32Array(0),
+  sampleRate: 0,
+});
+
 const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
   if (bytes.byteLength < HEADER_BYTES) {
     return EMPTY_RESULT();
@@ -24,11 +29,6 @@ const decodeBinary = (bytes: Uint8Array): StopRecordingResponse => {
   }
   return { samples, sampleRate };
 };
-
-const EMPTY_RESULT = (): StopRecordingResponse => ({
-  samples: new Float32Array(0),
-  sampleRate: 0,
-});
 
 /**
  * Whether `value` can back a `Float32Array` without surprising the caller.

@@ -10,6 +10,23 @@ const jsonResponse = (body: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
+/**
+ * The body of the nth transcript request the mock captured.
+ *
+ * A regression that stops sending the request leaves the capture empty, and
+ * that used to surface as a `TypeError` reading `.speech_models` of
+ * `undefined` -- naming neither the attempt nor the capture.
+ */
+const capturedBody = <T>(capture: { bodies: unknown[] }, call = 0): T => {
+  const body = capture.bodies[call];
+  if (body === undefined) {
+    throw new Error(
+      `Expected a captured request body at index ${call}, captured ${capture.bodies.length}`,
+    );
+  }
+  return body as T;
+};
+
 describe("normalizeAssemblyAISpeechModel", () => {
   it("accepts the supported ids and migrates legacy tier names", () => {
     expect(normalizeAssemblyAISpeechModel("universal-3-5-pro")).toBe(
@@ -124,7 +141,7 @@ describe("assemblyaiTranscribeAudio request contract", () => {
       customFetch: makeFetch(capture),
     });
 
-    const body = capture.bodies[0]!;
+    const body = capturedBody<{ speech_models?: unknown }>(capture);
     expect(body.speech_models).toEqual(["universal-3-5-pro", "universal-2"]);
     expect(body).not.toHaveProperty("speech_model");
   });

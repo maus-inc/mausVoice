@@ -34,8 +34,8 @@ beforeEach(() => {
   mocks.send
     .mockReset()
     .mockImplementation(
-      async (_id: string, _text: string, onPersisted?: () => void) =>
-        onPersisted?.(),
+      (_id: string, _text: string, onPersisted?: () => void) =>
+        Promise.resolve(onPersisted?.()),
     );
   container = document.createElement("div");
   document.body.append(container);
@@ -55,14 +55,22 @@ const render = async (running: boolean) => {
       }),
     ),
   );
-  return container.querySelector("input")!;
+  const input = container.querySelector("input");
+  if (!input) throw new Error("Expected the composer input to be rendered");
+  return input;
 };
 const type = async (input: HTMLInputElement, text = "draft") => {
   await act(async () => {
-    Object.getOwnPropertyDescriptor(
+    const setter = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
       "value",
-    )!.set!.call(input, text);
+    )?.set;
+    if (!setter) {
+      throw new Error(
+        "Expected HTMLInputElement.prototype.value to have a setter",
+      );
+    }
+    setter.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };

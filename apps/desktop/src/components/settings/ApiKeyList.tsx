@@ -677,6 +677,43 @@ const GenericModelPicker = ({
   );
 };
 
+/**
+ * One icon button in a key card's action row, with its tooltip.
+ *
+ * Extracted so the edit and delete actions read as one element each instead of
+ * a Tooltip>span>IconButton trio nested four JSX levels deep inside the card's
+ * Paper>Stack>Stack. The `title` is a ReactNode passed by the caller, so each
+ * `defaultMessage` literal stays where the extractor can read it. The `span` is
+ * kept because a disabled IconButton does not fire pointer events, so the
+ * tooltip needs a live element to hover.
+ */
+const ApiKeyCardAction = ({
+  title,
+  onClick,
+  disabled,
+  color,
+  icon,
+}: {
+  title: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  color?: "error";
+  icon: React.ReactNode;
+}) => (
+  <Tooltip title={title}>
+    <span>
+      <IconButton
+        size="small"
+        color={color}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {icon}
+      </IconButton>
+    </span>
+  </Tooltip>
+);
+
 const ApiKeyCard = ({
   apiKey,
   selected,
@@ -856,29 +893,19 @@ const ApiKeyCard = ({
               <FormattedMessage defaultMessage="Test" />
             )}
           </Button>
-          <Tooltip title={<FormattedMessage defaultMessage="Edit key" />}>
-            <span>
-              <IconButton
-                size="small"
-                onClick={onEdit}
-                disabled={deleting || testing}
-              >
-                <Pencil size={16} strokeWidth={1.9} />
-              </IconButton>
-            </span>
-          </Tooltip>
-          <Tooltip title={<FormattedMessage defaultMessage="Delete key" />}>
-            <span>
-              <IconButton
-                size="small"
-                color="error"
-                onClick={onDelete}
-                disabled={deleting || testing}
-              >
-                <Trash2 size={16} strokeWidth={1.9} />
-              </IconButton>
-            </span>
-          </Tooltip>
+          <ApiKeyCardAction
+            title={<FormattedMessage defaultMessage="Edit key" />}
+            onClick={onEdit}
+            disabled={deleting || testing}
+            icon={<Pencil size={16} strokeWidth={1.9} />}
+          />
+          <ApiKeyCardAction
+            title={<FormattedMessage defaultMessage="Delete key" />}
+            onClick={onDelete}
+            disabled={deleting || testing}
+            color="error"
+            icon={<Trash2 size={16} strokeWidth={1.9} />}
+          />
         </Stack>
       </Stack>
       <ModelPickerForProvider

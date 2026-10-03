@@ -2,9 +2,10 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 
 const { deleteToneMock } = vi.hoisted(() => ({
-  deleteToneMock: vi.fn(async () => undefined),
+  deleteToneMock: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -38,16 +39,7 @@ import { INITIAL_APP_STATE } from "../../state/app.state";
 import { setAppState } from "../../store";
 import { ManualStylingRow } from "./ManualStylingRow";
 
-(
-  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
-).IS_REACT_ACT_ENVIRONMENT = true;
-
-// jsdom has no ResizeObserver; MUI menus/tooltips require one.
-(globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
+ensureUiHarness();
 
 let container: HTMLDivElement;
 let root: Root;

@@ -313,7 +313,7 @@ describe("a caller's abort signal ends the retry wait", () => {
       });
       const mod = await load();
       let settled: unknown = null;
-      void run(mod, controller.signal).then(
+      run(mod, controller.signal).then(
         () => {
           settled = "resolved";
         },

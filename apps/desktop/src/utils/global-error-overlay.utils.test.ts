@@ -42,6 +42,8 @@ const installOverlayWithMockWindow = (rootChildren: unknown[] = []) => {
       listeners[type] ??= [];
       listeners[type].push(handler);
     },
+    // The overlay registers its listeners and never removes them, so the
+    // stub only has to be callable.
     removeEventListener: () => {},
   });
   return { doc, listeners };
@@ -195,6 +197,9 @@ describe("global error overlay", () => {
       scriptUrl: "asset://localhost/assets/async-chunk.js",
       linkUrl: "asset://localhost/assets/async-chunk.css",
     });
+    // Silenced, not asserted on: these tests pin which failures reach the
+    // overlay, and the console write is a side effect of that decision rather
+    // than the subject. The spy still records the calls if a test wants them.
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { installGlobalErrorOverlay } =
       await import("./global-error-overlay.utils.ts");
@@ -211,6 +216,7 @@ describe("global error overlay", () => {
   it("does not log ignored image load failures", async () => {
     const { doc, listeners } = installOverlayWithMockWindow([{}]);
     const HTMLImageElement = stubImageElement();
+    // Silenced, not asserted on -- see the note on `consoleWarn` above.
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -229,6 +235,7 @@ describe("global error overlay", () => {
 
   it("does not create an overlay for post-mount rejections", async () => {
     const { doc, listeners } = installOverlayWithMockWindow([{}]);
+    // Silenced, not asserted on -- see the note on `consoleWarn` above.
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
@@ -248,6 +255,7 @@ describe("global error overlay", () => {
     // test re-runs. The second install must not register a second pair of
     // listeners, so a single error event is still observed exactly once.
     const { listeners } = installOverlayWithMockWindow([{}]);
+    // Silenced, not asserted on -- see the note on `consoleWarn` above.
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});

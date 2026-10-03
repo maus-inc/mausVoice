@@ -998,7 +998,9 @@ export const storeTranscription = async (
     return { transcription: null, wordCount: 0 };
   }
 
-  const hasText = !!(input.rawTranscript && input.rawTranscript.length > 0);
+  const hasText = Boolean(
+    input.rawTranscript && input.rawTranscript.length > 0,
+  );
   const transcriptionFailed =
     input.rawTranscript === null && input.warnings.length > 0;
 

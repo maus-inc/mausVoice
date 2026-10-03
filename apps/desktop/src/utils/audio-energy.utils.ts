@@ -63,8 +63,8 @@ export const maxWindowedRms = (
     const end = Math.min(start + windowSize, input.length);
     let sumSquares = 0;
     for (let i = start; i < end; i++) {
-      const v = input[i] ?? 0;
-      sumSquares += v * v;
+      const sample = input[i] ?? 0;
+      sumSquares += sample * sample;
     }
     const windowRms = Math.sqrt(sumSquares / (end - start));
     if (windowRms > max) max = windowRms;

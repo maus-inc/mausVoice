@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../utils/secure-fetch.utils", () => ({
-  secureFetch: vi.fn(async () => new Response("{}", { status: 200 })),
+  secureFetch: vi.fn(() =>
+    Promise.resolve(new Response("{}", { status: 200 })),
+  ),
 }));
 
 import { OpenAICompatibleRepo } from "./ollama.repo";
@@ -9,9 +11,11 @@ import { OpenAICompatibleRepo } from "./ollama.repo";
 describe("OpenAICompatibleRepo URL handling", () => {
   it("appends /models directly to the base URL it is given", async () => {
     const calls: string[] = [];
-    const customFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const customFetch = vi.fn((input: RequestInfo | URL) => {
       calls.push(String(input));
-      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: [] }), { status: 200 }),
+      );
     });
 
     // Callers are responsible for building the /v1 base (see
@@ -30,9 +34,11 @@ describe("OpenAICompatibleRepo URL handling", () => {
 
   it("does not re-root an already API-versioned base", async () => {
     const calls: string[] = [];
-    const customFetch = vi.fn(async (input: RequestInfo | URL) => {
+    const customFetch = vi.fn((input: RequestInfo | URL) => {
       calls.push(String(input));
-      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: [] }), { status: 200 }),
+      );
     });
 
     const repo = new OpenAICompatibleRepo(

@@ -82,6 +82,26 @@ const browserRightClick = (target: Element, x = 120, y = 80): MouseEvent => {
   return nativeContextMenu(target, x, y);
 };
 
+/**
+ * `querySelector` that throws when nothing matches, the same shape as the
+ * `openContextMenu` guard in `test/helpers/context-menu.ts`. A non-null
+ * assertion would hand the next line a `null` that surfaces as a TypeError
+ * naming neither the selector nor the surface, whereas this fails with the
+ * selector that came up empty.
+ */
+const queryRequired = <T extends Element = HTMLElement>(
+  scope: ParentNode,
+  selector: string,
+): T => {
+  const found = scope.querySelector<T>(selector);
+  if (!found) {
+    throw new Error(
+      `Expected an element matching "${selector}" to be rendered`,
+    );
+  }
+  return found;
+};
+
 describe("ContextMenuProvider", () => {
   it("shows the clipboard menu on input right-click without throwing", () => {
     act(() => {
@@ -94,17 +114,17 @@ describe("ContextMenuProvider", () => {
       );
     });
 
-    const input = container.querySelector("input")!;
+    const input = queryRequired(container, "input");
     // Regression: the provider passes a NATIVE MouseEvent to handleContextMenu,
     // which previously dereferenced the React-only `nativeEvent` property and
     // threw a TypeError (suppressing the menu after preventDefault()).
     expect(() => nativeContextMenu(input)).not.toThrow();
 
-    const menu = document.querySelector('[role="menu"]');
+    const menu = queryRequired(document, '[role="menu"]');
     expect(menu).not.toBeNull();
-    expect(menu!.textContent).toContain("Copy");
-    expect(menu!.textContent).toContain("Paste");
-    expect(menu!.textContent).toContain("Select All");
+    expect(menu.textContent).toContain("Copy");
+    expect(menu.textContent).toContain("Paste");
+    expect(menu.textContent).toContain("Select All");
   });
 
   const copyItem = (): HTMLElement | undefined =>
@@ -123,7 +143,7 @@ describe("ContextMenuProvider", () => {
           ),
         );
       });
-      const input = container.querySelector("input")!;
+      const input = queryRequired<HTMLInputElement>(container, "input");
       if (select) {
         // window.getSelection() does NOT reflect <input> selection — the menu
         // must read selectionStart/selectionEnd instead (regression: Copy was
@@ -151,7 +171,7 @@ describe("ContextMenuProvider", () => {
       );
     });
 
-    const surface = container.querySelector("div")!;
+    const surface = queryRequired(container, "div");
     const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
@@ -264,7 +284,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(EmptyHarness));
     });
-    const button = container.querySelector('[data-testid="empty"]')!;
+    const button = queryRequired(container, '[data-testid="empty"]');
     const event = new MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
@@ -284,7 +304,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -300,7 +320,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -324,7 +344,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),
@@ -381,8 +401,8 @@ describe("useContextMenu", () => {
       root.render(createElement(RowHarness));
     });
 
-    const text = container.querySelector('[data-testid="row-text"]')!;
-    const rowButton = container.querySelector('[data-testid="row-button"]')!;
+    const text = queryRequired(container, '[data-testid="row-text"]');
+    const rowButton = queryRequired(container, '[data-testid="row-button"]');
     nativeContextMenu(text);
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),
@@ -413,7 +433,7 @@ describe("useContextMenu", () => {
     act(() => input.focus());
     expect(document.activeElement).toBe(input);
 
-    nativeContextMenu(container.querySelector('[data-testid="bare-text"]')!);
+    nativeContextMenu(queryRequired(container, '[data-testid="bare-text"]'));
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
@@ -440,7 +460,7 @@ describe("useContextMenu", () => {
     act(() => input.focus());
     expect(document.activeElement).toBe(input);
 
-    browserRightClick(container.querySelector('[data-testid="bare-text"]')!);
+    browserRightClick(queryRequired(container, '[data-testid="bare-text"]'));
     expect(document.activeElement).toBe(
       document.body.querySelector('[role="menu"]'),
     );
@@ -458,7 +478,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -480,7 +500,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button, 200, 150);
 
     const menu = document.body.querySelector('[role="menu"]');
@@ -489,9 +509,9 @@ describe("useContextMenu", () => {
     // ancestor's `filter`/`transform` can re-anchor or clip it.
     expect(container.contains(menu)).toBe(false);
     // Its positioned wrapper lives directly under <body>.
-    const positioned = menu!.parentElement as HTMLElement;
+    const positioned = menu?.parentElement;
     expect(positioned).not.toBeNull();
-    expect(positioned.parentElement).toBe(document.body);
+    expect(positioned?.parentElement).toBe(document.body);
   });
 
   it("consumes Escape before host (e.g. dialog) keydown handlers see it", () => {
@@ -501,7 +521,7 @@ describe("useContextMenu", () => {
       act(() => {
         root.render(createElement(Harness));
       });
-      nativeContextMenu(container.querySelector("button")!);
+      nativeContextMenu(queryRequired(container, "button"));
 
       const event = new KeyboardEvent("keydown", {
         key: "Escape",
@@ -525,7 +545,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    nativeContextMenu(container.querySelector("button")!);
+    nativeContextMenu(queryRequired(container, "button"));
 
     const menu = document.body.querySelector('[role="menu"]');
     expect(document.activeElement).toBe(menu);
@@ -535,7 +555,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
 
     const item = Array.from(
@@ -546,7 +566,7 @@ describe("useContextMenu", () => {
     act(() => {
       item.click();
     });
-    expect(container.querySelector('[data-testid="result"]')!.textContent).toBe(
+    expect(queryRequired(container, '[data-testid="result"]').textContent).toBe(
       "thing",
     );
     expect(document.querySelector('[role="menu"]')).toBeNull();
@@ -556,9 +576,9 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
-    const menu = document.querySelector('[role="menu"]')!;
+    const menu = queryRequired(document, '[role="menu"]');
     expect(menu).not.toBeNull();
 
     // The menu scrolls itself (overflowY: auto) when it has many items; that
@@ -575,7 +595,7 @@ describe("useContextMenu", () => {
     act(() => {
       root.render(createElement(Harness));
     });
-    const button = container.querySelector("button")!;
+    const button = queryRequired(container, "button");
     nativeContextMenu(button);
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
 
@@ -617,10 +637,10 @@ describe("surface yields editable right-clicks to the provider", () => {
       );
     });
 
-    const input = container.querySelector("input")!;
+    const input = queryRequired(container, "input");
     nativeContextMenu(input);
 
-    const menu = document.querySelector('[role="menu"]')!;
+    const menu = queryRequired(document, '[role="menu"]');
     expect(menu).not.toBeNull();
     // The provider's clipboard menu wins over the surface's Delete item.
     expect(menu.textContent).toContain("Copy");

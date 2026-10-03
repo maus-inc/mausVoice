@@ -177,7 +177,7 @@ describe("unsafe HTML is neutralized", () => {
   it("handles a long run of opening-angle brackets without backtracking", () => {
     // The tag scanner is single-pass; this would be a worst case for a
     // backtracking regex but must complete immediately.
-    const input = "<".repeat(50_000) + "text";
+    const input = `${"<".repeat(50_000)}text`;
     const start = Date.now();
     const result = markdownToPillText(input);
     expect(Date.now() - start).toBeLessThan(1000);

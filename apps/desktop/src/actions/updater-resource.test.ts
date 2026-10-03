@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
-  close: vi.fn(async (_rid: number): Promise<void> => undefined),
+  close: vi.fn((_rid: number): Promise<void> => Promise.resolve(undefined)),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: mocks.invoke,

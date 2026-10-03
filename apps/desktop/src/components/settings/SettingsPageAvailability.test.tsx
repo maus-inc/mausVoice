@@ -7,11 +7,11 @@ import { setAppState } from "../../store";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
-  return { ...actual, invoke: vi.fn(async () => null) };
+  return { ...actual, invoke: vi.fn(() => Promise.resolve(null)) };
 });
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
-  openUrl: vi.fn(async () => undefined),
+  openUrl: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -79,7 +79,7 @@ describe("settings search availability for pill placement", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot> | null = null;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     window.matchMedia = ((query: string) => ({
       matches: false,
       media: query,

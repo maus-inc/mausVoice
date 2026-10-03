@@ -389,7 +389,7 @@ export const markdownToPillText = (
       let k = spaceStart;
       while (k < line.length && (line[k] === " " || line[k] === "\t")) k += 1;
       if (k === spaceStart) return line;
-      return "\u2022 " + line.slice(k);
+      return `\u2022 ${line.slice(k)}`;
     })
     .join("\n");
 
@@ -410,7 +410,7 @@ export const markdownToPillText = (
       while (j < line.length && (line[j] === " " || line[j] === "\t")) j += 1;
       if (j === spaceStart) return line;
       const numberText = line.slice(digitStart, digitEnd);
-      return `${numberText}. ` + line.slice(j);
+      return `${numberText}. ${line.slice(j)}`;
     })
     .join("\n");
 

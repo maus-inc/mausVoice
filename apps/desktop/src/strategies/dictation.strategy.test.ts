@@ -174,6 +174,30 @@ const createHandleTranscriptParams = (
   ...overrides,
 });
 
+/**
+ * The payload of the nth `showToast` call.
+ *
+ * These assertions used to read `mock.calls[0]![0]`, and a regression that
+ * stopped showing a toast surfaced as a `TypeError` reading `.message` of
+ * `undefined` -- which says the toast was absent but not that none was shown.
+ */
+const toastCall = <T>(
+  mocked: { mock: { calls: readonly unknown[][] } },
+  call = 0,
+): T => {
+  const args = mocked.mock.calls[call];
+  if (!args) {
+    throw new Error(
+      `Expected showToast to be called at index ${call}, but it was called ${mocked.mock.calls.length} time(s)`,
+    );
+  }
+  const payload = args[0];
+  if (payload === undefined) {
+    throw new Error(`Expected showToast call ${call} to carry a payload`);
+  }
+  return payload as T;
+};
+
 describe("DictationStrategy backlog lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -536,7 +560,7 @@ describe("DictationStrategy backlog lifecycle", () => {
       currentApp: null,
     } as never);
 
-    const toast = vi.mocked(showToast).mock.calls[0]![0];
+    const toast = toastCall<{ message: string }>(vi.mocked(showToast));
     expect(toast.message).toBe(
       "Styling failed: Provider error. The raw transcript is saved in History.",
     );
@@ -564,7 +588,7 @@ describe("DictationStrategy backlog lifecycle", () => {
       currentApp: null,
     } as never);
 
-    expect(vi.mocked(showToast).mock.calls[0]![0].message).toBe(
+    expect(toastCall<{ message: string }>(vi.mocked(showToast)).message).toBe(
       "Styling failed: Provider error. The raw transcript is saved in History.",
     );
   });

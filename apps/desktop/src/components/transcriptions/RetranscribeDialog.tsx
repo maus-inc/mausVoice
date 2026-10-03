@@ -47,6 +47,29 @@ const languageOptions = (
   label: DICTATION_LANGUAGES[code],
 }));
 
+/**
+ * A select option that shows a check beside the currently chosen value.
+ *
+ * Extracted so the style and language pickers read as one element per option
+ * instead of a MenuItem wrapping the label and a conditional Check five JSX
+ * levels deep inside Dialog>DialogContent>Stack>FormControl>Select. The `key`
+ * stays at each `.map` call site; only the row shape moved.
+ */
+const CheckableMenuItem = ({
+  value,
+  label,
+  selected,
+}: {
+  value: string;
+  label: React.ReactNode;
+  selected: boolean;
+}) => (
+  <MenuItem value={value} sx={chromeMenuItemSx}>
+    {label}
+    {selected ? <Check size={16} strokeWidth={2} /> : null}
+  </MenuItem>
+);
+
 export const RetranscribeDialog = () => {
   const intl = useIntl();
 
@@ -142,12 +165,12 @@ export const RetranscribeDialog = () => {
                 }
               >
                 {tones.map((tone) => (
-                  <MenuItem key={tone.id} value={tone.id} sx={chromeMenuItemSx}>
-                    {tone.name}
-                    {tone.id === selectedToneId ? (
-                      <Check size={16} strokeWidth={2} />
-                    ) : null}
-                  </MenuItem>
+                  <CheckableMenuItem
+                    key={tone.id}
+                    value={tone.id}
+                    label={tone.name}
+                    selected={tone.id === selectedToneId}
+                  />
                 ))}
               </Select>
             </FormControl>
@@ -173,12 +196,12 @@ export const RetranscribeDialog = () => {
               }
             >
               {languageOptions.map(({ code, label }) => (
-                <MenuItem key={code} value={code} sx={chromeMenuItemSx}>
-                  {label}
-                  {code === selectedLanguage ? (
-                    <Check size={16} strokeWidth={2} />
-                  ) : null}
-                </MenuItem>
+                <CheckableMenuItem
+                  key={code}
+                  value={code}
+                  label={label}
+                  selected={code === selectedLanguage}
+                />
               ))}
             </Select>
           </FormControl>

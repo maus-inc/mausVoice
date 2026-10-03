@@ -5,7 +5,7 @@ import { getAppState, setAppState } from "../store";
 const { nativeRepoMock, snackbarMock, loggerMock } = vi.hoisted(() => {
   const nativeRepoMock = {
     requestAdminRelaunch: vi.fn(),
-    quitApp: vi.fn(async () => undefined),
+    quitApp: vi.fn(() => Promise.resolve(undefined)),
   };
   const snackbarMock = {
     showErrorSnackbar: vi.fn(),

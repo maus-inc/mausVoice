@@ -226,7 +226,7 @@ export class LocalTranscriptionSession implements TranscriptionSession {
   cleanup(): void {
     this.abortScope.abort();
     getLogger().info(
-      `[local-session] cleanup (hasUnlisten=${!!this.unlisten}, hasPretranscriber=${!!this.pretranscriber})`,
+      `[local-session] cleanup (hasUnlisten=${Boolean(this.unlisten)}, hasPretranscriber=${Boolean(this.pretranscriber)})`,
     );
     this.releaseStream();
     this.context = null;

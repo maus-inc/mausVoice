@@ -84,6 +84,67 @@ const reviewOutputTextWithStage = async (
   return reviewOutputText(text, prefs, skipReview);
 };
 
+export const insertLocalTranscriptOutputViaPaste = async (
+  text: string,
+  keybind: string | null,
+  isInterim?: boolean,
+): Promise<PasteOutcome> => {
+  const sanitized = sanitizeIndentation(text);
+
+  const outcome = await invoke<PasteOutcome>("paste", {
+    text: sanitized,
+    keybind,
+  });
+
+  if (outcome === "copied_to_clipboard" && !isInterim) {
+    getLogger().info(
+      "Focused element was not editable, transcription copied to clipboard",
+    );
+    sendPillFlashMessage(
+      getIntl().formatMessage({
+        defaultMessage: "Transcript copied to clipboard",
+      }),
+    );
+  }
+
+  return outcome;
+};
+
+export const insertLocalTranscriptOutputViaTyping = async (
+  text: string,
+  delayMs: number,
+): Promise<void> => {
+  const sanitized = sanitizeIndentation(text);
+
+  // ReentryGuard serializes simulate_type, so cancel_typing always
+  // targets the one live session — no session id is needed.
+  const handleCancel = () => {
+    // Fire-and-forget, but never unhandled: a failed cancel must not raise
+    // an unhandled rejection on every blur/Escape.
+    void invoke("cancel_typing").catch((error: unknown) => {
+      getLogger().warning(`Failed to cancel simulated typing: ${error}`);
+    });
+  };
+
+  window.addEventListener("blur", handleCancel, { once: true });
+  const keydownHandler = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      handleCancel();
+    }
+  };
+  window.addEventListener("keydown", keydownHandler);
+
+  try {
+    await invoke("simulate_type", {
+      text: sanitized,
+      delayMs,
+    });
+  } finally {
+    window.removeEventListener("blur", handleCancel);
+    window.removeEventListener("keydown", keydownHandler);
+  }
+};
+
 const insertLocalOutput = async (
   context: OutputContext,
   text: string,
@@ -178,67 +239,6 @@ export const routeTranscriptOutput = async (
   }
 
   return { delivered: true, remote: false, deliveredText: outputText };
-};
-
-export const insertLocalTranscriptOutputViaPaste = async (
-  text: string,
-  keybind: string | null,
-  isInterim?: boolean,
-): Promise<PasteOutcome> => {
-  const sanitized = sanitizeIndentation(text);
-
-  const outcome = await invoke<PasteOutcome>("paste", {
-    text: sanitized,
-    keybind,
-  });
-
-  if (outcome === "copied_to_clipboard" && !isInterim) {
-    getLogger().info(
-      "Focused element was not editable, transcription copied to clipboard",
-    );
-    sendPillFlashMessage(
-      getIntl().formatMessage({
-        defaultMessage: "Transcript copied to clipboard",
-      }),
-    );
-  }
-
-  return outcome;
-};
-
-export const insertLocalTranscriptOutputViaTyping = async (
-  text: string,
-  delayMs: number,
-): Promise<void> => {
-  const sanitized = sanitizeIndentation(text);
-
-  // ReentryGuard serializes simulate_type, so cancel_typing always
-  // targets the one live session — no session id is needed.
-  const handleCancel = () => {
-    // Fire-and-forget, but never unhandled: a failed cancel must not raise
-    // an unhandled rejection on every blur/Escape.
-    void invoke("cancel_typing").catch((error: unknown) => {
-      getLogger().warning(`Failed to cancel simulated typing: ${error}`);
-    });
-  };
-
-  window.addEventListener("blur", handleCancel, { once: true });
-  const keydownHandler = (e: KeyboardEvent) => {
-    if (e.key === "Escape") {
-      handleCancel();
-    }
-  };
-  window.addEventListener("keydown", keydownHandler);
-
-  try {
-    await invoke("simulate_type", {
-      text: sanitized,
-      delayMs,
-    });
-  } finally {
-    window.removeEventListener("blur", handleCancel);
-    window.removeEventListener("keydown", keydownHandler);
-  }
 };
 
 // ──────────────────────────────────────────────────────────────────────────────

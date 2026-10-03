@@ -92,9 +92,9 @@ describe("postProcessTranscript provider attribution on failure", () => {
   it("aborts the provider signal after a non-timeout failure", async () => {
     let seenSignal: AbortSignal | undefined;
     genRepo.generateText.mockImplementationOnce(
-      async (input: { signal?: AbortSignal }) => {
+      (input: { signal?: AbortSignal }) => {
         seenSignal = input.signal;
-        throw new Error("provider rejected the request");
+        return Promise.reject(new Error("provider rejected the request"));
       },
     );
 

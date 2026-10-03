@@ -103,7 +103,7 @@ describe("decodeStopRecordingPayload", () => {
 
 describe("invokeStopRecording", () => {
   it("invokes stop_recording and decodes the response", async () => {
-    const invokeFn = vi.fn(async () => encode(48_000, [0.5]));
+    const invokeFn = vi.fn(() => Promise.resolve(encode(48_000, [0.5])));
     const decoded = await invokeStopRecording(invokeFn);
     expect(invokeFn).toHaveBeenCalledWith("stop_recording");
     expect(Array.from(decoded.samples)).toEqual([0.5]);

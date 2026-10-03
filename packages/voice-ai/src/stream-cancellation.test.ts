@@ -42,6 +42,8 @@ describe("streaming transport cancellation", () => {
     async (_name, adapter) => {
       const controller = new AbortController();
       let transportSignal: AbortSignal | null | undefined;
+      // Placeholder until the transport hands over the real resolver; the
+      // `finally` below calls it even if the request never started.
       let release = () => {};
       const customFetch = vi.fn<CustomFetch>((_url, init) => {
         transportSignal = init?.signal;
@@ -69,8 +71,10 @@ describe("streaming transport cancellation", () => {
         customFetch,
       });
       const pending = stream.next();
-      // SDKs can reject immediately on abort, before the assertions below await it.
-      void pending.catch(() => {});
+      // SDKs can reject immediately on abort, before the assertions below await
+      // it. Registering the handler now is what stops that early rejection
+      // reaching the process; the assertions still see it on `pending`.
+      pending.catch(() => {});
       try {
         await vi.waitFor(() => expect(customFetch).toHaveBeenCalledTimes(1));
         const body = customFetch.mock.calls[0][1]?.body;
@@ -82,6 +86,8 @@ describe("streaming transport cancellation", () => {
         expect(customFetch).toHaveBeenCalledTimes(1);
       } finally {
         release();
+        // Teardown must not throw over whatever the test was actually asserting,
+        // so the pending rejection is absorbed here rather than re-raised.
         await pending.catch(() => {});
         await stream.return(undefined);
       }

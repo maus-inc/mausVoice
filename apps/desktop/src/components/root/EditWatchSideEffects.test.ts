@@ -37,13 +37,17 @@ vi.mock("../../hooks/toast.hooks", () => ({
   },
 }));
 
-const dismissToastMock = vi.hoisted(() => vi.fn(async () => undefined));
+// `dismissToast` is passed straight into `runToast(work: Promise<unknown>)`
+// and the real one is `async`, so the fake must hand back a promise.
+const dismissToastMock = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve(undefined)),
+);
 vi.mock("../../actions/toast.actions", () => ({
   dismissToast: dismissToastMock,
   runToast: (work: Promise<unknown>) => {
     void work;
   },
-  showToast: vi.fn(async () => undefined),
+  showToast: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 // Keep the probe observation-only by default: decide no corrections so the poll
@@ -64,7 +68,7 @@ vi.mock("../../utils/edit-watch.utils", () => ({
 // The only observable effect `acceptAutoLearnProposal` has, so a click that
 // reached the accept path is visible here.
 const createGlossaryTerms = vi.hoisted(() =>
-  vi.fn(async () => ({ created: [] })),
+  vi.fn(() => Promise.resolve({ created: [] })),
 );
 vi.mock("../../actions/dictionary.actions", () => ({
   createGlossaryTerms,
@@ -197,8 +201,9 @@ describe("EditWatchSideEffects disabled with a visible proposal", () => {
 
     // Remounted rather than re-rendered: the store mock is a plain object, not
     // a reactive store, so a same-element re-render would not re-run the effect
-    // that the flag drives.
-    await act(async () => {
+    // that the flag drives. The scope is sync: the unmount and the remount run
+    // their effects synchronously, so nothing here needs an async act scope.
+    await act(() => {
       storeState.userPrefs.autoLearnFromEditsEnabled = false;
       act(() => root.unmount());
       mount();
@@ -211,7 +216,7 @@ describe("EditWatchSideEffects disabled with a visible proposal", () => {
     const proposalId = await raiseProposal();
     mount();
 
-    await act(async () => {
+    await act(() => {
       storeState.userPrefs.autoLearnFromEditsEnabled = false;
       act(() => root.unmount());
       mount();

@@ -12,13 +12,13 @@ const {
   getGenerateTextRepoMock,
 } = vi.hoisted(() => ({
   getGenerateTextRepoMock: vi.fn(),
-  upsertToneMock: vi.fn(async (tone: unknown) => tone),
-  deleteToneMock: vi.fn(async (): Promise<void> => undefined),
+  upsertToneMock: vi.fn((tone: unknown) => Promise.resolve(tone)),
+  deleteToneMock: vi.fn((): Promise<void> => Promise.resolve()),
   closeToneEditorDialogMock: vi.fn(),
-  setAppTargetToneMock: vi.fn(async () => true),
-  generateTextMock: vi.fn(async (..._args: unknown[]) => ({
-    text: '{"result": "Styled sample!"}',
-  })),
+  setAppTargetToneMock: vi.fn(() => Promise.resolve(true)),
+  generateTextMock: vi.fn((..._args: unknown[]) =>
+    Promise.resolve({ text: '{"result": "Styled sample!"}' }),
+  ),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -154,6 +154,63 @@ const buttonByText = (text: string, small = false) =>
       (small ? el.classList.contains("MuiButton-sizeSmall") : true),
   ) as HTMLElement | undefined;
 
+/*
+ * The nullable lookups above are kept for the handful of assertions that
+ * genuinely test for a missing node. Everywhere else a `!` was silencing the
+ * failure these tests exist to catch: a wizard step that stops rendering left a
+ * `null` that surfaced as `Cannot read properties of null (reading 'click')`,
+ * naming neither the label nor the step. These wrappers turn that into a
+ * message naming the surface that came up empty.
+ */
+const requiredField = (placeholder: string) => {
+  const field = fieldByPlaceholder(placeholder);
+  if (!field) {
+    throw new Error(
+      `Expected a field with placeholder "${placeholder}" to be rendered`,
+    );
+  }
+  return field;
+};
+
+const requiredButton = (text: string, small = false) => {
+  const button = buttonByText(text, small);
+  if (!button) throw new Error(`Expected a button labelled "${text}"`);
+  return button;
+};
+
+const requiredTextarea = () => {
+  const area = document.querySelector("textarea");
+  if (!area) throw new Error("Expected the style prompt <textarea> to render");
+  return area;
+};
+
+/** The Delete button inside the topmost dialog, i.e. the confirmation prompt. */
+const confirmDeleteButton = () => {
+  const dialogs = document.querySelectorAll('[role="dialog"]');
+  const found = Array.from(
+    dialogs[dialogs.length - 1].querySelectorAll("button"),
+  ).find((button) => button.textContent?.trim() === "Delete");
+  if (!found)
+    throw new Error('Expected a "Delete" button in the confirm dialog');
+  return found;
+};
+
+const textareaWithValue = (value: string) => {
+  const found = Array.from(document.querySelectorAll("textarea")).find(
+    (field) => field.value === value,
+  );
+  if (!found) throw new Error(`Expected a <textarea> holding "${value}"`);
+  return found;
+};
+
+const nameInputWithValue = (value: string) => {
+  const found = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input[type="text"]'),
+  ).find((el) => el.value === value);
+  if (!found) throw new Error(`Expected a text input holding "${value}"`);
+  return found;
+};
+
 describe("ToneEditorDialog create wizard", () => {
   it.each(["create", "edit"])(
     "initializes and submits a localized sample in %s mode",
@@ -162,14 +219,14 @@ describe("ToneEditorDialog create wizard", () => {
       else seedEdit();
       renderDialog();
       if (mode === "create") {
-        typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
-        act(() => buttonByText("Next")!.click());
-        typeInto(document.querySelector("textarea")!, "Sound casual.");
-        await act(async () => buttonByText("Next")!.click());
+        typeInto(requiredField("Casual, Formal, Business..."), "Casual");
+        act(() => requiredButton("Next").click());
+        typeInto(requiredTextarea(), "Sound casual.");
+        await act(async () => requiredButton("Next").click());
       } else {
-        await act(async () => buttonByText("Run preview", true)!.click());
+        await act(async () => requiredButton("Run preview", true).click());
       }
-      const sample = fieldByPlaceholder("Sample dictation to restyle...")!;
+      const sample = requiredField("Sample dictation to restyle...");
       expect(sample.value).toBe("exemple de dictée");
       expect(sample.getAttribute("maxlength")).toBe("8000");
       expect(
@@ -182,7 +239,7 @@ describe("ToneEditorDialog create wizard", () => {
       renderDialog();
       expect(sample.value).toBe("Mon propre texte");
       typeInto(sample, "");
-      await act(async () => buttonByText("Run preview", true)!.click());
+      await act(async () => requiredButton("Run preview", true).click());
       expect(generateTextMock.mock.calls.at(-1)?.[0]).toMatchObject({
         prompt: expect.stringContaining("exemple de dictée"),
       });
@@ -193,9 +250,9 @@ describe("ToneEditorDialog create wizard", () => {
     async (status) => {
       seedCreate();
       renderDialog();
-      typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
-      act(() => buttonByText("Next")!.click());
-      typeInto(document.querySelector("textarea")!, "Sound casual.");
+      typeInto(requiredField("Casual, Formal, Business..."), "Casual");
+      act(() => requiredButton("Next").click());
+      typeInto(requiredTextarea(), "Sound casual.");
       let finishOld!: (value: { text: string }) => void;
       if (status === "running")
         generateTextMock.mockReturnValueOnce(
@@ -203,17 +260,17 @@ describe("ToneEditorDialog create wizard", () => {
             finishOld = resolve;
           }),
         );
-      await act(async () => buttonByText("Next")!.click());
+      await act(async () => requiredButton("Next").click());
       if (status === "done")
         expect(document.body.textContent).toContain("Styled sample!");
-      typeInto(document.querySelector("textarea")!, "A different sample.");
+      typeInto(requiredTextarea(), "A different sample.");
       expect(document.body.textContent).not.toContain("Styled sample!");
       expect(document.body.textContent).not.toContain("Styling the sample...");
       if (status === "running")
         await act(async () => finishOld({ text: "obsolete result" }));
       expect(document.body.textContent).not.toContain("obsolete result");
       generateTextMock.mockResolvedValueOnce({ text: "Fresh preview" });
-      await act(async () => buttonByText("Run preview", true)!.click());
+      await act(async () => requiredButton("Run preview", true).click());
       expect(document.body.textContent).toContain("Fresh preview");
       expect(generateTextMock).toHaveBeenCalledTimes(2);
     },
@@ -227,10 +284,9 @@ describe("ToneEditorDialog create wizard", () => {
     const next = buttonByText("Next");
     expect(next?.getAttribute("disabled")).not.toBeNull();
 
-    const name = fieldByPlaceholder("Casual, Formal, Business...");
-    expect(name).toBeTruthy();
+    const name = requiredField("Casual, Formal, Business...");
     expect(document.activeElement).toBe(name);
-    typeInto(name!, "Casual");
+    typeInto(name, "Casual");
     expect(buttonByText("Next")?.getAttribute("disabled")).toBeNull();
   });
 
@@ -238,21 +294,18 @@ describe("ToneEditorDialog create wizard", () => {
     seedCreate();
     renderDialog();
 
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
     act(() => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
     expect(document.body.textContent).toContain("Tune");
     expect(document.activeElement?.getAttribute("placeholder")).toContain(
       "professional but friendly",
     );
 
-    typeInto(
-      document.querySelector("textarea") as HTMLTextAreaElement,
-      "Sound casual.",
-    );
+    typeInto(requiredTextarea(), "Sound casual.");
     await act(async () => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
     expect(document.body.textContent).toContain("Test and review");
     expect(document.body.textContent).toContain("Styled sample!");
@@ -260,7 +313,7 @@ describe("ToneEditorDialog create wizard", () => {
     // Back returns to Tune with fields intact, and completed steps stay
     // clickable buttons for keyboard and pointer users alike.
     act(() => {
-      buttonByText("Back")!.click();
+      requiredButton("Back").click();
     });
     expect(document.body.textContent).toContain("Tune");
 
@@ -271,30 +324,24 @@ describe("ToneEditorDialog create wizard", () => {
     act(() => {
       defineStep.click();
     });
-    expect(
-      (fieldByPlaceholder("Casual, Formal, Business...") as HTMLInputElement)
-        ?.value,
-    ).toBe("Casual");
+    expect(requiredField("Casual, Formal, Business...").value).toBe("Casual");
   });
 
   it("creates the style from the review step and closes", async () => {
     seedCreate();
     renderDialog();
 
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
     act(() => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
-    typeInto(
-      document.querySelector("textarea") as HTMLTextAreaElement,
-      "Sound casual.",
-    );
+    typeInto(requiredTextarea(), "Sound casual.");
     await act(async () => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
 
     await act(async () => {
-      buttonByText("Create")!.click();
+      requiredButton("Create").click();
     });
     expect(upsertToneMock).toHaveBeenCalledTimes(1);
     expect(upsertToneMock.mock.calls[0][0]).toMatchObject({
@@ -307,13 +354,9 @@ describe("ToneEditorDialog create wizard", () => {
   it("retains the draft after a failed create and retries the same style", async () => {
     seedCreate();
     renderDialog();
-    const name = fieldByPlaceholder("Casual, Formal, Business...");
-    if (!name) throw new Error("Expected the style name field");
-    typeInto(name, "Keep this style");
+    typeInto(requiredField("Casual, Formal, Business..."), "Keep this style");
     act(() => buttonByText("Next")?.click());
-    const prompt = document.querySelector("textarea");
-    if (!prompt) throw new Error("Expected the style prompt field");
-    typeInto(prompt, "Keep this prompt");
+    typeInto(requiredTextarea(), "Keep this prompt");
     await act(async () => buttonByText("Next")?.click());
 
     upsertToneMock.mockRejectedValueOnce(new Error("Storage unavailable"));
@@ -339,18 +382,18 @@ describe("ToneEditorDialog create wizard", () => {
     state.toneEditor.targetId = "app";
     setAppState(state, true);
     renderDialog();
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
-    act(() => buttonByText("Next")!.click());
-    typeInto(document.querySelector("textarea")!, "Sound casual.");
-    await act(async () => buttonByText("Next")!.click());
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
+    act(() => requiredButton("Next").click());
+    typeInto(requiredTextarea(), "Sound casual.");
+    await act(async () => requiredButton("Next").click());
     setAppTargetToneMock.mockResolvedValueOnce(false);
-    await act(async () => buttonByText("Create")!.click());
+    await act(async () => requiredButton("Create").click());
     expect(upsertToneMock).toHaveBeenCalledTimes(1);
     expect(upsertToneMock).toHaveBeenCalledWith(expect.any(Object), {
       activate: false,
     });
     expect(closeToneEditorDialogMock).not.toHaveBeenCalled();
-    await act(async () => buttonByText("Create")!.click());
+    await act(async () => requiredButton("Create").click());
     expect(upsertToneMock.mock.calls[1][0]).toEqual(
       upsertToneMock.mock.calls[0][0],
     );
@@ -361,17 +404,14 @@ describe("ToneEditorDialog create wizard", () => {
     seedCreate();
     renderDialog();
 
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
     act(() => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
-    typeInto(
-      document.querySelector("textarea") as HTMLTextAreaElement,
-      "Sound casual.",
-    );
+    typeInto(requiredTextarea(), "Sound casual.");
     getGenerateTextRepoMock.mockReturnValueOnce({ repo: null });
     await act(async () => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
 
     expect(generateTextMock).not.toHaveBeenCalled();
@@ -389,23 +429,20 @@ describe("ToneEditorDialog create wizard", () => {
     seedCreate();
     renderDialog();
 
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
     act(() => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
-    typeInto(
-      document.querySelector("textarea") as HTMLTextAreaElement,
-      "Sound casual.",
-    );
+    typeInto(requiredTextarea(), "Sound casual.");
     generateTextMock.mockRejectedValueOnce(new Error("boom"));
     await act(async () => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
 
     expect(document.body.textContent).toContain("boom");
     generateTextMock.mockResolvedValueOnce({ text: "second try" });
     await act(async () => {
-      buttonByText("Run preview", true)!.click();
+      requiredButton("Run preview", true).click();
     });
     expect(document.body.textContent).toContain("second try");
   });
@@ -414,14 +451,11 @@ describe("ToneEditorDialog create wizard", () => {
     seedCreate();
     renderDialog();
 
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Casual");
+    typeInto(requiredField("Casual, Formal, Business..."), "Casual");
     act(() => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
-    typeInto(
-      document.querySelector("textarea") as HTMLTextAreaElement,
-      "Sound casual.",
-    );
+    typeInto(requiredTextarea(), "Sound casual.");
     generateTextMock.mockImplementationOnce(
       (input: unknown) =>
         new Promise((_resolve, reject) => {
@@ -434,13 +468,11 @@ describe("ToneEditorDialog create wizard", () => {
         }),
     );
     await act(async () => {
-      buttonByText("Next")!.click();
+      requiredButton("Next").click();
     });
 
-    const cancel = buttonByText("Cancel", true);
-    expect(cancel).toBeTruthy();
     await act(async () => {
-      cancel!.click();
+      requiredButton("Cancel", true).click();
     });
     expect(document.body.textContent).not.toContain("Styling the sample...");
     expect(document.body.textContent).not.toContain("boom");
@@ -458,13 +490,10 @@ describe("ToneEditorDialog edit mode", () => {
   it("does not confirm a queued discard after Save takes write ownership", async () => {
     seedEdit();
     renderDialog();
-    typeInto(
-      fieldByPlaceholder("Casual, Formal, Business...")!,
-      "Changed style",
-    );
-    act(() => buttonByText("Cancel")!.click());
-    const discard = buttonByText("Discard")!;
-    const save = buttonByText("Save changes")!;
+    typeInto(requiredField("Casual, Formal, Business..."), "Changed style");
+    act(() => requiredButton("Cancel").click());
+    const discard = requiredButton("Discard");
+    const save = requiredButton("Save changes");
     let finish!: () => void;
     upsertToneMock.mockReturnValueOnce(
       new Promise<void>((resolve) => {
@@ -489,7 +518,7 @@ describe("ToneEditorDialog edit mode", () => {
       promptTemplate: "Refreshed prompt",
     };
     act(() => setAppState({ toneById: { tone1: updated } }));
-    expect(fieldByPlaceholder("Casual, Formal, Business...")!.value).toBe(
+    expect(requiredField("Casual, Formal, Business...").value).toBe(
       "Refreshed style",
     );
     expect(
@@ -505,11 +534,8 @@ describe("ToneEditorDialog edit mode", () => {
     async (sameBatch) => {
       seedEdit();
       renderDialog();
-      typeInto(
-        fieldByPlaceholder("Casual, Formal, Business...")!,
-        "My unsaved edit",
-      );
-      const save = buttonByText("Save changes")!;
+      typeInto(requiredField("Casual, Formal, Business..."), "My unsaved edit");
+      const save = requiredButton("Save changes");
       const refresh = () =>
         setAppState({
           toneById: {
@@ -529,7 +555,7 @@ describe("ToneEditorDialog edit mode", () => {
         await act(async () => save.click());
       }
       expect(upsertToneMock).not.toHaveBeenCalled();
-      expect(fieldByPlaceholder("Casual, Formal, Business...")!.value).toBe(
+      expect(requiredField("Casual, Formal, Business...").value).toBe(
         "My unsaved edit",
       );
       expect(document.body.textContent).toContain(
@@ -543,7 +569,7 @@ describe("ToneEditorDialog edit mode", () => {
     seedEdit();
     renderDialog();
     generateTextMock.mockRejectedValueOnce(new Error("Provider diagnostic"));
-    await act(async () => buttonByText("Run preview", true)!.click());
+    await act(async () => requiredButton("Run preview", true).click());
     expect(document.body.textContent).toContain("Preview failed.");
     expect(document.body.textContent).toContain("Provider diagnostic");
   });
@@ -552,16 +578,10 @@ describe("ToneEditorDialog edit mode", () => {
     async (first) => {
       seedEdit();
       renderDialog();
-      typeInto(
-        fieldByPlaceholder("Casual, Formal, Business...")!,
-        "Changed style",
-      );
-      act(() => buttonByText("Delete")!.click());
-      const dialogs = document.querySelectorAll('[role="dialog"]');
-      const confirm = Array.from(
-        dialogs[dialogs.length - 1].querySelectorAll("button"),
-      ).find((button) => button.textContent?.trim() === "Delete")!;
-      const save = buttonByText("Save changes")!;
+      typeInto(requiredField("Casual, Formal, Business..."), "Changed style");
+      act(() => requiredButton("Delete").click());
+      const confirm = confirmDeleteButton();
+      const save = requiredButton("Save changes");
       let finish!: () => void;
       const pending = new Promise<void>((resolve) => {
         finish = resolve;
@@ -592,13 +612,8 @@ describe("ToneEditorDialog edit mode", () => {
       seedEdit();
       renderDialog();
       deleteToneMock.mockRejectedValueOnce(new Error("storage unavailable"));
-      act(() => buttonByText("Delete")!.click());
-      const confirmDelete = () => {
-        const dialogs = document.querySelectorAll('[role="dialog"]');
-        return Array.from(
-          dialogs[dialogs.length - 1].querySelectorAll("button"),
-        ).find((button) => button.textContent?.trim() === "Delete")!;
-      };
+      act(() => requiredButton("Delete").click());
+      const confirmDelete = () => confirmDeleteButton();
       await act(async () => confirmDelete().click());
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
@@ -632,13 +647,9 @@ describe("ToneEditorDialog edit mode", () => {
         finishDelete = resolve;
       }),
     );
-    act(() => buttonByText("Delete")!.click());
+    act(() => requiredButton("Delete").click());
     act(() => {
-      const dialogs = document.querySelectorAll('[role="dialog"]');
-      const confirm = Array.from(
-        dialogs[dialogs.length - 1].querySelectorAll("button"),
-      ).find((button) => button.textContent?.trim() === "Delete")!;
-      confirm.click();
+      confirmDeleteButton().click();
     });
     act(() => seedCreate());
     await act(async () => finishDelete());
@@ -649,13 +660,10 @@ describe("ToneEditorDialog edit mode", () => {
   it("invalidates an edit preview when its prompt changes", async () => {
     seedEdit();
     renderDialog();
-    act(() => buttonByText("Test style")!.click());
-    await act(async () => buttonByText("Run preview", true)!.click());
+    act(() => requiredButton("Test style").click());
+    await act(async () => requiredButton("Run preview", true).click());
     expect(document.body.textContent).toContain("Styled sample!");
-    const prompt = Array.from(document.querySelectorAll("textarea")).find(
-      (field) => field.value === "Write plainly.",
-    )!;
-    typeInto(prompt, "Write formally.");
+    typeInto(textareaWithValue("Write plainly."), "Write formally.");
     expect(document.body.textContent).not.toContain("Styled sample!");
   });
 
@@ -666,32 +674,25 @@ describe("ToneEditorDialog edit mode", () => {
     for (const heading of ["Basics", "Behavior", "Examples"]) {
       expect(document.body.textContent).toContain(heading);
     }
-    const name = fieldByPlaceholder("Casual, Formal, Business...");
-    expect(name).toBeTruthy();
-    expect((name as HTMLInputElement).value).toBe("My Style");
+    expect(requiredField("Casual, Formal, Business...").value).toBe("My Style");
   });
 
   it("confirms before discarding unsaved changes", async () => {
     seedEdit();
     renderDialog();
 
-    const nameInput = Array.from(
-      document.querySelectorAll('input[type="text"]'),
-    ).find((el) => (el as HTMLInputElement).value === "My Style") as
-      HTMLInputElement | undefined;
-    expect(nameInput).toBeTruthy();
-    typeInto(nameInput!, "My Style v2");
+    typeInto(nameInputWithValue("My Style"), "My Style v2");
 
     const save = buttonByText("Save changes");
     expect(save?.getAttribute("disabled")).toBeNull();
 
     // Dialog Cancel asks first when dirty.
     act(() => {
-      buttonByText("Cancel")!.click();
+      requiredButton("Cancel").click();
     });
     expect(document.body.textContent).toContain("Discard changes?");
     await act(async () => {
-      buttonByText("Discard")!.click();
+      requiredButton("Discard").click();
     });
     expect(closeToneEditorDialogMock).toHaveBeenCalled();
     expect(upsertToneMock).not.toHaveBeenCalled();
@@ -702,7 +703,7 @@ describe("ToneEditorDialog edit mode", () => {
     renderDialog();
 
     act(() => {
-      buttonByText("Cancel")!.click();
+      requiredButton("Cancel").click();
     });
     expect(document.body.textContent).not.toContain("Discard changes?");
     expect(closeToneEditorDialogMock).toHaveBeenCalled();
@@ -712,14 +713,10 @@ describe("ToneEditorDialog edit mode", () => {
     seedEdit();
     renderDialog();
 
-    const nameInput = Array.from(
-      document.querySelectorAll('input[type="text"]'),
-    ).find((el) => (el as HTMLInputElement).value === "My Style") as
-      HTMLInputElement | undefined;
-    typeInto(nameInput!, "My Style v2");
+    typeInto(nameInputWithValue("My Style"), "My Style v2");
 
     await act(async () => {
-      buttonByText("Save changes")!.click();
+      requiredButton("Save changes").click();
     });
     expect(upsertToneMock).toHaveBeenCalledTimes(1);
     expect(upsertToneMock.mock.calls[0][0]).toMatchObject({
@@ -735,7 +732,7 @@ describe("ToneEditorDialog edit mode", () => {
     renderDialog();
 
     act(() => {
-      buttonByText("Delete")!.click();
+      requiredButton("Delete").click();
     });
     expect(document.body.textContent).toContain(
       "Are you sure you want to delete this style?",
@@ -757,7 +754,7 @@ describe("ToneEditorDialog edit mode", () => {
   it("resets state when switching between create and edit", () => {
     seedCreate();
     renderDialog();
-    typeInto(fieldByPlaceholder("Casual, Formal, Business...")!, "Draft");
+    typeInto(requiredField("Casual, Formal, Business..."), "Draft");
 
     act(() => {
       seedEdit();

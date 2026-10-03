@@ -45,6 +45,12 @@ describe("redaction.utils", () => {
   });
 
   describe("redactError", () => {
+    // The credential fixtures in this file are written in pieces -- some as
+    // `${"sk"}-${"ant"}-...`, some as `"gsk_" + "..."` -- so this repository's
+    // own secret scan never sees one contiguous token. It reads a whole one as
+    // a leak, which is the right call for a real commit and the wrong one for a
+    // fixture. Merging the pieces reintroduces that finding, so the
+    // concatenations below are deliberate and should stay split.
     const secretPatternCases = [
       {
         key: "OpenAI sk-",

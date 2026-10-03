@@ -52,21 +52,19 @@ describe("LocalTranscriptionSidecar abort handling", () => {
 
     const controller = new AbortController();
     const calls: string[] = [];
-    secureFetchMock.mockImplementation(
-      async (url: string, init?: RequestInit) => {
-        const call = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
-        calls.push(call);
-        if (call === "POST /v1/transcriptions/sessions") {
-          return json({ sessionId: "s1" });
-        }
-        if (call.endsWith("/finalize")) {
-          expect(init?.signal).toBe(controller.signal);
-          controller.abort();
-          throw new DOMException("aborted", "AbortError");
-        }
-        return json({});
-      },
-    );
+    secureFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const call = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
+      calls.push(call);
+      if (call === "POST /v1/transcriptions/sessions") {
+        return Promise.resolve(json({ sessionId: "s1" }));
+      }
+      if (call.endsWith("/finalize")) {
+        expect(init?.signal).toBe(controller.signal);
+        controller.abort();
+        return Promise.reject(new DOMException("aborted", "AbortError"));
+      }
+      return Promise.resolve(json({}));
+    });
 
     await expect(
       sidecar.transcribe(transcribeInput(controller.signal)),
@@ -87,21 +85,19 @@ describe("LocalTranscriptionSidecar abort handling", () => {
 
     const controller = new AbortController();
     const calls: string[] = [];
-    secureFetchMock.mockImplementation(
-      async (url: string, init?: RequestInit) => {
-        const call = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
-        calls.push(call);
-        if (call === "POST /v1/transcriptions/sessions") {
-          return json({ sessionId: "s2" });
-        }
-        if (call.endsWith("/chunks")) {
-          expect(init?.signal).toBe(controller.signal);
-          controller.abort();
-          throw new DOMException("aborted", "AbortError");
-        }
-        return json({});
-      },
-    );
+    secureFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const call = `${init?.method ?? "GET"} ${new URL(url).pathname}`;
+      calls.push(call);
+      if (call === "POST /v1/transcriptions/sessions") {
+        return Promise.resolve(json({ sessionId: "s2" }));
+      }
+      if (call.endsWith("/chunks")) {
+        expect(init?.signal).toBe(controller.signal);
+        controller.abort();
+        return Promise.reject(new DOMException("aborted", "AbortError"));
+      }
+      return Promise.resolve(json({}));
+    });
 
     await expect(
       sidecar.transcribe({

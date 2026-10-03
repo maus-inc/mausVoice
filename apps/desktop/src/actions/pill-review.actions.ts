@@ -430,7 +430,7 @@ const startListening = (): Promise<void> => {
   return listenerSetup;
 };
 
-const waitForDecisionListener = async (id: string): Promise<boolean> => {
+const waitForDecisionListener = (id: string): Promise<boolean> => {
   const cancelled = new Promise<boolean>((resolve) => {
     pendingRegistrations.set(id, () => resolve(false));
   });

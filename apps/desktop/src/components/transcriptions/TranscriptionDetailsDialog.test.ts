@@ -5,10 +5,11 @@ import { createRoot } from "react-dom/client";
 import type { Transcription } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
+import { setMatchMedia } from "../../../test/helpers/jsdom-ui-harness";
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
-  return { ...actual, invoke: vi.fn(async () => null) };
+  return { ...actual, invoke: vi.fn(() => Promise.resolve(null)) };
 });
 
 vi.mock("../../repos", () => ({
@@ -53,22 +54,7 @@ const seed = (overrides: Partial<Transcription>) => {
   });
 };
 
-const stubMatchMedia = () => {
-  Object.defineProperty(window, "matchMedia", {
-    writable: true,
-    configurable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }),
-  });
-};
+const stubMatchMedia = () => setMatchMedia(false);
 
 const render = async (container: HTMLElement) => {
   const root = createRoot(container);

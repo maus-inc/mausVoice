@@ -18,8 +18,8 @@ vi.mock("../store");
 vi.mock("../repos");
 vi.mock("../types/expansion-flags.types");
 const ephemeralSessionMock = vi.hoisted(() => ({
-  startEphemeralSession: vi.fn(async () => undefined),
-  endEphemeralSession: vi.fn(async () => undefined),
+  startEphemeralSession: vi.fn(() => Promise.resolve(undefined)),
+  endEphemeralSession: vi.fn(() => Promise.resolve(undefined)),
 }));
 vi.mock("../actions/ephemeral-session.actions", () => ephemeralSessionMock);
 const logger = vi.hoisted(() => ({
@@ -148,8 +148,8 @@ describe("featureFlags", () => {
     it("serializes concurrent toggles without losing either update", async () => {
       let stored = "{}";
       const mockRepo = createRepoMock();
-      mockRepo.getUserPreferences.mockImplementation(async () =>
-        withFlags(stored),
+      mockRepo.getUserPreferences.mockImplementation(() =>
+        Promise.resolve(withFlags(stored)),
       );
       mockRepo.compareAndSetExpansionFlags.mockImplementation(
         async (_expected, flags) => {
@@ -199,19 +199,20 @@ describe("featureFlags", () => {
         return true;
       };
       const mockRepo = createRepoMock();
-      mockRepo.getUserPreferences.mockImplementation(async () =>
-        withFlags(stored),
+      mockRepo.getUserPreferences.mockImplementation(() =>
+        Promise.resolve(withFlags(stored)),
       );
-      mockRepo.setExpansionFlags.mockImplementation(async (flags) => {
+      mockRepo.setExpansionFlags.mockImplementation((flags) => {
         externalWrite();
         stored = flags;
-        return withFlags(stored);
+        return Promise.resolve(withFlags(stored));
       });
       mockRepo.compareAndSetExpansionFlags.mockImplementation(
-        async (expected, flags) => {
-          if (externalWrite() || expected !== stored) return null;
+        (expected, flags) => {
+          if (externalWrite() || expected !== stored)
+            return Promise.resolve(null);
           stored = flags;
-          return withFlags(stored);
+          return Promise.resolve(withFlags(stored));
         },
       );
       vi.mocked(getUserPreferencesRepo).mockReturnValue(mockRepo);

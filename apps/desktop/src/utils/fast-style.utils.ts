@@ -256,15 +256,15 @@ const breakIntoParagraphs = (text: string, sentencesPerPara = 3): string => {
 
 const toPolished = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  if (!t) return t;
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
-  t = fixCapitalizationAndPunctuation(t);
-  t = breakIntoParagraphs(t, 3);
-  t = t.replaceAll("—", "-");
-  return t;
+  let text = guarded.trim();
+  if (!text) return text;
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
+  text = fixCapitalizationAndPunctuation(text);
+  text = breakIntoParagraphs(text, 3);
+  text = text.replaceAll("—", "-");
+  return text;
 };
 
 const EMAIL_GREETING_RE = /^(?:hi|hello|hey|dear)\b/i;
@@ -340,11 +340,11 @@ const CHAT_CONNECTIVE_RE =
 
 const toChat = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
-  const sentences = splitIntoSentences(t);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
+  const sentences = splitIntoSentences(text);
   const cleaned = sentences
     .map((s) => deleteLeadingPhrase(s, CHAT_CONNECTIVE_RE))
     .map((s) => s.replace(/^[,.\s]+/, "").trim())
@@ -372,11 +372,11 @@ const expandContractions = (text: string): string => {
 };
 
 const toFormal = (raw: string): string => {
-  const t = expandContractions(toPolished(truncateGuard(raw)))
+  const text = expandContractions(toPolished(truncateGuard(raw)))
     .replace(INFORMAL_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return fixCapitalizationAndPunctuation(t);
+  return fixCapitalizationAndPunctuation(text);
 };
 
 /** Politeness openers that add nothing once the ask has been extracted. */
@@ -386,16 +386,16 @@ const PROMPT_REQUEST_RE =
 
 const toPrompt = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
-  t = t.replace(PROMPT_OPENER_RE, "").replace(PROMPT_REQUEST_RE, "");
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
+  text = text.replace(PROMPT_OPENER_RE, "").replace(PROMPT_REQUEST_RE, "");
 
   // Every sentence is kept. Condensing the request must not drop a constraint
   // the speaker stated after the opening, such as a deadline or a format
   // requirement, so this strips the politeness framing and nothing else.
-  const out = t.trim() || guarded.trim();
+  const out = text.trim() || guarded.trim();
   if (!out) return out;
   const cased = capitalizeFirst(out);
   return /[.!?]$/.test(cased) ? cased : `${cased}.`;
@@ -425,13 +425,13 @@ export const stripEdgePunctuation = (text: string): string => {
 
 const toBullets = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
 
-  const sentences = splitIntoSentences(t);
-  if (sentences.length === 0) return t;
+  const sentences = splitIntoSentences(text);
+  if (sentences.length === 0) return text;
 
   const ideas: string[] = [];
   for (const s of sentences) {
@@ -445,7 +445,7 @@ const toBullets = (raw: string): string => {
   const source = ideas.length > 0 ? ideas : sentences;
 
   const bullets = source.map((idea) => {
-    let out = idea.trim().replace(/^[•\-*]\s*/, "");
+    let out = idea.trim().replace(/^[•\-*]\s*/u, "");
     out = capitalizeFirst(out.replace(/\.$/, "").trim());
     return `- ${out}`;
   });
@@ -455,26 +455,26 @@ const toBullets = (raw: string): string => {
 
 const toConcise = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
-  t = deleteLeadingPhrase(t, HEDGING_RE);
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
+  text = deleteLeadingPhrase(text, HEDGING_RE);
   for (const [re, repl] of REDUNDANT_PHRASES) {
-    t = t.replace(re, repl);
+    text = text.replace(re, repl);
   }
-  t = t.replace(/\s{2,}/g, " ").trim();
-  return fixCapitalizationAndPunctuation(t);
+  text = text.replace(/\s{2,}/g, " ").trim();
+  return fixCapitalizationAndPunctuation(text);
 };
 
 const toNotes = (raw: string): string => {
   const guarded = truncateGuard(raw);
-  let t = guarded.trim();
-  t = applySymbolReplacements(t);
-  t = fixSelfCorrections(t);
-  t = removeFillerWords(t, true);
-  const sentences = splitIntoSentences(t);
-  if (sentences.length === 0) return t;
+  let text = guarded.trim();
+  text = applySymbolReplacements(text);
+  text = fixSelfCorrections(text);
+  text = removeFillerWords(text, true);
+  const sentences = splitIntoSentences(text);
+  if (sentences.length === 0) return text;
 
   const actionRe =
     /\b(?:need to|should|must|will|todo|action|next step|follow up|decide|decision)\b/i;

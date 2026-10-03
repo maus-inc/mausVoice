@@ -9,14 +9,14 @@ import {
 } from "../../../test/helpers/jsdom-ui-harness";
 
 const mocks = vi.hoisted(() => ({
-  createApiKey: vi.fn(async () => undefined),
-  deleteApiKey: vi.fn(async () => undefined),
-  loadApiKeys: vi.fn(async () => undefined),
-  updateApiKey: vi.fn(async () => undefined),
+  createApiKey: vi.fn(() => Promise.resolve()),
+  deleteApiKey: vi.fn(() => Promise.resolve()),
+  loadApiKeys: vi.fn(() => Promise.resolve()),
+  updateApiKey: vi.fn(() => Promise.resolve()),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
-  getTranscriptionModels: vi.fn(async () => [] as string[]),
-  getGenerativeTextModels: vi.fn(async () => [] as string[]),
+  getTranscriptionModels: vi.fn(() => Promise.resolve([] as string[])),
+  getGenerativeTextModels: vi.fn(() => Promise.resolve([] as string[])),
   onChange: vi.fn(),
   holdTest: false,
   releaseTest: null as null | (() => void),
@@ -149,6 +149,14 @@ const metaButton = (name: string): HTMLElement => {
   return el;
 };
 
+const testButton = (): HTMLButtonElement => {
+  const el = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+    (candidate) => candidate.textContent?.trim() === "Test",
+  );
+  if (!el) throw new Error("Test button not found");
+  return el;
+};
+
 describe("ApiKeyList", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -241,11 +249,7 @@ describe("ApiKeyList", () => {
 
     // The Test button is a sibling, never inside the selection region, so a
     // tap meant for the field cluster cannot re-select the key.
-    const testButton = [
-      ...document.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((b) => b.textContent?.trim() === "Test");
-    expect(testButton).toBeDefined();
-    expect(testButton!.closest("[aria-pressed]")).toBeNull();
+    expect(testButton().closest("[aria-pressed]")).toBeNull();
   });
 
   it("keeps the selection region focusable while the card is mid-test, and inert", async () => {
@@ -257,11 +261,8 @@ describe("ApiKeyList", () => {
     // Hold the integration test open so the card is observably in flight.
     mocks.holdTest = true;
 
-    const testButton = [
-      ...document.querySelectorAll<HTMLButtonElement>("button"),
-    ].find((b) => b.textContent?.trim() === "Test");
     await act(async () => {
-      testButton!.click();
+      testButton().click();
     });
     await flush();
 

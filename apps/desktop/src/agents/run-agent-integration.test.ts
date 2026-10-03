@@ -655,8 +655,8 @@ describe("runAgent immutable-state lifecycle", () => {
     "persists and reloads %s tool outcomes without live permissions",
     async (status) => {
       humanizeScrubMock.mockImplementation((text: string) => text);
-      getChatMessageRepoCreateMock.mockImplementation(
-        async (message) => message,
+      getChatMessageRepoCreateMock.mockImplementation((message) =>
+        Promise.resolve(message),
       );
       loopRunMock.mockImplementation(async function* () {
         yield { type: "iteration-start", iteration: 0 };
@@ -848,8 +848,8 @@ describe("runAgent immutable-state lifecycle", () => {
     "persists %s after cleanup (tool tail: %s)",
     async (reason, withTool) => {
       humanizeScrubMock.mockImplementation((text: string) => text);
-      getChatMessageRepoCreateMock.mockImplementation(
-        async (message) => message,
+      getChatMessageRepoCreateMock.mockImplementation((message) =>
+        Promise.resolve(message),
       );
       loopRunMock.mockImplementation(async function* () {
         yield { type: "iteration-start", iteration: 0 };
@@ -899,7 +899,9 @@ describe("runAgent immutable-state lifecycle", () => {
 
   it("finalizes an unexpected adapter failure with a durable generic outcome", async () => {
     humanizeScrubMock.mockImplementation((text: string) => text);
-    getChatMessageRepoCreateMock.mockImplementation(async (message) => message);
+    getChatMessageRepoCreateMock.mockImplementation((message) =>
+      Promise.resolve(message),
+    );
     loopRunMock.mockImplementation(async function* () {
       yield { type: "iteration-start", iteration: 0 };
       yield { type: "text-delta", text: "Partial answer" };
@@ -974,11 +976,13 @@ describe("runAgent immutable-state lifecycle", () => {
     await Promise.all([run1, run2]);
 
     expect(
-      capturedMessagesSecondRun.some(
-        (m: any) =>
-          m.role === "assistant" &&
-          m.content?.includes("Partial unfinished response"),
-      ),
+      capturedMessagesSecondRun.some((m) => {
+        const message = m as { role?: string; content?: string };
+        return (
+          message.role === "assistant" &&
+          message.content?.includes("Partial unfinished response")
+        );
+      }),
     ).toBe(false);
   });
 });

@@ -92,6 +92,24 @@ export const ConversationListLayout = ({
       case "earlier":
         return intl.formatMessage({ defaultMessage: "Earlier" });
     }
+    // No `default` here, deliberately. An earlier revision added one to satisfy a
+    // non-blocking "expected a default case" rule, and its comment claimed the
+    // analyser could not see that the switch is exhaustive. TypeScript does check
+    // it — an exhaustive switch over a union with a declared return type is what
+    // makes TS2366 possible at all.
+    //
+    // A `default` deletes that, and this function's return type is a rendered
+    // label: were a new day group ever added and not handled, the failure would
+    // be a silently wrong heading rather than a build error. Note the default it
+    // replaced returned "Earlier", so that failure mode was a plausible-looking
+    // wrong label, not an obvious blank.
+    //
+    // What was actually verified: adding a fourth member to `ThreadDayGroup`
+    // breaks the build, as TS2741 at the `Record<ThreadDayGroup, ...>` buckets
+    // initialiser further up — which is reached before this switch. That Record
+    // is what catches it. This switch's own contribution to exhaustiveness was
+    // not separately observed, and an earlier draft of this comment claimed a
+    // TS2366 here that was never actually seen.
   };
 
   let listBody: ReactNode;

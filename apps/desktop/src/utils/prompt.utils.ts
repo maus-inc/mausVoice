@@ -176,7 +176,7 @@ const codePointLength = (value: string): number =>
  */
 const HEAVYWEIGHT_TOKEN_RE =
   /[\u3400-\u4DBF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\uFF00-\uFFEF\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
-const ZERO_WIDTH_TOKEN_RE = /[\u0300-\u036F\uFE00-\uFE0F]/;
+const ZERO_WIDTH_TOKEN_RE = /[\u0300-\u036F\uFE00-\uFE0F]/u;
 
 export const estimateTokenCount = (value: string): number => {
   let tokens = 0;
@@ -468,8 +468,7 @@ export const buildSystemPostProcessingTonePrompt = (
       buildPostProcessingTemplateVars(input),
     );
     return withOutputFormatGuidance(
-      appendStructuredStyleGuidance(systemPrompt, input.tone) +
-        `\n\n${buildGlossaryGuidance(input.glossary)}`,
+      `${appendStructuredStyleGuidance(systemPrompt, input.tone)}\n\n${buildGlossaryGuidance(input.glossary)}`,
     );
   }
 

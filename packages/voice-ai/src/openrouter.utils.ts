@@ -180,7 +180,7 @@ export type OpenRouterGenerateTextOutput = {
  * Generate text using OpenRouter's chat completions API.
  * Uses the OpenAI SDK with custom baseURL since OpenRouter is OpenAI-compatible.
  */
-export const openrouterGenerateTextResponse = async ({
+export const openrouterGenerateTextResponse = ({
   apiKey,
   model = OPENROUTER_DEFAULT_MODEL,
   system,
@@ -197,7 +197,7 @@ export const openrouterGenerateTextResponse = async ({
     // A present-but-not-aborted signal is not an abort and must not disable
     // retries for transient failures.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: () => !signal?.aborted,
     // An abort during the wait is honoured: `retry` hands the signal to its
     // own wait, so a cancelled caller stops there instead of sitting it out.
     // That wait is the helper's own 20ms, because the helper only stretches
@@ -304,7 +304,7 @@ export type OpenRouterTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const openrouterTranscribeAudio = async ({
+export const openrouterTranscribeAudio = ({
   apiKey,
   model,
   blob,

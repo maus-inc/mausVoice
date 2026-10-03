@@ -17,7 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 import { getRec } from "@maus-inc/utilities";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { saveCorrectedTranscript } from "../../actions/auto-learn.actions";
 import { showErrorSnackbar, showSnackbar } from "../../actions/app.actions";
@@ -109,6 +109,19 @@ export const TranscriptionDetailsDialog = () => {
   const [isEditingFinal, setIsEditingFinal] = useState(false);
   const [finalDraft, setFinalDraft] = useState("");
   const [isSavingFinal, setIsSavingFinal] = useState(false);
+
+  // Focus the final-transcription field explicitly once it has mounted rather
+  // than with a DOM `autoFocus` prop: `autoFocus` fires as an attribute and
+  // cannot be deferred, so it races anything that moves focus in the same
+  // commit. This mirrors ContextMenu's own "focus after commit, not via
+  // autoFocus" rule. The field renders only while editing, so the effect is
+  // keyed on `isEditingFinal` rather than `[]` -- this component itself stays
+  // mounted for the whole app lifetime, so a mount-only effect would never fire.
+  // `TextField` forwards `inputRef` to the underlying `<textarea>`.
+  const finalDraftRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (isEditingFinal) finalDraftRef.current?.focus();
+  }, [isEditingFinal]);
 
   useEffect(() => {
     setIsEditingFinal(false);
@@ -375,7 +388,7 @@ export const TranscriptionDetailsDialog = () => {
                       <FormattedMessage defaultMessage="Final transcription" />
                     </Typography>
                     <TextField
-                      autoFocus
+                      inputRef={finalDraftRef}
                       fullWidth
                       multiline
                       minRows={3}

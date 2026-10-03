@@ -99,15 +99,11 @@ describe("best-effort native logging", () => {
     vi.stubGlobal("window", {});
     await initLogging();
     nativeLog.error.mockRejectedValue(new Error("sink unavailable"));
-    window.onerror?.call(
-      window,
-      "error",
-      "app",
-      1,
-      2,
-      new Error("operation error"),
-    );
-    window.onunhandledrejection?.call(window, {
+    // `log.utils` assigns arrow functions to both handlers, so `this` inside
+    // them is lexical and `.call(window, ...)` could not change it. Calling
+    // them as methods is the same call without the redundant receiver.
+    window.onerror?.("error", "app", 1, 2, new Error("operation error"));
+    window.onunhandledrejection?.({
       reason: "operation failure",
     } as PromiseRejectionEvent);
     await new Promise((resolve) => setTimeout(resolve, 0));

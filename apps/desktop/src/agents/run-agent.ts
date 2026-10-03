@@ -572,7 +572,7 @@ function createAgentTools(
     name: info.id,
     description: `${info.description}. ${info.instructions}`,
     parameters: info.schema,
-    async execute({ params, reason, toolCallId }) {
+    execute({ params, reason, toolCallId }) {
       return executeWithPermission(
         info,
         params,

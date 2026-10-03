@@ -112,7 +112,7 @@ const createClient = (
   });
 };
 
-export const azureOpenAIGenerateText = async ({
+export const azureOpenAIGenerateText = ({
   apiKey,
   endpoint,
   deploymentName,
@@ -129,7 +129,7 @@ export const azureOpenAIGenerateText = async ({
     // A present-but-not-aborted signal is not an abort and must not disable
     // retries for transient failures.
     retries: 3,
-    isRetryable: (error) => !signal?.aborted,
+    isRetryable: () => !signal?.aborted,
     // An abort during the wait is honoured: `retry` hands the signal to its
     // own wait, so a cancelled caller stops there instead of sitting it out.
     // That wait is the helper's own 20ms, because the helper only stretches

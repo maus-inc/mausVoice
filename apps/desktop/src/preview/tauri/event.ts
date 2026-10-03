@@ -30,9 +30,10 @@ export const once = async <T>(
   event: string,
   handler: EventCallback<T>,
 ): Promise<UnlistenFn> => {
-  let unlisten: UnlistenFn | undefined;
-  unlisten = await listen<T>(event, (payload) => {
-    unlisten?.();
+  // The handler closes over `unlisten` but only runs when the event fires, long
+  // after this assignment, so the self-reference is safe with `const`.
+  const unlisten = await listen<T>(event, (payload) => {
+    unlisten();
     handler(payload);
   });
   return unlisten;
@@ -55,7 +56,7 @@ export const emit = <T>(event: string, payload?: T): Promise<void> => {
 
 // Window routing is intentionally local in the browser: a preview only owns
 // its current tab and never creates a privileged native window.
-export const emitTo = async <T>(
+export const emitTo = <T>(
   _target: string,
   event: string,
   payload?: T,

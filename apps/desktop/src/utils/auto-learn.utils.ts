@@ -408,10 +408,18 @@ const trimTokenEdges = (raw: string): string => {
   let start = 0;
   let end = codePoints.length;
 
-  while (start < end && TOKEN_EDGE_CHARACTER.test(codePoints[start]!)) {
+  while (start < end) {
+    // `start < end <= codePoints.length` bounds both reads below, so the edge
+    // character is always present; the undefined case can only be reached if
+    // that invariant is broken, and it then ends the trim rather than testing
+    // the string "undefined".
+    const leading = codePoints[start];
+    if (leading === undefined || !TOKEN_EDGE_CHARACTER.test(leading)) break;
     start += 1;
   }
-  while (end > start && TOKEN_EDGE_CHARACTER.test(codePoints[end - 1]!)) {
+  while (end > start) {
+    const trailing = codePoints[end - 1];
+    if (trailing === undefined || !TOKEN_EDGE_CHARACTER.test(trailing)) break;
     end -= 1;
   }
 

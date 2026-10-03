@@ -124,7 +124,8 @@ describe("DictionaryRow context menu", () => {
       );
     });
 
-    const input = container.querySelector<HTMLInputElement>("input")!;
+    const input = container.querySelector<HTMLInputElement>("input");
+    if (!input) throw new Error("DictionaryRow rendered no editable input");
     input.setSelectionRange(0, 3);
     const event = new MouseEvent("contextmenu", {
       bubbles: true,

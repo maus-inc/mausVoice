@@ -76,6 +76,9 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       }
       callback(speech.result);
     }
+    // Deliberately empty: the recognizer's own state is the module-scoped
+    // `speech` object these tests read after the call, so there is nothing for
+    // a mock instance to hold and nothing here to release.
     close() {}
   },
   PhraseListGrammar: {
@@ -157,10 +160,25 @@ describe("azureTranscribeAudio phrase list", () => {
  * using them are what prove the redaction.
  */
 const HEX_DIGITS = "0123456789ABCDEF";
+/**
+ * One hex digit by index. The index is `(index * 7 + seed) % length`, so it is
+ * always in range by construction -- but `HEX_DIGITS[i]!` asserted that with a
+ * forbidden non-null assertion, and an off-by-one in the modulus would have
+ * produced a short fixture instead of a failure.
+ */
+const hexDigitAt = (index: number): string => {
+  const digit = HEX_DIGITS[index];
+  if (digit === undefined) {
+    throw new Error(
+      `Expected a hex digit at index ${index} of a ${HEX_DIGITS.length}-digit alphabet`,
+    );
+  }
+  return digit;
+};
+
 const hexString = (length: number, seed: number): string =>
-  Array.from(
-    { length },
-    (_, index) => HEX_DIGITS[(index * 7 + seed) % HEX_DIGITS.length]!,
+  Array.from({ length }, (_, index) =>
+    hexDigitAt((index * 7 + seed) % HEX_DIGITS.length),
   ).join("");
 
 const fromCharCodes = (...codes: number[]): string =>
@@ -840,18 +858,12 @@ describe("credential redaction is safe on hostile input", () => {
     // was fixed: the earlier unbounded patterns also passed it, because V8
     // handles those without blowing up.
     const hostile = [
-      "Ocp-Apim-Subscription-Key" +
-        '"'.repeat(20_000) +
-        " " +
-        ":".repeat(20_000),
-      "authorization" + " ".repeat(20_000) + "=" + '"'.repeat(20_000),
-      "api_key" + " ".repeat(20_000) + ":" + "sk" + "-a".repeat(20_000),
-      "eyJ" +
-        "a".repeat(20_000) +
-        "." +
-        "b".repeat(20_000) +
-        "." +
-        "c".repeat(20_000),
+      `Ocp-Apim-Subscription-Key${'"'.repeat(20_000)} ${":".repeat(20_000)}`,
+      `authorization${" ".repeat(20_000)}=${'"'.repeat(20_000)}`,
+      // `sk` and `-a` stay split literals: a contiguous `sk-` run plus a long
+      // tail is the shape the secret scanner reads as a live credential.
+      `api_key${" ".repeat(20_000)}:${"sk"}${"-a".repeat(20_000)}`,
+      `eyJ${"a".repeat(20_000)}.${"b".repeat(20_000)}.${"c".repeat(20_000)}`,
     ].join(" ");
     expect(hostile.length).toBeGreaterThan(100_000);
 

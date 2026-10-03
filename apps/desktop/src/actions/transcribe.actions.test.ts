@@ -37,10 +37,15 @@ const { loggerMock, invokeMock, addWordsMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/log.utils", () => ({ getLogger: () => loggerMock }));
-vi.mock("@tauri-apps/api/core", () => ({
+// `utils/tauri-shell.utils.ts` constructs a `Channel` and assigns its
+// `onmessage`, and `packages/desktop-utils/src/updater.ts` subclasses
+// `Resource`. Only `invoke` is stubbed here, so the real constructors are
+// spread in rather than replaced by empty stand-ins: nothing here ever
+// reaches Tauri IPC, and a real class cannot drift from the surface the code
+// under test actually imports.
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
   invoke: (...args: unknown[]) => invokeMock(...args),
-  Resource: class {},
-  Channel: class {},
   convertFileSrc: (path: string) => path,
 }));
 
@@ -51,7 +56,7 @@ vi.mock("@tauri-apps/plugin-http", () => ({
 
 const { createTranscriptionMock, purgeStaleAudioMock } = vi.hoisted(() => ({
   createTranscriptionMock: vi.fn(),
-  purgeStaleAudioMock: vi.fn(async () => [] as string[]),
+  purgeStaleAudioMock: vi.fn(() => Promise.resolve([] as string[])),
 }));
 
 vi.mock("../repos", async (importOriginal) => {
@@ -237,7 +242,7 @@ describe("storeTranscription audio retention", () => {
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
-    createTranscriptionMock.mockImplementation(async (t) => t);
+    createTranscriptionMock.mockImplementation((t) => Promise.resolve(t));
   });
 
   afterEach(() => {
@@ -260,9 +265,11 @@ describe("storeTranscription audio retention", () => {
     // `once` so a hang cannot leak into a later block: nothing else resets
     // `addWordsMock`, and a module mock stays pending for the rest of the file.
     purgeStaleAudioMock.mockImplementationOnce(
-      () => new Promise<string[]>(() => {}),
+      () => new Promise<string[]>(() => undefined),
     );
-    addWordsMock.mockImplementationOnce(() => new Promise<void>(() => {}));
+    addWordsMock.mockImplementationOnce(
+      () => new Promise<void>(() => undefined),
+    );
 
     const settled = await Promise.race([
       storeTranscription(buildInput()).then(() => "settled" as const),
@@ -373,7 +380,7 @@ describe("storeTranscription empty-audio retention (#418)", () => {
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
-    createTranscriptionMock.mockImplementation(async (t) => t);
+    createTranscriptionMock.mockImplementation((t) => Promise.resolve(t));
     setPrefs({});
   });
 
@@ -450,7 +457,7 @@ describe("storeTranscription post-process model persistence", () => {
     createTranscriptionMock.mockReset();
     purgeStaleAudioMock.mockReset();
     purgeStaleAudioMock.mockResolvedValue([]);
-    createTranscriptionMock.mockImplementation(async (t) => t);
+    createTranscriptionMock.mockImplementation((t) => Promise.resolve(t));
     setPrefs({});
     invokeMock.mockResolvedValue({
       filePath: "/tmp/audio.wav",

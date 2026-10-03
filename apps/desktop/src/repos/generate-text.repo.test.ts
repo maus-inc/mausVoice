@@ -46,6 +46,35 @@ vi.mock("@maus-inc/voice-ai", async (importOriginal) => {
 
 const mockResponse = (text: string) => ({ text, tokensUsed: 1 });
 
+/**
+ * The model a mocked provider was actually asked for on a given call.
+ *
+ * Every assertion below used to read this as `mock.calls[i]![0]!.model`. That
+ * is two non-null assertions the linter forbids, and when the expectation is
+ * wrong the `TypeError` it leaves behind ("Cannot read properties of
+ * undefined") names neither the call that should have happened nor its index.
+ * This reports both, and it still fails when the call is missing -- it just
+ * fails with something a reader can act on.
+ */
+const requestedModel = (
+  mocked: { mock: { calls: readonly unknown[][] } },
+  call = 0,
+): string => {
+  const args = mocked.mock.calls[call];
+  if (!args) {
+    throw new Error(
+      `Expected the provider to be called at index ${call}, but it was called ${mocked.mock.calls.length} time(s)`,
+    );
+  }
+  const request = args[0] as { model?: unknown } | undefined;
+  if (typeof request?.model !== "string") {
+    throw new Error(
+      `Expected provider call ${call} to carry a request with a string model, got ${JSON.stringify(request)}`,
+    );
+  }
+  return request.model;
+};
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -198,7 +227,7 @@ describe("Groq runtime-discovered models", () => {
     await repo.generateText({ prompt: "p" });
 
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked.mock.calls[0]![0]!.model).toBe("qwen/qwen3-32b");
+    expect(requestedModel(mocked)).toBe("qwen/qwen3-32b");
   });
 
   // The catalog also serves models that cannot answer a generation request.
@@ -217,9 +246,7 @@ describe("Groq runtime-discovered models", () => {
       const repo = new GroqGenerateTextRepo("k", modelId);
       await repo.generateText({ prompt: "p" });
 
-      expect(mocked.mock.calls[0]![0]!.model).toBe(
-        GROQ_DEFAULT_GENERATE_TEXT_MODEL,
-      );
+      expect(requestedModel(mocked)).toBe(GROQ_DEFAULT_GENERATE_TEXT_MODEL);
     },
   );
 });
@@ -236,9 +263,7 @@ describe("Groq fallback model", () => {
     await repo.generateText({ prompt: "p" });
 
     expect(mocked).toHaveBeenCalledTimes(2);
-    expect(mocked.mock.calls[1]![0]!.model).toBe(
-      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
-    );
+    expect(requestedModel(mocked, 1)).toBe(GROQ_DEFAULT_GENERATE_TEXT_MODEL);
   });
 
   // Regression: the default model used to be the same id as the fallback, so
@@ -255,10 +280,8 @@ describe("Groq fallback model", () => {
     await repo.generateText({ prompt: "p" });
 
     expect(mocked).toHaveBeenCalledTimes(2);
-    expect(mocked.mock.calls[0]![0]!.model).toBe(
-      GROQ_DEFAULT_GENERATE_TEXT_MODEL,
-    );
-    expect(mocked.mock.calls[1]![0]!.model).toBe("openai/gpt-oss-120b");
+    expect(requestedModel(mocked)).toBe(GROQ_DEFAULT_GENERATE_TEXT_MODEL);
+    expect(requestedModel(mocked, 1)).toBe("openai/gpt-oss-120b");
   });
 
   it("retries a distinct model when no model is stored", async () => {
@@ -507,7 +530,7 @@ describe("default model fallback when no model is stored", () => {
 
       await build().generateText({ prompt: "p" });
 
-      expect(allowed).toContain(mocked.mock.calls[0]![0]!.model);
+      expect(allowed).toContain(requestedModel(mocked));
     },
   );
 });

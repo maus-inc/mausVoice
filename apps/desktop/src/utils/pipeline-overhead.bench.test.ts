@@ -44,7 +44,7 @@ describe("pipeline overhead benchmark", () => {
     }
     expect(
       passed,
-      `pipeline overhead over budget after 3 attempts: ` +
+      "pipeline overhead over budget after 3 attempts: " +
         `median ${last.medianMs}ms (limit ${last.limitMedian}ms), ` +
         `p95 ${last.p95Ms}ms (limit ${last.limitP95}ms)`,
     ).toBe(true);

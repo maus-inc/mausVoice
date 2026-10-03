@@ -27,6 +27,54 @@ const sseResponse = (chunks: string[]): Response => {
   });
 };
 
+/**
+ * The arguments of the nth transport call.
+ *
+ * Every one of these assertions used to reach the recorded request through a
+ * non-null assertion (`customFetch.mock.calls[0]!`, or `[len - 1]!`). Besides
+ * being forbidden, that turned the failure this file exists to catch -- a
+ * request that was never sent, or sent with the wrong body -- into a
+ * `TypeError` about reading `.body` of `undefined`.
+ */
+const transportCall = <T>(
+  calls: readonly (readonly unknown[])[],
+  index: number,
+): T => {
+  const args = calls[index];
+  if (!args) {
+    throw new Error(
+      `Expected a transport call at index ${index}, recorded ${calls.length}`,
+    );
+  }
+  return args as T;
+};
+
+/** The parsed JSON body of the nth transport call. */
+const transportBody = <T = Record<string, unknown>>(
+  calls: readonly (readonly unknown[])[],
+  index: number,
+): T => {
+  const args = transportCall<[unknown, RequestInit?]>(calls, index);
+  const raw = args[1]?.body;
+  if (typeof raw !== "string") {
+    throw new Error(
+      `Expected transport call ${index} to send a JSON string body, got ${typeof raw}`,
+    );
+  }
+  return JSON.parse(raw) as T;
+};
+
+/** The element at an index, failing with a message instead of a `TypeError`. */
+const turnAt = <T>(turns: readonly T[], index: number, what: string): T => {
+  const turn = turns[index];
+  if (turn === undefined) {
+    throw new Error(
+      `Expected ${what} at index ${index}, conversation has ${turns.length} turn(s)`,
+    );
+  }
+  return turn;
+};
+
 describe("Gemini native transport", () => {
   it("sends full JSON response schemas through the JSON Schema field", async () => {
     const customFetch = vi.fn().mockResolvedValue(
@@ -48,7 +96,7 @@ describe("Gemini native transport", () => {
       jsonResponse: { name: "transcription_cleaning", schema },
       customFetch,
     });
-    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    const body = transportBody(customFetch.mock.calls, 0);
     expect(body.generationConfig.responseMimeType).toBe("application/json");
     expect(body.generationConfig.responseJsonSchema).toEqual(schema);
     expect(body.generationConfig).not.toHaveProperty("responseSchema");
@@ -72,7 +120,10 @@ describe("Gemini native transport", () => {
       }),
     ).resolves.toEqual({ text: "hello world", tokensUsed: 7 });
 
-    const [url, init] = customFetch.mock.calls[0]!;
+    const [url, init] = transportCall<[unknown, RequestInit?]>(
+      customFetch.mock.calls,
+      0,
+    );
     expect(url).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     );
@@ -182,7 +233,10 @@ describe("Gemini native transport", () => {
       (u as string).includes(":generateContent"),
     );
     expect(generateCalls).toHaveLength(1);
-    const [url, init] = generateCalls[0]!;
+    const [url, init] = transportCall<[unknown, RequestInit?]>(
+      generateCalls,
+      0,
+    );
     expect(url).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-transcribe:generateContent",
     );
@@ -234,8 +288,10 @@ describe("Gemini native transport", () => {
 
     // Should have attempted upload start, then fell back to generateContent
     expect(customFetch.mock.calls.length).toBe(2);
-    const lastCall = customFetch.mock.calls[customFetch.mock.calls.length - 1]!;
-    const body = JSON.parse((lastCall[1] as RequestInit).body as string);
+    const body = transportBody(
+      customFetch.mock.calls,
+      customFetch.mock.calls.length - 1,
+    );
     expect(body.contents[0].parts[0].inlineData).toEqual({
       mimeType: "audio/wav",
       data: "AQID",
@@ -311,7 +367,10 @@ describe("Gemini native transport", () => {
       },
     ]);
 
-    const [url, init] = customFetch.mock.calls[0]!;
+    const [url, init] = transportCall<[unknown, RequestInit?]>(
+      customFetch.mock.calls,
+      0,
+    );
     expect(url).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
     );
@@ -455,8 +514,8 @@ describe("Gemini native transport", () => {
         parts: Array<Record<string, { name?: string } | { text?: string }>>;
       }>;
     };
-    const modelTurn = body.contents[1]!;
-    const toolTurn = body.contents[2]!;
+    const modelTurn = turnAt(body.contents, 1, "the model turn");
+    const toolTurn = turnAt(body.contents, 2, "the tool-result turn");
     expect(modelTurn.role).toBe("model");
     expect(modelTurn.parts[0]).toEqual({
       functionCall: { name: "paste", args: {} },
@@ -745,7 +804,7 @@ describe("Gemini thinking controls", () => {
       maxTokens: 600,
       customFetch,
     });
-    const body = JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    const body = transportBody(customFetch.mock.calls, 0);
     return body.generationConfig as Record<string, unknown>;
   };
 
@@ -1108,7 +1167,7 @@ describe("Gemini Files API edge cases", () => {
         expect(
           allowed.some(
             (host) =>
-              target.hostname === host || target.hostname.endsWith("." + host),
+              target.hostname === host || target.hostname.endsWith(`.${host}`),
           ),
         ).toBe(true);
       }
@@ -1269,7 +1328,7 @@ describe("Gemini tool choice", () => {
     })) {
       // drain
     }
-    return JSON.parse(customFetch.mock.calls[0]![1].body as string);
+    return transportBody(customFetch.mock.calls, 0);
   };
 
   // `input.toolChoice` decides whether the model may call a tool at all. Gemini

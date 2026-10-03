@@ -6,7 +6,7 @@ import de from "../../i18n/locales/de.json";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { setUpdateChannelMock } = vi.hoisted(() => ({
-  setUpdateChannelMock: vi.fn(async () => undefined),
+  setUpdateChannelMock: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -167,7 +167,7 @@ it.each(["downloading", "installing"] as const)(
     expect(setUpdateChannelMock).not.toHaveBeenCalled();
   },
 );
-it("keeps the persisted channel shown during a beta-to-stable save", async () => {
+it("keeps the persisted channel shown during a beta-to-stable save", () => {
   // The store is not updated until the save resolves, so the persisted channel
   // is still `beta` for the whole in-flight window. That channel is the one
   // that has to stay enabled and selected; disabling both used to leave the
@@ -212,7 +212,7 @@ it("blocks duplicate switches during persistence and handles the action's report
   expect(setUpdateChannelMock).toHaveBeenCalledTimes(2);
 });
 
-it("renders the update-channel control and confirmation from the real German catalog", async () => {
+it("renders the update-channel control and confirmation from the real German catalog", () => {
   seedChannel("stable");
   renderSetting("de", de);
   expect(document.body.textContent).toContain(de.update_channel);

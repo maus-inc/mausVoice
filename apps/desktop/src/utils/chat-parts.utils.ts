@@ -44,7 +44,7 @@ const persistedToolCallsOf = (message: ChatMessage): LlmToolCall[] => {
   if (!Array.isArray(calls)) return [];
   return calls.filter(
     (call): call is LlmToolCall =>
-      !!recordOf(call) &&
+      Boolean(recordOf(call)) &&
       typeof (call as LlmToolCall).id === "string" &&
       typeof (call as LlmToolCall).name === "string",
   );

@@ -23,7 +23,38 @@ vi.mock("@maus-inc/voice-ai", async (importOriginal) => {
   return spied;
 });
 
+/*
+ * A namespace import, not named ones: the table below selects six different
+ * `*TestIntegration` exports by a runtime key, so the members cannot be known
+ * at the import site. Replacing this with a hand-maintained lookup was tried
+ * and is strictly worse -- `it.each` widens the key to `string`, so a name
+ * missing from that list is not a type error but a runtime failure far from
+ * the table that declared it.
+ */
 import * as voiceAi from "@maus-inc/voice-ai";
+
+const voiceAiMockFor = (fnName: string) => {
+  const fn = (voiceAi as unknown as Record<string, ReturnType<typeof vi.fn>>)[
+    fnName
+  ];
+  if (!fn)
+    throw new Error(`Expected ${fnName} to be exported by @maus-inc/voice-ai`);
+  return fn;
+};
+
+/**
+ * The first call's single argument. Going through here rather than indexing
+ * `spy.mock.calls[0]![0]` means a mock that was never called fails with the
+ * name of the export under test rather than a TypeError about `undefined`.
+ */
+const firstCallArgOf = (
+  spy: ReturnType<typeof vi.fn>,
+  fnName: string,
+): Record<string, unknown> => {
+  const call = spy.mock.calls.at(0);
+  if (!call) throw new Error(`Expected ${fnName} to have been called`);
+  return call[0] as Record<string, unknown>;
+};
 import { API_KEY_PROVIDERS } from "@maus-inc/types";
 import { getProviderFormConfig } from "./api-key-provider-config";
 
@@ -126,9 +157,7 @@ describe("provider test-integration transport", () => {
     ["deepseek", "deepseekTestIntegration"],
     ["assemblyai", "assemblyaiTestIntegration"],
   ])("%s routes through secureFetch", async (provider, fnName) => {
-    const spy = vi.mocked(
-      (voiceAi as unknown as Record<string, ReturnType<typeof vi.fn>>)[fnName]!,
-    );
+    const spy = vi.mocked(voiceAiMockFor(fnName));
     spy.mockClear();
 
     await getProviderFormConfig(
@@ -136,7 +165,9 @@ describe("provider test-integration transport", () => {
       "transcription",
     ).testIntegration(key(), "transcription");
 
-    expect(spy.mock.calls[0]![0]).toMatchObject({ customFetch: secureFetch });
+    expect(firstCallArgOf(spy, fnName)).toMatchObject({
+      customFetch: secureFetch,
+    });
   });
 
   it("openai-compatible routes through the saved-endpoint transport", async () => {
@@ -150,6 +181,8 @@ describe("provider test-integration transport", () => {
     ).testIntegration(key(), "post-processing");
 
     expect(createOpenAICompatibleFetch).toHaveBeenCalledWith("key-1");
-    expect(spy.mock.calls[0]![0].customFetch).toBeDefined();
+    expect(
+      firstCallArgOf(spy, "openaiCompatibleTestIntegration").customFetch,
+    ).toBeDefined();
   });
 });

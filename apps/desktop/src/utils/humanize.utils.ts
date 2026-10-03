@@ -24,7 +24,7 @@
 export const HUMANIZE_SKILL_TEXT = [
   "Humanize the text: remove AI-slop markers while preserving meaning, structure, and facts.",
   "Replace em-dashes (—) with commas, periods, or colons, or restructure the sentence.",
-  `Replace "delve" with "explore"; "seamless" with "smooth"; "unlock" with "enable"; "game-changer"/"transformative" with the actual benefit; "leveraging" with "using"; "utilize" with "use"; "in order to" with "to"; "a wide range of" with "many"; "cutting-edge"/"state-of-the-art" with "modern"; "robust" with "reliable"; "realm" with "area"; "in terms of" remove or rephrase; "it is important to note that"/"it is worth mentioning that" remove or condense.`,
+  'Replace "delve" with "explore"; "seamless" with "smooth"; "unlock" with "enable"; "game-changer"/"transformative" with the actual benefit; "leveraging" with "using"; "utilize" with "use"; "in order to" with "to"; "a wide range of" with "many"; "cutting-edge"/"state-of-the-art" with "modern"; "robust" with "reliable"; "realm" with "area"; "in terms of" remove or rephrase; "it is important to note that"/"it is worth mentioning that" remove or condense.',
   "Write in plain, direct, active-voice language. One idea per sentence. Avoid hedging (may/might/could) unless the uncertainty is real. Avoid clichés, buzzwords, and corporate jargon. Prefer concrete examples over abstract claims.",
   "Do NOT alter code, data, or structured output (JSON, markdown tables, etc.) except the banned markers embedded in their text. Do NOT change meaning, factual accuracy, or technical specificity.",
 ].join("\n");
@@ -329,7 +329,7 @@ export const humanizeScrub = (
     // whitespace folds into the comma; a newline that followed the dash is
     // eaten and re-emitted unchanged so lists/paragraphs never merge.
     let out = prose.replace(
-      /[ \t]*—[ \t]*(\r?\n)?/g, // NOSONAR: linear whitespace scan
+      /[ \t]*—[ \t]*(\r?\n)?/gu, // NOSONAR: linear whitespace scan
       (_match, newline: string | undefined) => (newline ? `,${newline}` : ", "),
     );
     for (const { pattern, replace } of replacements) {

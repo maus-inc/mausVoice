@@ -48,7 +48,7 @@ export type XaiTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const xaiTranscribeAudio = async ({
+export const xaiTranscribeAudio = ({
   apiKey,
   blob,
   ext,

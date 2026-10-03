@@ -62,6 +62,64 @@ export const getSwitchToStyleToneId = (actionName: string): string | null => {
   return raw.length > 0 ? raw : null;
 };
 
+type PlatformHotkeyCombos = {
+  macos: string[][];
+  windows: string[][];
+};
+
+export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
+  [DICTATE_HOTKEY]: {
+    macos: [["Function"]],
+    windows: [["MetaLeft", "ControlLeft"]],
+  },
+  [CANCEL_TRANSCRIPTION_HOTKEY]: {
+    macos: [["Escape"]],
+    windows: [["Escape"]],
+  },
+  [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
+    macos: [["RightArrow"]],
+    windows: [["RightArrow"]],
+  },
+  [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
+    macos: [["LeftArrow"]],
+    windows: [["LeftArrow"]],
+  },
+};
+
+export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
+  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
+};
+
+export const getDefaultHotkeyCombosForAction = (
+  actionName: string,
+): string[][] => {
+  const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
+  if (defaultCombos) {
+    if (getPlatform() === "macos") {
+      return defaultCombos.macos;
+    }
+    if (getPlatform() === "windows") {
+      return defaultCombos.windows;
+    }
+  }
+  return [];
+};
+
+export const getHotkeyCombosForAction = (
+  state: AppState,
+  actionName: string,
+): string[][] => {
+  const combos = Object.values(state.hotkeyById)
+    .filter((h) => h.actionName === actionName && h.keys.length > 0)
+    .map((h) => h.keys);
+
+  if (combos.length > 0) {
+    return combos;
+  }
+
+  return getDefaultHotkeyCombosForAction(actionName);
+};
+
 export type SwitchToStyleEntry = {
   actionName: string;
   toneId: string;
@@ -159,10 +217,12 @@ export const isModifierOnlyCombo = (combo: string[]): boolean => {
 const MODIFIER_SIDE_RE = /(Left|Right)$/i;
 
 const appendSideLabel = (base: string, key: string): string => {
-  const match = MODIFIER_SIDE_RE.exec(key);
-  if (!match) return base;
-  const side = match[1]!.charAt(0).toUpperCase();
-  return `${base} ${side}`;
+  // `match[1]` is the only capture group and it is non-optional in the pattern,
+  // so a successful `exec` always yields it. Reading it through `?.[1]` and
+  // bailing on `undefined` keeps that fact explicit instead of asserting it.
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined) return base;
+  return `${base} ${side.charAt(0).toUpperCase()}`;
 };
 
 export const getPrettyKeyName = (key: string): string => {
@@ -197,64 +257,6 @@ export const getPrettyKeyName = (key: string): string => {
   if (key === "DownArrow") return "↓";
 
   return key;
-};
-
-type PlatformHotkeyCombos = {
-  macos: string[][];
-  windows: string[][];
-};
-
-export const DEFAULT_HOTKEY_COMBOS: Record<string, PlatformHotkeyCombos> = {
-  [DICTATE_HOTKEY]: {
-    macos: [["Function"]],
-    windows: [["MetaLeft", "ControlLeft"]],
-  },
-  [CANCEL_TRANSCRIPTION_HOTKEY]: {
-    macos: [["Escape"]],
-    windows: [["Escape"]],
-  },
-  [SWITCH_WRITING_STYLE_FORWARD_HOTKEY]: {
-    macos: [["RightArrow"]],
-    windows: [["RightArrow"]],
-  },
-  [SWITCH_WRITING_STYLE_BACKWARD_HOTKEY]: {
-    macos: [["LeftArrow"]],
-    windows: [["LeftArrow"]],
-  },
-};
-
-export const getHasDefaultHotkeyForAction = (actionName: string): boolean => {
-  return Boolean(DEFAULT_HOTKEY_COMBOS[actionName]);
-};
-
-export const getDefaultHotkeyCombosForAction = (
-  actionName: string,
-): string[][] => {
-  const defaultCombos = DEFAULT_HOTKEY_COMBOS[actionName];
-  if (defaultCombos) {
-    if (getPlatform() === "macos") {
-      return defaultCombos.macos;
-    }
-    if (getPlatform() === "windows") {
-      return defaultCombos.windows;
-    }
-  }
-  return [];
-};
-
-export const getHotkeyCombosForAction = (
-  state: AppState,
-  actionName: string,
-): string[][] => {
-  const combos = Object.values(state.hotkeyById)
-    .filter((h) => h.actionName === actionName && h.keys.length > 0)
-    .map((h) => h.keys);
-
-  if (combos.length > 0) {
-    return combos;
-  }
-
-  return getDefaultHotkeyCombosForAction(actionName);
 };
 
 export type AdditionalLanguageEntry = {

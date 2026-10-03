@@ -160,14 +160,6 @@ let recentlyLapsedProposal: {
 /** How long a lapsed proposal still honours a click. */
 const LAPSED_PROPOSAL_GRACE_MS = PROPOSAL_TOAST_DURATION_MS;
 
-const readDeniedTerms = (): Set<string> => {
-  const stored = readStoredDeniedTerms();
-  if (stored.size === 0) {
-    return new Set(sessionDeniedTerms);
-  }
-  return new Set([...stored, ...sessionDeniedTerms]);
-};
-
 const readStoredDeniedTerms = (): Set<string> => {
   const storage = getLocalStorage();
   if (!storage) {
@@ -186,6 +178,14 @@ const readStoredDeniedTerms = (): Set<string> => {
   } catch {
     return new Set();
   }
+};
+
+const readDeniedTerms = (): Set<string> => {
+  const stored = readStoredDeniedTerms();
+  if (stored.size === 0) {
+    return new Set(sessionDeniedTerms);
+  }
+  return new Set([...stored, ...sessionDeniedTerms]);
 };
 
 const rememberDeniedTerm = (term: string): void => {
@@ -277,6 +277,30 @@ const captureBaseline = async (
   if (attemptsLeft > 1) {
     await captureBaseline(snapshot, attemptsLeft - 1);
   }
+};
+
+/**
+ * The id of the proposal the on-screen prompt belongs to, or null when no
+ * prompt of ours is showing.
+ *
+ * The toast outlives both the store proposal and the watch: the pill dismisses
+ * it on its own timer, and a TTL expiry clears the proposal while the prompt is
+ * still there. A click on such a prompt must answer the prompt the user is
+ * looking at, not whatever proposal has taken its place since, so the id is
+ * held here for as long as the prompt could still be clicked.
+ */
+let visibleProposalId: string | null = null;
+
+/**
+ * Forget the on-screen prompt.
+ *
+ * Deliberately not part of `clearAutoLearnProposal`: a TTL expiry clears the
+ * store proposal while the prompt is still on the pill, and the click it is
+ * holding a grace window for has to stay answerable. Call this where the prompt
+ * itself is gone or superseded.
+ */
+const clearVisibleProposalId = (): void => {
+  visibleProposalId = null;
 };
 
 /**
@@ -384,18 +408,6 @@ const resolveBaseline = (
 
 const collectExistingTerms = (): string[] => collectTermValues(getAppState());
 
-/**
- * The id of the proposal the on-screen prompt belongs to, or null when no
- * prompt of ours is showing.
- *
- * The toast outlives both the store proposal and the watch: the pill dismisses
- * it on its own timer, and a TTL expiry clears the proposal while the prompt is
- * still there. A click on such a prompt must answer the prompt the user is
- * looking at, not whatever proposal has taken its place since, so the id is
- * held here for as long as the prompt could still be clicked.
- */
-let visibleProposalId: string | null = null;
-
 let nextProposalId = 1;
 
 /**
@@ -405,18 +417,6 @@ let nextProposalId = 1;
  * checked against the prompt it was actually raised for.
  */
 export const getVisibleProposalId = (): string | null => visibleProposalId;
-
-/**
- * Forget the on-screen prompt.
- *
- * Deliberately not part of `clearAutoLearnProposal`: a TTL expiry clears the
- * store proposal while the prompt is still on the pill, and the click it is
- * holding a grace window for has to stay answerable. Call this where the prompt
- * itself is gone or superseded.
- */
-const clearVisibleProposalId = (): void => {
-  visibleProposalId = null;
-};
 
 const proposeAutoLearnTerm = async (term: string): Promise<void> => {
   const intl = getIntl();

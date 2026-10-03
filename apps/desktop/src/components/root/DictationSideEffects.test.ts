@@ -135,12 +135,12 @@ describe("surfacePersistedReviewInHistory", () => {
 
 describe("handleEmptyTranscriptionResult (#418)", () => {
   it("shows a recovery toast and stores a failure marker without emitting recording_failed", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(
-      async () => undefined,
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
-    >(async () => ({ transcription: null, wordCount: 0 }));
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
     const refreshMember = vi.fn();
 
     const result = await handleEmptyTranscriptionResult({
@@ -176,12 +176,12 @@ describe("handleEmptyTranscriptionResult (#418)", () => {
   });
 
   it("skips the audio store when strategy.shouldStoreTranscript() is false", async () => {
-    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(
-      async () => undefined,
+    const showToast = vi.fn<HandleEmptyResultInput["showToast"]>(() =>
+      Promise.resolve(undefined),
     );
     const storeTranscriptionFn = vi.fn<
       HandleEmptyResultInput["storeTranscriptionFn"]
-    >(async () => ({ transcription: null, wordCount: 0 }));
+    >(() => Promise.resolve({ transcription: null, wordCount: 0 }));
 
     await handleEmptyTranscriptionResult({
       audio: { samples: new Float32Array(0), sampleRate: 16000 },
@@ -283,9 +283,9 @@ describe("postProcessFinalizedTranscript", () => {
     const order: string[] = [];
     const handleTranscript = vi.fn<
       PostTranscriptInput["strategy"]["handleTranscript"]
-    >(async () => {
+    >(() => {
       order.push("handleTranscript");
-      return {
+      return Promise.resolve({
         shouldContinue: false,
         transcript: "hello world",
         sanitizedTranscript: "hello world",
@@ -296,31 +296,33 @@ describe("postProcessFinalizedTranscript", () => {
         postProcessWarnings: [],
         remoteStatus: null,
         remoteDeviceId: null,
-      };
+      });
     });
     const storeTranscriptionFn = vi.fn<
       PostTranscriptInput["storeTranscriptionFn"]
-    >(async () => {
+    >(() => {
       order.push("store");
-      return { transcription: null, wordCount: 0 };
+      return Promise.resolve({ transcription: null, wordCount: 0 });
     });
     const strategy: PostTranscriptInput["strategy"] = {
       handleTranscript,
       shouldStoreTranscript: () => options.store !== false,
     };
-    const sendIdle = vi.fn(async () => {
+    const sendIdle = vi.fn(() => {
       order.push("idle");
+      return Promise.resolve();
     });
     const refreshMember = vi.fn(() => {
       order.push("refresh");
     });
     const showToast = vi.fn(
-      async (_options: {
+      (_options: {
         message: string;
         toastType: "info" | "error";
         duration?: number;
       }) => {
         order.push("toast");
+        return Promise.resolve();
       },
     );
     const input: PostTranscriptInput = {
@@ -405,16 +407,18 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, storeTranscriptionFn } = buildInput();
     input.strategy = {
       ...input.strategy,
-      handleTranscript: vi.fn(async () => ({
-        shouldContinue: false,
-        transcript: "hello world",
-        sanitizedTranscript: "hello world",
-        postProcessMetadata: {},
-        postProcessWarnings: [],
-        remoteStatus: null,
-        remoteDeviceId: null,
-        historyOwner: "review" as const,
-      })),
+      handleTranscript: vi.fn(() =>
+        Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "review" as const,
+        }),
+      ),
     };
 
     await postProcessFinalizedTranscript(input);
@@ -429,16 +433,18 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, storeTranscriptionFn } = buildInput();
     input.strategy = {
       ...input.strategy,
-      handleTranscript: vi.fn(async () => ({
-        shouldContinue: false,
-        transcript: "hello world",
-        sanitizedTranscript: "hello world",
-        postProcessMetadata: {},
-        postProcessWarnings: [],
-        remoteStatus: null,
-        remoteDeviceId: null,
-        historyOwner: "pill" as const,
-      })),
+      handleTranscript: vi.fn(() =>
+        Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "pill" as const,
+        }),
+      ),
     };
 
     await postProcessFinalizedTranscript(input);
@@ -451,16 +457,18 @@ describe("postProcessFinalizedTranscript", () => {
     const { input, storeTranscriptionFn } = buildInput();
     input.strategy = {
       ...input.strategy,
-      handleTranscript: vi.fn(async () => ({
-        shouldContinue: false,
-        transcript: "hello world",
-        sanitizedTranscript: "hello world",
-        postProcessMetadata: {},
-        postProcessWarnings: [],
-        remoteStatus: null,
-        remoteDeviceId: null,
-        historyOwner: "stop-path" as const,
-      })),
+      handleTranscript: vi.fn(() =>
+        Promise.resolve({
+          shouldContinue: false,
+          transcript: "hello world",
+          sanitizedTranscript: "hello world",
+          postProcessMetadata: {},
+          postProcessWarnings: [],
+          remoteStatus: null,
+          remoteDeviceId: null,
+          historyOwner: "stop-path" as const,
+        }),
+      ),
     };
 
     await postProcessFinalizedTranscript(input);

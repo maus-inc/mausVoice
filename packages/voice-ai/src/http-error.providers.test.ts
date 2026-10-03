@@ -18,7 +18,7 @@ const audio = new ArrayBuffer(8);
 
 /** A fresh Response per call, so a retry never reuses a consumed body. */
 const respond = (status: number, headers?: Record<string, string>) =>
-  vi.fn(async () => new Response("denied", { status, headers }));
+  vi.fn(() => Promise.resolve(new Response("denied", { status, headers })));
 
 const expectHttpError = async (
   run: () => Promise<unknown>,

@@ -15,7 +15,7 @@ const MAX_EDIT_TOKENS = 8;
  */
 const MAX_ALIGNED_TOKENS = 600;
 
-const SMART_APOSTROPHE_PATTERN = /[\u2018\u2019]/g;
+const SMART_APOSTROPHE_PATTERN = /[\u2018\u2019]/gu;
 
 /**
  * The comparison key for a token. Case is folded so a corrected capital is
@@ -123,16 +123,26 @@ const alignTokens = (
   const baselineKeys = alignmentKeys(baseline);
   const fieldKeys = alignmentKeys(field);
 
+  // Every `lengths` read below is `row * columns + column` with `row` in
+  // `0..baseline.length` and `column` in `0..field.length`, which the loop
+  // bounds keep inside the allocation above. Funnelling them through one
+  // accessor keeps that invariant in one place; the `?? 0` is only reachable if
+  // a future edit breaks it, and a zero there is this table's own base value
+  // rather than the `NaN` an out-of-range read would otherwise poison the row
+  // with.
+  const cell = (row: number, column: number): number =>
+    lengths[row * columns + column] ?? 0;
+
   for (let row = 1; row <= baseline.length; row += 1) {
     for (let column = 1; column < columns; column += 1) {
       const shared =
         baselineKeys[row - 1] === fieldKeys[column - 1]
-          ? lengths[(row - 1) * columns + (column - 1)]! + 1
+          ? cell(row - 1, column - 1) + 1
           : 0;
       lengths[row * columns + column] = Math.max(
         shared,
-        lengths[(row - 1) * columns + column]!,
-        lengths[row * columns + (column - 1)]!,
+        cell(row - 1, column),
+        cell(row, column - 1),
       );
     }
   }
@@ -145,10 +155,7 @@ const alignTokens = (
       anchors.set(row - 1, column - 1);
       row -= 1;
       column -= 1;
-    } else if (
-      lengths[(row - 1) * columns + column]! >=
-      lengths[row * columns + (column - 1)]!
-    ) {
+    } else if (cell(row - 1, column) >= cell(row, column - 1)) {
       row -= 1;
     } else {
       column -= 1;
@@ -250,15 +257,23 @@ const collectRegionGaps = (args: {
   }
 
   for (const [baselineIndex, fieldIndex] of inSpan) {
+    // `anchors` is only ever filled with `row - 1` / `column - 1`, where `row`
+    // and `column` walk down from `baseline.length` / `field.length` and stop at
+    // 1, so both indices are in range by construction. Reading them through a
+    // guard keeps that fact checked instead of asserted.
+    const baselineToken = baseline[baselineIndex];
+    const fieldToken = field[fieldIndex];
     if (
-      changedTokenKey(baseline[baselineIndex]!) !==
-      changedTokenKey(field[fieldIndex]!)
+      baselineToken === undefined ||
+      fieldToken === undefined ||
+      changedTokenKey(baselineToken) === changedTokenKey(fieldToken)
     ) {
-      gaps.push({
-        baseline: [baseline[baselineIndex]!],
-        field: [field[fieldIndex]!],
-      });
+      continue;
     }
+    gaps.push({
+      baseline: [baselineToken],
+      field: [fieldToken],
+    });
   }
   return gaps;
 };

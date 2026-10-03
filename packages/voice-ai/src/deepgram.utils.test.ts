@@ -8,13 +8,15 @@ const jsonResponse = (body: unknown): Response =>
   });
 
 const makeFetch = (capture: { urls: string[] }) =>
-  vi.fn(async (url: RequestInfo | URL) => {
+  vi.fn((url: RequestInfo | URL) => {
     capture.urls.push(String(url));
-    return jsonResponse({
-      results: {
-        channels: [{ alternatives: [{ transcript: "hello world" }] }],
-      },
-    });
+    return Promise.resolve(
+      jsonResponse({
+        results: {
+          channels: [{ alternatives: [{ transcript: "hello world" }] }],
+        },
+      }),
+    );
   });
 
 describe("deepgramTranscribeAudio keyterm prompting", () => {

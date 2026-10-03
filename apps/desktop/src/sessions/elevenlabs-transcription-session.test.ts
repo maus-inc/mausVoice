@@ -86,19 +86,53 @@ import { ElevenLabsTranscriptionSession } from "./elevenlabs-transcription-sessi
 /** 20 ms of 16 kHz audio: exactly one minimum-sized chunk. */
 const chunk = () => new Float32Array(320).fill(0.5);
 
+/**
+ * The socket the session most recently constructed.
+ *
+ * Every caller has just waited for `createdSockets` to grow, so an empty read
+ * here means the wait timed out. That was `createdSockets.at(-1)!`, which handed
+ * the next line `undefined` and surfaced as a `TypeError` on `.open()` naming
+ * neither the timeout nor the socket.
+ */
+const latestSocket = (): FakeWebSocket => {
+  const socket = createdSockets.at(-1);
+  if (!socket) {
+    throw new Error("Expected the session to have constructed a WebSocket");
+  }
+  return socket;
+};
+
+/**
+ * The sample counter the most recently constructed queue writes to.
+ *
+ * No queue yet is a real state -- the session has not created one -- and reads
+ * as 0 retained samples. What is not a real state is a non-empty list whose
+ * last entry has gone missing, which is what the previous `at(-1)!.value`
+ * asserted away with a forbidden non-null assertion.
+ */
+const latestQueueValue = (): number => {
+  if (queueCounters.length === 0) return 0;
+  const counter = queueCounters.at(-1);
+  if (!counter) {
+    throw new Error(
+      `Expected a sample counter in a list of ${queueCounters.length}`,
+    );
+  }
+  return counter.value;
+};
+
 const startSession = async () => {
   const session = new ElevenLabsTranscriptionSession("test-key");
   const started = session.onRecordingStart(16000);
   await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
-  const socket = createdSockets.at(-1)!;
+  const socket = latestSocket();
   socket.open();
   await started;
   return { session, socket };
 };
 
 /** Samples currently held in the pending queue. */
-const retainedSamples = () =>
-  queueCounters.length === 0 ? 0 : queueCounters.at(-1)!.value;
+const retainedSamples = () => latestQueueValue();
 
 describe("ElevenLabs audio retention across a socket close", () => {
   beforeEach(() => {
@@ -134,7 +168,7 @@ describe("ElevenLabs audio retention across a socket close", () => {
     const session = new ElevenLabsTranscriptionSession("test-key");
     const started = session.onRecordingStart(16000);
     await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
-    const socket = createdSockets.at(-1)!;
+    const socket = latestSocket();
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
 
     session.writeAudioChunk(chunk());

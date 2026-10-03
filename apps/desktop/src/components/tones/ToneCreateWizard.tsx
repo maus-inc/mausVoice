@@ -28,6 +28,7 @@ import {
   useEffect,
   useMemo,
   useEffectEvent,
+  useRef,
   useState,
 } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -67,6 +68,22 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
   const defaultSampleText = intl.formatMessage(PREVIEW_SAMPLE_MESSAGE);
   const [sampleText, setSampleText] = useState(() => defaultSampleText);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Focus each step's field explicitly once it has mounted rather than with DOM
+  // `autoFocus` props: `autoFocus` fires as an attribute and cannot be deferred,
+  // so it races anything that moves focus in the same commit. This mirrors
+  // ContextMenu's own "focus after commit, not via autoFocus" rule.
+  //
+  // These two fields render only for their own step, so the effect is keyed on
+  // `step` rather than `[]`: on mount `step` is 0 and neither field is in the
+  // tree, so a mount-only effect would never fire and the field would not be
+  // focused on arrival. `TextField` forwards `inputRef` to the real element.
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+  const sampleRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    promptRef.current?.focus();
+    sampleRef.current?.focus();
+  }, [step]);
 
   const preview = useTonePreview(defaultSampleText);
 
@@ -227,7 +244,7 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
         {step === 1 && (
           <Stack spacing={3} sx={{ pt: 1 }}>
             <TextField
-              autoFocus
+              inputRef={promptRef}
               label={<FormattedMessage defaultMessage="Prompt" />}
               value={promptTemplate}
               onChange={(event) => setPromptTemplate(event.target.value)}
@@ -309,7 +326,7 @@ export const ToneCreateWizard = ({ onClose }: { onClose: () => void }) => {
                 <FormattedMessage defaultMessage="Try it" />
               </Typography>
               <TextField
-                autoFocus
+                inputRef={sampleRef}
                 value={sampleText}
                 label={
                   <FormattedMessage defaultMessage="Sample dictation to restyle..." />

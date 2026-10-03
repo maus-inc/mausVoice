@@ -236,6 +236,8 @@ describe("PauseChunkedPretranscriber", () => {
     try {
       // A span that neither settles nor rejects, modelling an adapter that
       // drops the abort signal.
+      // Never settles, and the empty executor is how that is expressed --
+      // there is nothing to assert on a promise that has not settled.
       const transcribe = vi.fn<ChunkTranscriber>(() => new Promise(() => {}));
       const target = new PauseChunkedPretranscriber(RATE, transcribe, CONFIG);
       feed(target, recording);

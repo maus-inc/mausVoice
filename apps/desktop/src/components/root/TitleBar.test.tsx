@@ -8,15 +8,19 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
     showError: vi.fn(),
     platformState: { value: "windows", native: true },
     windowMocks: {
-      minimize: vi.fn(async () => undefined),
-      maximize: vi.fn(async () => undefined),
-      unmaximize: vi.fn(async () => undefined),
-      close: vi.fn(async () => undefined),
-      isMaximized: vi.fn(async () => false),
-      onResized: vi.fn(async (): Promise<() => void> => vi.fn()),
-      isFocused: vi.fn(async () => true),
-      onFocusChanged: vi.fn(async (..._args: unknown[]): Promise<() => void> =>
-        vi.fn(),
+      // Each of these stands in for a `@tauri-apps/api/window` method, which
+      // returns a Promise that `TitleBar` consumes with `.then()`/`.catch()`.
+      // A mock that returned `undefined` would make those chains throw a
+      // TypeError, so the promise is the contract being faked, not decoration.
+      minimize: vi.fn(() => Promise.resolve(undefined)),
+      maximize: vi.fn(() => Promise.resolve(undefined)),
+      unmaximize: vi.fn(() => Promise.resolve(undefined)),
+      close: vi.fn(() => Promise.resolve(undefined)),
+      isMaximized: vi.fn(() => Promise.resolve(false)),
+      onResized: vi.fn((): Promise<() => void> => Promise.resolve(vi.fn())),
+      isFocused: vi.fn(() => Promise.resolve(true)),
+      onFocusChanged: vi.fn((..._args: unknown[]): Promise<() => void> =>
+        Promise.resolve(vi.fn()),
       ),
     },
     focusHandlers: [] as Array<(event: { payload: boolean }) => void>,
@@ -71,9 +75,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   focusHandlers.length = 0;
   windowMocks.isMaximized.mockResolvedValue(false);
-  windowMocks.onFocusChanged.mockImplementation(async (handler: unknown) => {
+  windowMocks.onFocusChanged.mockImplementation((handler: unknown) => {
     focusHandlers.push(handler as (event: { payload: boolean }) => void);
-    return vi.fn();
+    return Promise.resolve(vi.fn());
   });
   platformState.value = "windows";
   platformState.native = true;
@@ -92,6 +96,12 @@ afterEach(() => {
 const renderBar = async () => {
   // Flush the mount effect AND its async isFocused()/onFocusChanged()
   // promises so a late resolve cannot overwrite a subsequent focus event.
+  //
+  // The scope must stay `async` even though the body never awaits: those two
+  // native calls resolve in a microtask whose `.then` calls `setFocused` /
+  // `setMaximized`. Only an async act scope keeps capturing updates scheduled
+  // after the callback returns; a sync one lets them fall outside `act`, and
+  // `data-focused` would not be settled when the assertions below read it.
   await act(async () => {
     root.render(createElement(TitleBar));
   });
@@ -109,13 +119,13 @@ describe("TitleBar on Windows and Linux", () => {
       }),
     );
     await renderBar();
-    await act(async () => {
+    await act(() => {
       for (const handler of focusHandlers) handler({ payload: false });
     });
     expect(
       document.querySelector("[data-focused]")?.getAttribute("data-focused"),
     ).toBe("false");
-    await act(async () => resolve(true));
+    await act(() => resolve(true));
     expect(
       document.querySelector("[data-focused]")?.getAttribute("data-focused"),
     ).toBe("false");
@@ -131,7 +141,7 @@ describe("TitleBar on Windows and Linux", () => {
     );
     await renderBar();
     act(() => root.render(null));
-    await act(async () => resolve(cleanup));
+    await act(() => resolve(cleanup));
     expect(cleanup).toHaveBeenCalledOnce();
   });
   it.each(["windows", "linux"])(
@@ -149,7 +159,7 @@ describe("TitleBar on Windows and Linux", () => {
     expect(document.body.textContent).toContain("mausVoice");
     expect(windowMocks.isMaximized).not.toHaveBeenCalled();
     expect(windowMocks.isFocused).not.toHaveBeenCalled();
-    await act(async () => buttonByLabel("Minimize")!.click());
+    await act(() => buttonByLabel("Minimize")!.click());
     expect(windowMocks.minimize).not.toHaveBeenCalled();
   });
   it("shows caption buttons, not traffic lights, in the browser preview", async () => {
@@ -189,18 +199,18 @@ describe("TitleBar on Windows and Linux", () => {
     );
     expect(document.querySelector(".traffic-btn")).toBeNull();
 
-    await act(async () => {
+    await act(() => {
       minimize!.click();
     });
     expect(windowMocks.minimize).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
+    await act(() => {
       maximize!.click();
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
     expect(buttonByLabel("Restore")).toBeTruthy();
 
-    await act(async () => {
+    await act(() => {
       close!.click();
     });
     expect(windowMocks.close).toHaveBeenCalledTimes(1);
@@ -212,7 +222,7 @@ describe("TitleBar on Windows and Linux", () => {
     const bar = document.querySelector("[data-focused]");
     expect(bar?.getAttribute("data-focused")).toBe("true");
 
-    await act(async () => {
+    await act(() => {
       for (const handler of focusHandlers) {
         handler({ payload: false });
       }
@@ -229,7 +239,7 @@ describe("TitleBar on Windows and Linux", () => {
       "[data-tauri-drag-region]",
     ) as HTMLElement;
     expect(dragRegion).toBeTruthy();
-    await act(async () => {
+    await act(() => {
       dragRegion.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     expect(windowMocks.maximize).toHaveBeenCalled();
@@ -260,17 +270,17 @@ describe("TitleBar on macOS", () => {
   it("wires traffic buttons to window actions", async () => {
     await renderBar();
 
-    await act(async () => {
+    await act(() => {
       buttonByLabel("Close")!.click();
     });
     expect(windowMocks.close).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
+    await act(() => {
       buttonByLabel("Minimize")!.click();
     });
     expect(windowMocks.minimize).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
+    await act(() => {
       buttonByLabel("Maximize")!.click();
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
@@ -291,7 +301,7 @@ it.each([
     const error = new Error("window command failed");
     windowMocks[command].mockRejectedValueOnce(error);
     await renderBar();
-    await act(async () => buttonByLabel(label)!.click());
+    await act(() => buttonByLabel(label)!.click());
     expect(showError).toHaveBeenCalledWith(error);
   },
 );

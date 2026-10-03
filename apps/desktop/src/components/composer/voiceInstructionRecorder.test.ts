@@ -58,7 +58,7 @@ const baseDeps = (
       if (cmd === "stop_recording") {
         return Promise.resolve({ samples: [0, 1], sampleRate: 16000 });
       }
-      return Promise.resolve(undefined);
+      return Promise.resolve();
     }),
     transcribe: vi.fn().mockResolvedValue("transcript"),
     getPreferredMicrophone: () => null,
@@ -105,7 +105,7 @@ describe("VoiceInstructionRecorder", () => {
       invoke: vi.fn((cmd) => {
         if (cmd === "start_recording")
           return Promise.reject(new Error("no mic"));
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -127,7 +127,7 @@ describe("VoiceInstructionRecorder", () => {
         if (cmd === "start_recording") return startedRecording.promise;
         if (cmd === "stop_recording")
           return Promise.reject(new Error("transcribe failed"));
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -156,7 +156,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
         if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -190,7 +190,7 @@ describe("VoiceInstructionRecorder", () => {
       invoke: vi.fn((cmd) =>
         cmd === "start_recording"
           ? Promise.reject(new Error("no mic"))
-          : Promise.resolve(undefined),
+          : Promise.resolve(),
       ),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -225,7 +225,7 @@ describe("VoiceInstructionRecorder", () => {
       invoke: vi.fn((cmd) =>
         cmd === "start_recording"
           ? Promise.reject(new Error("no mic"))
-          : Promise.resolve(undefined),
+          : Promise.resolve(),
       ),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -239,9 +239,9 @@ describe("VoiceInstructionRecorder", () => {
     const stopDeferred = deferred<StopRecordingResponse>();
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "start_recording") return Promise.resolve();
         if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -263,9 +263,9 @@ describe("VoiceInstructionRecorder", () => {
     const stopDeferred = deferred<StopRecordingResponse>();
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "start_recording") return Promise.resolve();
         if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -286,9 +286,9 @@ describe("VoiceInstructionRecorder", () => {
     const transcribeDeferred = deferred<string>();
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "start_recording") return Promise.resolve();
         if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
       transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
     });
@@ -316,9 +316,9 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       createSpeechRecognition: () => fake,
       invoke: vi.fn((cmd) => {
-        if (cmd === "start_recording") return Promise.resolve(undefined);
+        if (cmd === "start_recording") return Promise.resolve();
         if (cmd === "stop_recording") return stopDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
       transcribe: vi.fn().mockReturnValue(transcribeDeferred.promise),
     });
@@ -349,7 +349,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
         if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);
@@ -376,7 +376,7 @@ describe("VoiceInstructionRecorder", () => {
     const deps = baseDeps({
       invoke: vi.fn((cmd) => {
         if (cmd === "start_recording") return startDeferred.promise;
-        return Promise.resolve(undefined);
+        return Promise.resolve();
       }),
     });
     const recorder = new VoiceInstructionRecorder(deps);

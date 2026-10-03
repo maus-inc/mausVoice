@@ -34,7 +34,9 @@ const styleText = () =>
 
 describe("SonnerToaster", () => {
   it("paints one neutral surface per toast and carries status in the icon", async () => {
-    await act(async () => {
+    // Sync act scope: `root.render` schedules the mount and its style
+    // injection, which `flushActQueue` drains in both act branches.
+    await act(() => {
       root?.render(
         <ThemeProvider theme={theme}>
           <SonnerToaster />
@@ -64,7 +66,7 @@ describe("SonnerToaster", () => {
     expect(css).toContain("var(--app-palette-level2");
 
     // …and richColors (saturated type fills) stays off for good.
-    await act(async () => {
+    await act(() => {
       toast.success("Copied successfully");
     });
     await act(async () => {

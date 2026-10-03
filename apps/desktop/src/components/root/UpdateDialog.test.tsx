@@ -52,8 +52,10 @@ describe("update release-history entry point", () => {
       const history = Array.from(document.querySelectorAll("button")).find(
         (button) => button.textContent === "View past releases",
       );
-      expect(history).toBeDefined();
-      await act(async () => history!.click());
+      if (!history) {
+        throw new Error('Expected a "View past releases" button to render');
+      }
+      await act(async () => history.click());
       expect(document.querySelector("[data-history]")).not.toBeNull();
     },
   );

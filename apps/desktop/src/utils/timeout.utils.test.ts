@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { withTimeout } from "./timeout.utils";
 
+/** A promise that never settles. The empty executor is that behaviour. */
 const never = () => new Promise<never>(() => {});
 
 describe("withTimeout", () => {

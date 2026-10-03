@@ -86,21 +86,6 @@ export const getIntlConfig = () => {
   };
 };
 
-// Helper to get intl instance for non-React contexts
-export function getIntl(locale?: Locale) {
-  const cache = createIntlCache();
-  const detectedLocale = locale ?? detectLocale();
-  const intl = createIntl(
-    {
-      locale: detectedLocale,
-      defaultLocale: DEFAULT_LOCALE,
-      messages: getMessagesForLocale(detectedLocale),
-    },
-    cache,
-  );
-  return { ...intl, formatMessage: idTolerantFormatMessage(intl) };
-}
-
 const idTolerantFormatMessage = (intl: IntlShape) => {
   const rawFormat = intl.formatMessage;
   /**
@@ -130,3 +115,18 @@ const idTolerantFormatMessage = (intl: IntlShape) => {
   // so the return type is whatever the underlying overload produces.
   return format as IntlShape["formatMessage"];
 };
+
+// Helper to get intl instance for non-React contexts
+export function getIntl(locale?: Locale) {
+  const cache = createIntlCache();
+  const detectedLocale = locale ?? detectLocale();
+  const intl = createIntl(
+    {
+      locale: detectedLocale,
+      defaultLocale: DEFAULT_LOCALE,
+      messages: getMessagesForLocale(detectedLocale),
+    },
+    cache,
+  );
+  return { ...intl, formatMessage: idTolerantFormatMessage(intl) };
+}

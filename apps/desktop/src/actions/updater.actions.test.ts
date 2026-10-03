@@ -6,20 +6,24 @@ import { createDefaultPreferences, setUpdateChannel } from "./user.actions";
 
 const { updaterMock, toastMock, invokeMock, savePreferences } = vi.hoisted(
   () => ({
-    invokeMock: vi.fn(async () => null),
-    savePreferences: vi.fn(async (preferences: UserPreferences) => preferences),
+    invokeMock: vi.fn(() => Promise.resolve(null)),
+    savePreferences: vi.fn((preferences: UserPreferences) =>
+      Promise.resolve(preferences),
+    ),
     updaterMock: {
       checkForUpdate: vi.fn(),
-      checkForChannelUpdate: vi.fn(async (...args: unknown[]) =>
-        (updaterMock.checkForUpdate as (...callArgs: unknown[]) => unknown)(
-          ...args,
+      checkForChannelUpdate: vi.fn((...args: unknown[]) =>
+        Promise.resolve(
+          (updaterMock.checkForUpdate as (...callArgs: unknown[]) => unknown)(
+            ...args,
+          ),
         ),
       ),
       hasAvailableUpdate: vi.fn(() => false),
-      closeAvailableUpdate: vi.fn(async () => {}),
-      installAvailableUpdate: vi.fn(async () => {}),
-      downloadAndOpenMacInstaller: vi.fn(async () => {}),
-      relaunchApp: vi.fn(async () => {}),
+      closeAvailableUpdate: vi.fn(() => Promise.resolve()),
+      installAvailableUpdate: vi.fn(() => Promise.resolve()),
+      downloadAndOpenMacInstaller: vi.fn(() => Promise.resolve()),
+      relaunchApp: vi.fn(() => Promise.resolve()),
       isReadOnlyFilesystemInstallError: vi.fn(() => false),
     },
     toastMock: { showToast: vi.fn((): Promise<void> => Promise.resolve()) },
@@ -67,7 +71,7 @@ beforeEach(() => {
   updaterMock.hasAvailableUpdate.mockReturnValue(false);
   savePreferences
     .mockReset()
-    .mockImplementation(async (preferences) => preferences);
+    .mockImplementation((preferences) => Promise.resolve(preferences));
   resetState();
 });
 
@@ -294,8 +298,11 @@ describe("checkForAppUpdates", () => {
     const background = checkForAppUpdates();
     const manual = checkForAppUpdates({ userInitiated: true });
 
-    // Let both callers settle against the shared endpoint promise.
-    resolveCheck!(availableUpdate);
+    // Let both callers settle against the shared endpoint promise. The executor
+    // above assigned `resolveCheck`, so it is set by the time `checkForAppUpdates`
+    // has called the mock.
+    if (!resolveCheck) throw new Error("checkForUpdate was never called");
+    resolveCheck(availableUpdate);
     await Promise.all([background, manual]);
 
     expect(updaterMock.checkForUpdate).toHaveBeenCalledTimes(1);

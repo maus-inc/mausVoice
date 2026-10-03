@@ -25,6 +25,20 @@ export type TranscriptionAudioDisclosure = {
   providerName: string | null;
 };
 
+const readProviderName = (provider: ApiKeyProvider | null): string | null => {
+  if (!provider) {
+    return null;
+  }
+  try {
+    return getProviderFormConfig(provider, "transcription").displayName;
+  } catch {
+    // Every transcription-capable provider has a form config, so this only
+    // covers a key row written by a newer build. A disclosure that cannot name
+    // its provider stays hidden rather than crashing the surface that shows it.
+    return null;
+  }
+};
+
 /**
  * The one gate every audio-transmission disclosure reads.
  *
@@ -56,20 +70,6 @@ export const getTranscriptionAudioDisclosure = (
 export const disclosureIsVisible = (
   disclosure: TranscriptionAudioDisclosure,
 ): boolean => disclosure.kind !== "local" && disclosure.providerName !== null;
-
-const readProviderName = (provider: ApiKeyProvider | null): string | null => {
-  if (!provider) {
-    return null;
-  }
-  try {
-    return getProviderFormConfig(provider, "transcription").displayName;
-  } catch {
-    // Every transcription-capable provider has a form config, so this only
-    // covers a key row written by a newer build. A disclosure that cannot name
-    // its provider stays hidden rather than crashing the surface that shows it.
-    return null;
-  }
-};
 
 /**
  * Body of the "press cancel again" toast.

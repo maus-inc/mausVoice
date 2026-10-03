@@ -11,7 +11,7 @@ const clientWith = (
 
 describe("openaiCompatibleTranscribeAudio cancellation", () => {
   it("passes the signal to the SDK request options", async () => {
-    const create = vi.fn(async () => ({ text: "hello world" }));
+    const create = vi.fn(() => Promise.resolve({ text: "hello world" }));
     const controller = new AbortController();
 
     const result = await openaiCompatibleTranscribeAudio({
@@ -29,7 +29,7 @@ describe("openaiCompatibleTranscribeAudio cancellation", () => {
   });
 
   it("never builds or sends a request once aborted", async () => {
-    const create = vi.fn(async () => ({ text: "unused" }));
+    const create = vi.fn(() => Promise.resolve({ text: "unused" }));
     const controller = new AbortController();
     controller.abort();
 
@@ -47,9 +47,9 @@ describe("openaiCompatibleTranscribeAudio cancellation", () => {
 
   it("does not retry after the signal aborts mid-request", async () => {
     const controller = new AbortController();
-    const create = vi.fn(async () => {
+    const create = vi.fn(() => {
       controller.abort();
-      throw new DOMException("aborted", "AbortError");
+      return Promise.reject(new DOMException("aborted", "AbortError"));
     });
 
     await expect(

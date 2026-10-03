@@ -259,10 +259,10 @@ describe("segment audio energy", () => {
   const audio = (seconds: number, speech: [number, number][] = []) => {
     const out = new Float32Array(seconds * rate);
     for (let i = 0; i < out.length; i++) {
-      const t = i / rate;
-      out[i] = 0.0005 * Math.sin(2 * Math.PI * 50 * t);
-      if (speech.some(([from, to]) => t >= from && t < to)) {
-        out[i] += 0.012 * Math.sin(2 * Math.PI * 180 * t);
+      const time = i / rate;
+      out[i] = 0.0005 * Math.sin(2 * Math.PI * 50 * time);
+      if (speech.some(([from, to]) => time >= from && time < to)) {
+        out[i] += 0.012 * Math.sin(2 * Math.PI * 180 * time);
       }
     }
     return out;

@@ -443,7 +443,7 @@ describe("retired model handling", () => {
 
   it("redacts a Groq gsk_ key echoed by a 401 instead of leaking it", async () => {
     const createCompletion = vi.fn().mockRejectedValue(
-      Object.assign(new Error("Incorrect API key provided: " + FAKE_KEY), {
+      Object.assign(new Error(`Incorrect API key provided: ${FAKE_KEY}`), {
         status: 401,
       }),
     );

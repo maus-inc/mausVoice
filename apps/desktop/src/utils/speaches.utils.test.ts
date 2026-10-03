@@ -32,8 +32,8 @@ const transcribe = () =>
 // A Response body is a single-use stream, and the retry policy sends the same
 // request more than once, so every attempt needs its own Response.
 const respondWith = (body: string, status: number, headers?: HeadersInit) =>
-  fetchMock.mockImplementation(
-    async () => new Response(body, { status, headers }),
+  fetchMock.mockImplementation(() =>
+    Promise.resolve(new Response(body, { status, headers })),
   );
 
 const settled = (promise: Promise<unknown>): Promise<unknown> =>

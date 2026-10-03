@@ -333,10 +333,10 @@ describe("final insertion stage", () => {
         handsFreeDelayMs: 0,
       });
       const trace = startPipelineTrace();
-      invokeMock.mockImplementation(async () => {
+      invokeMock.mockImplementation(() => {
         expect(sendPillStageText).toHaveBeenCalledWith("Inserting");
         expect(trace.marks.inserted).toBeUndefined();
-        return "pasted";
+        return Promise.resolve("pasted");
       });
       const result = await routeTranscriptOutput(
         { text: "final", mode: "dictation", currentAppId: null },

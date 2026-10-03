@@ -138,10 +138,7 @@ export class GroqGenerateTextFallbackError extends Error {
     const describe = (cause: unknown) =>
       cause instanceof Error ? cause.message : String(cause);
     super(
-      `Groq post-processing failed on both models. ` +
-        `Configured model \`${primaryModel}\` failed: ${describe(primaryCause)}. ` +
-        `Fallback model \`${fallbackModel}\` failed: ${describe(fallbackCause)}. ` +
-        describeChainAdvice(primaryCause, fallbackCause),
+      `Groq post-processing failed on both models. Configured model \`${primaryModel}\` failed: ${describe(primaryCause)}. Fallback model \`${fallbackModel}\` failed: ${describe(fallbackCause)}. ${describeChainAdvice(primaryCause, fallbackCause)}`,
     );
     this.name = "GroqGenerateTextFallbackError";
     this.primaryModel = primaryModel;

@@ -227,7 +227,7 @@ describe("audio intake ownership", () => {
 
   it("buffers pre-ready chunks and replays them in order with their indexes", async () => {
     const writeAudioChunk = vi.fn();
-    let ready = false;
+    const ready = false;
     const intake = await attachSessionAudioIntake(
       sessionWith(writeAudioChunk),
       () => true,
@@ -258,7 +258,7 @@ describe("audio intake ownership", () => {
 
   it("reports startup samples dropped by the buffer budget", async () => {
     const onOverflow = vi.fn();
-    let ready = false;
+    const ready = false;
     const intake = await attachSessionAudioIntake(
       sessionWith(vi.fn()),
       () => true,

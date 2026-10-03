@@ -38,14 +38,15 @@ const inert = (): unknown =>
 
 ensureUiHarness();
 
-let frames: FrameRequestCallback[] = [];
+// Named to avoid shadowing the read-only global `window.frames`.
+let frameCallbacks: FrameRequestCallback[] = [];
 // metal-fx keeps a module-level renderer whose frame throttle remembers the
 // last timestamp, so the fake clock must keep increasing across tests.
 let frameClock = performance.now();
 const flushFrames = (count: number) => {
   for (let i = 0; i < count; i++) {
-    const pending = frames;
-    frames = [];
+    const pending = frameCallbacks;
+    frameCallbacks = [];
     frameClock += 1000; // far apart so the frame throttle never skips
     for (const cb of pending) cb(frameClock);
   }
@@ -57,20 +58,20 @@ let root: Root;
 beforeEach(() => {
   motion.reduced = false;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  frames = [];
+  frameCallbacks = [];
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-    frames.push(cb);
-    return frames.length;
+    frameCallbacks.push(cb);
+    return frameCallbacks.length;
   });
   vi.stubGlobal("cancelAnimationFrame", () => undefined);
-  vi.stubGlobal(
-    "Path2D",
-    class {
-      constructor() {
-        return inert() as object;
-      }
-    },
-  );
+  // Returning an object from a constructor -- or from a function called with
+  // `new` -- makes that object the result, which is how this stub hands
+  // metal-fx the inert proxy. Written as a function rather than a class whose
+  // only member is a constructor that returns: that is an empty class by any
+  // reading, and the `return` in it is what JS-0109 flags.
+  vi.stubGlobal("Path2D", function Path2DStub() {
+    return inert();
+  });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() =>
     inert()) as unknown as HTMLCanvasElement["getContext"]);
   const style = document.createElement("style");
@@ -100,8 +101,8 @@ const renderPlayButton = async () => {
     ),
   );
   const wrapper = container.querySelector<HTMLElement>(".metal-fx-root");
-  expect(wrapper, "metal-fx did not take its WebGL path").not.toBeNull();
-  return wrapper!;
+  if (!wrapper) throw new Error("metal-fx did not take its WebGL path");
+  return wrapper;
 };
 
 describe("MetalChrome over the real metal-fx", () => {

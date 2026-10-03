@@ -297,7 +297,11 @@ describe("reviewTranscriptOnPill", () => {
     const second = startPillReview("queued");
     await flush(() => getQueuedSessions().length === 2);
     const resolved = vi.fn();
-    void first.then(resolved);
+    // Deliberately not awaited: the assertion under test is that this
+    // rejection is swallowed by the review path, which `resolved` records.
+    // `.then` with no rejection handler would surface as an unhandled
+    // rejection, so attach one that is itself asserted to be uncalled.
+    first.then(resolved, () => undefined);
     mocks.invoke.mockRejectedValueOnce(new Error("clipboard unavailable"));
     decide?.({
       payload: { reviewId: id, action: "copy", text: "edited draft" },
@@ -536,7 +540,9 @@ describe("reviewTranscriptOnPill", () => {
 
   it("transfers the timeout to the composer without rearming it on enqueue", async () => {
     vi.useFakeTimers();
-    let complete = (_value: string | null) => {};
+    // Replaced by the Promise executor below; the initializer only types the
+    // binding until that runs.
+    let complete: (value: string | null) => void = () => undefined;
     mocks.reviewTextInComposer.mockImplementationOnce(
       () =>
         new Promise<string | null>((resolve) => {
@@ -546,7 +552,10 @@ describe("reviewTranscriptOnPill", () => {
     try {
       const pending = startPillReview("first");
       const resolved = vi.fn();
-      void pending.then(resolved);
+      // Not awaited on purpose: the test asserts `resolved` was never called
+      // across the transferred timeout. The rejection handler keeps a late
+      // rejection from escaping as an unhandled rejection.
+      pending.then(resolved, () => undefined);
       await flush(() => getAppState().pendingPillReview !== null);
       const id = currentReviewId();
       await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
@@ -574,7 +583,9 @@ describe("reviewTranscriptOnPill", () => {
   });
 
   it("ignores a late composer result after cancellation and a new review", async () => {
-    let complete = (_value: string | null) => {};
+    // Replaced by the Promise executor below; the initializer only types the
+    // binding until that runs.
+    let complete: (value: string | null) => void = () => undefined;
     mocks.reviewTextInComposer.mockImplementationOnce(
       () =>
         new Promise<string | null>((resolve) => {

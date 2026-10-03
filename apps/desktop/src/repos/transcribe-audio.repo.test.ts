@@ -1146,9 +1146,9 @@ describe("every transcription provider goes through the app's fetch", () => {
   it("the OpenRouter repository built by the factory still binds a caller fetch", async () => {
     const seen: unknown[] = [];
     vi.spyOn(voiceAi, "openrouterTranscribeAudio").mockImplementation(
-      async (args) => {
+      (args) => {
         seen.push(args.customFetch);
-        return { text: "hello", wordsUsed: 1 };
+        return Promise.resolve({ text: "hello", wordsUsed: 1 });
       },
     );
     const state = structuredClone(INITIAL_APP_STATE);
@@ -1181,7 +1181,9 @@ describe("every transcription provider goes through the app's fetch", () => {
 
 describe("provider requests honor the abort signal", () => {
   it("binds the caller's signal into every provider fetch", async () => {
-    const baseFetch = vi.fn<typeof fetch>(async () => new Response("{}"));
+    const baseFetch = vi.fn<typeof fetch>(() =>
+      Promise.resolve(new Response("{}")),
+    );
     vi.spyOn(voiceAi, "groqTranscribeAudio").mockImplementation(
       async ({ customFetch }) => {
         await customFetch?.("https://api.groq.com/test", { method: "POST" });
@@ -1213,7 +1215,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     // First call: transcribe model fails with 403
     geminiMock.mockImplementationOnce(() => {
       const err = new Error("forbidden") as Error & { status?: number };
-      (err as any).status = 403;
+      err.status = 403;
       return Promise.reject(err);
     });
     // Second call: fallback succeeds
@@ -1234,7 +1236,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     expect(result.metadata?.modelSize).not.toBe("gemini-3.5-transcribe");
     expect(geminiMock).toHaveBeenCalledTimes(2);
     // Second call should use non-transcribe model
-    const secondModel = (geminiMock.mock.calls[1]?.[0] as any)?.model;
+    const secondModel = geminiMock.mock.calls[1]?.[0]?.model;
     expect(secondModel).not.toContain("-transcribe");
   });
 
@@ -1251,7 +1253,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
     geminiMock.mockImplementationOnce(() => {
       const err = new Error("forbidden") as Error & { status?: number };
-      (err as any).status = 403;
+      err.status = 403;
       return Promise.reject(err);
     });
     geminiMock.mockImplementationOnce(() =>
@@ -1270,7 +1272,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     expect(result.warnings?.[0]).toContain("dictionary");
     expect(result.warnings?.[0]).toContain("gemini-3.5-transcribe");
     // The dictionary really was configured, so this is a loss and not a no-op.
-    expect((geminiMock.mock.calls[0]?.[0] as any)?.customVocabulary).toEqual([
+    expect(geminiMock.mock.calls[0]?.[0]?.customVocabulary).toEqual([
       "mausvoice",
     ]);
   });
@@ -1300,7 +1302,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
     const geminiMock = vi.spyOn(voiceAi, "geminiTranscribeAudio");
     geminiMock.mockImplementationOnce(() => {
       const err = new Error("not found") as Error & { status?: number };
-      (err as any).status = 404;
+      err.status = 404;
       return Promise.reject(err);
     });
     geminiMock.mockImplementation(() =>
@@ -1325,7 +1327,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
       sampleRate: 16000,
     });
     expect(geminiMock).toHaveBeenCalledTimes(1);
-    const model = (geminiMock.mock.calls[0]?.[0] as any)?.model;
+    const model = geminiMock.mock.calls[0]?.[0]?.model;
     expect(model).not.toContain("-transcribe");
   });
 
@@ -1336,7 +1338,7 @@ describe("GeminiTranscribeAudioRepo fallback", () => {
       .spyOn(voiceAi, "geminiTranscribeAudio")
       .mockImplementation(() => {
         const err = new Error("not found") as Error & { status?: number };
-        (err as any).status = 404;
+        err.status = 404;
         return Promise.reject(err);
       });
     const repo = new GeminiTranscribeAudioRepo("key", "gemini-3.8-flash", []);

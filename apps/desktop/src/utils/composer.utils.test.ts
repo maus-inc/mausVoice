@@ -142,11 +142,11 @@ const installPerEventListener = () => {
     Array<(event: { payload: unknown }) => void>
   >();
   mocks.listen.mockImplementation(
-    async (event: string, cb: (event: { payload: unknown }) => void) => {
+    (event: string, cb: (event: { payload: unknown }) => void) => {
       const list = byEvent.get(event) ?? [];
       list.push(cb);
       byEvent.set(event, list);
-      return vi.fn();
+      return Promise.resolve(vi.fn());
     },
   );
   return byEvent;
@@ -213,21 +213,24 @@ describe("reviewTextInComposer", () => {
   beforeEach(() => {
     resetComposerMocks();
     // Default: register/discard/destroy succeed; creation returns a window.
-    mocks.invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "floating_window_create") return { id: "floating-1" };
-      return undefined;
-    });
+    mocks.invoke.mockImplementation((cmd: string) =>
+      Promise.resolve(
+        cmd === "floating_window_create" ? { id: "floating-1" } : undefined,
+      ),
+    );
     mocks.getByLabel.mockResolvedValue(null);
     mocks.listen.mockResolvedValue(vi.fn());
   });
 
   it("returns null and surfaces a recovery toast when window creation fails", async () => {
-    mocks.invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "floating_window_create") {
-        throw new Error("0x8007139F");
-      }
-      return undefined;
-    });
+    mocks.invoke.mockImplementation((cmd: string) =>
+      // Reject rather than throw: the code under test calls `invoke` inside its
+      // own try/catch, but rejecting keeps this mock's failure mode a rejected
+      // promise exactly as a real IPC call would be.
+      cmd === "floating_window_create"
+        ? Promise.reject(new Error("0x8007139F"))
+        : Promise.resolve(undefined),
+    );
     const result = await reviewTextInComposer("hello");
     expect(result).toBeNull();
     expect(mocks.showToast).toHaveBeenCalledWith(
@@ -241,12 +244,12 @@ describe("reviewTextInComposer", () => {
   it("does not open a second window while one is already live", async () => {
     let created = 0;
     const listeners = installPerEventListener();
-    mocks.invoke.mockImplementation(async (cmd: string) => {
+    mocks.invoke.mockImplementation((cmd: string) => {
       if (cmd === "floating_window_create") {
         created += 1;
-        return { id: `floating-${created}` };
+        return Promise.resolve({ id: `floating-${created}` });
       }
-      return undefined;
+      return Promise.resolve(undefined);
     });
 
     // Start the first review but do NOT await it. The synchronous entry
@@ -293,12 +296,14 @@ describe("reviewTextInComposer cleanup", () => {
   it("destroys the window and discards its text when the user accepts", async () => {
     const listeners = installPerEventListener();
     let createdId = "";
-    mocks.invoke.mockImplementation(async (cmd: string) => {
+    mocks.invoke.mockImplementation((cmd: string) => {
       if (cmd === "floating_window_create") {
         createdId = "floating-1";
-        return { id: createdId };
+        return Promise.resolve({ id: createdId });
       }
-      return undefined;
+      // Every branch must return a promise: `composer.utils.ts` chains
+      // `.catch()` directly onto the `invoke` result.
+      return Promise.resolve(undefined);
     });
 
     const promise = reviewTextInComposer("draft");
@@ -358,12 +363,14 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
     try {
       installPerEventListener();
       let createdId = "";
-      mocks.invoke.mockImplementation(async (cmd: string) => {
+      mocks.invoke.mockImplementation((cmd: string) => {
         if (cmd === "floating_window_create") {
           createdId = "floating-blank";
-          return { id: createdId };
+          return Promise.resolve({ id: createdId });
         }
-        return undefined;
+        // `composer.utils.ts` chains `.catch()` onto the `invoke` result, so
+        // every branch has to return a promise.
+        return Promise.resolve(undefined);
       });
 
       // Fresh module instance: reviewTextInComposer guards on a
@@ -423,11 +430,11 @@ describe("reviewTextInComposer ready-timeout safety net", () => {
     try {
       installPerEventListener();
       // floating_window_create never resolves (stalled native IPC call)
-      mocks.invoke.mockImplementation(async (cmd: string) => {
+      mocks.invoke.mockImplementation((cmd: string) => {
         if (cmd === "floating_window_create") {
-          return new Promise(() => {});
+          return new Promise(() => undefined);
         }
-        return undefined;
+        return Promise.resolve(undefined);
       });
 
       vi.resetModules();

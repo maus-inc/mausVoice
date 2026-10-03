@@ -97,8 +97,8 @@ const seed = ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  updateTranscription.mockImplementation(
-    async (payload: Transcription) => payload,
+  updateTranscription.mockImplementation((payload: Transcription) =>
+    Promise.resolve(payload),
   );
   createGlossaryTerms.mockResolvedValue({ created: [], failed: 0 });
   getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: false });

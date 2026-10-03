@@ -64,7 +64,7 @@ export type DeepgramTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const deepgramTranscribeAudio = async ({
+export const deepgramTranscribeAudio = ({
   apiKey,
   model = "nova-3",
   blob,

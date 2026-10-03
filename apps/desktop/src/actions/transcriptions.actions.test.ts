@@ -26,9 +26,9 @@ const {
   generateText: vi.fn(),
   showSnackbar: vi.fn(),
   showErrorSnackbar: vi.fn(),
-  showPersistentToast: vi.fn(async () => {}),
-  showCompletionToast: vi.fn(async () => {}),
-  dismissToast: vi.fn(async () => {}),
+  showPersistentToast: vi.fn(() => Promise.resolve()),
+  showCompletionToast: vi.fn(() => Promise.resolve()),
+  dismissToast: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../repos", () => ({
@@ -74,7 +74,7 @@ vi.mock("./toast.actions", async () => ({
   showPersistentToast,
   showCompletionToast,
   dismissToast,
-  showToast: vi.fn(async () => {}),
+  showToast: vi.fn(() => Promise.resolve()),
 }));
 
 const { intlFormatMessage } = vi.hoisted(() => ({
@@ -158,8 +158,8 @@ const mockSuccessfulPipeline = () => {
     warnings: [],
     metadata: {},
   });
-  updateTranscription.mockImplementation(
-    async (transcription: Transcription) => transcription,
+  updateTranscription.mockImplementation((transcription: Transcription) =>
+    Promise.resolve(transcription),
   );
   // vi.clearAllMocks() strips implementations, so these must be restored or
   // the toast helpers return undefined and their .then() chains reject.
@@ -611,8 +611,8 @@ describe("retranscribeTranscription persistence gate", () => {
       samples: [0.1, 0.2],
       sampleRate: 16000,
     });
-    updateTranscription.mockImplementation(
-      async (payload: Transcription) => payload,
+    updateTranscription.mockImplementation((payload: Transcription) =>
+      Promise.resolve(payload),
     );
     transcribeAudio.mockResolvedValue({
       rawTranscript: "raw retranscribed",
@@ -716,7 +716,9 @@ describe("retranscribeTranscription unstyled post-processing", () => {
   let consoleError: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     vi.clearAllMocks();
     resetState();
     mockSuccessfulPipeline();

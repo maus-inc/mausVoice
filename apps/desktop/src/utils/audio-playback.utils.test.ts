@@ -94,6 +94,8 @@ describe("audio source cleanup", () => {
     // the suspended call it has been superseded — and the guard it checks on
     // resumption still compares equal unless the stop advanced it, which let
     // the audio start after the user had already pressed stop.
+    // Placeholder for the resolver the resumed promise's executor assigns
+    // immediately below.
     let releaseResume = (): void => {};
     const resumed = new Promise<void>((resolve) => {
       releaseResume = resolve;

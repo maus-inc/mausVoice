@@ -39,17 +39,24 @@ export const createAudioChunkBuffer = (
   const drain = (targetCount: number) =>
     drainSamples(pendingChunks, pendingSampleCountRef, targetCount);
 
-  const flush = (force = false) => {
-    const socket = ws();
-    if (socket === null) {
-      return;
-    }
-    if (socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    while (sendNextChunk(socket, force)) {
-      // drain the buffer
+  const trySendChunk = (socket: WebSocket, chunk: Float32Array): boolean => {
+    try {
+      const pcm16 = convertFloat32ToPCM16(chunk);
+      socket.send(pcm16);
+      sentChunkCount++;
+      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
+        const durationMs = (chunk.length / sampleRate) * 1000;
+        getLogger().verbose(
+          `[${loggerPrefix}] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
+        );
+      }
+      return true;
+    } catch (error) {
+      getLogger().error(
+        `[${loggerPrefix}] Error sending buffered chunk:`,
+        error,
+      );
+      return false;
     }
   };
 
@@ -78,24 +85,17 @@ export const createAudioChunkBuffer = (
     return true;
   };
 
-  const trySendChunk = (socket: WebSocket, chunk: Float32Array): boolean => {
-    try {
-      const pcm16 = convertFloat32ToPCM16(chunk);
-      socket.send(pcm16);
-      sentChunkCount++;
-      if (sentChunkCount <= 3 || sentChunkCount % 10 === 0) {
-        const durationMs = (chunk.length / sampleRate) * 1000;
-        getLogger().verbose(
-          `[${loggerPrefix}] Sent chunk #${sentChunkCount} (${chunk.length} samples ~${durationMs.toFixed(1)} ms, ${pcm16.byteLength} bytes)`,
-        );
-      }
-      return true;
-    } catch (error) {
-      getLogger().error(
-        `[${loggerPrefix}] Error sending buffered chunk:`,
-        error,
-      );
-      return false;
+  const flush = (force = false) => {
+    const socket = ws();
+    if (socket === null) {
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    while (sendNextChunk(socket, force)) {
+      // drain the buffer
     }
   };
 

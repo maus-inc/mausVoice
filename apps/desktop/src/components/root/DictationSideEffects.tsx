@@ -863,7 +863,7 @@ export const DictationSideEffects = () => {
   }, [intl, sendPhaseToPill]);
 
   const processFinalizedRecording = useCallback(
-    async ({
+    ({
       audio,
       a11yInfo,
       appTarget,
@@ -877,7 +877,7 @@ export const DictationSideEffects = () => {
         getLogger().warning(
           `stopRecordingRaw: refs cleared (session=${!!session}, strategy=${!!strategy})`,
         );
-        return { shouldContinue: false };
+        return Promise.resolve({ shouldContinue: false });
       }
 
       const persistReviewedTranscript = async ({
@@ -1784,7 +1784,7 @@ export const DictationSideEffects = () => {
     await abortRecording();
   });
 
-  useTauriListen<void>("assistant-enable-type-mode", async () => {
+  useTauriListen<void>("assistant-enable-type-mode", () => {
     if (!isMainWindow) return;
     getLogger().info("Switching to type mode");
 

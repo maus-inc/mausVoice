@@ -49,7 +49,7 @@ const normalizeHallucinationText = (text: string): string =>
   text
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/[.!?,;:。！？，、]+/g, "")
+    .replace(/[.!?,;:。！？，、]+/gu, "")
     .replace(/\s+/g, " ")
     .trim();
 

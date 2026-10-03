@@ -135,6 +135,20 @@ const toggleButton = () => {
   );
 };
 
+/**
+ * The disclosure toggle, throwing instead of returning `undefined` so the
+ * caller does not have to assert the element away with a non-null assertion.
+ */
+const requireToggleButton = (): HTMLButtonElement => {
+  const found = toggleButton();
+  if (!found) {
+    throw new Error(
+      "TypographyWithMore rendered no Show more/Show less toggle",
+    );
+  }
+  return found;
+};
+
 describe("TypographyWithMore disclosure toggle", () => {
   it("renders collapsed with an inline 'Show more' whose hover is a link affordance, not a repaint of the fade", async () => {
     await render();
@@ -142,7 +156,7 @@ describe("TypographyWithMore disclosure toggle", () => {
     expect(button).not.toBeUndefined();
     expect(button?.textContent).toBe("Show more");
 
-    const hover = hoverRulesFor(button!);
+    const hover = hoverRulesFor(requireToggleButton());
     // The theme's stock text-button hover (level2) still exists in the
     // cascade; the rule that WINS (last in emitted order) must keep the
     // truncation-fade tier. A repaint double-toned the mask — pinned here.
@@ -169,7 +183,7 @@ describe("TypographyWithMore disclosure toggle", () => {
     expect(button).not.toBeUndefined();
     expect(button?.textContent).toBe("Show less");
 
-    const hover = hoverRulesFor(button!);
+    const hover = hoverRulesFor(requireToggleButton());
     const bgs = [...hover.matchAll(/background-color:([^;}]+)/g)].map(
       (m) => m[1],
     );
@@ -179,7 +193,7 @@ describe("TypographyWithMore disclosure toggle", () => {
 
   it("reveals the affordance on keyboard focus, not hover alone", async () => {
     await render();
-    const button = toggleButton()!;
+    const button = requireToggleButton();
 
     // A pointer user gets a state change on hover. A keyboard user tabbing to
     // the control used to see it stay de-emphasised, because the underline was
@@ -196,7 +210,7 @@ describe("TypographyWithMore disclosure toggle", () => {
 
   it("paints the affordance at rest where there is no hover to trigger it", async () => {
     await render();
-    const button = toggleButton()!;
+    const button = requireToggleButton();
 
     // A touch device never fires :hover, so a hover-only underline left a
     // truncated transcript with no affordance at all. The no-hover query
@@ -210,7 +224,7 @@ describe("TypographyWithMore disclosure toggle", () => {
     await act(async () => {
       toggleButton()?.click();
     });
-    const button = toggleButton()!;
+    const button = requireToggleButton();
 
     const focus = stateRulesFor(button, ":focus-visible");
     const focusBgs = [...focus.matchAll(/background-color:([^;}]+)/g)].map(

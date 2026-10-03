@@ -8,7 +8,7 @@ import { ensureUiHarness } from "../../../test/helpers/jsdom-ui-harness";
 
 ensureUiHarness();
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   state: {
     chatMessageById: {} as Record<string, ChatMessage>,
     streamingMessageById: {} as Record<string, unknown>,
@@ -26,7 +26,7 @@ vi.mock("../../store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../store")>();
   return {
     ...actual,
-    useAppStore: (selector: (s: unknown) => unknown) => selector(h.state),
+    useAppStore: (selector: (s: unknown) => unknown) => selector(mocks.state),
   };
 });
 
@@ -44,16 +44,16 @@ vi.mock(
       >();
     return {
       ...actual,
-      copyPendingPasteReview: vi.fn(async () => undefined),
-      cancelPendingPasteReview: vi.fn(async () => undefined),
+      copyPendingPasteReview: vi.fn(() => Promise.resolve()),
+      cancelPendingPasteReview: vi.fn(() => Promise.resolve()),
     };
   },
 );
 
 vi.mock("../../actions/chat.actions", () => ({
-  editAndResend: vi.fn(async () => undefined),
+  editAndResend: vi.fn(() => Promise.resolve()),
   laterMessagesHaveToolActivity: vi.fn(() => false),
-  retryAssistant: vi.fn(async () => undefined),
+  retryAssistant: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("react-markdown", () => ({
@@ -90,8 +90,8 @@ let container: HTMLDivElement;
 let root: Root | undefined;
 
 beforeEach(() => {
-  h.state.chatMessageById = { pending: pendingMessage };
-  h.state.chatMessageIdsByConversationId = { "conv-1": ["pending"] };
+  mocks.state.chatMessageById = { pending: pendingMessage };
+  mocks.state.chatMessageIdsByConversationId = { "conv-1": ["pending"] };
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -117,7 +117,7 @@ const rerender = async () => {
 };
 
 const resolveReview = (status: "copied" | "canceled") => {
-  h.state.chatMessageById = {
+  mocks.state.chatMessageById = {
     pending: {
       ...pendingMessage,
       metadata: { ...pendingMessage.metadata, status },
@@ -168,7 +168,7 @@ describe("pending paste review messages", () => {
   });
 
   it("leaves an ordinary empty system message hidden", async () => {
-    h.state.chatMessageById = {
+    mocks.state.chatMessageById = {
       pending: { ...pendingMessage, metadata: null },
     };
 

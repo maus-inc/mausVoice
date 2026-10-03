@@ -17,10 +17,12 @@ const historyEntry: Transcription = {
   isDeleted: false,
 };
 
-vi.mock("@tauri-apps/api/app", () => ({ getVersion: async () => "1.0.0" }));
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: () => Promise.resolve("1.0.0"),
+}));
 vi.mock("../../repos", () => ({
   getTranscriptionRepo: () => ({
-    listTranscriptions: async () => [historyEntry],
+    listTranscriptions: () => Promise.resolve([historyEntry]),
   }),
 }));
 vi.mock("./DashboardMenu", () => ({

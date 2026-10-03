@@ -42,6 +42,16 @@ export const SignInForm = () => {
   const [emailDialogOpen, setEmailDialogOpen] = useState(false);
   const [confirmLocalSetupOpen, setConfirmLocalSetupOpen] = useState(false);
   const prefilledNameSource = useRef<string | null>(null);
+  // Focus the first-name field explicitly once it has mounted rather than with a
+  // DOM `autoFocus` prop: `autoFocus` fires as an attribute and cannot be
+  // deferred, so it races anything that moves focus in the same commit. This
+  // mirrors ContextMenu's own "focus after commit, not via autoFocus" rule.
+  // `SignInForm` mounts with the sign-in surface, so the mount effect lands at
+  // the same point the removed `autoFocus` attribute did.
+  const firstNameRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    firstNameRef.current?.focus();
+  }, []);
 
   const auth = useAppStore((state) => state.auth);
   const isPersonalUse = isPersonalUseEnabled();
@@ -316,7 +326,7 @@ export const SignInForm = () => {
             onChange={handleFirstNameChange}
             onBlur={handleFirstNameBlur}
             required
-            autoFocus
+            inputRef={firstNameRef}
             autoComplete="given-name"
             fullWidth
             slotProps={{

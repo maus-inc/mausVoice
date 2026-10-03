@@ -21,17 +21,19 @@ const { loggerMock, prefsRepoMock, userRepoMock } = vi.hoisted(() => {
     warning: vi.fn(),
     error: vi.fn(),
     verbose: vi.fn(),
-    stopwatch: vi.fn(async (_label: string, fn: () => Promise<unknown>) =>
-      fn(),
-    ),
+    stopwatch: vi.fn((_label: string, fn: () => Promise<unknown>) => fn()),
   };
   const prefsRepoMock = {
-    setUserPreferences: vi.fn(async (preferences: unknown) => preferences),
-    getUserPreferences: vi.fn(async () => null),
+    setUserPreferences: vi.fn((preferences: unknown) =>
+      Promise.resolve(preferences),
+    ),
+    getUserPreferences: vi.fn(() => Promise.resolve(null)),
   };
   const userRepoMock = {
-    setMyUser: vi.fn<(user: User) => Promise<User>>(async (user) => user),
-    getMyUser: vi.fn<() => Promise<User | null>>(async () => null),
+    setMyUser: vi.fn<(user: User) => Promise<User>>((user) =>
+      Promise.resolve(user),
+    ),
+    getMyUser: vi.fn<() => Promise<User | null>>(() => Promise.resolve(null)),
   };
   return { loggerMock, prefsRepoMock, userRepoMock };
 });
@@ -234,7 +236,9 @@ describe("updateUser serialization", () => {
   };
 
   const deferred = () => {
-    let release = () => {};
+    // Replaced by the Promise executor below; the initializer only has to type
+    // the binding before that happens.
+    let release: () => void = () => undefined;
     const promise = new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -248,7 +252,7 @@ describe("updateUser serialization", () => {
     // re-seed the defaults.
     userRepoMock.setMyUser.mockReset();
     userRepoMock.getMyUser.mockReset();
-    userRepoMock.setMyUser.mockImplementation(async (user) => user);
+    userRepoMock.setMyUser.mockImplementation((user) => Promise.resolve(user));
     userRepoMock.getMyUser.mockResolvedValue(null);
     setAppState(
       {

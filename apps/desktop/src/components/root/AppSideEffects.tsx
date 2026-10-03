@@ -860,7 +860,7 @@ export const AppSideEffects = () => {
     await checkForAppUpdates();
   }, [isMainWindow]);
 
-  useToastAction(async (payload) => {
+  useToastAction((payload) => {
     if (payload.action === "open_agent_settings") {
       // `surfaceMainWindow` swallows its own errors and coalesces concurrent
       // calls, so there is nothing to await or recover from here: surfacing is a

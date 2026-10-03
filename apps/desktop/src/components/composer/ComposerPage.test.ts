@@ -249,10 +249,11 @@ describe("ComposerPage review session", () => {
       apiKeyById: {},
       userPrefs: { hasProvider: true },
     };
-    mockInvoke.mockImplementation(async (command: string) => {
-      if (command === "composer_peek_text") return "hello world edited";
-      return null;
-    });
+    mockInvoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "composer_peek_text" ? "hello world edited" : null,
+      ),
+    );
     window.history.replaceState(
       {},
       "",

@@ -51,7 +51,10 @@ describe("applyFastLocalStyle", () => {
       "concise",
     );
     expect(result).not.toBeNull();
-    expect(result!.styled.length).toBeGreaterThan(0);
+    // `expect(...).not.toBeNull()` above is the guard, but it does not narrow
+    // the type, so state the invariant explicitly instead of asserting it.
+    if (result === null) throw new Error("expected a styled result");
+    expect(result.styled.length).toBeGreaterThan(0);
   });
 
   it("reports the fast mode in metadata when it does apply", () => {
@@ -92,7 +95,8 @@ describe("fast style truncation warning", () => {
   });
 
   it("points at History for a transcript that was persisted", () => {
-    const message = warn(() => {});
+    // No state mutation: this case is about the default (persisted) path.
+    const message = warn(() => undefined);
     expect(message).toContain(String(DROPPED));
     expect(message).toContain("History");
   });

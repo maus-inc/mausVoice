@@ -53,6 +53,33 @@ export type TranscriptionRowProps = {
   id: string;
 };
 
+/**
+ * One icon button in the row's action cluster, with its tooltip.
+ *
+ * Extracted so the four row actions read as one line each instead of a
+ * Tooltip>IconButton pair nested four JSX levels deep inside the row's
+ * Box>Box>Stack>Stack. `label` is passed already formatted by the caller, so
+ * every `defaultMessage` literal stays in this module where the extractor can
+ * read it, and `title`/`aria-label` stay the same string as before.
+ */
+const RowAction = ({
+  label,
+  onClick,
+  icon,
+  color,
+}: {
+  label: string;
+  onClick: () => void;
+  icon: React.ReactNode;
+  color?: "primary" | "default";
+}) => (
+  <Tooltip title={label} placement="top">
+    <IconButton aria-label={label} onClick={onClick} size="small" color={color}>
+      {icon}
+    </IconButton>
+  </Tooltip>
+);
+
 export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
   const intl = useIntl();
   const prefersReducedMotion = useMediaQuery(reducedMotionQuery);
@@ -320,74 +347,37 @@ export const TranscriptionRow = ({ id }: TranscriptionRowProps) => {
             )}
           </Stack>
           <Stack direction="row" spacing={1}>
-            <Tooltip
-              title={intl.formatMessage({
+            <RowAction
+              label={intl.formatMessage({
                 defaultMessage: "View transcription details",
               })}
-              placement="top"
-            >
-              <IconButton
-                aria-label={intl.formatMessage({
-                  defaultMessage: "View transcription details",
-                })}
-                onClick={handleDetailsOpen}
-                size="small"
-                color={hasMetadata ? "primary" : "default"}
-              >
-                <Info size={16} strokeWidth={1.9} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              title={intl.formatMessage({ defaultMessage: "Copy transcript" })}
-              placement="top"
-            >
-              <IconButton
-                aria-label={intl.formatMessage({
-                  defaultMessage: "Copy transcript",
-                })}
-                onClick={() =>
-                  handleCopyTranscript(transcription?.transcript || "")
-                }
-                size="small"
-              >
-                <Copy size={16} strokeWidth={1.9} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip
-              title={intl.formatMessage({
+              onClick={handleDetailsOpen}
+              icon={<Info size={16} strokeWidth={1.9} />}
+              color={hasMetadata ? "primary" : "default"}
+            />
+            <RowAction
+              label={intl.formatMessage({ defaultMessage: "Copy transcript" })}
+              onClick={() =>
+                handleCopyTranscript(transcription?.transcript || "")
+              }
+              icon={<Copy size={16} strokeWidth={1.9} />}
+            />
+            <RowAction
+              label={intl.formatMessage({
                 defaultMessage: "Delete transcript",
               })}
-              placement="top"
-            >
-              <IconButton
-                aria-label={intl.formatMessage({
-                  defaultMessage: "Delete transcript",
-                })}
-                onClick={() => handleDeleteTranscript(id)}
-                size="small"
-              >
-                <Trash2 size={16} strokeWidth={1.9} />
-              </IconButton>
-            </Tooltip>
+              onClick={() => handleDeleteTranscript(id)}
+              icon={<Trash2 size={16} strokeWidth={1.9} />}
+            />
             {!isRemoteTranscript && activeRemoteTarget && (
-              <Tooltip
-                title={intl.formatMessage(
+              <RowAction
+                label={intl.formatMessage(
                   { defaultMessage: "Send to {name}" },
                   { name: activeRemoteTarget.name },
                 )}
-                placement="top"
-              >
-                <IconButton
-                  aria-label={intl.formatMessage(
-                    { defaultMessage: "Send to {name}" },
-                    { name: activeRemoteTarget.name },
-                  )}
-                  onClick={handleSendToReceiver}
-                  size="small"
-                >
-                  <Send size={16} strokeWidth={1.9} />
-                </IconButton>
-              </Tooltip>
+                onClick={handleSendToReceiver}
+                icon={<Send size={16} strokeWidth={1.9} />}
+              />
             )}
           </Stack>
         </Stack>

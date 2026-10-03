@@ -8,9 +8,9 @@ const jsonResponse = (body: unknown): Response =>
   });
 
 const makeFetch = (capture: { bodies: FormData[] }) =>
-  vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+  vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
     capture.bodies.push(init?.body as FormData);
-    return jsonResponse({ text: "hello world" });
+    return Promise.resolve(jsonResponse({ text: "hello world" }));
   });
 
 describe("elevenlabsTranscribeAudio keyterm prompting", () => {

@@ -11,6 +11,26 @@ import { getLogger } from "../utils/log.utils";
 import { reviewTranscriptBeforeInsert } from "../actions/pill-review.actions";
 import { createPendingPasteReview } from "../actions/pending-paste-review.actions";
 
+/**
+ * Record the paste for a manual hand-off, without ever failing the caller.
+ *
+ * The card is bookkeeping about a paste the user may already be able to
+ * complete another way: on the clipboard fallback the text is in the clipboard,
+ * and on a failed insert the insert's own error is the failure worth surfacing.
+ * A chat-message write that rejects must not swallow either, or the user ends
+ * up with neither the paste nor its record and only a bookkeeping error.
+ */
+const savePendingPasteReview = async (
+  conversationId: string,
+  text: string,
+): Promise<void> => {
+  try {
+    await createPendingPasteReview(conversationId, text);
+  } catch (error) {
+    getLogger().error(`Failed to save the pending Paste review: ${error}`);
+  }
+};
+
 export class PasteTool extends BaseTool {
   constructor(info: ToolInfo) {
     super(info);
@@ -59,23 +79,3 @@ export class PasteTool extends BaseTool {
     setToolAlwaysAllow(this.info.id, allowed, scope);
   }
 }
-
-/**
- * Record the paste for a manual hand-off, without ever failing the caller.
- *
- * The card is bookkeeping about a paste the user may already be able to
- * complete another way: on the clipboard fallback the text is in the clipboard,
- * and on a failed insert the insert's own error is the failure worth surfacing.
- * A chat-message write that rejects must not swallow either, or the user ends
- * up with neither the paste nor its record and only a bookkeeping error.
- */
-const savePendingPasteReview = async (
-  conversationId: string,
-  text: string,
-): Promise<void> => {
-  try {
-    await createPendingPasteReview(conversationId, text);
-  } catch (error) {
-    getLogger().error(`Failed to save the pending Paste review: ${error}`);
-  }
-};

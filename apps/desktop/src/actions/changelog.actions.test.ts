@@ -24,7 +24,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 const okResponse = (json: unknown) => ({
   ok: true,
   status: 200,
-  json: async () => json,
+  json: () => Promise.resolve(json),
 });
 
 beforeEach(() => {
@@ -120,9 +120,7 @@ describe("fetchChangelog", () => {
   it("classifies invalid JSON as an invalid response", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => {
-        throw new SyntaxError("bad JSON");
-      },
+      json: () => Promise.reject(new SyntaxError("bad JSON")),
     });
     await expect(fetchChangelog()).rejects.toMatchObject({
       code: "invalid-response",
@@ -133,9 +131,7 @@ describe("fetchChangelog", () => {
     const error = new DOMException("aborted", "AbortError");
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => {
-        throw error;
-      },
+      json: () => Promise.reject(error),
     });
     await expect(fetchChangelog()).rejects.toBe(error);
   });
@@ -169,9 +165,7 @@ it.each([
     else
       fetchMock.mockResolvedValueOnce({
         ok: true,
-        json: async () => {
-          throw error;
-        },
+        json: () => Promise.reject(error),
       });
     await expect(fetchChangelog()).rejects.toBe(error);
   },

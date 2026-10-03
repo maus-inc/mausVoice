@@ -580,7 +580,9 @@ describe("retryAssistant", () => {
 
   it("holds the reservation until generation finishes and then allows retry", async () => {
     seedThread();
-    let finish = () => {};
+    // Replaced by the Promise executor below; the initializer only types the
+    // binding until that runs.
+    let finish: () => void = () => undefined;
     runAgentMock.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {

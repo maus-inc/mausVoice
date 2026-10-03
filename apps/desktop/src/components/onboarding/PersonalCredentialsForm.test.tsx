@@ -88,6 +88,13 @@ const findButton = (
   return button;
 };
 
+/** The skip dialog, throwing rather than returning `null` to the caller. */
+const findDialog = (): HTMLElement => {
+  const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  if (!dialog) throw new Error("Skip API key setup dialog was not rendered");
+  return dialog;
+};
+
 const click = async (element: HTMLElement) => {
   await act(async () => {
     element.click();
@@ -150,7 +157,7 @@ describe("PersonalCredentialsForm API key skip confirmation", () => {
       "onboarding_open_skip_api_key_confirmation",
     );
 
-    await click(findButton("Go back", dialog!));
+    await click(findButton("Go back", findDialog()));
     await vi.waitFor(() =>
       expect(document.querySelector('[role="dialog"]')).toBeNull(),
     );
@@ -170,7 +177,7 @@ describe("PersonalCredentialsForm API key skip confirmation", () => {
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog).not.toBeNull();
     expect(mocks.goToOnboardingPage).not.toHaveBeenCalled();
-    await click(findButton("Skip for now", dialog!));
+    await click(findButton("Skip for now", findDialog()));
 
     expect(mocks.goToOnboardingPage).toHaveBeenCalledTimes(1);
     expect(mocks.goToOnboardingPage).toHaveBeenCalledWith(

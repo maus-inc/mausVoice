@@ -3,7 +3,7 @@ import type { IntlShape } from "react-intl";
 import { getPostProcessMaxTokens } from "../utils/prompt.utils";
 
 const { generateText, repoAvailable } = vi.hoisted(() => ({
-  generateText: vi.fn(async (_input: unknown) => ({ text: "" })),
+  generateText: vi.fn((_input: unknown) => Promise.resolve({ text: "" })),
   repoAvailable: { value: true },
 }));
 

@@ -41,6 +41,37 @@ const loadLocales = (): Record<string, Messages> => {
   return locales;
 };
 
+/**
+ * The message table for one locale.
+ *
+ * `loadLocales` only fills in the locales the manifest lists, so a lookup that
+ * comes up empty means the manifest and these assertions disagree -- worth a
+ * message naming both. These reads used to be `locales[locale]!`, which handed
+ * the next line `undefined` and surfaced as a `TypeError` naming neither.
+ */
+const messagesFor = (
+  locales: Record<string, Messages>,
+  locale: string,
+): Messages => {
+  const messages = locales[locale];
+  if (!messages) {
+    throw new Error(
+      `Expected the manifest to list "${locale}", loaded: ${Object.keys(locales).join(", ")}`,
+    );
+  }
+  return messages;
+};
+
+/** `react-intl` types a descriptor's `id` as optional; these fixtures need it. */
+const messageId = (descriptor: { id?: string }): string => {
+  if (!descriptor.id) {
+    throw new Error(
+      `Expected the message descriptor to carry an id, got ${JSON.stringify(descriptor)}`,
+    );
+  }
+  return descriptor.id;
+};
+
 describe("i18n catalogs", () => {
   it.each(manifest.supportedLocales.filter((locale) => locale !== "en"))(
     "localizes %s controls identified in accepted feedback",
@@ -109,7 +140,7 @@ describe("i18n catalogs", () => {
         },
       });
       expect(intl.formatMessage(PREVIEW_SAMPLE_MESSAGE)).toBe(
-        locales[locale][PREVIEW_SAMPLE_MESSAGE.id!],
+        messagesFor(locales, locale)[messageId(PREVIEW_SAMPLE_MESSAGE)],
       );
       const dualKey =
         "use_backwardhotkey_or_forwardhotkey_while_dictating_to_switc";
@@ -205,7 +236,7 @@ describe("i18n catalogs", () => {
 
   it("flags messages still English in every translated locale", () => {
     const locales = loadLocales();
-    const keyedEnglish = locales[manifest.defaultLocale]!;
+    const keyedEnglish = messagesFor(locales, manifest.defaultLocale);
     const translatedCodes = (manifest.supportedLocales as string[]).filter(
       (code) => code !== manifest.defaultLocale,
     );
@@ -240,9 +271,9 @@ describe("i18n catalogs", () => {
     // message that mistranslates "transcript" the same way fails here rather
     // than waiting for a native reader to notice.
     const locales = loadLocales();
-    const english = locales[manifest.defaultLocale]!;
-    const korean = locales.ko!;
-    const audioWording = /녹음\s*내용|트랜스크립트/;
+    const english = messagesFor(locales, manifest.defaultLocale);
+    const korean = messagesFor(locales, "ko");
+    const audioWording = /녹음\s*내용|트랜스크립트/u;
 
     const mistranslated = Object.keys(english).filter((key) => {
       const source = english[key] ?? "";
@@ -274,7 +305,7 @@ describe("i18n catalogs", () => {
 
   it("translates failed-transcription audio controls in every locale", () => {
     const locales = loadLocales();
-    const keyedEnglish = locales[manifest.defaultLocale]!;
+    const keyedEnglish = messagesFor(locales, manifest.defaultLocale);
     const translatedCodes = (manifest.supportedLocales as string[]).filter(
       (code) => code !== manifest.defaultLocale,
     );

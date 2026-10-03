@@ -357,6 +357,16 @@ const EmailStep = ({
   onFocus,
   onBlur,
 }: TutorialFieldProps) => {
+  // Focus the field explicitly once it has mounted rather than with a DOM
+  // `autoFocus` prop: `autoFocus` fires as an attribute and cannot be deferred,
+  // so it races anything that moves focus in the same commit. This mirrors
+  // ContextMenu's own "focus after commit, not via autoFocus" rule. `EmailStep`
+  // mounts when the tutorial reaches this step, so the mount effect lands at the
+  // same point the removed `autoFocus` attribute did.
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    fieldRef.current?.focus();
+  }, []);
   return (
     <TutorialWindow
       header={
@@ -412,10 +422,10 @@ const EmailStep = ({
       </Box>
       <Box sx={{ position: "relative" }}>
         <TextField
+          inputRef={fieldRef}
           multiline
           minRows={8}
           fullWidth
-          autoFocus
           value={value}
           onChange={onChange}
           disabled={submitting}

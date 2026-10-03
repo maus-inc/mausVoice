@@ -220,6 +220,8 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     await session.onRecordingStart(RATE);
     streamRecording(session, recording);
 
+    // Placeholder for the resolver the tail promise's executor assigns
+    // immediately below.
     let releaseTail = () => {};
     const tailInFlight = new Promise<void>((resolve) => {
       releaseTail = resolve;

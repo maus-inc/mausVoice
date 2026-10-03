@@ -115,6 +115,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * The client options the SDK's WebSocket constructor actually received.
+ *
+ * The point of this test is that `closeCodes` survives the constructor merge
+ * and reaches the WebSocket client, so an empty record is the merge having
+ * dropped it. `mergedClientOptions[0]!` turned that into a `TypeError` about
+ * reading `.options` of `undefined`.
+ */
+const mergedOptions = <T>(recorded: readonly unknown[], index = 0): T => {
+  const options = recorded[index];
+  if (options === undefined) {
+    throw new Error(
+      `Expected the WebSocket client to have been constructed at index ${index}, recorded ${recorded.length}`,
+    );
+  }
+  return options as T;
+};
+
 describe("createGladiaStreamingSession", () => {
   it("rejects a blank key before constructing an SDK client", async () => {
     const { createGladiaStreamingSession, clientOptions, startSession } =
@@ -165,7 +183,11 @@ describe("createGladiaStreamingSession", () => {
     // The close-code list is written after the constructor merge, never
     // through it, so it must be an array on the merged block the WebSocket
     // client actually receives.
-    expect(mergedClientOptions[0]!.options.wsRetry.closeCodes).toEqual([
+    expect(
+      mergedOptions<{ options: { wsRetry: { closeCodes: unknown } } }>(
+        mergedClientOptions,
+      ).options.wsRetry.closeCodes,
+    ).toEqual([
       [1002, 4399],
       [4500, 9999],
     ]);

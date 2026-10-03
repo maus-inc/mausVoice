@@ -1,7 +1,7 @@
 import type { ChatMessage, ChatPart, ToolPermission } from "@maus-inc/types";
 import { Box, Button, Stack, TextField, Typography } from "@mui/material";
 import { keyframes, useTheme } from "@mui/material/styles";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -91,11 +91,19 @@ export const MessageEditForm = ({
   onSave: () => void;
 }) => {
   const intl = useIntl();
+  // Focus the draft explicitly once it has mounted rather than with a DOM
+  // `autoFocus` prop: `autoFocus` fires as an attribute and cannot be deferred,
+  // so it races anything that moves focus in the same commit. This mirrors
+  // ContextMenu's own "focus after commit, not via autoFocus" rule.
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
   return (
     <Stack spacing={1}>
       <TextField
         multiline
-        autoFocus
+        inputRef={inputRef}
         fullWidth
         size="small"
         value={draft}
@@ -186,32 +194,29 @@ const MessageTimeline = ({
 }: {
   timeline: TimelinePart[];
   permissions: ToolPermission[];
-}) => (
-  <>
-    {timeline.length > 0 && (
-      <Stack spacing={0.25} sx={{ px: 0.5, mb: 0.5 }}>
-        {timeline.map((part) => {
-          if (part.kind === "reasoning")
-            return <ReasoningPart key="reasoning" part={part} />;
-          if (part.kind === "tool")
-            return <ToolStepPart key={`tool-${part.toolCallId}`} part={part} />;
-          if (part.kind === "permission") {
-            const permission = permissions.find(
-              (p) => p.id === part.permissionId,
-            );
-            return permission ? (
-              <ToolPermissionCard
-                key={`permission-${part.permissionId}`}
-                permission={permission}
-              />
-            ) : null;
-          }
-          return null;
-        })}
-      </Stack>
-    )}
-  </>
-);
+}) =>
+  timeline.length > 0 ? (
+    <Stack spacing={0.25} sx={{ px: 0.5, mb: 0.5 }}>
+      {timeline.map((part) => {
+        if (part.kind === "reasoning")
+          return <ReasoningPart key="reasoning" part={part} />;
+        if (part.kind === "tool")
+          return <ToolStepPart key={`tool-${part.toolCallId}`} part={part} />;
+        if (part.kind === "permission") {
+          const permission = permissions.find(
+            (p) => p.id === part.permissionId,
+          );
+          return permission ? (
+            <ToolPermissionCard
+              key={`permission-${part.permissionId}`}
+              permission={permission}
+            />
+          ) : null;
+        }
+        return null;
+      })}
+    </Stack>
+  ) : null;
 
 const MessageRunNotes = ({
   notes,

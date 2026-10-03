@@ -26,7 +26,7 @@ export type SpeachesTranscribeAudioOutput = {
   wordsUsed: number;
 };
 
-export const speachesTranscribeAudio = async ({
+export const speachesTranscribeAudio = ({
   baseUrl,
   model,
   blob,

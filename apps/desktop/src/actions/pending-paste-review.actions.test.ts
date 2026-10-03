@@ -66,8 +66,12 @@ const pendingMessage = (): ChatMessage => ({
 describe("pending Paste reviews", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    createChatMessageMock.mockImplementation(async (message) => message);
-    updateChatMessageMock.mockImplementation(async (message) => message);
+    createChatMessageMock.mockImplementation((message) =>
+      Promise.resolve(message),
+    );
+    updateChatMessageMock.mockImplementation((message) =>
+      Promise.resolve(message),
+    );
     invokeMock.mockResolvedValue(undefined);
   });
 

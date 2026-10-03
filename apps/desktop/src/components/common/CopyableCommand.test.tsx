@@ -53,7 +53,12 @@ const render = (command = "example command") =>
       </IntlProvider>,
     );
   });
-const button = () => container.querySelector("button")!;
+/** Throws rather than handing the next assertion a `null` button. */
+const button = (): HTMLButtonElement => {
+  const found = container.querySelector("button");
+  if (!found) throw new Error("CopyableCommand rendered no button");
+  return found;
+};
 const click = async () => {
   await act(async () => button().click());
 };

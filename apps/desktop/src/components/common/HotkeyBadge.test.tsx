@@ -98,7 +98,8 @@ it.each([false, true])(
       padding: `${Number(current.shape.borderRadius) * 4}px`,
     });
     render(["KeyK"], array ? [{ margin: 1 }, callback] : callback);
-    const group = container.querySelector('[role="group"]')!;
+    const group = container.querySelector('[role="group"]');
+    if (!group) throw new Error('Expected a [role="group"] badge to render');
     expect(getComputedStyle(group).padding).toBe("16px");
     expect(getComputedStyle(group).display).toBe("inline-flex");
   },

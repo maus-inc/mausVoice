@@ -8,8 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { fetchChangelogMock, openUrlMock, getVersionMock } = vi.hoisted(() => ({
   fetchChangelogMock: vi.fn(),
-  openUrlMock: vi.fn(async () => undefined),
-  getVersionMock: vi.fn(async () => "0.1.7"),
+  // `openUrl` is consumed with `.catch()` and `getVersion` with `.then()`, so
+  // both fakes have to hand back a promise like the real plugin calls do.
+  openUrlMock: vi.fn(() => Promise.resolve(undefined)),
+  getVersionMock: vi.fn(() => Promise.resolve("0.1.7")),
 }));
 
 vi.mock("react-intl", async (importOriginal) => {
@@ -93,6 +95,13 @@ const renderDialog = (locale = "en", messages: Record<string, string> = {}) => {
 const flush = async () => {
   await act(async () => {
     // Flush pending React effects and promise continuations.
+    //
+    // The scope has to stay `async` even with an empty body: `act` only keeps
+    // capturing work scheduled by pending promise continuations while it holds
+    // an async scope. A sync scope nulls the act queue on return, so the
+    // `fetchChangelog(...).then(...)` state updates this helper exists to
+    // absorb would land outside `act` instead. JS-0116 skips empty bodies, so
+    // it does not flag this one.
   });
 };
 
@@ -107,9 +116,12 @@ describe("ChangelogDialog", () => {
       renderDialog();
       await flush();
       const anchor = document.querySelector("a")!;
-      await act(async () => anchor.click());
+      // Sync act scope: the click only calls `preventDefault()` and hands the
+      // URL to `openUrl`, whose `.catch` only logs. No React state is set from
+      // a microtask here, so the scope does not need to be async.
+      await act(() => anchor.click());
       expect(log).toHaveBeenCalledWith("Failed to open release-note link.");
-      await act(async () => anchor.click());
+      await act(() => anchor.click());
       expect(openUrlMock).toHaveBeenCalledTimes(2);
     } finally {
       log.mockRestore();
@@ -128,7 +140,7 @@ describe("ChangelogDialog", () => {
         bubbles: true,
         cancelable: true,
       });
-      await act(async () => {
+      await act(() => {
         anchor.dispatchEvent(click);
       });
       expect(click.defaultPrevented).toBe(true);
@@ -178,7 +190,7 @@ describe("ChangelogDialog", () => {
       (el) => el.textContent?.trim() === "View on GitHub",
     ) as HTMLElement;
     expect(link).toBeTruthy();
-    await act(async () => {
+    await act(() => {
       link.click();
     });
     expect(openUrlMock).toHaveBeenCalledWith(
@@ -196,6 +208,10 @@ describe("ChangelogDialog", () => {
     );
     expect(document.body.textContent).not.toContain("nope");
     fetchChangelogMock.mockResolvedValueOnce(entries);
+    // The scope must stay `async`: the retry bumps `nonce`, the effect refires,
+    // and `fetchChangelog(...).then(...)` sets entries/status from a microtask.
+    // An async act scope captures those updates; a sync one lets them escape
+    // (verified: three "not wrapped in act" warnings).
     await act(async () => {
       (
         Array.from(document.querySelectorAll("button")).find(

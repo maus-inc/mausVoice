@@ -10,7 +10,7 @@ const { prefsRepoMock, requestAdminRelaunchMock, quitAppMock, loggerMock } =
       getUserPreferences: vi.fn(),
     },
     requestAdminRelaunchMock: vi.fn(),
-    quitAppMock: vi.fn(async () => undefined),
+    quitAppMock: vi.fn(() => Promise.resolve(undefined)),
     loggerMock: {
       info: vi.fn(),
       warning: vi.fn(),
