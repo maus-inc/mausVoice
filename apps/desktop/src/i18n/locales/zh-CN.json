@@ -385,6 +385,7 @@
   "high_five_5_days": "击掌！5 天！🖐️",
   "highest_accuracy_requires_gpu": "最高准确度，需要 GPU",
   "history": "历史记录",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "本会话无法使用历史记录，因此快速排版未处理的末尾 {droppedChars} 个字符未保存。",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "无痕模式下无法使用历史记录。编辑后的转录内容会保留在胶囊窗口中。",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "按住听写激活键并按左右方向键，即可在已启用的风格间切换。",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "按住按键进行录音，松开即可使用 AI 将您的语音转录为文本。",
