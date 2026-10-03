@@ -1273,12 +1273,7 @@ fn truncate_for_dump(s: &str) -> String {
     let cleaned: String = s.replace('\n', "\\n").replace('\r', "\\r");
     // One boundary-safe implementation, shared with the log paths that used to slice
     // bytes at a fixed offset and panic on any non-ASCII title or description.
-    let truncated = crate::utils::truncate_chars(&cleaned, DUMP_MAX_VALUE_CHARS);
-    if truncated.len() < cleaned.len() {
-        format!("{truncated}…")
-    } else {
-        truncated.to_owned()
-    }
+    crate::utils::truncate_display(&cleaned, DUMP_MAX_VALUE_CHARS, "…")
 }
 
 fn process_name_for_pid(pid: i32) -> Option<String> {
@@ -2051,14 +2046,7 @@ unsafe fn describe_children(arr: core_foundation::array::CFArrayRef, count: usiz
         parts.push(s);
     }
     let joined = parts.join(", ");
-    if joined.len() > 800 {
-        format!(
-            "{}... ({count} children total)",
-            crate::utils::truncate_chars(&joined, 800)
-        )
-    } else {
-        joined
-    }
+    crate::utils::truncate_display(&joined, 800, &format!("... ({count} children total)"))
 }
 
 unsafe fn write_accessibility_fields_impl(

@@ -593,11 +593,7 @@ unsafe fn dump_jab_element(
     let mut line = format!("{}[{}] \"{}\"", indent, role_display, name);
 
     if !description.is_empty() {
-        let d = if description.len() > 100 {
-            format!("{}...", crate::utils::truncate_chars(&description, 100))
-        } else {
-            description
-        };
+        let d = crate::utils::truncate_display(&description, 100, "...");
         line.push_str(&format!(" desc=\"{}\"", d));
     }
 
@@ -642,11 +638,7 @@ unsafe fn extract_text_append(api: &JabApi, vm_id: i32, ac: JOBJECT64, line: &mu
         if (api.get_text_range)(vm_id, ac, 0, len - 1, buf.as_mut_ptr(), buf.len() as i16) != 0 {
             let text = wchar_to_string(&buf);
             if !text.is_empty() {
-                let display = if text.len() > 100 {
-                    format!("{}...", crate::utils::truncate_chars(&text, 100))
-                } else {
-                    text
-                };
+                let display = crate::utils::truncate_display(&text, 100, "...");
                 line.push_str(&format!(" text=\"{}\"", display));
             }
         }

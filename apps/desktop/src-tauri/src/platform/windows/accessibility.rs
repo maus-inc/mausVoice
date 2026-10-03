@@ -440,11 +440,7 @@ unsafe fn format_dump_element(
     if let Some(ref v) = value {
         let v = v.trim();
         if !v.is_empty() {
-            let display = if v.len() > 100 {
-                format!("{}...", crate::utils::truncate_chars(&v, 100))
-            } else {
-                v.to_string()
-            };
+            let display = crate::utils::truncate_display(&v, 100, "...");
             line.push_str(&format!(" value=\"{}\"", display));
         }
     }
