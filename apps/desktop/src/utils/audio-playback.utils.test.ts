@@ -261,3 +261,108 @@ describe("audio context lifetime", () => {
     expect(activePlayback).not.toBeNull();
   });
 });
+
+// The other side of that hand-off. `activePlayback` takes the context before
+// the source is started and before the progress tick is armed, so an exit from
+// the setup that follows has already given the context an owner -- and an owner
+// the scheduled teardown never reaches: `source.onended` fires only for a source
+// that started, and `armTick` has not run yet. Without an explicit release the
+// context stays open and `activePlayback` keeps pointing at a playback that
+// will never make a sound: the same handle leak the close above removes, moved
+// to the far side of the hand-off. `AudioPlayerPill` catches the rejection and
+// shows "Unable to play audio snippet", so the app looks like it failed cleanly
+// while the handle survives.
+describe("audio context release after ownership", () => {
+  afterEach(() => {
+    stopActivePlayback("stopped");
+    vi.unstubAllGlobals();
+  });
+
+  const stubIdleWindow = () => {
+    vi.stubGlobal("window", {
+      requestAnimationFrame: vi.fn(() => 1),
+      cancelAnimationFrame: vi.fn(),
+    });
+  };
+
+  const stubContext = (
+    close: () => Promise<void>,
+    source: Record<string, unknown>,
+  ) => {
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        currentTime = 0;
+        destination = {};
+        close = close;
+        createBufferSource = vi.fn(() => source);
+        createBuffer = vi.fn(() => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        }));
+      },
+    );
+  };
+
+  it("closes the context and clears the owner when source.start throws", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    const source = {
+      stop: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      start: vi.fn(() => {
+        throw new DOMException("cannot start", "InvalidStateError");
+      }),
+      onended: null,
+    };
+    stubContext(close, source);
+
+    // The caller still has to learn playback failed, so the original rejection
+    // has to survive the teardown rather than being replaced by it.
+    await expect(
+      playWebAudio(
+        "t1",
+        { samples: [0, 0], sampleRate: 16000 },
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).rejects.toThrow("cannot start");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(activePlayback).toBeNull();
+    // Teardown reached the node it owns, rather than only closing the context.
+    expect(source.disconnect).toHaveBeenCalled();
+  });
+
+  it("releases the context when the progress callback throws after ownership", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    const source = {
+      stop: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      start: vi.fn(),
+      onended: null,
+    };
+    stubContext(close, source);
+
+    await expect(
+      playWebAudio(
+        "t1",
+        { samples: [0, 0], sampleRate: 16000 },
+        vi.fn(() => {
+          throw new Error("progress handler exploded");
+        }),
+        vi.fn(),
+      ),
+    ).rejects.toThrow("progress handler exploded");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(activePlayback).toBeNull();
+    // The source never started, so there is no `onended` to wait for; leaving
+    // it unstarted is the correct teardown for a playback that never played.
+    expect(source.start).not.toHaveBeenCalled();
+  });
+});

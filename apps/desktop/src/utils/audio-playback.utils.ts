@@ -265,6 +265,26 @@ export const playWebAudio = async (
     onProgress(startRatio);
     source.start(0, offset);
     armTick(playback);
+  } catch (error) {
+    // The far side of that hand-off. Setting up the playback is also what
+    // schedules its teardown, and neither half of that has run on an exit from
+    // here: `source.onended` fires only for a source that actually started, and
+    // `armTick` runs last. So an exception from `onProgress` or `source.start`
+    // leaves an open context under a stale `activePlayback` -- the same handle
+    // leak the `finally` closes, reached by the other route. Releasing it here
+    // is the only thing that both closes the context and clears the owner; the
+    // caller recovers from the rejection by showing an error snackbar, so
+    // nothing else would come back for it.
+    if (ownedByActivePlayback) {
+      // Best-effort, like the close below: a teardown that throws must not
+      // replace the failure the caller is about to be told about.
+      try {
+        stopActivePlayback("stopped");
+      } catch {
+        // no-op
+      }
+    }
+    throw error;
   } finally {
     if (!ownedByActivePlayback) {
       context.close().catch(() => undefined);
