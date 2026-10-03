@@ -615,7 +615,7 @@ describe("macOS-gated coverage is recorded, not silent", () => {
     assert.match(
       macosJobBody.text,
       /runs-on: macos-14/,
-      "only a macOS runner compiles `cfg(target_os = \"macos\")`; a Linux runner " +
+      'only a macOS runner compiles `cfg(target_os = "macos")`; a Linux runner ' +
         "exits 0 without looking at it",
     );
     assert.match(
@@ -659,7 +659,10 @@ describe("macOS-gated coverage is recorded, not silent", () => {
     const windowsJob = jobBlocks(read(WINDOWS_JOB_WORKFLOW)).find(
       (entry) => entry.name === WINDOWS_JOB,
     );
-    assert.ok(windowsJob, `${WINDOWS_JOB} must still exist alongside ${MACOS_JOB}`);
+    assert.ok(
+      windowsJob,
+      `${WINDOWS_JOB} must still exist alongside ${MACOS_JOB}`,
+    );
     assert.match(
       windowsJob.text,
       /runs-on: windows-2022/,
