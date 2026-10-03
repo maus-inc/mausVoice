@@ -1686,15 +1686,6 @@ fn draw_review_actions(
         .as_ref()
         .and_then(|review| review.hint.as_deref())
         .unwrap_or("Edit below, then press Enter to insert");
-    gfx.draw_text_top_left(
-        hint,
-        panel_x + PANEL_CONTENT_SIDE_INSET,
-        y + (REVIEW_ACTIONS_HEIGHT - 14.0) / 2.0,
-        11.0,
-        false,
-        false,
-        [1.0, 1.0, 1.0, 0.45 * alpha],
-    );
 
     // Every caption here is drawn by the pill, so every caption has to come
     // from the desktop's locale. The English fallbacks only apply to a sender
@@ -1741,13 +1732,43 @@ fn draw_review_actions(
             0.5,
         ),
     ];
+
+    // The hint and the buttons share this line, so the hint has to know how much
+    // room the button row leaves before it can be drawn. Measuring the buttons
+    // first is what makes that possible; previously the hint was drawn first
+    // and the French and German translations -- both far longer than the English
+    // default -- ran under the leftmost button by 35.7px and 32.6px.
+    let btn_widths: Vec<f64> = buttons
+        .iter()
+        .map(|(label, _, _)| {
+            (gfx.measure_text(label, 11.0, false).0 + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+        })
+        .collect();
+    let row_width: f64 =
+        btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
+    let buttons_left = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - row_width;
+    let hint_x = panel_x + PANEL_CONTENT_SIDE_INSET;
+    let hint_budget = buttons_left - PERM_BUTTON_GAP - hint_x;
+
+    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget.max(0.0), "…", |s| {
+        gfx.measure_text(s, 11.0, false).0
+    });
+    if !hint.is_empty() {
+        gfx.draw_text_top_left(
+            &hint,
+            hint_x,
+            y + (REVIEW_ACTIONS_HEIGHT - 14.0) / 2.0,
+            11.0,
+            false,
+            false,
+            [1.0, 1.0, 1.0, 0.45 * alpha],
+        );
+    }
+
     let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
     let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
 
-    for (label, action, text_alpha) in buttons {
-        // Localized labels can be wider than the English four-letter caption.
-        let text_width = gfx.measure_text(label, 11.0, false).0;
-        let btn_w = (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8);
+    for ((label, action, text_alpha), btn_w) in buttons.into_iter().zip(btn_widths) {
         btn_x -= btn_w;
 
         let hovered = is_mouse_over(state, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT);

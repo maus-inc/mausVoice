@@ -13,6 +13,7 @@ pub mod edge;
 pub mod hover;
 pub mod placement;
 pub mod spring;
+pub mod text_fit;
 
 use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;

@@ -1892,18 +1892,6 @@ fn draw_review_actions(
         .as_ref()
         .and_then(|review| review.hint.as_deref())
         .unwrap_or("Edit below, then press Enter to insert");
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
-    cr.select_font_face(
-        "Satoshi",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    cr.set_font_size(11.0);
-    cr.move_to(
-        panel_x + PANEL_CONTENT_SIDE_INSET,
-        y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0,
-    );
-    let _ = cr.show_text(hint);
 
     // Every caption here is drawn by the pill, so every caption has to come
     // from the desktop's locale. The English fallbacks only apply to a sender
@@ -1950,13 +1938,44 @@ fn draw_review_actions(
             0.5,
         ),
     ];
+
+    // The hint and the buttons share this line, so the hint has to know how much
+    // room the button row leaves before it can be drawn. Measuring the buttons
+    // first is what makes that possible; previously the hint was drawn first
+    // and the French and German translations -- both far longer than the English
+    // default -- ran under the leftmost button by 35.7px and 32.6px.
+    let btn_widths: Vec<f64> = buttons
+        .iter()
+        .map(|(label, _, _)| {
+            let text_width = cr.text_extents(label).map(|ext| ext.width()).unwrap_or(0.0);
+            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+        })
+        .collect();
+    let row_width: f64 =
+        btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
+    let buttons_left = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - row_width;
+    let hint_x = panel_x + PANEL_CONTENT_SIDE_INSET;
+    let hint_budget = buttons_left - PERM_BUTTON_GAP - hint_x;
+
+    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget.max(0.0), "…", |s| {
+        cr.text_extents(s).map(|ext| ext.width()).unwrap_or(0.0)
+    });
+    if !hint.is_empty() {
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
+        cr.set_font_size(11.0);
+        cr.move_to(hint_x, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
+        let _ = cr.show_text(&hint);
+    }
+
     let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
     let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
 
-    for (label, action, text_alpha) in buttons {
-        // Localized labels can be wider than the English four-letter caption.
-        let text_width = cr.text_extents(label).map(|ext| ext.width()).unwrap_or(0.0);
-        let btn_w = (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8);
+    for ((label, action, text_alpha), btn_w) in buttons.into_iter().zip(btn_widths) {
         btn_x -= btn_w;
 
         rounded_rect(cr, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
