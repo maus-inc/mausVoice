@@ -8,6 +8,13 @@ const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 // boundary between the leading `c` and the `s`.
 const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
+// The secret labels this file recognises in a plain string, as opposed to the
+// broader `isSecretKey` check that gates object keys. Widening this to match
+// `isSecretKey` is not a one-line change: the capture groups are positional, so
+// a prefix inside the alternation shifts them and every `.replace` callback
+// silently receives the wrong arguments. `secret_key` and `my_secret` are
+// recognised as object keys and not as string labels; closing that gap means
+// giving the label its own capture group and re-testing all three passes.
 const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|password|passwd|pwd|credential|secret)\b"?`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
@@ -52,6 +59,18 @@ const FREE_FORM_SECRET_LABELS: ReadonlySet<string> = new Set([
   "secret",
 ]);
 
+/**
+ * Whether this label's value is free-form.
+ *
+ * An enumeration of the labels in `SECRET_LABEL` whose value is free-form, and
+ * it has to stay in step with that alternation: a label the pattern does not
+ * match never reaches this predicate at all, so adding a name here without
+ * adding it there does nothing. `isSecretKey` recognises more names than
+ * `SECRET_LABEL` does (`secret_key`, `my_secret`, `credentials`), which is a
+ * real gap in the string form of this scrubber and a separate piece of work --
+ * it needs the label given its own capture group, since these patterns take
+ * their arguments positionally.
+ */
 const isFreeFormSecretLabel = (label: string): boolean =>
   FREE_FORM_SECRET_LABELS.has(label.replace(/["_-]/g, "").toLowerCase());
 
