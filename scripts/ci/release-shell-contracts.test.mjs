@@ -155,6 +155,75 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  it("secret-scan fails closed rather than trusting the scanned checkout's config", () => {
+    // The same trust argument as the baseline, applied to the rules rather than
+    // the fingerprints. Every scan resolved its config from the trusted checkout
+    // and then, when that file was missing or had lost the required rule, fell
+    // back to `gitleaks.toml` inside `scan-target` -- which for a fork PR is
+    // attacker-controlled. So a contributor who removed one rule from their copy
+    // got their secret scan run with the rule missing, and a green check with it.
+    const scan = read(".github/workflows/secret-scan.yml");
+
+    // Asserting the absence of the two fallback spellings is the load-bearing
+    // part. A step that selects the trusted config and never checks it also
+    // passes any assertion that only looks for the happy path.
+    assert.doesNotMatch(
+      scan,
+      /CONFIG_FILE="(?:scan-target\/)?gitleaks\.toml"/,
+      "secret-scan.yml must never select gitleaks.toml out of the scanned checkout",
+    );
+    assert.doesNotMatch(
+      scan,
+      /CONFIG_FILE="gitleaks\.toml"/,
+      "a bare CONFIG_FILE=gitleaks.toml resolves inside scan-target, so it is the same hole",
+    );
+
+    // And every guard that does exist has to end the step. This is what makes the
+    // absence above a policy rather than an accident: if a guard is reintroduced
+    // with an assignment instead of an exit, the counts disagree.
+    const guards =
+      scan.match(/if \[ ! -f "\$CONFIG_FILE" \][\s\S]*?^ {10}fi$/gm) ?? [];
+    assert.strictEqual(
+      guards.length,
+      5,
+      `expected five trusted-config guards, found ${guards.length}`,
+    );
+    for (const guard of guards) {
+      assert.match(
+        guard,
+        /exit 1/,
+        "a trusted-config guard must exit non-zero, not reassign CONFIG_FILE and continue",
+      );
+      assert.doesNotMatch(
+        guard,
+        /CONFIG_FILE="[^"]*gitleaks\.toml"/,
+        "the guard must not hand the scan back to a config from the scanned tree",
+      );
+    }
+  });
+
+  it("secret-scan reads its Node pin from the trusted checkout too", () => {
+    // `node-version-file: scan-target/.nvmrc` does resolve -- scan-target is a
+    // full checkout, and `.nvmrc` is tracked at its root, so a reviewer's claim
+    // that the step fails outright was wrong. The reason to change it is the
+    // same one as above: the version the guard tests run under was then chosen by
+    // the pull request, and a fork PR could move the whole verification off the
+    // pinned runtime.
+    const scan = read(".github/workflows/secret-scan.yml");
+    const pin = scan.match(/node-version-file:\s*(\S+)/);
+    assert.ok(pin !== null, "secret-scan.yml must pin node-version-file");
+    assert.strictEqual(
+      pin[1],
+      "trusted-scanner/.nvmrc",
+      "the Node pin must come from the trusted checkout, not the scanned one",
+    );
+    assert.doesNotMatch(
+      scan,
+      /node-version-file:\s*scan-target\//,
+      "no step may take its Node version from the scanned checkout",
+    );
+  });
+
   it("secret-scan never lets the scanned checkout supply its own baseline", () => {
     // Measured against gitleaks 8.18.0 rather than assumed: `detect` auto-loads
     // `<source>/.gitleaksignore` from the tree it scans, and

@@ -3286,9 +3286,12 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())??;
 
-    // The retry first: it is the only path that can remove these bytes at all,
-    // and it cannot touch a row's snapshot because a queued id's row is gone.
-    drain_pending_audio_deletions(&pool, &audio_dir).await?;
+    // The retry first: it is the only path that can remove bytes the retention
+    // pass will not look at. It lives inside `purge_transcription_audio_in_dir`
+    // so that this function really is the whole sweep over an open directory and
+    // pool, which is what its own doc claims — and so the decision to keep going
+    // after a drain failure is reachable from a test, which it was not while the
+    // drain sat here in the command that needs an `AppHandle`.
     purge_transcription_audio_in_dir(&pool, &audio_dir, marked).await
 }
 
@@ -3343,6 +3346,26 @@ async fn purge_transcription_audio_in_dir(
     audio_dir: &Dir,
     marked: Vec<(String, bool)>,
 ) -> Result<Vec<String>, String> {
+    // The retry queue goes first: it is the only path that can remove bytes the
+    // retention pass below will not look at. Its error is logged rather than
+    // propagated, because the two halves are independent — the drain writes per
+    // queued id and the retention pass writes per marked id, so a transient
+    // `SQLITE_BUSY` in one must not cancel the other. Before this the drain sat in
+    // the command above with a `?`, which meant one busy write transaction could
+    // skip the whole retention purge for that round and left nothing recording
+    // that it had been skipped. Nothing records it now either, and that is the
+    // property to rely on: a queued id stays queued, so the next sweep retries it.
+    //
+    // What the drain may remove is bounded by something narrower than "the row is
+    // gone": `release_stale_audio_markers_and_queue` also queues retention-capped
+    // ids whose rows still exist, with their markers already NULLed. Those rows are
+    // past the cap either way, so removing their bytes changes nothing a user can
+    // observe — but the drain only ever removes bytes that no row is claiming,
+    // which is the invariant actually worth stating.
+    if let Err(err) = drain_pending_audio_deletions(pool, audio_dir).await {
+        log::error!("Failed to drain pending audio deletions; retention sweep continues: {err}");
+    }
+
     let mut split = marked.into_iter();
     let retained: Vec<(String, bool)> = split
         .by_ref()
@@ -3422,7 +3445,22 @@ async fn clear_audio_metadata_for_deleted_files(
     cleared: &[String],
 ) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
-    for id in cleared {
+    clear_audio_metadata(&mut tx, cleared).await?;
+    tx.commit().await.map_err(|err| err.to_string())
+}
+
+/// The one statement that retires a row's claim on a snapshot that is really gone.
+///
+/// Both the repair pass and the marker-release pass need this exact update, each
+/// inside its own transaction, and they were written out separately — same SQL,
+/// same bind, same error mapping. That is a redundant write per row per sweep, and
+/// worse than the wasted write: two copies of the statement are two places for the
+/// columns to drift apart, and only one of them would be updated.
+async fn clear_audio_metadata(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    ids: &[String],
+) -> Result<(), String> {
+    for id in ids {
         sqlx::query(
             "UPDATE transcriptions
              SET audio_path = NULL,
@@ -3430,11 +3468,11 @@ async fn clear_audio_metadata_for_deleted_files(
              WHERE id = ?1",
         )
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut **transaction)
         .await
         .map_err(|err| err.to_string())?;
     }
-    tx.commit().await.map_err(|err| err.to_string())
+    Ok(())
 }
 
 /// Retry the snapshot deletions that a row deletion could not finish.
@@ -3517,17 +3555,8 @@ async fn release_stale_audio_markers_and_queue(
         return Ok(());
     }
     let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    clear_audio_metadata(&mut transaction, ids).await?;
     for id in ids {
-        sqlx::query(
-            "UPDATE transcriptions
-             SET audio_path = NULL,
-                 audio_duration_ms = NULL
-             WHERE id = ?1",
-        )
-        .bind(id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|err| err.to_string())?;
         sqlx::query("INSERT OR IGNORE INTO pending_audio_deletions (id) VALUES (?1)")
             .bind(id)
             .execute(&mut *transaction)
@@ -5750,13 +5779,40 @@ fn wait_for_handoff_within(
 /// Terminate a child that is still running and collect its status.
 ///
 /// Best effort on both halves, deliberately: `kill` fails once the child has
-/// exited on its own, and `wait` reaps it either way, so the status is still
-/// collected. Nothing here can report an error usefully — every caller is already
-/// returning, and a child that cannot be killed is a child that cannot be waited
-/// on either.
+/// exited on its own, and the wait collects the status either way.
+///
+/// The wait is **bounded**, which is the part that is easy to get wrong. `kill` is
+/// the non-blocking half — it only signals — while `wait` blocks on `waitpid` until
+/// the child really is gone. So a signal that does not end the process, whether
+/// `EPERM`, an unkillable handle on Windows, or a thread stuck in uninterruptible
+/// I/O, would park this thread for as long as the child lives. Since the caller
+/// runs on the blocking pool precisely so that a synchronous wait cannot stall an
+/// async worker, an unbounded one would just move the stall somewhere less
+/// visible: every blocking-pool thread this feature parks is one fewer call that
+/// cannot be served.
+///
+/// Giving up on the *status* is therefore safe and giving up on the *reap* is not,
+/// so the bound is on the wait and not on the kill. A child we stop waiting for is
+/// reparented and reaped by init rather than left as this process's zombie, which
+/// is the outcome this function exists to prevent.
 fn reap_child(child: &mut std::process::Child) {
+    const REAP_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+    const REAP_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
+
     let _ = child.kill();
-    let _ = child.wait();
+    let deadline = std::time::Instant::now() + REAP_BOUND;
+    loop {
+        match child.try_wait() {
+            // Collected, or already gone: either way this handle is finished.
+            Ok(Some(_)) | Err(_) => return,
+            // Still running. Past the bound, stop asking and let init reap it.
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                log::warn!("Child did not exit within the reap bound; leaving it to init");
+                return;
+            }
+            Ok(None) => std::thread::sleep(REAP_POLL),
+        }
+    }
 }
 
 /// Run blocking work on the runtime's blocking pool instead of an async worker.
@@ -8901,6 +8957,19 @@ mod tests {
             .await
             .expect("fixture row must be insertable");
 
+        // The queue is seeded on purpose. Asserting `is_empty()` against a queue
+        // that already was empty proves nothing: with nothing stranded the loop
+        // that writes queue entries never runs, so the queue stays empty whether
+        // the queueing logic works or is deleted outright. That is exactly what a
+        // reviewer found here — the assertion could not fail. Seeding one row gives
+        // it two ways to fail: an entry added, or the table cleared.
+        sqlx::query("INSERT INTO pending_audio_deletions (id, attempts) VALUES (?1, ?2)")
+            .bind("already-queued")
+            .bind(3_i64)
+            .execute(&pool)
+            .await
+            .expect("the seeded queue row must be insertable");
+
         delete_transcription_recording_stranded_audio(&pool, "ordinary", &[])
             .await
             .expect("the row deletion must succeed");
@@ -8910,9 +8979,102 @@ mod tests {
             .await
             .expect("the transcription table must be readable");
         assert_eq!(rows_left, 0, "the row must still be deleted");
-        assert!(
-            pending_rows(&pool).await.is_empty(),
-            "a snapshot that was removed with its row must not be queued"
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("already-queued".to_string(), 3_i64)],
+            "a deletion with nothing stranded must leave the queue exactly as it found it, \
+             including the attempt count"
+        );
+    }
+
+    /// A failing drain must not cancel the retention half of the sweep.
+    ///
+    /// The two halves write to disjoint sets of rows for disjoint reasons: the
+    /// drain retries ids whose rows are already gone, the retention pass retires
+    /// markers for rows that still exist. With the drain in the command above and
+    /// a `?` on it, one `SQLITE_BUSY` in its write transaction returned early and
+    /// skipped the retention purge for that round entirely — and nothing recorded
+    /// the skip.
+    ///
+    /// The failure is injected with a trigger rather than by dropping the table,
+    /// because dropping it would also break `release_stale_audio_markers_and_queue`
+    /// further down and the test would then be asserting an error path instead of
+    /// this one. The trigger fires on the drain's post-SELECT write, so the SELECT
+    /// that decides there is work to do still succeeds — which is what makes the
+    /// drain genuinely attempt something and genuinely fail.
+    #[tokio::test]
+    async fn a_failing_drain_does_not_skip_the_retention_pass() {
+        let root = lifecycle_test_root("sweep-survives-a-drain-failure");
+        let app_data = root.join("app-data");
+        let audio_path_dir = app_data.join("transcription-audio");
+        let audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let pool = stranded_test_pool().await;
+
+        // The trigger is scoped to the queued id on purpose. Scoping it to the whole
+        // table would also abort the retention pass's own `settle_pending_audio_
+        // deletions`, which legitimately deletes and re-counts rows in this table —
+        // so the test would be asserting that *it* fails, not that the drain's
+        // failure is survivable. Only the drain ever writes to `queued`.
+        for statement in [
+            "CREATE TRIGGER inject_drain_failure_update
+             BEFORE UPDATE ON pending_audio_deletions
+             WHEN OLD.id = 'queued'
+             BEGIN SELECT RAISE(ABORT, 'injected drain failure'); END",
+            "CREATE TRIGGER inject_drain_failure_delete
+             BEFORE DELETE ON pending_audio_deletions
+             WHEN OLD.id = 'queued'
+             BEGIN SELECT RAISE(ABORT, 'injected drain failure'); END",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("the injected-failure triggers must be creatable");
+        }
+
+        // A queued id whose snapshot really is on disk, so the drain has work and
+        // its post-DELETE write is what trips the trigger.
+        std::fs::write(audio_path_dir.join("queued.wav"), b"queued bytes")
+            .expect("managed fixture must be writable");
+        sqlx::query("INSERT INTO pending_audio_deletions (id) VALUES (?1)")
+            .bind("queued")
+            .execute(&pool)
+            .await
+            .expect("the queued row must be insertable");
+
+        // Newest first with one entry past the retention cap, so `live` is in the
+        // stale half that the retention pass deletes and clears metadata for.
+        let marked: Vec<(String, bool)> = (0..MAX_RETAINED_TRANSCRIPTION_AUDIO)
+            .map(|index| (format!("filler-{index:02}"), true))
+            .chain(std::iter::once(("live".to_string(), true)))
+            .collect();
+        for (id, _) in &marked {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+        std::fs::write(audio_path_dir.join("live.wav"), b"live bytes")
+            .expect("managed fixture must be writable");
+
+        // The assertion is the return value *and* the effect: propagating the
+        // drain error would satisfy a check on `Err` while silently skipping the
+        // work, so the cleared marker is what actually pins the behaviour.
+        purge_transcription_audio_in_dir(&pool, &audio_dir, marked)
+            .await
+            .expect("a drain failure must not fail the whole sweep");
+
+        let still_claiming_audio: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transcriptions WHERE id = 'live' AND audio_path IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the transcription table must be readable");
+        assert_eq!(
+            still_claiming_audio, 0,
+            "the retention pass must still retire the stale marker after a drain failure"
         );
     }
 
