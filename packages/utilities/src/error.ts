@@ -26,22 +26,55 @@ const PROVIDER_KEY_PREFIX =
 //   test masked `keyboard`, `hotkey` and `whiskey` used as object keys.
 //
 // So both paths now run the same rule. The names below are the only place a
-// credential label is written down: `isCredentialLabel` applies this pattern
-// anchored to a whole label to judge an object key, and the three labelled-value
-// patterns further down embed the same pattern unanchored to find the same
-// labels in free text. A label cannot redact in one form and leak in the other,
-// because there is only one list for it to be missing from.
+// credential label is written down, and `OPTIONAL_SEPARATOR` is the only place a
+// separator between two words of a name is written: `isCredentialLabel` applies
+// this pattern anchored to a whole label to judge an object key, and the three
+// labelled-value patterns further down embed the same pattern unanchored to find
+// the same labels in free text. Given the same word sequence, the two paths
+// cannot disagree about whether it is a label, because there is one vocabulary
+// and one separator class behind both of them.
+//
+// That sentence needed BOTH halves, and each was false on its own for a while.
+// The separator half was the quieter one: `client secret` redacted in a message
+// and printed in the clear as an object key, with the NAME present in the list
+// the whole time. The text form survived on the label's own trailing word -- the
+// engine finds the bare `secret` name inside the label and rewrites from there,
+// which is why the output reads `client secret:[redacted]` and looks right --
+// while an object key has no such tail to fall back on, being the whole label or
+// nothing, and `client[_-]?secret` had no way to spell a space. So "one list" was
+// never the whole invariant; one list AND one separator class is.
+//
+// The anchor half is the remaining, deliberate difference, and it is not the
+// separator. A tier-2 label is anchored at `\b` against the fixed holder list
+// so that an arbitrary qualifier cannot be mistaken for a credential, which
+// means the HOLDER has to come first -- and the text form is free to START its
+// match at that holder while an object key has to match from its own first
+// character. Measured, `sort-access-key` and `sort-signing-key` redact in a
+// message and leak as an object key, while `access-key` and `signing-key` redact
+// in both. The text form is the one that is generous there, and it is generous
+// by the `` it was always anchored on. Making the object form accept a
+// holder-led SUFFIX would close it and re-mask the middle-word metadata this
+// rule gives up on purpose (`db_password_hint`, `secret_rotation_enabled`), which
+// a test pins, so it stays. The camelCase version of the same divergence --
+// `openaiApiKey` in text against `openai_api_key` as a key -- is documented
+// under `foldCamelLabel` and is measured at 7 of 15 qualified camelCase labels.
+// Neither is the separator's fault and neither is a missing name.
 //
 // Each name is a word sequence joined with an OPTIONAL separator, so `api_key`,
-// `api-key` and `apikey` are one entry. There is deliberately no `["apikey"]`
-// entry -- `api[_-]?key` already accepts that spelling, and an entry that changes
-// nothing is one the next reader has to check.
+// `api-key`, `apikey` and `api key` are one entry. There is deliberately no
+// `["apikey"]` entry -- `api[_-]?key` already accepts that spelling, and an
+// entry that changes nothing is one the next reader has to check. The separator
+// is the one constant below, so a name added here is spelled with a space, a
+// hyphen, an underscore and nothing in the text path AND as an object key
+// without anyone having to remember that.
 //
 // Two tiers, because one list cannot do both jobs. The first is a spelling that
 // names a credential unambiguously -- `api_key`, `client_secret`, `password`,
-// `secret`, `subscription_key` -- and ANY separator-delimited qualifier may sit
-// in front of it. The second is the ambiguous words `token` and `key`, which
-// need a qualifier drawn from the holder list.
+// `secret`, `subscription_key`, `apim_key` -- and ANY separator-delimited
+// qualifier may sit in front of it. The second is the ambiguous words `token`
+// and `key`, which need a qualifier drawn from the holder list. The last two
+// names are the Azure API Management header and its relatives; they are in this
+// tier and not the holder list for reasons at their own entries.
 //
 // The measurements behind that split are worth keeping, because each one was
 // wrong before it was right:
@@ -83,7 +116,10 @@ const PROVIDER_KEY_PREFIX =
 //   labels too, and that was tried first; it also matches
 //   `Ocp-Apim-Subscription-Key`, which then read as a free-form label and took
 //   the two lines after it with it. See `KEY_HOLDERS` for why the holder list
-//   was the better place.
+//   was the better place for the two VENDOR names, and the entry on
+//   `subscription_key` for why that one came back as a name after all -- the
+//   free-form reading that stopped it is gone, rather than the leak being
+//   argued away.
 //
 // No camelCase QUALIFIER either: any pattern accepting one lets `monkey` donate
 // its `key` by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`.
@@ -125,6 +161,32 @@ const CREDENTIAL_NAMES: readonly (readonly string[])[] = [
   ["session", "token"],
   ["session", "key"],
   ["secret", "key"],
+  // The Azure API Management header and its relatives -- `Ocp-Apim-
+  // Subscription-Key`, `ocp_apim_subscription_key`, `Ocp-Subscription-Key`,
+  // `apim-subscription-key` -- all leaked in a message AND in a JSON body, and
+  // `Ocp-Apim-Key` with them.
+  //
+  // They are tier-1 NAMES rather than tier-2 HOLDERS, and that is the decision
+  // this file previously made the other way round for `subscription_key` alone.
+  // `ocp` and `apim` are part of a header's name; the holder list is defined as
+  // the ROLE whose token or key holds a credential (`vault`, `keyring`,
+  // `account`, `service`), and a product acronym is not a role. Tier 1 is also
+  // the tier whose qualifier is arbitrary, which is what these need: the holder
+  // word is in the MIDDLE (`ocp_apim_subscription_key`) or the whole leading run
+  // is unrecognized (`Ocp-Apim-Key`), and a list read from the first segment
+  // cannot reach either.
+  //
+  // The reason `subscription_key` was rejected here before -- it matches
+  // `Ocp-Apim-Subscription-Key`, which then read as a free-form label and took
+  // the two lines after its value with it -- is fixed rather than argued away.
+  // Both names are in `TOKEN_SHAPED_SECRET_ALIASES` now, so the free-form pass
+  // never sees them: an APIM subscription key is a single opaque token, so one
+  // token after the label IS the whole credential, exactly as it is for an API
+  // key. The two entries there are what make the tier-1 reading safe here, and
+  // the test `Ocp-Apim-Subscription-Key` keeps its `Reason:` line is what keeps
+  // them honest.
+  ["subscription", "key"],
+  ["apim", "key"],
   ["password"],
   ["passwd"],
   ["pwd"],
@@ -151,6 +213,15 @@ const CREDENTIAL_NAMES: readonly (readonly string[])[] = [
  * its value and swallowed the next two lines of a provider error, including the
  * `Reason:` the user is meant to read. Two entries here fix the two labels that
  * actually leaked and leave every other label's classification untouched.
+ *
+ * `subscription_key` is a tier-1 name NOW, which is not a reversal of that: the
+ * harm was never the name, it was the free-form reading, and that has been taken
+ * off every single-token credential in the vocabulary
+ * (`TOKEN_SHAPED_SECRET_ALIASES`). Nothing that was already a label changed
+ * meaning -- `azure_subscription_key` classifies the same under either
+ * arrangement -- and what the name adds is the APIM header and its relatives,
+ * which were not labels at all and are now labels whose value is read as the
+ * single token it is.
  */
 const KEY_HOLDERS: readonly string[] = [
   "aws",
@@ -182,7 +253,27 @@ const KEY_HOLDERS: readonly string[] = [
   "my",
 ];
 
-const OPTIONAL_SEPARATOR = "[_-]?";
+// A space is a separator between the words of ONE label, and admitting it is
+// what makes `api key`, `access token` and `client secret` spellings at all.
+// It is the separator class that the two paths did NOT share, and the leak was
+// measurable from it: `client secret` redacted in a message and leaked as an
+// object key. The text form survived on its own trailing word -- the engine
+// finds the bare `secret` name inside the label and rewrites from there, so the
+// output reads `client secret:[redacted]` -- while an object key has to match
+// whole, and `client[ _-]?secret` had no way to spell a space. One vocabulary,
+// two separator classes, two answers; the vocabulary was never the problem.
+//
+// A literal space and not `\s`, deliberately, twice over. `\s` would let a
+// label span a newline, and `api\nkey: v` is not a label. And admitting the
+// space cannot make an ordinary word a label on its own, because every pass
+// that carries a label requires `[:=]` IMMEDIATELY after it: `api key
+// rotation: on` has a word between the label and the colon and matches nothing,
+// and `client secret sauce: x` matches nothing either -- the shorter `secret`
+// reading fails on the same colon. That adjacency, not the separator, is what
+// bounds the rule. `\b` supplies the other half, so the `-style words are
+// untouched: `monkey`, `keyboard` and `hotkey` are not two words of this
+// vocabulary joined by a space, and nothing else can make them so.
+const OPTIONAL_SEPARATOR = "[ _-]?";
 // The shape, written out, because the grouping here is load-bearing and a
 // misplaced bracket silently NARROWS the rule instead of failing to compile:
 //
@@ -583,6 +674,24 @@ export const schemeValueEnd = (text: string): number => {
  * `isFreeFormSecretLabel` looks the label up by that form, and the question here
  * is which credential it is rather than whether it is one.
  *
+ * The lookup is a SUFFIX test rather than an equality test, and that is what
+ * makes a qualified label agree with its head. `Ocp-Apim-Subscription-Key` is
+ * read whole by the text pattern -- the tier-1 qualifier is arbitrary, so the
+ * match starts at the `O` and the captured label is all of it -- so an equality
+ * test would have needed a literal for every prefix anyone ever writes in front
+ * of a subscription key. The question was never about the prefix. It is about
+ * what the credential IS, and a qualifier does not change that, so
+ * `azure_api_key` is read like `api_key` and `Ocp-Apim-Subscription-Key` like
+ * `subscription_key`: one token, because an API key and an APIM subscription key
+ * are opaque single tokens by construction, exactly as this block's own opening
+ * sentence says.
+ *
+ * The cost is a precision change on the labels that were free-form and now are
+ * not, and it falls only on prose: `azure_api_key: <key> retry in 5s` keeps
+ * `retry in 5s` where it used to be swallowed. No value that fits in one token
+ * loses anything, and the alternative -- hand-listing the qualified spellings --
+ * is how this file already had one leak in the first place.
+ *
  * Every name here is also a name `SECRET_LABEL` matches. That is not a
  * coincidence to be re-established by hand: `isFreeFormSecretLabel` consults
  * `isCredentialLabel`, which runs the same pattern `SECRET_LABEL` embeds, so a
@@ -599,6 +708,18 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   "sessiontoken",
   "authorization",
   "bearer",
+  "subscriptionkey",
+  "apimkey",
+  // The two tier-1 names that are single opaque tokens rather than passphrases
+  // or key blobs. `secret_key`, `client_secret`, `private_key` and `password`
+  // are deliberately NOT here and never should be: a PEM private key is
+  // multi-line and a passphrase has spaces, so those labels need the run to the
+  // next separator. An Azure API Management subscription key is a short run of
+  // base64url with no space in it, so one token after the label is the whole
+  // credential, and reading past it eats whatever the provider printed next --
+  // which is how `Ocp-Apim-Subscription-Key` came to swallow the `Reason:` line
+  // under it, and the reason this tier-1 name could not be added while the
+  // free-form pass was still reaching it.
   // `secret` and `credential` are NOT here, and that is deliberate even though
   // they name no token. Reading only one token after them leaked the tail of a
   // passphrase under a label that says, in as many words, that it holds a
@@ -627,10 +748,33 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
  * separator-free form because that is the question being asked of it ("is this
  * credential one token?"), while `isCredentialLabel` needs the separators
  * ("is this a credential at all?").
+ *
+ * So the two lookups ask two different questions of two different strings: the
+ * separators decide WHETHER it is a credential and the joined form decides what
+ * KIND. The space is in the normalising class for the same reason it is in
+ * `OPTIONAL_SEPARATOR` -- `session key` and `session_key` are one label, and
+ * leaving the space out would have made the space spelling free-form and the
+ * underscore spelling one-token, which is the two-forms-disagree defect wearing
+ * a different hat.
  */
+const LABEL_SEPARATORS = /[ _-]/g;
+/**
+ * Whether the label's HEAD is one of the single-token credentials.
+ *
+ * A suffix test rather than an equality test, because a prefix is not part of
+ * the question; see the block comment on `TOKEN_SHAPED_SECRET_ALIASES` for what
+ * that buys and what it costs.
+ */
+const isTokenShapedLabel = (joined: string): boolean => {
+  for (const name of TOKEN_SHAPED_SECRET_ALIASES) {
+    if (joined.endsWith(name)) return true;
+  }
+  return false;
+};
+
 const isFreeFormSecretLabel = (label: string): boolean => {
   const bare = trimLabelEdges(label);
-  const joined = bare.replace(/[_-]/g, "").toLowerCase();
+  const joined = bare.replace(LABEL_SEPARATORS, "").toLowerCase();
   // `authorization` and `proxy-authorization` are the one label the free-form
   // pass must not claim, because `AUTHORIZATION_SCHEME` owns them and reads the
   // scheme word as syntax rather than as part of the credential. A free-form run
@@ -644,7 +788,7 @@ const isFreeFormSecretLabel = (label: string): boolean => {
   // `proxy-authorization` to `proxyauthorization` left no credential word in it,
   // so the free-form pass skipped it. That was never the reason it worked.
   if (AUTHORIZATION_LABEL_END.test(bare)) return false;
-  return isCredentialLabel(bare) && !TOKEN_SHAPED_SECRET_ALIASES.has(joined);
+  return isCredentialLabel(bare) && !isTokenShapedLabel(joined);
 };
 
 /**

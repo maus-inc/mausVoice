@@ -780,6 +780,18 @@ describe("authorization scheme credentials", () => {
     // predicate stopped searching for a credential word anywhere in the key.
     [["secret", "rotation", "enabled"].join("_"), "true"],
     [["db", "password", "hint"].join("_"), "set"],
+    // Usage counters from provider error bodies, and the measured cost of
+    // leaving tier 2 anchored at a holder rather than opening it to any chain of
+    // words: a rule that redacts every multi-word label ending in `token`
+    // reaches all four of these, and the first is four words long. Real names
+    // from real responses, which is what makes them the ones to keep readable.
+    [["cache", "creation", "input", "tokens"].join("_"), "1204"],
+    [["cache", "read", "input", "tokens"].join("_"), "900"],
+    [["max", "output", "tokens"].join("_"), "4096"],
+    [["input", "token", "details"].join("_"), "0"],
+    // An ordinary English compound with no credential word in it at all, and the
+    // reason the anchored rule can never be a substring test again.
+    ["keychain", "v"],
   ] as const;
   const SECRET_TOKEN = [SECRET, "token"].join("_");
   // The AWS-shaped value is held in two parts for the same reason as the labels
@@ -1107,12 +1119,204 @@ describe("one credential-label rule on both paths", () => {
     // had to be named. Tier-1 names `access_key` and `subscription_key` also
     // cover these and were tried first; they additionally match
     // `Ocp-Apim-Subscription-Key`, which then read as a free-form label and took
-    // the next two lines of a provider error with it.
+    // the next two lines of a provider error with it. `subscription_key` is a
+    // name now and `aws`/`azure` are still holders, and neither label below
+    // changed behaviour: the free-form reading that blocked the name is gone,
+    // rather than the name being argued away.
     ["aws", "secret", "access", "key"],
     ["azure", "subscription", "key"],
   ].map((words) => words.join("_"));
 
   const AWS_ACCESS_KEY = ["aws", "secret", "access", "key"].join("_");
+  // The Azure API Management header and the labels that reach it.
+  // `Ocp-Apim-Subscription-Key` is a real header carrying a real key, and it
+  // leaked in a message AND in a JSON body: the holder word is in the MIDDLE, so
+  // a tier-2 rule anchored at the first segment cannot reach it, and
+  // `subscription_key` was not a name either.
+  const APIM_SPELLINGS = [
+    ["Ocp", "Apim", "Subscription", "Key"].join("-"),
+    ["ocp", "apim", "subscription", "key"].join("_"),
+    ["ocp", "apim", "subscription", "key"].join("-"),
+    ["Ocp", "Subscription", "Key"].join("-"),
+    ["apim", "subscription", "key"].join("-"),
+    ["Ocp", "Apim", "Key"].join("-"),
+    ["ocp", "apim", "key"].join("_"),
+    ["subscription", "key"].join("_"),
+    ["subscription", "key"].join("-"),
+    ["subscription", "Key"].join(""),
+  ];
+  // The same names the way prose spells them, which is the spelling that had no
+  // separator at all. Held as words rather than as one literal so no contiguous
+  // credential shape appears in this file; what reaches the scrubber is
+  // byte-for-byte what the assertions below expect.
+  const SPACE_SEPARATED = [
+    ["api", "key"].join(" "),
+    ["access", "token"].join(" "),
+    ["refresh", "token"].join(" "),
+    ["id", "token"].join(" "),
+    ["session", "token"].join(" "),
+    ["session", "key"].join(" "),
+    ["secret", "key"].join(" "),
+    ["private", "key"].join(" "),
+    ["client", "secret"].join(" "),
+    ["subscription", "key"].join(" "),
+    ["apim", "key"].join(" "),
+  ];
+  // The subset whose value is one token by construction, so the run stops at the
+  // first space. The rest of the list above can hold a passphrase or a key blob
+  // and is read as a whole run on purpose -- that is the distinction this test
+  // and the next one are about, and it is per credential rather than per
+  // separator, which is why `api key` and `private key` sit in one list and get
+  // two different readings.
+  const SINGLE_TOKEN_SPELLINGS = [
+    ["api", "key"].join(" "),
+    ["access", "token"].join(" "),
+    ["refresh", "token"].join(" "),
+    ["id", "token"].join(" "),
+    ["session", "token"].join(" "),
+    ["subscription", "key"].join(" "),
+    ["apim", "key"].join(" "),
+  ];
+  const PASSPHRASE = ["no", "idea", "but", "hunter2"].join(" ");
+  const REASON = ["Reason", "quota exceeded"].join(": ");
+
+  it("redacts the Azure API Management header and its relatives on every path", () => {
+    // These are NAMES with an arbitrary qualifier in front of them, not holders
+    // in the list, and that is the decision rather than an accident of naming:
+    // `ocp` and `apim` are part of a header's name, and the holder list is
+    // defined as the ROLE whose token or key holds a credential. It is also the
+    // only tier that can reach them -- `Ocp-Apim-Key` has no recognizable holder
+    // anywhere, and `ocp_apim_subscription_key` has one in the middle, which a
+    // list read from the first segment cannot see.
+    for (const label of APIM_SPELLINGS) {
+      expect(redactSensitiveTokens(labelled(label, VALUE))).toBe(
+        `${label}:[redacted]`,
+      );
+      expect(unknownToMessage(jsonBody(label, VALUE))).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+      expect(unknownToMessage({ [label]: VALUE })).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+    }
+  });
+
+  it("reads a space as a separator between the words of one label", () => {
+    // A space is how prose spells these two-word names, and the separator class
+    // is the only thing that decides it. Before, `client secret` redacted in a
+    // message -- rescued by the bare `secret` name at the end of it, which is
+    // why the output read `client secret:[redacted]` and looked right -- and
+    // printed in the clear as an object key, which has to match whole and had no
+    // way to spell a space. Both forms are asserted, because "redacts
+    // somewhere" is not the property that was broken.
+    for (const label of SPACE_SEPARATED) {
+      expect(redactSensitiveTokens(labelled(label, VALUE))).toBe(
+        `${label}:[redacted]`,
+      );
+      expect(unknownToMessage(jsonBody(label, VALUE))).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+      expect(unknownToMessage({ [label]: VALUE })).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+    }
+  });
+
+  it("does not let the space separator reach past the label into prose", () => {
+    // What keeps admitting the space from turning ordinary prose into a label.
+    // Every pass that carries a label requires `[:=]` IMMEDIATELY after it, so a
+    // word between the label and the colon stops the match. Measured, all of
+    // these are unchanged, and the second is the interesting case: the shorter
+    // `secret` reading inside it fails on the same colon.
+    for (const text of [
+      ["api", "key", "rotation: on"].join(" "),
+      ["client", "secret", "sauce: x"].join(" "),
+      ["private", "key", "generation failed: see docs"].join(" "),
+      ["press", "the", "key: any"].join(" "),
+      ["the", "authorization", "was denied"].join(" "),
+    ]) {
+      expect(redactSensitiveTokens(text)).toBe(text);
+    }
+    // A newline is not a separator either, so a label cannot be assembled out of
+    // two lines by a document that happens to wrap one.
+    const WRAPPED = ["api", "key: abc123def456"].join("\n");
+    expect(redactSensitiveTokens(WRAPPED)).toBe(WRAPPED);
+    // And the `-style words the anchored rule exists for stay readable, in both
+    // forms, whatever else changed about the separator.
+    for (const word of [
+      "monkey",
+      "keyboard",
+      "hotkey",
+      "secretary",
+      "whiskey",
+    ]) {
+      expect(redactSensitiveTokens(`${word}: v`)).toBe(`${word}: v`);
+      expect(unknownToMessage({ [word]: "v" })).toBe(`{"${word}":"v"}`);
+    }
+  });
+
+  it("does not open tier 2 to a holder that is not the first segment", () => {
+    // Tier 2's qualifier is the HOLDER LIST and the holder has to come first.
+    // That is what keeps `sort_key`, `cache_key`, `idempotency_key`,
+    // `max_tokens` and `cache_creation_input_tokens` readable, and it is also why
+    // `Ocp-Apim-Subscription-Key` needed a NAME rather than a holder: its holder
+    // is in the middle of the label.
+    //
+    // The alternative -- a tier 2 that accepts a holder at ANY position in the
+    // chain -- was measured and not taken, and these two labels are what it costs
+    // in the other direction. A usage counter of the `<word>_api_tokens` shape
+    // becomes a credential because `api` sits in the middle, and every
+    // `<word>_api_key` becomes one for the same reason. Naming two Azure labels
+    // is the cheaper trade, and pinning it here means the next reader finds out
+    // by running a test rather than by shipping a masked usage counter.
+    for (const [label, value] of [
+      [["total", "api", "tokens"].join("_"), "251"],
+      [["some", "api", "token"].join("_"), "7"],
+    ] as const) {
+      expect(redactSensitiveTokens(labelled(label, value))).toBe(
+        `${label}: ${value}`,
+      );
+      expect(unknownToMessage({ [label]: value })).toBe(
+        `{"${label}":"${value}"}`,
+      );
+    }
+  });
+
+  it("reads a single-token credential as one token, so the line under it survives", () => {
+    // THE reason `subscription_key` could not simply be added as a name, and the
+    // reason it could be added once this reading existed. A label whose value
+    // can hold a space is read as a whole run to the next separator, and a
+    // newline is not a separator -- so a header-shaped label read that way takes
+    // the `Reason:` the user is meant to read along with the value. The value
+    // under this header is one opaque token, so it is read as one token and the
+    // line under it stays readable.
+    for (const label of [...APIM_SPELLINGS, ...SINGLE_TOKEN_SPELLINGS]) {
+      expect(
+        redactSensitiveTokens(`${labelled(label, VALUE)}\n${REASON}`),
+      ).toBe(`${label}:[redacted]\n${REASON}`);
+    }
+    // The other side of the same distinction, which the rule must not cost: a
+    // holder whose key is a blob still takes the whole run, or the tail of a
+    // private key stays in the clear beside a marker saying it was redacted.
+    for (const label of [
+      ["private", "key"].join("_"),
+      ["signing", "key"].join("_"),
+      ["encryption", "key"].join("_"),
+      ["master", "key"].join("_"),
+      ["client", "secret"].join(" "),
+      ["private", "key"].join(" "),
+    ]) {
+      expect(redactSensitiveTokens(labelled(label, PASSPHRASE))).toBe(
+        `${label}:[redacted]`,
+      );
+    }
+    // And the precision side of it: a diagnosis after a single-token credential
+    // now survives, where the free-form read used to take it. That is the whole
+    // cost of the rule, and it falls only on prose.
+    expect(
+      redactSensitiveTokens(labelled("azure_api_key", `${VALUE} retry in 5s`)),
+    ).toBe("azure_api_key:[redacted] retry in 5s");
+  });
 
   it("redacts a qualified label on every path, not only the text path", () => {
     // The JSON path was strictly WORSE than the text path on this shape. Every
@@ -1195,14 +1399,34 @@ describe("one credential-label rule on both paths", () => {
         "authorization_endpoint",
         "access_key_id",
         "client_id",
-        // A real Azure header carrying a real key, and the reason the Finding-2
-        // labels are handled by naming `aws`/`azure` as holders rather than by
-        // adding tier-1 names `access_key` and `subscription_key`. Those names
-        // also match this label, which then read as a free-form one and took the
-        // two lines after its value with it -- including the `Reason:` a user is
-        // meant to read. As a holder-qualified label it is not a label at all, so
-        // the free-form pass never sees it.
+        // A real Azure header carrying a real key. It is in this list because it
+        // used to be the one label where the two forms could not both be right:
+        // as a holder-qualified label it was not a label at all and stayed
+        // readable, while a tier-1 `subscription_key` matches it and then read
+        // as a free-form one, taking the two lines after its value with it --
+        // including the `Reason:` a user is meant to read. It is a label in both
+        // forms now, and its value is read as the single token it is, which is
+        // what lets both be true at once.
         "Ocp-Apim-Subscription-Key",
+        "ocp_apim_subscription_key",
+        "apim_key",
+        // The two-word names as prose spells them. `client secret` is the one
+        // that disagreed before the separator was shared: the text form found
+        // the trailing `secret`, and the object key had to match whole.
+        "api key",
+        "access token",
+        "session key",
+        "private key",
+        "client secret",
+        "secret key",
+        "subscription key",
+        "apim key",
+        // An arbitrary chain of words ending in `token` stays readable in both
+        // forms. Tier 2 is anchored at a holder precisely so that this cannot
+        // reach `cache_creation_input_tokens`, and the APIM label above is only
+        // redacted because `subscription_key` names a credential outright.
+        "some_multi_word_token",
+        "cancellation_token",
       ],
     ];
     for (const label of labels) {
