@@ -638,7 +638,7 @@ mod tests {
         audio_file_name_for, delete_audio_file, into_proved_std_file, open_audio_file_for_read,
         open_managed_audio_dir_at, AUDIO_DIR_NAME,
     };
-    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsMaybeDirExt};
     use cap_std::fs::{Dir, OpenOptions};
     use std::fs;
     use std::io;
@@ -855,9 +855,23 @@ mod tests {
 
         /// Open `name` through `dir` the way every call site does: no-follow,
         /// so the handle names the link itself rather than its target.
+        ///
+        /// `maybe_dir` because two of the fixtures below are directories, which
+        /// is why `open_dir_no_follow` sets it on the production side. It is
+        /// inert on Unix — cap-primitives' rustix path builds the open flags in
+        /// `compute_oflags`, which never reads `maybe_dir` — and on Windows it
+        /// is what adds `FILE_FLAG_BACKUP_SEMANTICS`, without which
+        /// `CreateFileW` refuses a directory outright. No job runs these tests
+        /// on Windows (`rust-windows-gated` lints `--all-targets`, which
+        /// compiles them without executing them), so without the flag the two
+        /// directory fixtures would fail for whoever runs `cargo test` there,
+        /// on a helper rather than on the code under test.
         fn open_no_follow(dir: &Dir, name: &str) -> io::Result<cap_std::fs::File> {
             let mut options = OpenOptions::new();
-            options.read(true).follow(FollowSymlinks::No);
+            options
+                .read(true)
+                .follow(FollowSymlinks::No)
+                .maybe_dir(true);
             dir.open_with(name, &options)
         }
 
@@ -886,9 +900,16 @@ mod tests {
             use std::os::unix::fs::symlink;
 
             let root = TemporaryDirectory::create();
-            let target = root.0.join("secret.wav");
-            fs::write(&target, b"do not read").expect("fixture must be writable");
-            symlink(&target, root.0.join("linked.wav")).expect("link must be creatable");
+            fs::write(root.0.join("secret.wav"), b"do not read").expect("fixture must be writable");
+            // A *relative* target, so the link resolves inside the directory
+            // that is held and the refusal below can only be the no-follow open.
+            // An absolute one is refused by the capability's own sandbox before
+            // the flag is ever consulted — cap-primitives opens through
+            // `openat2(RESOLVE_BENEATH)`, which answers `EXDEV` for a target
+            // outside the root, and `EXDEV` is reported as "a path led outside
+            // of the filesystem" — and then this assertion would hold for any
+            // open at all.
+            symlink("secret.wav", root.0.join("linked.wav")).expect("link must be creatable");
             let dir = held_dir(&root.0);
 
             let opened = open_no_follow(&dir, "linked.wav");
@@ -896,10 +917,29 @@ mod tests {
                 opened.is_err(),
                 "a no-follow open must not hand back a handle to a link: {opened:?}"
             );
-            // The read path refuses for the same reason, which is why the test
-            // that covers it needs no fixture of its own shape.
+
+            // The read call site refuses for the same reason, but it looks
+            // somewhere else: `open_audio_file_for_read` resolves the derived
+            // name *inside the managed audio directory*, and the link above is
+            // one level above that. With only the link above, the call fails
+            // `NotFound` whatever the open does, and the assertion below would
+            // pass on a read path carrying no guard at all. The decoy it points
+            // at is inside the managed directory too, for the same
+            // `RESOLVE_BENEATH` reason as above.
             let held_audio_dir = open_managed_audio_dir_at(&root.0).expect("managed dir");
-            assert!(open_audio_file_for_read(&held_audio_dir, "linked").is_err());
+            fs::write(root.audio_dir().join("decoy.wav"), b"another recording")
+                .expect("fixture must be writable");
+            symlink(
+                "decoy.wav",
+                root.audio_dir().join(audio_file_name_for("linked")),
+            )
+            .expect("link inside the managed directory must be creatable");
+
+            assert!(
+                open_audio_file_for_read(&held_audio_dir, "linked").is_err(),
+                "a link under the name the read path derives must be refused \
+                 where the read path looks, not merely be absent from it"
+            );
         }
 
         #[test]
