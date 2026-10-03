@@ -110,11 +110,21 @@ function executedSuites(workflowsText, repoRoot) {
 // and let the matcher decide. There is no separate list of "exempt" patterns to
 // keep consistent with the matcher, which is the class of bug this file exists
 // to catch.
+// One array of entries per `paths:` block, NOT one flat list.
+//
+// A workflow can carry a `paths:` filter per event -- `on: push:` and
+// `on: pull_request:` each with their own list -- and those are separate filters
+// for separate events, not one filter split across lines. Flattening them lets a
+// `!` in the second event's list cancel a positive in the first event's, which
+// is not what GitHub does: for any given event only that event's filter applies,
+// so the question "does this workflow run on this path" is answered by asking
+// each filter and OR-ing the answers.
 function pathsEntries(text) {
   const lines = text.split("\n");
-  const entries = [];
+  const blocks = [];
   for (let index = 0; index < lines.length; index += 1) {
     if (!/^\s*paths:\s*$/.test(lines[index])) continue;
+    const entries = [];
     for (let scan = index + 1; scan < lines.length; scan += 1) {
       const line = lines[scan];
       // A list item of this block, or a deeper one -- `paths:` at four spaces
@@ -129,8 +139,9 @@ function pathsEntries(text) {
       if (line.trim() === "" || /^\s*#/.test(line)) continue;
       if (/^\s*-\s/.test(line) || /^\s*\S/.test(line)) break;
     }
+    blocks.push(entries);
   }
-  return entries;
+  return blocks;
 }
 
 // The suites one workflow runs that its own `paths:` filter does not name.
@@ -164,10 +175,26 @@ function missingFromTriggerFilter(text, repoRoot) {
   // compiled a `!` entry as though it were a path pattern, so it could not match
   // anything and the exclusion was dropped silently -- the guard reporting the
   // opposite of what the workflow does, for the suite shape it exists to catch.
-  const filter = pathsEntries(text);
-  const decidesIncluded = (path) => {
+  const blocks = pathsEntries(text);
+  // Within ONE filter, GitHub resolves the entries in DECLARATION ORDER and the
+  // last pattern that matches decides. So a filter listing `!apps/**` and then
+  // `apps/desktop/**` DOES run a suite under `apps/desktop`, because the later
+  // positive re-includes it.
+  //
+  // My first attempt modelled this as `any(positive) AND NOT any(negative)`,
+  // which is a simplification of the above and gets that case backwards. It also
+  // compiled a `!` entry as though it were a path pattern, so it could not match
+  // anything and the exclusion was dropped silently -- the guard reporting the
+  // opposite of what the workflow does, for the suite shape it exists to catch.
+  //
+  // A second attempt kept the sequence but flattened every block into it, which
+  // is worse than the first: a `!` in one event's filter then cancelled a
+  // positive in ANOTHER event's, so the blocks stopped being a union. Both
+  // mistakes came from the same cause -- the blocks are per-event filters, so
+  // each is resolved on its own and only the answers are combined.
+  const filterIncludes = (entries, path) => {
     let included = false;
-    for (const entry of filter) {
+    for (const entry of entries) {
       const negated = entry.startsWith("!");
       if (globToRegExp(negated ? entry.slice(1) : entry).test(path)) {
         included = !negated;
@@ -175,6 +202,8 @@ function missingFromTriggerFilter(text, repoRoot) {
     }
     return included;
   };
+  const decidesIncluded = (path) =>
+    blocks.some((entries) => filterIncludes(entries, path));
   return [...executed].filter((path) => !decidesIncluded(path));
 }
 
@@ -692,6 +721,58 @@ describe("the trigger filter check compares executed paths to filter entries", (
       ["scripts/ci/windows-tauri-imports.test.mjs"],
       "a paths-ignore entry is not coverage: with no paths entry, the suite is " +
         "still an omission",
+    );
+  });
+
+  it("a negation in one paths block does not cancel a positive in another", () => {
+    // The blocks are per-EVENT filters, so for any given event only that event's
+    // filter applies. Flattening every block into one ordered list let the `!`
+    // below cancel the positive in the `push` block, and the guard then reported
+    // a suite as uncovered for a workflow that triggers on it correctly -- the
+    // union model the neighbouring test pins, contradicted by the code above it.
+    const text = [
+      "on:",
+      "  push:",
+      "    paths:",
+      '      - "scripts/ci/**"',
+      "  pull_request:",
+      "    paths:",
+      '      - "scripts/**"',
+      '      - "!scripts/ci/**"',
+      "jobs:",
+      "  unit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+      "",
+    ].join("\n");
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(text, scanRoot),
+      [],
+      "the push filter still includes the suite, so the workflow triggers on it",
+    );
+  });
+
+  it("a negation still excludes within the one filter that carries it", () => {
+    // The other direction, so the fix cannot be "ignore every `!`". Here there is
+    // only one block, so the exclusion is the last match and it decides.
+    const text = [
+      "on:",
+      "  push:",
+      "    paths:",
+      '      - "scripts/**"',
+      '      - "!scripts/ci/**"',
+      "jobs:",
+      "  unit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+      "",
+    ].join("\n");
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(text, scanRoot),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "one filter excluding the suite is enough to leave it uncovered",
     );
   });
 
