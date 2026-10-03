@@ -11,7 +11,7 @@ import type { Term } from "@maus-inc/types";
 import { INITIAL_APP_STATE } from "../../state/app.state";
 import { produceAppState, setAppState } from "../../store";
 
-const h = vi.hoisted(() => ({ deleteTerm: vi.fn() }));
+const termMocks = vi.hoisted(() => ({ deleteTerm: vi.fn() }));
 
 vi.mock("@tauri-apps/api/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
@@ -23,7 +23,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 
 vi.mock("../../repos", () => ({
   getTermRepo: () => ({
-    deleteTerm: h.deleteTerm,
+    deleteTerm: termMocks.deleteTerm,
   }),
 }));
 

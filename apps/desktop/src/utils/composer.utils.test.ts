@@ -167,8 +167,8 @@ vi.mock("../i18n/intl", () => {
   return {
     getIntl: () => ({
       formatMessage: (descriptor: unknown) => {
-        const m = descriptor as { defaultMessage?: string };
-        return m.defaultMessage ?? "";
+        const message = descriptor as { defaultMessage?: string };
+        return message.defaultMessage ?? "";
       },
     }),
   };
