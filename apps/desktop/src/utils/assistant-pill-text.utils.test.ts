@@ -200,4 +200,76 @@ describe("unsafe HTML is neutralized", () => {
   it("preserves HTML-like tags inside inline code as quoted text", () => {
     expect(markdownToPillText("Use `<b>` for bold")).toBe('Use "<b>" for bold');
   });
+
+  // A pill-text clamp that cuts a surrogate pair in half produces a string that
+  // is not well-formed. `JSON.stringify` escapes it as `\udXXX`, serde_json
+  // rejects that outright, and because the pill crates parse the whole sync as a
+  // single `InMessage` -- messages, streaming, permissions and the pending
+  // review card together -- one emoji at one offset discarded all of it. The
+  // offset that triggers it is not a round number: it is wherever the astral
+  // character's lead unit lands exactly on the limit, so the invariant is swept
+  // rather than asserted at one input.
+  const loneSurrogateAt = (value: string): number => {
+    for (let i = 0; i < value.length; i++) {
+      const unit = value.charCodeAt(i);
+      if (unit < 0xd800 || unit > 0xdbff) continue;
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : -1;
+      if (next < 0xdc00 || next > 0xdfff) return i;
+    }
+    return -1;
+  };
+
+  const cjk = "\u4e2d";
+  const tail = "\u5c3e";
+  const party = "\u{1f389}";
+
+  it("never leaves a lone surrogate when the clamp lands inside an emoji", () => {
+    for (let lead = 560; lead <= 640; lead++) {
+      const input = cjk.repeat(lead) + party + tail.repeat(80);
+      const out = markdownToPillText(input, { maxLength: 600 });
+      expect(loneSurrogateAt(out), `lead offset ${lead}`).toBe(-1);
+    }
+  });
+
+  it("still clamps and marks the cut when it drops the split emoji", () => {
+    // 599 puts the emoji's lead unit exactly on the 600th code unit, so the raw
+    // slice ends on it. Pinned rather than left implicit, because this is the
+    // one offset in the sweep above that produced the defect.
+    const input = cjk.repeat(599) + party + tail.repeat(80);
+    const out = markdownToPillText(input, { maxLength: 600 });
+    expect(loneSurrogateAt(out)).toBe(-1);
+    expect(out.length).toBeLessThanOrEqual(600);
+    expect(out.endsWith("\u2026")).toBe(true);
+    // The truncated emoji is gone rather than half-present.
+    expect(out).not.toContain(party);
+  });
+
+  it("keeps an emoji that fits inside the clamp intact", () => {
+    // The guard drops a trailing lead unit, never a whole pair, so text that
+    // fits must come through byte-identical.
+    const input = `${cjk.repeat(10)} ${party} ${tail.repeat(10)}`;
+    expect(markdownToPillText(input, { maxLength: 600 })).toBe(input);
+  });
+
+  it("would fail without the guard, so the sweep is not vacuous", () => {
+    const raw = (cjk.repeat(599) + party + tail.repeat(80)).slice(0, 600);
+    expect(loneSurrogateAt(raw)).toBe(599);
+    // And it is exactly the shape serde_json refuses: an unpaired escape.
+    expect(JSON.stringify({ text: raw })).toMatch(/\ud[89ab][0-9a-f]{2}/i);
+  });
+
+    it("drops exactly one code unit, not a character", () => {
+      // The guard must remove only the unpaired lead. Dropping two units would
+      // silently swallow a real character on every input that triggers it, which
+      // is the failure a lone-surrogate check is supposed to make impossible --
+      // and an earlier version of this test did not notice, because its inputs
+      // never ended in a lead surrogate with a real character in front of it.
+      const prefix = cjk.repeat(598);
+      const input = `${prefix}${party}${tail.repeat(80)}`;
+      const out = markdownToPillText(input, { maxLength: 600 });
+      expect(loneSurrogateAt(out)).toBe(-1);
+      // 598 CJK + the emoji's 2 units fills 600; the lead is dropped, so exactly
+      // one real character is lost and not two.
+      expect(out).toBe(`${prefix}\u2026`);
+    });
 });

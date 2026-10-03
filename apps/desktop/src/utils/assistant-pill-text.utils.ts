@@ -189,12 +189,40 @@ const stripHtml = (input: string): string => {
 };
 
 /**
+ * Drop a trailing lone high surrogate, if slicing left one.
+ *
+ * `slice` cuts on UTF-16 code units, so a limit landing between the two units of
+ * an astral character leaves an unpaired lead surrogate at the end. That string is
+ * not well-formed, and `JSON.stringify` escapes it as `\udXXX` -- which serde_json
+ * rejects outright (`LoneLeadingSurrogateInHexEscape`, read.rs). One emoji at one
+ * offset therefore failed the *whole* pill sync: the pill crates parse the payload
+ * as a single `InMessage`, and `AssistantState` carries the messages, the streaming
+ * state, the permissions and the pending review card together, so the parse error
+ * discarded all of it, including the review the user was being asked to answer.
+ *
+ * `charCodeAt` rather than `codePointAt`, because the guard is about the *unit* at
+ * the end rather than the character. I first wrote that `codePointAt` would decode
+ * the pair and never fire, then checked it: over 265,678 prefix slices the two
+ * guards never disagree, because a prefix can only end in a lone lead surrogate and
+ * never in a lone trailing one, so the complete-pair case is a no-op either way.
+ * `charCodeAt` is kept because it says what is being tested. (The two are NOT
+ * interchangeable in `fast-style.utils.ts`, where the check asks whether a cut would
+ * *split* a pair -- there `codePointAt` does answer a different question, and using
+ * it is a regression.)
+ */
+const dropLoneTrailingSurrogate = (s: string): string => {
+  if (s.length === 0) return s;
+  const last = s.charCodeAt(s.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
+};
+
+/**
  * Clamp a string to `maxLen` characters, breaking at the last word boundary
  * before the limit.
  */
 const clampWithEllipsis = (s: string, maxLen: number): string => {
   if (s.length <= maxLen) return s;
-  const truncated = s.slice(0, maxLen);
+  const truncated = dropLoneTrailingSurrogate(s.slice(0, maxLen));
   const lastSpace = truncated.lastIndexOf(" ");
   return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated) + ELLIPSIS;
 };
