@@ -141,6 +141,44 @@ const matchesAt = (message: string, index: number, literal: string): boolean =>
   message.slice(index, index + literal.length).toLowerCase() === literal;
 
 /**
+ * Where the credential after a value's first token ends.
+ *
+ * A scheme is the header's syntax rather than the credential, so its parameters
+ * belong to the redaction, and a bare token has no parameters for
+ * `schemeValueEnd` to disambiguate quotes with, so a quoted one runs to its
+ * closing quote as well. Both runs are taken and the LONGER wins, which is the
+ * whole point: a quoted scheme value can hold characters the scheme walk stops
+ * at, and taking only the scheme run left the remainder of the credential in
+ * clear. `authorization: "token abc def"` redacted to `[redacted] def"` while the
+ * same value after an `api_key` label redacted whole, because the scheme branch
+ * returned before the quote was ever read.
+ *
+ * This is deliberately the same order `apiKeyAssignmentEnd` applies, and the two
+ * must stay in step: they read the same `AUTHORIZATION_SCHEMES` and the same
+ * `schemeValueEnd`, and a value redaction that is correct after one label and
+ * leaks after the other is not a distinction any caller can act on. The `Digest`
+ * challenge is unaffected because its quote sits after the scheme's first token
+ * rather than before it, so `quote` is not the value's here and the scheme run
+ * stands on its own.
+ */
+const credentialEnd = (
+  message: string,
+  valueStart: number,
+  firstTokenEnd: number,
+  quote: string,
+): number => {
+  const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
+  const schemeEnd = AUTHORIZATION_SCHEMES.has(scheme)
+    ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
+    : firstTokenEnd;
+  if (!isQuote(quote)) return schemeEnd;
+  const closingQuoteEnd = quotedValueEnd(message, valueStart, quote);
+  return closingQuoteEnd === null
+    ? schemeEnd
+    : Math.max(schemeEnd, closingQuoteEnd);
+};
+
+/**
  * Where the `api_key` assignment starting at `index` ends, or null when there
  * is none. Only the value is secret and the whole match including the label is
  * replaced, so nothing is left to identify the key.
@@ -238,44 +276,6 @@ const labelValueEnd = (
   // its separator is not an assignment.
   if (firstTokenEnd === cursor) return null;
   return credentialEnd(message, cursor, firstTokenEnd, quote);
-};
-
-/**
- * Where the credential after a value's first token ends.
- *
- * A scheme is the header's syntax rather than the credential, so its parameters
- * belong to the redaction, and a bare token has no parameters for
- * `schemeValueEnd` to disambiguate quotes with, so a quoted one runs to its
- * closing quote as well. Both runs are taken and the LONGER wins, which is the
- * whole point: a quoted scheme value can hold characters the scheme walk stops
- * at, and taking only the scheme run left the remainder of the credential in
- * clear. `authorization: "token abc def"` redacted to `[redacted] def"` while the
- * same value after an `api_key` label redacted whole, because the scheme branch
- * returned before the quote was ever read.
- *
- * This is deliberately the same order `apiKeyAssignmentEnd` applies, and the two
- * must stay in step: they read the same `AUTHORIZATION_SCHEMES` and the same
- * `schemeValueEnd`, and a value redaction that is correct after one label and
- * leaks after the other is not a distinction any caller can act on. The `Digest`
- * challenge is unaffected because its quote sits after the scheme's first token
- * rather than before it, so `quote` is not the value's here and the scheme run
- * stands on its own.
- */
-const credentialEnd = (
-  message: string,
-  valueStart: number,
-  firstTokenEnd: number,
-  quote: string,
-): number => {
-  const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
-  const schemeEnd = AUTHORIZATION_SCHEMES.has(scheme)
-    ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
-    : firstTokenEnd;
-  if (!isQuote(quote)) return schemeEnd;
-  const closingQuoteEnd = quotedValueEnd(message, valueStart, quote);
-  return closingQuoteEnd === null
-    ? schemeEnd
-    : Math.max(schemeEnd, closingQuoteEnd);
 };
 
 /**

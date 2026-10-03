@@ -82,24 +82,6 @@ const armTick = (playback: ActiveWebAudioPlayback): void => {
   playback.rafId = window.requestAnimationFrame(tick);
 };
 
-const startSourceAt = (
-  playback: ActiveWebAudioPlayback,
-  offsetSeconds: number,
-): void => {
-  const source = playback.context.createBufferSource();
-  source.buffer = playback.buffer;
-  source.connect(playback.context.destination);
-  source.onended = () => {
-    if (activePlayback === playback) {
-      stopActivePlayback("ended");
-    }
-  };
-  playback.source = source;
-  playback.offsetSeconds = offsetSeconds;
-  playback.startTime = playback.context.currentTime;
-  source.start(0, offsetSeconds);
-};
-
 export const stopActivePlayback = (reason: PlaybackStopReason): void => {
   // A stop is a claim on the generation as well as on whatever is playing.
   // `playWebAudio` publishes `activePlayback` only once every await has
@@ -142,6 +124,24 @@ export const stopActivePlayback = (reason: PlaybackStopReason): void => {
 
   closingContext = current.context.close().catch(() => undefined);
   current.onStop(reason);
+};
+
+const startSourceAt = (
+  playback: ActiveWebAudioPlayback,
+  offsetSeconds: number,
+): void => {
+  const source = playback.context.createBufferSource();
+  source.buffer = playback.buffer;
+  source.connect(playback.context.destination);
+  source.onended = () => {
+    if (activePlayback === playback) {
+      stopActivePlayback("ended");
+    }
+  };
+  playback.source = source;
+  playback.offsetSeconds = offsetSeconds;
+  playback.startTime = playback.context.currentTime;
+  source.start(0, offsetSeconds);
 };
 
 export const seekPlayback = (progress: number): boolean => {

@@ -714,6 +714,21 @@ export const TutorialForm = () => {
     setDictationValue(event.target.value);
   };
 
+  const handleFinish = async () => {
+    setSubmitting(true);
+    try {
+      const savedUser = await finishOnboarding();
+      if (!savedUser) {
+        setSubmitting(false);
+        return;
+      }
+      showConfetti();
+    } catch (err) {
+      showErrorSnackbar(err);
+      setSubmitting(false);
+    }
+  };
+
   const handleContinue = async () => {
     if (!isLastStep) {
       trackButtonClick("onboarding_tutorial_continue");
@@ -728,21 +743,6 @@ export const TutorialForm = () => {
   const handleSkip = async () => {
     trackButtonClick("onboarding_tutorial_skip");
     await handleFinish();
-  };
-
-  const handleFinish = async () => {
-    setSubmitting(true);
-    try {
-      const savedUser = await finishOnboarding();
-      if (!savedUser) {
-        setSubmitting(false);
-        return;
-      }
-      showConfetti();
-    } catch (err) {
-      showErrorSnackbar(err);
-      setSubmitting(false);
-    }
   };
 
   const step1Placeholder = intl.formatMessage({

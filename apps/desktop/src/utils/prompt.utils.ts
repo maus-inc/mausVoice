@@ -442,6 +442,28 @@ const appendStructuredStyleGuidance = (
   return `${prompt}\n\nAdditional style guidance:\n${fields.join("\n")}`;
 };
 
+/**
+ * The reply contract for post-processing. Cleanup is normally a small,
+ * local change, so the model returns the changes as edits instead of
+ * retyping the transcript. Retyping costs output tokens (roughly one per
+ * word of the dictation) and gives the model a chance to alter text it was
+ * not asked to touch; an edit list is both cheaper to generate and
+ * verifiable before it is applied (see `applyTranscriptionEdits`).
+ *
+ * `result` stays in the schema so a heavy restyle, where nearly every word
+ * changes, can still return a full rewrite. Both keys are required, which is
+ * also what Groq's strict structured outputs need to decode the reply with
+ * constraints: the unused key is an empty string or an empty array. Providers
+ * that only offer JSON object mode ignore the schema, so the reader in
+ * ai.utils treats either key as optional and falls back to the raw transcript
+ * when neither is usable.
+ */
+const POST_PROCESS_OUTPUT_FORMAT_GUIDANCE = `Return JSON with both keys.
+"edits": the smallest ordered list of { "find", "replace" } pairs that turns the transcript into the cleaned text. Copy each "find" from the transcript exactly, including spaces and punctuation, and make sure it appears only once. Extend the copied text when a word repeats so each "find" is unique. Use an empty "replace" to delete text, and include the surrounding space in "find" when deleting a word so the sentence keeps single spacing.
+"result": leave this as an empty string when you return edits.
+Reply with only that JSON object, for example { "edits": [ { "find": "...", "replace": "..." } ], "result": "" }.
+If the style requires a full rewrite, or you cannot copy the changed text exactly, return "edits" as an empty array and put the full cleaned text in "result" instead.`;
+
 // The humanize skill is not repeated here. It rides on the cached prefix of
 // the user message instead, which `buildPostProcessingPrompt` builds, and
 // putting it in both halves of the request sent it twice for no benefit.
@@ -843,28 +865,6 @@ export const getPostProcessMaxTokens = (transcript: string): number => {
 // Cleanup is a formatting task. Low effort keeps gpt-oss reasoning from
 // consuming the output budget before the answer starts.
 export const POST_PROCESS_REASONING_EFFORT = "low";
-
-/**
- * The reply contract for post-processing. Cleanup is normally a small,
- * local change, so the model returns the changes as edits instead of
- * retyping the transcript. Retyping costs output tokens (roughly one per
- * word of the dictation) and gives the model a chance to alter text it was
- * not asked to touch; an edit list is both cheaper to generate and
- * verifiable before it is applied (see `applyTranscriptionEdits`).
- *
- * `result` stays in the schema so a heavy restyle, where nearly every word
- * changes, can still return a full rewrite. Both keys are required, which is
- * also what Groq's strict structured outputs need to decode the reply with
- * constraints: the unused key is an empty string or an empty array. Providers
- * that only offer JSON object mode ignore the schema, so the reader in
- * ai.utils treats either key as optional and falls back to the raw transcript
- * when neither is usable.
- */
-const POST_PROCESS_OUTPUT_FORMAT_GUIDANCE = `Return JSON with both keys.
-"edits": the smallest ordered list of { "find", "replace" } pairs that turns the transcript into the cleaned text. Copy each "find" from the transcript exactly, including spaces and punctuation, and make sure it appears only once. Extend the copied text when a word repeats so each "find" is unique. Use an empty "replace" to delete text, and include the surrounding space in "find" when deleting a word so the sentence keeps single spacing.
-"result": leave this as an empty string when you return edits.
-Reply with only that JSON object, for example { "edits": [ { "find": "...", "replace": "..." } ], "result": "" }.
-If the style requires a full rewrite, or you cannot copy the changed text exactly, return "edits" as an empty array and put the full cleaned text in "result" instead.`;
 
 const PROCESSED_TRANSCRIPTION_EDITS_SCHEMA = z
   .array(

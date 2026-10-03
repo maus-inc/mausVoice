@@ -108,6 +108,14 @@ export const readGladiaLiveWsRetryConfig = (
 ): GladiaLiveWsRetryConfig =>
   (client as unknown as GladiaClientOptionsView).options.wsRetry;
 
+const requireGladiaApiKey = (apiKey: string): string => {
+  const normalized = apiKey.trim();
+  if (!normalized) {
+    throw new Error("A Gladia API key is required.");
+  }
+  return normalized;
+};
+
 /**
  * The live client, configured so a live session survives a network drop.
  *
@@ -168,14 +176,6 @@ const errorMessage = (error: unknown): string =>
     .replace(/\btoken(\s*[:=]\s*)[^\s,;)]+/gi, "token$1[redacted]")
     .replace(/\bkey(\s*[:=]\s*)[^\s,;)]+/gi, "key$1[redacted]")
     .slice(0, 500);
-
-const requireGladiaApiKey = (apiKey: string): string => {
-  const normalized = apiKey.trim();
-  if (!normalized) {
-    throw new Error("A Gladia API key is required.");
-  }
-  return normalized;
-};
 
 const deduplicate = (values: string[]): string[] => Array.from(new Set(values));
 

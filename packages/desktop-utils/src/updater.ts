@@ -207,6 +207,61 @@ export const checkAppLocationWritable = async (
 };
 
 /**
+ * Retains an `Update` handle from any channel and resolves the install
+ * metadata the actions layer consumes. Shared by the bundled and channel
+ * check paths so both behave identically past this point.
+ */
+const retainUpdate = async (
+  update: Update,
+  platform: DesktopPlatform,
+): Promise<AvailableUpdateInfo> => {
+  if (availableUpdate && availableUpdate !== update) {
+    try {
+      await availableUpdate.close();
+    } catch (error) {
+      console.error("Failed to close previous update resource", error);
+    }
+  }
+  availableUpdate = update;
+
+  const requiresManualInstall =
+    platform === "darwin" ? !(await checkAppLocationWritable(platform)) : false;
+
+  const manualInstallerUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerUrl(update.version, update.rawJson)
+      : null;
+  const manualInstallerSignatureUrl =
+    platform === "darwin"
+      ? buildManualMacInstallerSignatureUrl(update.rawJson, manualInstallerUrl)
+      : null;
+
+  return {
+    currentVersion: update.currentVersion,
+    version: update.version,
+    releaseDate: update.date ?? null,
+    releaseNotes: update.body ?? null,
+    manualInstallerUrl,
+    manualInstallerSignatureUrl,
+    requiresManualInstall,
+  };
+};
+
+/** Releases the stored `Update` handle, if any. */
+export const closeAvailableUpdate = async (): Promise<void> => {
+  const previous = availableUpdate;
+  if (!previous) return;
+  // Detach synchronously: neither an install nor a later close may reuse this
+  // retiring resource, and finishing its close must not erase a newer offer.
+  availableUpdate = null;
+  try {
+    await previous.close();
+  } catch (error) {
+    console.error("Failed to close update resource", error);
+  }
+};
+
+/**
  * Checks for an update. On success the underlying `Update` handle is
  * retained internally so a follow-up `installAvailableUpdate()` call can
  * drive the install; returns `null` when the app is already current. Throws
@@ -273,61 +328,6 @@ export const checkForChannelUpdate = async (
     rawJson: JSON.parse(metadata.rawJson) as Record<string, unknown>,
   });
   return retainUpdate(update, platform);
-};
-
-/**
- * Retains an `Update` handle from any channel and resolves the install
- * metadata the actions layer consumes. Shared by the bundled and channel
- * check paths so both behave identically past this point.
- */
-const retainUpdate = async (
-  update: Update,
-  platform: DesktopPlatform,
-): Promise<AvailableUpdateInfo> => {
-  if (availableUpdate && availableUpdate !== update) {
-    try {
-      await availableUpdate.close();
-    } catch (error) {
-      console.error("Failed to close previous update resource", error);
-    }
-  }
-  availableUpdate = update;
-
-  const requiresManualInstall =
-    platform === "darwin" ? !(await checkAppLocationWritable(platform)) : false;
-
-  const manualInstallerUrl =
-    platform === "darwin"
-      ? buildManualMacInstallerUrl(update.version, update.rawJson)
-      : null;
-  const manualInstallerSignatureUrl =
-    platform === "darwin"
-      ? buildManualMacInstallerSignatureUrl(update.rawJson, manualInstallerUrl)
-      : null;
-
-  return {
-    currentVersion: update.currentVersion,
-    version: update.version,
-    releaseDate: update.date ?? null,
-    releaseNotes: update.body ?? null,
-    manualInstallerUrl,
-    manualInstallerSignatureUrl,
-    requiresManualInstall,
-  };
-};
-
-/** Releases the stored `Update` handle, if any. */
-export const closeAvailableUpdate = async (): Promise<void> => {
-  const previous = availableUpdate;
-  if (!previous) return;
-  // Detach synchronously: neither an install nor a later close may reuse this
-  // retiring resource, and finishing its close must not erase a newer offer.
-  availableUpdate = null;
-  try {
-    await previous.close();
-  } catch (error) {
-    console.error("Failed to close update resource", error);
-  }
 };
 
 /** True when `checkForUpdate` found and retained an update. */

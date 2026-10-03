@@ -278,6 +278,59 @@ const collectRegionGaps = (args: {
   return gaps;
 };
 
+const collectRegionTerms = (
+  gaps: TokenGap[],
+  dictatedLength: number,
+  existingTerms: string[],
+): string[] => {
+  // Added and removed are counted per gap, not across the region. A gap is a
+  // replacement bounded by aligned tokens, so it is the only place where an
+  // addition and a removal can be the same edit. Summing the two sides over the
+  // whole region let an insertion anywhere in it ride along on a correction
+  // somewhere else: type "Zeta" between "beta" and "call" and correct "Ralph" to
+  // "Ralf", and "Zeta" was learned as if the recognizer had produced it. The
+  // comment on `regionStart` describes that harm; this is what prevents it.
+  const added: string[] = [];
+  // Only ever read as a count, so it is tracked as one rather than built.
+  let removedCount = 0;
+  for (const gap of gaps) {
+    const gapAdded = computeAddedTokens(
+      gap.baseline.join(" "),
+      gap.field.join(" "),
+    );
+    if (gapAdded.length === 0) {
+      continue;
+    }
+    const gapRemoved = computeRemovedTokens(
+      gap.baseline.join(" "),
+      gap.field.join(" "),
+    );
+    if (gapRemoved.length === 0) {
+      continue;
+    }
+    added.push(...gapAdded);
+    removedCount += gapRemoved.length;
+  }
+
+  // A long list of added tokens means the user rewrote the text.
+  if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
+    return [];
+  }
+
+  // A pure insertion is the user adding their own words, not correcting the
+  // dictation, and a long removal is a rewrite.
+  if (removedCount === 0 || removedCount > MAX_EDIT_TOKENS) {
+    return [];
+  }
+
+  const replacedEverything =
+    dictatedLength > 1 && removedCount >= dictatedLength;
+  if (replacedEverything) {
+    return [];
+  }
+
+  return collectLearnableTerms(added, existingTerms);
+};
 /**
  * Returns the proper-noun terms the user corrected inside the dictated text.
  *
@@ -345,58 +398,4 @@ export const findEditCorrections = (args: {
     }
   }
   return [];
-};
-
-const collectRegionTerms = (
-  gaps: TokenGap[],
-  dictatedLength: number,
-  existingTerms: string[],
-): string[] => {
-  // Added and removed are counted per gap, not across the region. A gap is a
-  // replacement bounded by aligned tokens, so it is the only place where an
-  // addition and a removal can be the same edit. Summing the two sides over the
-  // whole region let an insertion anywhere in it ride along on a correction
-  // somewhere else: type "Zeta" between "beta" and "call" and correct "Ralph" to
-  // "Ralf", and "Zeta" was learned as if the recognizer had produced it. The
-  // comment on `regionStart` describes that harm; this is what prevents it.
-  const added: string[] = [];
-  // Only ever read as a count, so it is tracked as one rather than built.
-  let removedCount = 0;
-  for (const gap of gaps) {
-    const gapAdded = computeAddedTokens(
-      gap.baseline.join(" "),
-      gap.field.join(" "),
-    );
-    if (gapAdded.length === 0) {
-      continue;
-    }
-    const gapRemoved = computeRemovedTokens(
-      gap.baseline.join(" "),
-      gap.field.join(" "),
-    );
-    if (gapRemoved.length === 0) {
-      continue;
-    }
-    added.push(...gapAdded);
-    removedCount += gapRemoved.length;
-  }
-
-  // A long list of added tokens means the user rewrote the text.
-  if (added.length === 0 || added.length > MAX_EDIT_TOKENS) {
-    return [];
-  }
-
-  // A pure insertion is the user adding their own words, not correcting the
-  // dictation, and a long removal is a rewrite.
-  if (removedCount === 0 || removedCount > MAX_EDIT_TOKENS) {
-    return [];
-  }
-
-  const replacedEverything =
-    dictatedLength > 1 && removedCount >= dictatedLength;
-  if (replacedEverything) {
-    return [];
-  }
-
-  return collectLearnableTerms(added, existingTerms);
 };

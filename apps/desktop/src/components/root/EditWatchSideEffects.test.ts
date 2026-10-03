@@ -162,6 +162,8 @@ const raiseProposal = async (): Promise<string | null> => {
   return getVisibleProposalId();
 };
 
+const handlerAt = (index: number) => toastHandlers.at(index);
+
 describe("EditWatchSideEffects unmount cleanup (thread 18)", () => {
   it("ends the edit watch when the component unmounts", async () => {
     beginEditWatch("Hello world");
@@ -339,5 +341,3 @@ describe("EditWatchSideEffects stale auto-learn click", () => {
     expect(createGlossaryTerms).not.toHaveBeenCalled();
   });
 });
-
-const handlerAt = (index: number) => toastHandlers.at(index);
