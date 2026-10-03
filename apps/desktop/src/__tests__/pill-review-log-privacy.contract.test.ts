@@ -26,11 +26,25 @@ const PILL_PROCESS = "apps/desktop/src-tauri/src/pill_process.rs";
  * while a diagnostic added to the live path went unchecked. Both are named here
  * so neither can be renamed away without this failing, and so the set is the
  * thing a reader has to keep true rather than a single signature.
+ *
+ * `dispatch_pill_event` is here because it destructures `PillEvent::
+ * ReviewDecision { .., text }` and `TypedMessage { text }` and is one `log::error!`
+ * away from writing either to the log. It logs `{err}` today, so nothing leaks --
+ * the point is that a `{text}` added to that call would now fail this contract,
+ * which is the same gap this list exists to close, just one frame further down.
+ *
+ * `parse_pill_event` logs nothing at all today, and stays anyway. That is not the
+ * same as the vacuous assertions removed elsewhere in this change set: this
+ * asserts a RULE ("any log call added here must not carry the payload"), which
+ * holds vacuously now and takes effect the moment someone adds a `log::` line --
+ * whereas `is_char_boundary` on a `&str` could not fail under any input ever.
+ * An entry is load-bearing if a future edit would trip it.
  */
 const LINE_HANDLERS = [
   "pub(crate) fn parse_review_decision_value(",
   "pub(crate) fn parse_style_switch_direction_value(",
   "pub(crate) fn parse_pill_event(",
+  "fn dispatch_pill_event(",
   // The only place a pill line's parse error reaches a log at all. It appears
   // exactly twice in the Rust source -- this definition and the call site above
   // -- so it belongs here rather than in a test of its own: one list to keep
