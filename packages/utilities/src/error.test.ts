@@ -636,6 +636,30 @@ describe("authorization scheme credentials", () => {
     ["anthropic", "api", "key"].join("_"),
   ];
   const AZURE_KEY_NUMBERED = ["azure", "api", "key", "2"].join("_");
+  // camelCase credential labels, written the way a TypeScript caller writes them.
+  const CAMEL_CREDENTIAL_KEYS = [
+    ["openai", "Api", "Key"].join(""),
+    ["azure", "Api", "Key"].join(""),
+    ["auth", "Token"].join(""),
+    ["signing", "Key"].join(""),
+    ["encryption", "Key"].join(""),
+    ["user", "Password"].join(""),
+    ["db", "Password"].join(""),
+    ["client", "Secret"].join(""),
+    ["private", "Key"].join(""),
+    ["session", "Token"].join(""),
+  ];
+  // camelCase words that are not credentials, including the two that only fail
+  // because folding produces a form the holder rule rejects.
+  const CAMEL_NON_SECRET_KEYS = [
+    ["secretary", ""].join(""),
+    ["keyboard", ""].join(""),
+    ["sort", "Key"].join(""),
+    ["max", "Tokens"].join(""),
+    ["cache", "Key"].join(""),
+    ["response", "Id"].join(""),
+    ["hotkey", ""].join(""),
+  ];
   const PRIVATE_KEY = ["private", "key"].join("_");
   // Fields that are not credentials, each with a value, read by both directions
   // of the label test below. One table rather than two lists, because the two
@@ -788,6 +812,30 @@ describe("authorization scheme credentials", () => {
     expect(
       redactSensitiveTokens(labelled(AZURE_KEY_NUMBERED, TWELVE_CHARS)),
     ).toBe(`${AZURE_KEY_NUMBERED}:[redacted]`);
+  });
+
+  it("folds a camelCase object key before judging it", () => {
+    // The anchored rule needs a separator before a qualifier, and an object key
+    // in this codebase is camelCase. These were measured leaking: a provider
+    // error body is JSON, so this is the shape that matters.
+    for (const key of CAMEL_CREDENTIAL_KEYS) {
+      expect(unknownToMessage({ [key]: TWELVE_CHARS })).toBe(
+        `{"${key}":"[redacted]"}`,
+      );
+    }
+  });
+
+  it("still refuses an ordinary camelCase word as an object key", () => {
+    // Folding is only safe because the anchored form then applies the SAME
+    // rule. `sortKey` folds to `sort_key` and `maxTokens` to `max_tokens`,
+    // which the holder vocabulary rejects -- exactly as the snake_case spellings
+    // are rejected. `secretary` and `keyboard` have no uppercase at all, so
+    // folding cannot help a substring rule find them either.
+    for (const key of CAMEL_NON_SECRET_KEYS) {
+      expect(unknownToMessage({ [key]: "bananas" })).toBe(
+        `{"${key}":"bananas"}`,
+      );
+    }
   });
 
   it("redacts a passphrase whole under a general label, and accepts the lost diagnosis", () => {

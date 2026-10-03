@@ -215,8 +215,38 @@ const SECRET_LABEL = String.raw`("?\b${CREDENTIAL_LABEL_CORE}\b"?)`;
  */
 const ANCHORED_CREDENTIAL_LABEL = new RegExp(`^${CREDENTIAL_LABEL_CORE}$`, "i");
 const LABEL_EDGE = /^["'\s]+|["'\s]+$/g;
-const isCredentialLabel = (label: string): boolean =>
-  ANCHORED_CREDENTIAL_LABEL.test(label.replace(LABEL_EDGE, ""));
+
+/**
+ * `openaiApiKey` -> `openai_api_key`, so the anchored rule above can judge it.
+ *
+ * An object key is a whole identifier, so unlike a label inside a message there
+ * is nothing around it for a suffix to backtrack into. That makes a camelCase
+ * qualifier safe HERE and unsafe in `SECRET_LABEL`, which scans free text -- any
+ * pattern that accepts a bare camel prefix there lets `monkey` donate its `key`
+ * and turns `monkey: bananas` into `monkey:[redacted]`. So the difference
+ * between the two forms is deliberate and it lives in this function rather than
+ * in a second copy of the vocabulary.
+ *
+ * Folding to separators and then running the SAME anchored regex is what keeps
+ * this from becoming a second rule to keep in step. Measured on the labels it
+ * did not catch before: `authToken`, `signingKey`, `encryptionKey`,
+ * `userPassword`, `dbPassword`, `openaiApiKey`, `azureApiKey` now redact, and
+ * `secretary`, `keyboard`, `hotkey`, `whiskey`, `tokenize`, `sortKey` and
+ * `maxTokens` still do not, because folding turns the last two into `sort_key`
+ * and `max_tokens`, which the holder rule rejects for the same reason the
+ * snake_case ones are rejected.
+ */
+const CAMEL_BOUNDARY = /([a-z0-9])([A-Z])/g;
+const foldCamelLabel = (label: string): string =>
+  label.replace(CAMEL_BOUNDARY, "$1_$2");
+
+const isCredentialLabel = (label: string): boolean => {
+  const trimmed = label.replace(LABEL_EDGE, "");
+  return (
+    ANCHORED_CREDENTIAL_LABEL.test(trimmed) ||
+    ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed))
+  );
+};
 // The one tier-1 name that denotes a header rather than a stored credential, so
 // it is matched as the END of a label: `authorization` and `proxy-authorization`
 // are the two spellings, and `AUTHORIZATION_SCHEME` handles both.
