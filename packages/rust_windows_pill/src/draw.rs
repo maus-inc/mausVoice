@@ -1741,7 +1741,8 @@ fn draw_review_actions(
     let btn_widths: Vec<f64> = buttons
         .iter()
         .map(|(label, _, _)| {
-            (gfx.measure_text(label, 11.0, false).0 + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+            let text_width = gfx.measure_text(label, 11.0, false).0;
+            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
         })
         .collect();
     let row_width: f64 =

@@ -1641,7 +1641,10 @@ fn draw_review_actions(
     // default -- ran under the leftmost button by 35.7px and 32.6px.
     let btn_widths: Vec<f64> = buttons
         .iter()
-        .map(|(label, _, _)| (ctx.text_extents(label).width + 20.0).max(PERM_BUTTON_WIDTH * 0.8))
+        .map(|(label, _, _)| {
+            let text_width = ctx.text_extents(label).width;
+            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+        })
         .collect();
     let row_width: f64 =
         btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
