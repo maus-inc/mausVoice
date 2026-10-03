@@ -26,6 +26,7 @@ import {
 } from "./transcription.utils";
 import type {
   ChatCompletionChunk,
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
@@ -63,6 +64,58 @@ export function supportsOpenAIJsonSchema(model: string): boolean {
 /** True for legacy models that need the `json_object` shape instead. */
 export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
   JSON_OBJECT_ONLY_MODELS.has(model);
+
+/**
+ * The field that caps the completion length for `model`.
+ *
+ * `max_completion_tokens` arrived with the o-series and is the only spelling
+ * those models and everything after gpt-4o-2024-08-06 accept. The pre-turbo
+ * GPT-4 and GPT-3.5 line rejects it as an unrecognised request argument, so it
+ * answers a request that carries it with a 400 instead of a transcript. Those
+ * ids are the same `OPENAI_LEGACY_CHAT_MODELS` set the `json_object` branch
+ * above serves, and they are reachable as discovered model ids, so the same
+ * request shape that works on gpt-4o-mini has to keep working on them.
+ */
+const buildMaxTokensParams = (
+  model: string,
+  maxTokens: number = 1024,
+): Record<string, number> =>
+  isOpenAIJsonObjectOnlyModel(model)
+    ? { max_tokens: maxTokens }
+    : { max_completion_tokens: maxTokens };
+
+// Matches the o-series id shape, with or without a vendor prefix: `o3-mini` on
+// OpenAI, `openai/o3-mini` where an aggregator routes one through, and
+// `openai:o3-mini` where the prefix is qualified with a colon instead of a
+// slash. The prefix boundary is any character that is neither alphanumeric nor
+// `-`, because `-` is the intra-id separator every published id already uses
+// (`gpt-4o-mini`, `gpt-oss-20b`) and is not a prefix delimiter: reading it as one
+// would classify `llama-o1-finetune`, a user-chosen Azure deployment alias, as a
+// reasoning model and silently drop its sampling parameters. The trailing digit
+// requirement is what keeps the test off everything else, and
+// `omni-moderation-latest` is what keeps it from being a bare "starts with o".
+const OPENAI_O_SERIES_MODEL_ID = /(?:^|[^A-Za-z0-9-])o\d/;
+
+/**
+ * Whether a model id names an OpenAI o-series (or gpt-5-style reasoning) model,
+ * which reject the sampling parameters rather than ignoring them.
+ *
+ * `temperature` and `top_p` are not "unsupported values" on these models the way
+ * they are on gpt-5 (which accepts only the default `1` and is therefore happy
+ * with the request this file sends). OpenAI documents `temperature`, `top_p`,
+ * `frequency_penalty` and `presence_penalty` as not supported by o1 and the
+ * reasoning models that followed it, and answers a request that carries them
+ * with a 400 before generating anything. This endpoint takes any id the model
+ * list returned, so an o-series id is reachable here and the request has to be
+ * built for it rather than sent and corrected.
+ *
+ * Exported because two other providers serve these model ids and hit the same
+ * 400: Azure by deployment name, OpenRouter by routing prefix (`openai/o3-mini`).
+ * A duplicate of this test in each file is a fourth thing to forget when the
+ * family grows.
+ */
+export const isOpenAIOReasoningModel = (model: string): boolean =>
+  OPENAI_O_SERIES_MODEL_ID.test(model);
 
 const buildResponseFormat = (model: string, jsonResponse?: JsonResponse) =>
   buildJsonSchemaResponseFormat(
@@ -218,17 +271,24 @@ export const openaiGenerateTextResponse = async ({
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
-      const response = await client.chat.completions.create(
-        {
-          messages,
-          model,
-          temperature: 1,
-          max_completion_tokens: maxTokens ?? 1024,
-          top_p: 1,
-          ...(response_format ? { response_format } : {}),
-        },
-        { signal },
-      );
+      // The o-series rejects the sampling pair outright, so it is omitted
+      // rather than sent and left to fail. Both keys are deleted rather than
+      // conditionally spread so `temperature: undefined` cannot reach the
+      // request as a key the API still sees.
+      const params: ChatCompletionCreateParamsNonStreaming = {
+        messages,
+        model,
+        ...buildMaxTokensParams(model, maxTokens),
+        ...(response_format ? { response_format } : {}),
+      };
+      if (!isOpenAIOReasoningModel(model)) {
+        params.temperature = 1;
+        params.top_p = 1;
+      }
+
+      const response = await client.chat.completions.create(params, {
+        signal,
+      });
 
       console.log("openai llm usage:", response.usage);
       return parseOpenAICompatibleGenerateTextResponse({
@@ -421,11 +481,21 @@ export async function* openaiCompatibleStreamChat(
       tools: llmToolsToOpenAI(input.tools),
       tool_choice: llmToolChoiceToOpenAI(input.toolChoice),
       max_tokens: input.maxTokens,
-      temperature: input.temperature,
+      // The streaming half of the guard the non-streaming call above already
+      // has: this entry point serves the same reasoning ids (Azure by
+      // deployment name, OpenRouter by routing prefix), and OpenAI documents
+      // these four as unsupported on o-series models, answering a request that
+      // carries them with a 400 before generating anything. `stop` and `seed`
+      // are not in that set, so a reasoning stream keeps them.
+      ...(isOpenAIOReasoningModel(model)
+        ? {}
+        : {
+            temperature: input.temperature,
+            top_p: input.topP,
+            frequency_penalty: input.frequencyPenalty,
+            presence_penalty: input.presencePenalty,
+          }),
       stop: input.stopSequences,
-      top_p: input.topP,
-      frequency_penalty: input.frequencyPenalty,
-      presence_penalty: input.presencePenalty,
       seed: input.seed,
       ...extraBody,
     },

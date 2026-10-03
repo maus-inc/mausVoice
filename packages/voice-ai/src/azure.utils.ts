@@ -8,6 +8,19 @@ export type AzureTranscriptionArgs = {
   language?: string;
   /** Vocabulary terms fed to the recognizer's phrase list. */
   phrases?: string[];
+  /**
+   * Deadline for the whole recognition round trip, in milliseconds. Omitted by
+   * every streaming and batch caller, which have their own lifecycle; see
+   * `azureTestIntegration` for the probe that needs one.
+   */
+  timeoutMs?: number;
+  /**
+   * Cancels the recognition. The Azure SDK's `recognizeOnceAsync` is
+   * callback-only and takes neither a signal nor a deadline, so without this a
+   * caller that gave up still waits for a recognizer nobody is listening to --
+   * a stop button that does not stop anything until the service answers.
+   */
+  signal?: AbortSignal;
 };
 
 export type AzureTranscribeAudioOutput = {
@@ -151,6 +164,8 @@ export const azureTranscribeAudio = async ({
   blob,
   language = "en-US",
   phrases,
+  timeoutMs,
+  signal,
 }: AzureTranscriptionArgs): Promise<AzureTranscribeAudioOutput> => {
   return new Promise((resolve, reject) => {
     const azureLocale = mapToAzureLocale(language);
@@ -189,29 +204,90 @@ export const azureTranscribeAudio = async ({
     const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
     applyPhraseList(recognizer, phrases);
 
+    // `recognizeOnceAsync` is callback-only: it takes no signal and has no
+    // deadline of its own, so a connection that never answers leaves this
+    // promise pending for the life of the process. The recognizer's two
+    // callbacks and the timer race for the one settle, so whichever loses must
+    // not write the promise a second time — and the timer is always cleared, so
+    // a probe that answered in time is not rejected afterwards.
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settleOnce = (settle: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      // A listener left on the caller's signal keeps this whole closure -- the
+      // recognizer, the audio buffer, the decoded samples -- alive for as long
+      // as the signal does, which for a session controller is the app's lifetime.
+      signal?.removeEventListener("abort", onAbort);
+      settle();
+    };
+    const onAbort = (): void => {
+      recognizer.close();
+      settleOnce(() =>
+        reject(
+          new AzureRecognitionError(
+            "Azure recognition cancelled by the caller",
+            "cancelled before Azure answered",
+          ),
+        ),
+      );
+    };
+    if (signal?.aborted) {
+      // A call that arrives already cancelled settles here rather than waiting
+      // for a recognizer it will never want. The recognizer and the push stream
+      // are built by the time this runs, so this saves the round trip rather
+      // than the construction -- which is what still happens on a cancellation
+      // that arrives later.
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        recognizer.close();
+        // Worded so the transport rules read it as unreachable, which is what a
+        // blackholed connection is: nothing came back over the network, and the
+        // key was never judged.
+        const reason = `Timed out after ${timeoutMs}ms: no answer arrived from the network.`;
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${reason}`,
+              reason,
+            ),
+          ),
+        );
+      }, timeoutMs);
+    }
+
     recognizer.recognizeOnceAsync(
       (result) => {
         recognizer.close();
-
-        if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-          resolve({ text: result.text });
-        } else if (result.reason === sdk.ResultReason.NoMatch) {
-          resolve({ text: "" });
-        } else {
-          reject(
-            new AzureRecognitionError(
-              `Azure recognition failed: ${result.errorDetails}`,
-              result.errorDetails,
-            ),
-          );
-        }
+        settleOnce(() => {
+          if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+            resolve({ text: result.text });
+          } else if (result.reason === sdk.ResultReason.NoMatch) {
+            resolve({ text: "" });
+          } else {
+            reject(
+              new AzureRecognitionError(
+                `Azure recognition failed: ${result.errorDetails}`,
+                result.errorDetails,
+              ),
+            );
+          }
+        });
       },
       (error) => {
         recognizer.close();
-        reject(
-          new AzureRecognitionError(
-            `Azure API request failed: ${error}`,
-            error,
+        settleOnce(() =>
+          reject(
+            new AzureRecognitionError(
+              `Azure API request failed: ${error}`,
+              error,
+            ),
           ),
         );
       },
@@ -226,6 +302,8 @@ export type AzureTestIntegrationArgs = {
 
 /** Bytes in a canonical 44-byte PCM WAV header. */
 const WAV_HEADER_BYTES = 44;
+/** Every WAV chunk id (`RIFF`, `WAVE`, `fmt `, `data`) is a four-byte field. */
+const WAV_CHUNK_ID_BYTES = 4;
 const PROBE_SAMPLE_RATE = 16_000;
 const PROBE_CHANNELS = 1;
 const PROBE_BITS_PER_SAMPLE = 16;
@@ -233,26 +311,48 @@ const PROBE_BITS_PER_SAMPLE = 16;
 const PROBE_FRAMES = 4_800;
 
 /**
- * Write a WAV chunk id. The field is four ASCII bytes, so a code point above
- * U+007F cannot be encoded at all. `for...of` walks code points rather than
- * UTF-16 code units, so an astral character arrives here whole and is rejected
- * instead of being written as two low bytes, which would corrupt the id for
- * every reader of the file.
+ * Write a WAV chunk id.
+ *
+ * The field is exactly four ASCII bytes, and both halves of that are checked
+ * before anything is written rather than left to the caller to get right: a
+ * shorter tag leaves the id padded with whatever the buffer already held, and a
+ * longer one runs straight into the chunk size or sample-rate field that
+ * follows. Either way the header is one no reader agrees on, and this is an
+ * exported helper, so the length is this function's contract rather than an
+ * internal caller's habit. Validating first also means a refused tag cannot
+ * leave a half-written id behind.
+ *
+ * The ASCII test comes first because `for...of` walks code points rather than
+ * UTF-16 code units: an astral character arrives here whole, and writing its
+ * low byte would corrupt the id for every reader of the file.
  */
 export const writeWavChunkId = (
   view: DataView,
   offset: number,
   tag: string,
 ): void => {
-  let index = 0;
-  for (const character of tag) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined || codePoint > 0x7f) {
+  // Code points rather than UTF-16 units, so an astral tag is one character
+  // here and is still measured as the one character it is.
+  const characters = [...tag];
+  for (const character of characters) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint > 0x7f) {
       throw new RangeError(
         `A WAV chunk id is ASCII, so "${tag}" cannot be written at offset ${offset}.`,
       );
     }
-    view.setUint8(offset + index, codePoint);
+  }
+  if (characters.length !== WAV_CHUNK_ID_BYTES) {
+    throw new RangeError(
+      `A WAV chunk id is ${WAV_CHUNK_ID_BYTES} bytes, so "${tag}" (${characters.length}) cannot be written at offset ${offset}.`,
+    );
+  }
+
+  // Only now, with the whole tag known to be four ASCII characters, is
+  // anything written.
+  let index = 0;
+  for (const character of characters) {
+    view.setUint8(offset + index, character.codePointAt(0) ?? 0);
     index += 1;
   }
 };
@@ -471,6 +571,19 @@ const AZURE_CREDENTIAL_PATTERNS: RegExp[] = [
   // reaching this is an Azure failure reason, where no such field exists, and a
   // redaction control that hides one harmless value is far cheaper than one that
   // lets a key through because a new vendor prefix was not enumerated.
+  //
+  // The 24 bounds how much LABEL text the engine inspects before the credential
+  // word, and it is sized above every label that reaches this code: the longest
+  // one this app's own gateway sends, `Ocp-Apim-Subscription-Key`, puts 22
+  // characters in front of `Key`. It cannot put a credential back, which is the
+  // only property the number has to have, and the reason is structural: the
+  // `(?:key|token|...)` alternation is what makes the whole pattern match, so a
+  // value is redacted only once that word has been read inside the budgeted
+  // run. A label longer than the budget is simply re-matched from the next word
+  // boundary inside it -- `-` is one -- and the run it skips over is label text
+  // rather than value text, so the match still spans the credential and the
+  // label reads back whole. `a-f-o-o-bar-baz-qux-quux-corge-Key: v` is redacted
+  // from `baz-Key` and prints as the label it started from.
   /\b[a-z0-9_.-]{0,24}(?:key|token|secret|password|credential)\b["']{0,2}[ \t]{0,4}[:=][ \t]{0,4}["']{0,2}\S+/gi,
   // `Authorization: <scheme> <credential>`, for any scheme. The value runs to
   // the end of the line rather than to the next space, because the scheme is
@@ -576,6 +689,20 @@ const azureReasonExcerpt = (
  */
 const AZURE_REASON_LOG_CHARS = 240;
 
+/**
+ * How long the credential probe waits before it stops waiting.
+ *
+ * The probe used to hand the recognizer a 0-byte buffer, which threw a
+ * `RangeError` while the header was being parsed, so it always resolved without
+ * a request leaving the process and never needed a deadline. It now sends a real
+ * silent WAV and really talks to Azure, and the SDK's one-shot API has neither a
+ * signal nor a timeout: a captive portal or a firewall DROP leaves the promise
+ * pending forever. `ApiKeyList` holds `setTestingApiKeyId` for the whole promise,
+ * so the card would spin with no cancel path. This is the same budget
+ * `gladiaTestIntegration` gives its probe.
+ */
+const AZURE_PROBE_TIMEOUT_MS = 10_000;
+
 export const azureTestIntegration = async ({
   subscriptionKey,
   region,
@@ -585,6 +712,7 @@ export const azureTestIntegration = async ({
       subscriptionKey,
       region,
       blob: buildSilentProbeWav(),
+      timeoutMs: AZURE_PROBE_TIMEOUT_MS,
     });
     return true;
   } catch (error) {

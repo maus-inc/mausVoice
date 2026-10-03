@@ -252,13 +252,14 @@ pub enum OutMessage {
     },
 }
 
-/// Write one message to the desktop.
+/// Send one message to the desktop process over stdout.
 ///
-/// Returns whether the desktop actually received it. A closed or broken pipe is
-/// the desktop going away mid-take, and the caller needs to know: an entry
-/// cleared after a write nobody received has destroyed text that cannot be
-/// recovered and cannot be re-sent, because the pipe it would be re-sent on is
-/// the one that just failed.
+/// Returns whether the bytes were actually handed to the pipe. A write to a
+/// desktop process that has exited fails, and callers that would otherwise
+/// discard the user's text — the entry clearing itself on submit — need that
+/// to decide whether the message really landed. This used to discard every
+/// error with `let _ =`, which is why this pill was the only one of the three
+/// that threw the entry away on a failed write.
 pub fn send(msg: &OutMessage) -> bool {
     let mut stdout = io::stdout().lock();
     if serde_json::to_writer(&mut stdout, msg).is_err() {

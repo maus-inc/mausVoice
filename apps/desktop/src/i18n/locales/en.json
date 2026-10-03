@@ -389,6 +389,7 @@
   "high_five_5_days": "High five! 5 days! 🖐️",
   "highest_accuracy_requires_gpu": "Highest accuracy, requires GPU",
   "history": "History",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "History is not available in this session, so the {droppedChars} characters fast styling left unstyled at the end of that dictation were not saved.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "History is unavailable in Incognito Mode. Your edited transcript remains on the pill.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "Hold the dictate activation key and press Left or Right Arrow to cycle active styles.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "Hold the key to record, release to transcribe your speech into text with AI.",

@@ -54,11 +54,9 @@ on:
       - ".github/**"
   workflow_dispatch:
 
-# Least privilege: this workflow only reads the source and verifies formatting
-# and i18n consistency. It never writes to the repository, never publishes, and
-# does not cancel other workflow runs, so it needs only contents: read.
-permissions:
-  contents: read
+# Least privilege: the default grants nothing and each job below asks for the
+# one scope it needs. Nothing here writes to the repository or publishes.
+permissions: {}
 
 # Group every run for the same PR or branch so they queue instead of running in
 # parallel, without cancelling earlier runs (which would need actions: write).
@@ -67,6 +65,8 @@ concurrency:
 
 jobs:
   prettier:
+    permissions:
+      contents: read
     name: Repo-wide Prettier Check
     runs-on: ubuntu-latest
     steps:
@@ -86,6 +86,8 @@ jobs:
         run: pnpm run format:check
 
   i18n-idempotence:
+    permissions:
+      contents: read
     name: i18n Extractor Idempotence
     runs-on: ubuntu-latest
     steps:

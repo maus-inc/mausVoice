@@ -389,6 +389,7 @@
   "high_five_5_days": "Batti il cinque! 5 giorni! 🖐️",
   "highest_accuracy_requires_gpu": "Massima precisione, richiede GPU",
   "history": "Cronologia",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "La cronologia non è disponibile in questa sessione, quindi gli ultimi {droppedChars} caratteri che la formattazione rapida non ha formattato non sono stati salvati.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "La cronologia non è disponibile in modalità in incognito. La trascrizione modificata rimane nella pillola.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "Tieni premuto il tasto di attivazione della dettatura e premi Freccia sinistra o destra per scorrere gli stili attivi.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "Tieni premuto il tasto per registrare, rilascialo per trascrivere il tuo discorso in testo con l'IA.",

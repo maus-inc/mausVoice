@@ -19,7 +19,10 @@ import type {
   OpenRouterProvider,
   OpenRouterProviderRouting,
 } from "@maus-inc/types";
-import { openaiCompatibleStreamChat } from "./openai.utils";
+import {
+  isOpenAIOReasoningModel,
+  openaiCompatibleStreamChat,
+} from "./openai.utils";
 import type { CustomFetch } from "./types";
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -224,14 +227,17 @@ export const openrouterGenerateTextResponse = async ({
 
       const response_format = buildResponseFormat(model, jsonResponse);
 
+      // OpenRouter routes `openai/o1` and `openai/o3-mini` to the same models
+      // that reject `temperature` and `top_p`, so the id is checked through its
+      // routing prefix rather than being assumed to be a third-party model.
+      const reasoning = isOpenAIOReasoningModel(model);
       const requestParams: ChatCompletionCreateParamsNonStreaming & {
         provider?: OpenRouterProviderRouting;
       } = {
         messages,
         model,
-        temperature: 1,
         max_tokens: maxTokens ?? 1024,
-        top_p: 1,
+        ...(reasoning ? {} : { temperature: 1, top_p: 1 }),
         ...(response_format ? { response_format } : {}),
       };
 
@@ -283,6 +289,14 @@ export type OpenRouterTranscriptionArgs = {
   prompt?: string;
   language?: string;
   signal?: AbortSignal;
+  /**
+   * The transport to run the request over. Every other entry point in this file
+   * takes one, and every other transcription provider in the desktop app is
+   * wired with the app's own native or secure fetch. Without it this call was
+   * the one transcription path that could not use the configured request path
+   * and always fell back to the SDK's default transport.
+   */
+  customFetch?: CustomFetch;
 };
 
 export type OpenRouterTranscribeAudioOutput = {
@@ -298,9 +312,10 @@ export const openrouterTranscribeAudio = async ({
   prompt,
   language,
   signal,
+  customFetch,
 }: OpenRouterTranscriptionArgs): Promise<OpenRouterTranscribeAudioOutput> => {
   return openaiCompatibleTranscribeAudio({
-    client: createClient(apiKey),
+    client: createClient(apiKey, customFetch),
     blob,
     model,
     ext,

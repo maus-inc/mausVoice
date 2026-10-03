@@ -1,8 +1,6 @@
 use crate::constants::*;
 use crate::ipc::{self, OutMessage};
 use crate::state::{ClickAction, PillState};
-use std::cell::RefCell;
-use std::io::{self, Write};
 
 /// A23: Dispatch haptic/audio feedback to the desktop process.
 pub(crate) fn send_haptic(kind: &str) {
@@ -14,18 +12,22 @@ pub(crate) fn send_haptic(kind: &str) {
 /// Report a review decision back to the desktop. The id travels with the
 /// decision so a late click on a card that has already been replaced is
 /// discarded instead of applied to the next transcript.
-/// Report a review decision back to the desktop. The id travels with the
-/// decision so a late click on a card that has already been replaced is
-/// discarded instead of applied to the next transcript.
-///
-/// Returns whether the desktop received it, so a caller holding the only copy
-/// of an edited transcript can keep it when the write fails.
-pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) -> bool {
-    ipc::send(&OutMessage::ReviewDecision {
+fn send_review_decision_with(
+    review_id: &str,
+    action: &str,
+    text: Option<String>,
+    send: impl FnOnce(&OutMessage) -> bool,
+) -> bool {
+    send(&OutMessage::ReviewDecision {
         review_id: review_id.to_string(),
         action: action.to_string(),
         text,
     })
+}
+
+/// [`send_review_decision_with`] over the desktop's pipe.
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) -> bool {
+    send_review_decision_with(review_id, action, text, ipc::send)
 }
 
 /// Send whatever the entry holds.
@@ -35,29 +37,24 @@ pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<S
 /// Otherwise it is a message for the assistant. An empty entry sends nothing,
 /// because there is nothing to insert or say.
 ///
-/// Returns true when something was sent, so the caller can clear the platform
-/// text control only then.
+/// Returns true when the message actually reached the desktop, so the caller
+/// clears the platform text control only then. A failed write leaves the text
+/// in the entry: the pipe it would be re-sent on is the one that just failed,
+/// so the entry is the only remaining copy.
 pub(crate) fn submit_entry(state: &PillState) -> bool {
-    submit_entry_inner(&state.entry_text, state.pending_review_id(), |msg| {
-        let mut stdout = io::stdout().lock();
-        if serde_json::to_writer(&mut stdout, msg).is_err() {
-            return false;
-        }
-        if stdout.write_all(b"\n").is_err() {
-            return false;
-        }
-        stdout.flush().is_ok()
-    })
+    submit_entry_inner(
+        &state.entry_text,
+        state.pending_review_id().as_deref(),
+        ipc::send,
+    )
 }
 
-/// The submit decision, isolated from the platform write so the contract is
-/// testable: a send that fails must leave the entry untouched.
-///
-/// The parameter is named `entry_text` to match the other two pills, which the
-/// cross-crate contract test asserts against.
+/// The body of [`submit_entry`], with the entry and the sink as parameters so
+/// the decision can be tested without a `PillState` (which has no constructor)
+/// or a live desktop pipe.
 fn submit_entry_inner(
-    entry_text: &RefCell<String>,
-    pending_review_id: Option<String>,
+    entry_text: &std::cell::RefCell<String>,
+    review_id: Option<&str>,
     send: impl FnOnce(&OutMessage) -> bool,
 ) -> bool {
     // Send the text exactly as the user left it. Spacing at either end can be
@@ -67,22 +64,24 @@ fn submit_entry_inner(
     if text.trim().is_empty() {
         return false;
     }
-    let msg = match pending_review_id {
-        Some(review_id) => OutMessage::ReviewDecision {
-            review_id,
-            action: "insert".to_string(),
-            text: Some(text),
-        },
-        None => OutMessage::TypedMessage { text },
+    // The insert decision goes out through the one function that builds it, so
+    // the message shape has a single owner: the desktop's action vocabulary
+    // changes here and nowhere else.
+    let sent = match review_id {
+        Some(review_id) => send_review_decision_with(review_id, "insert", Some(text), send),
+        None => send(&OutMessage::TypedMessage { text }),
     };
-    // Clear only once the desktop has the text. Clearing after a failed write
-    // loses the user's only copy, and the pipe to re-send it on is the pipe
-    // that just failed.
-    if !send(&msg) {
-        return false;
+    // Cleared only when the desktop actually received it. This runs in the
+    // entry's activate handler, so there is no retry here: a failed write
+    // means the pipe is gone and nothing would consume one. That is exactly
+    // why the text must stay — the one copy the user has cannot be re-sent
+    // down a pipe that has just failed, so clearing it destroys it outright.
+    if sent {
+        *entry_text.borrow_mut() = String::new();
+        true
+    } else {
+        false
     }
-    entry_text.borrow_mut().clear();
-    true
 }
 
 pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
@@ -142,10 +141,10 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                         .map(|review| review.id.clone());
                     match review_id {
                         Some(review_id) => {
-                            send_review_decision(&review_id, "cancel", None);
+                            let _ = send_review_decision(&review_id, "cancel", None);
                         }
                         None => {
-                            ipc::send(&OutMessage::AssistantClose);
+                            let _ = ipc::send(&OutMessage::AssistantClose);
                         }
                     }
                 }
@@ -167,7 +166,7 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     send_review_decision(id, "edit", Some(text));
                 }
                 ClickAction::ReviewCancel(id) => {
-                    send_review_decision(id, "cancel", None);
+                    let _ = send_review_decision(id, "cancel", None);
                 }
                 ClickAction::OpenInNew => {
                     let review_id = state
@@ -320,55 +319,23 @@ pub(crate) fn handle_scroll(state: &PillState, delta: f64) {
 }
 
 #[cfg(test)]
-mod entry_submit_tests {
+mod tests {
     use super::*;
 
-    /// The entry is the user's only copy of an edited transcript. Clearing it
-    /// after a write that never reached the desktop destroys text that cannot
-    /// be recovered, because the pipe it would be re-sent on is the one that
-    /// just failed.
-    #[test]
-    fn a_failed_review_submit_keeps_the_edited_transcript() {
-        let entry_text = RefCell::new("an edited transcript".to_string());
-        let sent = submit_entry_inner(&entry_text, Some("review-7".to_string()), |_| false);
-        assert!(!sent, "a failed write is not a send");
-        assert_eq!(entry_text.borrow().as_str(), "an edited transcript");
-    }
-
-    #[test]
-    fn a_failed_plain_submit_keeps_the_entry_text() {
-        let entry_text = RefCell::new("a typed message".to_string());
-        let sent = submit_entry_inner(&entry_text, None, |_| false);
-        assert!(!sent);
-        assert_eq!(entry_text.borrow().as_str(), "a typed message");
-    }
-
-    #[test]
-    fn a_successful_submit_clears_the_entry() {
-        let entry_text = RefCell::new("a typed message".to_string());
-        let sent = submit_entry_inner(&entry_text, None, |_| true);
-        assert!(sent);
-        assert!(entry_text.borrow().is_empty());
-    }
-
-    #[test]
-    fn an_empty_entry_sends_nothing_and_is_never_cleared() {
-        for text in ["", "   ", "\n\t "] {
-            let entry_text = RefCell::new(text.to_string());
-            let sent = submit_entry_inner(&entry_text, None, |_| true);
-            assert!(!sent, "whitespace-only entry {text:?} must not be sent");
-            assert_eq!(entry_text.borrow().as_str(), text);
-        }
-    }
-
-    /// A review submit is an insert decision that carries the text exactly as
-    /// the user left it, including surrounding spacing, which can be deliberate
-    /// when the transcript lands in a document.
+    /// The entry is the user's only copy of what they typed. Clearing it after
+    /// a write that never reached the desktop destroys text that cannot be
+    /// recovered and cannot be re-sent, because the pipe it would be re-sent
+    /// on is the one that just failed.
+    /// The desktop's action vocabulary has one owner, `send_review_decision_with`,
+    /// so the insert decision's wire shape is pinned here rather than left to
+    /// whichever caller happens to build it. The surrounding text travels exactly
+    /// as the user left it, including spacing that can be deliberate when the
+    /// transcript lands in a document.
     #[test]
     fn a_review_submit_sends_an_insert_decision_carrying_the_text() {
-        let entry_text = RefCell::new("  spaced transcript  ".to_string());
-        let sent_json = RefCell::new(None);
-        let sent = submit_entry_inner(&entry_text, Some("review-9".to_string()), |msg| {
+        let entry = std::cell::RefCell::new("  spaced transcript  ".to_string());
+        let sent_json = std::cell::RefCell::new(None);
+        let sent = submit_entry_inner(&entry, Some("review-9"), |msg| {
             *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
             true
         });
@@ -379,14 +346,14 @@ mod entry_submit_tests {
                 r#"{"type":"review_decision","review_id":"review-9","action":"insert","text":"  spaced transcript  "}"#
             )
         );
-        assert!(entry_text.borrow().is_empty());
+        assert!(entry.borrow().is_empty());
     }
 
     #[test]
     fn a_plain_submit_sends_a_typed_message() {
-        let entry_text = RefCell::new("hello".to_string());
-        let sent_json = RefCell::new(None);
-        let sent = submit_entry_inner(&entry_text, None, |msg| {
+        let entry = std::cell::RefCell::new("hello".to_string());
+        let sent_json = std::cell::RefCell::new(None);
+        let sent = submit_entry_inner(&entry, None, |msg| {
             *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
             true
         });
@@ -394,6 +361,46 @@ mod entry_submit_tests {
         assert_eq!(
             sent_json.borrow().as_deref(),
             Some(r#"{"type":"typed_message","text":"hello"}"#)
+        );
+    }
+
+    #[test]
+    fn a_failed_submit_keeps_the_entry_text() {
+        let entry = std::cell::RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry, None, |_| false);
+        assert!(!sent, "a failed write is not a send");
+        assert_eq!(
+            entry.borrow().as_str(),
+            "a typed message",
+            "the entry must survive a write the desktop never received"
+        );
+    }
+
+    #[test]
+    fn a_failed_review_submit_keeps_the_edited_transcript() {
+        let entry = std::cell::RefCell::new("an edited transcript".to_string());
+        let sent = submit_entry_inner(&entry, Some("review-7"), |_| false);
+        assert!(!sent);
+        assert_eq!(entry.borrow().as_str(), "an edited transcript");
+    }
+
+    #[test]
+    fn a_successful_submit_clears_the_entry() {
+        let entry = std::cell::RefCell::new("a typed message".to_string());
+        let sent = submit_entry_inner(&entry, None, |_| true);
+        assert!(sent);
+        assert!(entry.borrow().is_empty());
+    }
+
+    #[test]
+    fn an_entry_of_only_whitespace_sends_nothing() {
+        let entry = std::cell::RefCell::new("   \n ".to_string());
+        let sent = submit_entry_inner(&entry, None, |_| true);
+        assert!(!sent, "there is nothing to say, so nothing is sent");
+        assert_eq!(
+            entry.borrow().as_str(),
+            "   \n ",
+            "and a submit that sent nothing must not clear the entry either"
         );
     }
 }

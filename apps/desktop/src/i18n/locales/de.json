@@ -389,6 +389,7 @@
   "high_five_5_days": "High five! 5 Tage! 🖐️",
   "highest_accuracy_requires_gpu": "Höchste Genauigkeit, erfordert GPU",
   "history": "Verlauf",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "Der Verlauf ist in dieser Sitzung nicht verfügbar, daher wurden die {droppedChars} Zeichen am Ende, die die schnelle Formatierung nicht formatiert hat, nicht gespeichert.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "Der Verlauf ist im Inkognito-Modus nicht verfügbar. Die bearbeitete Transkription bleibt in der Pille.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "Halten Sie die Diktier-Aktivierungstaste gedrückt und drücken Sie die Pfeiltaste nach links oder rechts, um die aktiven Stile zu durchlaufen.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "Halten Sie die Taste zum Aufnehmen gedrückt und lassen Sie sie los, um Ihre Sprache mit KI in Text umzuwandeln.",

@@ -1,5 +1,8 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { INITIAL_APP_STATE } from "../state/app.state";
+import { setAppState } from "../store";
 import type { PostProcessMetadata } from "./transcribe.actions";
-import { describe, expect, it, vi } from "vitest";
+import { FAST_STYLE_MAX_INPUT_CHARS } from "../utils/fast-style.utils";
 
 const { loggerMock } = vi.hoisted(() => ({
   loggerMock: {
@@ -64,5 +67,59 @@ describe("applyFastLocalStyle", () => {
     const { result, metadata } = run("um uh er", "concise");
     expect(result).toBeNull();
     expect(metadata.postProcessMode).toBeUndefined();
+  });
+});
+
+// The dropped tail is only recoverable when the transcript is actually written
+// somewhere. `isPersistenceAllowed()` is false under incognito mode and during
+// an ephemeral session, and both store paths honour it, so the warning used to
+// promise a History row that no code path created.
+describe("fast style truncation warning", () => {
+  const OVER_CAP = "dictation word ".repeat(2000);
+  const DROPPED = OVER_CAP.trim().length - FAST_STYLE_MAX_INPUT_CHARS;
+
+  const warn = (mutate: (state: typeof INITIAL_APP_STATE) => void) => {
+    const state = structuredClone(INITIAL_APP_STATE);
+    mutate(state);
+    setAppState(state, true);
+    const { warnings } = run(OVER_CAP, "concise");
+    expect(warnings).toHaveLength(1);
+    return warnings[0];
+  };
+
+  beforeEach(() => {
+    setAppState(structuredClone(INITIAL_APP_STATE), true);
+  });
+
+  it("points at History for a transcript that was persisted", () => {
+    const message = warn(() => {});
+    expect(message).toContain(String(DROPPED));
+    expect(message).toContain("History");
+  });
+
+  it.each([
+    // `userPrefs` starts as null and `isIncognitoModeEnabled` reads through it
+    // with `?.`, so the object has to exist before the flag can be set.
+    [
+      "incognito mode",
+      (s: typeof INITIAL_APP_STATE) => {
+        s.userPrefs = { incognitoModeEnabled: true } as typeof s.userPrefs;
+      },
+    ],
+    [
+      "an ephemeral session",
+      (s: typeof INITIAL_APP_STATE) => {
+        s.local.ephemeralSessionActive = true;
+      },
+    ],
+  ])("does not promise History under %s", (_label, mutate) => {
+    const message = warn(mutate);
+    // The count is still true and still actionable, so it stays.
+    expect(message).toContain(String(DROPPED));
+    // The defect is the promise, not the word "History": nothing was written,
+    // so the message must deny the tail is recoverable rather than send the
+    // user looking for a row that was never created.
+    expect(message).not.toContain("saved in History");
+    expect(message).toMatch(/not saved/i);
   });
 });

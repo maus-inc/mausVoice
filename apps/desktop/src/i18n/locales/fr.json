@@ -389,6 +389,7 @@
   "high_five_5_days": "Tape m'en cinq ! 5 jours ! 🖐️",
   "highest_accuracy_requires_gpu": "Précision maximale, nécessite un GPU",
   "history": "Historique",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "L'historique n'est pas disponible dans cette session, donc les {droppedChars} caractères à la fin que la mise en forme rapide n'a pas formatés n'ont pas été enregistrés.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "L'historique n'est pas disponible en mode navigation privée. La transcription modifiée reste dans la pastille.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "Maintenez la touche d'activation de la dictée et appuyez sur Flèche gauche ou droite pour faire défiler les styles actifs.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "Maintenez la touche enfoncée pour enregistrer et relâchez-la pour transcrire votre parole en texte grâce à l’IA.",

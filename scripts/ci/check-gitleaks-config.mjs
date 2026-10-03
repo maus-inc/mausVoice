@@ -230,71 +230,104 @@ export function rulesSection(raw) {
 
 // The `regex` value of the tauri-minisign-updater-private-key rule, or null
 // when no rule with that id carries a regex. Shared with
-// test-secret-history-scan.mjs so both scripts test the same rule. The id
-// line is matched per-line (trimmed, either quote style, any indentation),
-// and the value is read with the same string scanner stripTomlComments uses,
-// so every TOML string form works and no cross-text quantifier can
+// test-secret-history-scan.mjs so both scripts test the same rule. Both the id
+// and the value are found with the same string scanner stripTomlComments uses,
+// so every TOML string form works, an id or regex line inside a multi-line
+// description is content rather than config, and no cross-text quantifier can
 // backtrack.
-const UPDATER_RULE_ID_LINE =
-  /^id\s*=\s*["']tauri-minisign-updater-private-key["']\s*$/;
+const UPDATER_RULE_ID = "tauri-minisign-updater-private-key";
 
 /**
- * The offset of a `key =` assignment that starts a line and is not inside a
- * string, or -1. Reusing the string scanner keeps a quoted run from supplying
- * the match, which a plain regex over the text cannot tell apart from a key.
+ * Offset of the first non-blank character of the value of the first `key =`
+ * assignment that starts a line and is not inside a string, or -1 when the key
+ * has no assignment of that shape. Reusing the string scanner keeps a quoted run
+ * from supplying the match, which a plain regex over the text cannot tell apart
+ * from a key, and the line-start test is what tells a key from a word like
+ * `regexes` in a free-text value.
  */
-function findKeyOutsideStrings(text, key) {
+function findAssignmentOutsideStrings(text, key) {
   let cursor = 0;
   while (cursor < text.length) {
     const at = indexOfOutsideStrings(text, key, cursor);
     if (at === -1) return -1;
-    let lineStart = text.lastIndexOf("\n", at - 1) + 1;
-    let indent = lineStart;
+    let indent = text.lastIndexOf("\n", at - 1) + 1;
     while (text[indent] === " " || text[indent] === "\t") indent += 1;
     if (indent === at) {
-      let after = at + key.length;
-      while (text[after] === " " || text[after] === "\t") after += 1;
-      if (text[after] === "=") return at;
+      const valueStart = valueStartAfter(text, at + key.length);
+      if (valueStart !== -1) return valueStart;
     }
     cursor = at + key.length;
   }
   return -1;
 }
 
+/**
+ * Offset of the first non-blank character of the value in an assignment whose
+ * key ends at `keyEnd`, or -1 when no `=` follows the key. Any run of spaces and
+ * tabs is allowed on either side of the `=`, so `regex="..."` and `regex  = "..."`
+ * both resolve to their value.
+ */
+function valueStartAfter(text, keyEnd) {
+  let cursor = keyEnd;
+  while (text[cursor] === " " || text[cursor] === "\t") cursor += 1;
+  if (text[cursor] !== "=") return -1;
+  cursor += 1;
+  while (text[cursor] === " " || text[cursor] === "\t") cursor += 1;
+  return cursor;
+}
+
+// Offset of the quoted value of an assignment at `valueStart`, or -1 when the
+// value is not a quoted string. Only a single-character delimiter can open a
+// value: a triple-quoted one opens a multi-line string, which is how the prose
+// this scanner has to skip is written.
+function quotedValueAt(text, valueStart) {
+  const quote = text[valueStart];
+  if (quote !== '"' && quote !== "'") return null;
+  const delimiter = quoteLengthAt(text, valueStart);
+  if (delimiter === 3) return null;
+  const end = stringEnd(text, valueStart);
+  return text.slice(valueStart + delimiter, end - delimiter);
+}
+
+function updaterRuleIdValueStart(rules) {
+  let cursor = 0;
+  while (cursor < rules.length) {
+    const at = indexOfOutsideStrings(rules, "id", cursor);
+    if (at === -1) return -1;
+    const valueStart = findAssignmentOutsideStrings(rules.slice(at), "id");
+    if (
+      valueStart !== -1 &&
+      quotedValueAt(rules, at + valueStart) === UPDATER_RULE_ID
+    ) {
+      return at + valueStart;
+    }
+    cursor = at + "id".length;
+  }
+  return -1;
+}
+
 export function updaterRulePattern(rules) {
-  const lines = rules.split("\n");
-  const idLineIndex = lines.findIndex((line) =>
-    UPDATER_RULE_ID_LINE.test(line.trim()),
-  );
-  if (idLineIndex === -1) return null;
-  const afterIdLine = lines.slice(idLineIndex + 1).join("\n");
+  // Find the id with the string scanner rather than by trimming lines. An
+  // `id = "..."` line inside a multi-line description is prose, and treating it
+  // as the rule would start the search for `regex` in the middle of that
+  // description: the string still open there would then swallow the real key.
+  const idValueStart = updaterRuleIdValueStart(rules);
+  if (idValueStart === -1) return null;
+  const idLineEnd = rules.indexOf("\n", idValueStart);
+  const afterId = idLineEnd === -1 ? "" : rules.slice(idLineEnd + 1);
   // The regex must belong to the updater rule itself. Stop at the next
   // [[rules]] table so a regex from a later rule is never attributed to it.
-  const nextRulesTable = indexOfOutsideStrings(afterIdLine, "[[rules]]");
-  const afterId =
-    nextRulesTable === -1 ? afterIdLine : afterIdLine.slice(0, nextRulesTable);
-  // Find the key with the string scanner rather than a raw regex, so a
-  // `regex =` line inside a multi-line description is not mistaken for the
-  // key. `indexOfOutsideStrings` skips quoted runs, and the line-start and
-  // `=` checks are what make the match a TOML key and not a word like
-  // `regexes` in a free-text value.
-  const keyStart = findKeyOutsideStrings(afterId, "regex");
-  if (keyStart === -1) return null;
-  // `findKeyOutsideStrings` already proved an `=` follows the key, so only the
-  // whitespace between them is left to step over.
-  let afterEquals = keyStart + "regex".length;
-  while (afterId[afterEquals] === " " || afterId[afterEquals] === "\t") {
-    afterEquals += 1;
-  }
-  let valueStart = afterEquals + 1;
-  while (afterId[valueStart] === " " || afterId[valueStart] === "\t") {
-    valueStart += 1;
-  }
-  const quote = afterId[valueStart];
-  if (quote !== '"' && quote !== "'") return null;
-  const valueEnd = stringEnd(afterId, valueStart);
-  const delimiter = quoteLengthAt(afterId, valueStart);
-  return afterId.slice(valueStart + delimiter, valueEnd - delimiter).trim();
+  const nextRulesTable = indexOfOutsideStrings(afterId, "[[rules]]");
+  const section =
+    nextRulesTable === -1 ? afterId : afterId.slice(0, nextRulesTable);
+  // Find the key with the same scanner, so a `regex =` line inside a multi-line
+  // description is not mistaken for the key.
+  const valueStart = findAssignmentOutsideStrings(section, "regex");
+  if (valueStart === -1) return null;
+  const delimiter = quoteLengthAt(section, valueStart);
+  if (delimiter === 1) return quotedValueAt(section, valueStart);
+  const end = stringEnd(section, valueStart);
+  return section.slice(valueStart + delimiter, end - delimiter).trim();
 }
 
 function main() {

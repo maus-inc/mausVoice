@@ -70,8 +70,10 @@ function collectWorkflowFacts() {
   const pins = [];
   const setupNodeSteps = [];
 
+  // Both suffixes: GitHub accepts either, so a workflow saved as `.yaml` would
+  // otherwise carry an unpinned action past this guard entirely.
   for (const file of readdirSync(WORKFLOW_DIR).filter((f) =>
-    f.endsWith(".yml"),
+    /\.ya?ml$/.test(f),
   )) {
     const lines = readFileSync(join(WORKFLOW_DIR, file), "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {

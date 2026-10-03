@@ -6,10 +6,10 @@ on:
       - "apps/desktop/**"
       - "packages/**"
       - ".github/workflows/test-desktop-integration.yml"
+permissions: {}
+
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.
-permissions:
-  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +19,8 @@ jobs:
   integration-tests:
     name: Desktop Integration Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Provider-backed tests are push-only. Keep the origin guard as defense
     # in depth if a PR trigger is restored; fork code must not receive secrets.
     if: |

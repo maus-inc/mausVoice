@@ -47,7 +47,131 @@ impl Drop for ReentryGuard<'_> {
 /// Shared cancel signal for the in-progress `simulate_type` call.
 /// `ReentryGuard` on `SIMULATE_TYPE_IN_PROGRESS` serializes typing, so
 /// there is never more than one live session and this flag is unambiguous.
+///
+/// Every backend polls this once per character, before emitting it, so a flag
+/// raised at any point during a session stops the next character — and a flag
+/// already set when the session starts stops the first one.
 static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
+
+/// Wall-clock millisecond at which a cancel that arrived with no live typing
+/// session stops being honoured. `0` means "no cancel is latched".
+///
+/// This exists because the frontend registers its blur/Escape handler *before*
+/// it issues the `simulate_type` invoke, so a cancel can be delivered in the
+/// window where the user has asked to stop but no session has started. Every
+/// input backend posts to the **system** focused application, so discarding
+/// that cancel types the whole private transcript into whatever app now holds
+/// focus. Dropping it is not an option; letting it live forever is not either,
+/// because a stray blur with nothing to cancel would then abort the *next*
+/// unrelated session. A short grace window satisfies both: it is orders of
+/// magnitude wider than the pre-start window (listener registered → invoke →
+/// Rust command entry), and far shorter than the gap between two dictations.
+static CANCEL_TYPING_DEADLINE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How long a cancel delivered with no live session keeps cancelling.
+///
+/// The pre-start window is listener-registration → IPC → command entry, which
+/// is sub-millisecond in-process. Two seconds leaves a very large margin while
+/// still expiring long before a user could start a *new*, unrelated dictation.
+const CANCEL_TYPING_GRACE_MS: u64 = 2_000;
+
+fn cancel_clock_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// True when a cancel latched at `deadline` is still inside its grace window.
+///
+/// `deadline == 0` is the "nothing latched" sentinel, and 0 is never a live
+/// `cancel_clock_millis()` result in any realistic epoch, so the check is
+/// redundant with the deadline test but keeps the sentinel meaning explicit.
+fn cancel_is_within_grace(deadline: u64) -> bool {
+    deadline != 0 && cancel_clock_millis() <= deadline
+}
+
+/// Record a delivered cancel. Never dropped, and never reads the re-entry flag.
+///
+/// Ordering is load-bearing and must not be swapped: the latch is published
+/// **before** the flag. `begin_typing_session` clears the flag and then takes
+/// the latch with one atomic swap, so a cancel landing between those two steps
+/// is either caught by the swap (latch already visible) or has its flag store
+/// land after the clear, where the live session's per-character poll sees it.
+/// Reversing the two stores reopens that window and silently loses the cancel.
+fn record_typing_cancel() {
+    CANCEL_TYPING_DEADLINE.store(
+        cancel_clock_millis().saturating_add(CANCEL_TYPING_GRACE_MS),
+        Ordering::SeqCst,
+    );
+    CANCEL_TYPING.store(true, Ordering::SeqCst);
+}
+
+/// Start a typing session. Returns `true` when it must type nothing at all.
+///
+/// Called with the re-entry guard already held, so exactly one session can be
+/// starting. The latch is consumed by the same atomic swap that reads it, so
+/// there is no interval in which a concurrent cancel is both observed and
+/// discarded — which is the whole point: the old code read the re-entry flag
+/// and then reset the cancel flag as two separate steps.
+fn begin_typing_session() -> bool {
+    // Clear first, then take the latch. A cancel that is already latched is
+    // caught by the swap below; a cancel that arrives after the swap has its
+    // flag store land after this clear (see `record_typing_cancel`).
+    CANCEL_TYPING.store(false, Ordering::SeqCst);
+    let latched = CANCEL_TYPING_DEADLINE.swap(0, Ordering::SeqCst);
+    if cancel_is_within_grace(latched) {
+        // Raise the flag so the cancellation is also visible to anything
+        // reading the signal rather than this return value.
+        CANCEL_TYPING.store(true, Ordering::SeqCst);
+        return true;
+    }
+    false
+}
+
+/// End a typing session and drop any latch that belonged to it.
+///
+/// A cancel that arrived during this session was aimed at this session, and a
+/// cancel that arrived after the last keystroke had nothing left to cancel.
+/// Either way it must not be inherited by the next session, which is what the
+/// grace window alone cannot guarantee: the next session may start within it.
+fn end_typing_session() {
+    CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+    CANCEL_TYPING.store(false, Ordering::SeqCst);
+}
+
+/// RAII wrapper so a panic or an early return in `simulate_type` still drops
+/// the latch, exactly as `ReentryGuard` releases its flag.
+///
+/// It *owns* the re-entry guard rather than sitting beside it so the drop
+/// order is defined by this `impl` and not by local declaration order: the
+/// latch goes first, then the re-entry flag. Getting that backwards would let
+/// a new session acquire the flag and then consume the previous session's
+/// latch, which is exactly the bug the ordering above exists to prevent.
+struct TypingSession {
+    /// Dropped after `Drop::drop` runs, releasing the re-entry flag.
+    _reentry: ReentryGuard<'static>,
+}
+
+impl TypingSession {
+    /// Take the session slot and apply any cancel already waiting for it.
+    ///
+    /// Returns `(session, cancelled)`. `cancelled` means the caller must type
+    /// nothing; the returned session still has to be dropped to release the
+    /// slot and the latch.
+    fn begin() -> Result<(Self, bool), String> {
+        let reentry = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS)
+            .map_err(|_| "Simulated typing is already in progress".to_string())?;
+        let session = Self { _reentry: reentry };
+        Ok((session, begin_typing_session()))
+    }
+}
+
+impl Drop for TypingSession {
+    fn drop(&mut self) {
+        end_typing_session();
+    }
+}
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
@@ -1645,34 +1769,120 @@ fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
     matches!(audio_path, Some(path) if !path.is_empty())
 }
 
+/// How a batch of managed-audio deletions actually went.
+///
+/// `cleared` and `retained` are kept apart because a caller may only treat a
+/// row as no longer owning its snapshot once that snapshot is really gone.
+/// `retained` still has bytes on disk, so its row has to keep `audio_path`
+/// set for a later sweep to find and retry it.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AudioDeletionOutcome {
+    /// Ids whose snapshot is gone, so their audio metadata may be cleared.
+    cleared: Vec<String>,
+    /// Ids whose snapshot is still on disk, so their rows must keep pointing
+    /// at it.
+    retained: Vec<String>,
+}
+
+fn delete_audio_entries_in_dir(
+    audio_dir: &Dir,
+    entries: Vec<(String, bool)>,
+) -> AudioDeletionOutcome {
+    let mut outcome = AudioDeletionOutcome::default();
+    for (id, has_file_path) in entries {
+        // `audio_path` is only a presence marker. Preserve the historical
+        // empty-marker behavior (clear metadata but do not delete a file),
+        // while deriving every non-empty marker's filename from its ID.
+        if !has_file_path {
+            // Nothing was ever stored under this marker, so clearing it cannot
+            // orphan a file. This is the historical empty-marker behavior.
+            outcome.cleared.push(id);
+            continue;
+        }
+        match crate::system::audio_store::delete_audio_file(audio_dir, &id) {
+            Ok(()) => outcome.cleared.push(id),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Already gone, so a later sweep has nothing to retry. Clearing
+                // the marker here is what stops `purge` re-selecting this row on
+                // every run forever, which is the recovery behavior the previous
+                // unconditional push was reaching for.
+                outcome.cleared.push(id);
+            }
+            Err(err) => {
+                // The snapshot is still on disk but could not be removed: on
+                // Windows the playback reader holds the file without delete
+                // sharing, and a permission or transient I/O failure arrives the
+                // same way. Clearing the row's marker now would strand those
+                // bytes permanently — `purge` selects
+                // `WHERE audio_path IS NOT NULL`, and `sweep_orphaned_wavs` runs
+                // only on a full local wipe, so nothing could find the file
+                // again. Retaining it lets the next sweep retry, which the
+                // frontend triggers after every dictation.
+                log::error!("Failed to delete audio file for transcription {id}: {err}");
+                outcome.retained.push(id);
+            }
+        }
+    }
+    outcome
+}
+
+/// Ids whose row claims a snapshot that is already gone, found *regardless* of
+/// the retention cap.
+///
+/// `purge_stale_transcription_audio` deletes files first and clears the rows'
+/// metadata afterwards. Anything that interrupts that gap — a pool error, a
+/// lock, a process kill — leaves a row advertising audio that no longer exists.
+/// `export_transcription` hard-fails on exactly that state (a non-empty marker
+/// with an unreadable snapshot is an error, not an absent feature), so such a
+/// row cannot be exported at all while the transcript stays readable in the app.
+///
+/// A row past the cap does get re-selected by the next sweep, where the
+/// `NotFound` arm of `delete_audio_entries_in_dir` clears it. That is a partial
+/// recovery and it is not unconditional: the sweep skips the newest
+/// `MAX_RETAINED_TRANSCRIPTION_AUDIO` marked rows, so a stranded row that later
+/// moves back inside the window — which happens as soon as the user deletes
+/// newer transcriptions — is never selected again and stays unexportable for
+/// good. This pass closes that: a row whose snapshot is already absent is
+/// inconsistent state, not audio worth retaining, so it is repaired no matter
+/// where it sits.
+///
+/// Only `NotFound` counts as absent. Any other error (permissions, a transient
+/// I/O failure, the Windows sharing violation while the file is open for
+/// playback) leaves the row alone, because "could not read" is not "is gone" and
+/// clearing the marker on the former is what strands bytes permanently.
+fn absent_snapshots_within_retention(
+    audio_dir: &Dir,
+    candidates: Vec<(String, bool)>,
+) -> Vec<String> {
+    let mut absent = Vec::new();
+    for (id, has_file_path) in candidates {
+        // The empty marker never had a file, so there is nothing to be absent.
+        if !has_file_path {
+            continue;
+        }
+        match crate::system::audio_store::open_audio_file_for_read(audio_dir, &id) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => absent.push(id),
+            Err(err) => {
+                log::error!("Could not confirm the snapshot for transcription {id} is gone: {err}");
+            }
+            Ok(_file) => {}
+        }
+    }
+    absent
+}
+
 async fn delete_audio_entries(
     app: AppHandle,
     entries: Vec<(String, bool)>,
-) -> Result<Vec<String>, String> {
+) -> Result<AudioDeletionOutcome, String> {
     if entries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(AudioDeletionOutcome::default());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
         let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
             .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
-        let mut removed = Vec::new();
-        for (id, has_file_path) in entries {
-            // `audio_path` is only a presence marker. Preserve the historical
-            // empty-marker behavior (clear metadata but do not delete a file),
-            // while deriving every non-empty marker's filename from its ID.
-            if has_file_path {
-                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id) {
-                    if err.kind() != std::io::ErrorKind::NotFound {
-                        log::error!("Failed to delete audio file for transcription {id}: {err}");
-                    }
-                }
-            }
-            // Match the existing recovery behavior: an unavailable file must
-            // not keep stale snapshot metadata indefinitely.
-            removed.push(id);
-        }
-        Ok::<Vec<String>, String>(removed)
+        Ok::<AudioDeletionOutcome, String>(delete_audio_entries_in_dir(&audio_dir, entries))
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2060,6 +2270,13 @@ pub async fn transcription_delete(
     .map_err(|err| err.to_string())?;
 
     if let Some(audio_path) = audio_path {
+        // Deliberately asymmetric with `purge_stale_transcription_audio`. The
+        // user asked for this row to be gone, so it goes even while its
+        // snapshot is momentarily undeletable; refusing the row deletion would
+        // leave the user unable to remove a transcription at all. The cost is
+        // an unlinked `.wav` until a full local wipe sweeps it — strictly
+        // better than the alternative, because the user already asked for
+        // these bytes to stop existing.
         delete_audio_entries(
             app.clone(),
             vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
@@ -2164,51 +2381,98 @@ pub async fn export_transcription(
         .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        use std::io::Read;
-        use std::io::Write;
-        use zip::write::SimpleFileOptions;
-
-        let file = std::fs::File::create(&save_path)
-            .map_err(|err| format!("Failed to create file: {err}"))?;
-        let mut zip = zip::ZipWriter::new(file);
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-
-        zip.start_file("processed.txt", options)
-            .map_err(|err| err.to_string())?;
-        zip.write_all(transcript.as_bytes())
-            .map_err(|err| err.to_string())?;
-
-        if let Some(ref raw) = raw_transcript {
-            if !raw.is_empty() {
-                zip.start_file("raw.txt", options)
-                    .map_err(|err| err.to_string())?;
-                zip.write_all(raw.as_bytes())
-                    .map_err(|err| err.to_string())?;
-            }
-        }
-
-        if audio_path_has_file_path(audio_path.as_deref()) {
-            // A non-empty value marks a saved snapshot; the generated ID name
-            // and held directory capability select the actual file.
-            if let Ok(mut audio_file) =
-                crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
-            {
-                let mut audio_data = Vec::new();
-                audio_file
-                    .read_to_end(&mut audio_data)
-                    .map_err(|err| format!("Failed to read audio: {err}"))?;
-                zip.start_file("audio.wav", options)
-                    .map_err(|err| err.to_string())?;
-                zip.write_all(&audio_data).map_err(|err| err.to_string())?;
-            }
-        }
-
-        zip.finish().map_err(|err| err.to_string())?;
+        build_transcription_export(
+            &audio_dir,
+            &id,
+            audio_path.as_deref(),
+            &transcript,
+            raw_transcript.as_deref(),
+            &save_path,
+        )?;
         Ok::<bool, String>(true)
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// Write one transcription export archive to `save_path`.
+///
+/// The snapshot is read before the archive file is created, so a snapshot that
+/// cannot be opened fails the export without leaving a half-written zip at the
+/// path the user picked.
+///
+/// A row whose `audio_path` is a non-empty marker *claims* a snapshot exists,
+/// so failing to read one is a real error rather than an absent feature. A
+/// partial export is legitimate only if the user is told it is partial, and
+/// this command's `Result<bool, String>` cannot say that: the frontend reads
+/// `Ok(true)` as "Export saved successfully" and shows no second message. The
+/// text is not lost by refusing — the transcript stays readable in the
+/// transcriptions view — whereas a silently text-only archive is
+/// indistinguishable from a complete one.
+fn build_transcription_export(
+    audio_dir: &Dir,
+    id: &str,
+    audio_path: Option<&str>,
+    transcript: &str,
+    raw_transcript: Option<&str>,
+    save_path: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::Read;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    // A non-empty value marks a saved snapshot; the generated ID name and held
+    // directory capability select the actual file, never the persisted path.
+    let audio_data = if audio_path_has_file_path(audio_path) {
+        // The row claims a snapshot, so failing to read one is an error rather
+        // than an absent feature. `open_audio_file_for_read` is an `io::Result`,
+        // so `NotFound`, `PermissionDenied` and the Windows sharing violation all
+        // arrive here, and `transcription_audio_load` already reports this same
+        // failure as an error. Surfacing it is what keeps the export from being
+        // indistinguishable from a complete one.
+        let mut audio_file = crate::system::audio_store::open_audio_file_for_read(audio_dir, id)
+            .map_err(|err| {
+                format!(
+                    "Unable to read the recorded audio for this export, so no archive was \
+                         written: {err}. The transcript is still available in the app."
+                )
+            })?;
+        let mut audio_data = Vec::new();
+        audio_file
+            .read_to_end(&mut audio_data)
+            .map_err(|err| format!("Failed to read audio: {err}"))?;
+        Some(audio_data)
+    } else {
+        None
+    };
+
+    let file =
+        std::fs::File::create(save_path).map_err(|err| format!("Failed to create file: {err}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    zip.start_file("processed.txt", options)
+        .map_err(|err| err.to_string())?;
+    zip.write_all(transcript.as_bytes())
+        .map_err(|err| err.to_string())?;
+
+    if let Some(raw) = raw_transcript {
+        if !raw.is_empty() {
+            zip.start_file("raw.txt", options)
+                .map_err(|err| err.to_string())?;
+            zip.write_all(raw.as_bytes())
+                .map_err(|err| err.to_string())?;
+        }
+    }
+
+    if let Some(ref audio_data) = audio_data {
+        zip.start_file("audio.wav", options)
+            .map_err(|err| err.to_string())?;
+        zip.write_all(audio_data).map_err(|err| err.to_string())?;
+    }
+
+    zip.finish().map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2900,9 +3164,10 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())?;
 
-    let stale_entries: Vec<(String, bool)> = rows
+    // `timestamp DESC` puts the newest first, which is the order the retention
+    // cap is defined against.
+    let marked: Vec<(String, bool)> = rows
         .into_iter()
-        .skip(MAX_RETAINED_TRANSCRIPTION_AUDIO)
         .map(|row| {
             let audio_path = row.get::<String, _>("audio_path");
             (
@@ -2912,17 +3177,79 @@ pub async fn purge_stale_transcription_audio(
         })
         .collect();
 
-    if stale_entries.is_empty() {
+    if marked.is_empty() {
         return Ok(Vec::new());
     }
 
-    let purged_ids = delete_audio_entries(app.clone(), stale_entries).await?;
+    let audio_dir = tauri::async_runtime::spawn_blocking(move || {
+        crate::system::audio_store::open_managed_audio_dir(&app)
+            .map_err(|err| format!("Unable to open the managed audio directory: {err}"))
+    })
+    .await
+    .map_err(|err| err.to_string())??;
 
-    if purged_ids.is_empty() {
-        return Ok(purged_ids);
+    purge_transcription_audio_in_dir(&pool, &audio_dir, marked).await
+}
+
+/// The whole retention sweep, over an already-open directory and pool.
+///
+/// Split out from the command so it is reachable without an `AppHandle`: the
+/// decision that matters — which rows may have their metadata cleared — is the
+/// part worth testing, and it is pure bookkeeping plus two filesystem probes.
+///
+/// Three things happen, in this order:
+/// 1. Rows past the retention cap have their snapshots deleted. A snapshot that
+///    could not be deleted keeps its marker, so the next sweep retries it.
+/// 2. Rows whose snapshot is *already* gone are repaired, at any position.
+/// 3. Both sets have their audio metadata cleared, in one transaction.
+///
+/// Steps 1 and 3 are not atomic across the filesystem boundary, which is the
+/// whole reason step 2 exists.
+async fn purge_transcription_audio_in_dir(
+    pool: &sqlx::SqlitePool,
+    audio_dir: &Dir,
+    marked: Vec<(String, bool)>,
+) -> Result<Vec<String>, String> {
+    let mut split = marked.into_iter();
+    let retained: Vec<(String, bool)> = split
+        .by_ref()
+        .take(MAX_RETAINED_TRANSCRIPTION_AUDIO)
+        .collect();
+    let stale_entries: Vec<(String, bool)> = split.collect();
+
+    let outcome = delete_audio_entries_in_dir(audio_dir, stale_entries);
+    let repairs = absent_snapshots_within_retention(audio_dir, retained);
+
+    let mut cleared = outcome.cleared;
+    cleared.extend(repairs);
+    if cleared.is_empty() {
+        return Ok(cleared);
     }
 
-    for id in &purged_ids {
+    clear_audio_metadata_for_deleted_files(pool, &cleared).await?;
+    Ok(cleared)
+}
+
+/// NULL the audio columns of the rows whose snapshot is confirmed gone.
+///
+/// Only ids the deletion batch actually cleared, or that a repair pass found to
+/// be already absent, may be passed here. A row left out keeps `audio_path`,
+/// which is what lets a later sweep re-select it: the purge query filters on
+/// `WHERE audio_path IS NOT NULL`, so clearing a row whose `.wav` survived is the
+/// one action that makes the file unfindable.
+///
+/// One transaction for the whole batch. Per-id autocommits meant a failure part
+/// way through left some rows repaired and some not with nothing recording which,
+/// and the caller cannot tell a completed sweep from an interrupted one. It
+/// cannot close the file/row gap on its own — a process kill between the delete
+/// and this commit still strands a row — which is what `absent_snapshots_
+/// within_retention` is for.
+async fn clear_audio_metadata_for_deleted_files(
+    pool: &sqlx::SqlitePool,
+    cleared: &[String],
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|err| err.to_string())?;
+    for id in cleared {
         sqlx::query(
             "UPDATE transcriptions
              SET audio_path = NULL,
@@ -2930,12 +3257,11 @@ pub async fn purge_stale_transcription_audio(
              WHERE id = ?1",
         )
         .bind(id)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
     }
-
-    Ok(purged_ids)
+    tx.commit().await.map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -3057,12 +3383,17 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
         return Ok(());
     }
 
-    // Re-entry guard serializes typing: only one session can be live, so
-    // `cancel_typing` is unambiguous without a session id.
-    let _type_guard = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS)
-        .map_err(|_| "Simulated typing is already in progress".to_string())?;
-
-    CANCEL_TYPING.store(false, Ordering::SeqCst);
+    // Taking the session slot and consuming any cancel that arrived before this
+    // command's body ran is one step, so the "user already pressed Escape"
+    // case cannot slip between them.
+    let (_session, cancelled) = TypingSession::begin()?;
+    if cancelled {
+        // A cancel landed before the first keystroke. Report success, not an
+        // error: the user asked for this, and the frontend has no second
+        // message for a failure it did not cause.
+        log::info!("Simulated typing cancelled before it started");
+        return Ok(());
+    }
 
     let join_result = tauri::async_runtime::spawn_blocking(move || {
         crate::platform::input::type_text_into_focused_field(&text, delay_ms, &CANCEL_TYPING)
@@ -3088,16 +3419,12 @@ pub async fn simulate_type(text: String, delay_ms: u64) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub fn cancel_typing() -> Result<(), String> {
-    // Serialization by the re-entry guard is what makes cancel unambiguous:
-    // only one `simulate_type` can be live, so this flag always targets it.
-    // Ignore cancels that arrive with no live session (a late blur/Escape,
-    // or another caller): otherwise the flag would stay set and abort the
-    // *next* typing session before it starts.
-    if !SIMULATE_TYPE_IN_PROGRESS.load(Ordering::Acquire) {
-        return Ok(());
-    }
-
-    CANCEL_TYPING.store(true, Ordering::SeqCst);
+    // No liveness check: a cancel delivered before its session starts is the
+    // one that must never be dropped, and the backends post to whatever app
+    // the *system* has focused. `record_typing_cancel` bounds how long a
+    // session with no live session of its own can inherit this signal, which
+    // is what the old early return was protecting.
+    record_typing_cancel();
     Ok(())
 }
 
@@ -5578,25 +5905,194 @@ mod tests {
         assert!(validate_pill_placement("TOP").is_err());
     }
 
+    /// `CANCEL_TYPING` and its latch are process-wide and `cargo test` runs
+    /// tests in parallel, so every test that touches the cancel signal takes
+    /// this lock and puts the signal back the way it found it.
+    static CANCEL_TYPING_TEST_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> =
+        once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));
+
     #[test]
-    fn cancel_typing_only_signals_a_live_session() {
-        // `CANCEL_TYPING` is process-wide and `cargo test` runs tests in
-        // parallel, so put it back the way we found it before returning.
+    fn a_cancel_delivered_before_the_typing_session_starts_is_not_discarded() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = CANCEL_TYPING.load(Ordering::SeqCst);
         CANCEL_TYPING.store(false, Ordering::SeqCst);
 
-        // No typing session is live, so the cancel must be ignored instead
-        // of arming the flag for the next session.
+        // The frontend registers its blur/Escape handler *before* it issues the
+        // `simulate_type` invoke, so a cancel can be delivered in the window
+        // where the user has already asked to stop but the session has not
+        // started yet. All four input backends post to the system-focused
+        // application, so dropping this cancel types the whole transcript into
+        // whatever app now holds focus.
         cancel_typing().unwrap();
-        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+
+        assert!(
+            CANCEL_TYPING.load(Ordering::SeqCst),
+            "a cancel delivered before the typing session started was discarded"
+        );
+
+        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+    }
+
+    /// Replaces `cancel_typing_only_signals_a_live_session`, which asserted
+    /// that a cancel with no live session is *dropped*. That was the defect,
+    /// not the contract: the frontend registers its blur/Escape handler
+    /// before it issues the invoke, so the common case of that test was the
+    /// "late blur with nothing to cancel" shape at the exact moment it is
+    /// least safe — and every backend posts to the system-focused app.
+    #[test]
+    fn a_cancel_is_recorded_whether_or_not_a_session_is_live() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous_flag = CANCEL_TYPING.load(Ordering::SeqCst);
+        let previous_deadline = CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst);
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+
+        // No session live: still recorded, because the session may be starting.
+        cancel_typing().unwrap();
+        assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        assert!(cancel_is_within_grace(
+            CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst)
+        ));
 
         {
-            let _session = ReentryGuard::acquire(&SIMULATE_TYPE_IN_PROGRESS).unwrap();
+            let (_session, cancelled) = TypingSession::begin().unwrap();
+            assert!(
+                cancelled,
+                "the cancel recorded above must stop this session"
+            );
+            assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+        }
+
+        CANCEL_TYPING.store(previous_flag, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(previous_deadline, Ordering::SeqCst);
+    }
+
+    /// The delivered-cancel contract: a cancel recorded before the session
+    /// starts must stop that session from typing anything.
+    #[test]
+    fn a_cancel_recorded_before_the_session_stops_it_from_typing() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+
+        // The pre-start window: the user hit Escape, the handler is live, but
+        // `simulate_type` has not taken the session slot yet.
+        cancel_typing().unwrap();
+        let (_session, cancelled) = TypingSession::begin().unwrap();
+
+        assert!(
+            cancelled,
+            "the session typed anyway even though the cancel arrived first"
+        );
+        // And it is visible to a reader of the raw signal too.
+        assert!(CANCEL_TYPING.load(Ordering::SeqCst));
+    }
+
+    /// The other half of the contract, and the reason the session owns its
+    /// latch: a cancel from an unrelated earlier moment must not kill a
+    /// session that starts long afterwards.
+    #[test]
+    fn a_cancel_from_a_finished_session_does_not_abort_the_next_one() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+
+        // A cancel raised during a live session, which then ends...
+        {
+            let (_session, cancelled) = TypingSession::begin().unwrap();
+            assert!(!cancelled, "nothing was cancelling this session yet");
             cancel_typing().unwrap();
             assert!(CANCEL_TYPING.load(Ordering::SeqCst));
         }
 
-        CANCEL_TYPING.store(previous, Ordering::SeqCst);
+        // ...must not be inherited by the session that starts next.
+        let (_next, cancelled) = TypingSession::begin().unwrap();
+        assert!(
+            !cancelled,
+            "a cancel belonging to the previous session aborted the next one"
+        );
+    }
+
+    /// An expired latch must not abort anything, and the expiry is a pure
+    /// function of the deadline so it is checked without sleeping.
+    #[test]
+    fn an_expired_cancel_does_not_abort_a_later_session() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        CANCEL_TYPING.store(false, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+
+        // `0` is the "nothing latched" sentinel and never aborts.
+        assert!(!cancel_is_within_grace(0));
+
+        cancel_typing().unwrap();
+        let fresh = CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst);
+        assert!(cancel_is_within_grace(fresh));
+        assert!(!cancel_is_within_grace(fresh - CANCEL_TYPING_GRACE_MS - 1));
+
+        // A latch left behind from long ago must be consumed without aborting.
+        CANCEL_TYPING_DEADLINE.store(1, Ordering::SeqCst);
+        CANCEL_TYPING.store(true, Ordering::SeqCst);
+        let (_session, cancelled) = TypingSession::begin().unwrap();
+        assert!(
+            !cancelled,
+            "a stale latch aborted a session it had no bearing on"
+        );
+        // Consuming it also cleared the stale flag.
+        assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+    }
+
+    /// The ordering property, not the happy path: whatever the interleaving of
+    /// a delivered cancel and a session starting, the session must never both
+    /// proceed *and* miss the cancel. All four backends poll `CANCEL_TYPING`
+    /// before emitting each character, so "flag raised" is what stops the text.
+    ///
+    /// This is a stress test over a barrier, not a proof — it cannot be, since
+    /// the window is a few instructions. It is here because the fix is
+    /// structural (one atomic swap instead of a check then a reset) and this
+    /// pins the structure against a future edit that reorders the two stores.
+    #[test]
+    fn a_cancel_racing_a_session_start_is_never_lost() {
+        const ROUNDS: usize = 2_000;
+        for _ in 0..ROUNDS {
+            let _serialized = CANCEL_TYPING_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            CANCEL_TYPING.store(false, Ordering::SeqCst);
+            CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let canceller = {
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    record_typing_cancel();
+                })
+            };
+            barrier.wait();
+            let (session, aborted) = TypingSession::begin().unwrap();
+            canceller
+                .join()
+                .expect("the canceller thread must not panic");
+
+            // The session either refused to type, or left the flag raised for
+            // its per-character poll. Never "typed anyway, cancel lost".
+            assert!(
+                aborted || CANCEL_TYPING.load(Ordering::SeqCst),
+                "the session proceeded and the racing cancel was lost"
+            );
+
+            drop(session);
+        }
     }
 
     #[test]
@@ -6639,6 +7135,552 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A test-owned root under a per-test name, so the two audio-lifecycle
+    /// tests below cannot collide with each other or with a stale directory
+    /// left behind by an interrupted run.
+    fn lifecycle_test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "mausvoice-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    fn zip_entry_names(zip_path: &std::path::Path) -> Vec<String> {
+        let file = std::fs::File::open(zip_path).expect("export archive must be readable");
+        let mut archive = zip::ZipArchive::new(file).expect("export must be a readable archive");
+        (0..archive.len())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .expect("entry must be readable")
+                    .name()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn zip_entry_bytes(zip_path: &std::path::Path, entry: &str) -> Vec<u8> {
+        use std::io::Read;
+        let file = std::fs::File::open(zip_path).expect("export archive must be readable");
+        let mut archive = zip::ZipArchive::new(file).expect("export must be a readable archive");
+        let mut bytes = Vec::new();
+        archive
+            .by_name(entry)
+            .unwrap_or_else(|err| panic!("{entry} must be present: {err}"))
+            .read_to_end(&mut bytes)
+            .expect("entry must be readable");
+        bytes
+    }
+
+    /// A row that claims a snapshot it cannot produce must not be exported as
+    /// if the export were complete.
+    ///
+    /// `open_audio_file_for_read` is an `io::Result`, so `NotFound`,
+    /// `PermissionDenied` and the Windows sharing violation all land in the
+    /// same place. Silently dropping the audio and returning `Ok(true)` hands
+    /// the user a text-only archive named `mausvoice-<id>.zip` while
+    /// `TranscriptRow.tsx` reports "Export saved successfully" — the one
+    /// outcome the user cannot detect. The sibling `transcription_audio_load`
+    /// maps this same failure to an explicit error, so the export must too.
+    #[test]
+    fn export_reports_a_marked_but_unreadable_snapshot_instead_of_claiming_success() {
+        let root = lifecycle_test_root("export-missing-audio");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let save_path = root.join("export.zip");
+        let id = "missing-audio";
+
+        // `audio_path` is a non-empty marker, so the row claims a snapshot. No
+        // `.wav` exists for it.
+        let result = build_transcription_export(
+            &held_audio_dir,
+            id,
+            Some("/some/recorded.m4a"),
+            "the processed words",
+            Some("the raw words"),
+            &save_path,
+        );
+
+        assert!(
+            result.is_err(),
+            "a snapshot the row claims but cannot read must not export as a success"
+        );
+        assert!(
+            !save_path.exists(),
+            "a refused export must not leave an archive the user will mistake for a complete one"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A repair pass finds rows whose marker survived a snapshot that did not,
+    /// and it must not confuse "cannot read" with "is gone".
+    #[test]
+    fn a_stranded_row_inside_the_retention_window_is_found_and_a_live_one_is_not() {
+        let root = lifecycle_test_root("repair-absent");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        std::fs::write(audio_dir.join("still-here.wav"), b"live bytes")
+            .expect("managed fixture must be writable");
+        // A directory named like a snapshot opens, so it must not be mistaken
+        // for absent either.
+        std::fs::create_dir(audio_dir.join("blocked.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        let absent = absent_snapshots_within_retention(
+            &held_audio_dir,
+            vec![
+                ("still-here".to_string(), true),
+                ("blocked".to_string(), true),
+                ("already-gone".to_string(), true),
+                ("empty-marker".to_string(), false),
+            ],
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            absent,
+            vec!["already-gone".to_string()],
+            "only a marker whose snapshot is genuinely absent may be repaired"
+        );
+    }
+
+    /// The user-visible consequence, end to end, through the sweep itself: the
+    /// stranded row cannot be exported, the sweep repairs it, and it exports
+    /// again.
+    ///
+    /// This is the chain the defect rests on. `purge_stale_transcription_audio`
+    /// deletes snapshots and clears the rows' metadata afterwards, so anything
+    /// that interrupts that gap leaves `audio_path` set on a row whose `.wav` is
+    /// gone — and `build_transcription_export` treats a marker it cannot read as
+    /// an error, so the transcript stays readable in the app but cannot be
+    /// exported at all. Nothing in the row records that it needs repairing.
+    ///
+    /// The stranded row sits *inside* the retention window, because that is
+    /// where the previous sweep could not reach it: the query skipped the newest
+    /// `MAX_RETAINED_TRANSCRIPTION_AUDIO` marked rows, so a stranded row that
+    /// drifted back inside — which happens once the user deletes newer
+    /// transcriptions — was never selected again.
+    #[tokio::test]
+    async fn the_sweep_repairs_a_stranded_row_inside_the_retention_window() {
+        let root = lifecycle_test_root("repair-restores-export");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+
+        // Newest first, as the command's `ORDER BY timestamp DESC` produces.
+        // Two more rows than the cap, so the split is actually exercised.
+        let mut ids: Vec<String> = (0..=MAX_RETAINED_TRANSCRIPTION_AUDIO as u16)
+            .map(|index| format!("filler-{index:02}"))
+            .collect();
+        ids[0] = "healthy-live".to_string();
+        ids[1] = "stranded".to_string();
+        ids[MAX_RETAINED_TRANSCRIPTION_AUDIO - 1] = "blocked".to_string();
+        ids[MAX_RETAINED_TRANSCRIPTION_AUDIO] = "collectable".to_string();
+
+        for id in &ids {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+        // Only two of the marked rows have bytes on disk: one inside the
+        // window and one outside. `blocked` is a directory, so its delete fails
+        // the way an open playback reader does on Windows.
+        std::fs::write(audio_dir.join("healthy-live.wav"), b"live bytes")
+            .expect("managed fixture must be writable");
+        std::fs::write(audio_dir.join("collectable.wav"), b"collectable bytes")
+            .expect("managed fixture must be writable");
+        std::fs::create_dir(audio_dir.join("blocked.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        let marked: Vec<(String, bool)> = ids.iter().map(|id| (id.to_string(), true)).collect();
+        let cleared = purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked)
+            .await
+            .expect("the sweep must succeed");
+
+        async fn marker_of(pool: &sqlx::SqlitePool, id: &str) -> Option<String> {
+            let row: (Option<String>,) =
+                sqlx::query_as("SELECT audio_path FROM transcriptions WHERE id = ?1")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+                    .expect("the fixture row must still be readable");
+            row.0
+        }
+
+        assert_eq!(
+            marker_of(&pool, "healthy-live").await.as_deref(),
+            Some("/audio/healthy-live.m4a"),
+            "a retained row whose snapshot exists must keep its marker and its bytes"
+        );
+        assert!(audio_dir.join("healthy-live.wav").exists());
+        assert_eq!(
+            marker_of(&pool, "stranded").await,
+            None,
+            "a stranded row inside the retention window must be repaired"
+        );
+        assert_eq!(
+            marker_of(&pool, "collectable").await,
+            None,
+            "collected audio must have its marker cleared"
+        );
+        assert!(!audio_dir.join("collectable.wav").exists());
+        assert_eq!(
+            marker_of(&pool, "blocked").await.as_deref(),
+            Some("/audio/blocked.m4a"),
+            "an undeletable snapshot must keep its marker so the next sweep retries it"
+        );
+        assert!(
+            cleared.contains(&"stranded".to_string()),
+            "the repaired id must be reported so the frontend drops its cached audio"
+        );
+
+        // And the user's actual problem is gone: it exports again.
+        let save_path = root.join("repaired.zip");
+        let result = build_transcription_export(
+            &held_audio_dir,
+            "stranded",
+            None,
+            "the processed words",
+            None,
+            &save_path,
+        );
+
+        assert!(
+            result.is_ok(),
+            "a repaired row must export again instead of failing forever"
+        );
+        assert_eq!(
+            zip_entry_names(&save_path),
+            vec!["processed.txt".to_string()],
+            "a repaired row exports text-only, which is what the user still has"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The batch is one transaction: an id that cannot be cleared leaves the
+    /// whole batch unapplied, so a caller can never be left with a sweep that
+    /// half-happened and nothing recording which half.
+    ///
+    /// The trigger is how the failure is injected deterministically — it aborts
+    /// on one specific id, which is what a pool error or a lock does to a batch
+    /// of per-id autocommits.
+    #[tokio::test]
+    async fn a_failed_id_leaves_the_whole_metadata_batch_unapplied() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+        sqlx::query(
+            "CREATE TRIGGER refuse_one BEFORE UPDATE ON transcriptions
+             WHEN NEW.id = 'boom'
+             BEGIN SELECT RAISE(ABORT, 'refused'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("the failure trigger must be creatable");
+        for id in ["first", "boom", "last"] {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+
+        let result = clear_audio_metadata_for_deleted_files(
+            &pool,
+            &["first".to_string(), "boom".to_string()],
+        )
+        .await;
+
+        assert!(result.is_err(), "the refused id must surface as an error");
+        let markers: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, audio_path FROM transcriptions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("rows must be readable");
+        assert_eq!(
+            markers,
+            vec![
+                ("boom".to_string(), Some("/audio/boom.m4a".to_string())),
+                ("first".to_string(), Some("/audio/first.m4a".to_string())),
+                ("last".to_string(), Some("/audio/last.m4a".to_string())),
+            ],
+            "a batch that failed part way through must leave every row as it was"
+        );
+    }
+
+    /// The happy path must keep working, and must keep putting the real bytes
+    /// in `audio.wav`.
+    #[test]
+    fn export_includes_the_snapshot_bytes_when_the_marker_is_readable() {
+        let root = lifecycle_test_root("export-happy-path");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let save_path = root.join("export.zip");
+        let id = "readable-audio";
+        std::fs::write(audio_dir.join("readable-audio.wav"), b"RIFFfake-wave-bytes")
+            .expect("managed fixture must be writable");
+
+        build_transcription_export(
+            &held_audio_dir,
+            id,
+            Some("recorded.m4a"),
+            "the processed words",
+            Some("the raw words"),
+            &save_path,
+        )
+        .expect("a readable snapshot must export");
+
+        let mut names = zip_entry_names(&save_path);
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["audio.wav", "processed.txt", "raw.txt"],
+            "a complete export carries all three members"
+        );
+        assert_eq!(
+            zip_entry_bytes(&save_path, "audio.wav"),
+            b"RIFFfake-wave-bytes"
+        );
+        assert_eq!(
+            zip_entry_bytes(&save_path, "processed.txt"),
+            b"the processed words"
+        );
+        assert_eq!(zip_entry_bytes(&save_path, "raw.txt"), b"the raw words");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A row that never stored a snapshot legitimately exports text only, and
+    /// must not be turned into an error by the fix above.
+    #[test]
+    fn export_stays_text_only_when_no_snapshot_was_ever_recorded() {
+        let root = lifecycle_test_root("export-no-snapshot");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let save_path = root.join("export.zip");
+        let id = "no-snapshot";
+
+        build_transcription_export(
+            &held_audio_dir,
+            id,
+            None,
+            "the processed words",
+            None,
+            &save_path,
+        )
+        .expect("a row without a snapshot must still export its text");
+
+        assert_eq!(zip_entry_names(&save_path), vec!["processed.txt"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The mechanism test: force a non-`NotFound` delete failure deterministically
+    /// on every platform, and assert the row keeps its marker — alongside a
+    /// sibling in the same batch that *does* delete, so the partition the fix
+    /// exists for is pinned end to end.
+    ///
+    /// This test previously had an open-file sibling, `a_snapshot_that_could_not_
+    /// be_deleted_is_retained_for_a_later_retry`, which held a read handle on the
+    /// snapshot to imitate the playback reader. It was folded in here because it
+    /// could not assert anything anywhere: `delete_audio_file` is
+    /// `audio_dir.remove_file(...)`, and unlinking an open file succeeds on Linux
+    /// and macOS, so `retained` came back empty and every run fell into an
+    /// `else` arm that printed `SKIP`. The assertion it was named for therefore
+    /// executed on no platform at all — and no job runs these tests on Windows,
+    /// where `rust-windows-gated` only lints `--all-targets` (see the note at
+    /// `system/audio_store.rs:864-868`). What it could have asserted, that an
+    /// undeleted snapshot is retained while a deletable one in the same batch is
+    /// cleared, is asserted here instead, on every platform.
+    ///
+    /// The open-handle case is still load-bearing on Windows and remains pinned
+    /// there by `windows_reparse_attributes_are_detected` and the surrounding
+    /// `audio_store` suite. It is not pinned by this file, and cannot be from a
+    /// host that cannot run it.
+    #[test]
+    fn any_non_not_found_delete_failure_keeps_the_row_pointing_at_the_snapshot() {
+        let root = lifecycle_test_root("delete-dir-in-the-way");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let blocked_id = "blocked";
+        let deletable_id = "deletable";
+        // A *directory* named like the snapshot makes `remove_file` fail with
+        // something other than `NotFound` regardless of uid, where a permission
+        // bit would be ignored by the root user this suite may run as.
+        std::fs::create_dir(audio_dir.join("blocked.wav"))
+            .expect("the blocking fixture must be creatable");
+        std::fs::write(audio_dir.join("deletable.wav"), b"removable")
+            .expect("managed fixture must be writable");
+
+        let outcome = delete_audio_entries_in_dir(
+            &held_audio_dir,
+            vec![
+                (blocked_id.to_string(), true),
+                (deletable_id.to_string(), true),
+            ],
+        );
+
+        assert!(
+            audio_dir.join("blocked.wav").exists(),
+            "the blocking fixture must have survived the batch"
+        );
+        assert!(!audio_dir.join("deletable.wav").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            outcome.retained,
+            vec![blocked_id.to_string()],
+            "a snapshot still on disk must be retained for the next sweep"
+        );
+        assert_eq!(
+            outcome.cleared,
+            vec![deletable_id.to_string()],
+            "an undeleted snapshot must never be reported as cleared, and the \
+             deletable one in the same batch must be"
+        );
+    }
+
+    /// A snapshot that is genuinely already gone has nothing to retry, so its
+    /// row must stop pointing at it — otherwise `purge` re-selects the row on
+    /// every sweep forever.
+    #[test]
+    fn an_already_absent_snapshot_is_cleared_so_the_row_stops_reappearing() {
+        let root = lifecycle_test_root("delete-already-absent");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let absent_id = "already-gone";
+
+        let outcome =
+            delete_audio_entries_in_dir(&held_audio_dir, vec![(absent_id.to_string(), true)]);
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.cleared, vec![absent_id.to_string()]);
+        assert!(outcome.retained.is_empty());
+    }
+
+    /// The empty-marker case clears metadata without touching the filesystem,
+    /// which is the historical behavior and must survive the fix.
+    #[test]
+    fn the_empty_marker_case_clears_metadata_without_a_delete() {
+        let root = lifecycle_test_root("delete-empty-marker");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let empty_marker_id = "empty-marker";
+
+        let outcome = delete_audio_entries_in_dir(
+            &held_audio_dir,
+            vec![(empty_marker_id.to_string(), false)],
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.cleared, vec![empty_marker_id.to_string()]);
+        assert!(outcome.retained.is_empty());
+    }
+
+    /// `clear_audio_metadata_for_deleted_files` is what the purge command calls
+    /// with the cleared ids, so this pins the row-level consequence directly:
+    /// a retained row keeps `audio_path` and a later sweep can re-select it.
+    #[tokio::test]
+    async fn clearing_audio_metadata_touches_only_the_ids_passed_in() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+        for (id, marker) in [("gone", "/audio/gone.m4a"), ("kept", "/audio/kept.m4a")] {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(marker)
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+
+        // `kept` stands in for a snapshot that failed to delete: it must not be
+        // in the cleared set.
+        clear_audio_metadata_for_deleted_files(&pool, &["gone".to_string()])
+            .await
+            .expect("clearing cleared ids must succeed");
+
+        let markers: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, audio_duration_ms FROM transcriptions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("rows must be readable");
+        let paths: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, audio_path FROM transcriptions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("rows must be readable");
+
+        assert_eq!(
+            paths,
+            vec![
+                ("gone".to_string(), None),
+                // The retained row still points at its snapshot, which is what
+                // keeps it findable for the next sweep.
+                ("kept".to_string(), Some("/audio/kept.m4a".to_string())),
+            ]
+        );
+        assert_eq!(
+            markers,
+            vec![("gone".to_string(), None), ("kept".to_string(), Some(4200)),]
+        );
     }
 
     #[cfg(unix)]

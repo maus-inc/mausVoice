@@ -389,6 +389,7 @@
   "high_five_5_days": "하이 파이브! 5일! 🖐️",
   "highest_accuracy_requires_gpu": "가장 높은 정확도, GPU 필요",
   "history": "기록",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "이 세션에서는 기록을 사용할 수 없으므로 빠른 스타일링이 적용되지 않은 마지막 {droppedChars}개 문자는 저장되지 않았습니다.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "시크릿 모드에서는 기록을 사용할 수 없습니다. 수정한 받아쓰기는 알약 창에 그대로 남아 있습니다.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "받아쓰기 활성화 키를 누른 상태에서 왼쪽 또는 오른쪽 화살표 키를 눌러 활성 스타일을 순환하세요.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "키를 누른 채 녹음하고 놓으면 AI가 음성을 텍스트로 변환합니다.",

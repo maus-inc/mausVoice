@@ -145,6 +145,24 @@ pub const MAX_REVIEW_PREVIEW_LINES: usize = 60;
 /// truncating the preview for.
 const REVIEW_PREVIEW_TRIM_WINDOW: usize = 64;
 
+/// Byte offset where the character-budget scan stops, or `None` when the whole
+/// text fits inside the budget.
+///
+/// `char_indices().nth` returns the position of the first character *past* the
+/// budget, so `None` is the same `chars().count() <= limit` comparison the
+/// budget documents without walking the rest of a transcript that can be
+/// thousands of times longer than the preview. `chars().count()` did walk all
+/// of it, which made every rendered frame cost time proportional to the full
+/// text; this returns the offset the scan reached, which is a property of the
+/// budget and not of the input's length, so a test can assert the bound without
+/// timing a sub-microsecond call.
+fn review_preview_scan_end(full_text: &str) -> Option<usize> {
+    full_text
+        .char_indices()
+        .nth(MAX_REVIEW_PREVIEW_CHARS)
+        .map(|(byte_index, _)| byte_index)
+}
+
 /// Prepare a bounded slice of review text for rendering.
 /// Ensures that huge inputs (e.g. long audio imports or transcripts)
 /// do not cause unbounded text layout, wrapping, or allocation overhead on every frame.
@@ -152,17 +170,7 @@ pub fn bound_review_preview_text(full_text: &str) -> (String, bool) {
     // The budget is documented in characters, so it is measured in characters:
     // `str::len` is bytes, and 3000 bytes of Japanese is about 1000
     // characters.
-    //
-    // One scan, and it stops at the budget. `chars().count()` walked the whole
-    // transcript just to compare against the limit, so every rendered frame
-    // cost time proportional to the full text; `char_indices().nth` returns
-    // `None` exactly when the text fits, which is the same comparison without
-    // the scan. `None` also means there is no byte offset to cut at.
-    let Some(end) = full_text
-        .char_indices()
-        .nth(MAX_REVIEW_PREVIEW_CHARS)
-        .map(|(byte_index, _)| byte_index)
-    else {
+    let Some(end) = review_preview_scan_end(full_text) else {
         return (full_text.to_string(), false);
     };
 
@@ -201,6 +209,37 @@ pub fn clip_span_to_band(y: f64, h: f64, band_y: f64, band_h: f64) -> Option<(f6
     }
 }
 
+/// The rectangle a click target has to cover when the draw code painted it
+/// inside a scale transform about `(center_x, center_y)`.
+///
+/// Pointer coordinates and the input shape are both in unscaled window space,
+/// so a target registered with the rectangle's own coordinates covers a
+/// different part of the window than the pixels drawn there. The toast banner
+/// is scaled about its centre from half size up to full, and for the whole
+/// animation that leaves a button's registered rectangle offset from the button
+/// the user can see: a click on the visible half misses. Scaling the rectangle
+/// about the same centre, with the same factor the transform used, is what puts
+/// the target and the paint back in step.
+///
+/// A `scale` of 1 leaves the rectangle where it was, so this is safe for a
+/// caller that is unsure whether the transform was degenerate.
+pub fn scaled_click_rect(
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+) -> (f64, f64, f64, f64) {
+    (
+        center_x + (x - center_x) * scale,
+        center_y + (y - center_y) * scale,
+        w * scale,
+        h * scale,
+    )
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -237,8 +276,29 @@ pub const PILL_EXPAND_STIFFNESS: f64 = 320.0;
 pub const LABEL_BASE_ALPHA: f64 = 0.55;
 /// Vertical slide offset for the crossfade in pixels.
 pub const LABEL_SLIDE_OFFSET: f64 = 2.0;
-/// Alpha cutoff below which a label is not drawn (avoids pointless draws).
-pub const LABEL_ALPHA_CUTOFF: f64 = 0.01;
+/// Alpha below which a label is not drawn.
+///
+/// This ends one label when the other has taken over; it is not the
+/// sub-perceptual "avoid pointless draws" threshold it used to be. The two
+/// alphas are complementary — they sum to `LABEL_BASE_ALPHA * expand_t` — so a
+/// cutoff near zero is not a cleanup, it is the width of the crossfade. At
+/// `0.01` both labels cleared the bar for `drag_t` in roughly (0.018, 0.982):
+/// 96% of the transition, about 14 frames at 60 Hz, with `label_slide_y`
+/// parting them by `LABEL_SLIDE_OFFSET` (2px) on 12px glyphs. Two different
+/// strings superimposed 2px apart is a smudge, not a crossfade, and it is
+/// drawn while the pill tracks the cursor.
+///
+/// So the cutoff sits just under half the peak. Just under rather than exactly
+/// half, because all three renderers gate with `alpha > LABEL_ALPHA_CUTOFF`: at
+/// exactly half both arms equal the cutoff at `drag_t == 0.5` and the pill
+/// blinks with no label for one frame. At 45% of peak the overlap is ~19ms of
+/// the spring's ~350ms travel — about one frame at 60 Hz, at ~47% of peak
+/// alpha, so no frame ever draws nothing.
+///
+/// Raising it cannot suppress a label the geometry would have drawn: all three
+/// renderers only call the label painter above `expand_t > 0.5`, and at
+/// `drag_t == 0` the idle alpha is already `0.55 * 0.5 = 0.275` there.
+pub const LABEL_ALPHA_CUTOFF: f64 = LABEL_BASE_ALPHA * 0.45;
 
 /// Idle label text shown when not dragging.
 pub const LABEL_IDLE_TEXT: &str = "Click to dictate";
@@ -2176,6 +2236,49 @@ mod tests {
     }
 
     #[test]
+    fn an_unscaled_transform_leaves_the_rectangle_where_it_was() {
+        assert_eq!(
+            scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 1.0),
+            (300.0, 40.0, 60.0, 22.0)
+        );
+    }
+
+    #[test]
+    fn a_scaled_button_is_registered_where_it_is_painted() {
+        // The toast banner is drawn from half size up, about its centre, so the
+        // button on the banner's right edge is painted 50 points further left
+        // and half as wide while the banner is half size. A rectangle left at 300
+        // covers the empty space to the right of the button the user can see.
+        let (x, y, w, h) = scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 0.5);
+        assert_eq!((x, y, w, h), (250.0, 45.5, 30.0, 11.0));
+    }
+
+    #[test]
+    fn scaling_a_button_gives_the_rectangle_the_transform_paints() {
+        // The property the call sites rely on: the rectangle this returns, put
+        // back through the same transform, is the rectangle the draw code laid
+        // out. A rectangle left unscaled does not survive that round trip at any
+        // step of the animation, which is the whole defect.
+        let (x, y, w, h) = (300.0, 40.0, 60.0, 22.0);
+        let (cx, cy) = (200.0, 51.0);
+        for step in 0..=10 {
+            let scale = 0.5 + 0.5 * f64::from(step) / 10.0;
+            let (rx, ry, rw, rh) = scaled_click_rect(x, y, w, h, cx, cy, scale);
+            for (corner_x, corner_y) in [(rx, ry), (rx + rw, ry + rh)] {
+                let painted_x = cx + (corner_x - cx) / scale;
+                let painted_y = cy + (corner_y - cy) / scale;
+                let expected_x = if corner_x == rx { x } else { x + w };
+                let expected_y = if corner_y == ry { y } else { y + h };
+                assert!(
+                    (painted_x - expected_x).abs() < 1e-9 && (painted_y - expected_y).abs() < 1e-9,
+                    "at scale {scale} the painted corner came back at ({painted_x}, {painted_y}) \
+                     instead of ({expected_x}, {expected_y})"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_button_touching_a_band_edge_is_dropped() {
         // Zero visible height is nothing to click.
         assert_eq!(clip_span_to_band(56.0, 44.0, 100.0, 200.0), None);
@@ -2194,18 +2297,22 @@ mod tests {
     fn review_preview_bounding_truncates_huge_transcripts_cleanly() {
         let word = "transcription ";
         let huge_text = word.repeat(10_000); // ~140,000 characters
-        let start = std::time::Instant::now();
         let (preview, truncated) = bound_review_preview_text(&huge_text);
-        let elapsed = start.elapsed();
 
         assert!(truncated);
         // In characters: the budget is a character budget, and a byte assertion
         // would pass for a preview that kept a fraction of it.
         assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
         assert!(preview.contains("Full transcript preserved"));
+        // The range the function read is the budget's, not the transcript's:
+        // an offset proportional to the input is what made every rendered frame
+        // cost time proportional to the whole transcript.
+        let end =
+            review_preview_scan_end(&huge_text).expect("a transcript of this size is over budget");
         assert!(
-            elapsed.as_millis() < 50,
-            "Bounding huge text must be nearly instantaneous"
+            end < MAX_REVIEW_PREVIEW_CHARS * 8,
+            "the scan read {end} bytes of a {} byte transcript",
+            huge_text.len()
         );
     }
 
@@ -2271,41 +2378,380 @@ mod tests {
         let shown = preview
             .strip_suffix("\n… [Full transcript preserved for insert]")
             .expect("the truncation notice is appended to a bounded preview");
+        // The floor, not the trim window, is the point: 64 characters back is
+        // the worst a bounded trim can give up. Asserting it against
+        // `MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW` made the
+        // comparison hold for any budget — shrink the budget to 600 and the
+        // fixture still kept 600 characters against a floor of 536. The
+        // numbers are written out so moving either constant has to move this
+        // test deliberately.
         assert!(
-            shown.chars().count() >= MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW,
-            "preview kept {} characters of a {MAX_REVIEW_PREVIEW_CHARS} character budget",
+            shown.chars().count() >= 3000 - 64,
+            "preview kept {} characters of a 3000 character budget",
             shown.chars().count()
+        );
+        // This fixture has no whitespace anywhere near the cut, so the trim
+        // cannot fire at all and the preview keeps the budget to the character.
+        // That is the strongest form of the claim and it pins the budget's
+        // size, not just the trim's reach.
+        assert_eq!(
+            shown.chars().count(),
+            3000,
+            "a transcript with no whitespace near the cut must keep the whole budget"
         );
     }
 
     #[test]
-    fn review_preview_bounding_cost_does_not_grow_with_the_transcript() {
-        // The preview is bounded on the render path, once per drawn frame, so
-        // `chars().count()` walking the entire transcript made every frame
-        // linear in the full text size. Measured as a ratio against a
-        // barely-over-budget input, which is the same work either way, so the
-        // assertion does not depend on how fast the machine is.
-        fn fastest_bound(text: &str) -> std::time::Duration {
-            let mut fastest = std::time::Duration::MAX;
-            for _ in 0..3 {
-                let start = std::time::Instant::now();
-                std::hint::black_box(bound_review_preview_text(text));
-                fastest = fastest.min(start.elapsed());
-            }
-            fastest
-        }
+    fn review_preview_budget_is_3000_characters() {
+        // `MAX_REVIEW_PREVIEW_CHARS` is public and every test that mentions it
+        // compares against it, so a change to its value silently changed the
+        // meaning of all of them: 3000 -> 600 left every assertion passing while
+        // the preview quietly shrank to a fifth of its budget. The budget is a
+        // documented promise about layout cost, so it is pinned against the
+        // literal 3000 here, and separately from the trim window.
+        let at_budget = "a".repeat(3000);
+        let (whole, truncated) = bound_review_preview_text(&at_budget);
+        assert!(
+            !truncated,
+            "3000 characters fit the budget, so nothing should be trimmed"
+        );
+        assert_eq!(whole.chars().count(), 3000);
 
+        // One character over: the preview is trimmed, and what survives the
+        // trim is exactly the budget.
+        let over = "a".repeat(3001);
+        let (preview, truncated) = bound_review_preview_text(&over);
+        assert!(truncated);
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert_eq!(shown.chars().count(), 3000);
+
+        // The budget is in characters, not bytes: 3000 CJK characters are 9000
+        // bytes and must still fit whole.
+        let cjk = "あ".repeat(3000);
+        assert!(cjk.len() > 3000);
+        let (preview, truncated) = bound_review_preview_text(&cjk);
+        assert!(
+            !truncated,
+            "3000 characters are 9000 bytes but still on budget"
+        );
+        assert_eq!(preview.chars().count(), 3000);
+    }
+
+    #[test]
+    fn review_preview_bounding_reads_the_same_range_at_every_length() {
+        // The preview is bounded on the render path, once per drawn frame, so
+        // `chars().count()` walking the entire transcript made every frame linear
+        // in the full text size.
+        //
+        // What is asserted here is the range the function reads, not how long it
+        // takes: a stopwatch around a sub-microsecond call is a test that fails
+        // on a contended runner and under a sanitizer, and the range is the thing
+        // that actually bounds the work. It is a property of the budget and not
+        // of the input's length, so the same two fixtures must produce the same
+        // offset and the same preview whether one is barely over budget and the
+        // other is ten million characters.
         let barely_over = "word ".repeat(MAX_REVIEW_PREVIEW_CHARS / 5 + 2);
         let huge = "word ".repeat(2_000_000); // 10M characters
         assert!(
             barely_over.chars().count() > MAX_REVIEW_PREVIEW_CHARS,
             "the baseline must itself be over budget or it would return early"
         );
-        let (baseline, huge_cost) = (fastest_bound(&barely_over), fastest_bound(&huge));
+
+        let small_end = review_preview_scan_end(&barely_over);
+        let huge_end = review_preview_scan_end(&huge);
         assert!(
-            huge_cost < baseline * 4,
-            "bounding 10M characters took {huge_cost:?} against {baseline:?} for a barely-over-budget \
-             transcript: the cost still scales with the input"
+            small_end.is_some() && huge_end.is_some(),
+            "both fixtures must be over the budget"
         );
+        assert_eq!(
+            small_end, huge_end,
+            "the scan stopped at a different offset for a longer transcript, so its \
+             cost still scales with the input"
+        );
+
+        let (small_preview, small_truncated) = bound_review_preview_text(&barely_over);
+        let (huge_preview, huge_truncated) = bound_review_preview_text(&huge);
+        assert!(small_truncated && huge_truncated);
+        assert_eq!(
+            small_preview.chars().count(),
+            huge_preview.chars().count(),
+            "a ten-million character transcript produced a different preview length than a \
+             barely-over-budget one"
+        );
+    }
+
+    // ── Idle/drag label crossfade ──────────────────────────────────────
+    //
+    // `label_crossfade_alpha` and `label_slide_y` are called by all three pill
+    // renderers on every drawn frame and had no test at all: three mutations to
+    // `label_crossfade_alpha` — dropping `(1.0 - drag_t)` from the idle arm,
+    // swapping the two arms, and dropping `expand_t` from the idle arm — left
+    // the suite green. The last is a visible regression by itself, so these
+    // tests pin the contract rather than the arithmetic.
+
+    /// The cutoff is the width of the crossfade, so its value is the thing the
+    /// handoff depends on. Pinned as a number: 0.01 left both labels drawn for
+    /// 96% of the transition, and 0.275 (exactly half the peak) would blink a
+    /// blank frame at `drag_t == 0.5` because the renderers gate on `>`.
+    #[test]
+    fn label_alpha_cutoff_sits_just_under_half_the_peak() {
+        assert!(
+            (LABEL_ALPHA_CUTOFF - 0.2475).abs() < 1e-12,
+            "LABEL_ALPHA_CUTOFF is {}",
+            LABEL_ALPHA_CUTOFF
+        );
+        let half_peak = LABEL_BASE_ALPHA * 0.5;
+        assert!(
+            LABEL_ALPHA_CUTOFF < half_peak,
+            "at or above half the peak, both arms fall under the cutoff together at \
+             drag_t == 0.5 and the pill draws no label for a frame"
+        );
+    }
+
+    #[test]
+    fn label_crossfade_hands_over_around_the_midpoint_without_a_blank_frame() {
+        // Both alphas above the cutoff at once is the smudge the cutoff exists
+        // to prevent; neither above it is a blank frame. At 45% of peak the
+        // overlap is one frame wide and it straddles the midpoint.
+        let mut overlap_frames = Vec::new();
+        let mut blank_frames = Vec::new();
+        let mut both_drawn = 0;
+        let mut neither_drawn = 0;
+        for step in 0..=1000 {
+            let drag_t = step as f64 / 1000.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            let idle_drawn = idle > LABEL_ALPHA_CUTOFF;
+            let drag_drawn = drag > LABEL_ALPHA_CUTOFF;
+            match (idle_drawn, drag_drawn) {
+                (true, true) => both_drawn += 1,
+                (false, false) => neither_drawn += 1,
+                _ => {}
+            }
+            if idle_drawn && drag_drawn {
+                overlap_frames.push(drag_t);
+            }
+            if !idle_drawn && !drag_drawn {
+                blank_frames.push(drag_t);
+            }
+        }
+
+        assert!(
+            blank_frames.is_empty(),
+            "no label is drawn for drag_t in {blank_frames:?}: the pill blinks"
+        );
+        // The window is open at both ends and the grid has 1001 samples, so
+        // (0.45, 0.55) holds 99 of them.
+        assert_eq!(
+            overlap_frames.len(),
+            99,
+            "both labels are drawn across {}/1000 of the transition",
+            both_drawn
+        );
+        // The first and last overlapping samples bracket the window, which is
+        // open: the edges fall at 0.45 and 0.55 in `drag_t`.
+        let (lo, hi) = (overlap_frames[0], overlap_frames[overlap_frames.len() - 1]);
+        assert!(
+            (0.4505..0.452).contains(&lo) && (0.548..0.5495).contains(&hi),
+            "the overlap window runs from {lo} to {hi}, not from 0.45 to 0.55"
+        );
+        // The edges are the cutoff as a fraction of the peak, which is what
+        // makes this a property of the constant rather than a magic number.
+        let fraction = LABEL_ALPHA_CUTOFF / LABEL_BASE_ALPHA;
+        assert!(
+            (fraction - 0.45).abs() < 1e-12,
+            "the cutoff is {fraction} of the peak, so the window edges are not 0.45 and 0.55"
+        );
+
+        // Over 96% of the transition the two labels were both above a 0.01
+        // cutoff. One tenth is the replacement, and the window must stay
+        // centred so the handoff does not drift toward either label.
+        assert_eq!(neither_drawn, 0);
+    }
+
+    #[test]
+    fn label_crossfade_endpoints_pick_exactly_one_label() {
+        // Fully idle: the idle label at full peak, the drag label not drawn.
+        let (idle, drag) = label_crossfade_alpha(0.0, 1.0);
+        assert!(
+            (idle - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the idle label must reach full peak when idle, got {idle}"
+        );
+        assert!(
+            drag <= LABEL_ALPHA_CUTOFF,
+            "the drag label must not be drawn while idle, got {drag}"
+        );
+
+        // Fully dragging: the mirror image. This is the assertion a swapped
+        // pair of arms fails first.
+        let (idle, drag) = label_crossfade_alpha(1.0, 1.0);
+        assert!(
+            idle <= LABEL_ALPHA_CUTOFF,
+            "the idle label must not be drawn while dragging, got {idle}"
+        );
+        assert!(
+            (drag - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the drag label must reach full peak while dragging, got {drag}"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_pill_draws_no_label_at_any_drag_progress() {
+        // `expand_t == 0` is a collapsed pill. Every renderer skips the label
+        // painter below `expand_t > 0.5`, so the multiplier is the last line of
+        // defence — and losing it painted "Click to dictate" on a pill with
+        // nowhere to put it.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 0.0);
+            assert!(
+                idle <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the idle label at {idle}"
+            );
+            assert!(
+                drag <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the drag label at {drag}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alpha_scales_with_expansion_and_clamps_its_inputs() {
+        // Half-expanded is half as opaque, which is what keeps the label from
+        // arriving at full strength on a pill that is still growing.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            for expand_t in [0.25, 0.5, 0.75, 1.0] {
+                let (idle, drag) = label_crossfade_alpha(drag_t, expand_t);
+                let peak = LABEL_BASE_ALPHA * expand_t;
+                assert!(
+                    (idle + drag - peak).abs() < 1e-12,
+                    "alphas must sum to {peak}"
+                );
+                assert!(
+                    idle <= peak + 1e-12 && drag <= peak + 1e-12,
+                    "neither arm may exceed the peak for expand_t {expand_t}"
+                );
+            }
+        }
+
+        // Out-of-range progress is clamped, not propagated: a spring that
+        // overshoots past 1.0 must not paint a label brighter than peak, and a
+        // value below 0 must not paint a negative alpha, which every backend
+        // treats as opaque.
+        for (raw, clamped) in [(-5.0, 0.0), (-0.001, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(raw, 1.0),
+                label_crossfade_alpha(clamped, 1.0),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+        for (raw, clamped) in [(-1.0, 0.0), (2.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(0.5, raw),
+                label_crossfade_alpha(0.5, clamped),
+                "expand_t {raw} was not clamped to {clamped}"
+            );
+        }
+        let (idle, drag) = label_crossfade_alpha(-3.0, -3.0);
+        assert!((idle).abs() < 1e-12 && (drag).abs() < 1e-12);
+    }
+
+    #[test]
+    fn label_slide_y_ends_where_the_labels_belong_and_never_parts_them_further() {
+        // At rest the idle label sits on the base line and the drag label is
+        // parked one offset below it, ready to slide up into place. Fully
+        // dragging, they have swapped: the idle label is one offset above the
+        // base and the drag label is on it.
+        let (idle_y, drag_y) = label_slide_y(100.0, 0.0);
+        assert!(
+            (idle_y - 100.0).abs() < 1e-12,
+            "idle label rest y is {idle_y}"
+        );
+        assert!(
+            (drag_y - 102.0).abs() < 1e-12,
+            "the drag label parks one offset below base, got {drag_y}"
+        );
+
+        let (idle_y, drag_y) = label_slide_y(100.0, 1.0);
+        assert!(
+            (idle_y - 98.0).abs() < 1e-12,
+            "the idle label ends one offset above base, got {idle_y}"
+        );
+        assert!(
+            (drag_y - 100.0).abs() < 1e-12,
+            "drag label rest y is {drag_y}"
+        );
+
+        // The slide is what would separate two overlapping labels, and it is
+        // fixed at `LABEL_SLIDE_OFFSET` for the whole transition — 2px on 12px
+        // glyphs. That is why the cutoff, not the offset, carries the handoff:
+        // pinned here so a larger offset cannot arrive unnoticed.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                (drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12,
+                "at drag_t {drag_t} the labels are parted by {}px, not {LABEL_SLIDE_OFFSET}px",
+                drag_y - idle_y
+            );
+        }
+
+        // base_y is a baseline the renderers computed from font extents, so it
+        // has to pass through untouched at the midpoint rather than be pulled
+        // toward either label.
+        for drag_t in [0.0, 0.5, 1.0] {
+            let (idle_y, drag_y) = label_slide_y(-17.5, drag_t);
+            assert!(
+                idle_y < -17.5 + 1e-12 && drag_y > -17.5 - 1e-12,
+                "a negative baseline must still bracket base_y, got {idle_y} and {drag_y}"
+            );
+        }
+
+        for (raw, clamped) in [(-5.0, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_slide_y(100.0, raw),
+                label_slide_y(100.0, clamped),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alphas_and_slide_agree_about_when_each_label_is_visible() {
+        // The two functions are called back to back by all three renderers with
+        // the same `drag_t`, and the renderers gate drawing on the alphas. So
+        // the visible range of each label is the same window, and it has to be
+        // the one the cutoff intends: nothing drawn, then one label, then both
+        // for about a frame, then the other label, then nothing.
+        let visible = |drag_t: f64| -> (bool, bool) {
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            (idle > LABEL_ALPHA_CUTOFF, drag > LABEL_ALPHA_CUTOFF)
+        };
+
+        assert_eq!(visible(0.0), (true, false));
+        assert_eq!(visible(0.4), (true, false));
+        assert_eq!(visible(0.5), (true, true), "the midpoint must not blink");
+        assert_eq!(visible(0.6), (false, true));
+        assert_eq!(visible(1.0), (false, true));
+
+        // The slide never lifts a suppressed label back over the bar, so the
+        // alpha gate and the geometry gate cannot disagree about which strings
+        // are on screen at the same time.
+        for step in 0..=200 {
+            let drag_t = step as f64 / 200.0;
+            let (idle_drawn, drag_drawn) = visible(drag_t);
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                idle_y.is_finite() && drag_y.is_finite(),
+                "drag_t {drag_t} produced a non-finite baseline"
+            );
+            if idle_drawn && drag_drawn {
+                // Both drawn: they are 2px apart, which is the overlap the
+                // cutoff keeps to a single frame.
+                assert!((drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12);
+            }
+        }
     }
 }

@@ -105,12 +105,26 @@ pub(crate) fn send_haptic(kind: &str) {
 /// Report a review decision back to the desktop. The id travels with the
 /// decision so a late click on a card that has already been replaced is
 /// discarded instead of applied to the next transcript.
-pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) {
-    ipc::send(&OutMessage::ReviewDecision {
+///
+/// The sink is a parameter so the decision can be tested without a live desktop
+/// pipe. It returns true when the message reached the desktop, which is what
+/// lets a caller that owns the text clear its copy only then.
+fn send_review_decision_with(
+    review_id: &str,
+    action: &str,
+    text: Option<String>,
+    send: impl FnOnce(&OutMessage) -> bool,
+) -> bool {
+    send(&OutMessage::ReviewDecision {
         review_id: review_id.to_string(),
         action: action.to_string(),
         text,
-    });
+    })
+}
+
+/// [`send_review_decision_with`] over the desktop's pipe.
+pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<String>) -> bool {
+    send_review_decision_with(review_id, action, text, ipc::send)
 }
 
 /// Send whatever the entry holds.
@@ -147,20 +161,19 @@ fn submit_entry_inner(
     if text.trim().is_empty() {
         return false;
     }
-    let msg = match review_id {
-        Some(review_id) => OutMessage::ReviewDecision {
-            review_id: review_id.to_string(),
-            action: "insert".to_string(),
-            text: Some(text),
-        },
-        None => OutMessage::TypedMessage { text },
+    // The insert decision goes out through the one function that builds it, so
+    // the message shape has a single owner: the desktop's action vocabulary
+    // changes here and nowhere else.
+    let sent = match review_id {
+        Some(review_id) => send_review_decision_with(review_id, "insert", Some(text), send),
+        None => send(&OutMessage::TypedMessage { text }),
     };
     // Cleared only when the desktop actually received it. This runs in the
     // entry's activate handler, so there is no retry here: a failed write
     // means the pipe is gone and nothing would consume one. That is exactly
     // why the text must stay — the one copy the user has cannot be re-sent
     // down a pipe that has just failed, so clearing it destroys it outright.
-    if send(&msg) {
+    if sent {
         *entry_text.borrow_mut() = String::new();
         true
     } else {
@@ -532,6 +545,31 @@ fn union_side_controls(
         );
         let _ = region.union_rectangle(&btn_rect);
     }
+}
+
+/// The toast buttons' hit rectangles, as the plain numbers
+/// `update_input_region` reads them back out of `click_regions`.
+///
+/// The draw callback clears and re-registers `click_regions` itself, so an input
+/// shape built before a frame describes the previous frame's buttons. The toast
+/// is scaled about its centre from half size up to full, which moves both
+/// buttons every frame of the animation, so for the whole animation the shape
+/// would be one frame behind the painted button and a click on the part the user
+/// can see would miss. Comparing this before and after the draw is how the
+/// callback knows the shape it just built is stale.
+pub(crate) fn flash_click_signature(state: &PillState) -> Vec<(f64, f64, f64, f64)> {
+    state
+        .click_regions
+        .borrow()
+        .iter()
+        .filter(|region| {
+            matches!(
+                region.action,
+                ClickAction::FlashAction | ClickAction::FlashReject
+            )
+        })
+        .map(|region| (region.x, region.y, region.w, region.h))
+        .collect()
 }
 
 pub(crate) fn update_input_region(gdk_window: &gdk::Window, state: &PillState) {

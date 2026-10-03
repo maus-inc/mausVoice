@@ -55,15 +55,9 @@ impl Rect {
     }
 }
 
-/// The rectangle a `width` x `height` window occupies when pinned to `anchor`
-/// inside `visible`, kept `margin` points in from the edge the anchor names.
-///
-/// This is the whole placement rule and it does not vary by platform: the
-/// platforms differ only in the coordinate space their monitor and cursor
-/// values arrive in, which the caller converts before calling this.
-/// The anchored rectangle for a monitor, and the same bounds used for a
-/// hit test. Callers that only differ in how they read the cursor position
-/// share this so the placement arithmetic is written once.
+/// The anchored rectangle for a monitor, and the same bounds a hit test uses.
+/// Callers that differ only in how they read the cursor position share this so
+/// the placement arithmetic is written once.
 pub fn anchored_bounds(
     monitor: &MonitorAtCursor,
     anchor: OverlayAnchor,
@@ -80,6 +74,14 @@ pub fn anchored_bounds(
     )
 }
 
+/// The rectangle a `width` x `height` window occupies when pinned to `anchor`
+/// inside `visible`, kept `margin` points in from the edge the anchor names.
+///
+/// This is the whole placement rule and it does not vary by platform: the
+/// platforms differ only in the coordinate space their monitor and cursor
+/// values arrive in, which the caller converts before calling this. macOS and
+/// Linux go through `anchored_bounds`, which resolves the monitor first;
+/// Windows converts to logical points and so calls this directly.
 pub fn anchor_rect(
     visible: Rect,
     anchor: OverlayAnchor,
@@ -117,19 +119,26 @@ pub fn anchor_rect(
 
 // ── Hotkey and capability values ────────────────────────────────────────
 
-/// Strategy for platforms that get global hotkeys from an OS-level listener.
-/// `get_hotkey_strategy` for the platforms whose hotkeys are the listener's:
-/// every one except Linux on Wayland, which uses the bridge.
+/// The strategy name for platforms that get global hotkeys from an OS-level
+/// listener: every one except Linux on Wayland, which uses the bridge.
 pub fn listener_hotkey_strategy() -> &'static str {
     LISTENER_HOTKEY_STRATEGY
 }
 
-/// Whether the platform can report which app is frontmost. Every platform this
-/// ships on can, so the answer is not a per-platform question.
+/// Whether the platform can report which app is frontmost.
+///
+/// The constant answer is the macOS and Windows one, and those are the only two
+/// platforms that re-export this function. Linux is the per-platform case and
+/// does not come from here: `platform/linux` implements
+/// `supports_app_detection` as `!detect::is_wayland()`, because a Wayland
+/// compositor will not tell a client which window has focus.
 pub fn supports_app_detection() -> bool {
     true
 }
 
+/// The strategy string `listener_hotkey_strategy` reports, shared so the value
+/// `platform/linux` matches on and the value a platform's `get_hotkey_strategy`
+/// returns cannot drift apart.
 pub const LISTENER_HOTKEY_STRATEGY: &str = "listener";
 
 /// Strategy for Wayland, which has no global hotkey source: input is read

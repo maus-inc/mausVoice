@@ -129,6 +129,140 @@ describe("redactProviderMessage", () => {
     }
   });
 
+  // A scheme is the header's syntax and the credential is the token after it, so
+  // `Basic dXNlcjpwYXNz` is one secret in two tokens. The value class stops at
+  // whitespace, so the redaction used to end at the scheme word and hand the
+  // credential on in the clear to `normalizeGroqError`, whose own contract is
+  // that this scrubber is what keeps the key out of logs and persisted
+  // `postProcessError` metadata. Split at the label so the fixture never holds a
+  // contiguous `label=value` token.
+  const SCHEME_CREDENTIAL = "dXNlcjpw" + "YXNz";
+  it.each([
+    [
+      "a basic scheme in a JSON body",
+      `{"api_key":"Basic ${SCHEME_CREDENTIAL}"}`,
+    ],
+    ["a token scheme quoted", `api_key="token ${SCHEME_CREDENTIAL}"`],
+    ["an apikey scheme unquoted", `api_key=ApiKey ${SCHEME_CREDENTIAL}`],
+    [
+      "a bearer scheme with the label spaced out",
+      `API-KEY : Bearer ${SCHEME_CREDENTIAL}`,
+    ],
+    [
+      "a digest scheme with its parameters",
+      `api_key=Digest nonce="${SCHEME_CREDENTIAL}", realm="x"`,
+    ],
+    [
+      "a scheme inside a sentence",
+      `upstream said api_key=Basic ${SCHEME_CREDENTIAL} and gave up`,
+    ],
+  ])("scrubs %s whole", (_label, body) => {
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(SCHEME_CREDENTIAL);
+    expect(output).toContain("[redacted]");
+  });
+
+  // A quoted value ends at its closing quote, not at the first character the
+  // value class does not hold. The class is the unquoted token's character set
+  // and it has no way to say "the quote opened a string", so `api_key="Ai za-
+  // Qq0Wx1"` was cut after `Ai` and the rest of the key went into the log line
+  // and the persisted `postProcessError` metadata in the clear -- and the
+  // prefix patterns do not know an `Ai`-shaped key, so nothing downstream
+  // caught it either.
+  const QUOTED_HEAD = "Ai" + "za";
+  const QUOTED_TAIL = "Qq0" + "Wx1";
+  it.each([
+    ["a space", " "],
+    ["a comma", ","],
+    ["a colon", ":"],
+    ["an equals sign", "="],
+  ])("scrubs a quoted api key value holding %s", (_label, separator) => {
+    const body = `api_key="${QUOTED_HEAD}${separator}${QUOTED_TAIL}"`;
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(QUOTED_HEAD);
+    expect(output).not.toContain(QUOTED_TAIL);
+    expect(output).toContain("[redacted]");
+    // The quote belongs to the document, not to the secret, so it stays and the
+    // JSON around the field is still parseable.
+    expect(output).toBe('[redacted]"');
+  });
+
+  it("scrubs a quoted api key value holding an escaped quote", () => {
+    // The `\"` is one character of the value, not the quote that ends it. Reading
+    // it as the closing quote cut the value in half and handed the rest of the
+    // key on in the clear, which is the same leak with a different separator.
+    const body = `api_key="${QUOTED_HEAD}\\"${QUOTED_TAIL}"`;
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(QUOTED_HEAD);
+    expect(output).not.toContain(QUOTED_TAIL);
+  });
+
+  it("scrubs a quoted authorization value that opens with a scheme word", () => {
+    // The two labelled passes read the same value with the same helpers, so they
+    // have to agree on where the credential ends. A quoted value whose first
+    // token is a scheme word reaches both the scheme run and the closing-quote
+    // run, and the scheme run is shorter: `token abc def` ends at the parameter
+    // walk's second token, while the closing quote is two characters further on.
+    // Taking only the scheme run left `def` beside the redaction in clear --
+    // `authorization: "token abc def"` printed `[redacted] def"` where the same
+    // value after an `api_key` label printed `[redacted]"`. Which end wins is
+    // therefore pinned here as "the longer", because that is the only reading
+    // under which a value cannot be scrubbed after one label and not the other.
+    const output = providerErrorUtils.redactProviderMessage(
+      'authorization: "token abc def"',
+    );
+    expect(output).not.toContain("token");
+    expect(output).not.toContain("abc");
+    expect(output).not.toContain("def");
+    // The quote is the document's, so it survives and the tail stays readable.
+    expect(output).toBe('[redacted]"');
+  });
+
+  it("scrubs the same quoted scheme value after an api_key label identically", () => {
+    // The point of the case above is agreement between two callers of one
+    // decision, so the equality is asserted directly rather than left implicit.
+    const value = "token abc def";
+    const afterApiKey = providerErrorUtils.redactProviderMessage(
+      `api_key="${value}"`,
+    );
+    const afterAuthorization = providerErrorUtils.redactProviderMessage(
+      `authorization: "${value}"`,
+    );
+    expect(afterApiKey).toBe('[redacted]"');
+    expect(afterAuthorization).toBe(afterApiKey);
+  });
+
+  it("keeps the rest of a JSON document readable around a quoted key value", () => {
+    const body = `{"api_key":"${QUOTED_HEAD} ${QUOTED_TAIL}","model":"llama-3"}`;
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(QUOTED_HEAD);
+    expect(output).not.toContain(QUOTED_TAIL);
+    expect(output).toBe('{"[redacted]","model":"llama-3"}');
+  });
+
+  it("stops a scheme-prefixed value where the surrounding document resumes", () => {
+    // The run goes to the end of the value, not to the end of the message: a
+    // record separator or a closing quote still ends it, so the rest of a JSON
+    // document stays readable and a second field is not swallowed.
+    const output = providerErrorUtils.redactProviderMessage(
+      `{"api_key":"Basic ${SCHEME_CREDENTIAL}","model":"llama-3"}`,
+    );
+    expect(output).not.toContain(SCHEME_CREDENTIAL);
+    expect(output).toContain('"model":"llama-3"');
+  });
+
+  it("still keeps the prose that follows a bare token value", () => {
+    // The scheme rule is what widens the run, and it is deliberately gated on
+    // the first token being a scheme. A bare `api_key=<token>` is routinely
+    // followed by the reason the message carries, and redacting that would cost
+    // the diagnosis the log line exists to give.
+    const output = providerErrorUtils.redactProviderMessage(
+      "api_key=" + "abc123XYZnotaprefix" + " is not configured on this account",
+    );
+    expect(output).not.toContain("abc123XYZnotaprefix");
+    expect(output).toContain("is not configured on this account");
+  });
+
   it("leaves an ordinary hyphenated token alone", () => {
     // The documented intent of the leading \b: `sk-` must not match inside a
     // longer word, or every hyphenated identifier in a log line would be
@@ -154,6 +288,7 @@ describe("redactProviderMessage", () => {
   // both it and the shipped scrubber, and the outputs have to be identical. It
   // lives here, in an excluded-from-analysis file, so the pattern that Sonar
   // flags is never reintroduced into the module.
+  const MARKER = "[redacted]";
   const REFERENCE_SECRET_PATTERNS: RegExp[] = [
     /\b(?:gsk|csk|sk)[-_][a-z0-9_-]+/gi,
     /bearer\s+[a-z0-9._~+/=-]+/gi,
@@ -163,9 +298,20 @@ describe("redactProviderMessage", () => {
 
   const referenceRedact = (message: string): string =>
     REFERENCE_SECRET_PATTERNS.reduce(
-      (cleaned, pattern) => cleaned.replace(pattern, "[redacted]"),
+      (cleaned, pattern) => cleaned.replace(pattern, MARKER),
       message,
     );
+
+  /** True when every character of `needle` occurs in `haystack`, in order. */
+  const isSubsequence = (needle: string, haystack: string): boolean => {
+    let cursor = 0;
+    for (const character of needle) {
+      const found = haystack.indexOf(character, cursor);
+      if (found === -1) return false;
+      cursor = found + 1;
+    }
+    return true;
+  };
 
   // Every axis the shape is built from. The sweep below crosses them, so a
   // change to any one of them lands in a case rather than in a gap.
@@ -238,15 +384,28 @@ describe("redactProviderMessage", () => {
 
   it("redacts the same shapes surrounded by other text", () => {
     // The junk around an assignment matters as much as the assignment: it is
-    // what proves the scanner stops where the pattern stopped rather than
-    // redacting more of the sentence or less of the value than it did. Every
-    // other element of each axis is enough here, because the sweep above
-    // already crossed all of them unwrapped.
+    // what proves the scanner finds the same value with the document's own text
+    // around it rather than only in the shapes it was shown bare. Every other
+    // element of each axis is enough here, because the sweep above already
+    // crossed all of them unwrapped -- and it crosses them there for the strict
+    // equality, which a wrapper can break: `api_key:"ABC {"body": "` is a
+    // truncated document whose opening quote is not the start of a value but
+    // whose closing one is a later field's, and a scanner that reads a quoted
+    // value to its closing quote (which is the fix above) has to redact that
+    // later field too. There is no structural way to tell the two apart, and
+    // redacting more is the direction that errs safely, so what this sweep
+    // asserts is the property that matters and still holds everywhere: the
+    // shipped scrubber never leaves visible a character the pattern took away,
+    // so it reveals a subsequence of what the pattern revealed and may hide more.
+    // The sweep above keeps the strict two-sided equality over all 80,190
+    // unwrapped shapes, and the named tests in this file are what pin the other
+    // direction -- that prose around a secret survives.
     const WRAPPERS = ["", "upstream said: ", ' {"body": "', "} ", " error "];
     const REAL_LABELS = ["api_key", "API-KEY", "apikey"];
     const everyOther = (values: readonly string[]): string[] =>
       values.filter((_value, position) => position % 2 === 0);
     let compared = 0;
+    let hidMore = 0;
     for (const label of REAL_LABELS) {
       for (const before of everyOther(BEFORE_SEPARATOR)) {
         for (const separator of everyOther(SEPARATORS)) {
@@ -256,7 +415,18 @@ describe("redactProviderMessage", () => {
               for (const prefix of WRAPPERS) {
                 for (const suffix of WRAPPERS) {
                   compared += 1;
-                  expectSameAsPattern(`${prefix}${core}${suffix}`);
+                  const message = `${prefix}${core}${suffix}`;
+                  const shipped =
+                    providerErrorUtils.redactProviderMessage(message);
+                  const revealedByShip = shipped.split(MARKER).join("");
+                  const revealedByPattern = referenceRedact(message)
+                    .split(MARKER)
+                    .join("");
+                  expect(
+                    isSubsequence(revealedByShip, revealedByPattern),
+                    `shipped scrubber revealed more than the pattern on ${JSON.stringify(message)}`,
+                  ).toBe(true);
+                  if (shipped !== referenceRedact(message)) hidMore += 1;
                 }
               }
             }
@@ -265,6 +435,10 @@ describe("redactProviderMessage", () => {
       }
     }
     expect(compared).toBeGreaterThan(15_000);
+    // The relationship above has to be able to differ at all, or it would be a
+    // restatement of the equality the sweep above already pins and would go on
+    // passing if the quote rule were reverted.
+    expect(hidMore).toBeGreaterThan(0);
   });
 
   it("redacts a second assignment beside the first, and resumes after it", () => {
@@ -292,4 +466,121 @@ describe("redactProviderMessage", () => {
     expect(providerErrorUtils.redactProviderMessage(message)).toBe(message);
     expect(Date.now() - started).toBeLessThan(1000);
   }, 1000);
+});
+
+describe("an authorization label with a scheme-prefixed value", () => {
+  // The label pattern stops at the first space, so `authorization: Digest
+  // username="u", realm="r", response="s"` used to redact the scheme word and
+  // leave every parameter of the challenge in the string these callers log and
+  // persist as error metadata. `response` is what a server computes, and it is
+  // as sensitive as the nonce next to it.
+  const CHALLENGE = 'response="' + "s3cr3t" + '"';
+
+  it("redacts the whole Digest challenge after a bare authorization label", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      'authorization: Digest username="u", realm="r", ' + CHALLENGE,
+    );
+    expect(output).not.toContain(CHALLENGE);
+    expect(output).not.toContain('realm="r"');
+    expect(output).toContain("[redacted]");
+  });
+
+  it("redacts a proxy-authorization challenge the same way", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      "proxy-authorization: Digest nonce=" + CHALLENGE,
+    );
+    expect(output).not.toContain(CHALLENGE);
+  });
+
+  it("keeps the diagnosis that follows the credential", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      "authorization: Digest abc is not authorized for this request",
+    );
+    expect(output).not.toContain("Digest abc ");
+    expect(output).toContain("is not authorized for this request");
+  });
+});
+
+describe("an authorization label inside a JSON body", () => {
+  // A JSON body quotes both sides of the separator, and this label scanner
+  // wanted a bare `:` straight after the label name. It skipped the whole field,
+  // so a Digest challenge a caller put in a request body -- the nonce, the realm
+  // and the `response` a server computes -- reached the log file and the
+  // persisted error metadata in the clear. The key-shaped fixtures are split at
+  // the prefix for the reason the rest of this file's fixtures are.
+  const DIGEST_NONCE = "nc" + "7f3a91";
+  const UNPREFIXED_CREDENTIAL = "abc1" + "23xyz";
+
+  it.each([
+    [
+      "a quoted separator and a scheme",
+      `{"authorization": "Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
+      '{"[redacted]"}',
+    ],
+    [
+      "no space after the separator",
+      `{"authorization":"Digest nonce=${DIGEST_NONCE}, realm=eastus"}`,
+      '{"[redacted]"}',
+    ],
+    [
+      "a proxy-authorization field",
+      `{"proxy-authorization": "Digest nonce=${DIGEST_NONCE}"}`,
+      '{"[redacted]"}',
+    ],
+    [
+      "a quoted value with no scheme word",
+      `{"authorization":"${UNPREFIXED_CREDENTIAL}"}`,
+      '{"[redacted]"}',
+    ],
+    [
+      "a single-quoted label",
+      `{'authorization': 'Digest nonce=${DIGEST_NONCE}'}`,
+      "{'[redacted]'}",
+    ],
+  ])("redacts a JSON authorization field with %s", (_label, body, expected) => {
+    const output = providerErrorUtils.redactProviderMessage(body);
+    expect(output).not.toContain(DIGEST_NONCE);
+    expect(output).not.toContain(UNPREFIXED_CREDENTIAL);
+    expect(output).toBe(expected);
+  });
+
+  it("stops at the closing quote so the next JSON field survives", () => {
+    const output = providerErrorUtils.redactProviderMessage(
+      `{"authorization": "Digest nonce=${DIGEST_NONCE}", "model": "llama-3"}`,
+    );
+    expect(output).not.toContain(DIGEST_NONCE);
+    expect(output).toBe('{"[redacted]", "model": "llama-3"}');
+  });
+
+  describe("an authorization value that is quoted and is not a bare token", () => {
+    // Found by mutating the scanner: with the quoted branch disabled this suite
+    // still passed, because a bare token inside quotes ends at the closing quote
+    // anyway and the value class excludes it. The branch only earns its keep when
+    // the quoted value holds something the value class stops at -- which is the
+    // same leak the `api_key` scanner was fixed for, on the other label.
+    it("redacts a quoted value holding a space whole", () => {
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "tok en-secret-tail"}',
+      );
+      expect(output).not.toContain("en-secret-tail");
+      expect(output).toContain("[redacted]");
+    });
+
+    it("redacts a quoted value holding punctuation whole", () => {
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "abc:def/ghi"}',
+      );
+      expect(output).not.toContain("def/ghi");
+    });
+
+    it("still answers the question the log line exists to answer", () => {
+      // Over-redacting the diagnosis would cost the reason the message was kept,
+      // so the redaction stops at the value's own closing quote.
+      const output = providerErrorUtils.redactProviderMessage(
+        '{"authorization": "tok en", "model":"llama-3"}',
+      );
+      expect(output).not.toContain("tok en");
+      expect(output).toContain('"model":"llama-3"');
+    });
+  });
 });

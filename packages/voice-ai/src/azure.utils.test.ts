@@ -15,6 +15,7 @@ const capturedPhrases: string[] = vi.hoisted(() => []);
 // unrecognised result, and a rejected one.
 const speech = vi.hoisted(() => ({
   error: null as string | null,
+  hang: false,
   result: { reason: "recognized", text: "hello world" } as {
     reason: string;
     text?: string;
@@ -64,6 +65,11 @@ vi.mock("microsoft-cognitiveservices-speech-sdk", () => ({
       onError: (message: string) => void,
     ) {
       speech.calls += 1;
+      // What a blackholed connection looks like to this API: neither callback
+      // ever arrives, because `recognizeOnceAsync` has no signal of its own.
+      if (speech.hang) {
+        return;
+      }
       if (speech.error !== null) {
         onError(speech.error);
         return;
@@ -95,6 +101,7 @@ const wavBlob = (): ArrayBuffer => {
 
 beforeEach(() => {
   speech.error = null;
+  speech.hang = false;
   speech.result = { reason: "recognized", text: "hello world" };
   speech.subscriptions = [];
   speech.formats = [];
@@ -371,6 +378,68 @@ describe("azureTestIntegration", () => {
       azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
     ).resolves.toBe(false);
   });
+
+  it("gives up on a connection that never answers", async () => {
+    // The probe used to hand the recognizer a 0-byte buffer, which threw a
+    // RangeError locally before any request left the process, so it never
+    // needed a deadline. It now sends a real silent WAV and really talks to
+    // Azure, and `recognizeOnceAsync` reports a blackholed connection — a
+    // captive portal, a firewall DROP — by never calling back at all.
+    // `ApiKeyList` holds `setTestingApiKeyId` for the whole promise, so without
+    // a deadline the card spins with no cancel path at all.
+    speech.hang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = azureTestIntegration({
+        subscriptionKey: "key",
+        region: "eastus",
+      });
+      const raised = expect(pending).rejects.toThrow(/could not be reached/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await raised;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not report a blackholed connection as a bad key", async () => {
+    // The deadline has to reach the same diagnosis a transport failure gets: a
+    // key that cannot be confirmed because nothing came back is not a rejected
+    // credential, and telling the user to replace a working key is the one
+    // outcome that makes the problem worse.
+    speech.hang = true;
+    vi.useFakeTimers();
+    try {
+      const pending = azureTestIntegration({
+        subscriptionKey: "key",
+        region: "eastus",
+      });
+      const outcome = pending.then(
+        () => "resolved" as const,
+        () => "raised" as const,
+      );
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await outcome).toBe("raised");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles the probe normally inside the deadline", async () => {
+    // The deadline must not fire on a healthy round trip, and must not leave a
+    // timer behind that rejects after the probe already answered.
+    vi.useFakeTimers();
+    try {
+      await expect(
+        azureTestIntegration({ subscriptionKey: "key", region: "eastus" }),
+      ).resolves.toBe(true);
+      // Past the deadline, a settled probe must not be written to again.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(speech.calls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**
@@ -578,6 +647,30 @@ describe("azureTestIntegration message bounds", () => {
       expect(text).toContain('"ResourceId":"eastus"');
     }
     expect(message).toMatch(/could not confirm the key/);
+  });
+
+  it("redacts a label longer than the 24-character budget in front of its value", async () => {
+    // `[a-z0-9_.-]{0,24}` bounds how much label text the pattern inspects before
+    // the credential word, which reads as if it could cut a long label short and
+    // leave the value outside the match. It cannot, and this is what says so:
+    // the `(?:key|token|...)` alternation is what makes the pattern match, so a
+    // value is only ever redacted once that word was read inside the budgeted
+    // run, and a label too long for the budget is re-matched from the next word
+    // boundary inside it -- which skips label text, not value text.
+    const key = azureKeyFixture();
+    const label = "a-f-o-o-bar-baz-qux-quux-corge-Key";
+    expect(label.length).toBeGreaterThan(24);
+    speech.error = ["StatusCode: 0", `${label}: ${key}`].join("\n");
+
+    const message = await raisedMessage();
+    const logged = loggedLine();
+
+    for (const text of [message, logged]) {
+      expect(text).not.toContain(key);
+      // The whole label still reads back, because the part the budget skipped is
+      // copied through in front of the match rather than dropped.
+      expect(text).toContain(`${label}: [redacted]`);
+    }
   });
 
   it("redacts a gateway header and a JWT the shared redactor leaves alone", async () => {
@@ -802,5 +895,112 @@ describe("writeWavChunkId", () => {
     expect(() => writeWavChunkId(view, 0, "é")).toThrow(
       /A WAV chunk id is ASCII/,
     );
+  });
+
+  it("refuses a tag that is not exactly four bytes", () => {
+    // The field is four bytes wide, so a short tag leaves the id padded with
+    // whatever was already in the buffer and a long one runs into the chunk
+    // size or sample-rate field that follows it. Both produce a header no
+    // reader of the file agrees on, so the writer refuses instead.
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    new Uint8Array(buffer).fill(0xaa);
+
+    expect(() => writeWavChunkId(view, 0, "abc")).toThrow(RangeError);
+    expect(() => writeWavChunkId(view, 0, "")).toThrow(RangeError);
+    expect(() => writeWavChunkId(view, 0, "RIFFX")).toThrow(RangeError);
+
+    // A refused tag writes nothing, so a partial write cannot half-corrupt
+    // the header before the throw.
+    expect(Array.from(new Uint8Array(view.buffer))).toEqual(
+      new Array(8).fill(0xaa),
+    );
+  });
+});
+
+describe("cancelling an Azure recognition", () => {
+  // The SDK's `recognizeOnceAsync` is callback-only: it takes no signal and has
+  // no deadline of its own, so a caller that gave up keeps waiting on a
+  // recognizer nobody is listening to. That is what makes a cancelled
+  // dictation look hung, so the signal has to reach the recognizer itself.
+  beforeEach(() => {
+    speech.hang = true;
+    speech.error = null;
+  });
+
+  it("rejects when the caller's signal fires mid-recognition", async () => {
+    const controller = new AbortController();
+    const pending = azureTranscribeAudio({
+      subscriptionKey: "key",
+      region: "eastus",
+      blob: wavBlob(),
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(pending).rejects.toThrow(/cancelled/i);
+  });
+
+  it("rejects without reaching the recognizer when the signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    speech.hang = false;
+    speech.calls = 0;
+
+    await expect(
+      azureTranscribeAudio({
+        subscriptionKey: "key",
+        region: "eastus",
+        blob: wavBlob(),
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/cancelled/i);
+    // A call that arrives already cancelled should not open a connection it is
+    // about to close.
+    expect(speech.calls).toBe(0);
+  });
+
+  it("leaves no abort listener behind once the call has settled", async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let live = 0;
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = (...args: Parameters<typeof add>) => {
+      live += 1;
+      return add(...args);
+    };
+    signal.removeEventListener = (...args: Parameters<typeof remove>) => {
+      live -= 1;
+      return remove(...args);
+    };
+    speech.hang = false;
+
+    await azureTranscribeAudio({
+      subscriptionKey: "key",
+      region: "eastus",
+      blob: wavBlob(),
+      signal,
+    });
+
+    // A listener that outlives the call keeps the recognizer, the decoded
+    // samples and this whole closure alive for as long as the signal does --
+    // for a session controller, the life of the app.
+    expect(live).toBe(0);
+  });
+
+  it("still answers normally when nothing cancels it", async () => {
+    speech.hang = false;
+    const controller = new AbortController();
+
+    await expect(
+      azureTranscribeAudio({
+        subscriptionKey: "key",
+        region: "eastus",
+        blob: wavBlob(),
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual({ text: "hello world" });
   });
 });

@@ -142,3 +142,7 @@ reports/pr*/
 # Locally installed Rust toolchain (CARGO_HOME/RUSTUP_HOME for local gates).
 # Never committed: hundreds of megabytes of binaries, and CI provisions its own.
 .tooling/
+
+# Locally installed Rust toolchain (CARGO_HOME/RUSTUP_HOME for local gates).
+# Never committed: hundreds of megabytes of binaries, and CI provisions its own.
+.tooling/

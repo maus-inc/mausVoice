@@ -713,13 +713,17 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.move_to(lx, ly);
         ctx.show_text(label);
 
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: reject_w,
-            h: FLASH_ACTION_HEIGHT,
-            action: ClickAction::FlashReject,
-        });
+        register_scaled_click(
+            state,
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+            ClickAction::FlashReject,
+        );
     }
 
     // Action button
@@ -747,16 +751,53 @@ fn draw_flash_message(ctx: &Ctx, state: &PillState, ww: f64, wh: f64) {
         ctx.move_to(lx, ly);
         ctx.show_text(label);
 
-        state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
-            action: ClickAction::FlashAction,
-        });
+        register_scaled_click(
+            state,
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+            ClickAction::FlashAction,
+        );
     }
 
     ctx.restore();
+}
+
+/// Register the hit target for a toast button the banner painted inside the
+/// scale transform.
+///
+/// Pointer coordinates and the input shape are both in unscaled window space,
+/// so a target registered with the laid-out rectangle covers a different part
+/// of the window than the pixels drawn there, and for the whole scale animation
+/// a click on the visible half of the button misses. Both buttons go through
+/// here so the transform and the region construction have one implementation
+/// each, and so a change to either reaches the reject and accept buttons
+/// together.
+#[allow(clippy::too_many_arguments)]
+fn register_scaled_click(
+    state: &PillState,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+    action: ClickAction,
+) {
+    let (region_x, region_y, region_w, region_h) =
+        rust_pill_shared::scaled_click_rect(x, y, w, h, center_x, center_y, scale);
+    state.click_regions.borrow_mut().push(ClickRegion {
+        x: region_x,
+        y: region_y,
+        w: region_w,
+        h: region_h,
+        action,
+    });
 }
 
 // ── Flash blue border ────────────────────────────────────────────
@@ -1300,6 +1341,17 @@ fn draw_transcript(
     let review = state.assistant_review.borrow();
 
     if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // Both halves of the scroll state go with the content. Nothing sets
+        // them on this path below, so a panel that has just been emptied keeps
+        // the height of the transcript it used to hold: the wheel can then
+        // scroll the next transcript past its own last line, and the content is
+        // not visible even though it is there. The offset is the other half of
+        // the same state, and it is what the next transcript is laid out from —
+        // a panel emptied while scrolled drew the following transcript starting
+        // above its own first line, and its opening lines were off the top.
+        // An empty panel has no scrollable content and no place in it.
+        state.scroll_offset.set(0.0);
+        state.content_height.set(0.0);
         return;
     }
 

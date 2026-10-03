@@ -208,14 +208,83 @@ describe("updaterRulePattern", () => {
     assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
   });
 
-  it("ignores a regex key that only appears inside a single-line string", () => {
-    const toml = [
-      'id = "tauri-minisign-updater-private-key"',
-      "description = 'use regex = not-the-rule here'",
-      'keywords = ["regex = also-not-the-rule"]',
+  // The offset of the value is derived from where the key starts, so an
+  // implementation that assumes exactly one space before the `=` reads a valid
+  // config as "no regex at all" and the guard fails on a shipped, working
+  // gitleaks.toml. TOML allows any run of spaces and tabs on either side, so
+  // every one of these has to resolve to the same value.
+  it("resolves the value whatever the spacing around the `=` is", () => {
+    for (const assignment of [
       "regex = 'dW50cnVzdGVk'",
+      "regex='dW50cnVzdGVk'",
+      "regex\t=\t'dW50cnVzdGVk'",
+      "regex   =    'dW50cnVzdGVk'",
+    ]) {
+      assert.equal(
+        updaterRulePattern(`${idLine}\n${assignment}\n`),
+        "dW50cnVzdGVk",
+        assignment,
+      );
+    }
+  });
+
+  // A `regex =` at the start of a line is the shape a line-anchored search
+  // finds, so the multi-line fixture above is what decides whether the search
+  // tracks string state. Both delimiters are here because `stringEnd` treats
+  // them differently: a literal string has no escapes, so a quote inside one
+  // closes it and the text after it is structure again.
+  it("ignores a regex key that only appears inside a quoted string", () => {
+    for (const fixture of [
+      [
+        idLine,
+        "description = 'use regex = not-the-rule here'",
+        'keywords = ["regex = also-not-the-rule"]',
+        "regex = 'dW50cnVzdGVk'",
+      ],
+      [
+        idLine,
+        "description = '''",
+        "regex = 'not-the-rule'",
+        "'''",
+        "regex = 'dW50cnVzdGVk'",
+      ],
+    ]) {
+      assert.equal(updaterRulePattern(fixture.join("\n")), "dW50cnVzdGVk");
+    }
+  });
+
+  // Both of the next two are the same defect seen from each side: the id was
+  // found by trimming lines, so a quoted id line inside a description looked
+  // like the rule, and the search for `regex` then began mid-description with
+  // the description's own string still open.
+  it("ignores an id line that only appears inside a description", () => {
+    const toml = [
+      "[[rules]]",
+      'description = """',
+      "The rule below is the one CI looks for:",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${PREAMBLE_B64}'`,
+      '"""',
+      "entropy = 3.5",
     ].join("\n");
-    assert.equal(updaterRulePattern(toml), "dW50cnVzdGVk");
+    assert.equal(
+      updaterRulePattern(toml),
+      null,
+      "prose must not supply the rule's detector",
+    );
+  });
+
+  it("still finds the detector when a description quotes the rule's own id", () => {
+    const toml = [
+      "[[rules]]",
+      'description = """',
+      "The rule below is the one CI looks for:",
+      'id = "tauri-minisign-updater-private-key"',
+      '"""',
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${PREAMBLE_B64}'`,
+    ].join("\n");
+    assert.equal(updaterRulePattern(toml), PREAMBLE_B64);
   });
 });
 
@@ -252,7 +321,11 @@ describe("tomlTableBody [extend]", () => {
 });
 
 describe("CLI requires explicit built-in rule extension", () => {
-  for (const [name, extension, status] of [
+  // The rule block is a column so a case can replace it: the point of the last
+  // case is a config whose only `regex =` line is inside a description, which
+  // the shared trailing rule would otherwise satisfy.
+  const realRule = `[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n`;
+  for (const [name, extension, status, rules = realRule] of [
     ["missing extension", "", 1],
     ["ignored top-level option", "useDefault = true\n", 1],
     [
@@ -267,6 +340,12 @@ describe("CLI requires explicit built-in rule extension", () => {
     ],
     ["explicit extension", "[extend]\nuseDefault = true\n", 0],
     ["quoted option", '[extend]\n"useDefault" = true\n', 0],
+    [
+      "a detector written only inside a description",
+      "[extend]\nuseDefault = true\n",
+      1,
+      `[[rules]]\ndescription = """\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n"""\nentropy = 3.5\n`,
+    ],
   ]) {
     it(name, (t) => {
       const root = mkdtempSync(join(tmpdir(), "gitleaks-config-"));
@@ -280,7 +359,7 @@ describe("CLI requires explicit built-in rule extension", () => {
       );
       writeFileSync(
         join(root, "gitleaks.toml"),
-        `${extension}\n[allowlist]\ndescription = "test"\n[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n`,
+        `${extension}\n[allowlist]\ndescription = "test"\n${rules}`,
       );
       const result = spawnSync(process.execPath, [script], {
         encoding: "utf8",

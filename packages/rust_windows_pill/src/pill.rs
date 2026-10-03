@@ -426,7 +426,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         // cancel decision: the desktop is waiting for an answer.
                         match state.pending_review_id() {
                             Some(review_id) => {
-                                input::send_review_decision(&review_id, "cancel", None);
+                                let _ = input::send_review_decision(&review_id, "cancel", None);
                             }
                             None => {
                                 if state.is_typing() {
@@ -2329,10 +2329,10 @@ fn handle_edit_message(msg: &MSG) -> bool {
                 });
                 match review_id {
                     Some(review_id) => {
-                        input::send_review_decision(&review_id, "cancel", None);
+                        let _ = input::send_review_decision(&review_id, "cancel", None);
                     }
                     None => {
-                        ipc::send(&OutMessage::AssistantClose);
+                        let _ = ipc::send(&OutMessage::AssistantClose);
                     }
                 }
                 return true;

@@ -3,7 +3,7 @@ import { drainSamples as drainSamplesFromQueue } from "../sessions/audio-buffer.
 export type AudioChunkPump = {
   pushSamples: (samples: Float32Array) => void;
   resetBuffers: () => void;
-  flushPendingSamples: (force?: boolean) => void;
+  flushPendingSamples: (force?: boolean, final?: boolean) => void;
 };
 
 export type AudioChunkPumpCallbacks = {
@@ -19,6 +19,12 @@ export type AudioChunkPumpCallbacks = {
   sendChunk: (chunk: Float32Array, isLastChunk: boolean) => void;
   onError: (error: unknown) => void;
   maxBufferedSamples?: number;
+  /**
+   * True once the session is finalizing. The final forced flush has no later
+   * flush behind it, so audio it fails to send cannot be carried by a
+   * subsequent one -- see the restore in `flushPendingSamples`.
+   */
+  isFinalizing?: () => boolean;
 };
 
 /**
@@ -51,6 +57,7 @@ export const createAudioChunkPump = ({
   sendChunk,
   onError,
   maxBufferedSamples,
+  isFinalizing,
 }: AudioChunkPumpCallbacks): AudioChunkPump => {
   const minSamplesPerChunk = Math.max(
     1,
@@ -103,7 +110,53 @@ export const createAudioChunkPump = ({
     return chunk;
   };
 
-  const flushPendingSamples = (force = false) => {
+  /**
+   * Sends one drained chunk, putting it back in front of the queue if the send
+   * throws. Reports whether it carried the terminal signal, and whether it
+   * failed, so the caller does not have to keep the loop's own state in step
+   * with a try/catch it does not own.
+   *
+   * `force` and `final` are passed rather than closed over on purpose: this is
+   * the path that decides whether a failed send is recoverable, and a recovery
+   * test must be able to drive it without a surrounding flush. A previous
+   * revision of this file discriminated on a local `force` flag instead and was
+   * wrong, because a forced flush that is not finalizing still has to restore.
+   */
+  const sendOrRestore = (
+    chunk: Float32Array,
+    drained: Float32Array,
+    force: boolean,
+    final: boolean,
+  ): { sentTerminal: boolean; failed: boolean } => {
+    const isLastChunk = force && pendingSampleCount === 0;
+    try {
+      sendChunk(chunk, isLastChunk);
+      return { sentTerminal: isLastChunk, failed: false };
+    } catch (error) {
+      // The samples left the queue before they went on the wire, so a failed
+      // send is a silent drop: the socket can recover, and the audio in hand
+      // is the only copy there is.
+      //
+      // Restoring them in front of the queue is what lets a later flush carry
+      // that audio instead of silence. The exception is the finalizing
+      // flush: there is no later one, because the buffer is reset once the
+      // session is done. Samples parked there would never reach the provider
+      // and would leave the tracked count claiming audio that is already
+      // gone, so that loss is reported through onError instead.
+      //
+      // They go back unpadded either way: the padding is a send-time
+      // artefact, and putting it back would inflate the buffered count a
+      // little more on every retry.
+      if (!(final || isFinalizing?.())) {
+        pendingChunks.unshift(drained);
+        pendingSampleCount += drained.length;
+      }
+      onError(error);
+      return { sentTerminal: false, failed: true };
+    }
+  };
+
+  const flushPendingSamples = (force = false, final = false) => {
     if (!canSend()) {
       return;
     }
@@ -115,17 +168,15 @@ export const createAudioChunkPump = ({
         break;
       }
 
-      const chunk = padChunkIfNeeded(drainSamples(chunkSize), force);
+      const drained = drainSamples(chunkSize);
+      const chunk = padChunkIfNeeded(drained, force);
       if (chunk.length === 0) {
         break;
       }
 
-      try {
-        const isLastChunk = force && pendingSampleCount === 0;
-        sendChunk(chunk, isLastChunk);
-        sentTerminal = isLastChunk;
-      } catch (error) {
-        onError(error);
+      const outcome = sendOrRestore(chunk, drained, force, final);
+      sentTerminal = outcome.sentTerminal;
+      if (outcome.failed) {
         break;
       }
     }

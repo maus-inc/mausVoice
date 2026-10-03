@@ -232,12 +232,38 @@ const startElevenLabsStreaming = async (
 
     const writeAudioChunk = (rawChunk: Float32Array) => {
       if (isFinalized) return;
+      // Queue only for a socket that is still able to receive. The test is
+      // `readyState`, not `ws`: `cleanup` only nulls the socket when it is not
+      // already CLOSED, so after a normal close `ws` is still the closed socket,
+      // and a `!ws` guard would have changed nothing at all.
+      //
+      // There is no reconnect to queue for. The comment this replaces spoke of
+      // "reconnecting", but nothing in this session ever opens a second socket,
+      // so `flushPendingSamples` below stayed a no-op for the rest of the
+      // recording while every chunk pushed into `pendingChunks` stayed there
+      // too: hours of audio, retained, never sent, until `finalize` released it.
+      if (
+        !ws ||
+        ws.readyState === WebSocket.CLOSING ||
+        ws.readyState === WebSocket.CLOSED
+      ) {
+        return;
+      }
       try {
         const typedChunk = needsResample
           ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
           : rawChunk;
-        // Queue even while the socket is reconnecting; flushPendingSamples is a
-        // no-op until it is OPEN, so speech is not dropped on a transient close.
+        // Queued unconditionally; `flushPendingSamples` is what decides whether
+        // the socket can take it, and `finalize` drains what is left with
+        // `force`.
+        //
+        // There is no "captured while connecting" case to cover here, which is
+        // what this comment used to promise. `writeAudioChunk` is handed out
+        // from `ws.onopen` and not before, so the socket is OPEN by the time any
+        // caller can reach this; audio written during the handshake never gets
+        // this far, because the base session has no stream session to forward it
+        // to until then. The guard above is the one that earns its keep: a
+        // socket that closed under us leaves this queue with nowhere to go.
         pendingChunks.push(typedChunk);
         pendingSampleCountRef.value += typedChunk.length;
         flushPendingSamples(false);

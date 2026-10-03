@@ -17,11 +17,41 @@ import { parseJsonObject, unknownToMessage } from "@maus-inc/utilities";
 const stringifyToolResult = (result: unknown): string =>
   typeof result === "string" ? result : JSON.stringify(result ?? {});
 
+/**
+ * The result a tool call reports when the caller aborts before it answers.
+ *
+ * A tool call is only ever omitted when it never started; one that started is
+ * always paired with a result, or the next provider turn carries an assistant
+ * tool call with no matching tool message and the conversation is rejected.
+ */
+const ABORTED_TOOL_OUTPUT: AgentToolOutput = {
+  success: false,
+  failureReason: "Tool execution aborted",
+};
+
+/**
+ * One conversation with a provider: stream a reply, run the tools it asks for,
+ * feed the results back, until the model stops asking, the iteration budget runs
+ * out, or `abort()` is called.
+ *
+ * `abort()` means "stop this run". It is scoped to the run rather than to the
+ * instance, so the controller and the flag are reset when `run()` starts: a
+ * permanently aborted `AbortSignal` handed to a second run is a request that
+ * silently does nothing, and the caller sees an empty conversation with no
+ * error.
+ *
+ * One loop carries one run at a time, and a second `run()` while the first is
+ * still going is refused rather than interleaved. The abort state is a pair of
+ * fields, not a parameter threaded through fifteen frames, so two runs sharing
+ * them would mean `abort()` cancelling whichever started last while the first
+ * kept waiting on a provider that was never cancelled. Refusing says that plainly
+ * at the call site; every caller constructs a loop per conversation anyway.
+ */
 export class AgentLoop {
   private config: AgentConfig;
   private aborted = false;
-  private readonly abortController = new AbortController();
-
+  private abortController = new AbortController();
+  private running = false;
   constructor(config: AgentConfig) {
     this.config = config;
   }
@@ -32,6 +62,32 @@ export class AgentLoop {
   }
 
   async *run(messages: LlmMessage[]): AsyncGenerator<AgentEvent> {
+    if (this.running) {
+      throw new Error(
+        "AgentLoop.run: this loop is already running a conversation. One loop " +
+          "carries one run at a time; construct another for a second one rather " +
+          "than sharing this one, or abort this run first.",
+      );
+    }
+    this.running = true;
+    // A run starts live. An abort left over from a previous run describes that
+    // run, and a signal that is already aborted is one the provider and every
+    // tool will refuse before doing any work.
+    this.aborted = false;
+    this.abortController = new AbortController();
+    try {
+      yield* this.runConversation(messages);
+    } finally {
+      // `finally` rather than a success path: a consumer that stops iterating
+      // early -- `break` out of a `for await` -- disposes the generator, and a
+      // loop stuck "running" would refuse every later conversation.
+      this.running = false;
+    }
+  }
+
+  private async *runConversation(
+    messages: LlmMessage[],
+  ): AsyncGenerator<AgentEvent> {
     const history: LlmMessage[] = [...messages];
     const maxIterations = this.config.maxIterations ?? 30;
 
@@ -155,25 +211,65 @@ export class AgentLoop {
     return { ...schema, properties, required };
   }
 
+  /**
+   * Run a tool, or give the wait up when the caller aborts.
+   *
+   * `abort()` sets the flag every other part of the loop reads, but this await
+   * was not one of them: a tool that never settles held the generator open, so
+   * no `finish` event was ever emitted and whoever was driving the loop waited
+   * forever on a stop it had already asked for. The tool's own promise is not
+   * cancellable — `AgentToolInput` carries no signal — so racing the abort is
+   * what releases the loop. A tool that ignores the cancellation keeps running
+   * in the background, which is no worse than before, and the call is still
+   * paired with a result so the provider's context stays valid.
+   */
   private async executeTool(
     tool: AgentTool,
     toolCallId: string,
     toolParams: Record<string, unknown>,
     reason: unknown,
   ): Promise<AgentToolOutput> {
+    if (this.aborted) {
+      return ABORTED_TOOL_OUTPUT;
+    }
     try {
-      return await tool.execute({
-        params: toolParams,
-        reason: typeof reason === "string" ? reason : "",
-        toolCallId,
+      // `execute` is typed as returning a promise, but a tool that throws before
+      // returning one would escape this frame with no tool-result and no finish
+      // event, so the awaited call is inside the same `try` that reports a tool
+      // failure. A tool that never settles is released by the race below.
+      const run = Promise.resolve(
+        tool.execute({
+          params: toolParams,
+          reason: typeof reason === "string" ? reason : "",
+          toolCallId,
+        }),
+      ).catch((err: unknown) => {
+        // A tool must never abort the whole agent loop. Surface the failure
+        // as a tool-result message so the model can recover or end cleanly.
+        return { success: false, failureReason: unknownToMessage(err) };
       });
+
+      // The abort waiter is per call, not per loop: a shared promise resolves once
+      // and its reaction then sits on every result this loop ever produced, which
+      // keeps each tool's output alive until the run ends.
+      const waitForAbort = (): Promise<AgentToolOutput> =>
+        new Promise<AgentToolOutput>((resolve) => {
+          if (this.aborted) {
+            resolve(ABORTED_TOOL_OUTPUT);
+            return;
+          }
+          this.abortController.signal.addEventListener(
+            "abort",
+            () => resolve(ABORTED_TOOL_OUTPUT),
+            { once: true },
+          );
+        });
+
+      // Whichever settles first wins; the loser stops mattering because nothing
+      // here holds a reference to it once this frame returns.
+      return await Promise.race([run, waitForAbort()]);
     } catch (err) {
-      // A tool must never abort the whole agent loop. Surface the failure
-      // as a tool-result message so the model can recover or end cleanly.
-      return {
-        success: false,
-        failureReason: unknownToMessage(err),
-      };
+      return { success: false, failureReason: unknownToMessage(err) };
     }
   }
 

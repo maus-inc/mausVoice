@@ -505,20 +505,45 @@ const recordFastStyleTruncation = (
     `Fast style dropped ${truncation.droppedChars} chars for ${context} (kept ${truncation.keptChars} of ${rawTranscript.length})`,
   );
   metadata.fastStyleTruncatedChars = truncation.droppedChars;
+  // Which sentence to use depends on whether anything was written.
+  // `isPersistenceAllowed()` is false under incognito mode and during an
+  // ephemeral session, and both store paths consult it before writing, so the
+  // original unconditional "saved in History" pointed the user at a row that
+  // was never created while the dropped tail was in fact unrecoverable.
+  //
+  // The no-persistence wording names History rather than dropping the word: the
+  // user has just been told text went missing, and silence about where it went
+  // reads as a bug. Saying History is unavailable is the actionable half, and
+  // it matches the copy the review-persistence failure already uses.
+  //
+  // Two `formatMessage` calls rather than one call with a conditional
+  // descriptor, because the extractor needs `id` and `defaultMessage` as string
+  // literals in the argument and cannot follow a ternary. Both ids below are
+  // the ones the extractor generates from these messages; see the note on the
+  // explicit id for why they cannot be left implicit.
   warnings.push(
-    getIntl().formatMessage(
-      {
-        // Without an explicit id the descriptor cannot resolve: `intl.ts` falls
-        // back to using the English default message as the id, and the catalogs
-        // key on the id the extractor generates from that message, so the lookup
-        // missed and every locale got the English warning. The translations were
-        // already there, under the id below.
-        id: "dictation_was_longer_than_fast_styling_allows_droppedchars_c",
-        defaultMessage:
-          "Dictation was longer than fast styling allows. {droppedChars} characters at the end were left unstyled. The full text is saved in History.",
-      },
-      { droppedChars: truncation.droppedChars },
-    ),
+    isPersistenceAllowed()
+      ? getIntl().formatMessage(
+          {
+            // Without an explicit id the descriptor cannot resolve: `intl.ts`
+            // falls back to using the English default message as the id, and
+            // the catalogs key on the id the extractor generates from that
+            // message, so the lookup missed and every locale got the English
+            // warning. Both ids below are those extractor-generated ids.
+            id: "dictation_was_longer_than_fast_styling_allows_droppedchars_c",
+            defaultMessage:
+              "Dictation was longer than fast styling allows. {droppedChars} characters at the end were left unstyled. The full text is saved in History.",
+          },
+          { droppedChars: truncation.droppedChars },
+        )
+      : getIntl().formatMessage(
+          {
+            id: "history_is_not_available_in_this_session_so_the_droppedchars",
+            defaultMessage:
+              "History is not available in this session, so the {droppedChars} characters fast styling left unstyled at the end of that dictation were not saved.",
+          },
+          { droppedChars: truncation.droppedChars },
+        ),
   );
 };
 

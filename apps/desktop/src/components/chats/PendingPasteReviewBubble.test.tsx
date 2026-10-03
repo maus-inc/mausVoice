@@ -130,11 +130,22 @@ describe("pending paste review messages", () => {
     await render();
 
     expect(container.textContent).toContain("Paste action waiting for you");
+    // The field is a MUI `TextField` with `multiline`, which renders a
+    // `.MuiFormControl-root` div carrying the `aria-label` and a `<textarea>`
+    // inside it. The label is on the wrapper, not on the textarea, so a selector
+    // asking for the textarea *itself* to be labelled -- or for a textarea
+    // outside the labelled subtree -- matches nothing and asserts `undefined`
+    // against a string, which fails loudly but for the wrong reason.
+    const labelled = container.querySelector(
+      '[aria-label="Text prepared for manual paste"]',
+    );
+    expect(labelled, "the manual-paste field must be labelled").toBeTruthy();
+    const field = labelled?.querySelector("textarea");
     expect(
-      container.querySelector<HTMLTextAreaElement>(
-        '[aria-label="Text prepared for manual paste"] textarea',
-      )?.value,
-    ).toBe("the agent's transcript");
+      field,
+      "the labelled element must contain the multiline field",
+    ).toBeTruthy();
+    expect(field?.value).toBe("the agent's transcript");
   });
 
   it("routes the Copy action to the saved review", async () => {

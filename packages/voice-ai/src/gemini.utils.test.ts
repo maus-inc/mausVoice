@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { LlmChatInput } from "@maus-inc/types";
 import {
   geminiGenerateTextResponse,
   geminiStreamChat,
@@ -305,7 +306,7 @@ describe("Gemini native transport", () => {
       },
       {
         type: "finish",
-        finishReason: "stop",
+        finishReason: "tool-calls",
         usage: { promptTokens: 4, completionTokens: 2 },
       },
     ]);
@@ -320,6 +321,76 @@ describe("Gemini native transport", () => {
       properties: { id: { type: "INTEGER" } },
     });
     expect(body).not.toHaveProperty("generationConfig");
+  });
+
+  it("reports a turn that ended in a function call as tool-calls", async () => {
+    // Gemini has no tool-call finish reason: this turn is reported as a plain
+    // STOP, which reads as "the model finished talking" on a turn that is
+    // waiting on a tool result. The other two providers in this package
+    // report it as `tool-calls`, and nothing in the turn says otherwise.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"id":7}}}],"role":"model"},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [{ name: "lookup", parameters: { type: "object" } }],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({
+      type: "tool-call",
+      id: "gemini-tc-0",
+      name: "lookup",
+      arguments: '{"id":7}',
+    });
+    expect(events[events.length - 1]).toEqual({
+      type: "finish",
+      finishReason: "tool-calls",
+      usage: undefined,
+    });
+  });
+
+  it("keeps a truncated reason on a turn that also called a tool", async () => {
+    // A turn cut off at the token limit is not waiting on a tool result, so
+    // the more specific reason is the one a consumer needs.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{}}}],"role":"model"},"finishReason":"MAX_TOKENS"}]}\r\n\r\n',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [{ name: "lookup", parameters: { type: "object" } }],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[events.length - 1]).toEqual({
+      type: "finish",
+      finishReason: "length",
+      usage: undefined,
+    });
   });
 
   it("parses a final event that arrives without its terminating blank line", async () => {
@@ -700,6 +771,79 @@ describe("Gemini thinking controls", () => {
 });
 
 describe("Gemini Files API edge cases", () => {
+  /**
+   * The Files API mock skeleton, written once.
+   *
+   * Every test in this block walks the same four steps: POST the upload to get a
+   * resumable URL, PUT to that URL to get the file's `uri`, poll the file for its
+   * state, and DELETE it when the transcription is done. Only the file id, the
+   * polling state, the cleanup answer and the model call's text differ between
+   * them, so those four are the parameters. A copy per test meant a change to the
+   * upload handshake or the file URI had to be found in every copy, and the copies
+   * that had drifted were the ones nothing exercised.
+   *
+   * `fileUri` is the id half of the URI rather than the whole URI because the
+   * poll and the DELETE both address it by suffix. A test that needs its own id
+   * -- to tell two files apart, or to prove a slow one is polled -- passes that
+   * id here rather than re-declaring the handshake to get a different one.
+   */
+  const filesApiFetch = ({
+    fileUri = "abc",
+    pollState,
+    deleteHandler,
+    fallbackText = "ok",
+  }: {
+    /** The file id the upload hands back, which the poll and the DELETE address. */
+    fileUri?: string;
+    /** The body each successive polling GET answers, given the 1-based count. */
+    pollState?: (pollCount: number) => Record<string, unknown>;
+    /** The cleanup DELETE. Return a `Response` to settle it, or never to stall. */
+    deleteHandler?: (init?: RequestInit) => Promise<Response>;
+    /** The text the model call answers with once the file is ready. */
+    fallbackText?: string;
+  } = {}) => {
+    const filePath = `/v1beta/files/${fileUri}`;
+    let pollCount = 0;
+    return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: {
+              "x-goog-upload-url": "https://upload.example.com/resumable",
+            },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({
+            file: {
+              uri: `https://generativelanguage.googleapis.com${filePath}`,
+              mimeType: "audio/wav",
+            },
+          }),
+        );
+      }
+      if (url.includes(filePath) && (init?.method === "GET" || !init?.method)) {
+        pollCount += 1;
+        return Promise.resolve(
+          jsonResponse(pollState ? pollState(pollCount) : { state: "ACTIVE" }),
+        );
+      }
+      if (url.includes(filePath) && init?.method === "DELETE") {
+        return deleteHandler
+          ? deleteHandler(init)
+          : Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: fallbackText }] } }],
+        }),
+      );
+    });
+  };
+
   it("throws when upload URL header is missing", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {
@@ -730,46 +874,18 @@ describe("Gemini Files API edge cases", () => {
     vi.useFakeTimers();
     try {
       let polls = 0;
-      const customFetch = vi
-        .fn()
-        .mockImplementation((url: string, init?: RequestInit) => {
-          if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-            return Promise.resolve(
-              new Response(JSON.stringify({}), {
-                status: 200,
-                headers: {
-                  "x-goog-upload-url": "https://upload.example.com/resumable",
-                },
-              }),
-            );
-          }
-          if (url.includes("upload.example.com")) {
-            return Promise.resolve(
-              jsonResponse({
-                file: {
-                  uri: "https://generativelanguage.googleapis.com/v1beta/files/slow",
-                  mimeType: "audio/wav",
-                },
-              }),
-            );
-          }
-          if (url.includes("/v1beta/files/slow") && init?.method === "GET") {
-            polls += 1;
-            // Still processing after 20 polls, which is well past what the old
-            // ten fixed attempts could ever have waited for.
-            return Promise.resolve(
-              jsonResponse({ state: polls <= 20 ? "PROCESSING" : "ACTIVE" }),
-            );
-          }
-          if (url.includes("/v1beta/files/slow") && init?.method === "DELETE") {
-            return Promise.resolve(new Response(null, { status: 200 }));
-          }
-          return Promise.resolve(
-            jsonResponse({
-              candidates: [{ content: { parts: [{ text: "slow but ok" }] } }],
-            }),
-          );
-        });
+      const customFetch = filesApiFetch({
+        fileUri: "slow",
+        pollState: (pollCount) => {
+          polls = pollCount;
+          // Still processing after 20 polls, which is well past what the old
+          // ten fixed attempts could ever have waited for.
+          return pollCount <= 20
+            ? { state: "PROCESSING" }
+            : { state: "ACTIVE" };
+        },
+        fallbackText: "slow but ok",
+      });
 
       const pending = geminiTranscribeAudio({
         apiKey: "k",
@@ -792,41 +908,9 @@ describe("Gemini Files API edge cases", () => {
   });
 
   it("throws on FAILED file state", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "FAILED" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "ok" }] } }],
-          }),
-        );
-      });
+    const customFetch = filesApiFetch({
+      pollState: () => ({ state: "FAILED" }),
+    });
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
@@ -838,45 +922,14 @@ describe("Gemini Files API edge cases", () => {
   });
 
   it("throws when file never becomes ACTIVE after polling", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "fallback" }] } }],
-          }),
-        );
-      });
     // Fake clock, because giving up now means spending the whole 30s budget
     // rather than ten fixed 100ms attempts.
     vi.useFakeTimers();
     try {
+      const customFetch = filesApiFetch({
+        pollState: () => ({ state: "PROCESSING" }),
+        fallbackText: "fallback",
+      });
       const pending = geminiTranscribeAudio({
         apiKey: "k",
         model: "gemini-3.5-transcribe",
@@ -897,49 +950,14 @@ describe("Gemini Files API edge cases", () => {
 
   it("aborts during polling when signal is aborted", async () => {
     const controller = new AbortController();
-    let pollCount = 0;
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
+    const customFetch = filesApiFetch({
+      pollState: (pollCount) => {
+        if (pollCount === 1) {
+          controller.abort();
         }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (
-          url.includes("/v1beta/files/abc") &&
-          (init?.method === "GET" || !init?.method)
-        ) {
-          pollCount++;
-          if (pollCount === 1) {
-            controller.abort();
-          }
-          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "ok" }] } }],
-          }),
-        );
-      });
+        return { state: "PROCESSING" };
+      },
+    });
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
@@ -949,6 +967,57 @@ describe("Gemini Files API edge cases", () => {
         customFetch,
       }),
     ).rejects.toThrow();
+  }, 10000);
+
+  it("releases a stalled cleanup DELETE when the caller cancels", async () => {
+    // The cleanup request was the one call on this path that took no signal, so
+    // a stalled deletion kept the transcription awaiting a response that was
+    // never coming. The cancellation that should release it had already been
+    // spent on the request before it: every other call here carries the signal,
+    // so the deadline that ended the operation had nothing left to hand the
+    // DELETE, and a stalled deletion then blocked transcription forever after
+    // the operation deadline expired. The mock below settles only on an abort,
+    // which is what a real transport does with a request it is told to abandon.
+    const controller = new AbortController();
+    let cleanupSignal: AbortSignal | undefined;
+    const customFetch = filesApiFetch({
+      fallbackText: "cleaned up",
+      deleteHandler: (init) => {
+        cleanupSignal = init?.signal ?? undefined;
+        // The cancel lands while the deletion is in flight, so the request has
+        // to already be listening for it.
+        queueMicrotask(() => controller.abort());
+        return new Promise((_resolve, reject) => {
+          const onAbort = () =>
+            reject(new DOMException("aborted", "AbortError"));
+          if (cleanupSignal?.aborted) onAbort();
+          else
+            cleanupSignal?.addEventListener("abort", onAbort, { once: true });
+        });
+      },
+    });
+
+    const pending = geminiTranscribeAudio({
+      apiKey: "k",
+      model: "gemini-3.5-transcribe",
+      blob: new Uint8Array([1, 2, 3]).buffer,
+      signal: controller.signal,
+      customFetch,
+    });
+    // A real clock rather than fake timers: the failure being guarded against is
+    // an await that never settles, so the only way to see it is to stop waiting.
+    const outcome = await Promise.race([
+      pending.then(
+        () => "settled",
+        () => "rejected",
+      ),
+      new Promise<string>((resolve) =>
+        setTimeout(() => resolve("hung"), 1_000),
+      ),
+    ]);
+
+    expect(cleanupSignal).toBeDefined();
+    expect(outcome).toBe("settled");
   }, 10000);
 
   it("validates upload URL is https", async () => {
@@ -1157,5 +1226,86 @@ describe("Gemini Files API edge cases", () => {
     ).resolves.toEqual({ text: "hi", wordsUsed: 1 });
     const body = JSON.parse(customFetch.mock.calls[0]?.[1]?.body as string);
     expect(body.contents[0].parts[0].inlineData.data).toBe("AQID");
+  });
+});
+
+describe("Gemini tool choice", () => {
+  const tools = [
+    {
+      name: "lookup",
+      description: "looks something up",
+      parameters: { type: "object" as const, properties: {} },
+    },
+    {
+      name: "other",
+      description: "does something else",
+      parameters: { type: "object" as const, properties: {} },
+    },
+  ];
+
+  // Every case in this block asserts on the request body that came out, and they
+  // differ only in the `input` they hand the stream, so the mock, the drain and
+  // the parse live here once. A second copy of that plumbing can only drift from
+  // the first, and a case that forgot to assert would then read as a pass.
+  const streamOnce = async (
+    input: Partial<LlmChatInput> = {},
+  ): Promise<Record<string, unknown>> => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+    for await (const _event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools,
+        ...input,
+      },
+      customFetch,
+    })) {
+      // drain
+    }
+    return JSON.parse(customFetch.mock.calls[0]![1].body as string);
+  };
+
+  // `input.toolChoice` decides whether the model may call a tool at all. Gemini
+  // spells the same three options in `toolConfig.functionCallingConfig.mode`,
+  // and "only this one" as an allow-list inside `ANY`. Sending the request
+  // without it leaves Gemini on its default of AUTO for every caller: a `none`
+  // turn can still call a tool, and a `required` turn can still answer in prose.
+  it.each([
+    ["auto", "AUTO"],
+    ["none", "NONE"],
+    ["required", "ANY"],
+  ])("maps toolChoice %s onto mode %s", async (choice, mode) => {
+    const body = await streamOnce({ toolChoice: choice as never });
+    expect(body.toolConfig).toEqual({ functionCallingConfig: { mode } });
+  });
+
+  it("restricts a named tool choice to that function", async () => {
+    const body = await streamOnce({ toolChoice: { name: "lookup" } as never });
+    expect(body.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["lookup"],
+      },
+    });
+  });
+
+  it("sends no toolConfig when the caller expressed no choice", async () => {
+    const body = await streamOnce();
+    expect(body).not.toHaveProperty("toolConfig");
+  });
+
+  it("sends no toolConfig when there are no tools to choose between", async () => {
+    // Gemini rejects a `toolConfig` on a request that declares no function, so
+    // the choice is only expressible once `tools` is present.
+    const body = await streamOnce({ toolChoice: "required", tools: undefined });
+    expect(body).not.toHaveProperty("toolConfig");
+    expect(body).not.toHaveProperty("tools");
   });
 });

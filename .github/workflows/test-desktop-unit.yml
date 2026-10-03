@@ -20,12 +20,33 @@ on:
       - "scripts/bindings.sh"
       - "scripts/ci/check-bindings-guard.test.mjs"
       - "scripts/ci/check-workflow-pins.test.mjs"
+      - "scripts/ci/windows-tauri-imports.test.mjs"
+      # Every suite this workflow runs, and the config `dev-surface-contracts`
+      # reads. A guard whose own edit does not match the trigger filter does not
+      # run for the change most likely to break it, and the guard is then only
+      # documentation. `check-workspace-hygiene.test.mjs` fails the build when a
+      # suite executed here is missing from this list, so it cannot rot again.
+      #
+      # The cost is real and worth stating: `paths:` is a workflow-level filter,
+      # so naming a guard here also starts `rust-unit-tests` (an apt install, a
+      # `cargo test --lib`, and `clippy --all-targets` over two crates) and
+      # `rust-windows-gated` (a full desktop-crate clippy on `windows-2022`) for
+      # what is usually a comment in a `.mjs` file. Accepted, because
+      # `apps/desktop/**` already sends every one of those jobs the common case
+      # of any desktop source change, and a guard that silently stops running is
+      # the more expensive failure -- it is invisible until it matters.
+      - "scripts/ci/check-workspace-hygiene.test.mjs"
+      - "scripts/ci/dev-surface-contracts.test.mjs"
+      - "scripts/ci/dev-surface-config.mjs"
+      - "scripts/ci/package-exports.test.mjs"
+      - "scripts/ci/validate-release-inputs.test.mjs"
+      - "scripts/ci/release-notes.test.mjs"
+      - "scripts/ci/verify-sherpa-archives.test.mjs"
       - ".github/workflows/**"
+permissions: {}
+
 # These workflows run on branch pushes or manual requests, not PR events.
 # Cancel superseded runs for the same branch.
-permissions:
-  contents: read
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -52,6 +73,12 @@ jobs:
         run: node --test scripts/ci/run-with-diagnostics.test.mjs
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the dev surface config guards
+        # `smol-toml` is a workspace devDependency, so this guard needs the
+        # install above and cannot live on the `node --test`-only job that runs
+        # the rest of `scripts/ci`. It guards `scripts/ci/dev-surface-config.mjs`,
+        # which `package.json` scripts call, and its tests had never run anywhere.
+        run: node --test scripts/ci/dev-surface-contracts.test.mjs
       - name: Build dependencies
         run: pnpm exec turbo run build --filter=desktop^... --verbosity=2 --continue
       - name: Run desktop unit tests
@@ -137,8 +164,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
+          # One entry per crate this job compiles. `workspaces` replaces the
+          # default rather than extending it, so a crate left out of this list
+          # has no cache at all and the lint below rebuilds its dependency tree
+          # on every push.
           workspaces: |
             apps/desktop/src-tauri -> target
+            packages/rust_pill_shared -> packages/rust_pill_shared/target
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -203,6 +235,30 @@ jobs:
         run: node --test scripts/ci/check-bindings-guard.test.mjs
       - name: Test workflow action pin guard
         run: node --test scripts/ci/check-workflow-pins.test.mjs
+      - name: Test the release script guards
+        # `release.yml` runs these four scripts but none of their guards, so a
+        # change to the release input validation, the notes builder, the dev
+        # surface config or the sherpa archive check would have shipped on the
+        # strength of the script's own exit code alone. All four are plain
+        # `node --test` with no workspace dependency, which is why they belong
+        # on this job rather than one that installs pnpm.
+        run: |
+          node --test scripts/ci/validate-release-inputs.test.mjs
+          node --test scripts/ci/release-notes.test.mjs
+          node --test scripts/ci/verify-sherpa-archives.test.mjs
+      - name: Test workspace hygiene guards
+        # This suite reads the repository rather than a build output: it refuses
+        # a captured transcript in the tree, and it fails when a `.deepsource.toml`
+        # exclusion has rotted into matching nothing -- the one way an analyzer
+        # stops being skipped without anyone being told. A guard that no job runs
+        # is documentation, so it is run here like the others.
+        run: node --test scripts/ci/check-workspace-hygiene.test.mjs
+      - name: Test Windows-only Rust module imports
+        # No runner in this repository compiles
+        # apps/desktop/src-tauri/src/platform/windows/** on Linux, so an
+        # undeclared name in that tree is invisible to every other guard until
+        # a Windows build. This one reads the source, so it runs here.
+        run: node --test scripts/ci/windows-tauri-imports.test.mjs
       - name: Verify generated bindings are in sync
         # Regenerates packages/desktop-native-apis/src/bindings.ts from the
         # generator example and fails on any diff. Guards against a command
@@ -215,10 +271,12 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" bindings bash scripts/check-bindings.sh
 
   # The `cfg(windows)` half of the desktop crate is compiled by the Windows app
-  # build, but nothing linted it outside the binary, and nothing could test it:
-  # `console_display_is_on` was unreachable from the Ubuntu job for exactly that
-  # reason, and the missing import that broke the Windows build sat in code no
-  # Linux command could see. This job closes that.
+  # build, but nothing linted it outside the binary: the missing import that
+  # broke the Windows build sat in code no Linux command could see, and
+  # `console_display_is_on` was unreachable from the Ubuntu job for that same
+  # reason. This job closes that by compiling and linting it on a Windows
+  # runner. It does not execute those tests, because the test binary links
+  # WebView2 and a bare runner has no runtime for it; see the lint step below.
   #
   # The standalone macOS pill crate needed nothing: `lint-desktop.yml` already
   # lints and tests it on `macos-14`. Its gap was formatting, and that is
@@ -239,12 +297,17 @@ jobs:
           workspaces: |
             apps/desktop/src-tauri -> target
       - name: Lint the Windows-gated code
-        # Lint, not test: the desktop crate links WebView2, and a bare
-        # windows-2022 runner has no WebView2 runtime, so the test binary exits
-        # with STATUS_ENTRYPOINT_NOT_FOUND before a single test runs. Clippy
-        # with `--all-targets` still compiles the `cfg(windows)` code *and* its
-        # `cfg(test)` modules, which is the coverage that matters here -- it is
-        # what found the dead binding that only `#[cfg(unix)]` reads.
+        # Lint, not test: the test binary links the whole lib, which reaches
+        # tauri -> wry -> webview2-com -> WebView2Loader.dll, and a bare
+        # windows-2022 runner has no WebView2 runtime, so the process fails to
+        # load (STATUS_ENTRYPOINT_NOT_FOUND) before libtest reports anything.
+        # The four `cfg(test)` modules themselves are pure logic -- hotkey
+        # sweeps, console-display filtering, argument quoting, keepalive
+        # predicates -- so the runtime is the only thing between them and a
+        # green run, and it is the first thing to install if they ever are.
+        # Clippy with `--all-targets` compiles the `cfg(windows)` code *and*
+        # those `cfg(test)` modules, which is the coverage that exists here --
+        # it is what found the dead binding that only `#[cfg(unix)]` reads.
         working-directory: apps/desktop/src-tauri
         env:
           TAURI_CONFIG: '{"bundle":{"externalBin":[]}}'

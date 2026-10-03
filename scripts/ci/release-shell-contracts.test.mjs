@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const workflowDir = resolve(repoRoot, ".github/workflows");
 const read = (relativePath) =>
   readFileSync(resolve(repoRoot, relativePath), "utf8");
 
@@ -63,6 +70,76 @@ const extractSteps = (workflowText) => {
   if (current) steps.push(current);
   return steps;
 };
+
+// The key of the mapping a line sits inside, or "" at the top level. Found by
+// walking up past blank lines to the first line indented less than `indent`.
+function enclosingKey(lines, index, indent) {
+  for (let above = index - 1; above >= 0; above -= 1) {
+    const line = lines[above];
+    if (line.trim() === "") continue;
+    const aboveIndent = line.length - line.trimStart().length;
+    if (aboveIndent >= indent) continue;
+    return line.trim().replace(/:.*$/, "");
+  }
+  return "";
+}
+
+// The jobs of a workflow as { name, body } records, so a guard can prove a
+// property of one job instead of of the whole file read as a single string.
+function jobBlocks(workflowText) {
+  const lines = workflowText.split("\n");
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  // A workflow with no `jobs:` section has nothing to check, and a scanner that
+  // silently returned an empty list would let the caller conclude every job
+  // declared its permissions -- including for a file that has no jobs at all.
+  if (jobsAt === -1) return [];
+  const jobs = [];
+  let current = null;
+  for (const line of lines.slice(jobsAt + 1)) {
+    const start = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(line);
+    if (start) {
+      current = { name: start[1], body: [] };
+      jobs.push(current);
+      continue;
+    }
+    current?.body.push(line);
+  }
+  return jobs.map((job) => ({ ...job, body: job.body.join("\n") }));
+}
+
+// This is the guard: every job declares its own permissions, and a scan that
+// found no jobs at all is a failure rather than an empty result.
+//
+// It takes the workflow text rather than reading a file so a test can hand it a
+// shape the repository does not currently contain. That is the whole point: a
+// guard whose only exercise is today's workflows cannot be shown to fail, and a
+// guard that has never been seen to fail is a guard nobody can rely on.
+function assertEveryJobDeclaresPermissions(workflowText, label) {
+  const jobs = jobBlocks(workflowText);
+  assert.ok(
+    jobs.length > 0,
+    `${label} has a jobs: section this scan cannot read, so its jobs' ` +
+      "permissions blocks were never verified",
+  );
+  const undeclared = jobs
+    .filter((job) => !/^ {4}permissions:/m.test(job.body))
+    .map((job) => job.name);
+  assert.deepStrictEqual(
+    undeclared,
+    [],
+    `${label}: every job must declare its own permissions, or it inherits ` +
+      `none: ${undeclared.join(", ")}`,
+  );
+}
+
+// The nearest enclosing step's `uses:` pin, looking upward from `index`, or null.
+function enclosingUsesPin(lines, index) {
+  for (let above = index - 1; above >= 0; above -= 1) {
+    const uses = /^\s*(?:-\s+)?uses:\s*(\S+)/.exec(lines[above]);
+    if (uses) return uses[1];
+  }
+  return null;
+}
 
 describe("release workflow shell contracts", () => {
   const release = read(".github/workflows/release.yml");
@@ -193,9 +270,13 @@ describe("release workflow shell contracts", () => {
       /find dist -type f -name '\*\.sig' -print0/,
       "verification must walk the signatures, not the installer suffixes",
     );
+    // `.deb` belongs in that list as much as `.msi` and `.exe`: Tauri v2 emits
+    // no detached signature for it (see the INSTALLER_TYPES note in
+    // build-updater-manifest.mjs), so a `-name '*.deb'` arm would fail every
+    // stable release for a signature nobody produces.
     assert.doesNotMatch(
       command,
-      /-name '\*\.msi' -o|-name '\*\.exe' -o/,
+      /-name '\*\.(?:msi|exe|deb)'/,
       "unsigned manual-download installers must not be required to have a signature",
     );
 
@@ -214,44 +295,134 @@ describe("release workflow shell contracts", () => {
     // `run:` block is substituted before the shell sees it, so a dispatch input
     // can inject shell. This workflow passes each one through `env:` and reads
     // it as a shell variable, which is what the rule is asking for. Pin the
-    // property that makes that true: an `inputs.` interpolation may only appear
-    // as an environment entry or in an `if:` condition, never in a script.
-    for (const [index, line] of release.split("\n").entries()) {
+    // property that makes that true: an `inputs.` interpolation may reach an
+    // `env:` entry, an `if:` condition, or the `with:` block of an action that
+    // is pinned to a commit, and nothing else.
+    //
+    // The shape of the line is not enough to tell those apart, because a `with:`
+    // entry looks exactly like an `env:` entry:
+    // `prerelease: ${{ inputs.prerelease }}` at release.yml:620 is a parameter of
+    // `softprops/action-gh-release`, which is handed the value as an argument and
+    // never splices it into a script. So the enclosing block is read from the
+    // line above, at the key's own indentation, and a `with:` entry has to prove
+    // that the action it belongs to is pinned before it counts as safe.
+    const lines = release.split("\n");
+    for (const [index, line] of lines.entries()) {
       if (!line.includes("${{ inputs.")) continue;
-      const isEnvEntry = /^\s+[A-Za-z_][A-Za-z0-9_]*:\s*\$\{\{\s*inputs\./.test(
-        line,
-      );
+      const indent = line.length - line.trimStart().length;
+      const key = line.trim().replace(/\s*:.*$/, "");
+      const block = enclosingKey(lines, index, indent);
+      const isEnvEntry =
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && block === "env";
       const isCondition = /^\s*(if|!if):/.test(line.trimStart());
+      const isPinnedStepParameter =
+        block === "with" &&
+        /@[0-9a-f]{40}$/.test(enclosingUsesPin(lines, index) ?? "");
       assert.ok(
-        isEnvEntry || isCondition,
-        `release.yml:${index + 1} interpolates a dispatch input outside env or an if:`,
+        isEnvEntry || isCondition || isPinnedStepParameter,
+        `release.yml:${index + 1} interpolates a dispatch input outside an env: entry, an if:, or a pinned action parameter`,
       );
     }
   });
 
-  it("grants the workflow token read-only unless a job asks for more", () => {
-    // The token defaults to write-all when nothing says otherwise, so a
-    // workflow with no grant at all is the widest grant available. Every
-    // workflow declares a read-only default and every job that needs more
-    // declares its own block, which replaces the default.
-    for (const file of [
-      "release.yml",
-      "lint-desktop.yml",
-      "test-desktop-unit.yml",
-      "build-desktop.yml",
-      "secret-scan.yml",
-      "test-package-rust-transcription.yml",
-      "test-desktop-integration.yml",
-      "test-docs.yml",
-    ]) {
-      const workflow = read(`.github/workflows/${file}`);
-      const beforeJobs = workflow.split(/^jobs:$/m)[0];
+  it("grants each job only the token scope it declares", () => {
+    // Per-job least privilege, which is the rule the repository states: every
+    // job declares what it needs, and the workflow-level default grants
+    // nothing at all. The default has to be `{}` rather than `contents: read`
+    // because a read default still hands a token to a job that needs none, and
+    // it has to be `{}` rather than nothing because GitHub's own default is
+    // write-all: a job added tomorrow without a `permissions:` block would
+    // otherwise inherit write access. `{}` is what makes the missing block fail
+    // loudly instead of quietly.
+    //
+    // The list comes from the directory rather than from a hand-maintained
+    // array: a workflow added later is then covered the day it lands, and the
+    // one added a moment ago, `format-and-i18n.yml`, cannot be the one that
+    // quietly loses its default.
+    const workflows = readdirSync(workflowDir).filter((file) =>
+      /\.ya?ml$/.test(file),
+    );
+    assert.ok(
+      workflows.length > 0,
+      "expected at least one workflow in .github/workflows",
+    );
+
+    for (const file of workflows) {
+      const workflow = readFileSync(join(workflowDir, file), "utf8");
       assert.match(
-        beforeJobs,
-        /^permissions:\n {2}contents: read$/m,
-        `${file} must default the token to read-only before its jobs`,
+        workflow.split(/^jobs:$/m)[0],
+        /^permissions: \{\}$/m,
+        `${file} must default the token to no permissions before its jobs`,
       );
+      assertEveryJobDeclaresPermissions(workflow, file);
     }
+  });
+
+  // A guard that cannot fail is worse than no guard, because it is read as
+  // evidence. Both shapes below pass a naive `deepStrictEqual(undeclared, [])`
+  // while checking nothing at all.
+  it("refuses a workflow whose jobs it cannot see", () => {
+    // Jobs indented four spaces instead of two. Every job here declares nothing,
+    // and the old comparison saw an empty list, compared it to an empty list and
+    // passed -- so a workflow reformatted by a well-meaning edit would have
+    // switched this guard off without a word.
+    const deep = [
+      "permissions: {}",
+      "jobs:",
+      "    build:",
+      "      runs-on: ubuntu-latest",
+      "      steps:",
+      "        - run: echo hi",
+      "",
+    ].join("\n");
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions(deep, "deep.yml"),
+      /cannot read/,
+      "no readable job means no verified job, which has to be a failure",
+    );
+    // And the reason it used to pass is still true of the scan itself: the
+    // blindness is in `jobBlocks`, not in the assertion.
+    assert.deepStrictEqual(jobBlocks(deep), []);
+  });
+
+  it("refuses a workflow with no jobs section at all", () => {
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions("name: nothing\n", "empty.yml"),
+      /cannot read/,
+    );
+  });
+
+  it("reports a job with no permissions block, and only that job", () => {
+    const workflow = [
+      "permissions: {}",
+      "jobs:",
+      "  declared:",
+      "    runs-on: ubuntu-latest",
+      "    permissions:",
+      "      contents: read",
+      "    steps:",
+      "      - run: echo hi",
+      "  bare:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo hi",
+      "",
+    ].join("\n");
+    assert.throws(
+      () => assertEveryJobDeclaresPermissions(workflow, "mixed.yml"),
+      /bare/,
+      "the job that inherits the workflow default is the one to name",
+    );
+    // And the same workflow passes once that job declares its own.
+    assert.doesNotThrow(() =>
+      assertEveryJobDeclaresPermissions(
+        workflow.replace(
+          "  bare:\n    runs-on: ubuntu-latest\n",
+          "  bare:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
+        ),
+        "fixed.yml",
+      ),
+    );
   });
 
   it("builds both channels through one manifest step", () => {

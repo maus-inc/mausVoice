@@ -9,11 +9,6 @@ use std::path::Path;
 /// (250 MB ≈ 10 × 25 MB).
 pub const MAX_LOG_DIR_SIZE: u64 = 250 * 1024 * 1024;
 
-/// Number of most-recent log files `purge_old_logs` always keeps, even if
-/// they push the directory past `MAX_LOG_DIR_SIZE`. Matches the
-/// `RotationStrategy::KeepSome(MAX_LOG_FILES)` configured in `app.rs`.
-pub const MIN_KEEP_RECENT_FILES: usize = 10;
-
 pub fn purge_old_logs(app: &tauri::AppHandle) {
     let logs_dir = match crate::system::paths::logs_dir(app) {
         Ok(dir) => dir,
@@ -29,63 +24,90 @@ fn purge_old_logs_in(logs_dir: &Path) {
     purge_old_logs_in_with_cap(logs_dir, MAX_LOG_DIR_SIZE);
 }
 
-fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
-    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> =
-        match fs::read_dir(logs_dir) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_file())
-                .filter_map(|e| {
-                    let metadata = e.metadata().ok()?;
-                    let modified = metadata.modified().ok()?;
-                    let size = metadata.len();
-                    Some((e.path(), modified, size))
-                })
-                .collect(),
-            Err(err) => {
-                log::error!("Failed to read logs dir for purge: {err}");
-                return;
-            }
-        };
+/// One regular file in the log directory, carrying the two fields purging needs
+/// to order the directory and to tell the active log from its rotated history.
+struct LogFile {
+    path: std::path::PathBuf,
+    modified: std::time::SystemTime,
+    name: std::ffi::OsString,
+    size: u64,
+}
 
-    let total_size: u64 = files.iter().map(|(_, _, size)| size).sum();
+fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
+    let mut files: Vec<LogFile> = match fs::read_dir(logs_dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| {
+                let metadata = e.metadata().ok()?;
+                let modified = metadata.modified().ok()?;
+                let size = metadata.len();
+                let name = e.file_name();
+                Some(LogFile {
+                    path: e.path(),
+                    modified,
+                    name,
+                    size,
+                })
+            })
+            .collect(),
+        Err(err) => {
+            log::error!("Failed to read logs dir for purge: {err}");
+            return;
+        }
+    };
+
+    let total_size: u64 = files.iter().map(|file| file.size).sum();
     if total_size <= cap {
         return;
     }
 
     // Oldest first, so deletion walks from the oldest file upward while the
-    // directory stays over the cap. Trimming ignores the MIN_KEEP_RECENT_FILES
-    // recency floor once over the cap, so a directory with few huge legacy logs
-    // (the #468 case) still shrinks.
-    files.sort_by_key(|(_, modified, _)| *modified);
+    // directory stays over the cap. There is no recency floor: a directory
+    // holding few huge legacy logs (the #468 case) still has to shrink, so once
+    // the cap is exceeded it wins over keeping recent files, and trimming stops
+    // the moment the cap is met rather than deleting more than it must.
+    // Ties on mtime break on the file name so the order never depends on the
+    // order `read_dir` happened to return.
+    files.sort_by(|a, b| {
+        a.modified
+            .cmp(&b.modified)
+            .then_with(|| a.name.cmp(&b.name))
+    });
 
-    // The active log is the newest file the rotating writer holds open, and
-    // deleting it fails with a sharing violation on Windows. Log file names
-    // carry a second-resolution timestamp, so a rotation can leave several
-    // files with an identical mtime; keeping only the last one of those would
-    // make the survivor depend on the order read_dir happened to return, and on
-    // Unix the file it picked to delete can be the one still being appended to.
-    // Nothing in the directory distinguishes a tie, so every file sharing the
-    // newest mtime is kept and the cap is honoured as far as the rest allows.
-    let newest_modified = files.last().map(|(_, modified, _)| *modified);
+    // Exactly one file is exempt: the active log the rotating writer holds
+    // open. Deleting it fails with a sharing violation on Windows, and on Unix
+    // it unlinks the file that is still being appended to, so those writes go
+    // nowhere. It is identified by NAME rather than by its mtime value. Log
+    // file names are `mausvoice_%Y-%m-%d_%H%M%S` (`app.rs`), a zero-padded
+    // second-resolution stamp, so the newest file by name is the one just
+    // created and therefore the active one. Keying on the mtime value instead
+    // would exempt every file sharing the newest mtime, which is what a
+    // rotation burst inside a single second produces on a volume with coarse
+    // timestamps (FAT32 or exFAT, so a USB stick or an external macOS volume):
+    // the directory could then never shrink, because the files that had to go
+    // were all exempt.
+    let Some((_active, purgeable)) = files.split_last() else {
+        return;
+    };
 
     let mut removed = 0usize;
     let mut running_total = total_size;
 
-    for (path, modified, size) in files.iter() {
-        if Some(*modified) == newest_modified {
-            continue;
-        }
+    for file in purgeable {
         if running_total <= cap {
             break;
         }
-        match fs::remove_file(path) {
+        match fs::remove_file(&file.path) {
             Ok(()) => {
                 removed += 1;
-                running_total -= size;
+                running_total -= file.size;
             }
             Err(err) => {
-                log::warn!("Failed to purge old log file {}: {err}", path.display());
+                log::warn!(
+                    "Failed to purge old log file {}: {err}",
+                    file.path.display()
+                );
             }
         }
     }
@@ -151,7 +173,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{purge_old_logs_in, purge_old_logs_in_with_cap, MIN_KEEP_RECENT_FILES};
+    use super::{purge_old_logs_in, purge_old_logs_in_with_cap};
     use std::fs;
     use std::path::PathBuf;
     use std::thread::sleep;
@@ -208,20 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn purge_trims_to_min_recent_count() {
-        let dir = unique_tmp_dir("purge-count");
-        for idx in 0..(MIN_KEEP_RECENT_FILES + 5) {
-            write_file_with_size(&dir.join(format!("mausvoice_{idx:02}.log")), 64);
-            sleep(Duration::from_millis(2));
-        }
-
-        purge_old_logs_in(&dir);
-
-        assert!(count_files(&dir) >= MIN_KEEP_RECENT_FILES);
-        fs::remove_dir_all(&dir).expect("failed to clean up");
-    }
-
-    #[test]
     fn purge_enforces_total_size_cap() {
         let dir = unique_tmp_dir("purge-size");
         let chunk = 1024usize;
@@ -244,7 +252,15 @@ mod tests {
             final_size <= test_cap,
             "log dir size {final_size} exceeded cap {test_cap}"
         );
-        assert!(count_files(&dir) >= MIN_KEEP_RECENT_FILES);
+        // Exactly the 15 oldest files are deleted: 30 files of 65_536 are
+        // 1_966_080 bytes against a cap of 983_040, and trimming stops the
+        // moment the cap is met. Written as a literal so it pins how much is
+        // purged rather than merely that something was.
+        assert_eq!(
+            count_files(&dir),
+            15,
+            "expected exactly the 15 oldest files to be purged"
+        );
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 
@@ -277,9 +293,8 @@ mod tests {
             survivors.iter().all(|n| n != "mausvoice_00.log"),
             "expected oldest file to be purged, got {survivors:?}"
         );
-        // The recency floor only applies while under the cap; once the
-        // directory is over it, the cap wins and the directory may drop
-        // below MIN_KEEP_RECENT_FILES.
+        // There is no recency floor: the cap wins outright, so the directory
+        // may shrink to just the active log.
         assert!(
             total_size(&dir) <= 8 * 1024,
             "expected size to shrink to the cap, got {}",
@@ -289,9 +304,9 @@ mod tests {
     }
 
     // Regression test for #468: a directory holding few files but huge
-    // legacy logs (the 63 GB case) must still shrink. The old recency
-    // floor protected every file inside MIN_KEEP_RECENT_FILES, so a
-    // <=10-file directory over the cap was never trimmed.
+    // legacy logs (the 63 GB case) must still shrink. An earlier recency
+    // floor protected the 10 newest files, so a directory of 10 files or
+    // fewer that was over the cap was never trimmed at all.
     #[test]
     fn purge_shrinks_small_dir_over_cap() {
         let dir = unique_tmp_dir("purge-small-dir-over-cap");
@@ -322,15 +337,15 @@ mod tests {
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 
-    // Log file names carry a second-resolution timestamp, so a rotation can
-    // leave two files with an identical mtime. Choosing the survivor by
-    // position in the sorted list then depends on the order read_dir happened
-    // to return, and the file it deletes can be the one the writer still holds
-    // open: on Unix that unlinks the active log while it is being appended to.
-    // Every file sharing the newest mtime is kept instead, because none of them
-    // can be shown to be the older one.
+    // A rotation burst inside one second leaves several log files sharing an
+    // mtime on a volume with coarse timestamps (FAT32, exFAT). Every one of
+    // them is NOT the active log: the name carries a second-resolution stamp,
+    // so only the newest file by name is the one the writer holds open. Pinning
+    // the whole tied group, as an mtime comparison does, leaves the directory
+    // unable to shrink however far over the cap it is — the files that had to
+    // go were all exempt.
     #[test]
-    fn purge_keeps_every_file_that_shares_the_newest_mtime() {
+    fn purge_pins_only_the_newest_named_file_among_files_sharing_the_newest_mtime() {
         let dir = unique_tmp_dir("purge-newest-tie");
         let now = SystemTime::now();
         let old = filetime::FileTime::from_system_time(now - Duration::from_secs(60));
@@ -347,9 +362,8 @@ mod tests {
             filetime::set_file_mtime(&path, mtime).expect("failed to set mtime");
         }
 
-        // A quarter of the directory: low enough that a position-based
-        // survivor choice deletes one of the two tied files, which is what
-        // makes this a test of the tie rather than of the ordinary case.
+        // A quarter of the directory, so the cap cannot be met without purging
+        // from inside the tied group.
         purge_old_logs_in_with_cap(&dir, 1024);
 
         let survivors: Vec<String> = fs::read_dir(&dir)
@@ -357,12 +371,26 @@ mod tests {
             .filter_map(|e| e.ok())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
-        for name in ["mausvoice_new_a.log", "mausvoice_new_b.log"] {
-            assert!(
-                survivors.iter().any(|n| n == name),
-                "{name} shares the newest mtime and must survive, got {survivors:?}",
-            );
-        }
+        assert!(
+            survivors.iter().any(|n| n == "mausvoice_new_b.log"),
+            "the newest file by name shares the newest mtime and must survive, got {survivors:?}",
+        );
+        assert!(
+            survivors.iter().all(|n| n != "mausvoice_new_a.log"),
+            "only the newest file by name may be exempt, so new_a must be purgeable, got {survivors:?}",
+        );
+        assert!(
+            survivors.iter().all(|n| n != "mausvoice_old_a.log")
+                && survivors.iter().all(|n| n != "mausvoice_old_b.log"),
+            "expected both older files to be purged, got {survivors:?}",
+        );
+        // The active log alone is left: 4 x 2048 is 8192 and the cap is 1024,
+        // so only exempting one file can get within a factor of two of it.
+        assert_eq!(
+            count_files(&dir),
+            1,
+            "expected only the active log to survive, got {survivors:?}"
+        );
         fs::remove_dir_all(&dir).expect("failed to clean up");
     }
 

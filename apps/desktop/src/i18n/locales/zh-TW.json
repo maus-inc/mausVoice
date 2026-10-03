@@ -389,6 +389,7 @@
   "high_five_5_days": "擊掌！5 天！🖐️",
   "highest_accuracy_requires_gpu": "最高準確度，需要 GPU",
   "history": "歷史記錄",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "本工作階段無法使用歷程記錄，因此快速排版未處理的結尾 {droppedChars} 個字元未儲存。",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "無痕模式無法使用歷程記錄。已編輯的轉錄內容會保留在膠囊視窗中。",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "按住聽寫啟用鍵並按左右方向鍵，即可在已啟用的風格間切換。",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "按住按鍵進行錄音，放開即可使用 AI 將您的語音轉錄為文字。",

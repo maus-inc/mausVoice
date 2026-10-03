@@ -10,6 +10,7 @@ import type {
   LlmFinishReason,
   LlmMessage,
   LlmStreamEvent,
+  LlmToolChoice,
 } from "@maus-inc/types";
 import type { CustomFetch, DiscoveredModelId } from "./types";
 import { buildGeminiThinkingConfig } from "./reasoning.utils";
@@ -62,6 +63,17 @@ type GeminiContent = {
   parts: GeminiPart[];
 };
 
+type GeminiFunctionCallingConfig = {
+  /** `ANY` is Gemini's "must call a tool", `NONE` its "must not". */
+  mode: "AUTO" | "ANY" | "NONE";
+  /** Restricts `ANY` to named functions. */
+  allowedFunctionNames?: string[];
+};
+
+type GeminiToolConfig = {
+  functionCallingConfig: GeminiFunctionCallingConfig;
+};
+
 type GeminiGenerateContentResponse = {
   candidates?: Array<{
     content?: GeminiContent;
@@ -78,6 +90,7 @@ type GeminiGenerateContentRequest = {
   contents: GeminiContent[];
   systemInstruction?: GeminiContent;
   tools?: Array<{ functionDeclarations: GeminiFunctionDeclaration[] }>;
+  toolConfig?: GeminiToolConfig;
   generationConfig?: Record<string, unknown>;
 };
 
@@ -98,12 +111,6 @@ const geminiModelPath = (model: string): string => {
 };
 
 /**
- * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
- * can distinguish a permanent client error (400/401/403/404) from a transient
- * rate limit or server failure. Extends the shared `HttpError` so every
- * provider in this package reports failures with the same shape.
- */
-export /**
  * The upload reached a terminal FAILED state.
  *
  * Its own type so `pollGeminiFileState` can tell it apart from a transient
@@ -119,6 +126,12 @@ class GeminiFileProcessingError extends Error {
   }
 }
 
+/**
+ * Non-2xx Gemini response with the HTTP status preserved, so retry helpers
+ * can distinguish a permanent client error (400/401/403/404) from a transient
+ * rate limit or server failure. Extends the shared `HttpError` so every
+ * provider in this package reports failures with the same shape.
+ */
 class GeminiHttpError extends HttpError {
   constructor(status: number, detail: string, retryAfter?: string | null) {
     super(
@@ -414,8 +427,7 @@ const uploadGeminiFile = async (
   customFetch: CustomFetch,
   signal?: AbortSignal,
 ): Promise<{ uri: string; mimeType: string }> => {
-  const bytes =
-    blob instanceof Uint8Array ? blob : new Uint8Array(blob as ArrayBuffer);
+  const bytes = blob instanceof Uint8Array ? blob : new Uint8Array(blob);
 
   const startResponse = await customFetch(GEMINI_UPLOAD_URL, {
     method: "POST",
@@ -469,15 +481,32 @@ const uploadGeminiFile = async (
   };
 };
 
+/**
+ * Remove an uploaded file from the Files API, best effort.
+ *
+ * The signal is threaded in because this runs in a `finally` and on the fallback
+ * path, which is where a cancellation has already been spent on the request
+ * that preceded it. Without one, a stalled deletion kept the transcription
+ * awaiting a response that was never coming, with nothing left to release it:
+ * the five-minute operation deadline expires, `deleteGeminiFile` is still
+ * awaiting, and the caller waits forever. Every other request on this path
+ * carries the signal for the same reason.
+ *
+ * A failed or abandoned cleanup is only logged. It is a leaked provider-side
+ * file, and turning that into a failed dictation the user has to see would be a
+ * worse outcome than the leak.
+ */
 const deleteGeminiFile = async (
   fileUri: string,
   apiKey: string,
   customFetch: CustomFetch,
+  signal?: AbortSignal,
 ): Promise<void> => {
   try {
     await customFetch(fileUri, {
       method: "DELETE",
       headers: { "x-goog-api-key": apiKey.trim() },
+      signal,
     });
   } catch (error) {
     console.warn(
@@ -756,7 +785,12 @@ const tryUploadWithFallback = async (args: {
     return { uri: uploaded.uri, mimeType: uploaded.mimeType };
   } catch (error) {
     if (uploadedUri) {
-      await deleteGeminiFile(uploadedUri, args.apiKey, args.customFetch);
+      await deleteGeminiFile(
+        uploadedUri,
+        args.apiKey,
+        args.customFetch,
+        args.signal,
+      );
     }
     if (args.signal?.aborted) throw error;
     // For upload path, fallback to inlineData on any failure except abort,
@@ -842,7 +876,12 @@ const transcribeWithDedicatedModel = async (args: {
     return { text, wordsUsed: countWords(text) };
   } finally {
     if (uploaded.uri) {
-      await deleteGeminiFile(uploaded.uri, args.apiKey, args.customFetch);
+      await deleteGeminiFile(
+        uploaded.uri,
+        args.apiKey,
+        args.customFetch,
+        args.signal,
+      );
     }
   }
 };
@@ -1199,6 +1238,59 @@ const buildGeminiTools = (
   }));
 };
 
+/**
+ * Map the shared tool choice onto Gemini's `toolConfig`.
+ *
+ * The three options exist on both sides, under different names, and Gemini
+ * expresses "only this one" as an allow-list inside `ANY` rather than as a
+ * fourth mode. Leaving the field off is not neutral: Gemini then defaults to
+ * `AUTO`, so a caller that selected `none` can still get a tool call and one
+ * that selected `required` can still get prose instead of the call it asked
+ * for.
+ */
+const buildGeminiToolConfig = (
+  toolChoice: LlmToolChoice | undefined,
+  hasTools: boolean,
+): GeminiToolConfig | undefined => {
+  // Nothing to choose between, and nothing to forbid: Gemini rejects a
+  // `toolConfig` on a request that declares no function at all.
+  if (!toolChoice || !hasTools) return undefined;
+  if (typeof toolChoice === "string") {
+    switch (toolChoice) {
+      case "auto":
+        return { functionCallingConfig: { mode: "AUTO" } };
+      case "required":
+        return { functionCallingConfig: { mode: "ANY" } };
+      case "none":
+        return { functionCallingConfig: { mode: "NONE" } };
+    }
+  }
+  return {
+    functionCallingConfig: {
+      mode: "ANY",
+      allowedFunctionNames: [toolChoice.name],
+    },
+  };
+};
+
+/**
+ * The finish reason for a completed Gemini turn.
+ *
+ * Gemini has no tool-call finish reason: a turn that ends in function-call
+ * parts is reported as a plain STOP, which reads as "the model finished
+ * talking" on a turn that is actually waiting on tool results. OpenAI and
+ * Anthropic both name that turn `tool-calls`, and the emitted parts are the
+ * only signal this API gives, so they are read as the reason they mean.
+ *
+ * The upgrade is deliberately narrow. Only an otherwise ordinary end-of-turn
+ * is re-read, because a turn that was truncated or filtered is not waiting on
+ * a tool result and the more specific reason is the one a consumer needs.
+ */
+const geminiTurnFinishReason = (state: GeminiChunkState): LlmFinishReason =>
+  state.pendingToolCalls.length > 0 && state.finishReason === "stop"
+    ? "tool-calls"
+    : state.finishReason;
+
 const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
   state: GeminiChunkState,
@@ -1340,6 +1432,7 @@ export async function* geminiStreamChat({
 }: GeminiStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const { systemInstruction, contents } = llmMessagesToGemini(input.messages);
   const tools = buildGeminiTools(input);
+  const toolConfig = buildGeminiToolConfig(input.toolChoice, Boolean(tools));
   const generationConfig = {
     maxOutputTokens: input.maxTokens,
     temperature: input.temperature,
@@ -1359,6 +1452,7 @@ export async function* geminiStreamChat({
         ? { parts: [{ text: systemInstruction }] }
         : undefined,
       tools: tools ? [{ functionDeclarations: tools }] : undefined,
+      toolConfig,
       generationConfig: hasGenerationConfig ? generationConfig : undefined,
     },
     customFetch,
@@ -1397,7 +1491,7 @@ export async function* geminiStreamChat({
 
   yield {
     type: "finish",
-    finishReason: state.finishReason,
+    finishReason: geminiTurnFinishReason(state),
     usage:
       state.promptTokens != null || state.completionTokens != null
         ? {

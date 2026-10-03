@@ -426,8 +426,18 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         }
     }
 
-    // Already-consolidated profiles may retain old ledger rows. Validate every
-    // known checksum above before changing even these redundant records.
+    // Already-consolidated profiles may retain old ledger rows, and retiring
+    // them only drops the record of steps whose schema 069 already established.
+    //
+    // This does NOT re-validate the retired rows, and it cannot: a retired
+    // version is by definition absent from `migrations()`, which is the set the
+    // checksum loop above iterates, and its SQL is no longer shipped (071-087
+    // were folded into 069). There is no expected checksum left to compare the
+    // stored one against, so re-adding those files purely to validate rows that
+    // are about to be deleted would reintroduce the migration history this
+    // consolidation exists to remove. What is checked for these rows is the
+    // (version, description) match in `RETIRED_CONSOLIDATION_ERA_VERSIONS`,
+    // which they must pass to reach this point.
     if !retired.is_empty() {
         let mut transaction = pool
             .begin()

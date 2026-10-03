@@ -90,9 +90,15 @@ describe("native pill review surface", () => {
 
     // A failed write means the pipe is gone, so the one copy of the user's text
     // must survive: clearing it would destroy a transcript nothing can re-send.
+    // The decision is reached through `send_review_decision_with` now, so the
+    // guard is on the boolean it returns rather than on the send call itself --
+    // both a bare insert and a review decision have to clear on success.
     expect(submit).toMatch(
-      /if send\(&msg\) \{\s*\*entry_text\.borrow_mut\(\) = String::new\(\);/,
+      /if sent \{\s*\*entry_text\.borrow_mut\(\) = String::new\(\);/,
     );
+    // And the send has to be captured, not discarded, or the guard above would
+    // be testing a value nothing assigned.
+    expect(submit).toMatch(/let sent = match review_id \{/);
   });
 
   it("clears the Windows entry text only when the desktop received it", () => {
@@ -102,12 +108,32 @@ describe("native pill review surface", () => {
     // The Windows pill used to clear the entry unconditionally, so a write that
     // never reached the desktop destroyed the user's only copy of an edited
     // transcript, and the pipe to re-send it on was the pipe that just failed.
-    expect(submit).toMatch(/if !send\(&msg\) \{\s*return false;/);
-    expect(submit).toContain("entry_text.borrow_mut().clear();");
-    // The clear must come after the send, not before it.
-    expect(submit.indexOf("send(&msg)")).toBeLessThan(
-      submit.indexOf("entry_text.borrow_mut().clear()"),
-    );
+    //
+    // Two shapes satisfy this, and both have shipped here at different times:
+    // guarding the clear with `if sent`, or bailing out early when the send
+    // failed and clearing after it. Assert the guard exists and that the clear
+    // cannot run before the send, rather than pinning one spelling.
+    // Both clearing forms count: `borrow_mut().clear()` and assigning an empty
+    // string. The invariant is that the entry is emptied only after a write the
+    // desktop received.
+    const CLEAR =
+      /entry_text\.borrow_mut\(\)\s*(?:\.clear\(\)|=\s*String::new\(\))/;
+    const clearIndex = submit.search(CLEAR);
+    expect(clearIndex).toBeGreaterThan(-1);
+
+    const guardedBySent = new RegExp(
+      `if sent\\s*\\{[\\s\\S]*?${CLEAR.source}`,
+    ).test(submit);
+    const bailsOutFirst = /if !send\(&msg\)\s*\{\s*return false;/.test(submit);
+    expect(
+      guardedBySent || bailsOutFirst,
+      "the entry clear must be gated on the write having succeeded",
+    ).toBe(true);
+
+    // The send has to be resolved before the clear, whichever shape is used.
+    const sendIndex = submit.search(/let sent = match review_id/);
+    expect(sendIndex).toBeGreaterThan(-1);
+    expect(sendIndex).toBeLessThan(clearIndex);
   });
 
   it("reports whether the Windows write actually reached the desktop", () => {

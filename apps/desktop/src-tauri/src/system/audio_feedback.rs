@@ -203,10 +203,21 @@ pub fn set_interaction_chime_enabled(enabled: bool) {
 /// whenever the Audio dialog slider commits. The read path clamps to a
 /// conservative safe range so an out-of-range or attacker-controlled value
 /// can never break audio.
-pub static INTERACTION_FEEDBACK_VOLUME: AtomicU32 = AtomicU32::new(0.35_f32.to_bits());
+pub static INTERACTION_FEEDBACK_VOLUME: AtomicU32 =
+    AtomicU32::new(crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS);
 
-const MIN_SAFE_VOLUME: f32 = 0.05;
-const MAX_SAFE_VOLUME: f32 = 0.5;
+pub const MIN_SAFE_VOLUME: f32 = 0.05;
+pub const MAX_SAFE_VOLUME: f32 = 0.5;
+
+/// A `0.35` typed into the sink, or a window that no longer contains the
+/// default, is invisible to every test that runs in a shared process: the
+/// static is mutable, so whichever test writes it last decides what a later
+/// reader sees. Asserting it at compile time is the only form that cannot be
+/// reordered.
+const _: () = assert!(
+    MIN_SAFE_VOLUME <= crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME
+        && crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME <= MAX_SAFE_VOLUME
+);
 
 fn current_interaction_feedback_volume() -> f32 {
     f32::from_bits(INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed))
@@ -260,8 +271,104 @@ mod thock_limiter {
 
     #[cfg(test)]
     mod tests {
-        use super::super::{current_interaction_feedback_volume, set_interaction_feedback_volume};
+        use super::super::{
+            current_interaction_feedback_volume, set_interaction_feedback_volume,
+            INTERACTION_FEEDBACK_VOLUME, MAX_SAFE_VOLUME,
+        };
         use super::*;
+        use std::sync::{Mutex, MutexGuard};
+
+        /// Every test that touches `INTERACTION_FEEDBACK_VOLUME` queues on this.
+        ///
+        /// The atomic is process-global, so a write and the read that has to
+        /// observe it are only adjacent if nothing else writes in between. The
+        /// test runner interleaves freely: with the guard taken off the four
+        /// tests below, all 20 full-suite runs at `--test-threads=16` failed —
+        /// `a_volume_round_trips_through_the_shared_window` reading a value
+        /// `interaction_feedback_volume_clamps_to_safe_window` had written — and
+        /// either test could be the one asserting another's value.
+        static VOLUME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+        /// Exclusive use of the volume for one test, restored on drop.
+        ///
+        /// Dropping restores the bits the test found, so a test that leaves the
+        /// volume at its own last value cannot decide what the next one reads.
+        /// A test that panics mid-way still gives the lock up, so the failure
+        /// does not cascade into every later test reporting a poisoned lock.
+        struct ExclusiveVolume {
+            _queued: MutexGuard<'static, ()>,
+            previous_bits: u32,
+        }
+
+        impl ExclusiveVolume {
+            fn take() -> Self {
+                let queued = VOLUME_TEST_LOCK
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                Self {
+                    _queued: queued,
+                    previous_bits: INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed),
+                }
+            }
+        }
+
+        impl Drop for ExclusiveVolume {
+            fn drop(&mut self) {
+                INTERACTION_FEEDBACK_VOLUME.store(self.previous_bits, Ordering::Relaxed);
+            }
+        }
+
+        /// The persistence boundary clamps to this same window, so a value
+        /// stored on one side is played back at the volume it was stored as.
+        ///
+        /// The seed is read here rather than left to the `const` assertion
+        /// above because this test now owns the atomic for its duration: with
+        /// `ExclusiveVolume` held, the round-trip below is about the clamp and
+        /// nothing else can answer for it.
+        #[test]
+        fn a_volume_round_trips_through_the_shared_window() {
+            let _volume = ExclusiveVolume::take();
+            assert_eq!(
+                INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed),
+                crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME_BITS,
+                "the atomic starts at the shared default, so a fresh install and the database agree"
+            );
+            let default = crate::domain::user::DEFAULT_INTERACTION_FEEDBACK_VOLUME;
+            set_interaction_feedback_volume(default);
+            assert_eq!(current_interaction_feedback_volume(), default);
+            set_interaction_feedback_volume(1.0);
+            assert_eq!(
+                current_interaction_feedback_volume(),
+                MAX_SAFE_VOLUME,
+                "the sink clamps what it is given, so an out-of-range value cannot be played",
+            );
+        }
+
+        /// Restoring on drop is what keeps one test's last write from deciding
+        /// what the next one reads: the seed the round trip above asserts is
+        /// only there because every other test handed the atomic back the bits
+        /// it found rather than keeping its own last value.
+        #[test]
+        fn a_guarded_test_hands_the_volume_back_unchanged() {
+            let before = {
+                let _volume = ExclusiveVolume::take();
+                let before = INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed);
+                set_interaction_feedback_volume(MAX_SAFE_VOLUME);
+                assert_eq!(current_interaction_feedback_volume(), MAX_SAFE_VOLUME);
+                before
+                // `_volume` drops here, on the way out, restoring `before`.
+            };
+            // The read is taken under a guard of its own. Releasing the first one
+            // and then reading the global is the same unguarded read that made
+            // this file flaky in the first place: between the two statements any
+            // other test on this thread can store whatever it likes.
+            let _check = ExclusiveVolume::take();
+            assert_eq!(
+                INTERACTION_FEEDBACK_VOLUME.load(Ordering::Relaxed),
+                before,
+                "a guarded test must not leave its last write behind for the next one to read"
+            );
+        }
 
         #[test]
         fn first_thock_is_not_throttled() {
@@ -288,9 +395,14 @@ mod thock_limiter {
 
         #[test]
         fn interaction_feedback_volume_clamps_to_safe_window() {
-            // The user-facing slider exposes the full 0..=1 range, but the
-            // sink gain must stay inside the conservative safe window so a
-            // user-set value can never blow out the speaker or go silent.
+            // The user-facing slider exposes only [0.05, 0.5] — `AudioDialog.tsx`
+            // sets min/max 0.05/0.5 and `user.actions.ts` clamps to that range
+            // before persisting — so a value outside it does not arrive from the
+            // UI. The write still accepts 0..=1 and the sink gain stays inside
+            // the safe window, which is the backstop for an already-persisted
+            // preference, a second client, or a future slider that widens the
+            // range: neither a blown-out speaker nor a silent pill.
+            let _volume = ExclusiveVolume::take();
             set_interaction_feedback_volume(0.0);
             assert_eq!(current_interaction_feedback_volume(), 0.05);
             set_interaction_feedback_volume(0.2);
@@ -312,6 +424,10 @@ mod thock_limiter {
             let clamp = |v: f32| v.clamp(0.0, 1.0);
             assert_eq!(clamp(-1.0), 0.0);
             assert_eq!(clamp(2.0), 1.0);
+            // The stored value is process-global state, so it is read under the
+            // same lock as the writes above. Read outside it, a concurrent test
+            // could store between the load and this assertion.
+            let _volume = ExclusiveVolume::take();
             let stored = current_interaction_feedback_volume();
             assert_eq!(clamp(stored), stored);
         }

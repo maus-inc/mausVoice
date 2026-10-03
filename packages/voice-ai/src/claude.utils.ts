@@ -224,6 +224,9 @@ const mapClaudeToolChoice = (
   choice: LlmToolChoice | undefined,
   hasTools: boolean,
 ): ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | undefined => {
+  // Nothing to choose between. Leaving `tool_choice` off is not neutral either:
+  // it is the only shape of this request Anthropic accepts when no tool is
+  // defined, so it has to be absent rather than name a tool that is not there.
   if (!choice || !hasTools) return undefined;
   if (typeof choice === "string") {
     switch (choice) {
@@ -299,7 +302,11 @@ export async function* claudeStreamChat({
 }: ClaudeStreamChatArgs): AsyncGenerator<LlmStreamEvent> {
   const client = createClient(apiKey, customFetch);
   const { system, messages } = llmMessagesToClaude(input.messages);
-  const tools = input.tools?.map(toClaudeTool);
+  // An empty list is a request with no tool definitions, and `[]` is truthy, so
+  // the length is what decides it here: sending `tools: []` would claim a tool
+  // list that does not exist and leave `tool_choice` naming one of nothing.
+  // The other providers already drop an empty list the same way.
+  const tools = input.tools?.length ? input.tools.map(toClaudeTool) : undefined;
   const toolChoice = mapClaudeToolChoice(input.toolChoice, Boolean(tools));
 
   const stream = client.messages.stream(

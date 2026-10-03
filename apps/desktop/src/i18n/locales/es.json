@@ -389,6 +389,7 @@
   "high_five_5_days": "¡Choca esos cinco! ¡5 días! 🖐️",
   "highest_accuracy_requires_gpu": "Máxima precisión, requiere GPU",
   "history": "Historial",
+  "history_is_not_available_in_this_session_so_the_droppedchars": "El historial no está disponible en esta sesión, por lo que los {droppedChars} caracteres del final que el formato rápido dejó sin formato no se guardaron.",
   "history_is_unavailable_in_incognito_mode_your_edited_transcr": "El historial no está disponible en modo incógnito. La transcripción editada permanece en la píldora.",
   "hold_the_dictate_activation_key_and_press_left_or_right_arro": "Mantén la tecla de activación de dictado y pulsa Flecha izquierda o derecha para alternar los estilos activos.",
   "hold_the_key_to_record_release_to_transcribe_your_speech_int": "Mantén pulsada la tecla para grabar y suéltala para transcribir tu voz a texto con IA.",

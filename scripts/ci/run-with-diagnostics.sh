@@ -3,8 +3,10 @@
 set +e
 set -u
 set -o pipefail
-# A `case` glob rather than `[[ ... =~ ... ]]`: regex matching is undefined in
-# POSIX sh, and this script has to behave the same however it is invoked.
+# A `case` glob rather than `[[ ... =~ ... ]]`, so the label check reads as the
+# plain pattern match this bash script uses everywhere else. It is not a step
+# toward POSIX sh: the rest of this file is bash-only (`PIPESTATUS`,
+# `${var:0:n}`, `(( ))`), and the shebang says so.
 label_is_safe() {
   case "$1" in
     "" | *[!a-zA-Z0-9_-]*) return 1 ;;
