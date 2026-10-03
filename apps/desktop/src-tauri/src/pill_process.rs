@@ -375,9 +375,14 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
     if trimmed.is_empty() {
         return None;
     }
+    // The line carries the user's transcript, so this reports the parse error
+    // and never repeats the line: logs travel with bug reports.
     let val: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(v) => v,
-        Err(_) => return None,
+        Err(error) => {
+            log::warn!("Ignoring unparseable pill line: {error}");
+            return None;
+        }
     };
     let event_type = val.get("type").and_then(|v| v.as_str())?;
     match event_type {
@@ -581,24 +586,6 @@ pub(crate) fn parse_style_switch_direction_value(
     }
 }
 
-/// Parsed `style_switch` direction from a pill stdout line.
-///
-/// Accepts the serde-tagged JSON the pills emit
-/// (`{"type":"style_switch","direction":"forward"}`) and is case-insensitive
-/// on `direction` so a casing drift cannot silently drop the click.
-#[allow(dead_code)]
-pub(crate) fn parse_style_switch_direction(line: &str) -> Option<PillStyleSwitchDirection> {
-    let trimmed = line.trim();
-    let value: serde_json::Value = match serde_json::from_str(trimmed) {
-        Ok(value) => value,
-        Err(error) => {
-            log::warn!("Ignoring unparseable pill line {trimmed:?}: {error}");
-            return None;
-        }
-    };
-    parse_style_switch_direction_value(&value)
-}
-
 /// What the user chose for the transcript shown on the pill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PillReviewAction {
@@ -633,6 +620,20 @@ impl PillReviewAction {
     }
 }
 
+/// The `review_decision` payload out of a pill stdout line.
+///
+/// The id and the action are both required. A decision this cannot read is
+/// dropped instead of guessed at, because assuming an action would throw away
+/// the very transcript the user is being asked about. Dropping it leaves the
+/// transcript on the pill, so the click can simply be repeated.
+///
+/// The text is what the pill's entry held at the time. Insert, Copy, Open,
+/// and Edit carry it so the desktop can preserve the edit before settling the
+/// review. Cancel leaves it out.
+///
+/// The line carries the user's transcript, so none of the diagnostics below
+/// repeat it — logs travel with bug reports. The unknown-action token is the
+/// one field that cannot be user text, and it is truncated before logging.
 pub(crate) fn parse_review_decision_value(
     value: &serde_json::Value,
 ) -> Option<(String, PillReviewAction, Option<String>)> {
@@ -658,33 +659,6 @@ pub(crate) fn parse_review_decision_value(
         .and_then(|v| v.as_str())
         .map(|text| text.to_string());
     Some((review_id.to_string(), action, text))
-}
-
-/// Parsed `review_decision` from a pill stdout line.
-///
-/// The id and the action are both required. A malformed line is dropped
-/// instead of guessed at, because assuming an action would throw away the very
-/// transcript the user is being asked about. Dropping it leaves the transcript
-/// on the pill, so the click can simply be repeated.
-///
-/// The text is what the pill's entry held at the time. Insert, Copy, Open,
-/// and Edit carry it so the desktop can preserve the edit before settling
-/// the review. Cancel leaves it out.
-#[allow(dead_code)]
-pub(crate) fn parse_review_decision(
-    line: &str,
-) -> Option<(String, PillReviewAction, Option<String>)> {
-    let trimmed = line.trim();
-    // The line carries the user's transcript, so none of the diagnostics below
-    // repeat it. Logs travel with bug reports.
-    let value: serde_json::Value = match serde_json::from_str(trimmed) {
-        Ok(value) => value,
-        Err(error) => {
-            log::warn!("Ignoring unparseable pill line: {error}");
-            return None;
-        }
-    };
-    parse_review_decision_value(&value)
 }
 
 /// Tauri event names the pill bridge emits for a chevron click. These must
@@ -714,44 +688,64 @@ pub fn emit_pill_style_switch(app: &tauri::AppHandle, direction: PillStyleSwitch
 
 #[cfg(test)]
 mod style_switch_parse_tests {
-    use super::{parse_style_switch_direction, PillStyleSwitchDirection};
+    use super::{parse_pill_event, PillEvent, PillStyleSwitchDirection};
+
+    // These go through `parse_pill_event`, the only entry point
+    // `start_stdout_reader` uses, so they cover the path a real pill click
+    // takes rather than a test-only wrapper around it.
 
     #[test]
     fn parses_canonical_pill_line() {
         assert_eq!(
-            parse_style_switch_direction(r#"{"type":"style_switch","direction":"forward"}"#),
-            Some(PillStyleSwitchDirection::Forward)
+            parse_pill_event(r#"{"type":"style_switch","direction":"forward"}"#),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Forward
+            })
         );
         assert_eq!(
-            parse_style_switch_direction(r#"{"type":"style_switch","direction":"backward"}"#),
-            Some(PillStyleSwitchDirection::Backward)
+            parse_pill_event(r#"{"type":"style_switch","direction":"backward"}"#),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Backward
+            })
         );
     }
 
     #[test]
     fn accepts_trailing_newline_and_mixed_case() {
         assert_eq!(
-            parse_style_switch_direction("{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"),
-            Some(PillStyleSwitchDirection::Forward)
+            parse_pill_event("{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Forward
+            })
         );
         assert_eq!(
-            parse_style_switch_direction(
-                "{\"type\":\"style_switch\",\"direction\":\"BACKWARD\"}\r\n"
-            ),
-            Some(PillStyleSwitchDirection::Backward)
+            parse_pill_event("{\"type\":\"style_switch\",\"direction\":\"BACKWARD\"}\r\n"),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Backward
+            })
         );
     }
 
     #[test]
     fn rejects_malformed_or_unrelated_lines() {
-        assert_eq!(parse_style_switch_direction(r#"{"type":"click"}"#), None);
+        // A click line is a click, never a style switch: the two carry
+        // different payloads and a crossover would fire the wrong action.
         assert_eq!(
-            parse_style_switch_direction(r#"{"type":"style_switch","direction":"sideways"}"#),
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_switch","direction":"sideways"}"#),
             None
         );
-        assert_eq!(parse_style_switch_direction("not json"), None);
+        assert_eq!(parse_pill_event("not json"), None);
         assert_eq!(
-            parse_style_switch_direction(r#"{"type":"style_info","name":"forward"}"#),
+            parse_pill_event(r#"{"type":"style_switch"}"#),
+            None,
+            "a style switch with no direction cannot be resolved"
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_info","name":"forward"}"#),
             None
         );
     }
@@ -759,7 +753,21 @@ mod style_switch_parse_tests {
 
 #[cfg(test)]
 mod review_decision_parse_tests {
-    use super::{parse_review_decision, PillReviewAction};
+    use super::{parse_pill_event, PillEvent, PillReviewAction};
+
+    // As with the style-switch tests above, these exercise `parse_pill_event`,
+    // the entry point the stdout reader actually calls.
+
+    fn decision(line: &str) -> Option<(String, PillReviewAction, Option<String>)> {
+        match parse_pill_event(line) {
+            Some(PillEvent::ReviewDecision {
+                review_id,
+                action,
+                text,
+            }) => Some((review_id, action, text)),
+            _ => None,
+        }
+    }
 
     #[test]
     fn parses_every_decision() {
@@ -771,10 +779,7 @@ mod review_decision_parse_tests {
             ("edit", PillReviewAction::Edit),
         ] {
             let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
-            assert_eq!(
-                parse_review_decision(&line),
-                Some(("r1".to_string(), expected, None))
-            );
+            assert_eq!(decision(&line), Some(("r1".to_string(), expected, None)));
             assert_eq!(expected.as_str(), raw);
         }
     }
@@ -782,7 +787,7 @@ mod review_decision_parse_tests {
     #[test]
     fn keeps_the_text_edited_on_the_pill() {
         assert_eq!(
-            parse_review_decision(
+            decision(
                 r#"{"type":"review_decision","review_id":"r1","action":"insert","text":"edited words"}"#
             ),
             Some((
@@ -796,7 +801,7 @@ mod review_decision_parse_tests {
     #[test]
     fn keeps_the_text_edited_before_opening_history() {
         assert_eq!(
-            parse_review_decision(
+            decision(
                 r#"{"type":"review_decision","review_id":"r1","action":"open","text":"edited words"}"#
             ),
             Some((
@@ -810,9 +815,7 @@ mod review_decision_parse_tests {
     #[test]
     fn accepts_trailing_newline_and_mixed_case() {
         assert_eq!(
-            parse_review_decision(
-                "{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"
-            ),
+            decision("{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"),
             Some(("r1".to_string(), PillReviewAction::Insert, None))
         );
     }
@@ -822,25 +825,150 @@ mod review_decision_parse_tests {
         // A missing or unknown action must never fall back to cancel: that
         // would discard the transcript the card is asking about.
         assert_eq!(
-            parse_review_decision(r#"{"type":"review_decision","review_id":"r1"}"#),
+            decision(r#"{"type":"review_decision","review_id":"r1"}"#),
             None
         );
         assert_eq!(
-            parse_review_decision(
-                r#"{"type":"review_decision","review_id":"r1","action":"delete"}"#
-            ),
+            decision(r#"{"type":"review_decision","review_id":"r1","action":"delete"}"#),
             None
         );
         assert_eq!(
-            parse_review_decision(r#"{"type":"review_decision","action":"insert"}"#),
+            decision(r#"{"type":"review_decision","action":"insert"}"#),
             None
         );
         assert_eq!(
-            parse_review_decision(r#"{"type":"review_decision","review_id":"","action":"insert"}"#),
+            decision(r#"{"type":"review_decision","review_id":"","action":"insert"}"#),
             None
         );
-        assert_eq!(parse_review_decision(r#"{"type":"click"}"#), None);
-        assert_eq!(parse_review_decision("not json"), None);
+        assert_eq!(
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click),
+            "a click line is a click, never a review decision"
+        );
+        assert_eq!(parse_pill_event("not json"), None);
+    }
+}
+
+#[cfg(test)]
+mod pill_line_log_tests {
+    use super::parse_pill_event;
+    use std::cell::RefCell;
+    use std::sync::Once;
+
+    thread_local! {
+        /// Records emitted on the current thread. A thread-local buffer keeps
+        /// this correct under the test harness's parallelism: `log::log!` is
+        /// synchronous, so a record is always pushed on the thread that parsed
+        /// the line, never on another test's thread.
+        static CAPTURED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            CAPTURED.with(|captured| {
+                captured
+                    .borrow_mut()
+                    .push(format!("{}: {}", record.level(), record.args()))
+            });
+        }
+        fn flush(&self) {}
+    }
+
+    static INSTALL: Once = Once::new();
+
+    /// Run `f` and return the warnings it logged on this thread.
+    fn warnings_from(f: impl FnOnce()) -> Vec<String> {
+        INSTALL.call_once(|| {
+            log::set_boxed_logger(Box::new(Capture)).expect("capture logger must install");
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        CAPTURED.with(|captured| captured.borrow_mut().clear());
+        f();
+        CAPTURED.with(|captured| captured.borrow().clone())
+    }
+
+    // A pill that renames a field or emits a shape this build's serde_json
+    // rejects used to stop responding to clicks with nothing in the log, which
+    // is the failure this pins: the drop has to be visible.
+    #[test]
+    fn an_unparseable_line_is_reported() {
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event("not json at all"), None);
+        });
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("WARN") && w.contains("unparseable pill line")),
+            "an unparseable pill line must be reported, got {warnings:?}"
+        );
+    }
+
+    // The line carries the user's transcript and logs travel with bug reports,
+    // so the diagnostic may name the failure but never the content.
+    #[test]
+    fn the_report_never_repeats_the_line() {
+        let canary = "transcript-canary-4f2a";
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event(canary), None);
+        });
+        assert!(
+            !warnings.is_empty(),
+            "expected a diagnostic for the unparseable line, got none"
+        );
+        for warning in &warnings {
+            assert!(
+                !warning.contains(canary),
+                "the diagnostic repeated the pill line: {warning}"
+            );
+        }
+    }
+
+    // The warn is for a line that failed to parse, not for routine framing: a
+    // reader would otherwise emit one record per blank line forever.
+    #[test]
+    fn readable_lines_and_blank_lines_stay_quiet() {
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event(""), None);
+            assert_eq!(parse_pill_event("   \n"), None);
+            assert_eq!(
+                parse_pill_event(r#"{"type":"click"}"#),
+                Some(super::PillEvent::Click)
+            );
+            assert_eq!(
+                parse_pill_event(r#"{"type":"typed_message","text":"hello"}"#),
+                Some(super::PillEvent::TypedMessage {
+                    text: "hello".to_string()
+                })
+            );
+        });
+        assert!(
+            warnings.is_empty(),
+            "readable and blank lines must not log, got {warnings:?}"
+        );
+    }
+
+    // A payload the desktop understands but cannot act on is a different
+    // failure from an unparseable line: the `*_value` parsers report it, and
+    // `parse_pill_event` must not double-report it as a parse error.
+    #[test]
+    fn a_known_type_with_a_bad_payload_is_not_reported_as_unparseable() {
+        let warnings = warnings_from(|| {
+            assert_eq!(
+                parse_pill_event(r#"{"type":"style_switch","direction":"sideways"}"#),
+                None
+            );
+        });
+        for warning in &warnings {
+            assert!(
+                !warning.contains("unparseable pill line"),
+                "a readable payload must not be reported as unparseable, got {warnings:?}"
+            );
+        }
     }
 }
 

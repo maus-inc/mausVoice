@@ -395,9 +395,13 @@ mod thock_limiter {
 
         #[test]
         fn interaction_feedback_volume_clamps_to_safe_window() {
-            // The user-facing slider exposes the full 0..=1 range, but the
-            // sink gain must stay inside the conservative safe window so a
-            // user-set value can never blow out the speaker or go silent.
+            // The user-facing slider exposes only [0.05, 0.5] — `AudioDialog.tsx`
+            // sets min/max 0.05/0.5 and `user.actions.ts` clamps to that range
+            // before persisting — so a value outside it does not arrive from the
+            // UI. The write still accepts 0..=1 and the sink gain stays inside
+            // the safe window, which is the backstop for an already-persisted
+            // preference, a second client, or a future slider that widens the
+            // range: neither a blown-out speaker nor a silent pill.
             let _volume = ExclusiveVolume::take();
             set_interaction_feedback_volume(0.0);
             assert_eq!(current_interaction_feedback_volume(), 0.05);
