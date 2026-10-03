@@ -141,7 +141,9 @@ describe("AssemblyAI streaming connection parameters", () => {
       ),
       new Promise((resolve) => setTimeout(() => resolve("STILL PENDING"), 50)),
     ]);
-    expect(outcome).toBe("rejected: WebSocket closed before the connection opened");
+    expect(outcome).toBe(
+      "rejected: WebSocket closed before the connection opened",
+    );
   });
 
   it("still resolves normally when the socket closes after opening", async () => {

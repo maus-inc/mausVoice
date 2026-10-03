@@ -31,8 +31,7 @@ vi.mock("../utils/user.utils", () => ({
 // read-only window onto how much audio is being held -- not a way to change it.
 const queueCounters: { value: number }[] = [];
 vi.mock("./audio-buffer.utils", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("./audio-buffer.utils")>();
+  const actual = await importOriginal<typeof import("./audio-buffer.utils")>();
   return {
     ...actual,
     drainSamples: (
