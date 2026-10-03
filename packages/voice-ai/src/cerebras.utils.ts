@@ -41,14 +41,20 @@ export class CerebrasProviderError extends Error {
   }
 }
 
+/**
+ * Client statuses a Cerebras attempt must not be retried on (billing, auth, bad
+ * request). The same six statuses `TERMINAL_CLIENT_STATUSES` in
+ * `@maus-inc/utilities` holds; it is kept as a local set rather than read from
+ * there so a change to the shared default cannot silently alter which failures
+ * Cerebras treats as terminal.
+ */
+const CEREBRAS_TERMINAL_STATUSES: ReadonlySet<number> = new Set([
+  400, 401, 402, 403, 404, 422,
+]);
+
 /** True when a status must not be retried (billing, auth, bad request). */
 export const isCerebrasTerminalStatus = (status: number): boolean =>
-  status === 400 ||
-  status === 401 ||
-  status === 402 ||
-  status === 403 ||
-  status === 404 ||
-  status === 422;
+  CEREBRAS_TERMINAL_STATUSES.has(status);
 
 /**
  * Replace the literal API key and common authorization material anywhere in

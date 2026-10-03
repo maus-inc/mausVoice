@@ -150,6 +150,25 @@ describe("normalizeCerebrasError", () => {
     expect(isCerebrasTerminalStatus(429)).toBe(false);
     expect(isCerebrasTerminalStatus(500)).toBe(false);
   });
+
+  // The whole set, not a sample of it. A status dropped from it becomes a retry
+  // the caller pays for twice; a status added to it turns a transient failure
+  // into a dead end. Both are invisible to the four assertions above, which is
+  // why the membership is written out here rather than sampled.
+  it("pins the full terminal-status set", () => {
+    for (const status of [400, 401, 402, 403, 404, 422]) {
+      expect(
+        isCerebrasTerminalStatus(status),
+        `expected ${status} to be non-retryable`,
+      ).toBe(true);
+    }
+    for (const status of [200, 408, 409, 425, 429, 500, 502, 503]) {
+      expect(
+        isCerebrasTerminalStatus(status),
+        `expected ${status} to stay retryable`,
+      ).toBe(false);
+    }
+  });
 });
 
 describe("cerebrasGenerateTextResponse 402 handling", () => {

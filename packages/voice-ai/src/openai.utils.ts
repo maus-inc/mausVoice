@@ -78,7 +78,7 @@ export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
  */
 const buildMaxTokensParams = (
   model: string,
-  maxTokens: number = 1024,
+  maxTokens = 1024,
 ): Record<string, number> =>
   isOpenAIJsonObjectOnlyModel(model)
     ? { max_tokens: maxTokens }
