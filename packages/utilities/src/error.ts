@@ -8,11 +8,18 @@ const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 // boundary between the leading `c` and the `s`.
 const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
-// The secret labels this file recognises in a plain string. Deliberately
-// narrower than the `isSecretKey` check that gates object keys -- `secret_key`
-// and `my_secret` are recognised there and not here -- and the reason it cannot
-// simply be widened is at `TOKEN_SHAPED_SECRET_ALIASES`, with the gap named.
-const SECRET_LABEL = String.raw`"?\b(api[_-]?key|apiKey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|password|passwd|pwd|credential|secret)\b"?`;
+// The secret labels this file recognises in a plain string, captured as group 1
+// so the three passes that embed this pattern can name the label they matched
+// instead of the separator.
+//
+// The alternation accepts a separator-delimited prefix, so `secret_key`,
+// `my_secret`, `credentials` and `secrets` are labels here and not only as
+// object keys. It does not accept a camelCase prefix: any pattern that does
+// lets `monkey` donate its `key` by backtracking, which turns
+// `monkey: bananas` into `monkey:[redacted]`. `apiKey` still matches because it
+// needs no prefix. `secretKey` and `mySecret` do not, and that is the stated
+// cost of not over-redacting.
+const SECRET_LABEL = String.raw`("?\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|token|secret|key|password|passwd|pwd|credential)s?\b"?)`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
 // the whole value is replaced either way.
@@ -111,6 +118,22 @@ const PLACEHOLDER_VALUES = new Set([
   "empty",
 ]);
 
+/**
+ * Whether this value names the missing field rather than being one.
+ *
+ * Deliberately an exact match against a short list. A tempting extension is to
+ * treat a run containing any diagnostic word -- "could", "not", "required" -- as
+ * prose, so that `credential: could not decrypt` keeps its first word instead of
+ * losing it to the redaction. That was written, measured, and reverted: it
+ * defers `password: no idea but hunter2`, `password: can you open it` and
+ * `password: not my password` in full. Prose markers occur inside real
+ * passphrases, so the heuristic trades a lost word in a diagnostic for a
+ * credential printed in a log, and that is the wrong trade in a scrubber.
+ *
+ * The cost that remains is one word. `credential: could not decrypt` becomes
+ * `credential:[redacted] not decrypt`, which is ugly and readable. That is the
+ * right side of the trade to be on.
+ */
 const describesField = (value: string): boolean =>
   PLACEHOLDER_VALUES.has(value.toLowerCase());
 
@@ -312,13 +335,31 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   "sessiontoken",
   "authorization",
   "bearer",
+  // `secret` and `credential` are here despite not naming a token, because
+  // they are ordinary English words and this pass's stop is a comma or a
+  // semicolon rather than a space. Reading to that stop turned a
+  // `credential` label followed by "could not decrypt" into a bare redaction
+  // marker -- a destroyed diagnosis on a message that never held a
+  // credential, and
+  // `unknownToMessage` output is what a user attaches to a diagnostics export.
+  // One token still goes, so a provider-prefixed key under a `secret` label is
+  // covered; the words after it survive, which is the right way round for an
+  // ambiguous label.
+  // The unambiguous formats are the ones that keep the wider read:
+  // `client_secret`, `private_key`, `session_key`, `password`.
+  "secret",
+  "credential",
 ]);
 
 const isFreeFormSecretLabel = (label: string): boolean => {
   const normalized = label.replace(/["_-]/g, "").toLowerCase();
+  // `isSecretKey` rather than the set, so the string form and the object-key
+  // form of this scrubber agree by construction. That set does not contain
+  // `secretkey`, which `isSecretKey` does accept, so deriving from the set left
+  // `secret_key` reading a single token while the same key inside an object was
+  // redacted whole.
   return (
-    SECRET_KEY_ALIASES.has(normalized) &&
-    !TOKEN_SHAPED_SECRET_ALIASES.has(normalized)
+    isSecretKey(normalized) && !TOKEN_SHAPED_SECRET_ALIASES.has(normalized)
   );
 };
 

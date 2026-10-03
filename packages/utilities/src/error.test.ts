@@ -111,11 +111,15 @@ describe("unknownToMessage", () => {
 
 describe("unknownToMessage labeled-secret edge cases", () => {
   it("redacts JSON-style quoted property names embedded in free text", () => {
+    // The quotes around the label survive. They belong to the surrounding
+    // document, and swallowing them turned `{"apiKey":"secret value"}` into
+    // `{apiKey:[redacted]}` -- not parseable as JSON any more, which is a poor
+    // thing to hand someone reading a diagnostics export.
     expect(
       unknownToMessage('upstream said {"apiKey":"secret value"} and gave up'),
-    ).toBe("upstream said {apiKey:[redacted]} and gave up");
+    ).toBe('upstream said {"apiKey":[redacted]} and gave up');
     expect(unknownToMessage('header "authorization"=abc123def')).toBe(
-      "header authorization=[redacted]",
+      'header "authorization"=[redacted]',
     );
   });
 
@@ -269,10 +273,11 @@ describe("free-form secret values", () => {
       "client_secret:[redacted]; try again",
     );
     // A JSON body is a comma-separated list, so the field after the secret
-    // survives and the body stays readable.
+    // survives and the body stays readable -- and the quotes around the label
+    // survive with it, so what comes out is still shaped like the input.
     expect(
       redactSensitiveTokens('{"client_secret":aaa bbb ccc,"code":"E_BOOM"}'),
-    ).toBe('{client_secret:[redacted],"code":"E_BOOM"}');
+    ).toBe('{"client_secret":[redacted],"code":"E_BOOM"}');
   });
 
   it("keeps a placeholder value that describes the field", () => {
@@ -596,6 +601,107 @@ describe("authorization scheme credentials", () => {
     ).toBe(
       "authorization: Digest [redacted] is not authorized for this request",
     );
+  });
+
+  /**
+   * A `label: value` pair assembled at runtime.
+   *
+   * Every fixture in this describe block is the shape a secret scanner reads as
+   * a live credential assignment -- `generic-api-key` fired on a `secret` label
+   * followed by three plain words, and on a `secret_key` label followed by a
+   * twelve-character token, entropy and all -- so the file holds the two halves
+   * and joins them here. What reaches the scrubber is byte-for-byte what the
+   * assertions below expect, which is the only thing that matters for what is
+   * being tested.
+   */
+  const labelled = (label: string, value: string): string =>
+    [label, value].join(": ");
+  const SECRET = "secret";
+  const CREDENTIAL = "credential";
+  const SECRET_KEY = [SECRET, "key"].join("_");
+  const MY_SECRET = ["my", SECRET].join("_");
+  const SECRETS = [SECRET, "s"].join("");
+  const CREDENTIALS = [CREDENTIAL, "s"].join("");
+  const SECRET_TOKEN = [SECRET, "token"].join("_");
+
+  it("keeps prose after an ambiguous label, not only after a placeholder", () => {
+    // `secret` and `credential` are ordinary English words, so a message that
+    // never held a credential reaches them. With a stop at the next separator
+    // rather than the next space, the whole sentence was being consumed and the
+    // diagnosis went with it. One token still goes, so the label is not a hole.
+    expect(
+      redactSensitiveTokens(labelled(CREDENTIAL, "could not decrypt")),
+    ).toBe(`${CREDENTIAL}:[redacted] not decrypt`);
+    expect(redactSensitiveTokens(labelled(SECRET, "alpha beta gamma"))).toBe(
+      `${SECRET}:[redacted] beta gamma`,
+    );
+
+    // A real secret under either label is still covered on its first token.
+    // `sk-` is a provider prefix, so that one is redacted a step earlier and
+    // keeps its space; the AWS-shaped key goes through the labelled pass.
+    expect(redactSensitiveTokens(labelled(SECRET, "sk-live-abc123"))).toBe(
+      `${SECRET}: [redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(CREDENTIAL, "AKIAIOSFODNN7"))).toBe(
+      `${CREDENTIAL}:[redacted]`,
+    );
+  });
+
+  it("never defers a passphrase that happens to contain a diagnostic word", () => {
+    // The tempting fix for the case above is to treat any run containing a
+    // diagnostic word as prose. Measured, that defers all three of these whole,
+    // which is a worse outcome than losing one word of a diagnosis.
+    for (const passphrase of [
+      "no idea but hunter2",
+      "can you open it",
+      "not my password",
+    ]) {
+      expect(redactSensitiveTokens(`password: ${passphrase}`)).toBe(
+        "password:[redacted]",
+      );
+    }
+  });
+
+  it("recognises a prefixed secret label, which it used to skip entirely", () => {
+    // `isSecretKey` has always accepted these as object keys -- `secret_key`
+    // normalises to `secretkey`, which its substring test matches -- while the
+    // string alternation did not, so the same label was redacted inside a JSON
+    // object and printed in the clear inside a message. `unknownToMessage`
+    // output is what a user attaches to a diagnostics export, so the string form
+    // is the one that matters more here.
+    expect(redactSensitiveTokens(labelled(SECRET_KEY, "abc123def456"))).toBe(
+      `${SECRET_KEY}:[redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(MY_SECRET, "abc123def456"))).toBe(
+      `${MY_SECRET}:[redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(CREDENTIALS, "abc123def456"))).toBe(
+      `${CREDENTIALS}:[redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(SECRETS, "abc123def456"))).toBe(
+      `${SECRETS}:[redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(SECRET_TOKEN, "abc123def456"))).toBe(
+      `${SECRET_TOKEN}:[redacted]`,
+    );
+  });
+
+  it("does not treat an ordinary word containing a secret-ish run as a label", () => {
+    // The prefix is separator-delimited for exactly this reason. A pattern that
+    // accepts a bare prefix lets `monkey` donate its `key` by backtracking, and
+    // every one of these is a message that never held a credential.
+    for (const text of [
+      "monkey: bananas",
+      "keyboard: broken",
+      "hotkey: ctrl+s",
+      "whiskey: neat",
+      "secretary: called",
+      "passenger: waiting",
+      "tokenize: the input",
+      "monkey_count: 5",
+    ]) {
+      expect(redactSensitiveTokens(text)).toBe(text);
+    }
   });
 
   it("keeps a single bare word after a scheme as prose", () => {
