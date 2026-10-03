@@ -5182,6 +5182,17 @@ pub async fn download_and_open_mac_installer(
         }
     });
     let client = reqwest::Client::builder()
+        // The signature client above bounds the whole request, which is right for
+        // a few hundred bytes. It is wrong here: an installer is hundreds of
+        // megabytes, so any total timeout short enough to be useful against a
+        // stalled peer would also fail a legitimate slow download.
+        //
+        // What actually bounds the hazard is a read timeout. A peer that stops
+        // sending part-way through is cut off, while one that keeps making
+        // progress is not penalised for being slow. The connect timeout matches
+        // the signature client's.
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(30))
         .redirect(redirect_policy)
         .build()
         .map_err(|e| e.to_string())?;
@@ -5211,12 +5222,142 @@ pub async fn download_and_open_mac_installer(
     // The handler may still need to read the verified file after `open`
     // returns, so retain it on success. If the hand-off itself fails, no other
     // process owns the file and it must not be left behind in the temp dir.
-    if let Err(error) = std::process::Command::new("open").arg(&dest).spawn() {
-        let _ = std::fs::remove_file(&dest);
-        return Err(error.to_string());
+    //
+    // `spawn` succeeding only means the process started. `open` exits as soon as
+    // the hand-off is done, so a non-zero exit is not ambiguous the way a long
+    // installer's would be: it means the hand-off itself failed — no handler for
+    // the extension, or a sandbox refusal. Reporting success there leaves the
+    // user with a downloaded file, nothing open, and no error, which is the
+    // outcome this whole signature check exists to make trustworthy.
+    let mut child = match std::process::Command::new("open").arg(&dest).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = std::fs::remove_file(&dest);
+            return Err(error.to_string());
+        }
+    };
+    match wait_for_handoff(&mut child) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = std::fs::remove_file(&dest);
+            return Err(
+                "`open` exited non-zero, so the installer was not handed off to a handler"
+                    .to_string(),
+            );
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&dest);
+            return Err(error);
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::wait_for_handoff;
+
+    /// A child that exits immediately with `code`, via whatever shell this
+    /// platform has.
+    fn child_exiting(code: i32) -> std::process::Child {
+        let mut cmd = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg(format!("exit {code}"));
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(format!("exit {code}"));
+            c
+        };
+        cmd.spawn()
+            .expect("a shell must be available for this test")
+    }
+
+    #[test]
+    fn a_clean_exit_is_a_successful_handoff() {
+        let mut child = child_exiting(0);
+        assert_eq!(
+            wait_for_handoff(&mut child),
+            Ok(true),
+            "exit 0 must read as a hand-off that worked"
+        );
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_not_a_successful_handoff() {
+        // This is the finding: `spawn` returning Ok is not the same as the
+        // installer being opened, and reporting success on a failed hand-off
+        // leaves the user with a file, nothing open, and no error.
+        let mut child = child_exiting(3);
+        assert_eq!(
+            wait_for_handoff(&mut child),
+            Ok(false),
+            "a non-zero exit must be distinguishable from success"
+        );
+    }
+
+    #[test]
+    fn a_child_that_outlives_the_bound_is_treated_as_handed_off() {
+        // `open` returns promptly in practice, so exceeding the window means
+        // something unusual rather than failure. Refusing to continue would be
+        // worse than the ambiguity, so this resolves to success.
+        let mut cmd = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg("ping -n 4 127.0.0.1 >NUL");
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg("sleep 30");
+            c
+        };
+        let mut child = cmd.spawn().expect("a shell must be available");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            super::wait_for_handoff_within(&mut child, std::time::Duration::from_millis(200)),
+            Ok(true),
+            "outliving the bound is treated as a hand-off that worked"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the bound must actually bound the wait, and must be the one passed in"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Wait briefly for a macOS hand-off process to report its exit status.
+///
+/// Returns `Ok(true)` for a clean exit and `Ok(false)` for a non-zero one. If the
+/// child is still running when the bound expires the hand-off is treated as
+/// successful: `open` normally returns immediately, so outliving the window means
+/// something else is going on, and refusing to continue would be worse than the
+/// ambiguity.
+fn wait_for_handoff(child: &mut std::process::Child) -> Result<bool, String> {
+    // Generous, because a loaded machine can make a LaunchServices hand-off
+    // sluggish. The bound is a parameter rather than a constant inside the loop
+    // so the test can exercise the timeout without spending that long asleep.
+    wait_for_handoff_within(child, std::time::Duration::from_secs(10))
+}
+
+fn wait_for_handoff_within(
+    child: &mut std::process::Child,
+    bound: std::time::Duration,
+) -> Result<bool, String> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(50);
+    let deadline = std::time::Instant::now() + bound;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.success()),
+            Ok(None) => {}
+            Err(error) => return Err(format!("Failed to wait for `open`: {error}")),
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(true);
+        }
+        std::thread::sleep(POLL);
+    }
 }
 
 /// Update metadata for a channel check. Mirrors the updater plugin's own

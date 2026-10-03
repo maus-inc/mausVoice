@@ -151,12 +151,21 @@ export const startAssemblyAIStreaming = async (
     );
     ws = new WebSocket(wsUrl);
 
-    ws.onopen = async () => {
-      getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
-      buffer.flush(false);
-      getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
-      startupSettled = true;
-      resolve({ finalize, cleanup, writeAudioChunk });
+    // Not `async`, because there is nothing to await. The `async` was doing one
+    // job, though: it turned a throw inside this handler into a rejected promise
+    // rather than an uncaught exception in a WebSocket event callback, where
+    // nothing observes it. That containment is kept explicitly, so it is visible
+    // rather than incidental — an error here is reported instead of vanishing.
+    ws.onopen = () => {
+      try {
+        getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
+        buffer.flush(false);
+        getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+        startupSettled = true;
+        resolve({ finalize, cleanup, writeAudioChunk });
+      } catch (error) {
+        getLogger().error(`[${LOGGER_PREFIX}] onopen handler failed`, error);
+      }
     };
 
     ws.onmessage = (event) => {

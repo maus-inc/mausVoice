@@ -49,6 +49,34 @@ const transportCall = <T>(
   return args as T;
 };
 
+/**
+ * The parts of a Gemini request body these tests assert on.
+ *
+ * `transportBody` is generic so a call site can state the shape it expects, and
+ * these call sites were not doing that. With the `Record<string, unknown>`
+ * default, `body.generationConfig` is `unknown` and every property access on it
+ * is TS18046 — which is what the four errors here were. Passing the shape at the
+ * call site is the fix; casting at the use, or widening the default to `any`,
+ * would remove the error without adding a check.
+ */
+type GeminiJsonRequest = {
+  generationConfig?: {
+    responseMimeType?: string;
+    responseJsonSchema?: unknown;
+    audioTranscriptionConfig?: unknown;
+    [key: string]: unknown;
+  };
+};
+
+/** The transcription half of the same body, which asserts on `contents`. */
+type GeminiAudioRequest = GeminiJsonRequest & {
+  contents?: Array<{
+    parts?: Array<{
+      inlineData?: { mimeType?: string; data?: string };
+    }>;
+  }>;
+};
+
 /** The parsed JSON body of the nth transport call. */
 const transportBody = <T = Record<string, unknown>>(
   calls: readonly (readonly unknown[])[],
@@ -96,9 +124,9 @@ describe("Gemini native transport", () => {
       jsonResponse: { name: "transcription_cleaning", schema },
       customFetch,
     });
-    const body = transportBody(customFetch.mock.calls, 0);
-    expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.generationConfig.responseJsonSchema).toEqual(schema);
+    const body = transportBody<GeminiJsonRequest>(customFetch.mock.calls, 0);
+    expect(body.generationConfig?.responseMimeType).toBe("application/json");
+    expect(body.generationConfig?.responseJsonSchema).toEqual(schema);
     expect(body.generationConfig).not.toHaveProperty("responseSchema");
   });
 
@@ -288,15 +316,15 @@ describe("Gemini native transport", () => {
 
     // Should have attempted upload start, then fell back to generateContent
     expect(customFetch.mock.calls.length).toBe(2);
-    const body = transportBody(
+    const body = transportBody<GeminiAudioRequest>(
       customFetch.mock.calls,
       customFetch.mock.calls.length - 1,
     );
-    expect(body.contents[0].parts[0].inlineData).toEqual({
+    expect(body.contents?.[0]?.parts?.[0]?.inlineData).toEqual({
       mimeType: "audio/wav",
       data: "AQID",
     });
-    expect(body.generationConfig.audioTranscriptionConfig).toBeDefined();
+    expect(body.generationConfig?.audioTranscriptionConfig).toBeDefined();
   });
 
   it("does not fallback to inlineData on abort during upload", async () => {

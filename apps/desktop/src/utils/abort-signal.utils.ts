@@ -31,14 +31,26 @@ export const combineAbortSignals = (
   // must not leave a listener behind per request. `dispose` removes both.
   const controller = new AbortController();
   const sources = [first, second];
-  const detach = (): void => {
-    sources.forEach((source, index) => {
-      source.removeEventListener("abort", listeners[index]);
-    });
+
+  // These two genuinely need each other: firing one listener detaches its
+  // sibling, and `dispose` removes both. Declared separately they formed a
+  // use-before-declaration cycle -- `detach` closes over `listeners` while
+  // `listeners` calls `detach` -- so no declaration order satisfied both. One
+  // self-referential object removes the cycle without changing when anything
+  // runs: neither function is called during initialisation, only afterwards.
+  const link: { detach: () => void; listeners: Array<() => void> } = {
+    detach: () => {
+      sources.forEach((source, index) => {
+        source.removeEventListener("abort", link.listeners[index]);
+      });
+    },
+    listeners: [],
   };
-  const listeners = sources.map((source) => () => {
-    detach();
-    controller.abort(source.reason);
+  sources.forEach((source) => {
+    link.listeners.push(() => {
+      link.detach();
+      controller.abort(source.reason);
+    });
   });
 
   const alreadyAborted = sources.find((source) => source.aborted);
@@ -46,10 +58,10 @@ export const combineAbortSignals = (
     controller.abort(alreadyAborted.reason);
   } else {
     sources.forEach((source, index) => {
-      source.addEventListener("abort", listeners[index], { once: true });
+      source.addEventListener("abort", link.listeners[index], { once: true });
     });
   }
-  return { signal: controller.signal, dispose: detach };
+  return { signal: controller.signal, dispose: link.detach };
 };
 
 const BODY_READERS = [
