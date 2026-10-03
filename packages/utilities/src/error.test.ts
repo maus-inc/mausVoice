@@ -623,6 +623,27 @@ describe("authorization scheme credentials", () => {
   const SECRETS = [SECRET, "s"].join("");
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
   const CLIENT_SECRET = ["client", "secret"].join("_");
+  const SESSION_TOKEN = ["session", "token"].join("_");
+  const PRIVATE_KEY = ["private", "key"].join("_");
+  // Ordinary fields whose name ends in a credential word. Held as fragments so
+  // no contiguous `label: value` a secret scanner could read exists in this file.
+  const NON_SECRET_KEY_LABELS = [
+    ["sort", "key"].join("_"),
+    ["cache", "key"].join("_"),
+    ["partition", "key"].join("_"),
+    ["idempotency", "key"].join("_"),
+    ["response", "id"].join("_"),
+    ["token", "count"].join("_"),
+  ];
+  const ORDINARY_WORDS = [
+    "monkey",
+    "hotkey",
+    "whiskey",
+    "secretary",
+    "passenger",
+    "tokenize",
+    "keyboard",
+  ];
   const SECRET_TOKEN = [SECRET, "token"].join("_");
   // The AWS-shaped value is held in two parts for the same reason as the labels
   // above: an `AKIA`-prefixed token in a file reads to a secret scanner as a
@@ -683,6 +704,47 @@ describe("authorization scheme credentials", () => {
     expect(redactSensitiveTokens(labelled(QUALIFIED, CRED_VALUE))).toBe(
       `${QUALIFIED}:[redacted]`,
     );
+  });
+
+  it("recognises a credential label behind a prefix, and no ordinary field", () => {
+    // The prefix list is the whole difficulty here. An arbitrary prefix redacts
+    // `sort_key`, `cache_key`, `partition_key`, `idempotency_key`, `max_tokens`
+    // and `total_tokens`, which are ordinary fields in a provider error for an
+    // app whose whole job is calling models -- and no prefix rule keeps
+    // `oauth_token` while dropping `max_tokens`, because they differ only in
+    // their first word. So both directions are pinned.
+    for (const label of [
+      SECRET_KEY,
+      MY_SECRET,
+      CLIENT_SECRET,
+      SESSION_TOKEN,
+      PRIVATE_KEY,
+    ]) {
+      expect(redactSensitiveTokens(labelled(label, TWELVE_CHARS))).toBe(
+        `${label}:[redacted]`,
+      );
+    }
+
+    // The other half: fields that merely end in a credential word.
+    for (const label of NON_SECRET_KEY_LABELS) {
+      expect(redactSensitiveTokens(labelled(label, TWELVE_CHARS))).toBe(
+        `${label}: ${TWELVE_CHARS}`,
+      );
+    }
+
+    // English words that contain one. `\b` is what keeps them out; a pattern
+    // that let a suffix backtrack would turn `monkey: bananas` into
+    // `monkey:[redacted]`.
+    for (const word of ORDINARY_WORDS) {
+      expect(redactSensitiveTokens(labelled(word, "bananas"))).toBe(
+        `${word}: bananas`,
+      );
+    }
+
+    // A bare `key:` is not a label. It is given up deliberately: `\bkey\b`
+    // matches the English word wherever it appears, so accepting it turned
+    // `press the key: any` into `press the key:[redacted]`.
+    expect(redactSensitiveTokens(labelled("key", "any"))).toBe("key: any");
   });
 
   it("redacts a passphrase whole under a general label, and accepts the lost diagnosis", () => {

@@ -8,38 +8,45 @@ const BEARER_TOKEN = /\bBearer\s+\S+/gi;
 // boundary between the leading `c` and the `s`.
 const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
-// The secret labels this file recognises in a plain string, captured as group 1
-// so the three passes that embed this pattern can name the label they matched
-// instead of the separator.
+// A label naming a secret.
 //
 // The alternation accepts a separator-delimited prefix, so `secret_key`,
-// `my_secret`, `credentials` and `secrets` are labels here and not only as
-// object keys. It does not accept a camelCase prefix: any pattern that does
-// lets `monkey` donate its `key` by backtracking, which turns
-// `monkey: bananas` into `monkey:[redacted]`. `apiKey` still matches because it
-// needs no prefix. `secretKey` and `mySecret` do not, and that is the stated
-// cost of not over-redacting.
+// `my_secret`, `oauth_token` and `credentials` are labels here and not only
+// object keys. Three narrowings are load-bearing, and each was measured rather
+// than reasoned about:
 //
-// A prefix of ANY word was too wide, and both halves of that are load-bearing.
-// The prefix words are drawn from the secret vocabulary rather than being any
-// word, so `sort_key`, `cache_key`, `partition_key`, `idempotency_key` and
-// `max_tokens` are left alone -- they are not credentials, and they are ordinary
-// text in a provider error for an app whose whole job is calling models. The
-// prefix also sits immediately before the label with no space between, which is
-// what stops a bare match on a word further back in the sentence.
+//   No arbitrary prefix. Any `(?:[a-z0-9]+[_-])*` in front redacts `sort_key`,
+//   `partition_key`, `cache_key`, `idempotency_key`, `max_tokens` and
+//   `total_tokens` -- ordinary fields in a provider error for an app whose whole
+//   job is calling models. There is no prefix rule that keeps `oauth_token` and
+//   drops `max_tokens`; they differ only in their first word. So the credential
+//   words that may carry the prefix are listed.
 //
-// There is deliberately no bare `key` alternative, and getting that wrong cost
-// `secret_key` twice. `\bkey\b` matches the English word wherever it appears, so
-// `press the key: any` came out as `press the key:[redacted]`. Dropping `key`
-// outright then un-redacted `secret_key: <credential>`, which is the case this
-// whole prefix exists for.
+//   No bare `key`. `\bkey\b` matches the English word wherever it appears, so
+//   `press the key: any` came out as `press the key:[redacted]`. Removing `key`
+//   outright then un-redacted `secret_key: <credential>` -- the case the prefix
+//   exists for -- and the test pinning `secret_key` is what caught that. So the
+//   prefix and `key` are alternatives rather than prefix-then-suffix: `secret_key`
+//   and `api_key` match as single spellings, and a lone `key: <value>` is not
+//   recognised at all.
 //
-// The resolution is that the prefix and `key` are alternatives, not a prefix and
-// a suffix: `secret_key` and `api_key` match as single spellings of their own,
-// while a lone `key: <value>` is not recognised at all. What is given up is the
-// one spelling that is most often prose and least often a credential -- and the
-// test that pins `secret_key` is what caught the second mistake.
-const SECRET_LABEL = String.raw`("?\b(?:secret|private|client|session|api)[_-]key|(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|(?:my[_-])?secrets?|password|passwd|pwd|credentials?)\b"?)`;
+//   No camelCase prefix. Any pattern accepting one lets `monkey` donate its `key`
+//   by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`. `apiKey`
+//   still matches because it needs no prefix; `secretKey` and `mySecret` do not,
+//   and that is the stated cost of not redacting English words ending in "key".
+//
+// What is given up is the spelling that is most often prose and least often a
+// credential. Where this set and `isSecretKey` still differ -- an object key may
+// reach the predicate by a route the string pattern does not have -- that is
+// recorded at `isFreeFormSecretLabel`.
+//
+// The last alternative is the prefix list. It exists for the labels that are a
+// credential word behind a word describing its holder: `oauth_token`,
+// `bearer_token`, `signing_key`, `master_key`, `user_password`. `secret_key` and
+// `my_secret` do NOT depend on it -- `secret[_-]?key` in the first group already
+// matches them, which a mutation confirmed by dropping `secret` from the prefix
+// list and breaking no test.
+const SECRET_LABEL = String.raw`("?\b(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|secret[_-]?key|password|passwd|pwd|credential|secret|(?:oauth|auth|bearer|signing|master|encryption|private|client|session|access|refresh|id|api|user|db|account|service|provider|vault|keyring|updater|licence|license|secret|my)[_-](?:[a-z0-9]+[_-])*(?:secret|token|key|credential|password|passwd|pwd))s?\b"?)`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
 // the whole value is replaced either way.
