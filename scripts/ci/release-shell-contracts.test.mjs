@@ -183,14 +183,33 @@ describe("release workflow shell contracts", () => {
         `${step.name} must fail closed when the trusted policy is absent or unreadable`,
       );
 
-      // Case 2: trusted policy present but without the rule -> warn, and run with no
-      // config rather than failing. `-c` REPLACES gitleaks' built-ins, so an
-      // allowlist-only config would silently disable every default detector; the
-      // fix is to pass no config at all, which is stronger than either file.
+      // Case 2: trusted policy present -> always use it. `-c` REPLACES gitleaks'
+      // built-in ruleset, so a config carrying no `[[rules]]` -- which is what
+      // 0.1.6 and main carry today: 23 lines of `[allowlist]` and nothing else --
+      // detects nothing at all. Measured on this branch's own range with gitleaks
+      // 8.18.0: passing that config reports 0 findings, dropping `-c` reports 12.
+      // So the config is set unconditionally and the rule's absence is reported,
+      // never acted on.
       assert.match(
         run,
-        /if grep -q "tauri-minisign-updater-private-key" "\$TRUSTED_POLICY"[\s\S]*?CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)[\s\S]*?else[\s\S]*?::warning::/,
-        `${step.name} must warn and scan with built-ins when the base policy lacks the rule`,
+        /CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)\s*\n\s*if ! grep -q "tauri-minisign-updater-private-key"/,
+        `${step.name} must pass the trusted config unconditionally, warning only when the rule is absent`,
+      );
+      assert.match(
+        run,
+        /if ! grep -q "tauri-minisign-updater-private-key" "\$TRUSTED_POLICY"[\s\S]*?::warning::/,
+        `${step.name} must report a base policy carrying no updater-key rule`,
+      );
+      // The property the measurement turns on: no path may leave the config unset.
+      // An earlier version of these steps required the rule and therefore ran with
+      // no `-c` at all, reasoning that no config beats an allowlist-only one. On
+      // this base that turns a vacuous green into 12 known false positives, which
+      // is not a stronger gate, just a different one. Pinning the absence of the
+      // empty assignment is what stops that shape coming back.
+      assert.doesNotMatch(
+        run,
+        /CONFIG_ARGS=\(\)/,
+        `${step.name} must never leave the gitleaks config unset`,
       );
 
       // Case 3: never the scanned checkout. An enforcement step may not so much as
