@@ -147,10 +147,26 @@ const SchemeButton = () => {
   );
 };
 
+/** Route-change transition presets. `reduced` drops the 6px slide so the
+ *  page cross-fades in place; `full` keeps it. One discriminant, three props. */
+export const PAGE_MOTION = {
+  full: {
+    initial: { opacity: 0, y: 6 },
+    exit: { opacity: 0, y: -6 },
+    transition: springSnappy,
+  },
+  reduced: {
+    initial: { opacity: 0 },
+    exit: { opacity: 0 },
+    transition: { duration: 0.18 },
+  },
+} as const;
+
 const Shell = () => {
   const location = useLocation();
   const reduceMotion = useReducedMotion();
   const { overrides, resetAll } = useSpec();
+  const pageMotion = reduceMotion ? PAGE_MOTION.reduced : PAGE_MOTION.full;
   const editedCount = Object.values(overrides).reduce(
     (n, o) => n + Object.keys(o).length,
     0,
@@ -205,10 +221,10 @@ const Shell = () => {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+              initial={pageMotion.initial}
               animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-              transition={reduceMotion ? { duration: 0.18 } : springSnappy}
+              exit={pageMotion.exit}
+              transition={pageMotion.transition}
             >
               <Routes location={location}>
                 <Route path="/" element={<IndexPage />} />

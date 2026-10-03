@@ -10,12 +10,13 @@ import {
   Paper,
   Stack,
   Typography,
+  type ChipProps,
 } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import { Link, useParams } from "react-router-dom";
 import { SpecEditor } from "../components/spec-editor";
 import { DEMOS } from "../demos/index";
-import { CATEGORIES, entryById } from "../lib/registry";
+import { CATEGORIES, entryById, type RegistryEntry } from "../lib/registry";
 
 // Spec files are the human-editable source of truth (specs/*.md).
 const SPEC_MODULES = import.meta.glob("../../specs/*.md", {
@@ -23,6 +24,17 @@ const SPEC_MODULES = import.meta.glob("../../specs/*.md", {
   import: "default",
   eager: true,
 }) as Record<string, string>;
+
+/** The reused/recreated badge is one fact rendered two ways (label + colour).
+ *  Keyed by the discriminant itself, so adding a status to RegistryEntry fails
+ *  the build here instead of silently falling through a ternary. */
+const STATUS_BADGE: Record<
+  RegistryEntry["status"],
+  { label: string; color: ChipProps["color"] }
+> = {
+  reused: { label: "reused · real component", color: "success" },
+  recreated: { label: "recreated · pixel spec", color: "warning" },
+};
 
 const specMarkdown = (id: string): string =>
   SPEC_MODULES[`../../specs/${id}.md`] ??
@@ -48,6 +60,7 @@ export const ComponentPage = () => {
   }
   const Demo = DEMOS[entry.demo];
   const category = CATEGORIES.find((c) => c.id === entry.category);
+  const badge = STATUS_BADGE[entry.status];
 
   return (
     <Box sx={{ p: { xs: 2, md: 4 }, maxWidth: 1200 }}>
@@ -66,15 +79,7 @@ export const ComponentPage = () => {
         sx={{ alignItems: "center", flexWrap: "wrap", mb: 1 }}
       >
         <Typography variant="headlineSmall">{entry.name}</Typography>
-        <Chip
-          size="small"
-          label={
-            entry.status === "reused"
-              ? "reused · real component"
-              : "recreated · pixel spec"
-          }
-          color={entry.status === "reused" ? "success" : "warning"}
-        />
+        <Chip size="small" label={badge.label} color={badge.color} />
         {category && (
           <Chip size="small" label={category.label} variant="outlined" />
         )}
