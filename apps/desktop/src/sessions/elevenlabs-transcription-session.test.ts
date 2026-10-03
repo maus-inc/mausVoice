@@ -122,24 +122,31 @@ describe("ElevenLabs audio retention across a socket close", () => {
     expect(retainedSamples()).toBe(0);
   });
 
-  it("keeps audio queued while the socket is still connecting", async () => {
-    // The half of the old comment that was true, and the reason the fix is not
-    // simply "stop queueing": speech captured before the handshake completes is
-    // held and drained by `onopen` rather than dropped.
+  it("has no writer at all while the socket is connecting", async () => {
+    // What the comment above `pendingChunks.push` used to promise -- that a
+    // chunk arriving while the socket is CONNECTING is queued and replayed by
+    // `onopen` -- describes a state this class cannot reach. The stream session
+    // is handed out from `ws.onopen` and not before, so while the handshake is
+    // in flight `BaseApiTranscriptionSession.writeAudioChunk` has no session to
+    // forward to and the audio is dropped. Pinned because the test that used to
+    // cover this window was titled "keeps audio queued while the socket is still
+    // connecting" and never wrote a chunk inside it.
     const session = new ElevenLabsTranscriptionSession("test-key");
     const started = session.onRecordingStart(16000);
     await vi.waitFor(() => expect(createdSockets.length).toBeGreaterThan(0));
     const socket = createdSockets.at(-1)!;
     expect(socket.readyState).toBe(FakeWebSocket.CONNECTING);
 
-    // Nothing to send yet: the socket has not opened, and `onopen` has not run.
+    session.writeAudioChunk(chunk());
+
     socket.open();
     await started;
     expect(socket.readyState).toBe(FakeWebSocket.OPEN);
-    // The backlog `onopen` drained is empty in this test because there is no
-    // writer to call while `streamSession` is still null -- what matters is that
-    // the connecting socket is a live destination, so the fix below drops audio
-    // only for a socket that is gone.
+    // Nothing was held across the handshake, so `onopen`'s drain had nothing to
+    // send. The write after the open does go out, which is what makes the empty
+    // `sent` above a fact about the connecting window rather than a queue that
+    // never worked in the first place.
+    expect(socket.sent).toEqual([]);
     session.writeAudioChunk(chunk());
     expect(socket.sent.length).toBeGreaterThan(0);
   });

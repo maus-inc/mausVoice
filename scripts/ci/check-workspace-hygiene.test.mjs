@@ -19,7 +19,16 @@ const globToRegExp = (pattern) => {
   return new RegExp(`^${source}$`);
 };
 
-// Every `scripts/ci` suite the workflow text would actually execute.
+// Every `*.test.mjs` the workflow text would actually execute, as the
+// repository-relative path a workflow's own `paths:` filter is written in.
+//
+// The directory is carried, not just the file name, because the two checks below
+// compare against paths and a bare name cannot be compared to either:
+// `node --test scripts/run-tauri-dev.test.mjs` and
+// `node --test scripts/ci/run-tauri-dev.test.mjs` are different files sharing a
+// name. `apps/desktop`'s own `test:unit` runs the first of those, so dropping
+// the directory made a correct workflow look like it was missing a
+// `scripts/ci/` entry that cannot exist.
 //
 // Matched on a command, not on a substring: a suite named in a `paths:` trigger
 // filter, or in prose, is not a suite anything executes, and a check that
@@ -59,7 +68,7 @@ function executedSuites(workflowsText, repoRoot) {
       const name = token.slice(token.lastIndexOf("/") + 1);
       if (!name.endsWith(".test.mjs")) continue;
       if (!name.includes("*")) {
-        executed.add(name);
+        executed.add(`${directory}${name}`);
         continue;
       }
       // A glob stands for the suites it names, so expand it rather than
@@ -70,12 +79,57 @@ function executedSuites(workflowsText, repoRoot) {
       const suffix = name.slice(name.lastIndexOf("*") + 1);
       for (const file of readdirSync(target)) {
         if (file.startsWith(prefix) && file.endsWith(suffix)) {
-          executed.add(file);
+          executed.add(`${directory}${file}`);
         }
       }
     }
   }
   return executed;
+}
+
+// A `paths:` entry that names a whole directory, so it covers every suite under
+// it and is not an omission. No `g` flag: `.test` on a global regex carries
+// `lastIndex` between calls, and this is called once per workflow.
+const WHOLE_DIR_PATTERNS = [
+  /^\s*-\s*["']?scripts\/ci\/\*\*["']?\s*$/m,
+  /^\s*-\s*["']?scripts\/\*\*["']?\s*$/m,
+  /^\s*-\s*["']?\*\*["']?\s*$/m,
+  /^\s*-\s*["']?\.github\/\*\*["']?\s*$/m,
+];
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// The suites one workflow runs that its own `paths:` filter does not name.
+//
+// Split out of the loop that uses it so a synthetic workflow can be fed to it.
+// The decision is the entire point of the guard, and while it was inline the
+// only thing that could exercise it was the nine workflows this repository
+// happens to have -- which is how it came to demand a `scripts/ci/` entry for a
+// suite run from `apps/desktop/scripts`.
+//
+// File-scoped on purpose, not per `paths:` block. GitHub runs a workflow "if at
+// least one path matches a pattern in the `paths` filter", so the blocks in a
+// workflow are a union rather than an intersection: one of them naming
+// `scripts/**` already covers a second, narrower one. `format-and-i18n.yml` and
+// `test-package-rust-transcription.yml` both carry a `push` and a `pull_request`
+// list, and a per-block rule would fail them for no reason a reader could act on.
+function missingFromTriggerFilter(text, repoRoot) {
+  // Only a workflow with a `paths:` filter can be missing an entry. One that
+  // triggers on every push has nothing to keep in sync.
+  if (!/^\s*paths:\s*$/m.test(text)) return [];
+  const executed = executedSuites(text, repoRoot);
+  if (executed.size === 0) return [];
+  // Tested once rather than per suite, because none of the four says anything
+  // about any individual suite: they are a property of the file, and iterating
+  // them per suite only made that read as a per-suite check.
+  if (WHOLE_DIR_PATTERNS.some((pattern) => pattern.test(text))) return [];
+  return [...executed].filter(
+    (path) =>
+      !new RegExp(
+        `^\\s*-\\s*["']?${escapeRegExp(path)}["']?\\s*$`,
+        "m",
+      ).test(text),
+  );
 }
 
 describe("workspace hygiene contracts", () => {
@@ -218,17 +272,24 @@ describe("workspace hygiene contracts", () => {
     const reached = new Set(executed);
     for (let grew = true; grew;) {
       grew = false;
-      for (const suite of [...reached]) {
+      for (const path of [...reached]) {
+        // An import is relative, so what it names sits beside its importer, and
+        // the suite it reaches keeps the importer's directory.
+        const directory = path.slice(0, path.lastIndexOf("/") + 1);
+        const suite = path.slice(directory.length);
         for (const next of imported.get(suite) ?? []) {
-          if (!reached.has(next)) {
-            reached.add(next);
+          const nextPath = `${directory}${next}`;
+          if (!reached.has(nextPath)) {
+            reached.add(nextPath);
             grew = true;
           }
         }
       }
     }
 
-    const unwired = suites.filter((suite) => !reached.has(suite));
+    const unwired = suites.filter(
+      (suite) => !reached.has(`scripts/ci/${suite}`),
+    );
     assert.deepStrictEqual(
       unwired,
       [],
@@ -242,36 +303,15 @@ describe("workspace hygiene contracts", () => {
   // `paths:` is a trigger filter, and it is workflow-level, so it cannot be
   // narrowed to the jobs that do not need it -- which is why the fix for a
   // missing entry costs a heavy Rust job on a `.mjs` comment. Worth it anyway:
-  // `test-desktop-unit.yml` was missing six of the eleven suites it runs, so a
-  // change to any of them skipped the workflow that executes it.
+  // `test-desktop-unit.yml` runs ten `scripts/ci` suites and was missing six of
+  // them (four were already named), so a change to any of the other six skipped
+  // the workflow that executes it.
   it("a suite a workflow runs is in that workflow's trigger filter", () => {
     const dir = resolve(repoRoot, ".github/workflows");
     const offenders = [];
     for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
       const text = readFileSync(resolve(dir, file), "utf8");
-      // Only a workflow with a `paths:` filter can be missing an entry. One that
-      // triggers on every push has nothing to keep in sync.
-      const filtered = /^\s*paths:\s*$/m.test(text);
-      if (!filtered) continue;
-      const executed = executedSuites(text, repoRoot);
-      if (executed.size === 0) continue;
-      // A filter that already names the whole directory covers every suite in
-      // it, so it is not an omission.
-      const wholeDir = [...executed].every(
-        (suite) =>
-          /^\s*-\s*["']?scripts\/ci\/\*\*["']?\s*$/m.test(text) ||
-          /^\s*-\s*["']?scripts\/\*\*["']?\s*$/m.test(text) ||
-          /^\s*-\s*["']?\*\*["']?\s*$/m.test(text) ||
-          /^\s*-\s*["']?\.github\/\*\*["']?\s*$/m.test(text),
-      );
-      if (wholeDir) continue;
-      const missing = [...executed].filter(
-        (suite) =>
-          !new RegExp(
-            `^\\s*-\\s*["']?scripts/ci/${suite.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']?\\s*$`,
-            "m",
-          ).test(text),
-      );
+      const missing = missingFromTriggerFilter(text, repoRoot);
       if (missing.length > 0) offenders.push(`${file}: ${missing.join(", ")}`);
     }
     assert.deepStrictEqual(
@@ -299,7 +339,7 @@ describe("the workflow scan finds every way a suite is executed", () => {
     ].join("\n");
     assert.deepStrictEqual(
       [...executedSuites(text, scanRoot)],
-      ["dev-surface-contracts.test.mjs"],
+      ["scripts/ci/dev-surface-contracts.test.mjs"],
       "a flag between `node --test` and the path is not a reason to miss the suite",
     );
   });
@@ -311,7 +351,10 @@ describe("the workflow scan finds every way a suite is executed", () => {
     ].join("\n");
     assert.deepStrictEqual(
       [...executedSuites(text, scanRoot)].sort(),
-      ["release-notes.test.mjs", "validate-release-inputs.test.mjs"],
+      [
+        "scripts/ci/release-notes.test.mjs",
+        "scripts/ci/validate-release-inputs.test.mjs",
+      ],
       "a second suite on the same command is still a suite something executes",
     );
   });
@@ -324,8 +367,8 @@ describe("the workflow scan finds every way a suite is executed", () => {
       "a glob stands for every suite in the directory, not for one literal `*`",
     );
     assert.ok(
-      found.has("windows-tauri-imports.test.mjs") &&
-        found.has("check-workspace-hygiene.test.mjs"),
+      found.has("scripts/ci/windows-tauri-imports.test.mjs") &&
+        found.has("scripts/ci/check-workspace-hygiene.test.mjs"),
       `a glob must resolve to the suites it names, got ${[...found].length} entries`,
     );
     assert.ok(
@@ -346,8 +389,180 @@ describe("the workflow scan finds every way a suite is executed", () => {
     ].join("\n");
     assert.deepStrictEqual(
       [...executedSuites(text, scanRoot)],
-      ["windows-tauri-imports.test.mjs"],
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
       "a `paths:` entry or a mention in prose is not a suite anything executes",
+    );
+  });
+
+  it("keeps the directory a suite is run from", () => {
+    // The trigger-filter check compares an executed path against a `paths:`
+    // entry, and a bare file name cannot be compared to either. These two files
+    // share a name and nothing else, and the second one is what `apps/desktop`'s
+    // own `test:unit` script runs.
+    const text = [
+      "      - run: node --test scripts/run-tauri-dev.test.mjs",
+      "",
+    ].join("\n");
+    assert.deepStrictEqual(
+      [...executedSuites(text, scanRoot)],
+      ["scripts/run-tauri-dev.test.mjs"],
+      "the directory is part of which suite this is",
+    );
+  });
+});
+
+// The trigger filter is the one guard above whose decision was never exercised
+// by anything but the workflows this repository happens to have, which is how it
+// came to reject a correct one. These feed it synthetic workflows.
+describe("the trigger filter check compares executed paths to filter entries", () => {
+  const scanRoot = repoRoot;
+
+  const workflow = (paths, command) =>
+    [
+      "on:",
+      "  push:",
+      "    paths:",
+      ...paths.map((path) => `      - "${path}"`),
+      "jobs:",
+      "  unit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      `      - run: ${command}`,
+      "",
+    ].join("\n");
+
+  it("does not demand a scripts/ci entry for a suite run from elsewhere", () => {
+    // The false positive this replaces: the required entry was hardcoded to
+    // `scripts/ci/`, so this workflow -- which names the path it actually runs
+    // -- was reported as missing `scripts/ci/run-tauri-dev.test.mjs`, an entry
+    // that cannot exist and that adding would not start the job either.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        workflow(
+          ["scripts/run-tauri-dev.test.mjs"],
+          "node --test scripts/run-tauri-dev.test.mjs",
+        ),
+        scanRoot,
+      ),
+      [],
+      "a filter that names the path the suite is run from is not missing it",
+    );
+  });
+
+  it("still reports a scripts/ci suite whose filter omits it", () => {
+    // The control for the one above: same shape, suite in `scripts/ci`, absent
+    // from the filter. Without this the fix above would pass by ignoring every
+    // path rather than by comparing them.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        workflow(
+          ["apps/desktop/**"],
+          "node --test scripts/ci/windows-tauri-imports.test.mjs",
+        ),
+        scanRoot,
+      ),
+      ["scripts/ci/windows-tauri-imports.test.mjs"],
+      "naming the wrong directory is an omission, not an exemption",
+    );
+  });
+
+  it("exempts a filter that names any whole directory it could run", () => {
+    // One pattern per case, because the exemption is four independent literals
+    // and a refactor that kept only the first would otherwise stay green.
+    for (const pattern of ["scripts/ci/**", "scripts/**", "**", ".github/**"]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(
+          workflow(
+            [pattern],
+            "node --test scripts/ci/windows-tauri-imports.test.mjs",
+          ),
+          scanRoot,
+        ),
+        [],
+        `${pattern} covers every suite in scripts/ci`,
+      );
+    }
+  });
+
+  it("one paths block naming the directory covers a second, narrower block", () => {
+    // GitHub runs a workflow "if at least one path matches a pattern in the
+    // `paths` filter", so the blocks are a union. A per-block rule would demand
+    // the suite in both lists and fail a workflow that triggers correctly.
+    const text = [
+      "on:",
+      "  push:",
+      "    paths:",
+      '      - "scripts/**"',
+      "  pull_request:",
+      "    paths:",
+      '      - "apps/desktop/**"',
+      "jobs:",
+      "  unit:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+      "",
+    ].join("\n");
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(text, scanRoot),
+      [],
+      "the blocks are OR'd, so one of them covering the suite is enough",
+    );
+  });
+
+  it("reads a paths entry whatever its indent, and either way of quoting", () => {
+    // `paths:` list items are indented six spaces in every workflow here, so a
+    // matcher pinned to that indent would agree with all nine of them and be
+    // wrong everywhere else. Unquoted and single-quoted forms included, because
+    // a guard that only accepts the spelling this repository happens to use is
+    // the same guard with a smaller view.
+    const shapes = [
+      '      - "scripts/ci/windows-tauri-imports.test.mjs"',
+      "      - scripts/ci/windows-tauri-imports.test.mjs",
+      "      - 'scripts/ci/windows-tauri-imports.test.mjs'",
+      "    - scripts/ci/windows-tauri-imports.test.mjs",
+      "        - scripts/ci/windows-tauri-imports.test.mjs",
+    ];
+    for (const entry of shapes) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(
+          [
+            "on:",
+            "  push:",
+            "    paths:",
+            entry,
+            "jobs:",
+            "  unit:",
+            "    runs-on: ubuntu-latest",
+            "    steps:",
+            "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+            "",
+          ].join("\n"),
+          scanRoot,
+        ),
+        [],
+        `a filter naming the suite as ${JSON.stringify(entry)} is not missing it`,
+      );
+    }
+  });
+
+  it("says nothing about a workflow that triggers on every push", () => {
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        [
+          "on:",
+          "  push:",
+          "jobs:",
+          "  unit:",
+          "    runs-on: ubuntu-latest",
+          "    steps:",
+          "      - run: node --test scripts/ci/windows-tauri-imports.test.mjs",
+          "",
+        ].join("\n"),
+        scanRoot,
+      ),
+      [],
+      "there is no filter to keep in sync when there is no filter",
     );
   });
 });

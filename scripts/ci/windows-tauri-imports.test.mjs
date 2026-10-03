@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -45,9 +52,19 @@ function windowsRunnerCargoTests(workflowDir) {
 
 // The same scan over one workflow's text, so a synthetic workflow can be fed
 // to it. `label` names the source in each record.
+//
+// Refuses a workflow it read no job out of. `jobBlocks` cannot see a `jobs:`
+// key carrying an anchor, a comment or an inline `{}`, and a workflow it cannot
+// see is not a workflow without Windows jobs -- it is a workflow this guard has
+// no opinion about, and reporting no opinion as "no `cargo test` anywhere" is
+// the direction that reassures. `windowsJobBody` below refuses a missing job for
+// the same reason; this is the same refusal for every other workflow, so the
+// walk above cannot pass without having read something from each file it names.
 function windowsRunnerCargoTestsIn(text, label) {
+  const jobs = jobBlocks(text);
+  assert.ok(jobs.length > 0, `${label}: no job this scan could read`);
   const found = [];
-  for (const job of jobBlocks(text)) {
+  for (const job of jobs) {
     if (!runsOnWindows(job.text)) continue;
     for (const line of job.text.split("\n")) {
       if (/cargo test\b/.test(line) && line.includes(GATED_CRATE_MANIFEST)) {
@@ -413,6 +430,76 @@ describe("Windows-gated coverage is recorded, not silent", () => {
       "a `cargo test` on a Windows runner is exactly the step this record says " +
         "does not exist; if it was added, the note above the job is now wrong",
     );
+  });
+
+  // The three above are about the splitter reading the wrong jobs. These three
+  // are about it reading none at all, which is worse: a scan that returns only
+  // what it managed to parse reports "no Windows `cargo test` anywhere" just as
+  // confidently over a file it never opened.
+  it("refuses a workflow whose jobs key this splitter cannot read", () => {
+    // `jobs: &anchor`, `jobs: # comment` and `jobs: {}` are all valid YAML and
+    // valid Actions, and `/^jobs:\s*$/` matches none of them. Refusing the scan
+    // is the fix rather than widening the pattern, because a wider pattern is
+    // one more shape to get wrong and it fails the same silent way.
+    const workflow = [
+      "jobs: &windows",
+      "  build:",
+      "    runs-on: windows-2022",
+      "    steps:",
+      "      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+      "",
+    ].join("\n");
+    assert.throws(
+      () => windowsRunnerCargoTestsIn(workflow, "synthetic.yml"),
+      /no job this scan could read/,
+      "a `jobs:` key this splitter cannot read must fail the scan, not empty it",
+    );
+  });
+
+  it("the directory walk refuses a workflow it cannot read", () => {
+    // The gap was in this walk rather than in the single-workflow scan: it
+    // collects from every file and asserts nothing about any of them, so one
+    // unreadable file counted as a file with no Windows jobs in it.
+    const dir = mkdtempSync(join(tmpdir(), "windows-tauri-imports-"));
+    try {
+      writeFileSync(
+        join(dir, "anchored.yml"),
+        [
+          "jobs: &windows",
+          "  build:",
+          "    runs-on: windows-2022",
+          "    steps:",
+          "      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml",
+          "",
+        ].join("\n"),
+      );
+      assert.throws(
+        () => windowsRunnerCargoTests(dir),
+        /anchored\.yml/,
+        "the walk has to name the file it could not read, not skip it",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a job out of every workflow in this tree", () => {
+    // Every workflow here carries a plain `jobs:`, which is the only reason the
+    // walk above has anything to scan at all. Pinned so the day one stops being
+    // readable the failure names that file, instead of surfacing later as a
+    // guard that quietly stopped guarding.
+    const workflowDir = ".github/workflows";
+    const files = readdirSync(resolve(repoRoot, workflowDir)).filter((file) =>
+      /\.ya?ml$/.test(file),
+    );
+    assert.ok(files.length > 0, "there must be workflows to scan");
+    for (const file of files) {
+      assert.ok(
+        jobBlocks(read(`${workflowDir}/${file}`)).length > 0,
+        `${file} has no job this splitter can read, so the Windows scan cannot ` +
+          "see it at all",
+      );
+    }
   });
 });
 

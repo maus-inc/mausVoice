@@ -253,9 +253,17 @@ const startElevenLabsStreaming = async (
         const typedChunk = needsResample
           ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
           : rawChunk;
-        // Still queue while the socket is CONNECTING: `flushPendingSamples` is a
-        // no-op until it is OPEN, and `onopen` drains the backlog, so speech
-        // captured during connect is kept rather than dropped.
+        // Queued unconditionally; `flushPendingSamples` is what decides whether
+        // the socket can take it, and `finalize` drains what is left with
+        // `force`.
+        //
+        // There is no "captured while connecting" case to cover here, which is
+        // what this comment used to promise. `writeAudioChunk` is handed out
+        // from `ws.onopen` and not before, so the socket is OPEN by the time any
+        // caller can reach this; audio written during the handshake never gets
+        // this far, because the base session has no stream session to forward it
+        // to until then. The guard above is the one that earns its keep: a
+        // socket that closed under us leaves this queue with nowhere to go.
         pendingChunks.push(typedChunk);
         pendingSampleCountRef.value += typedChunk.length;
         flushPendingSamples(false);
