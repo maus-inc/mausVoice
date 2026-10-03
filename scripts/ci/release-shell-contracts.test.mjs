@@ -155,14 +155,16 @@ describe("release workflow shell contracts", () => {
     );
   });
 
-  it("secret-scan resolves its policy three ways, and never from the scanned tree", () => {
-    // A previous version of this had two cases: trusted config if it carried the
-    // updater-key rule, otherwise hard failure. That turned the whole
-    // `Gitleaks updater-key scan` job red on every pull request, because
-    // origin/0.1.6 and origin/main both carry an ALLOWLIST-ONLY gitleaks.toml with
-    // no `[[rules]]` and no `[extend]`. Requiring a rule the base does not have is
-    // un-sequenceable from a PR against that base. So there are three cases now, and
-    // these assertions exist to keep the middle one from being "simplified" away.
+  it("secret-scan resolves its policy two ways, refuses an inert one, and never from the scanned tree", () => {
+    // Two resolvers, not three. An intermediate version had a middle case -- pass
+    // no `-c` at all when the trusted policy lacked the updater-key rule -- on the
+    // reasoning that no config is stronger than an allowlist-only one. It is
+    // stronger in the letter and weaker in the effect: origin/0.1.6 and
+    // origin/main carry a gitleaks.toml with no `[[rules]]` and no `[extend]`, and
+    // `-c` REPLACES the ruleset, so passing it runs an empty ruleset. That is a
+    // green check which finds nothing, which is the condition no gate should be
+    // able to reach silently. So the resolver is: absent or unreadable fails, an
+    // inert one fails, and anything else is used as-is.
     const scan = read(".github/workflows/secret-scan.yml");
     const steps = extractSteps(scan);
     const scanSteps = steps.filter((step) => /^Scan /.test(step.name));
@@ -170,6 +172,16 @@ describe("release workflow shell contracts", () => {
       scanSteps.length,
       3,
       "expected the three enforcement scans",
+    );
+
+    // The trusted policy has to come from the base, never from the commit under
+    // scan. On a push event `github.sha` IS the pushed commit, so pinning the
+    // trusted checkout to it would make the word "trusted" mean nothing while
+    // every other assertion in this test still passed.
+    assert.match(
+      scan,
+      /ref: \$\{\{ github\.event\.pull_request\.base\.sha \|\| 'main' \}\}/,
+      "the trusted policy checkout must be pinned to the base sha, or main on push",
     );
 
     for (const step of scanSteps) {
@@ -183,33 +195,71 @@ describe("release workflow shell contracts", () => {
         `${step.name} must fail closed when the trusted policy is absent or unreadable`,
       );
 
-      // Case 2: trusted policy present -> always use it. `-c` REPLACES gitleaks'
-      // built-in ruleset, so a config carrying no `[[rules]]` -- which is what
-      // 0.1.6 and main carry today: 23 lines of `[allowlist]` and nothing else --
-      // detects nothing at all. Measured on this branch's own range with gitleaks
-      // 8.18.0: passing that config reports 0 findings, dropping `-c` reports 12.
-      // So the config is set unconditionally and the rule's absence is reported,
-      // never acted on.
+      // Case 2: trusted policy readable -> always use it. Matched as two
+      // independent statements on purpose: an earlier version pinned them to
+      // consecutive lines through one regex, so inserting a guard between them
+      // failed the contract for a formatting reason. A gate that punishes
+      // formatting is a gate people disable.
       assert.match(
         run,
-        /CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)\s*\n\s*if ! grep -q "tauri-minisign-updater-private-key"/,
-        `${step.name} must pass the trusted config unconditionally, warning only when the rule is absent`,
+        /CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)/,
+        `${step.name} must pass the trusted config`,
       );
       assert.match(
         run,
-        /if ! grep -q "tauri-minisign-updater-private-key" "\$TRUSTED_POLICY"[\s\S]*?::warning::/,
-        `${step.name} must report a base policy carrying no updater-key rule`,
+        /if ! grep -q "tauri-minisign-updater-private-key"/,
+        `${step.name} must react to a trusted policy carrying no updater-key rule`,
       );
-      // The property the measurement turns on: no path may leave the config unset.
-      // An earlier version of these steps required the rule and therefore ran with
-      // no `-c` at all, reasoning that no config beats an allowlist-only one. On
-      // this base that turns a vacuous green into 12 known false positives, which
-      // is not a stronger gate, just a different one. Pinning the absence of the
-      // empty assignment is what stops that shape coming back.
+      assert.match(
+        run,
+        /::warning::/,
+        `${step.name} must surface that as a warning rather than acting on it`,
+      );
       assert.doesNotMatch(
         run,
         /CONFIG_ARGS=\(\)/,
         `${step.name} must never leave the gitleaks config unset`,
+      );
+
+      // The invariant the four assertions above do NOT establish, and the one
+      // that actually matters: that the config handed to `gitleaks detect`
+      // resolves to at least one active rule. Every assertion above holds just as
+      // well for a policy carrying zero rules, which is precisely what 0.1.6 and
+      // main carry -- so without these the suite is green against a scan that
+      // cannot detect anything, and the fixture at "Prove a built-in detector is
+      // active" does not help either because it deliberately runs with no config.
+      //
+      // Both halves of the proof are required, because each alone is fooled by a
+      // shape that occurs in real configs: `[[rules]]` alone rejects a policy that
+      // legitimately only extends the defaults, and a bare search for
+      // `useDefault = true` is satisfied by the word appearing inside a
+      // `description` string or inside `[allowlist]`, where Gitleaks ignores it.
+      // Matching inside an `[extend]` body terminated by the next table header is
+      // what excludes both.
+      assert.ok(
+        run.includes("grep -qE '^[[:space:]]*\\[\\[rules\\]\\]'"),
+        `${step.name} must accept a [[rules]] table as one proof of an active ruleset`,
+      );
+      assert.ok(
+        run.includes("in_extend && /^[[:space:]]*useDefault"),
+        `${step.name} must require useDefault = true inside an [extend] body, not anywhere in the file`,
+      );
+      assert.match(
+        run,
+        /if \[ "\$active" -ne 1 \]; then[\s\S]*?exit 1/,
+        `${step.name} must fail closed when the trusted policy is inert`,
+      );
+
+      // The message must name the ref the trusted checkout actually used. Asserted
+      // by deriving the expected expression from the checkout itself, so the two
+      // cannot drift, and separately barred from `github.sha`, which on a push
+      // event is the pushed commit -- so the one event where an operator is told
+      // to go look at the base was the one event naming a commit whose policy was
+      // never read.
+      assert.match(
+        run,
+        /POLICY_REF="\$\{\{ github\.event\.pull_request\.base\.sha \|\| 'main' \}\}"/,
+        `${step.name} must name the trusted policy's ref, which is the base sha or main`,
       );
 
       // Case 3: never the scanned checkout. An enforcement step may not so much as

@@ -5798,7 +5798,7 @@ fn wait_for_handoff_within(
 /// is wrong: `std::process::Child` has no `Drop`, so letting the handle go out of
 /// scope collects nothing at all. On Unix the kernel reparents a child only when its
 /// *parent* exits, so an abandoned child stays this process's zombie until the app
-/// exits -- the very outcome the thirty lines above say this function exists to
+/// exits -- the very outcome `reap_child`'s own doc comment says it exists to
 /// prevent, and the one `reaping_a_live_child_collects_its_status` pins. On Windows
 /// the process handle is simply leaked, once per abandoned child.
 ///
@@ -5823,9 +5823,14 @@ fn reap_child(child: &mut std::process::Child) {
         match child.try_wait() {
             // Collected, or already gone: either way this handle is finished.
             Ok(Some(_)) | Err(_) => return,
-            // Still running. Past the bound, stop asking and let init reap it.
+            // Still running. Past the bound, stop asking. The handle is dropped
+            // here, which collects nothing -- see `reap_child`'s doc comment for
+            // why init does not cover for us either.
             Ok(None) if std::time::Instant::now() >= deadline => {
-                log::warn!("Child did not exit within the reap bound; leaving it to init");
+                log::warn!(
+                    "Child did not exit within the reap bound; dropping the handle unreaped \
+                     (this becomes a zombie on Unix once we exit, a leaked handle on Windows)"
+                );
                 return;
             }
             Ok(None) => std::thread::sleep(REAP_POLL),
