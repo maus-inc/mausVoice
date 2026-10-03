@@ -776,17 +776,25 @@ describe("Gemini Files API edge cases", () => {
    *
    * Every test in this block walks the same four steps: POST the upload to get a
    * resumable URL, PUT to that URL to get the file's `uri`, poll the file for its
-   * state, and DELETE it when the transcription is done. Only the polling state,
-   * the cleanup answer and the model call's text differ between them, so those
-   * three are the parameters. A copy per test meant a change to the upload
-   * handshake or the file URI had to be found in every copy, and the copies that
-   * had drifted were the ones nothing exercised.
+   * state, and DELETE it when the transcription is done. Only the file id, the
+   * polling state, the cleanup answer and the model call's text differ between
+   * them, so those four are the parameters. A copy per test meant a change to the
+   * upload handshake or the file URI had to be found in every copy, and the copies
+   * that had drifted were the ones nothing exercised.
+   *
+   * `fileUri` is the id half of the URI rather than the whole URI because the
+   * poll and the DELETE both address it by suffix. A test that needs its own id
+   * -- to tell two files apart, or to prove a slow one is polled -- passes that
+   * id here rather than re-declaring the handshake to get a different one.
    */
   const filesApiFetch = ({
+    fileUri = "abc",
     pollState,
     deleteHandler,
     fallbackText = "ok",
   }: {
+    /** The file id the upload hands back, which the poll and the DELETE address. */
+    fileUri?: string;
     /** The body each successive polling GET answers, given the 1-based count. */
     pollState?: (pollCount: number) => Record<string, unknown>;
     /** The cleanup DELETE. Return a `Response` to settle it, or never to stall. */
@@ -794,6 +802,7 @@ describe("Gemini Files API edge cases", () => {
     /** The text the model call answers with once the file is ready. */
     fallbackText?: string;
   } = {}) => {
+    const filePath = `/v1beta/files/${fileUri}`;
     let pollCount = 0;
     return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
@@ -810,22 +819,19 @@ describe("Gemini Files API edge cases", () => {
         return Promise.resolve(
           jsonResponse({
             file: {
-              uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+              uri: `https://generativelanguage.googleapis.com${filePath}`,
               mimeType: "audio/wav",
             },
           }),
         );
       }
-      if (
-        url.includes("/v1beta/files/abc") &&
-        (init?.method === "GET" || !init?.method)
-      ) {
+      if (url.includes(filePath) && (init?.method === "GET" || !init?.method)) {
         pollCount += 1;
         return Promise.resolve(
           jsonResponse(pollState ? pollState(pollCount) : { state: "ACTIVE" }),
         );
       }
-      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+      if (url.includes(filePath) && init?.method === "DELETE") {
         return deleteHandler
           ? deleteHandler(init)
           : Promise.resolve(new Response(null, { status: 200 }));
@@ -868,46 +874,18 @@ describe("Gemini Files API edge cases", () => {
     vi.useFakeTimers();
     try {
       let polls = 0;
-      const customFetch = vi
-        .fn()
-        .mockImplementation((url: string, init?: RequestInit) => {
-          if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-            return Promise.resolve(
-              new Response(JSON.stringify({}), {
-                status: 200,
-                headers: {
-                  "x-goog-upload-url": "https://upload.example.com/resumable",
-                },
-              }),
-            );
-          }
-          if (url.includes("upload.example.com")) {
-            return Promise.resolve(
-              jsonResponse({
-                file: {
-                  uri: "https://generativelanguage.googleapis.com/v1beta/files/slow",
-                  mimeType: "audio/wav",
-                },
-              }),
-            );
-          }
-          if (url.includes("/v1beta/files/slow") && init?.method === "GET") {
-            polls += 1;
-            // Still processing after 20 polls, which is well past what the old
-            // ten fixed attempts could ever have waited for.
-            return Promise.resolve(
-              jsonResponse({ state: polls <= 20 ? "PROCESSING" : "ACTIVE" }),
-            );
-          }
-          if (url.includes("/v1beta/files/slow") && init?.method === "DELETE") {
-            return Promise.resolve(new Response(null, { status: 200 }));
-          }
-          return Promise.resolve(
-            jsonResponse({
-              candidates: [{ content: { parts: [{ text: "slow but ok" }] } }],
-            }),
-          );
-        });
+      const customFetch = filesApiFetch({
+        fileUri: "slow",
+        pollState: (pollCount) => {
+          polls = pollCount;
+          // Still processing after 20 polls, which is well past what the old
+          // ten fixed attempts could ever have waited for.
+          return pollCount <= 20
+            ? { state: "PROCESSING" }
+            : { state: "ACTIVE" };
+        },
+        fallbackText: "slow but ok",
+      });
 
       const pending = geminiTranscribeAudio({
         apiKey: "k",
@@ -930,41 +908,9 @@ describe("Gemini Files API edge cases", () => {
   });
 
   it("throws on FAILED file state", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "FAILED" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "ok" }] } }],
-          }),
-        );
-      });
+    const customFetch = filesApiFetch({
+      pollState: () => ({ state: "FAILED" }),
+    });
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
@@ -976,45 +922,14 @@ describe("Gemini Files API edge cases", () => {
   });
 
   it("throws when file never becomes ACTIVE after polling", async () => {
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "fallback" }] } }],
-          }),
-        );
-      });
     // Fake clock, because giving up now means spending the whole 30s budget
     // rather than ten fixed 100ms attempts.
     vi.useFakeTimers();
     try {
+      const customFetch = filesApiFetch({
+        pollState: () => ({ state: "PROCESSING" }),
+        fallbackText: "fallback",
+      });
       const pending = geminiTranscribeAudio({
         apiKey: "k",
         model: "gemini-3.5-transcribe",
