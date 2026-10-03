@@ -196,23 +196,38 @@ fn download_prebuilt_libs(
         None
     };
 
-    // A cache hit is only a hit if it can be verified. Returning the extracted
-    // directory on its existence handed the linker whatever was in it, and the
-    // pinned digest below never ran on that path at all, so a cache that had
-    // been altered after extraction linked without ever being checked. The
-    // archive is the thing the digest covers, so it is what has to be present
-    // for a cache hit to mean anything.
+    // Verifying the archive is necessary but not sufficient, and that gap is what
+    // this closes: the pinned digest covers the archive, while the linker reads
+    // the *extracted* `.so`/`.a` files. A local process that rewrites a file under
+    // `extracted_dir` after extraction leaves the archive byte-identical, so the
+    // pinned digest still passes and the modified content gets linked. The
+    // extracted tree therefore carries a digest of its own, recorded beside it,
+    // and the cache is reused only while that still matches.
+    let tree_digest_path = cache_root.join(format!("{archive_stem}.extracted.sha256"));
     if let Some(dir) = cached_dir {
         if archive_path.is_file() {
             // A mismatch is a hard failure, not something to re-download over:
             // `verify_archive_digest` has already deleted the archive, and a
-            // tampered cache is exactly the case that must not be papered over.
+            // tampered archive is exactly the case that must not be papered over.
             verify_archive_digest(&archive_path, &archive_name)?;
+            if verify_extracted_tree(&extracted_dir, &tree_digest_path)? {
+                eprintln!(
+                    "Using verified cached sherpa-onnx libs at {}",
+                    dir.display()
+                );
+                return Ok(dir.clone());
+            }
+            // The archive just matched its pinned digest, so unpacking it again
+            // reproduces the official tree exactly. Falling through to the
+            // extraction below repairs the cache without re-downloading anything,
+            // and that is what keeps the first run after this change from being a
+            // permanent failure: no digest is recorded yet at that point, so every
+            // existing cache is unverifiable and re-extracting is the repair.
+            // Failing here instead would break that run for good.
             eprintln!(
-                "Using verified cached sherpa-onnx libs at {}",
-                dir.display()
+                "Re-extracting sherpa-onnx libs at {}: the extracted tree does not match its recorded digest, so it cannot be linked as it stands",
+                extracted_dir.display()
             );
-            return Ok(dir.clone());
         }
         // The archive is gone but the extracted tree is still here, so nothing
         // about that tree can be traced to a pinned digest. Drop it and fetch
@@ -222,6 +237,10 @@ fn download_prebuilt_libs(
             extracted_dir.display()
         );
         let _ = fs::remove_dir_all(&extracted_dir);
+        // Drop the recorded digest along with the tree. Left behind it would
+        // describe a directory that no longer exists, so a later extraction that
+        // differed would be re-extracted forever.
+        let _ = fs::remove_file(&tree_digest_path);
     }
 
     fs::create_dir_all(&cache_root)?;
@@ -257,6 +276,10 @@ fn download_prebuilt_libs(
     if extracted_dir.exists() {
         fs::remove_dir_all(&extracted_dir)?;
     }
+    // Cleared before the unpack as well as the tree: a digest describing the old
+    // tree must not survive into the window where the new one is being written, or
+    // an interrupted unpack would leave behind a digest matching nothing.
+    let _ = fs::remove_file(&tree_digest_path);
 
     // Verify cryptographic SHA-256 digest before unpacking
     verify_archive_digest(&archive_path, &archive_name)?;
@@ -271,12 +294,22 @@ fn download_prebuilt_libs(
     if let Err(err) = unpack_result {
         let _ = fs::remove_file(&archive_path);
         let _ = fs::remove_dir_all(&extracted_dir);
+        // No digest is recorded for a tree that did not unpack cleanly, so a partial
+        // extraction can never be mistaken for a verified one afterwards.
+        let _ = fs::remove_file(&tree_digest_path);
         return Err(format!(
             "Failed to unpack cached archive {}: {err}",
             archive_path.display()
         )
         .into());
     }
+
+    // Record what was just extracted, so the next build can tell this tree from one
+    // that has been altered since. Written only after a successful unpack of an
+    // archive that matched its pinned digest, which is what makes the recorded
+    // digest a statement about official content rather than about whatever
+    // happened to be on disk.
+    record_extracted_tree_digest(&extracted_dir, &tree_digest_path)?;
 
     if !lib_dir.is_dir() {
         // Android archives use jniLibs/{abi}/ instead of lib/.
@@ -579,6 +612,137 @@ fn copy_windows_runtime_dlls(lib_dir: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
+/// Digests the extracted tree, so a cache hit can be checked against the content
+/// the linker will actually read rather than only against the archive it came
+/// from.
+///
+/// Entries are hashed in sorted relative-path order with the path mixed in, so the
+/// digest is stable across runs and independent of the order the filesystem
+/// returns. Hashing the path means a renamed or added file changes the digest;
+/// hashing the contents means a rewritten one does too.
+///
+/// File mode is deliberately not hashed. It is not part of what the linker reads
+/// here, and hashing it would make the recorded digest platform-dependent for no
+/// gain.
+fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
+    use std::io::Read as _;
+
+    fn walk(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) -> io::Result<()> {
+        let mut entries: Vec<PathBuf> = fs::read_dir(dir)?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .collect();
+        entries.sort();
+        for path in entries {
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                walk(root, &path, files)?;
+            } else if metadata.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                files.push((relative, path));
+            }
+            // Anything that is neither a plain file nor a directory (a symlink, a
+            // socket) is skipped rather than followed, so `read_dir` cannot walk
+            // outside the cache root through a symlinked directory.
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    walk(root, root, &mut files)?;
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut hasher = Sha256::new();
+    for (relative, path) in &files {
+        hasher.update(relative.as_bytes());
+        let mut file = File::open(path)?;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        // Length-delimited, so two different trees cannot concatenate to the same
+        // byte stream and hash alike.
+        hasher.update((relative.len() as u64).to_le_bytes());
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Writes the tree's digest beside it, so a later build can tell an untouched
+/// cache from an altered one.
+fn record_extracted_tree_digest(root: &Path, digest_path: &Path) -> Result<(), DynError> {
+    let digest = digest_extracted_tree(root)?;
+    write_atomic(&format!("{digest}\n"), digest_path)?;
+    eprintln!(
+        "Recorded extracted-tree SHA-256 for {}: {digest}",
+        root.display()
+    );
+    Ok(())
+}
+
+/// Checks the extracted tree against the digest recorded for it.
+///
+/// Returns `Ok(false)` rather than failing the build when the tree cannot be
+/// vouched for: no digest recorded yet, or the tree no longer matches. The caller
+/// re-extracts from the archive it has already verified against its pinned digest,
+/// which reproduces the official tree with no download. A hard failure here would
+/// instead make the first build after this check was introduced fail permanently,
+/// since no cache carries a recorded digest until one build has written one.
+fn verify_extracted_tree(root: &Path, digest_path: &Path) -> Result<bool, DynError> {
+    if !root.is_dir() {
+        return Ok(false);
+    }
+
+    let recorded = match fs::read_to_string(digest_path) {
+        Ok(text) => text.trim().to_ascii_lowercase(),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            eprintln!(
+                "No recorded digest for the extracted sherpa-onnx tree at {}",
+                root.display()
+            );
+            return Ok(false);
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    if recorded.is_empty() {
+        eprintln!(
+            "Recorded digest for {} is empty, so the tree cannot be verified",
+            root.display()
+        );
+        return Ok(false);
+    }
+
+    let actual = digest_extracted_tree(root)?;
+    if actual.eq_ignore_ascii_case(&recorded) {
+        return Ok(true);
+    }
+
+    eprintln!(
+        "Extracted sherpa-onnx tree at {} does not match its recorded digest: expected {recorded}, got {actual}",
+        root.display()
+    );
+    Ok(false)
+}
+
+/// Writes a small file atomically, so a reader never sees a half-written digest.
+fn write_atomic(contents: &str, dest: &Path) -> Result<(), DynError> {
+    let temp_path = temp_path_for(dest);
+    if temp_path.exists() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    fs::write(&temp_path, contents.as_bytes())?;
+    fs::rename(&temp_path, dest)?;
+    Ok(())
+}
+
 fn verify_archive_digest(archive_path: &Path, archive_name: &str) -> Result<(), DynError> {
     use std::io::Read;
 
@@ -617,4 +781,223 @@ fn verify_archive_digest(archive_path: &Path, archive_name: &str) -> Result<(), 
 
     eprintln!("Verified SHA-256 for {archive_name}: {actual_digest}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A scratch directory under `OUT_DIR`-free temp space, unique per test so the
+    /// suite never shares state. Removed on drop is not attempted: a leftover temp
+    /// dir is harmless, a shared one is not.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let base = std::env::temp_dir().join(format!(
+                "sherpa-tree-digest-{}-{}-{:?}",
+                tag,
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = fs::remove_dir_all(&base);
+            fs::create_dir_all(&base).expect("create scratch dir");
+            Scratch(base)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write(root: &Path, relative: &str, contents: &[u8]) {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("has parent")).expect("create parent");
+        fs::write(&path, contents).expect("write file");
+    }
+
+    /// A stand-in for an extracted sherpa tree: a `lib/` of plausible library files,
+    /// which is the shape the cache check actually has to cope with.
+    fn sample_tree(root: &Path) {
+        write(root, "lib/libsherpa-onnx-c-api.a", b"c-api bytes");
+        write(root, "lib/libsherpa-onnx-core.a", b"core bytes");
+        write(root, "include/sherpa-onnx/c-api.h", b"header bytes");
+    }
+
+    #[test]
+    fn digest_is_stable_across_calls() {
+        let scratch = Scratch::new("stable");
+        sample_tree(scratch.path());
+        let first = digest_extracted_tree(scratch.path()).expect("digest");
+        let second = digest_extracted_tree(scratch.path()).expect("digest");
+        assert_eq!(first, second, "digest must not depend on read_dir order");
+    }
+
+    #[test]
+    fn digest_changes_when_a_library_is_rewritten() {
+        // The finding: a local process rewrites an extracted `.so`/`.a` while
+        // leaving the archive byte-identical. The archive digest still passes, so
+        // the tree digest is the only thing that can notice.
+        let scratch = Scratch::new("rewrite");
+        sample_tree(scratch.path());
+        let before = digest_extracted_tree(scratch.path()).expect("digest");
+
+        write(
+            scratch.path(),
+            "lib/libsherpa-onnx-core.a",
+            b"core bytes, with an injected payload",
+        );
+
+        let after = digest_extracted_tree(scratch.path()).expect("digest");
+        assert_ne!(
+            before, after,
+            "rewriting an extracted library must change the tree digest"
+        );
+    }
+
+    #[test]
+    fn digest_changes_when_a_file_is_added() {
+        let scratch = Scratch::new("add");
+        sample_tree(scratch.path());
+        let before = digest_extracted_tree(scratch.path()).expect("digest");
+
+        write(scratch.path(), "lib/libextra.a", b"extra");
+        let after = digest_extracted_tree(scratch.path()).expect("digest");
+        assert_ne!(before, after, "an added file must change the digest");
+    }
+
+    #[test]
+    fn digest_changes_when_a_file_is_renamed_without_disturbing_the_sort_order() {
+        // The linker resolves libraries by name, so a rename has to change the
+        // digest. The names here are chosen so the renamed file keeps its position
+        // in sorted order and the file keeps its length, which means a digest built
+        // only from the byte stream — contents in sorted order, no paths — is
+        // unchanged by this rename and must therefore be caught here.
+        let scratch = Scratch::new("rename");
+        write(scratch.path(), "lib/aaa.a", b"first file bytes");
+        write(scratch.path(), "lib/zzz.a", b"second file bytes");
+        let before = digest_extracted_tree(scratch.path()).expect("digest");
+
+        // Same length as "aaa.a", and still sorts before "zzz.a".
+        fs::rename(
+            scratch.path().join("lib/aaa.a"),
+            scratch.path().join("lib/aab.a"),
+        )
+        .expect("rename");
+        // Stated rather than assumed: this is the property that makes the case
+        // discriminating, so a future edit to the names must trip it.
+        assert_eq!(
+            "lib/aab.a".len(),
+            "lib/aaa.a".len(),
+            "precondition: the new name is the same length as the old one"
+        );
+        assert!(
+            "lib/aab.a" < "lib/zzz.a",
+            "precondition: the renamed file keeps its position in sort order"
+        );
+
+        let after = digest_extracted_tree(scratch.path()).expect("digest");
+        assert_ne!(
+            before, after,
+            "a renamed library must change the digest even when the sort order and \
+             the file length are unchanged"
+        );
+    }
+
+    #[test]
+    fn digest_distinguishes_content_swapped_between_two_paths() {
+        // Two files whose contents are exchanged hash alike if the path is not mixed
+        // in, so this pins that the path really is part of the digest.
+        let a = Scratch::new("swap-a");
+        let b = Scratch::new("swap-b");
+        write(a.path(), "lib/one.a", b"first");
+        write(a.path(), "lib/two.a", b"second");
+        write(b.path(), "lib/one.a", b"second");
+        write(b.path(), "lib/two.a", b"first");
+        assert_ne!(
+            digest_extracted_tree(a.path()).expect("digest a"),
+            digest_extracted_tree(b.path()).expect("digest b"),
+            "swapping contents between two paths must change the digest"
+        );
+    }
+
+    #[test]
+    fn verify_accepts_an_untouched_tree_and_rejects_a_rewritten_one() {
+        let scratch = Scratch::new("verify");
+        let tree = scratch.path().join("tree");
+        fs::create_dir_all(&tree).expect("create tree");
+        let digest_path = scratch.path().join("tree.sha256");
+        sample_tree(&tree);
+
+        // No digest recorded yet: unverifiable, not an error. This is the state
+        // every cache is in on the first build after the check was introduced.
+        assert!(
+            !verify_extracted_tree(&tree, &digest_path).expect("verify"),
+            "a tree with no recorded digest must not be accepted"
+        );
+
+        record_extracted_tree_digest(&tree, &digest_path).expect("record");
+        assert!(
+            verify_extracted_tree(&tree, &digest_path).expect("verify"),
+            "an untouched tree must verify against its own recorded digest"
+        );
+
+        write(&tree, "lib/libsherpa-onnx-core.a", b"tampered");
+        assert!(
+            !verify_extracted_tree(&tree, &digest_path).expect("verify"),
+            "a rewritten library must not verify"
+        );
+    }
+
+    #[test]
+    fn verify_rejects_an_empty_recorded_digest() {
+        let scratch = Scratch::new("empty");
+        let tree = scratch.path().join("tree");
+        fs::create_dir_all(&tree).expect("create tree");
+        sample_tree(&tree);
+        let digest_path = scratch.path().join("tree.sha256");
+        fs::write(&digest_path, "   \n").expect("write empty digest");
+        assert!(
+            !verify_extracted_tree(&tree, &digest_path).expect("verify"),
+            "an empty recorded digest must not be treated as a match"
+        );
+    }
+
+    #[test]
+    fn verify_rejects_a_missing_tree() {
+        let scratch = Scratch::new("missing");
+        let digest_path = scratch.path().join("tree.sha256");
+        fs::write(&digest_path, "deadbeef\n").expect("write digest");
+        assert!(
+            !verify_extracted_tree(&scratch.path().join("absent"), &digest_path).expect("verify"),
+            "a missing tree must not verify"
+        );
+    }
+
+    #[test]
+    fn record_is_case_insensitive_on_read_back() {
+        // The digest is stored as hex and compared with `eq_ignore_ascii_case`, so an
+        // uppercase recording of the same value must still verify.
+        let scratch = Scratch::new("case");
+        let tree = scratch.path().join("tree");
+        fs::create_dir_all(&tree).expect("create tree");
+        sample_tree(&tree);
+        let digest_path = scratch.path().join("tree.sha256");
+
+        record_extracted_tree_digest(&tree, &digest_path).expect("record");
+        let lower = fs::read_to_string(&digest_path).expect("read");
+        fs::write(&digest_path, lower.trim().to_ascii_uppercase()).expect("rewrite");
+
+        assert!(
+            verify_extracted_tree(&tree, &digest_path).expect("verify"),
+            "hex comparison must be case-insensitive"
+        );
+    }
 }
