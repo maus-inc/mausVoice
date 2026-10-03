@@ -586,3 +586,84 @@ describe("the job splitter both guards share", () => {
     assert.equal(jobBlocks(workflow)[0].lines[0], "  first:");
   });
 });
+
+describe("macOS-gated coverage is recorded, not silent", () => {
+  // The mirror of the Windows record above, and it exists for the same reason:
+  // a half of the desktop crate that nothing lints is a half that rots quietly.
+  // `platform/macos/` is 15 files, `accessibility.rs` about 86 KB of them, and
+  // `Build Desktop (macOS)` compiles it -- so a type error was always caught --
+  // while nothing checked a lint. `lint-desktop.yml` runs clippy on
+  // `packages/rust_macos_pill`, which shares no code with that directory.
+  //
+  // This is not a hypothetical gap. Commit `849b979f` shipped a
+  // `clippy::needless_borrow` in `platform/windows/accessibility.rs` behind a
+  // commit message claiming `clippy --all-targets` was clean, because Linux
+  // clippy exits 0 without compiling any `cfg(windows)` or `cfg(macos)` file.
+  // Pinning both jobs is what stops that shape from recurring on either side.
+  const MACOS_JOB = "rust-macos-gated";
+
+  const macosJobBody = (() => {
+    const lines = read(WINDOWS_JOB_WORKFLOW).split("\n");
+    const job = jobBlocks(lines.join("\n")).find(
+      (entry) => entry.name === MACOS_JOB,
+    );
+    assert.ok(job, `${MACOS_JOB} must exist in the workflow`);
+    return { lines, start: job.start, text: job.text };
+  })();
+
+  it("lints the cfg(macos) code on a macOS runner", () => {
+    assert.match(
+      macosJobBody.text,
+      /runs-on: macos-14/,
+      "only a macOS runner compiles `cfg(target_os = \"macos\")`; a Linux runner " +
+        "exits 0 without looking at it",
+    );
+    assert.match(
+      macosJobBody.text,
+      /cargo clippy --locked --all-targets -- -D warnings/,
+      "--all-targets is what compiles the `cfg(macos)` code and its test " +
+        "modules; --lib or --bin would leave the whole directory unchecked",
+    );
+    assert.match(
+      macosJobBody.text,
+      /working-directory: apps\/desktop\/src-tauri/,
+      "the lint must run against the desktop crate, not the standalone pill " +
+        "crate that `lint-desktop.yml` already covers",
+    );
+    assert.match(
+      macosJobBody.text,
+      /TAURI_CONFIG:/,
+      "without `bundle.externalBin` emptied the tauri build script aborts on " +
+        "the missing sidecar binary and the crate never compiles",
+    );
+  });
+
+  it("records that it lints rather than tests, and why", () => {
+    // There are no `#[cfg(test)]` modules under `platform/macos/` at all, so a
+    // test step would report "0 passed" and prove nothing -- which is a
+    // different claim from "cannot be run", and the Windows record above is
+    // explicit about that distinction. Assert the job does not quietly grow a
+    // test step that reports success without running anything.
+    assert.doesNotMatch(
+      macosJobBody.text,
+      /cargo test/,
+      `${MACOS_JOB} must lint, not test: platform/macos has no #[cfg(test)] ` +
+        "modules, so a test step would report 0 passed and read as coverage",
+    );
+  });
+
+  it("keeps the Windows job, so neither half can be dropped for the other", () => {
+    // The Windows record above already asserts its own job exists. This is the
+    // other direction: adding macOS coverage must not have replaced it, which is
+    // the shape a "consolidate the gated jobs" refactor would take.
+    const windowsJob = jobBlocks(read(WINDOWS_JOB_WORKFLOW)).find(
+      (entry) => entry.name === WINDOWS_JOB,
+    );
+    assert.ok(windowsJob, `${WINDOWS_JOB} must still exist alongside ${MACOS_JOB}`);
+    assert.match(
+      windowsJob.text,
+      /runs-on: windows-2022/,
+      `${WINDOWS_JOB} must stay on a Windows runner`,
+    );
+  });
+});
