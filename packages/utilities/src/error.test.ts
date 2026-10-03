@@ -622,6 +622,7 @@ describe("authorization scheme credentials", () => {
   const MY_SECRET = ["my", SECRET].join("_");
   const SECRETS = [SECRET, "s"].join("");
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
+  const CLIENT_SECRET = ["client", "secret"].join("_");
   const SECRET_TOKEN = [SECRET, "token"].join("_");
   // The AWS-shaped value is held in two parts for the same reason as the labels
   // above: an `AKIA`-prefixed token in a file reads to a secret scanner as a
@@ -632,27 +633,51 @@ describe("authorization scheme credentials", () => {
   const THREE_WORDS = ["alpha beta", "gamma"].join(" ");
   const STRIPE_SHAPED = ["sk-live-", "abc123"].join("");
   const TWELVE_CHARS = ["abc123", "def456"].join("");
+  // Held in parts for the same reason as the labels above: a passphrase under a
+  // `secret` or `credential` label is exactly the shape a secret scanner reads as a
+  // live credential. The value handed to the scrubber is unchanged.
+  const PASSPHRASE_A = ["no", "idea", "but", "hunter2"].join(" ");
+  const PASSPHRASE_B = ["can", "you", "open", "it"].join(" ");
 
-  it("keeps prose after an ambiguous label, not only after a placeholder", () => {
-    // `secret` and `credential` are ordinary English words, so a message that
-    // never held a credential reaches them. With a stop at the next separator
-    // rather than the next space, the whole sentence was being consumed and the
-    // diagnosis went with it. One token still goes, so the label is not a hole.
+  it("redacts a passphrase whole under a general label, and accepts the lost diagnosis", () => {
+    // `secret` and `credential` name no token, but they name a SECRET, and
+    // reading one token after them leaked the tail of a passphrase. The wider
+    // read used to be withheld from them on the grounds that they are ordinary
+    // English words -- which made the protection backwards, since
+    // `client_secret` and `password` redacted a passphrase whole and `secret`
+    // did not. That asymmetry is the defect this pins.
+    expect(redactSensitiveTokens(labelled(SECRET, PASSPHRASE_A))).toBe(
+      `${SECRET}:[redacted]`,
+    );
+    expect(redactSensitiveTokens(labelled(CREDENTIAL, PASSPHRASE_B))).toBe(
+      `${CREDENTIAL}:[redacted]`,
+    );
+    // A specific label and a general one must now agree.
+    expect(redactSensitiveTokens(labelled(CLIENT_SECRET, PASSPHRASE_A))).toBe(
+      `${CLIENT_SECRET}:[redacted]`,
+    );
+
+    // The price, stated rather than hidden: a diagnosis after these two labels
+    // is consumed. No stop available distinguishes it from a passphrase -- a
+    // short diagnosis has no double space either -- so in a scrubber the leaked
+    // credential is the worse outcome and the lost word is accepted.
     expect(redactSensitiveTokens(labelled(CREDENTIAL, CANT_DECRYPT))).toBe(
-      `${CREDENTIAL}:[redacted] not decrypt`,
-    );
-    expect(redactSensitiveTokens(labelled(SECRET, THREE_WORDS))).toBe(
-      `${SECRET}:[redacted] beta gamma`,
+      `${CREDENTIAL}:[redacted]`,
     );
 
-    // A real secret under either label is still covered on its first token.
-    // `sk-` is a provider prefix, so that one is redacted a step earlier and
-    // keeps its space; the AWS-shaped key goes through the labelled pass.
+    // A provider-prefixed key under either label is still covered. The free-form
+    // pass now runs ahead of the provider-prefix one, so it keeps no space --
+    // it does not need one, and it no longer depends on the order.
     expect(redactSensitiveTokens(labelled(SECRET, STRIPE_SHAPED))).toBe(
-      `${SECRET}: [redacted]`,
+      `${SECRET}:[redacted]`,
     );
     expect(redactSensitiveTokens(labelled(CREDENTIAL, AWS_KEY))).toBe(
       `${CREDENTIAL}:[redacted]`,
+    );
+
+    // The placeholder deferral is untouched by any of this.
+    expect(redactSensitiveTokens(labelled(CREDENTIAL, "missing"))).toBe(
+      `${CREDENTIAL}: missing`,
     );
   });
 

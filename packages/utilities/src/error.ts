@@ -335,20 +335,21 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   "sessiontoken",
   "authorization",
   "bearer",
-  // `secret` and `credential` are here despite not naming a token, because
-  // they are ordinary English words and this pass's stop is a comma or a
-  // semicolon rather than a space. Reading to that stop turned a
-  // `credential` label followed by "could not decrypt" into a bare redaction
-  // marker -- a destroyed diagnosis on a message that never held a
-  // credential, and
-  // `unknownToMessage` output is what a user attaches to a diagnostics export.
-  // One token still goes, so a provider-prefixed key under a `secret` label is
-  // covered; the words after it survive, which is the right way round for an
-  // ambiguous label.
-  // The unambiguous formats are the ones that keep the wider read:
-  // `client_secret`, `private_key`, `session_key`, `password`.
-  "secret",
-  "credential",
+  // `secret` and `credential` are NOT here, and that is deliberate even though
+  // they name no token. Reading only one token after them leaked the tail of a
+  // passphrase under a label that says, in as many words, that it holds a
+  // secret -- and leaving them out of the wider read made the protection
+  // backwards: `client_secret`, `session_key` and `password` redacted a
+  // passphrase whole while `secret` and `credential` did not, so the least
+  // specific label got the least protection.
+  //
+  // The cost is a destroyed diagnosis. A `credential` label followed by "could
+  // not decrypt" becomes a bare marker, and `unknownToMessage` output is what a
+  // user attaches to a diagnostics export. That is accepted: in a scrubber a
+  // leaked credential is a security failure and a lost word is an annoyance,
+  // and no stop available distinguishes the two -- a short diagnosis has no
+  // double space, so the "stop at two spaces" idea fixes the passphrase and
+  // re-breaks the diagnosis in one move.
 ]);
 
 const isFreeFormSecretLabel = (label: string): boolean => {
