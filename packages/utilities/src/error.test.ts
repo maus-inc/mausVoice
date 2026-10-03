@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { redactSensitiveTokens, unknownToMessage } from "./error";
+import {
+  redactSensitiveTokens,
+  schemeValueEnd,
+  unknownToMessage,
+} from "./error";
 
 // `redactSensitiveTokens` is the pass that knows about authorization schemes;
 // the exported entry point needs an error object to unwrap first.
@@ -250,7 +254,7 @@ describe("authorization scheme credentials", () => {
       "authorization: Digest username='a\\'b' realm=\"r\"",
     );
     expect(out).not.toContain("realm=");
-    expect(out).toBe("authorization:[redacted]");
+    expect(out).toBe("authorization: Digest [redacted]");
   });
 
   it("redacts an unterminated quoted value to the end of the line", () => {
@@ -263,7 +267,7 @@ describe("authorization scheme credentials", () => {
     );
     expect(out).not.toContain("abc");
     expect(out).not.toContain("def");
-    expect(out).toBe("authorization:[redacted]");
+    expect(out).toBe("authorization: Digest [redacted]");
   });
 
   it("leaves a closing bracket of the surrounding document beside the redaction", () => {
@@ -273,16 +277,16 @@ describe("authorization scheme credentials", () => {
     // punctuation the surrounding document is read from while the credential
     // before it still goes.
     expect(redactSensitiveTokens("authorization: Digest nonce=abc)")).toBe(
-      "authorization:[redacted])",
+      "authorization: Digest [redacted])",
     );
     expect(redactSensitiveTokens("authorization: Digest nonce=abc]")).toBe(
-      "authorization:[redacted]]",
+      "authorization: Digest [redacted]]",
     );
     // A `;` is a separator in the same list, so the parameter behind it survives
     // as a separate entry rather than being read as part of the first value.
     expect(
       redactSensitiveTokens("authorization: Digest nonce=abc;realm=r"),
-    ).toBe("authorization:[redacted];realm=r");
+    ).toBe("authorization: Digest [redacted];realm=r");
   });
 
   it("redacts one long quoted parameter whole", () => {
@@ -311,7 +315,7 @@ describe("authorization scheme credentials", () => {
 
     expect(out).not.toContain(value);
     expect(out).not.toContain("realm=");
-    expect(out).toBe("authorization:[redacted]");
+    expect(out).toBe("authorization: Digest [redacted]");
   });
 
   it("redacts a quoted value whole, including the part past the space", () => {
@@ -321,13 +325,13 @@ describe("authorization scheme credentials", () => {
     // stopped at the space, found no `=` for the parameter reader to recognise,
     // and left the tail of the secret in the clear.
     expect(redactSensitiveTokens('authorization: Basic "abc def"')).toBe(
-      "authorization:[redacted]",
+      "authorization: Basic [redacted]",
     );
     expect(
       redactSensitiveTokens('authorization: Basic "abc def" trailing prose'),
-    ).toBe("authorization:[redacted] trailing prose");
+    ).toBe("authorization: Basic [redacted] trailing prose");
     expect(redactSensitiveTokens('proxy-authorization: Basic "abc def"')).toBe(
-      "proxy-authorization:[redacted]",
+      "proxy-authorization: Basic [redacted]",
     );
   });
 
@@ -343,7 +347,63 @@ describe("authorization scheme credentials", () => {
     // the same reading that keeps `token missing` a diagnosis.
     expect(
       redactSensitiveTokens('authorization: Bearer "unterminated value'),
-    ).toBe("authorization:[redacted] value");
+    ).toBe("authorization: Bearer [redacted] value");
+  });
+
+  it("stops at the end of a scheme's parameters rather than eating what follows", () => {
+    // Asserted on `schemeValueEnd` directly, because that is the only level
+    // where the difference is observable. Through `redactSensitiveTokens` the
+    // gate makes no difference at all in this package; it is
+    // packages/voice-ai's `credentialEnd`, which takes the longer of the scheme
+    // run and the value's own quoted run, that turns an over-long scheme run
+    // into swallowed JSON syntax. So the property is pinned here, where the code
+    // is, instead of only in the package that happens to observe it.
+    //
+    // `Digest nonce="abc123"` is the whole credential. The `, "model": ...`
+    // that follows is document syntax, and reading its quote as a credential
+    // runs the walk to 41 -- past the field entirely.
+    const text = ' Digest nonce="abc123", "model": "llama-3"';
+    const end = schemeValueEnd(text);
+    expect(text.slice(0, end)).toBe(' Digest nonce="abc123"');
+    expect(end).toBe(22);
+
+    // A quoted value where the credential itself starts is still read whole:
+    // the gate is about which quotes open a credential, not about skipping them.
+    expect(schemeValueEnd(' "abc def"')).toBe(10);
+
+    // And a parameter list with nothing after it runs to the end of the list.
+    expect(schemeValueEnd(' Digest nonce="abc123", realm="r"')).toBe(33);
+  });
+
+  it("does not let a later pass eat the marker an earlier pass wrote", () => {
+    // AUTHORIZATION_SCHEME redacts a scheme credential and leaves the scheme
+    // word in place, giving `authorization: Bearer [redacted] def`. The bare
+    // labelled-value pass then re-matched that output and captured the literal
+    // marker `[redacted]` as though it were the value, which both destroyed the
+    // scheme word and left the credential's tail in the clear directly beside a
+    // marker saying it had been redacted.
+    expect(redactSensitiveTokens("authorization: Bearer abc def")).toBe(
+      "authorization: Bearer [redacted] def",
+    );
+    expect(redactSensitiveTokens("authorization: token abc def")).toBe(
+      "authorization: token [redacted] def",
+    );
+    expect(redactSensitiveTokens("authorization: Negotiate abc def")).toBe(
+      "authorization: Negotiate [redacted] def",
+    );
+  });
+
+  it("redacts a bare scheme credential while keeping the diagnosis after it", () => {
+    // The point of stopping at one token is that a diagnosis after the
+    // credential survives, so `Digest abc is not authorized` keeps its meaning
+    // while `abc` goes.
+    expect(
+      redactSensitiveTokens(
+        "authorization: Digest abc is not authorized for this request",
+      ),
+    ).toBe(
+      "authorization: Digest [redacted] is not authorized for this request",
+    );
   });
 
   it("keeps a single bare word after a scheme as prose", () => {

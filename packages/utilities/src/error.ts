@@ -304,9 +304,16 @@ export const redactSensitiveTokens = (message: string): string =>
       LABELED_SECRET_BARE,
       (match, label: string, sep: string, rawValue: string) => {
         const [value, tail] = splitTrailingClosers(rawValue);
-        return describesField(value)
-          ? match
-          : `${label}${sep}${REDACTED}${tail}`;
+        if (describesField(value)) return match;
+        // An earlier pass may have already replaced this value with the marker,
+        // as AUTHORIZATION_SCHEME does for a scheme credential. Matching the
+        // marker as though it were the value destroyed the scheme word and left
+        // the credential's tail sitting in the clear right beside it --
+        // `authorization: Bearer abc def` became
+        // `authorization:[redacted] def`, which reads as redacted and is not.
+        // The marker is not a value, so there is nothing here to redact.
+        if (value === REDACTED) return match;
+        return `${label}${sep}${REDACTED}${tail}`;
       },
     );
 
