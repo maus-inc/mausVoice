@@ -155,51 +155,87 @@ describe("release workflow shell contracts", () => {
     );
   });
 
-  it("secret-scan fails closed rather than trusting the scanned checkout's config", () => {
-    // The same trust argument as the baseline, applied to the rules rather than
-    // the fingerprints. Every scan resolved its config from the trusted checkout
-    // and then, when that file was missing or had lost the required rule, fell
-    // back to `gitleaks.toml` inside `scan-target` -- which for a fork PR is
-    // attacker-controlled. So a contributor who removed one rule from their copy
-    // got their secret scan run with the rule missing, and a green check with it.
+  it("secret-scan resolves its policy three ways, and never from the scanned tree", () => {
+    // A previous version of this had two cases: trusted config if it carried the
+    // updater-key rule, otherwise hard failure. That turned the whole
+    // `Gitleaks updater-key scan` job red on every pull request, because
+    // origin/0.1.6 and origin/main both carry an ALLOWLIST-ONLY gitleaks.toml with
+    // no `[[rules]]` and no `[extend]`. Requiring a rule the base does not have is
+    // un-sequenceable from a PR against that base. So there are three cases now, and
+    // these assertions exist to keep the middle one from being "simplified" away.
     const scan = read(".github/workflows/secret-scan.yml");
-
-    // Asserting the absence of the two fallback spellings is the load-bearing
-    // part. A step that selects the trusted config and never checks it also
-    // passes any assertion that only looks for the happy path.
-    assert.doesNotMatch(
-      scan,
-      /CONFIG_FILE="(?:scan-target\/)?gitleaks\.toml"/,
-      "secret-scan.yml must never select gitleaks.toml out of the scanned checkout",
+    const steps = extractSteps(scan);
+    const scanSteps = steps.filter((step) => /^Scan /.test(step.name));
+    assert.strictEqual(
+      scanSteps.length,
+      3,
+      "expected the three enforcement scans",
     );
+
+    for (const step of scanSteps) {
+      const run = step.run.join("\n");
+
+      // Case 1: trusted policy unreadable -> refuse. This is the part a contributor
+      // can reach, and it must stay a refusal.
+      assert.match(
+        run,
+        /if \[ ! -r "\$TRUSTED_POLICY" \]; then[\s\S]*?exit 1/,
+        `${step.name} must fail closed when the trusted policy is absent or unreadable`,
+      );
+
+      // Case 2: trusted policy present but without the rule -> warn, and run with no
+      // config rather than failing. `-c` REPLACES gitleaks' built-ins, so an
+      // allowlist-only config would silently disable every default detector; the
+      // fix is to pass no config at all, which is stronger than either file.
+      assert.match(
+        run,
+        /if grep -q "tauri-minisign-updater-private-key" "\$TRUSTED_POLICY"[\s\S]*?CONFIG_ARGS=\(-c "\$TRUSTED_POLICY"\)[\s\S]*?else[\s\S]*?::warning::/,
+        `${step.name} must warn and scan with built-ins when the base policy lacks the rule`,
+      );
+
+      // Case 3: never the scanned checkout. An enforcement step may not so much as
+      // mention it, which is a stronger bar than "does not prefer it".
+      assert.doesNotMatch(
+        run,
+        /scan-target\/gitleaks\.toml/,
+        `${step.name} must not reference the pull request's own gitleaks.toml`,
+      );
+      assert.doesNotMatch(
+        run,
+        /CONFIG_FILE=/,
+        `${step.name} must resolve its config through CONFIG_ARGS, not a bare CONFIG_FILE`,
+      );
+      assert.match(
+        run,
+        /\$\{CONFIG_ARGS\[@\]\+"\$\{CONFIG_ARGS\[@\]\}"\}/,
+        `${step.name} must pass -c conditionally, so an absent trusted config is not an unset variable`,
+      );
+      assert.match(
+        run,
+        /--gitleaks-ignore-path "\$BASELINE_FILE"/,
+        `${step.name} must still name its baseline explicitly`,
+      );
+    }
+
+    // The fixture steps are the one legitimate reader of the branch's own policy,
+    // because they prove the detector this PR adds actually fires -- a rule base
+    // cannot have yet. That exemption is scoped by step name so it cannot spread.
+    const fixtureUsers = steps.filter((step) =>
+      step.run.join("\n").includes('CONFIG_FILE="scan-target/gitleaks.toml"'),
+    );
+    assert.deepStrictEqual(
+      fixtureUsers.map((step) => step.name),
+      ["Prove a Base64-only updater key is detected"],
+      "only the updater-key self-test may read the pull request's own gitleaks.toml",
+    );
+
+    // And no enforcement step may fall back to a bare `CONFIG_FILE=gitleaks.toml`,
+    // which resolves inside scan-target and is the same hole spelled differently.
     assert.doesNotMatch(
       scan,
       /CONFIG_FILE="gitleaks\.toml"/,
-      "a bare CONFIG_FILE=gitleaks.toml resolves inside scan-target, so it is the same hole",
+      "a bare CONFIG_FILE=gitleaks.toml resolves inside the scanned checkout",
     );
-
-    // And every guard that does exist has to end the step. This is what makes the
-    // absence above a policy rather than an accident: if a guard is reintroduced
-    // with an assignment instead of an exit, the counts disagree.
-    const guards =
-      scan.match(/if \[ ! -f "\$CONFIG_FILE" \][\s\S]*?^ {10}fi$/gm) ?? [];
-    assert.strictEqual(
-      guards.length,
-      5,
-      `expected five trusted-config guards, found ${guards.length}`,
-    );
-    for (const guard of guards) {
-      assert.match(
-        guard,
-        /exit 1/,
-        "a trusted-config guard must exit non-zero, not reassign CONFIG_FILE and continue",
-      );
-      assert.doesNotMatch(
-        guard,
-        /CONFIG_FILE="[^"]*gitleaks\.toml"/,
-        "the guard must not hand the scan back to a config from the scanned tree",
-      );
-    }
   });
 
   it("secret-scan reads its Node pin from the trusted checkout too", () => {

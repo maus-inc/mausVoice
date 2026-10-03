@@ -5792,9 +5792,27 @@ fn wait_for_handoff_within(
 /// cannot be served.
 ///
 /// Giving up on the *status* is therefore safe and giving up on the *reap* is not,
-/// so the bound is on the wait and not on the kill. A child we stop waiting for is
-/// reparented and reaped by init rather than left as this process's zombie, which
-/// is the outcome this function exists to prevent.
+/// so the bound is on the wait and not on the kill.
+///
+/// What the bound actually costs, stated exactly, because the tempting summary here
+/// is wrong: `std::process::Child` has no `Drop`, so letting the handle go out of
+/// scope collects nothing at all. On Unix the kernel reparents a child only when its
+/// *parent* exits, so an abandoned child stays this process's zombie until the app
+/// exits -- the very outcome the thirty lines above say this function exists to
+/// prevent, and the one `reaping_a_live_child_collects_its_status` pins. On Windows
+/// the process handle is simply leaked, once per abandoned child.
+///
+/// So the bound is a genuine trade and not a free win: past it, a child that
+/// refuses to die costs a zombie or a leaked handle instead of a parked
+/// blocking-pool thread. Which is worse depends on which is scarcer, and for a
+/// child that has already ignored `SIGKILL` the honest answer is that this process
+/// has lost the race either way -- the alternative is a thread that never returns.
+/// Init does not reap it for us; that would need a double fork or a dedicated
+/// reaper, neither of which this is.
+///
+/// The alternative considered and rejected: drop the handle right after `kill` and
+/// skip the wait entirely. That collects nothing on the normal path, where the child
+/// dies promptly and the status is still worth having.
 fn reap_child(child: &mut std::process::Child) {
     const REAP_POLL: std::time::Duration = std::time::Duration::from_millis(25);
     const REAP_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
