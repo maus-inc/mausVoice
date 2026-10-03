@@ -879,7 +879,7 @@
   "transcript_copied_to_clipboard": "已將文字稿複製到剪貼簿",
   "transcript_updated": "轉錄已更新",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "轉錄已更新，但無法將修正後的名稱加入辭典。",
-  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "轉錄已更新。由於隱身模式已開啟，未加入任何內容到您的字典。",
   "transcription": "文字轉錄",
   "transcription_details": "轉錄詳情",
   "transcription_duration": "轉錄持續時間",

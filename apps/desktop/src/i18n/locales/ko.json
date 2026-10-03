@@ -879,7 +879,7 @@
   "transcript_copied_to_clipboard": "전사 내용이 클립보드에 복사되었습니다",
   "transcript_updated": "전사가 업데이트되었습니다",
   "transcript_updated_but_the_corrected_words_could_not_be_adde": "전사는 업데이트되었지만 수정된 이름을 사전에 추가하지 못했습니다.",
-  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
+  "transcript_updated_nothing_was_added_to_your_dictionary_beca": "전사가 업데이트되었습니다. 시크릿 모드가 켜져 있어 사전에 아무것도 추가되지 않았습니다.",
   "transcription": "전사",
   "transcription_details": "음성 인식 세부 정보",
   "transcription_duration": "음성 인식 시간",
