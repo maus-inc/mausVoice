@@ -19,6 +19,20 @@ name: Release mausVoice
 #   3. verify-ts + verify-rust must pass before any platform build starts
 
 on:
+  # checkov:skip=CKV_GHA_7:These inputs set release metadata, not build output
+  #
+  # CKV_GHA_7 requires that nothing but the build entry point and the top-level
+  # source location can influence what gets built. None of the four inputs below
+  # can: `version`, `prerelease`, `notes` and `tag` are consumed after the
+  # artifacts exist, to name the tag, set the release title, pick the prerelease
+  # flag and fill the "What's new" section. The compile inputs are the checked-out
+  # source at the ref the run was dispatched from, and `verify-ts` and
+  # `verify-rust` gate every platform build before it starts.
+  #
+  # The rule cannot be satisfied by deletion rather than by this suppression: a
+  # release workflow that cannot be told which version to release cannot release.
+  # Scoped to this one rule on this one block -- nothing else in this workflow is
+  # exempted, and no path is excluded from analysis anywhere.
   workflow_dispatch:
     inputs:
       version:
