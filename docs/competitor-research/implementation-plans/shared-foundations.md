@@ -193,9 +193,19 @@ incognito mode is on or an ephemeral session is active.
    session is active; existing incognito behavior is unchanged.
 4. Shared domain types compile in `apps/desktop/src/types/`.
 5. Event contracts bind each name to its payload through one map, and the typed
-   listener infers that payload at the call site.
+   listener infers that payload at the call site. **The second clause cannot be
+   met yet: there is no call site.** The map is in place, but
+   `useExpansionEventListener` (`apps/desktop/src/hooks/tauri.hooks.ts`) is
+   referenced by nothing else in the tree — not one caller, and not one test
+   (`tauri.hooks.ts` has no sibling `.test.ts`). So the inference is not merely
+   unused, it is unexercised. Waits on the emitters below.
 6. An ephemeral session suppresses persistence, fires its event once per
-   transition, and does not survive a restart.
+   transition, and does not survive a restart. **Implemented, and unreachable
+   from production.** `ephemeralSessionEnabled` is a real flag, defaulting to
+   `false` in `src/types/expansion-flags.types.ts`, and `setExpansionFlag` does
+   start and stop the session when it is written — but `setExpansionFlag` itself
+   has no production caller, so nothing can turn that flag on. "Fires once per
+   transition" is therefore true of the code and not reachable by a user.
 7. No existing dictation, transcription, or post-processing test regresses.
 8. Type check, lint, unit tests, and i18n all pass.
 
