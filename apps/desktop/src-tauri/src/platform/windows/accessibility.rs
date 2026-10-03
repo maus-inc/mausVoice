@@ -441,7 +441,7 @@ unsafe fn format_dump_element(
         let v = v.trim();
         if !v.is_empty() {
             let display = if v.len() > 100 {
-                format!("{}...", &v[..100])
+                format!("{}...", crate::utils::truncate_chars(&v, 100))
             } else {
                 v.to_string()
             };

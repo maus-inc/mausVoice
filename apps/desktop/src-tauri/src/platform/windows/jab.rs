@@ -594,7 +594,7 @@ unsafe fn dump_jab_element(
 
     if !description.is_empty() {
         let d = if description.len() > 100 {
-            format!("{}...", &description[..100])
+            format!("{}...", crate::utils::truncate_chars(&description, 100))
         } else {
             description
         };
@@ -643,7 +643,7 @@ unsafe fn extract_text_append(api: &JabApi, vm_id: i32, ac: JOBJECT64, line: &mu
             let text = wchar_to_string(&buf);
             if !text.is_empty() {
                 let display = if text.len() > 100 {
-                    format!("{}...", &text[..100])
+                    format!("{}...", crate::utils::truncate_chars(&text, 100))
                 } else {
                     text
                 };

@@ -1271,11 +1271,13 @@ unsafe fn format_element_line(element: CFTypeRef, depth: usize, child_index: usi
 
 fn truncate_for_dump(s: &str) -> String {
     let cleaned: String = s.replace('\n', "\\n").replace('\r', "\\r");
-    let truncated: String = cleaned.chars().take(DUMP_MAX_VALUE_CHARS).collect();
+    // One boundary-safe implementation, shared with the log paths that used to slice
+    // bytes at a fixed offset and panic on any non-ASCII title or description.
+    let truncated = crate::utils::truncate_chars(&cleaned, DUMP_MAX_VALUE_CHARS);
     if truncated.len() < cleaned.len() {
         format!("{truncated}…")
     } else {
-        truncated
+        truncated.to_owned()
     }
 }
 
@@ -2050,7 +2052,10 @@ unsafe fn describe_children(arr: core_foundation::array::CFArrayRef, count: usiz
     }
     let joined = parts.join(", ");
     if joined.len() > 800 {
-        format!("{}... ({count} children total)", &joined[..800])
+        format!(
+            "{}... ({count} children total)",
+            crate::utils::truncate_chars(&joined, 800)
+        )
     } else {
         joined
     }

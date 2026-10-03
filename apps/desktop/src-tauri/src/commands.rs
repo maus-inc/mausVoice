@@ -2389,7 +2389,10 @@ pub async fn export_transcription(
     let raw_transcript: Option<String> = row.get("raw_transcript");
     let audio_path: Option<String> = row.get("audio_path");
 
-    let short_id = if id.len() > 8 { &id[..8] } else { &id };
+    // A character count, not a byte count. `id` arrives over IPC, so a non-ASCII
+    // one would make a byte slice panic on a boundary it cannot land inside --
+    // in a command handler, which is the worst place for that.
+    let short_id = crate::utils::truncate_chars(&id, 8);
     let dialog = rfd::AsyncFileDialog::new()
         .set_file_name(format!("mausvoice-{short_id}.zip"))
         .add_filter("ZIP Archive", &["zip"])
