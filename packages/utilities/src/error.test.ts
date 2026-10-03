@@ -624,22 +624,35 @@ describe("authorization scheme credentials", () => {
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
   const CLIENT_SECRET = ["client", "secret"].join("_");
   const SESSION_TOKEN = ["session", "token"].join("_");
-  // Provider-qualified credential labels, in the `<provider>_api_key` spelling.
-  // Every provider here that uses that spelling, because the four with a
-  // recognised key prefix were the only ones safe before the tier split and the
-  // ones without one were exactly the leak.
+  // Provider-qualified credential labels in the `<provider>_api_key` spelling.
   //
-  // NOT every credential this repo handles: Azure's is the `Ocp-Apim-
-  // Subscription-Key` header, which no `<provider>_api_key` rule matches, and
+  // One entry per provider module this repo actually ships, which is the list
+  // that was previously six of seventeen while the comment claimed every one --
+  // so the claim was checkable and wrong. Widening it is not cosmetic: it pins
+  // the tier-1 rule against the real provider surface rather than a sample of it.
+  //
+  // NOT every credential this repo handles. Azure's is the `Ocp-Apim-
+  // Subscription-Key` header, which no `<provider>_api_key` spelling matches, and
   // which stays the responsibility of `apps/desktop/src`'s own redactor. That is
-  // stated rather than glossed because "every provider" would be false here.
+  // stated rather than glossed because "every provider" would be false again.
   const PROVIDER_QUALIFIED = [
-    ["azure", "api", "key"].join("_"),
-    ["groq", "api", "key"].join("_"),
-    ["deepgram", "api", "key"].join("_"),
-    ["elevenlabs", "api", "key"].join("_"),
-    ["xai", "api", "key"].join("_"),
+    ["aldea", "api", "key"].join("_"),
     ["anthropic", "api", "key"].join("_"),
+    ["assemblyai", "api", "key"].join("_"),
+    ["azure", "api", "key"].join("_"),
+    ["cerebras", "api", "key"].join("_"),
+    ["claude", "api", "key"].join("_"),
+    ["deepgram", "api", "key"].join("_"),
+    ["deepseek", "api", "key"].join("_"),
+    ["elevenlabs", "api", "key"].join("_"),
+    ["gemini", "api", "key"].join("_"),
+    ["gladia", "api", "key"].join("_"),
+    ["google", "api", "key"].join("_"),
+    ["groq", "api", "key"].join("_"),
+    ["openai", "api", "key"].join("_"),
+    ["openrouter", "api", "key"].join("_"),
+    ["speaches", "api", "key"].join("_"),
+    ["xai", "api", "key"].join("_"),
   ];
   const AZURE_KEY_NUMBERED = ["azure", "api", "key", "2"].join("_");
   // camelCase credential labels, written the way a TypeScript caller writes them.
@@ -727,7 +740,6 @@ describe("authorization scheme credentials", () => {
   // scrubber is unchanged.
   const AWS_KEY = ["AKIA", "IOSFODNN7"].join("");
   const CANT_DECRYPT = ["could not", "decrypt"].join(" ");
-  const THREE_WORDS = ["alpha beta", "gamma"].join(" ");
   const STRIPE_SHAPED = ["sk-live-", "abc123"].join("");
   const TWELVE_CHARS = ["abc123", "def456"].join("");
   // Held in parts for the same reason as the labels above: a passphrase under a

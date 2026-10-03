@@ -200,7 +200,7 @@ const CREDENTIAL_LABEL_CORE =
   `|(?:${KEY_HOLDERS.join("|")})[_-](?:[a-z0-9]+[_-])*(?:token|key)` +
   ")" +
   // A plural or a numbered variant is the same label.
-  `(?:s|[_-]?\\d+)?`;
+  String.raw`(?:s|[_-]?\d+)?`;
 // The same core twice, and that is the point: unanchored, to find a label
 // somewhere in free text with the document's own quotes and word boundaries
 // around it, and anchored, to judge a bare object key that has no surrounding
@@ -222,7 +222,35 @@ const SECRET_LABEL = String.raw`("?\b${CREDENTIAL_LABEL_CORE}\b"?)`;
  * so a replacement can put them back -- is judged on the label itself.
  */
 const ANCHORED_CREDENTIAL_LABEL = new RegExp(`^${CREDENTIAL_LABEL_CORE}$`, "i");
-const LABEL_EDGE = /^["'\s]+|["'\s]+$/g;
+/**
+ * Strips the quotes and whitespace a label may arrive wrapped in.
+ *
+ * The trailing edge is walked rather than matched, and that is a measured
+ * decision. As one pattern -- `/^["'\s]+|["'\s]+$/g` -- it is quadratic: the `g`
+ * loop retries the second alternative at every offset of a run, and each attempt
+ * runs `["'\s]+` greedily to the end of the run before walking back one character
+ * at a time looking for `$`. On a 400 000-character run that is 77 seconds.
+ *
+ * Splitting it into two single-anchored patterns does NOT help, and that was the
+ * first thing tried: `["'\s]+$` backtracks identically, measured at 3.92x per
+ * doubling against the original's 4.00x. Only removing the regex from the
+ * trailing edge removes the backtracking, so that is what this does.
+ *
+ * The leading edge keeps its pattern because `^["'\s]+` succeeds on the first
+ * try and never has to try again. Behaviour is unchanged -- identical on 21
+ * hand-picked shapes and on 200 000 random strings.
+ */
+const LEADING_LABEL_EDGE = /^["'\s]+/;
+const LABEL_EDGE_CHAR = /["'\s]/;
+
+const trimLabelEdges = (label: string): string => {
+  const body = label.replace(LEADING_LABEL_EDGE, "");
+  let end = body.length;
+  while (end > 0 && LABEL_EDGE_CHAR.test(body.charAt(end - 1))) {
+    end -= 1;
+  }
+  return body.slice(0, end);
+};
 
 /**
  * `openaiApiKey` -> `openai_api_key`, so the anchored rule above can judge it.
@@ -245,10 +273,13 @@ const LABEL_EDGE = /^["'\s]+|["'\s]+$/g;
  * snake_case ones are rejected.
  *
  * WHAT THE TEXT FORM STILL DOES NOT CATCH, and why it is left that way: a
- * QUALIFIED camelCase label. Measured, all five of `openaiApiKey`, `azureApiKey`,
- * `authToken`, `signingKey` and `userPassword` reach `unknownToMessage` in the
- * clear in a message, while none leak as an object key. An unqualified
- * camelCase name -- `apiKey`, `secretKey`, `clientSecret` -- matches on both.
+ * QUALIFIED camelCase label. `openaiApiKey`, `azureApiKey`, `authToken`,
+ * `signingKey` and `userPassword` all reach `unknownToMessage` in the clear in a
+ * message, while none leak as an object key. Those five are examples from the
+ * same measured set as the "7 of 15" above -- not a second, smaller measurement
+ * -- and a wider probe found every qualified camelCase name it tried leaking,
+ * 8 of 8. An unqualified camelCase name -- `apiKey`, `secretKey`, `clientSecret`
+ * -- matches on both forms.
  *
  * The obvious way to close it is to let the text form's tier-1 qualifier take a
  * separator-less prefix, i.e. `(?:[a-z0-9]+[_-]*)*`. Measured: that does not fail
@@ -265,7 +296,7 @@ const foldCamelLabel = (label: string): string =>
   label.replace(CAMEL_BOUNDARY, "$1_$2");
 
 const isCredentialLabel = (label: string): boolean => {
-  const trimmed = label.replace(LABEL_EDGE, "");
+  const trimmed = trimLabelEdges(label);
   return (
     ANCHORED_CREDENTIAL_LABEL.test(trimmed) ||
     ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed))
@@ -598,7 +629,7 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
  * ("is this a credential at all?").
  */
 const isFreeFormSecretLabel = (label: string): boolean => {
-  const bare = label.replace(LABEL_EDGE, "");
+  const bare = trimLabelEdges(label);
   const joined = bare.replace(/[_-]/g, "").toLowerCase();
   // `authorization` and `proxy-authorization` are the one label the free-form
   // pass must not claim, because `AUTHORIZATION_SCHEME` owns them and reads the
