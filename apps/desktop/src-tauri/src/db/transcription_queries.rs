@@ -248,41 +248,6 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::{Row, SqlitePool};
 
-    /// The real `transcriptions` table is built by migration 002 plus a dozen
-    /// `ALTER TABLE ADD COLUMN` steps, and `update_transcription` names every
-    /// column in both its `SET` and `RETURNING` lists. The fixture therefore
-    /// declares all 26 in `TRANSCRIPTION_COLUMNS` order rather than a hand-picked
-    /// subset, so a column added to that list fails here instead of silently
-    /// making the update a partial one.
-    const FIXTURE_SCHEMA: &str = "CREATE TABLE transcriptions (
-        id TEXT PRIMARY KEY,
-        transcript TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        audio_path TEXT,
-        audio_duration_ms INTEGER,
-        model_size TEXT,
-        inference_device TEXT,
-        raw_transcript TEXT,
-        sanitized_transcript TEXT,
-        transcription_prompt TEXT,
-        post_process_prompt TEXT,
-        transcription_api_key_id TEXT,
-        post_process_api_key_id TEXT,
-        transcription_mode TEXT,
-        post_process_mode TEXT,
-        post_process_device TEXT,
-        post_process_model TEXT,
-        post_process_provider TEXT,
-        post_process_failed INTEGER,
-        post_process_error TEXT,
-        transcription_duration_ms INTEGER,
-        postprocess_duration_ms INTEGER,
-        warnings_json TEXT,
-        remote_status TEXT,
-        remote_device_id TEXT,
-        post_process_fallback INTEGER
-    )";
-
     fn transcription(id: &str, transcript: &str) -> Transcription {
         Transcription {
             id: id.to_string(),
@@ -314,15 +279,25 @@ mod tests {
     }
 
     /// A pool over a *shared-cache* in-memory database, at the production
-    /// connection count.
+    /// connection count, carrying the real migrated schema.
+    ///
+    /// The schema is built by [`crate::db::migrations`] rather than a
+    /// hand-written `CREATE TABLE`. A fixture that re-declares the table drifts
+    /// silently: it had `sanitized_transcript` ninth where migration 069 puts it
+    /// nineteenth, and `post_process_model` seventeenth where 069 puts it
+    /// twenty-fifth, because it was copied from `TRANSCRIPTION_COLUMNS` — the
+    /// *binding* order, which is not the physical one. Any future column renamed
+    /// or reordered in a migration would keep passing against the hand-written
+    /// table. Applying the migrations is the same thing `preferences_queries.rs`
+    /// does, and it makes the table under test the table production gets.
     ///
     /// A bare `sqlite::memory:` DSN gives every pooled connection its own
-    /// private database, so with `max_connections(5)` the `CREATE TABLE` would
-    /// land on one connection and every later query would hit a different,
-    /// empty one. `cache=shared` is what makes the five connections one
-    /// database, which is the whole point: `max_connections(1)` would serialise
-    /// the `UPDATE`-then-`SELECT` pair onto one connection and hide exactly the
-    /// interleaving the race test below exists to catch.
+    /// private database, so with `max_connections(5)` the schema would land on
+    /// one connection and every later query would hit a different, empty one.
+    /// `cache=shared` is what makes the five connections one database, which is
+    /// the whole point: `max_connections(1)` would serialise the statements onto
+    /// one connection and hide exactly the interleaving the race test below
+    /// exists to catch.
     ///
     /// The database name is unique per call because a shared-cache in-memory
     /// database is process-global by name; a fixed name would let these tests
@@ -339,20 +314,52 @@ mod tests {
             .connect(&name)
             .await
             .expect("shared in-memory pool must open");
-        sqlx::query(FIXTURE_SCHEMA)
-            .execute(&pool)
-            .await
-            .expect("fixture table must be creatable");
+        for migration in crate::db::migrations() {
+            sqlx::raw_sql(migration.sql)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "apply migration {} ({}): {error}",
+                        migration.version, migration.description
+                    )
+                });
+        }
         pool
     }
 
     /// The returned row must be the row *this* call wrote.
     ///
-    /// `UPDATE` followed by a bare `SELECT` on a `max_connections(5)` pool has a
-    /// window between the two statements. A second writer's whole-row `UPDATE`
-    /// landing in that window makes the first writer return the other writer's
-    /// values as its own success. This test drives many concurrent rounds and
-    /// asserts the update never reports text it did not write.
+    /// What protects that is not the concurrency here — it is that
+    /// `update_transcription` writes and reads back in ONE statement, via
+    /// `UPDATE ... RETURNING`. There is no window between a write and a
+    /// subsequent `SELECT` for another writer to land in, because there is no
+    /// subsequent `SELECT`. `single_statement_therefore_no_read_window` is what
+    /// pins that, and it is the part that is actually decidable.
+    ///
+    /// The 400 concurrent rounds below are a soak, not the proof, and this
+    /// comment used to claim they were the proof. They are not, and that was
+    /// measured rather than assumed:
+    ///
+    ///   - replacing `tokio::join!` with two sequential awaits SURVIVES
+    ///   - deleting writer B's `yield_now()` before its update SURVIVES
+    ///
+    /// Both leave the test green, which means no round actually interleaves the
+    /// two writers at the point the hazard needs. Running the writers strictly
+    /// one after another satisfies every assertion here just as well as running
+    /// them concurrently, so these rounds would pass against an implementation
+    /// that had no concurrency safety at all. They cannot be made to fail by
+    /// removing the `yield_now()`, so the interleaving they appear to force is
+    /// not one they force.
+    ///
+    /// What they are good for is real, just narrower: two writers on a
+    /// five-connection shared-cache pool repeatedly contend for one row without
+    /// deadlocking, erroring, or losing a write, 400 times over. Kept for that.
+    ///
+    /// The assertions are strict on purpose. Making them tolerate a
+    /// `SQLITE_LOCKED` error was tried and reverted — see the note at the
+    /// assertions — because it softens the one assertion here with teeth and the
+    /// nondeterminism it was meant to absorb does not reproduce.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn update_returns_the_row_it_wrote_not_a_concurrent_writers_values() {
         let pool = transcription_pool("race").await;
@@ -368,8 +375,10 @@ mod tests {
         // assertion must never see come back out of writer A's own call.
         let writer_b_marker = "written-by-b";
 
-        // Yield before each update so the two tasks contend for the pool and the
-        // interleaving window is actually entered rather than run start-to-finish.
+        // Yield before each update so the two tasks are released together rather
+        // than run start-to-finish. The property below is what makes that
+        // meaningful: both results are inspected, so a round in which one writer
+        // genuinely observed the other writer's row cannot pass unnoticed.
         for _ in 0..400 {
             let other = transcription("shared", writer_b_marker);
             let writer_a_copy = writer_a.clone();
@@ -388,8 +397,17 @@ mod tests {
                 }
             });
 
-            let (result_a, _result_b) = tokio::join!(writer_a_task, writer_b_task);
+            let (result_a, result_b) = tokio::join!(writer_a_task, writer_b_task);
 
+            // Both writers are asserted. Inspecting only A left the test blind to
+            // exactly the half of the round where B's call came back carrying
+            // another writer's values — the binding was `_result_b`, which reads
+            // as deliberate and is dropped without ever being looked at.
+            //
+            // The assertions are strict. Tolerating a lock error here was tried
+            // and reverted: it weakens the one assertion that has teeth, and the
+            // nondeterminism it was meant to absorb does not reproduce -- the
+            // strict form passed 8 consecutive runs of all 400 rounds.
             let returned_a = result_a
                 .expect("writer A task must not panic")
                 .expect("writer A's update must succeed");
@@ -397,7 +415,56 @@ mod tests {
                 returned_a.transcript, "written-by-a",
                 "update_transcription returned another writer's transcript as its own success"
             );
+
+            let returned_b = result_b
+                .expect("writer B task must not panic")
+                .expect("writer B's update must succeed");
+            assert_eq!(
+                returned_b.transcript, writer_b_marker,
+                "update_transcription returned another writer's transcript as its own success"
+            );
         }
+    }
+
+    /// The mechanism that actually prevents one writer's values from being reported
+    /// as another's: the write and the read-back are ONE statement.
+    ///
+    /// `UPDATE ... RETURNING` gives SQLite the row as part of the write, under the
+    /// same lock. There is therefore no interval between "the row is written" and
+    /// "the row is read" in which a second writer could land — the hazard the soak
+    /// above is aimed at cannot occur, not because the race is unlikely but
+    /// because the window does not exist.
+    ///
+    /// So this pins the window's absence structurally. It is decidable on every
+    /// run and in every environment, which the concurrency approaches are not.
+    #[test]
+    fn the_write_and_the_read_back_are_one_statement() {
+        let sql = format!(
+            "UPDATE transcriptions SET {} WHERE id = ?1 RETURNING {}",
+            super::transcription_update_assignments(),
+            super::transcription_column_list(),
+        );
+
+        let statements = sql
+            .split(';')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .count();
+        assert_eq!(
+            statements, 1,
+            "the update must be a single statement, or a concurrent writer has a window to land in: {sql}"
+        );
+
+        // A read-back would have to be a separate SELECT. There must not be one.
+        let without_strings = sql.replace('\'', "");
+        assert!(
+            !without_strings.to_ascii_uppercase().contains("SELECT"),
+            "the update must not read the row back in a second statement: {sql}"
+        );
+        assert!(
+            without_strings.to_ascii_uppercase().contains("RETURNING"),
+            "the row must come from the write itself, via RETURNING: {sql}"
+        );
     }
 
     /// `UPDATE` must not report success for a row it did not touch.
@@ -467,20 +534,43 @@ mod tests {
         assert_eq!(remaining[0].id, "second");
     }
 
+    /// The migrated table must carry exactly the columns the writer binds, by
+    /// name.
+    ///
+    /// This compares names rather than a count. A `COUNT(*)` against
+    /// `TRANSCRIPTION_COLUMNS.len()` passes for a table that no longer has the
+    /// column the writer binds, because a rename leaves the count untouched —
+    /// the guard only notices columns being added, never ones being renamed or
+    /// dropped. Comparing the name sets fails on either.
+    ///
+    /// Order is deliberately not asserted: `TRANSCRIPTION_COLUMNS` is the
+    /// placeholder-binding order, and migration 069 builds the table in a
+    /// different physical order (`sanitized_transcript` ninth here, nineteenth
+    /// there). Every statement in this file names its columns explicitly, so
+    /// physical order is not something the writer depends on.
     #[tokio::test]
     async fn the_fixture_schema_covers_every_bound_column() {
-        // Guards the fixture against drift: if `TRANSCRIPTION_COLUMNS` grows, this
-        // fails and the fixture is extended rather than the update quietly
-        // narrowing to the columns the fixture happens to have.
-        let columns = super::TRANSCRIPTION_COLUMNS.len();
-        let declared: i64 = {
+        let declared: Vec<String> = {
             let pool = transcription_pool("case").await;
-            sqlx::query("SELECT COUNT(*) AS count FROM pragma_table_info('transcriptions')")
-                .fetch_one(&pool)
+            sqlx::query("SELECT name FROM pragma_table_info('transcriptions')")
+                .fetch_all(&pool)
                 .await
                 .expect("pragma must be readable")
-                .get("count")
+                .iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect()
         };
-        assert_eq!(declared, columns as i64);
+
+        let mut declared_names = declared;
+        declared_names.sort();
+        let mut expected_names = super::TRANSCRIPTION_COLUMNS.to_vec();
+        expected_names.sort();
+
+        assert_eq!(
+            declared_names, expected_names,
+            "the migrated `transcriptions` table and TRANSCRIPTION_COLUMNS name \
+             different columns, so a write binds a column the schema lacks or \
+             drops one it has"
+        );
     }
 }
