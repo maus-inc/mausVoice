@@ -10,43 +10,51 @@ const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
 // A label naming a secret.
 //
-// The alternation accepts a separator-delimited prefix, so `secret_key`,
-// `my_secret`, `oauth_token` and `credentials` are labels here and not only
-// object keys. Three narrowings are load-bearing, and each was measured rather
-// than reasoned about:
+// Two tiers, because one list cannot do both jobs. The first alternative is a
+// spelling that names a credential unambiguously -- `api_key`, `client_secret`,
+// `password`, `secret` and so on -- and ANY separator-delimited qualifier may sit
+// in front of it. The second is the ambiguous words `token` and `key`, which
+// need a qualifier drawn from a listed vocabulary.
 //
-//   No arbitrary prefix. Any `(?:[a-z0-9]+[_-])*` in front redacts `sort_key`,
-//   `partition_key`, `cache_key`, `idempotency_key`, `max_tokens` and
-//   `total_tokens` -- ordinary fields in a provider error for an app whose whole
-//   job is calling models. There is no prefix rule that keeps `oauth_token` and
-//   drops `max_tokens`; they differ only in their first word. So the credential
-//   words that may carry the prefix are listed.
+// Three measurements shaped this, and each one was wrong before it was right.
 //
-//   No bare `key`. `\bkey\b` matches the English word wherever it appears, so
-//   `press the key: any` came out as `press the key:[redacted]`. Removing `key`
-//   outright then un-redacted `secret_key: <credential>` -- the case the prefix
-//   exists for -- and the test pinning `secret_key` is what caught that. So the
-//   prefix and `key` are alternatives rather than prefix-then-suffix: `secret_key`
-//   and `api_key` match as single spellings, and a lone `key: <value>` is not
-//   recognised at all.
+//   An arbitrary qualifier over BOTH tiers redacts ordinary fields. Any
+//   `(?:[a-z0-9]+[_-])*` in front reaches `sort_key`, `partition_key`,
+//   `cache_key`, `idempotency_key`, `max_tokens` and `total_tokens` -- ordinary
+//   fields in a provider error for an app whose whole job is calling models.
+//   Restricting it to the secret vocabulary fixed that and dropped ten
+//   credential labels the other way, so an enumeration is the trade being made:
+//   unbounded recall for precision, not a way of having both.
 //
-//   No camelCase prefix. Any pattern accepting one lets `monkey` donate its `key`
-//   by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`. `apiKey`
-//   still matches because it needs no prefix; `secretKey` and `mySecret` do not,
-//   and that is the stated cost of not redacting English words ending in "key".
+//   `azure_api_key` is the case that set the tier boundary. `api[_-]?key`
+//   cannot match inside `azure_api_key` -- `_` is a word character, so there is
+//   no boundary -- and `PROVIDER_KEY_PREFIX` recognises only `csk_`, `gsk_`,
+//   `sk-ant-`, `xai-` and `sk-`, so an Azure subscription key and a Deepgram key
+//   carry none of those. Measured, `azure_api_key`, `groq_api_key`,
+//   `deepgram_api_key`, `elevenlabs_api_key` and `xai_api_key` all reached
+//   `unknownToMessage` in the clear. `PROVIDER_KEY_PREFIX` is not the backstop
+//   for a qualified label, because only four providers have a prefix at all.
+//   So an unambiguous spelling takes any qualifier: there is no realistic field
+//   called `sort_api_key`, which is what makes the unbounded prefix safe here and
+//   only here.
+//
+//   A bare `key` is in neither tier. `\bkey\b` matches the English word wherever
+//   it appears, so `press the key: any` came out as `press the key:[redacted]`.
+//   Removing `key` outright then un-redacted `secret_key: <credential>` -- the
+//   case the prefix exists for -- and the test pinning `secret_key` is what
+//   caught that. `secret[_-]?key` is therefore spelled out as a tier-1
+//   alternative, and a lone `key: <value>` is not recognised at all.
+//
+// No camelCase qualifier either: any pattern accepting one lets `monkey` donate
+// its `key` by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`.
+// `apiKey` still matches because it needs no qualifier; `secretKey` and
+// `mySecret` do not, and that is the stated cost.
 //
 // What is given up is the spelling that is most often prose and least often a
 // credential. Where this set and `isSecretKey` still differ -- an object key may
 // reach the predicate by a route the string pattern does not have -- that is
 // recorded at `isFreeFormSecretLabel`.
-//
-// The last alternative is the prefix list. It exists for the labels that are a
-// credential word behind a word describing its holder: `oauth_token`,
-// `bearer_token`, `signing_key`, `master_key`, `user_password`. `secret_key` and
-// `my_secret` do NOT depend on it -- `secret[_-]?key` in the first group already
-// matches them, which a mutation confirmed by dropping `secret` from the prefix
-// list and breaking no test.
-const SECRET_LABEL = String.raw`("?\b(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|secret[_-]?key|password|passwd|pwd|credential|secret|(?:oauth|auth|bearer|signing|master|encryption|private|client|session|access|refresh|id|api|user|db|account|service|provider|vault|keyring|updater|licence|license|secret|my)[_-](?:[a-z0-9]+[_-])*(?:secret|token|key|credential|password|passwd|pwd))s?\b"?)`;
+const SECRET_LABEL = String.raw`("?\b(?:(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|secret[_-]?key|password|passwd|pwd|credential|secret)|(?:oauth|auth|bearer|signing|master|encryption|private|client|session|access|refresh|id|api|user|db|account|service|provider|vault|keyring|updater|licence|license|secret|my)[_-](?:[a-z0-9]+[_-])*(?:token|key))(?:s|[_-]?\d+)?\b"?)`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
 // the whole value is replaced either way.

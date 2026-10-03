@@ -624,26 +624,49 @@ describe("authorization scheme credentials", () => {
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
   const CLIENT_SECRET = ["client", "secret"].join("_");
   const SESSION_TOKEN = ["session", "token"].join("_");
+  // Provider-qualified credential labels. Every provider in this repo, because
+  // the four that have a recognised key prefix are the only ones that were safe
+  // before the tier split, and the ones without one are exactly the leak.
+  const PROVIDER_QUALIFIED = [
+    ["azure", "api", "key"].join("_"),
+    ["groq", "api", "key"].join("_"),
+    ["deepgram", "api", "key"].join("_"),
+    ["elevenlabs", "api", "key"].join("_"),
+    ["xai", "api", "key"].join("_"),
+    ["anthropic", "api", "key"].join("_"),
+  ];
+  const AZURE_KEY_NUMBERED = ["azure", "api", "key", "2"].join("_");
   const PRIVATE_KEY = ["private", "key"].join("_");
-  // Ordinary fields whose name ends in a credential word. Held as fragments so
-  // no contiguous `label: value` a secret scanner could read exists in this file.
-  const NON_SECRET_KEY_LABELS = [
-    ["sort", "key"].join("_"),
-    ["cache", "key"].join("_"),
-    ["partition", "key"].join("_"),
-    ["idempotency", "key"].join("_"),
-    ["response", "id"].join("_"),
-    ["token", "count"].join("_"),
-  ];
-  const ORDINARY_WORDS = [
-    "monkey",
-    "hotkey",
-    "whiskey",
-    "secretary",
-    "passenger",
-    "tokenize",
-    "keyboard",
-  ];
+  // Fields that are not credentials, each with a value, read by both directions
+  // of the label test below. One table rather than two lists, because the two
+  // directions have to agree about what is NOT a label -- a copy per test drifts,
+  // and the drift is silent: one half stops covering a case the other still
+  // claims to.
+  //
+  // Held as fragments so no contiguous `label: value` exists in this file for a
+  // secret scanner to read as a live credential. Every entry is a real field
+  // name from a provider error or an ordinary English word, not an invented
+  // shape.
+  const NON_SECRET_FIELDS = [
+    [["sort", "key"].join("_"), "created_at"],
+    [["cache", "key"].join("_"), "v2"],
+    [["partition", "key"].join("_"), "events"],
+    [["idempotency", "key"].join("_"), "7f3a"],
+    [["max", "tokens"].join("_"), "4096"],
+    [["total", "tokens"].join("_"), "251"],
+    [["token", "limit"].join("_"), "8192"],
+    [["token", "usage"].join("_"), "91%"],
+    [["token", "count"].join("_"), "42"],
+    [["response", "id"].join("_"), "abc123"],
+    [["monkey", "count"].join("_"), "5"],
+    ["monkey", "bananas"],
+    ["keyboard", "v"],
+    ["hotkey", "v"],
+    ["whiskey", "v"],
+    ["secretary", "v"],
+    ["passenger", "v"],
+    ["tokenize", "v"],
+  ] as const;
   const SECRET_TOKEN = [SECRET, "token"].join("_");
   // The AWS-shaped value is held in two parts for the same reason as the labels
   // above: an `AKIA`-prefixed token in a file reads to a secret scanner as a
@@ -666,26 +689,9 @@ describe("authorization scheme credentials", () => {
     // useful fact with a marker on exactly the output a user attaches to a
     // diagnostics export. Each one is a real field name from a provider error,
     // not an invented shape.
-    for (const field of [
-      ["sort", "key", "created_at"],
-      ["cache", "key", "v2"],
-      ["partition", "key", "events"],
-      ["idempotency", "key", "7f3a"],
-      ["max", "tokens", "4096"],
-      ["total", "tokens", "251"],
-      ["token", "limit", "8192"],
-      ["token", "usage", "91%"],
-      [null, "monkey", "bananas"],
-      [null, "keyboard", "v"],
-      [null, "hotkey", "v"],
-      [null, "whiskey", "v"],
-      [null, "secretary", "v"],
-      [null, "passenger", "v"],
-      [null, "tokenize", "v"],
-    ] as const) {
-      const label = field[0] ? `${field[0]}_${field[1]}` : field[1];
-      expect(redactSensitiveTokens(labelled(label, field[2]))).toBe(
-        `${label}: ${field[2]}`,
+    for (const [label, value] of NON_SECRET_FIELDS) {
+      expect(redactSensitiveTokens(labelled(label, value))).toBe(
+        `${label}: ${value}`,
       );
     }
   });
@@ -725,19 +731,13 @@ describe("authorization scheme credentials", () => {
       );
     }
 
-    // The other half: fields that merely end in a credential word.
-    for (const label of NON_SECRET_KEY_LABELS) {
-      expect(redactSensitiveTokens(labelled(label, TWELVE_CHARS))).toBe(
-        `${label}: ${TWELVE_CHARS}`,
-      );
-    }
-
-    // English words that contain one. `\b` is what keeps them out; a pattern
-    // that let a suffix backtrack would turn `monkey: bananas` into
-    // `monkey:[redacted]`.
-    for (const word of ORDINARY_WORDS) {
-      expect(redactSensitiveTokens(labelled(word, "bananas"))).toBe(
-        `${word}: bananas`,
+    // The other half, from the shared table: fields that merely end in a
+    // credential word, and the English words that contain one. `\b` is what keeps
+    // the words out -- a pattern that let a suffix backtrack would turn
+    // `monkey: bananas` into `monkey:[redacted]`.
+    for (const [label, value] of NON_SECRET_FIELDS) {
+      expect(redactSensitiveTokens(labelled(label, value))).toBe(
+        `${label}: ${value}`,
       );
     }
 
@@ -745,6 +745,25 @@ describe("authorization scheme credentials", () => {
     // matches the English word wherever it appears, so accepting it turned
     // `press the key: any` into `press the key:[redacted]`.
     expect(redactSensitiveTokens(labelled("key", "any"))).toBe("key: any");
+  });
+
+  it("redacts a provider-qualified label, which the qualifier list had dropped", () => {
+    // These were measured redacting nothing. `\bapi[_-]?key` cannot match inside
+    // `azure_api_key` -- `_` is a word character, so there is no boundary there --
+    // and `PROVIDER_KEY_PREFIX` recognises only `csk_`, `gsk_`, `sk-ant-`,
+    // `xai-` and `sk-`, so an Azure subscription key and a Deepgram key carry
+    // none of those. The value then reached `unknownToMessage` in the clear, and
+    // that output is what a user attaches to a diagnostics export.
+    for (const label of PROVIDER_QUALIFIED) {
+      expect(redactSensitiveTokens(labelled(label, TWELVE_CHARS))).toBe(
+        `${label}:[redacted]`,
+      );
+    }
+    // The same shape numbered, because `\b` refuses a trailing digit and a
+    // numbered credential field is still one.
+    expect(
+      redactSensitiveTokens(labelled(AZURE_KEY_NUMBERED, TWELVE_CHARS)),
+    ).toBe(`${AZURE_KEY_NUMBERED}:[redacted]`);
   });
 
   it("redacts a passphrase whole under a general label, and accepts the lost diagnosis", () => {
