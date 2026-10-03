@@ -196,7 +196,7 @@ impl Drop for TypingSession {
 
 /// User-data tables wiped by `clear_local_data`. Extend this list when
 /// adding a table that stores user content — a missed table is a privacy leak.
-const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
+const USER_DATA_TABLES_TO_CLEAR: [&str; 12] = [
     "chat_messages",
     "conversations",
     "user_profiles",
@@ -208,6 +208,10 @@ const USER_DATA_TABLES_TO_CLEAR: [&str; 11] = [
     "tones",
     "app_targets",
     "paired_remote_devices",
+    // Transcription ids whose snapshot outlived their row. A wipe must not leave
+    // those ids behind: `sweep_orphaned_wavs` below already removes every `.wav`
+    // in the managed directory, so the retry has nothing left to act on.
+    "pending_audio_deletions",
 ];
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
@@ -1849,26 +1853,22 @@ fn delete_audio_entries_in_dir(
 
 /// Ids in the slice it is given whose row claims a snapshot that is already gone.
 ///
-/// The sweep that calls this is what reaches *regardless* of the retention cap:
-/// it passes the rows inside the cap, and this repairs the ones among them whose
-/// files are gone. The cap bounds the size of the result, not its reach.
+/// The slice is the caller's to choose, and the only caller passes the rows
+/// *inside* the retention cap — which is the whole point, because those are the
+/// rows nothing else reaches. A row past the cap is re-selected by the next sweep,
+/// where the `NotFound` arm of `delete_audio_entries_in_dir` clears it; but the
+/// sweep skips the newest `MAX_RETAINED_TRANSCRIPTION_AUDIO` marked rows, so a
+/// stranded row that later moves back inside the window — which happens as soon as
+/// the user deletes newer transcriptions — is never selected again and stays
+/// unexportable for good. That is the case this pass exists for, and the cap
+/// bounds the size of the result rather than its reach.
 ///
-/// `purge_stale_transcription_audio` deletes files first and clears the rows'
-/// metadata afterwards. Anything that interrupts that gap — a pool error, a
-/// lock, a process kill — leaves a row advertising audio that no longer exists.
-/// `export_transcription` hard-fails on exactly that state (a non-empty marker
-/// with an unreadable snapshot is an error, not an absent feature), so such a
-/// row cannot be exported at all while the transcript stays readable in the app.
-///
-/// A row past the cap does get re-selected by the next sweep, where the
-/// `NotFound` arm of `delete_audio_entries_in_dir` clears it. That is a partial
-/// recovery and it is not unconditional: the sweep skips the newest
-/// `MAX_RETAINED_TRANSCRIPTION_AUDIO` marked rows, so a stranded row that later
-/// moves back inside the window — which happens as soon as the user deletes
-/// newer transcriptions — is never selected again and stays unexportable for
-/// good. This pass closes that: a row whose snapshot is already absent is
-/// inconsistent state, not audio worth retaining, so it is repaired no matter
-/// where it sits.
+/// `purge_stale_transcription_audio` releases a row's marker before it deletes the
+/// file, so that ordering cannot strand one. Anything else can: an older build's
+/// file-then-marker order, a path outside this sweep, a process killed mid-gap.
+/// `export_transcription` hard-fails on that state (a non-empty marker with an
+/// unreadable snapshot is an error, not an absent feature), so such a row cannot be
+/// exported at all while the transcript stays readable in the app.
 ///
 /// Only `NotFound` counts as absent. Any other error (permissions, a transient
 /// I/O failure, the Windows sharing violation while the file is open for
@@ -1910,6 +1910,60 @@ async fn delete_audio_entries(
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// Maximum number of sweeps that will retry one stranded snapshot before its
+/// record is dropped.
+///
+/// Bounded because a record that can never succeed — a name permanently held by
+/// something other than a player — would otherwise be retried on every dictation
+/// forever, which is the same "never stops" shape as the unrepaired row this
+/// replaces. Eight sweeps is far more than the transient case needs: the Windows
+/// sharing violation that causes this resolves when playback stops, which is
+/// seconds, not dictations.
+///
+/// Giving up is logged at error level and the bytes are not hidden by it: a full
+/// local data wipe still sweeps the whole managed directory, so the file is
+/// removed there. What is lost is the automatic retry, deliberately, so the retry
+/// itself cannot become permanent.
+const MAX_PENDING_AUDIO_DELETION_ATTEMPTS: i64 = 8;
+
+/// Delete a transcription's row and record every snapshot that outlived it, in one
+/// transaction.
+///
+/// The two facts are only consistent together, which is why they share a
+/// transaction. A record whose row still exists points the retry at a snapshot a
+/// live transcript is still using, and a deleted row with no record is the defect
+/// this exists to close: the `.wav` is then findable by nothing, because
+/// `purge_stale_transcription_audio` selects `WHERE audio_path IS NOT NULL` and
+/// `sweep_orphaned_wavs` runs only on a full local wipe. Committing both together
+/// means an interruption leaves either the row and its file untouched, or the row
+/// gone with a record a later sweep will act on.
+///
+/// `stranded` is the `retained` half of the deletion outcome. An empty slice is
+/// the ordinary case and writes nothing here.
+async fn delete_transcription_recording_stranded_audio(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    stranded: &[String],
+) -> Result<(), String> {
+    let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    sqlx::query("DELETE FROM transcriptions WHERE id = ?1")
+        .bind(id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|err| err.to_string())?;
+    for stranded_id in stranded {
+        // `INSERT OR IGNORE`, not a plain insert: the key is what bounds this
+        // table, so a repeat of an id that is already queued must neither add a
+        // second row nor reset an attempt count it has already spent.
+        sqlx::query("INSERT OR IGNORE INTO pending_audio_deletions (id) VALUES (?1)")
+            .bind(stranded_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    transaction.commit().await.map_err(|err| err.to_string())
 }
 
 /// Delete snapshots whose non-null database marker was collected before a
@@ -2293,24 +2347,33 @@ pub async fn transcription_delete(
     .await
     .map_err(|err| err.to_string())?;
 
-    if let Some(audio_path) = audio_path {
+    let outcome = if let Some(audio_path) = audio_path {
         // Deliberately asymmetric with `purge_stale_transcription_audio`. The
         // user asked for this row to be gone, so it goes even while its
         // snapshot is momentarily undeletable; refusing the row deletion would
-        // leave the user unable to remove a transcription at all. The cost is
-        // an unlinked `.wav` until a full local wipe sweeps it — strictly
-        // better than the alternative, because the user already asked for
-        // these bytes to stop existing.
-        delete_audio_entries(
-            app.clone(),
-            vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
+        // leave the user unable to remove a transcription at all.
+        //
+        // What that used to cost is now bounded: a snapshot that could not be
+        // removed is not simply abandoned on disk, it is recorded in
+        // `pending_audio_deletions` together with the row deletion, so the
+        // retention sweep can still find and remove it. The alternative — keeping
+        // the row so the existing sweep can retry it — would contradict the
+        // asymmetry above: the transcript the user deleted would reappear in the
+        // list every time the app reopened, which is a worse failure than the one
+        // being fixed and would leave the bytes on disk anyway.
+        Some(
+            delete_audio_entries(
+                app.clone(),
+                vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
+            )
+            .await?,
         )
-        .await?;
-    }
+    } else {
+        None
+    };
 
-    crate::db::transcription_queries::delete_transcription(pool, &id)
-        .await
-        .map_err(|err| err.to_string())
+    let stranded = outcome.map_or_else(Vec::new, |outcome| outcome.retained);
+    delete_transcription_recording_stranded_audio(&pool, &id, &stranded).await
 }
 
 #[tauri::command]
@@ -3204,7 +3267,15 @@ pub async fn purge_stale_transcription_audio(
         })
         .collect();
 
-    if marked.is_empty() {
+    // Snapshots stranded by a row deletion are not in `marked` — their row is
+    // gone, so this query can never return them — and they must still be retried,
+    // so the early return has to consider the queue as well.
+    let pending_deletions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pending_audio_deletions")
+        .fetch_one(&pool)
+        .await
+        .map_err(|err| err.to_string())?;
+
+    if marked.is_empty() && pending_deletions == 0 {
         return Ok(Vec::new());
     }
 
@@ -3215,6 +3286,9 @@ pub async fn purge_stale_transcription_audio(
     .await
     .map_err(|err| err.to_string())??;
 
+    // The retry first: it is the only path that can remove these bytes at all,
+    // and it cannot touch a row's snapshot because a queued id's row is gone.
+    drain_pending_audio_deletions(&pool, &audio_dir).await?;
     purge_transcription_audio_in_dir(&pool, &audio_dir, marked).await
 }
 
@@ -3225,13 +3299,18 @@ pub async fn purge_stale_transcription_audio(
 /// part worth testing, and it is pure bookkeeping plus two filesystem probes.
 ///
 /// Three things happen, in this order:
-/// 1. Rows past the retention cap have their snapshots deleted. A snapshot that
-///    could not be deleted keeps its marker, so the next sweep retries it.
-/// 2. Rows whose snapshot is *already* gone are repaired, at any position.
-/// 3. Both sets have their audio metadata cleared, in one transaction.
+/// 1. Rows past the retention cap release their audio marker and queue the id, in
+///    one transaction, *before* any file is touched. A snapshot that could not be
+///    deleted does not keep its marker; it is retried from the queue instead,
+///    which is what makes the file-then-marker interruption impossible.
+/// 2. Rows past the cap have their snapshots deleted, and rows whose snapshot is
+///    *already* gone are repaired, at any position.
+/// 3. The repair pass's rows have their audio metadata cleared, in one
+///    transaction.
 ///
-/// Steps 1 and 3 are not atomic across the filesystem boundary, which is the
-/// whole reason step 2 exists.
+/// Steps 1 and 2 are not atomic across the filesystem boundary, which is the whole
+/// reason step 1 records the intent first and step 2 exists to catch what earlier
+/// builds — and any other path — can still leave behind.
 /// Observation point for the thread the sweep's filesystem work runs on.
 ///
 /// The sweep records its own worker thread here so the test claiming the work
@@ -3271,6 +3350,29 @@ async fn purge_transcription_audio_in_dir(
         .collect();
     let stale_entries: Vec<(String, bool)> = split.collect();
 
+    // Marker first, files second, and the intent recorded in the same
+    // transaction as the marker. The two cannot be made atomic across the
+    // filesystem boundary, so the ordering decides which interrupted state is
+    // possible:
+    //
+    // Deleting the file first and clearing the marker afterwards leaves a row
+    // claiming audio that is gone — the state `export_transcription` treats as an
+    // error and refuses, so one interrupted sweep leaves those rows
+    // unexportable. Clearing first leaves the opposite state, a file whose row no
+    // longer claims it, and that one is recoverable: the id is in
+    // `pending_audio_deletions`, which is exactly the queue
+    // `transcription_delete` uses, and the drain retries it on the next sweep.
+    //
+    // Only rows with a real file path are queued. The empty marker never had a
+    // file, so there is nothing to retry and the historical behaviour (clear the
+    // metadata, touch nothing) still applies to it below.
+    let releasing: Vec<String> = stale_entries
+        .iter()
+        .filter(|(_, has_file_path)| *has_file_path)
+        .map(|(id, _)| id.clone())
+        .collect();
+    release_stale_audio_markers_and_queue(pool, &releasing).await?;
+
     // Both steps are blocking filesystem work — `remove_file` and `open` — and
     // this function runs on a Tauri async worker. `delete_audio_entries` sets
     // the offload convention for exactly this work and is still what
@@ -3288,6 +3390,8 @@ async fn purge_transcription_audio_in_dir(
     })
     .await
     .map_err(|err| err.to_string())?;
+
+    settle_pending_audio_deletions(pool, &outcome.cleared, &outcome.retained).await?;
 
     let mut cleared = outcome.cleared;
     cleared.extend(repairs);
@@ -3331,6 +3435,168 @@ async fn clear_audio_metadata_for_deleted_files(
         .map_err(|err| err.to_string())?;
     }
     tx.commit().await.map_err(|err| err.to_string())
+}
+
+/// Retry the snapshot deletions that a row deletion could not finish.
+///
+/// `transcription_delete` removes the row whether or not its `.wav` could be
+/// removed, and once the row is gone nothing else can find what is left: this
+/// sweep's own query is `WHERE audio_path IS NOT NULL`, which a deleted row can
+/// never satisfy, and `sweep_orphaned_wavs` runs only on a full local wipe. So the
+/// ids `delete_transcription_recording_stranded_audio` recorded are drained here,
+/// on the sweep the frontend already runs after every dictation.
+///
+/// Bounded in both directions, because a retry that is itself unbounded is the
+/// same defect wearing a different hat. One attempt per record per sweep, so a
+/// transient holder — a playing transcript on Windows — is gone on the next
+/// dictation; the primary key means a failure that repeats adds no row; and
+/// `MAX_PENDING_AUDIO_DELETION_ATTEMPTS` stops retrying a record that can never
+/// succeed, which is logged rather than left silent.
+///
+/// A record whose file is already absent is dropped from the table rather than
+/// counted as a failure: there is nothing left to remove, and the same `NotFound`
+/// rule `delete_audio_entries_in_dir` uses applies for the same reason.
+async fn drain_pending_audio_deletions(
+    pool: &sqlx::SqlitePool,
+    audio_dir: &Dir,
+) -> Result<(), String> {
+    let pending: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM pending_audio_deletions ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .map_err(|err| err.to_string())?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+
+    // `remove_file` is blocking work and this runs on a Tauri async worker, so
+    // the attempts go to the blocking pool — the same offload the sweep's own
+    // deletes use, and for the same reason.
+    let audio_dir = audio_dir
+        .try_clone()
+        .map_err(|err| format!("Unable to clone the managed audio directory: {err}"))?;
+    let (removed, retained) = tauri::async_runtime::spawn_blocking(move || {
+        let mut removed: Vec<String> = Vec::new();
+        let mut retained: Vec<String> = Vec::new();
+        for id in pending {
+            match crate::system::audio_store::delete_audio_file(&audio_dir, &id) {
+                Ok(()) => removed.push(id),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => removed.push(id),
+                Err(err) => {
+                    log::error!("Failed to retry the audio file for transcription {id}: {err}");
+                    retained.push(id);
+                }
+            }
+        }
+        (removed, retained)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
+
+    settle_pending_audio_deletions(pool, &removed, &retained).await
+}
+
+/// Stop a row claiming a snapshot the retention sweep is about to delete, and
+/// record the id so the deletion can be retried if it does not happen.
+///
+/// One transaction, because the two facts are only consistent together: a queue
+/// entry whose row still claims the file would have the sweep delete a snapshot a
+/// live transcript is using, and a released marker with no queue entry is a file
+/// nothing can find — the same pairing
+/// `delete_transcription_recording_stranded_audio` keeps for a row the *user*
+/// deleted.
+///
+/// `INSERT OR IGNORE` for the reason it is used there: the key is what bounds the
+/// table, and an id already queued from an earlier attempt must keep the count it
+/// has spent.
+async fn release_stale_audio_markers_and_queue(
+    pool: &sqlx::SqlitePool,
+    ids: &[String],
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    for id in ids {
+        sqlx::query(
+            "UPDATE transcriptions
+             SET audio_path = NULL,
+                 audio_duration_ms = NULL
+             WHERE id = ?1",
+        )
+        .bind(id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|err| err.to_string())?;
+        sqlx::query("INSERT OR IGNORE INTO pending_audio_deletions (id) VALUES (?1)")
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    transaction.commit().await.map_err(|err| err.to_string())
+}
+
+/// Apply one round of outcomes to the deletion queue.
+///
+/// A file that is gone — deleted, or already absent — loses its record: there is
+/// nothing left to retry, and keeping it would make every later sweep re-probe a
+/// file that cannot exist. A file that is still there keeps its record and spends
+/// an attempt, and a record that has spent `MAX_PENDING_AUDIO_DELETION_ATTEMPTS`
+/// of them is dropped with a log line, so a snapshot nothing can ever remove is
+/// not re-probed on every dictation forever.
+///
+/// The counts are read here rather than passed in, so the cap is enforced in one
+/// place for both callers: the drain's retries and the retention sweep's own
+/// deletions.
+async fn settle_pending_audio_deletions(
+    pool: &sqlx::SqlitePool,
+    removed: &[String],
+    retained: &[String],
+) -> Result<(), String> {
+    if removed.is_empty() && retained.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await.map_err(|err| err.to_string())?;
+    for id in removed {
+        sqlx::query("DELETE FROM pending_audio_deletions WHERE id = ?1")
+            .bind(id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    for id in retained {
+        let attempts: Option<i64> =
+            sqlx::query_scalar("SELECT attempts FROM pending_audio_deletions WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|err| err.to_string())?;
+        // No record means another path already resolved this id; there is nothing
+        // to count and nothing to drop.
+        let Some(attempts) = attempts else {
+            continue;
+        };
+        if attempts + 1 >= MAX_PENDING_AUDIO_DELETION_ATTEMPTS {
+            log::error!(
+                "Giving up on the audio file for transcription {id} after {} attempts; a full \
+                 local data wipe still sweeps it",
+                attempts + 1
+            );
+            sqlx::query("DELETE FROM pending_audio_deletions WHERE id = ?1")
+                .bind(id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|err| err.to_string())?;
+        } else {
+            sqlx::query("UPDATE pending_audio_deletions SET attempts = attempts + 1 WHERE id = ?1")
+                .bind(id)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|err| err.to_string())?;
+        }
+    }
+    transaction.commit().await.map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -5239,7 +5505,12 @@ pub async fn download_and_open_mac_installer(
             return Err(error.to_string());
         }
     };
-    match wait_for_handoff(&mut child) {
+    // The wait below is `std::thread::sleep` in a loop for up to ten seconds, so it
+    // runs on a blocking thread: this is an async worker, and one blocked worker
+    // stalls every other command queued behind it. The child moves into the
+    // blocking task so nothing can drop the handle out from under the wait.
+    let handoff = run_blocking_off_async_worker(move || wait_for_handoff(&mut child)).await;
+    match handoff {
         Ok(true) => {}
         Ok(false) => {
             let _ = std::fs::remove_file(&dest);
@@ -5325,8 +5596,110 @@ mod handoff_tests {
             started.elapsed() < std::time::Duration::from_secs(5),
             "the bound must actually bound the wait, and must be the one passed in"
         );
-        let _ = child.kill();
-        let _ = child.wait();
+        // The child is the wait's to dispose of, and this asserts it did. A
+        // dropped `Child` is a zombie on Unix and a leaked process handle on
+        // Windows, so a `Ok(true)` return that leaves the process running strands
+        // one per updater attempt. `try_wait` reports `Some` only once the status
+        // has been collected, which is what reaping means here.
+        //
+        // This replaces a manual `kill`/`wait` cleanup at the end of this test.
+        // That cleanup is not harmless once the wait reaps: the pid is free for
+        // reuse the moment it is collected, so a second `kill` would signal
+        // whatever inherited it.
+        assert!(
+            matches!(child.try_wait(), Ok(Some(_))),
+            "an overrunning child must be killed and reaped by the wait itself, \
+             not left running after Ok(true)"
+        );
+    }
+
+    /// `reap_child` on a child that is still running: killed and collected.
+    ///
+    /// This is the helper both non-success exits from the wait use, so it is
+    /// pinned directly rather than only through the bound-expiry path.
+    #[test]
+    fn reaping_a_live_child_collects_its_status() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg("ping -n 4 127.0.0.1 >NUL");
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg("sleep 30");
+            c
+        };
+        let mut child = cmd.spawn().expect("a shell must be available");
+
+        super::reap_child(&mut child);
+
+        assert!(
+            matches!(child.try_wait(), Ok(Some(_))),
+            "a killed child must have been waited on, or it is a zombie"
+        );
+    }
+
+    /// The blocking wait must not run on the async worker that awaits it.
+    ///
+    /// Pinned by where the work lands, not by counting anything: the work reports
+    /// the thread it ran on over a channel this test owns, and the caller is a
+    /// Tokio test thread, so calling the work inline would put both on one thread
+    /// and fail. That is the claim that matters for `download_and_open_mac_installer`,
+    /// whose only offload is this call.
+    #[tokio::test]
+    async fn the_handoff_wait_runs_off_the_async_runtime_thread() {
+        let caller_thread = std::thread::current().id();
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        let handed_off = super::run_blocking_off_async_worker(move || {
+            let _ = sender.send(std::thread::current().id());
+            Ok(true)
+        })
+        .await;
+
+        assert_eq!(
+            handed_off,
+            Ok(true),
+            "the offload must report the blocking work's own result"
+        );
+        let work_thread = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the blocking work did not report a thread in time");
+        assert_ne!(
+            work_thread, caller_thread,
+            "the wait ran inline on the async runtime thread, so a ten-second \
+             `thread::sleep` loop would stall every command queued behind it"
+        );
+    }
+
+    /// A failure inside the blocking work reaches the caller as its own error,
+    /// rather than being swallowed by the offload.
+    #[tokio::test]
+    async fn an_error_from_the_blocking_work_survives_the_offload() {
+        let result = super::run_blocking_off_async_worker(|| {
+            Err::<(), _>("Failed to wait for `open`".into())
+        })
+        .await;
+
+        assert_eq!(
+            result,
+            Err("Failed to wait for `open`".to_string()),
+            "the caller's error must not be replaced by the offload's plumbing"
+        );
+    }
+
+    /// A panic in the blocking work becomes an error. Tauri command futures must
+    /// not unwind into the runtime's worker task.
+    #[tokio::test]
+    async fn a_panicking_blocking_task_becomes_an_error() {
+        let result = super::run_blocking_off_async_worker(|| -> Result<(), String> {
+            panic!("blocking task exploded");
+        })
+        .await;
+
+        assert!(
+            result.is_err(),
+            "a panicking task must surface as Err, not unwind the caller"
+        );
     }
 }
 
@@ -5336,7 +5709,8 @@ mod handoff_tests {
 /// child is still running when the bound expires the hand-off is treated as
 /// successful: `open` normally returns immediately, so outliving the window means
 /// something else is going on, and refusing to continue would be worse than the
-/// ambiguity.
+/// ambiguity. A child that is still alive on that path is killed and reaped rather
+/// than dropped; see `wait_for_handoff_within`.
 fn wait_for_handoff(child: &mut std::process::Child) -> Result<bool, String> {
     // Generous, because a loaded machine can make a LaunchServices hand-off
     // sluggish. The bound is a parameter rather than a constant inside the loop
@@ -5354,13 +5728,57 @@ fn wait_for_handoff_within(
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status.success()),
             Ok(None) => {}
-            Err(error) => return Err(format!("Failed to wait for `open`: {error}")),
+            Err(error) => {
+                reap_child(child);
+                return Err(format!("Failed to wait for `open`: {error}"));
+            }
         }
         if std::time::Instant::now() >= deadline {
+            // The hand-off still counts as successful, but the child is alive and
+            // this function is what owns the handle. Kill and reap rather than
+            // return with it dropped, for the reason the terminal-command timeout
+            // above gives: a dropped `Child` is a zombie on Unix and a leaked
+            // process handle on Windows, and every retry of the updater collects
+            // another one for as long as the app runs.
+            reap_child(child);
             return Ok(true);
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// Terminate a child that is still running and collect its status.
+///
+/// Best effort on both halves, deliberately: `kill` fails once the child has
+/// exited on its own, and `wait` reaps it either way, so the status is still
+/// collected. Nothing here can report an error usefully — every caller is already
+/// returning, and a child that cannot be killed is a child that cannot be waited
+/// on either.
+fn reap_child(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Run blocking work on the runtime's blocking pool instead of an async worker.
+///
+/// For work that is a synchronous wait — polling a child process with
+/// `std::thread::sleep` — which on an async worker thread blocks everything else
+/// the runtime has queued behind it for as long as it sleeps. Same offload, and
+/// same reasoning, as `run_terminal_command` and the retention sweep.
+///
+/// `spawn_blocking` rather than rewriting the wait as an async `tokio::time` loop:
+/// the work owns a `std::process::Child`, and an async loop would hold that handle
+/// across `.await` points, so a command future that is dropped or aborted would
+/// abandon the child unreaped — the leak this exists to close. A blocking task
+/// runs to completion whatever the awaiting future does.
+async fn run_blocking_off_async_worker<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("Blocking task panicked: {err}"))?
 }
 
 /// Update metadata for a channel check. Mirrors the updater plugin's own
@@ -7587,12 +8005,19 @@ mod tests {
     /// stranded row cannot be exported, the sweep repairs it, and it exports
     /// again.
     ///
-    /// This is the chain the defect rests on. `purge_stale_transcription_audio`
-    /// deletes snapshots and clears the rows' metadata afterwards, so anything
-    /// that interrupts that gap leaves `audio_path` set on a row whose `.wav` is
-    /// gone — and `build_transcription_export` treats a marker it cannot read as
-    /// an error, so the transcript stays readable in the app but cannot be
-    /// exported at all. Nothing in the row records that it needs repairing.
+    /// This is the chain the defect rests on, and the ordering has since changed, so
+    /// read this as history rather than as current behaviour. `purge_stale_transcription_audio`
+    /// used to delete snapshots and clear the rows' metadata afterwards, so
+    /// anything that interrupted that gap left `audio_path` set on a row whose
+    /// `.wav` was gone — and `build_transcription_export` treats a marker it cannot
+    /// read as an error, so the transcript stayed readable in the app but could
+    /// not be exported at all. Nothing in the row recorded that it needed repair.
+    ///
+    /// The sweep now releases the marker and queues the id in one transaction
+    /// *before* touching the filesystem, so that window no longer opens going
+    /// forward. This test is the other half: rows already stranded by a build
+    /// with the old ordering are still on disk in users' databases, and repairing
+    /// them is exactly what the sweep is for.
     ///
     /// The stranded row sits *inside* the retention window, because that is
     /// where the previous sweep could not reach it: the query skipped the newest
@@ -7606,19 +8031,9 @@ mod tests {
         let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
             .expect("managed audio directory must be openable");
         let audio_dir = app_data.join("transcription-audio");
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("in-memory pool must open");
-        sqlx::query(
-            "CREATE TABLE transcriptions (
-                id TEXT PRIMARY KEY,
-                audio_path TEXT,
-                audio_duration_ms INTEGER
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("fixture table must be creatable");
+        // The sweep records every id it releases before it deletes, so the fixture
+        // needs that table as well as `transcriptions`.
+        let pool = stranded_test_pool().await;
 
         // Newest first, as the command's `ORDER BY timestamp DESC` produces.
         // Two more rows than the cap, so the split is actually exercised.
@@ -7648,16 +8063,6 @@ mod tests {
         std::fs::create_dir(audio_dir.join("blocked.wav"))
             .expect("the blocking fixture must be creatable");
 
-        async fn marker_of(pool: &sqlx::SqlitePool, id: &str) -> Option<String> {
-            let row: (Option<String>,) =
-                sqlx::query_as("SELECT audio_path FROM transcriptions WHERE id = ?1")
-                    .bind(id)
-                    .fetch_one(pool)
-                    .await
-                    .expect("the fixture row must still be readable");
-            row.0
-        }
-
         // Before the sweep, the row advertises audio that is not on disk. That
         // is the state the chain rests on, and it has to be shown failing here
         // rather than assumed: `stranded` is handed no `.wav` by the fixture, so
@@ -7682,6 +8087,19 @@ mod tests {
         assert!(
             refused_before.is_err(),
             "a row advertising a missing snapshot must not export as if it were text-only"
+        );
+        // `is_err` alone would accept a refusal for any reason — a zip it could not
+        // create, a write that failed — and then the success below would prove
+        // nothing about the marker. The refusal has to be the one this state
+        // produces, so the reason is asserted rather than inferred.
+        let refusal = refused_before.expect_err("the pre-sweep export must refuse");
+        assert!(
+            refusal.contains("Unable to read the recorded audio"),
+            "the pre-sweep export refused for the wrong reason: {refusal}"
+        );
+        assert!(
+            !root.join("before-sweep.zip").exists(),
+            "a refused export must not leave an archive behind that looks complete"
         );
 
         let marked: Vec<(String, bool)> = ids.iter().map(|id| (id.to_string(), true)).collect();
@@ -7741,6 +8159,18 @@ mod tests {
             zip_entry_names(&save_path),
             vec!["processed.txt".to_string()],
             "a repaired row exports text-only, which is what the user still has"
+        );
+        // The entry *name* follows from the marker being `None`, so on its own it
+        // adds nothing to the assertion above. The bytes do: an export that
+        // succeeded while writing the wrong transcript, or none at all, would pass
+        // every other assertion in this test. What the user gets back is the
+        // point, so it is read out of the archive rather than inferred from the
+        // result being `Ok`.
+        assert_eq!(
+            zip_entry_bytes(&save_path, "processed.txt"),
+            b"the processed words".to_vec(),
+            "the repaired row must export the transcript the user wrote, not just \
+             an archive that exists"
         );
 
         let _ = std::fs::remove_dir_all(&root);
@@ -7897,19 +8327,9 @@ mod tests {
         let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
             .expect("managed audio directory must be openable");
         let audio_dir = app_data.join("transcription-audio");
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("in-memory pool must open");
-        sqlx::query(
-            "CREATE TABLE transcriptions (
-                id TEXT PRIMARY KEY,
-                audio_path TEXT,
-                audio_duration_ms INTEGER
-            )",
-        )
-        .execute(&pool)
-        .await
-        .expect("fixture table must be creatable");
+        // The sweep records every id it releases before it deletes, so the fixture
+        // needs that table as well as `transcriptions`.
+        let pool = stranded_test_pool().await;
 
         std::fs::write(audio_dir.join("live.wav"), b"live bytes")
             .expect("managed fixture must be writable");
@@ -8089,6 +8509,458 @@ mod tests {
 
         assert_eq!(outcome.cleared, vec![empty_marker_id.to_string()]);
         assert!(outcome.retained.is_empty());
+    }
+
+    /// A row deleted while its snapshot could not be removed leaves a `.wav` that
+    /// nothing can find: `purge` selects `WHERE audio_path IS NOT NULL` and the row
+    /// is gone, and the orphan sweep runs only on a full local wipe. This is the
+    /// chain that closes it, through the three real functions rather than a
+    /// restatement of any one of them.
+    ///
+    /// The failure is provoked the way this file already does it: a *directory*
+    /// named like the snapshot makes `remove_file` fail with something other than
+    /// `NotFound` on every platform and for any uid, which is the shape a Windows
+    /// sharing violation has.
+    #[tokio::test]
+    async fn a_snapshot_stranded_by_a_deleted_row_is_removed_by_a_later_sweep() {
+        let root = lifecycle_test_root("stranded-snapshot-retried");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+        sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+            .bind("stranded")
+            .bind("/audio/stranded.m4a")
+            .execute(&pool)
+            .await
+            .expect("fixture row must be insertable");
+        std::fs::create_dir(audio_dir.join("stranded.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        // Step 1: the delete attempt strands the snapshot.
+        let outcome =
+            delete_audio_entries_in_dir(&held_audio_dir, vec![("stranded".to_string(), true)]);
+        assert_eq!(
+            outcome.retained,
+            vec!["stranded".to_string()],
+            "an undeletable snapshot must be reported as retained"
+        );
+        assert!(audio_dir.join("stranded.wav").exists());
+
+        // Step 2: the row goes, and the retained id goes with it — into the queue a
+        // sweep can see. Both in one transaction, so the two cannot disagree.
+        delete_transcription_recording_stranded_audio(&pool, "stranded", &outcome.retained)
+            .await
+            .expect("the row deletion must succeed");
+        let rows_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions")
+            .fetch_one(&pool)
+            .await
+            .expect("the transcription table must be readable");
+        assert_eq!(rows_left, 0, "the user's row must actually be deleted");
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("stranded".to_string(), 0)],
+            "a snapshot that outlived its row must be recorded somewhere a sweep \
+             can find it, or nothing ever will"
+        );
+
+        // Step 3: playback stops holding the file, and the next sweep removes it.
+        // The fixture becomes an ordinary deletable file rather than being removed
+        // outright, so this asserts the bytes were deleted, not just that the
+        // queue was emptied.
+        std::fs::remove_dir(audio_dir.join("stranded.wav"))
+            .expect("the blocking fixture must be removable");
+        std::fs::write(audio_dir.join("stranded.wav"), b"recorded words")
+            .expect("managed fixture must be writable");
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the drain must succeed");
+
+        assert!(
+            !audio_dir.join("stranded.wav").exists(),
+            "the stranded snapshot must be gone after a sweep"
+        );
+        assert!(
+            pending_rows(&pool).await.is_empty(),
+            "a resolved record must not be left behind"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The record has to survive the process, not just the call.
+    ///
+    /// The state this fixes is reached across an app restart: `transcription_delete`
+    /// committed the row deletion and the record together, and the retry had not
+    /// happened before the app exited. A same-process chain cannot produce that, so
+    /// the record is inserted directly here — the queue is the only thing that
+    /// carries the id across the restart — and a later sweep has to act on it.
+    ///
+    /// Also the only test that reads the queue the way production does, through the
+    /// `SELECT` at the top of the drain, rather than through the writer.
+    #[tokio::test]
+    async fn a_record_written_before_a_restart_is_swept_by_a_later_run() {
+        let root = lifecycle_test_root("stranded-survives-restart");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+        std::fs::write(audio_dir.join("survivor.wav"), b"recorded words")
+            .expect("managed fixture must be writable");
+        // Exactly what the delete transaction leaves behind: no transcription row,
+        // one queued id, and its bytes still on disk.
+        sqlx::query("INSERT INTO pending_audio_deletions (id) VALUES ('survivor')")
+            .execute(&pool)
+            .await
+            .expect("the recorded id must be insertable");
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the drain must succeed");
+
+        assert!(
+            !audio_dir.join("survivor.wav").exists(),
+            "a snapshot whose record outlived the process must be removed by the \
+             next sweep, which is the only thing that can still find it"
+        );
+        assert!(
+            pending_rows(&pool).await.is_empty(),
+            "the record must be cleared once the bytes are gone"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stale row releases its marker before the sweep touches the filesystem, so an
+    /// interrupted sweep can never leave a row claiming a file that is already
+    /// gone — the state that makes `export_transcription` refuse outright.
+    ///
+    /// Pinned by the observable consequence rather than by ordering: the row's
+    /// marker is gone even though its snapshot is still on disk and undeletable,
+    /// and the id is queued instead. Under the old order (delete, then clear) the
+    /// marker would still be set here, because a failed delete retained it.
+    #[tokio::test]
+    async fn a_stale_row_releases_its_marker_and_queues_the_id_before_any_delete() {
+        let root = lifecycle_test_root("sweep-releases-before-delete");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+
+        // More rows than the cap, newest first as the command's query produces, so
+        // `blocked` is past the cap and is the one the sweep tries to delete.
+        let mut marked: Vec<(String, bool)> = (0..MAX_RETAINED_TRANSCRIPTION_AUDIO)
+            .map(|index| (format!("filler-{index:02}"), true))
+            .collect();
+        marked.push(("blocked".to_string(), true));
+        for (id, _) in &marked {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+        // A directory named like the snapshot, so `remove_file` fails the way an
+        // open playback reader does on Windows.
+        std::fs::create_dir(audio_dir.join("blocked.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked)
+            .await
+            .expect("the sweep must succeed");
+
+        assert!(
+            audio_dir.join("blocked.wav").exists(),
+            "the snapshot must still be on disk: this is the fixture that could not \
+             be deleted"
+        );
+        assert_eq!(
+            marker_of(&pool, "blocked").await,
+            None,
+            "a row whose snapshot the sweep tried to delete must stop claiming it, \
+             or an interruption between the delete and the clear leaves it \
+             unexportable forever"
+        );
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("blocked".to_string(), 1)],
+            "the undeleted snapshot must be queued with the attempt counted, or the \
+             release above is what strands it"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The queue entry from the sweep above is not a dead end: once the holder lets
+    /// go, the next sweep removes the bytes.
+    #[tokio::test]
+    async fn the_snapshot_the_sweep_only_queued_is_removed_by_the_next_one() {
+        let root = lifecycle_test_root("sweep-queued-then-removed");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+
+        let mut marked: Vec<(String, bool)> = (0..MAX_RETAINED_TRANSCRIPTION_AUDIO)
+            .map(|index| (format!("filler-{index:02}"), true))
+            .collect();
+        marked.push(("later".to_string(), true));
+        for (id, _) in &marked {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+        std::fs::create_dir(audio_dir.join("later.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked.clone())
+            .await
+            .expect("the first sweep must succeed");
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("later".to_string(), 1)],
+            "the first sweep can only queue it"
+        );
+
+        // Playback stops holding the file: the blocking fixture becomes an ordinary
+        // deletable file, so the assertion below is about the bytes, not the queue.
+        std::fs::remove_dir(audio_dir.join("later.wav"))
+            .expect("the blocking fixture must be removable");
+        std::fs::write(audio_dir.join("later.wav"), b"recorded words")
+            .expect("managed fixture must be writable");
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the retry must succeed");
+
+        assert!(
+            !audio_dir.join("later.wav").exists(),
+            "a queued snapshot must be removed once it is deletable"
+        );
+        assert!(pending_rows(&pool).await.is_empty());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The interrupted state the old order could produce is still repairable, which
+    /// is why the repair pass exists at all: files gone, markers not yet cleared.
+    ///
+    /// Both halves of the window are covered — a row inside the retention window,
+    /// which only the repair pass can reach, and a row past it, which the next
+    /// sweep re-selects and finds `NotFound`. This is the state an older build, or
+    /// a process killed mid-sweep, can leave behind, so the fix for that ordering
+    /// does not remove the need for this pass.
+    #[tokio::test]
+    async fn an_interrupted_metadata_clear_is_repaired_by_the_next_sweep() {
+        let root = lifecycle_test_root("sweep-interrupted-clear");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let pool = stranded_test_pool().await;
+
+        // `inside` is the newest marked row, so it sits within the retention window;
+        // `outside` is past it. Neither has a file, which is exactly the state a
+        // sweep interrupted between the delete and the clear leaves behind.
+        let mut marked: Vec<(String, bool)> = vec![("inside".to_string(), true)];
+        marked.extend(
+            (0..MAX_RETAINED_TRANSCRIPTION_AUDIO).map(|index| (format!("filler-{index:02}"), true)),
+        );
+        marked.push(("outside".to_string(), true));
+        for (id, _) in &marked {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+
+        let cleared = purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked)
+            .await
+            .expect("the sweep must succeed");
+
+        assert_eq!(
+            marker_of(&pool, "inside").await,
+            None,
+            "a row inside the retention window whose snapshot is gone must be repaired"
+        );
+        assert_eq!(
+            marker_of(&pool, "outside").await,
+            None,
+            "a row past the window whose snapshot is gone must be repaired too"
+        );
+        assert!(cleared.contains(&"inside".to_string()));
+        assert!(cleared.contains(&"outside".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A snapshot still held when the queue is written is retried, and the queue
+    /// must not grow while it is: one record per id, whatever happens.
+    #[tokio::test]
+    async fn a_repeated_failure_keeps_one_record_and_counts_the_attempt() {
+        let root = lifecycle_test_root("stranded-retry-counted");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+        std::fs::create_dir(audio_dir.join("held.wav"))
+            .expect("the blocking fixture must be creatable");
+        sqlx::query("INSERT INTO pending_audio_deletions (id) VALUES ('held')")
+            .execute(&pool)
+            .await
+            .expect("the queued record must be insertable");
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the first drain must succeed");
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("held".to_string(), 1)],
+            "a snapshot still on disk must stay queued, with the attempt counted"
+        );
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the second drain must succeed");
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("held".to_string(), 2)],
+            "a second failure must add no second record"
+        );
+
+        // Re-queuing the same id must not add a row either, which is the other half
+        // of "must not grow unboundedly": the key is what bounds the table.
+        delete_transcription_recording_stranded_audio(&pool, "absent", &["held".to_string()])
+            .await
+            .expect("recording an already-queued id must succeed");
+        assert_eq!(
+            pending_rows(&pool).await,
+            vec![("held".to_string(), 2)],
+            "re-queuing a known id must neither duplicate it nor reset its count"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of the bound: a record that can never succeed stops being
+    /// retried. The file is still there afterwards, so this asserts the record is
+    /// dropped rather than the failure being hidden.
+    #[tokio::test]
+    async fn a_record_that_cannot_succeed_is_dropped_after_the_attempt_cap() {
+        let root = lifecycle_test_root("stranded-attempt-cap");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = stranded_test_pool().await;
+        std::fs::create_dir(audio_dir.join("doomed.wav"))
+            .expect("the blocking fixture must be creatable");
+        sqlx::query("INSERT INTO pending_audio_deletions (id, attempts) VALUES ('doomed', ?1)")
+            .bind(MAX_PENDING_AUDIO_DELETION_ATTEMPTS - 1)
+            .execute(&pool)
+            .await
+            .expect("the queued record must be insertable");
+
+        drain_pending_audio_deletions(&pool, &held_audio_dir)
+            .await
+            .expect("the drain must succeed");
+
+        assert!(
+            pending_rows(&pool).await.is_empty(),
+            "a record past the cap must be dropped, not retried forever"
+        );
+        assert!(
+            audio_dir.join("doomed.wav").exists(),
+            "the file is still there: the record was given up on, not satisfied"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The ordinary path must queue nothing. Every transcription deletion goes
+    /// through here, so a queue that grew on the normal path would be a leak of its
+    /// own — and would retry files that are already gone.
+    #[tokio::test]
+    async fn deleting_a_row_whose_snapshot_went_records_nothing_to_retry() {
+        let pool = stranded_test_pool().await;
+        sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+            .bind("ordinary")
+            .bind("/audio/ordinary.m4a")
+            .execute(&pool)
+            .await
+            .expect("fixture row must be insertable");
+
+        delete_transcription_recording_stranded_audio(&pool, "ordinary", &[])
+            .await
+            .expect("the row deletion must succeed");
+
+        let rows_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transcriptions")
+            .fetch_one(&pool)
+            .await
+            .expect("the transcription table must be readable");
+        assert_eq!(rows_left, 0, "the row must still be deleted");
+        assert!(
+            pending_rows(&pool).await.is_empty(),
+            "a snapshot that was removed with its row must not be queued"
+        );
+    }
+
+    /// In-memory pool with the two tables these tests need, at the shapes the
+    /// production code queries them with.
+    async fn stranded_test_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+        sqlx::query(
+            "CREATE TABLE pending_audio_deletions (
+                id TEXT PRIMARY KEY NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+        pool
+    }
+
+    /// The queue's contents as `(id, attempts)`, in id order.
+    async fn pending_rows(pool: &sqlx::SqlitePool) -> Vec<(String, i64)> {
+        sqlx::query_as("SELECT id, attempts FROM pending_audio_deletions ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .expect("the queue must be readable")
+    }
+
+    /// A row's audio marker, which is what says whether it still claims a snapshot.
+    async fn marker_of(pool: &sqlx::SqlitePool, id: &str) -> Option<String> {
+        let row: (Option<String>,) =
+            sqlx::query_as("SELECT audio_path FROM transcriptions WHERE id = ?1")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .expect("the fixture row must still be readable");
+        row.0
     }
 
     /// `clear_audio_metadata_for_deleted_files` is what the purge command calls

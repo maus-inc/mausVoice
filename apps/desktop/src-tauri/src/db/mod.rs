@@ -162,6 +162,14 @@ pub const POST_PROCESS_FALLBACK_MIGRATION_SQL: &str =
 /// the user's file. 89 sits above the window, so it is a plain forward step.
 pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
     include_str!("migrations/089_user_profile_timestamps.sql");
+/// Ids whose transcription row is gone but whose audio snapshot outlived the
+/// delete, so `drain_pending_audio_deletions` can still find and remove it.
+///
+/// Version 90 for the same reason 89 is 89: 71-88 are the retirement window for
+/// the steps folded into 69, and a number inside it would be checksum-compared
+/// against databases that already applied some of those steps individually.
+pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
+    include_str!("migrations/090_pending_audio_deletions.sql");
 /// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
 /// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
 /// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
@@ -592,6 +600,12 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             version: 89,
             description: "add_user_profile_timestamps",
             sql: USER_PROFILE_TIMESTAMPS_MIGRATION_SQL,
+            kind: tauri_plugin_sql::MigrationKind::Up,
+        },
+        tauri_plugin_sql::Migration {
+            version: 90,
+            description: "create_pending_audio_deletions_table",
+            sql: PENDING_AUDIO_DELETIONS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]
