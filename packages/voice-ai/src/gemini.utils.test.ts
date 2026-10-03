@@ -771,6 +771,73 @@ describe("Gemini thinking controls", () => {
 });
 
 describe("Gemini Files API edge cases", () => {
+  /**
+   * The Files API mock skeleton, written once.
+   *
+   * Every test in this block walks the same four steps: POST the upload to get a
+   * resumable URL, PUT to that URL to get the file's `uri`, poll the file for its
+   * state, and DELETE it when the transcription is done. Only the polling state,
+   * the cleanup answer and the model call's text differ between them, so those
+   * three are the parameters. A copy per test meant a change to the upload
+   * handshake or the file URI had to be found in every copy, and the copies that
+   * had drifted were the ones nothing exercised.
+   */
+  const filesApiFetch = ({
+    pollState,
+    deleteHandler,
+    fallbackText = "ok",
+  }: {
+    /** The body each successive polling GET answers, given the 1-based count. */
+    pollState?: (pollCount: number) => Record<string, unknown>;
+    /** The cleanup DELETE. Return a `Response` to settle it, or never to stall. */
+    deleteHandler?: (init?: RequestInit) => Promise<Response>;
+    /** The text the model call answers with once the file is ready. */
+    fallbackText?: string;
+  } = {}) => {
+    let pollCount = 0;
+    return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({}), {
+            status: 200,
+            headers: {
+              "x-goog-upload-url": "https://upload.example.com/resumable",
+            },
+          }),
+        );
+      }
+      if (url.includes("upload.example.com")) {
+        return Promise.resolve(
+          jsonResponse({
+            file: {
+              uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
+              mimeType: "audio/wav",
+            },
+          }),
+        );
+      }
+      if (
+        url.includes("/v1beta/files/abc") &&
+        (init?.method === "GET" || !init?.method)
+      ) {
+        pollCount += 1;
+        return Promise.resolve(
+          jsonResponse(pollState ? pollState(pollCount) : { state: "ACTIVE" }),
+        );
+      }
+      if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
+        return deleteHandler
+          ? deleteHandler(init)
+          : Promise.resolve(new Response(null, { status: 200 }));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: fallbackText }] } }],
+        }),
+      );
+    });
+  };
+
   it("throws when upload URL header is missing", async () => {
     const customFetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes("/upload/v1beta/files")) {
@@ -968,49 +1035,14 @@ describe("Gemini Files API edge cases", () => {
 
   it("aborts during polling when signal is aborted", async () => {
     const controller = new AbortController();
-    let pollCount = 0;
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
+    const customFetch = filesApiFetch({
+      pollState: (pollCount) => {
+        if (pollCount === 1) {
+          controller.abort();
         }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (
-          url.includes("/v1beta/files/abc") &&
-          (init?.method === "GET" || !init?.method)
-        ) {
-          pollCount++;
-          if (pollCount === 1) {
-            controller.abort();
-          }
-          return Promise.resolve(jsonResponse({ state: "PROCESSING" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          return Promise.resolve(new Response(null, { status: 200 }));
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "ok" }] } }],
-          }),
-        );
-      });
+        return { state: "PROCESSING" };
+      },
+    });
     await expect(
       geminiTranscribeAudio({
         apiKey: "k",
@@ -1033,51 +1065,22 @@ describe("Gemini Files API edge cases", () => {
     // which is what a real transport does with a request it is told to abandon.
     const controller = new AbortController();
     let cleanupSignal: AbortSignal | undefined;
-    const customFetch = vi
-      .fn()
-      .mockImplementation((url: string, init?: RequestInit) => {
-        if (url.includes("/upload/v1beta/files") && init?.method === "POST") {
-          return Promise.resolve(
-            new Response(JSON.stringify({}), {
-              status: 200,
-              headers: {
-                "x-goog-upload-url": "https://upload.example.com/resumable",
-              },
-            }),
-          );
-        }
-        if (url.includes("upload.example.com")) {
-          return Promise.resolve(
-            jsonResponse({
-              file: {
-                uri: "https://generativelanguage.googleapis.com/v1beta/files/abc",
-                mimeType: "audio/wav",
-              },
-            }),
-          );
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "GET") {
-          return Promise.resolve(jsonResponse({ state: "ACTIVE" }));
-        }
-        if (url.includes("/v1beta/files/abc") && init?.method === "DELETE") {
-          cleanupSignal = init?.signal ?? undefined;
-          // The cancel lands while the deletion is in flight, so the request has
-          // to already be listening for it.
-          queueMicrotask(() => controller.abort());
-          return new Promise((_resolve, reject) => {
-            const onAbort = () =>
-              reject(new DOMException("aborted", "AbortError"));
-            if (cleanupSignal?.aborted) onAbort();
-            else
-              cleanupSignal?.addEventListener("abort", onAbort, { once: true });
-          });
-        }
-        return Promise.resolve(
-          jsonResponse({
-            candidates: [{ content: { parts: [{ text: "cleaned up" }] } }],
-          }),
-        );
-      });
+    const customFetch = filesApiFetch({
+      fallbackText: "cleaned up",
+      deleteHandler: (init) => {
+        cleanupSignal = init?.signal ?? undefined;
+        // The cancel lands while the deletion is in flight, so the request has
+        // to already be listening for it.
+        queueMicrotask(() => controller.abort());
+        return new Promise((_resolve, reject) => {
+          const onAbort = () =>
+            reject(new DOMException("aborted", "AbortError"));
+          if (cleanupSignal?.aborted) onAbort();
+          else
+            cleanupSignal?.addEventListener("abort", onAbort, { once: true });
+        });
+      },
+    });
 
     const pending = geminiTranscribeAudio({
       apiKey: "k",

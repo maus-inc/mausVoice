@@ -197,6 +197,41 @@ describe("redactProviderMessage", () => {
     expect(output).not.toContain(QUOTED_TAIL);
   });
 
+  it("scrubs a quoted authorization value that opens with a scheme word", () => {
+    // The two labelled passes read the same value with the same helpers, so they
+    // have to agree on where the credential ends. A quoted value whose first
+    // token is a scheme word reaches both the scheme run and the closing-quote
+    // run, and the scheme run is shorter: `token abc def` ends at the parameter
+    // walk's second token, while the closing quote is two characters further on.
+    // Taking only the scheme run left `def` beside the redaction in clear --
+    // `authorization: "token abc def"` printed `[redacted] def"` where the same
+    // value after an `api_key` label printed `[redacted]"`. Which end wins is
+    // therefore pinned here as "the longer", because that is the only reading
+    // under which a value cannot be scrubbed after one label and not the other.
+    const output = providerErrorUtils.redactProviderMessage(
+      'authorization: "token abc def"',
+    );
+    expect(output).not.toContain("token");
+    expect(output).not.toContain("abc");
+    expect(output).not.toContain("def");
+    // The quote is the document's, so it survives and the tail stays readable.
+    expect(output).toBe('[redacted]"');
+  });
+
+  it("scrubs the same quoted scheme value after an api_key label identically", () => {
+    // The point of the case above is agreement between two callers of one
+    // decision, so the equality is asserted directly rather than left implicit.
+    const value = "token abc def";
+    const afterApiKey = providerErrorUtils.redactProviderMessage(
+      `api_key="${value}"`,
+    );
+    const afterAuthorization = providerErrorUtils.redactProviderMessage(
+      `authorization: "${value}"`,
+    );
+    expect(afterApiKey).toBe('[redacted]"');
+    expect(afterAuthorization).toBe(afterApiKey);
+  });
+
   it("keeps the rest of a JSON document readable around a quoted key value", () => {
     const body = `{"api_key":"${QUOTED_HEAD} ${QUOTED_TAIL}","model":"llama-3"}`;
     const output = providerErrorUtils.redactProviderMessage(body);

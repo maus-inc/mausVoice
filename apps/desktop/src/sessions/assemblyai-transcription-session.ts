@@ -34,6 +34,13 @@ export const startAssemblyAIStreaming = async (
   return new Promise((resolve, reject) => {
     let ws: WebSocket | null = null;
     let isFinalized = false;
+    // Whether the startup handshake below has settled this promise. It has three
+    // outs -- `onopen` resolves, `onerror` rejects -- and a socket that closes
+    // before it ever opens takes neither, because the WebSocket spec delivers
+    // `close` for a failed handshake without promising an `error` first. The
+    // flag is what lets `onclose` tell "the session is up and this is the end of
+    // it" from "the session never started", which need opposite handling.
+    let startupSettled = false;
     const transcriptState = createTranscriptAccumulator();
 
     const buffer = createAudioChunkBuffer(() => ws, {
@@ -148,6 +155,7 @@ export const startAssemblyAIStreaming = async (
       getLogger().info(`[${LOGGER_PREFIX}] Connected, sending auth...`);
       buffer.flush(false);
       getLogger().info(`[${LOGGER_PREFIX}] Session ready`);
+      startupSettled = true;
       resolve({ finalize, cleanup, writeAudioChunk });
     };
 
@@ -189,6 +197,7 @@ export const startAssemblyAIStreaming = async (
 
     ws.onerror = (error) => {
       getLogger().error(`[${LOGGER_PREFIX}] WebSocket error:`, error);
+      startupSettled = true;
       cleanup();
       reject(new Error("WebSocket connection failed"));
     };
@@ -198,6 +207,18 @@ export const startAssemblyAIStreaming = async (
         code: event.code,
         reason: event.reason,
       });
+      // A close before the handshake finished settles nothing on its own. Left
+      // as it was, `await startAssemblyAIStreaming(...)` never returned:
+      // `onRecordingStart` stayed suspended, so the session never became ready,
+      // `cleanup()` reset the buffer the fallback path was waiting on, and the
+      // caller fell through to no provider at all -- a silent dead microphone
+      // rather than a visible "cannot connect".
+      if (!startupSettled) {
+        startupSettled = true;
+        cleanup();
+        reject(new Error("WebSocket closed before the connection opened"));
+        return;
+      }
       cleanup();
     };
   });

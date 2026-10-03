@@ -232,12 +232,30 @@ const startElevenLabsStreaming = async (
 
     const writeAudioChunk = (rawChunk: Float32Array) => {
       if (isFinalized) return;
+      // Queue only for a socket that is still able to receive. The test is
+      // `readyState`, not `ws`: `cleanup` only nulls the socket when it is not
+      // already CLOSED, so after a normal close `ws` is still the closed socket,
+      // and a `!ws` guard would have changed nothing at all.
+      //
+      // There is no reconnect to queue for. The comment this replaces spoke of
+      // "reconnecting", but nothing in this session ever opens a second socket,
+      // so `flushPendingSamples` below stayed a no-op for the rest of the
+      // recording while every chunk pushed into `pendingChunks` stayed there
+      // too: hours of audio, retained, never sent, until `finalize` released it.
+      if (
+        !ws ||
+        ws.readyState === WebSocket.CLOSING ||
+        ws.readyState === WebSocket.CLOSED
+      ) {
+        return;
+      }
       try {
         const typedChunk = needsResample
           ? resampleAudio(rawChunk, inputSampleRate, sampleRate)
           : rawChunk;
-        // Queue even while the socket is reconnecting; flushPendingSamples is a
-        // no-op until it is OPEN, so speech is not dropped on a transient close.
+        // Still queue while the socket is CONNECTING: `flushPendingSamples` is a
+        // no-op until it is OPEN, and `onopen` drains the backlog, so speech
+        // captured during connect is kept rather than dropped.
         pendingChunks.push(typedChunk);
         pendingSampleCountRef.value += typedChunk.length;
         flushPendingSamples(false);

@@ -198,7 +198,17 @@ describe("openaiStreamChat sampling parameters", () => {
   // point (Azure by deployment name, OpenRouter by routing prefix) and answer a
   // request carrying the sampling or penalty fields with a 400 before any
   // token is generated.
-  it.each(["o1", "o1-mini", "o3-mini", "o4-mini", "openai/o3-mini"])(
+  it.each([
+    "o1",
+    "o1-mini",
+    "o3-mini",
+    "o4-mini",
+    "openai/o3-mini",
+    // The same o-series id behind a colon-qualified vendor prefix. This is the
+    // shape the boundary test used to read as a plain sampled model, so it sent
+    // `temperature` and took a 400 from the provider.
+    "openai:o3-mini",
+  ])(
     "sends no sampling or penalty parameter to the o-series model %s",
     async (model) => {
       const params = await streamParams(model);
@@ -225,16 +235,23 @@ describe("openaiStreamChat sampling parameters", () => {
     },
   );
 
-  it.each(["gpt-4o-mini", "gpt-4.1", "gpt-5.6-sol", "gpt-oss-20b"])(
-    "still pins the sampling parameters on %s",
-    async (model) => {
-      const params = await streamParams(model);
-      expect(params).toMatchObject({
-        temperature: 0.4,
-        top_p: 0.9,
-        frequency_penalty: 0.1,
-        presence_penalty: 0.2,
-      });
-    },
-  );
+  it.each([
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-5.6-sol",
+    "gpt-oss-20b",
+    // A hyphen is the intra-id separator every published id uses, so a user-chosen
+    // Azure deployment alias that happens to contain `o<digit>` is still a
+    // sampled model. Widening the prefix boundary to include `-` would read this
+    // as a reasoning model and drop the parameters without an error.
+    "llama-o1-finetune",
+  ])("still pins the sampling parameters on %s", async (model) => {
+    const params = await streamParams(model);
+    expect(params).toMatchObject({
+      temperature: 0.4,
+      top_p: 0.9,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.2,
+    });
+  });
 });

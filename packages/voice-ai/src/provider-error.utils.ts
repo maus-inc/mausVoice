@@ -210,25 +210,6 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
 const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
 
 /**
- * Redact the value of every `authorization` label, scheme and credential both.
- *
- * This was a pattern that matched the value as one token, which is right for
- * `authorization: gsk_abc` and wrong for every scheme that puts the credential
- * somewhere else: `Digest username="u", realm="r", response="s"` lost the scheme
- * word and kept the whole challenge, including the `response` the server
- * computed. It is a scanner now because the run's end is chosen by the text --
- * a scheme extends it past its parameters, a bare token does not -- which no
- * single pattern expresses.
- *
- * The separator may be quoted. A header echo or a request body arrives as JSON,
- * where a closing quote sits between the label and the `:` and another one opens
- * the value; requiring a bare `:` skipped the whole field, so the challenge went
- * into the log line and the persisted error metadata in the clear. Both quotes
- * are the document's, so they are consumed as syntax and the redaction keeps
- * their surroundings -- `{"authorization": "..."}` becomes
- * `{"[redacted]"}` -- rather than leaving a quote dangling in front of it.
- */
-/**
  * The end of the value a label starting at `index` names, or null when there is
  * no assignment here at all.
  *
@@ -263,11 +244,22 @@ const labelValueEnd = (
  * Where the credential after a value's first token ends.
  *
  * A scheme is the header's syntax rather than the credential, so its parameters
- * belong to the redaction: a bare token has no parameters for `schemeValueEnd` to
- * disambiguate quotes with, so a quoted one runs to its closing quote here for
- * the same reason the `api_key` scanner does it. The scheme branch is left alone:
- * it already ends at a quote, and a `Digest` challenge carries quotes of its own
- * (`nonce="u"`), which only the parameter walk can step over.
+ * belong to the redaction, and a bare token has no parameters for
+ * `schemeValueEnd` to disambiguate quotes with, so a quoted one runs to its
+ * closing quote as well. Both runs are taken and the LONGER wins, which is the
+ * whole point: a quoted scheme value can hold characters the scheme walk stops
+ * at, and taking only the scheme run left the remainder of the credential in
+ * clear. `authorization: "token abc def"` redacted to `[redacted] def"` while the
+ * same value after an `api_key` label redacted whole, because the scheme branch
+ * returned before the quote was ever read.
+ *
+ * This is deliberately the same order `apiKeyAssignmentEnd` applies, and the two
+ * must stay in step: they read the same `AUTHORIZATION_SCHEMES` and the same
+ * `schemeValueEnd`, and a value redaction that is correct after one label and
+ * leaks after the other is not a distinction any caller can act on. The `Digest`
+ * challenge is unaffected because its quote sits after the scheme's first token
+ * rather than before it, so `quote` is not the value's here and the scheme run
+ * stands on its own.
  */
 const credentialEnd = (
   message: string,
@@ -276,16 +268,35 @@ const credentialEnd = (
   quote: string,
 ): number => {
   const scheme = message.slice(valueStart, firstTokenEnd).toLowerCase();
-  if (AUTHORIZATION_SCHEMES.has(scheme)) {
-    return firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd));
-  }
-  if (!isQuote(quote)) return firstTokenEnd;
+  const schemeEnd = AUTHORIZATION_SCHEMES.has(scheme)
+    ? firstTokenEnd + schemeValueEnd(message.slice(firstTokenEnd))
+    : firstTokenEnd;
+  if (!isQuote(quote)) return schemeEnd;
   const closingQuoteEnd = quotedValueEnd(message, valueStart, quote);
   return closingQuoteEnd === null
-    ? firstTokenEnd
-    : Math.max(firstTokenEnd, closingQuoteEnd);
+    ? schemeEnd
+    : Math.max(schemeEnd, closingQuoteEnd);
 };
 
+/**
+ * Redact the value of every `authorization` label, scheme and credential both.
+ *
+ * This was a pattern that matched the value as one token, which is right for
+ * `authorization: gsk_abc` and wrong for every scheme that puts the credential
+ * somewhere else: `Digest username="u", realm="r", response="s"` lost the scheme
+ * word and kept the whole challenge, including the `response` the server
+ * computed. It is a scanner now because the run's end is chosen by the text --
+ * a scheme extends it past its parameters, a bare token does not -- which no
+ * single pattern expresses.
+ *
+ * The separator may be quoted. A header echo or a request body arrives as JSON,
+ * where a closing quote sits between the label and the `:` and another one opens
+ * the value; requiring a bare `:` skipped the whole field, so the challenge went
+ * into the log line and the persisted error metadata in the clear. Both quotes
+ * are the document's, so they are consumed as syntax and the redaction keeps
+ * their surroundings -- `{"authorization": "..."}` becomes
+ * `{"[redacted]"}` -- rather than leaving a quote dangling in front of it.
+ */
 const redactAuthorizationLabels = (message: string): string => {
   const parts: string[] = [];
   let copied = 0;

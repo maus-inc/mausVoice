@@ -224,10 +224,3 @@ describe("azure-openai o-series parameters", () => {
     },
   );
 });
-
-describe("TEMP probe: mock does not leak past the o-series describe", () => {
-  it("loads the real openai module", async () => {
-    const loaded = await import("openai");
-    expect(loaded.AzureOpenAI.name).not.toBe("MockAzureOpenAI");
-  });
-});

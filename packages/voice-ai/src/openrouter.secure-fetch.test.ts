@@ -16,6 +16,17 @@ import type { CustomFetch } from "./types";
 describe("openrouter production paths thread the caller's fetch", () => {
   /** The options each constructed client was given, so the fetch can be read. */
   const clientOptionsSeenRaw = vi.hoisted(() => vi.fn());
+  /**
+   * The uploads `toFile` calls, so a mock of that module can be shown to be the
+   * one running rather than assumed to be.
+   *
+   * `openrouterTranscribeAudio` delegates to `openaiCompatibleTranscribeAudio`,
+   * which takes `toFile` from `"openai/uploads"` and not from the bare `"openai"`
+   * module. A `toFile` on the `"openai"` mock is therefore never called by the
+   * transcription path, which left the test running the real SDK's `toFile`
+   * against a bare `ArrayBuffer` while appearing to stub it.
+   */
+  const uploadCallsRaw = vi.hoisted(() => vi.fn());
 
   const setupOpenAIMock = (
     completion: () => unknown = () => ({
@@ -25,6 +36,7 @@ describe("openrouter production paths thread the caller's fetch", () => {
   ) => {
     vi.resetModules();
     clientOptionsSeenRaw.mockClear();
+    uploadCallsRaw.mockClear();
     vi.doMock("openai", () => ({
       default: class MockOpenAI {
         constructor(options: Record<string, unknown>) {
@@ -40,7 +52,12 @@ describe("openrouter production paths thread the caller's fetch", () => {
         };
         models = { list: vi.fn().mockResolvedValue({ data: [] }) };
       },
-      toFile: vi.fn().mockResolvedValue({}),
+    }));
+    vi.doMock("openai/uploads", () => ({
+      toFile: vi.fn().mockImplementation((...args: unknown[]) => {
+        uploadCallsRaw(...args);
+        return Promise.resolve({});
+      }),
     }));
   };
 
@@ -112,17 +129,25 @@ describe("openrouter production paths thread the caller's fetch", () => {
   };
 
   it("builds the transcription client with the caller's fetch", async () => {
+    const blob = new ArrayBuffer(8);
     await expectClientBuiltWithCallerFetch(
       async ({ openrouterTranscribeAudio }, customFetch) => {
         await openrouterTranscribeAudio({
           apiKey: "test-key",
           model: "openai/whisper-large-v3",
-          blob: new ArrayBuffer(8),
+          blob,
           ext: "wav",
           customFetch,
         });
       },
     );
+
+    // The uploads module is the one the transcription path imports `toFile`
+    // from, so this asserts the stub is the code under test rather than leaving
+    // it to be believed. A mock of the bare `"openai"` module cannot see this
+    // call, which is what made the previous version of this test vacuous.
+    expect(uploadCallsRaw).toHaveBeenCalledTimes(1);
+    expect(uploadCallsRaw.mock.calls[0]?.[0]).toBe(blob);
   });
 
   it("builds the generate-text client with the caller's fetch", async () => {

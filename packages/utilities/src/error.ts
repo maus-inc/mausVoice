@@ -123,6 +123,25 @@ const tokenEnd = (text: string, index: number): number => {
 };
 
 /**
+ * One end of a quoted run starting at `index`, or `index` when no quote opens
+ * there. A backslash escapes the next character, so `\"` does not close it.
+ * An unterminated run has no end to report, so it returns `index` and the
+ * caller falls back to its own reading of the text.
+ */
+const quotedValueEnd = (text: string, index: number): number => {
+  const quote = text[index];
+  if (quote !== '"' && quote !== "'") return index;
+  for (let cursor = index + 1; cursor < text.length; cursor += 1) {
+    if (text[cursor] === "\\" && cursor + 1 < text.length) {
+      cursor += 1;
+      continue;
+    }
+    if (text[cursor] === quote) return cursor + 1;
+  }
+  return index;
+};
+
+/**
  * One end of the `name=value` entry starting at `index`, or `index` when there is
  * none there. A leading comma and any whitespace belong to the entry, so a
  * parameter list is consumed one entry at a time.
@@ -148,33 +167,49 @@ const parameterEnd = (text: string, index: number): number => {
   cursor += 1;
   const quote = text[cursor];
   if (quote === '"' || quote === "'") {
-    for (cursor += 1; cursor < text.length; cursor += 1) {
-      if (text[cursor] === "\\" && cursor + 1 < text.length) {
-        cursor += 1;
-        continue;
-      }
-      if (text[cursor] === quote) return cursor + 1;
-    }
-    return text.length;
+    const quoted = quotedValueEnd(text, cursor);
+    return quoted === cursor ? text.length : quoted;
   }
   return tokenEnd(text, cursor);
 };
 
 export const schemeValueEnd = (text: string): number => {
   let end = 0;
+  // Whether any non-whitespace token has been read yet. A quote opens the
+  // credential only before the first one; after it, a quote is a parameter's.
+  let readAnyToken = false;
   while (end < text.length) {
     if (SCHEME_WHITESPACE.test(text[end])) {
       end += 1;
       continue;
     }
+    // A quoted run where the credential itself starts is the credential whole.
+    // Without this the value ended at the opening quote, the scan resumed
+    // inside the string, and `authorization: Basic "abc def"` redacted only
+    // `Basic` -- leaving `def` in the clear, because the tail of a quoted
+    // secret has no `=` for the parameter reader below to recognise.
+    //
+    // Only the FIRST token is read this way. Past it the text is a parameter
+    // list, and a quote there belongs to a parameter value: read as a
+    // credential of its own it ran `Digest nonce="x", "model": "llama-3"` on to
+    // swallow the `"model"` field as well, so the redaction ate the document's
+    // own JSON syntax.
+    if (!readAnyToken) {
+      const quoted = quotedValueEnd(text, end);
+      if (quoted !== end) {
+        return quoted;
+      }
+    }
     const parameter = parameterEnd(text, end);
     if (parameter !== end) {
       end = parameter;
+      readAnyToken = true;
       continue;
     }
     // A closer that ends the document is not part of any credential.
     if (isCloser(text[end])) return end;
     end = tokenEnd(text, end);
+    readAnyToken = true;
     // A bare token is the credential only when no parameter follows it;
     // otherwise it is a parameter name and the list continues.
     if (parameterEnd(text, end) === end) return end;

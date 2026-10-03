@@ -233,4 +233,130 @@ describe("authorization scheme credentials", () => {
       "token missing",
     );
   });
+
+  /**
+   * The scanner replaced a pattern, and three of its readings are not the
+   * pattern's. Each is pinned here, because a redaction change nobody wrote a
+   * test for is a redaction that gets reverted by the next reader who assumes
+   * the previous behaviour was the specified one.
+   */
+  it("steps over a backslash escape inside a single-quoted value", () => {
+    // Basic-string backslash escapes only exist in double quotes, so the old
+    // `'[^']*'` read the quote in `'a\'b'` as the value's end and stopped there,
+    // leaving `b' realm="r"` as the tail. Treating `\'` as one escaped
+    // character instead consumes the whole run, which is the point of the
+    // change: the value cannot end on a quote it escaped.
+    const out = redactSensitiveTokens(
+      "authorization: Digest username='a\\'b' realm=\"r\"",
+    );
+    expect(out).not.toContain("realm=");
+    expect(out).toBe("authorization:[redacted]");
+  });
+
+  it("redacts an unterminated quoted value to the end of the line", () => {
+    // The old value alternative required a closing quote, so a value that never
+    // closed matched nothing and ` def` was left in the clear beside the label.
+    // A remote end chooses the text, so a value that opens a quote and does not
+    // close it is a value that runs to where the document stops.
+    const out = redactSensitiveTokens(
+      'authorization: Digest username="abc def',
+    );
+    expect(out).not.toContain("abc");
+    expect(out).not.toContain("def");
+    expect(out).toBe("authorization:[redacted]");
+  });
+
+  it("leaves a closing bracket of the surrounding document beside the redaction", () => {
+    // The old unquoted class `[^\s,]*` ran past the closers, so it swallowed
+    // the `)` that belonged to the text around the header. The run now stops at
+    // `) ] } " ' ;` and the closer is returned as the tail, which keeps the
+    // punctuation the surrounding document is read from while the credential
+    // before it still goes.
+    expect(redactSensitiveTokens("authorization: Digest nonce=abc)")).toBe(
+      "authorization:[redacted])",
+    );
+    expect(redactSensitiveTokens("authorization: Digest nonce=abc]")).toBe(
+      "authorization:[redacted]]",
+    );
+    // A `;` is a separator in the same list, so the parameter behind it survives
+    // as a separate entry rather than being read as part of the first value.
+    expect(
+      redactSensitiveTokens("authorization: Digest nonce=abc;realm=r"),
+    ).toBe("authorization:[redacted];realm=r");
+  });
+
+  it("redacts one long quoted parameter whole", () => {
+    // The earlier timing guard in this repo feeds `"api_key=" + " ".repeat(150_000)`,
+    // which finds no value token and returns before the parameter walk the
+    // comment above `parameterEnd` is about -- so it never reaches the pass it
+    // appears to be timing. This input does reach it, and what is asserted here
+    // is the reading rather than a duration.
+    //
+    // There is deliberately no wall-clock bound. The scanner replaced a pattern
+    // whose ambiguous value alternative was retried against every prefix, and
+    // the comment claims that is quadratic. Measured on this machine, V8 does
+    // not reproduce that: the old pattern runs in well under a millisecond on
+    // every adversarial shape tried (long whitespace run after `name=`, long
+    // comma run, unterminated quote with and without inner spaces, at 100 to
+    // 16000 characters). A timing assertion here would therefore be green
+    // against both implementations, which pins nothing while still being a
+    // test that can fail on a loaded CI machine. The correctness assertion below
+    // is what actually holds the pass in place: a parameter walk that gave up on
+    // the entry would stop at the opening quote and leave 200k characters of the
+    // value in the clear.
+    const value = "a".repeat(200_000);
+    const out = redactSensitiveTokens(
+      `authorization: Digest username="${value}", realm="r"`,
+    );
+
+    expect(out).not.toContain(value);
+    expect(out).not.toContain("realm=");
+    expect(out).toBe("authorization:[redacted]");
+  });
+
+  it("redacts a quoted value whole, including the part past the space", () => {
+    // The closing quote is what says where the credential ends, so a quoted
+    // value is read to it rather than to the first whitespace. Read to the
+    // whitespace instead, `authorization: Basic "abc def"` lost `def`: the scan
+    // stopped at the space, found no `=` for the parameter reader to recognise,
+    // and left the tail of the secret in the clear.
+    expect(redactSensitiveTokens('authorization: Basic "abc def"')).toBe(
+      "authorization:[redacted]",
+    );
+    expect(
+      redactSensitiveTokens('authorization: Basic "abc def" trailing prose'),
+    ).toBe("authorization:[redacted] trailing prose");
+    expect(redactSensitiveTokens('proxy-authorization: Basic "abc def"')).toBe(
+      "proxy-authorization:[redacted]",
+    );
+  });
+
+  it("does not let a quoted credential escape on a backslash escape", () => {
+    // A backslash-quote is an escaped quote, so the value runs past it to the
+    // real closing one.
+    expect(
+      redactSensitiveTokens('authorization: Bearer "ab\\"c def"'),
+    ).not.toContain("def");
+    // An unterminated quote has no end to read to, so the value falls back to
+    // the token rule rather than swallowing the rest of the message. The
+    // credential is the one token after the scheme; what follows it is prose,
+    // the same reading that keeps `token missing` a diagnosis.
+    expect(
+      redactSensitiveTokens('authorization: Bearer "unterminated value'),
+    ).toBe("authorization:[redacted] value");
+  });
+
+  it("keeps a single bare word after a scheme as prose", () => {
+    // Deliberate, and the reason the scheme pass stops at whitespace: a bare
+    // word after the scheme reads as a diagnosis, not a secret.
+    // `authorization: token missing` says the header is absent.
+    expect(unknownToMessage("authorization: token missing")).toBe(
+      "authorization: token missing",
+    );
+    // A real single-token value is still redacted, so the deferral is not a
+    // hole in the scheme pass.
+    expect(
+      redactSensitiveTokens("authorization: Bearer abc123def456"),
+    ).not.toContain("abc123def456");
+  });
 });

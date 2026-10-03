@@ -12,6 +12,14 @@ vi.mock("../utils/log.utils", () => ({
 
 const createdSockets: FakeWebSocket[] = [];
 
+/**
+ * When set, the next socket closes on its first turn instead of opening, and
+ * fires no `error`. That is the shape the spec allows for a failed handshake --
+ * a proxy answering with a 4xx, a captive portal, a dropped SYN -- and the one
+ * `close`-without-`error` path the startup promise has to survive.
+ */
+let closeInsteadOfOpen = false;
+
 class FakeWebSocket {
   static OPEN = 1;
   static CLOSED = 3;
@@ -26,7 +34,14 @@ class FakeWebSocket {
   constructor(url: string) {
     this.url = url;
     createdSockets.push(this);
-    queueMicrotask(() => this.onopen?.());
+    queueMicrotask(() => {
+      if (closeInsteadOfOpen) {
+        this.readyState = FakeWebSocket.CLOSED;
+        this.onclose?.({ code: 1006 });
+        return;
+      }
+      this.onopen?.();
+    });
   }
 
   send(data: string | ArrayBufferView | Blob) {
@@ -104,11 +119,44 @@ describe("AssemblyAITranscriptionSession finalize contract", () => {
 describe("AssemblyAI streaming connection parameters", () => {
   beforeEach(() => {
     createdSockets.length = 0;
+    closeInsteadOfOpen = false;
     vi.stubGlobal("WebSocket", FakeWebSocket);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("rejects when the socket closes before it ever opens", async () => {
+    // A promise nobody settles is the worst of the three outcomes available
+    // here: `onRecordingStart` awaits it, so the session never becomes ready and
+    // the caller neither starts recording nor learns that the provider is
+    // unreachable. Raced against a timer rather than awaited directly, so a
+    // regression reports what it did (nothing) instead of timing out the file.
+    closeInsteadOfOpen = true;
+    const outcome = await Promise.race([
+      startAssemblyAIStreaming("test-key", 16000, [], undefined).then(
+        () => "resolved",
+        (error: Error) => `rejected: ${error.message}`,
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("STILL PENDING"), 50)),
+    ]);
+    expect(outcome).toBe("rejected: WebSocket closed before the connection opened");
+  });
+
+  it("still resolves normally when the socket closes after opening", async () => {
+    // The other half of the same `onclose`: a close after a successful
+    // handshake is the normal end of a session and must not reject.
+    const session = await startAssemblyAIStreaming(
+      "test-key",
+      16000,
+      [],
+      undefined,
+    );
+    expect(session).toBeTruthy();
+    const socket = createdSockets.at(-1);
+    expect(() => socket?.close()).not.toThrow();
+    await expect(session.finalize()).resolves.toBe("");
   });
 
   it("pins the universal speech model and sends keyterms when the dictionary is non-empty", async () => {

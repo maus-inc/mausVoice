@@ -84,18 +84,21 @@ const buildMaxTokensParams = (
     ? { max_tokens: maxTokens }
     : { max_completion_tokens: maxTokens };
 
-/**
- * Matches the o-series id shape, with or without a vendor prefix (`o3-mini` on
- * OpenAI, `openai/o3-mini` where an aggregator passes one through). The trailing
- * digit requirement is what keeps it off everything else: the sampled families
- * start with a letter (`gpt-4o-mini`, `gpt-oss-20b`), and a bare `o` is not a
- * published id.
- */
-const OPENAI_O_SERIES_MODEL_ID = /(?:^|\/)o\d/;
+// Matches the o-series id shape, with or without a vendor prefix: `o3-mini` on
+// OpenAI, `openai/o3-mini` where an aggregator routes one through, and
+// `openai:o3-mini` where the prefix is qualified with a colon instead of a
+// slash. The prefix boundary is any character that is neither alphanumeric nor
+// `-`, because `-` is the intra-id separator every published id already uses
+// (`gpt-4o-mini`, `gpt-oss-20b`) and is not a prefix delimiter: reading it as one
+// would classify `llama-o1-finetune`, a user-chosen Azure deployment alias, as a
+// reasoning model and silently drop its sampling parameters. The trailing digit
+// requirement is what keeps the test off everything else, and
+// `omni-moderation-latest` is what keeps it from being a bare "starts with o".
+const OPENAI_O_SERIES_MODEL_ID = /(?:^|[^A-Za-z0-9-])o\d/;
 
 /**
- * True for the o-series reasoning models, which reject the sampling parameters
- * rather than ignoring them.
+ * Whether a model id names an OpenAI o-series (or gpt-5-style reasoning) model,
+ * which reject the sampling parameters rather than ignoring them.
  *
  * `temperature` and `top_p` are not "unsupported values" on these models the way
  * they are on gpt-5 (which accepts only the default `1` and is therefore happy
@@ -105,9 +108,6 @@ const OPENAI_O_SERIES_MODEL_ID = /(?:^|\/)o\d/;
  * with a 400 before generating anything. This endpoint takes any id the model
  * list returned, so an o-series id is reachable here and the request has to be
  * built for it rather than sent and corrected.
- */
-/**
- * Whether a model id names an OpenAI o-series (or gpt-5-style reasoning) model.
  *
  * Exported because two other providers serve these model ids and hit the same
  * 400: Azure by deployment name, OpenRouter by routing prefix (`openai/o3-mini`).

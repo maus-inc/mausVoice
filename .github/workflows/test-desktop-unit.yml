@@ -21,6 +21,27 @@ on:
       - "scripts/ci/check-bindings-guard.test.mjs"
       - "scripts/ci/check-workflow-pins.test.mjs"
       - "scripts/ci/windows-tauri-imports.test.mjs"
+      # Every suite this workflow runs, and the config `dev-surface-contracts`
+      # reads. A guard whose own edit does not match the trigger filter does not
+      # run for the change most likely to break it, and the guard is then only
+      # documentation. `check-workspace-hygiene.test.mjs` fails the build when a
+      # suite executed here is missing from this list, so it cannot rot again.
+      #
+      # The cost is real and worth stating: `paths:` is a workflow-level filter,
+      # so naming a guard here also starts `rust-unit-tests` (an apt install, a
+      # `cargo test --lib`, and `clippy --all-targets` over two crates) and
+      # `rust-windows-gated` (a full desktop-crate clippy on `windows-2022`) for
+      # what is usually a comment in a `.mjs` file. Accepted, because
+      # `apps/desktop/**` already sends every one of those jobs the common case
+      # of any desktop source change, and a guard that silently stops running is
+      # the more expensive failure -- it is invisible until it matters.
+      - "scripts/ci/check-workspace-hygiene.test.mjs"
+      - "scripts/ci/dev-surface-contracts.test.mjs"
+      - "scripts/ci/dev-surface-config.mjs"
+      - "scripts/ci/package-exports.test.mjs"
+      - "scripts/ci/validate-release-inputs.test.mjs"
+      - "scripts/ci/release-notes.test.mjs"
+      - "scripts/ci/verify-sherpa-archives.test.mjs"
       - ".github/workflows/**"
 permissions: {}
 

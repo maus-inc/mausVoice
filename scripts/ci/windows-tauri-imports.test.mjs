@@ -47,25 +47,7 @@ function windowsRunnerCargoTests(workflowDir) {
 // to it. `label` names the source in each record.
 function windowsRunnerCargoTestsIn(text, label) {
   const found = [];
-  const lines = text.split("\n");
-  const jobs = [];
-  let start = lines.findIndex((line) => /\S/.test(line));
-  for (let index = start; index < lines.length; index += 1) {
-    const opened = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[index]);
-    if (opened) {
-      let end = index + 1;
-      while (
-        end < lines.length &&
-        !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[end]) &&
-        !/^\S/.test(lines[end])
-      ) {
-        end += 1;
-      }
-      jobs.push({ name: opened[1], text: lines.slice(index, end).join("\n") });
-      index = end - 1;
-    }
-  }
-  for (const job of jobs) {
+  for (const job of jobBlocks(text)) {
     if (!runsOnWindows(job.text)) continue;
     for (const line of job.text.split("\n")) {
       if (/cargo test\b/.test(line) && line.includes(GATED_CRATE_MANIFEST)) {
@@ -74,6 +56,51 @@ function windowsRunnerCargoTestsIn(text, label) {
     }
   }
   return found;
+}
+
+// The jobs of one workflow, as { name, start, lines, text } records.
+//
+// Two of the guards below read a job's own body, so where one job ends and the
+// next begins is decided once, here. Each of the three rules below is a rule the
+// two hand-rolled splitters this replaced did not agree on, and the disagreement
+// was invisible because no workflow in this tree violates the difference:
+//
+//   * A job is a two-space key *under `jobs:`*. Scanning from the top of the
+//     file instead also matches `on:`'s own two-space keys, so `push`,
+//     `pull_request` and `workflow_dispatch` were read as jobs -- in all nine
+//     workflows here. Harmless today only because an event block carries no
+//     `runs-on:` to resolve.
+//   * A body ends at the next two-space key *or at the next top-level key*. A
+//     top-level `env:` or `defaults:` after `jobs:` is legal, and GitHub's own
+//     documentation puts `env:` at the top level; one splitter stopped there and
+//     the other swallowed it into the last job's body.
+//   * `start` and `lines` are carried so a caller can read what sits around a
+//     job, which the note above `rust-windows-gated` needs.
+function jobBlocks(workflowText) {
+  const lines = workflowText.split("\n");
+  const jobsAt = lines.findIndex((line) => /^jobs:\s*$/.test(line));
+  if (jobsAt === -1) return [];
+  const jobs = [];
+  for (let index = jobsAt + 1; index < lines.length; index += 1) {
+    const opened = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[index]);
+    if (!opened) continue;
+    let end = index + 1;
+    while (
+      end < lines.length &&
+      !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[end]) &&
+      !/^\S/.test(lines[end])
+    ) {
+      end += 1;
+    }
+    jobs.push({
+      name: opened[1],
+      start: index,
+      lines: lines.slice(index, end),
+      text: lines.slice(index, end).join("\n"),
+    });
+    index = end - 1;
+  }
+  return jobs;
 }
 
 // Whether a job body can run on a Windows runner.
@@ -219,14 +246,11 @@ describe("Windows-gated coverage is recorded, not silent", () => {
   // being updated fails instead of quietly making the comment wrong.
   const windowsJobBody = (() => {
     const lines = read(WINDOWS_JOB_WORKFLOW).split("\n");
-    const start = lines.findIndex((line) =>
-      new RegExp(`^ {2}${WINDOWS_JOB}:\\s*$`).test(line),
+    const job = jobBlocks(lines.join("\n")).find(
+      (entry) => entry.name === WINDOWS_JOB,
     );
-    assert.notEqual(start, -1, `${WINDOWS_JOB} must exist in the workflow`);
-    let end = start + 1;
-    while (end < lines.length && !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[end]))
-      end += 1;
-    return { lines, start, text: lines.slice(start, end).join("\n") };
+    assert.ok(job, `${WINDOWS_JOB} must exist in the workflow`);
+    return { lines, start: job.start, text: job.text };
   })();
 
   it("compiles the cfg(windows) test modules on a Windows runner", () => {
@@ -389,5 +413,89 @@ describe("Windows-gated coverage is recorded, not silent", () => {
       "a `cargo test` on a Windows runner is exactly the step this record says " +
         "does not exist; if it was added, the note above the job is now wrong",
     );
+  });
+});
+
+// The two guards above read a job body through one splitter between them, and
+// these are the rules it has to hold. Each one is a rule the two hand-rolled
+// splitters disagreed about, and neither disagreement was visible in this
+// repository: every workflow here triggers on `push` and none carries a
+// top-level key after `jobs:`, so both wrong answers were the right answer for
+// every file in the tree. That is the shape of a bug that ships.
+describe("the job splitter both guards share", () => {
+  it("does not read a trigger's own keys as jobs", () => {
+    // `on:`'s children are two-space keys too. Reading from the top of the file
+    // rather than from `jobs:` collects `push`, `pull_request` and
+    // `workflow_dispatch` as jobs -- which is what it did for all nine
+    // workflows here, and only stayed harmless because an event block has no
+    // `runs-on:` for the resolver to misread.
+    const workflow = [
+      "on:",
+      "  push:",
+      "    paths:",
+      "      - scripts/ci/anything.test.mjs",
+      "  workflow_dispatch:",
+      "permissions: {}",
+      "jobs:",
+      "  build:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo hi",
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      jobBlocks(workflow).map((job) => job.name),
+      ["build"],
+      "only a key under `jobs:` is a job",
+    );
+  });
+
+  it("ends a job at a top-level key that follows jobs:", () => {
+    // A top-level `env:` after `jobs:` is legal, and GitHub documents `env:` as
+    // a top-level key. Swallowing it into the last job's body puts text in a job
+    // block that the job never declared, which is the direction that reassures:
+    // a `cargo test` or a `runs-on:` in a top-level block would be read as
+    // belonging to the job above it.
+    const workflow = [
+      "permissions: {}",
+      "jobs:",
+      "  build:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - run: echo hi",
+      "env:",
+      "  NOT_A_JOB_STEP: true",
+      "",
+    ].join("\n");
+    const jobs = jobBlocks(workflow);
+    assert.deepEqual(
+      jobs.map((job) => job.name),
+      ["build"],
+    );
+    assert.doesNotMatch(
+      jobs[0].text,
+      /NOT_A_JOB_STEP/,
+      "a top-level key after `jobs:` is not part of the last job's body",
+    );
+  });
+
+  it("keeps the line a job starts on, so a caller can read what sits above it", () => {
+    // `windowsJobBody` reads the comment above `rust-windows-gated` by walking up
+    // from the job's first line, so `start` has to be the index in the whole
+    // file rather than an offset into the jobs section.
+    const workflow = [
+      "permissions: {}",
+      "jobs:",
+      "  first:",
+      "    runs-on: ubuntu-latest",
+      "  second:",
+      "    runs-on: windows-2022",
+      "",
+    ].join("\n");
+    assert.deepEqual(
+      jobBlocks(workflow).map((job) => job.start),
+      [2, 4],
+    );
+    assert.equal(jobBlocks(workflow)[0].lines[0], "  first:");
   });
 });
