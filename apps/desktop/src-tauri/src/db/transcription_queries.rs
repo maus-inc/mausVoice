@@ -199,6 +199,24 @@ pub async fn fetch_transcriptions(
     Ok(transcriptions)
 }
 
+/// The `UPDATE` statement [`update_transcription`] runs.
+///
+/// Shared with the test that pins the single-statement shape, so the test reads
+/// the string the caller actually executes. A test that formats its own copy
+/// asserts only that its own copy is well formed, and therefore keeps passing
+/// when the caller is reverted to the `UPDATE`-then-`SELECT` pair the test is
+/// named against -- a regression guard that cannot fail.
+fn transcription_update_sql() -> String {
+    format!(
+        "UPDATE transcriptions
+         SET {}
+         WHERE id = ?1
+         RETURNING {}",
+        transcription_update_assignments(),
+        transcription_column_list(),
+    )
+}
+
 /// Update one row and return it as stored.
 ///
 /// The read is `RETURNING`, not a follow-up `SELECT`. On the shared pool
@@ -211,20 +229,11 @@ pub async fn update_transcription(
     pool: SqlitePool,
     transcription: &Transcription,
 ) -> Result<Transcription, sqlx::Error> {
-    let row = bind_transcription_fields(
-        sqlx::query(&format!(
-            "UPDATE transcriptions
-         SET {}
-         WHERE id = ?1
-         RETURNING {}",
-            transcription_update_assignments(),
-            transcription_column_list(),
-        )),
-        transcription,
-    )
-    .fetch_optional(&pool)
-    .await?
-    .ok_or(sqlx::Error::RowNotFound)?;
+    let sql = transcription_update_sql();
+    let row = bind_transcription_fields(sqlx::query(&sql), transcription)
+        .fetch_optional(&pool)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)?;
 
     row_to_transcription(row)
 }
@@ -334,8 +343,8 @@ mod tests {
     /// `update_transcription` writes and reads back in ONE statement, via
     /// `UPDATE ... RETURNING`. There is no window between a write and a
     /// subsequent `SELECT` for another writer to land in, because there is no
-    /// subsequent `SELECT`. `single_statement_therefore_no_read_window` is what
-    /// pins that, and it is the part that is actually decidable.
+    /// subsequent `SELECT`. `the_write_and_the_read_back_are_one_statement` is
+    /// what pins that, and it is the part that is actually decidable.
     ///
     /// The 400 concurrent rounds below are a soak, not the proof, and this
     /// comment used to claim they were the proof. They are not, and that was
@@ -439,11 +448,10 @@ mod tests {
     /// run and in every environment, which the concurrency approaches are not.
     #[test]
     fn the_write_and_the_read_back_are_one_statement() {
-        let sql = format!(
-            "UPDATE transcriptions SET {} WHERE id = ?1 RETURNING {}",
-            super::transcription_update_assignments(),
-            super::transcription_column_list(),
-        );
+        // Read through the caller's helper on purpose. Formatting the statement
+        // here would give this test its own copy to bless, and the assertions
+        // below would still hold after a revert to UPDATE-then-SELECT.
+        let sql = super::transcription_update_sql();
 
         let statements = sql
             .split(';')

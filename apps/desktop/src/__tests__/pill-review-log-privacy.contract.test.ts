@@ -31,6 +31,11 @@ const LINE_HANDLERS = [
   "pub(crate) fn parse_review_decision_value(",
   "pub(crate) fn parse_style_switch_direction_value(",
   "pub(crate) fn parse_pill_event(",
+  // The only place a pill line's parse error reaches a log at all. It appears
+  // exactly twice in the Rust source -- this definition and the call site above
+  // -- so it belongs here rather than in a test of its own: one list to keep
+  // true, and a rename cannot drop the diagnostic out of the contract.
+  "fn report_unparseable_pill_line(",
 ];
 
 /** Names whose presence would put the dictated text into a log line. */
@@ -49,44 +54,27 @@ describe("pill review decision logging", () => {
         .map((line) => line.trim());
 
       // A handler that logs nothing cannot leak the transcript, but it is also
-      // not what this contract is for, so assert it is the handler at all.
-      expect(body.length).toBeGreaterThan(0);
+      // not what this contract is for, so assert it is the handler at all. The
+      // useful form of that is "the block starts at this marker": a length check
+      // passes on any string, including one extracted from the wrong function.
+      expect(body.startsWith(marker)).toBe(true);
       for (const call of logCalls) {
         expect(call).not.toMatch(PAYLOAD_NAMES);
       }
     },
   );
 
-  it("keeps a parse failure from echoing the line it failed on", () => {
+  it("logs the parse error but never the line that failed to parse", () => {
     // The diagnostic for an unparseable line is the one place where a
     // transcription error and the text that caused it are in scope together.
     // `serde_json::Error` carries a position and what it expected, never the
     // input, so logging it is safe -- and this is the assertion that says so,
     // because it is the one that would notice if that ever changed.
     //
-    // Both markers are needed. The log line itself lives in
-    // `report_unparseable_pill_line`, which dedupes repeats, and
-    // `parse_pill_event` only calls it -- so extracting one block covers the
-    // call site and not the diagnostic, and the assertion silently stops
-    // describing anything. `extractRustBlock` takes the first marker it finds,
-    // so passing both is how the contract keeps covering the line that logs.
-    const source = readRepoSource(PILL_PROCESS);
-    const body = extractRustBlock(
-      source,
-      "fn report_unparseable_pill_line(",
-      "pub(crate) fn parse_pill_event(",
-    );
-    expect(body).toContain("log::warn!");
-    expect(body).toContain("{error}");
-    expect(body).not.toMatch(/log::\w+!\([^)]*\{(line|trimmed|text)[:}]/);
-  });
-
-  it("keeps the deduped parse diagnostic itself inside the privacy contract", () => {
-    // The helper is the only place a pill line's parse error reaches a log, so
-    // it has to be named as a handler in its own right. `report_unparseable_
-    // pill_line` appears exactly twice in the Rust source -- its definition and
-    // its call site -- so if this ever fails, the diagnostic has moved out of
-    // the contract rather than regressed within it.
+    // One block, not two: `extractRustBlock` resolves markers in argument order
+    // and keeps the first it finds, so passing `report_unparseable_pill_line`
+    // alongside `parse_pill_event` returned the *diagnostic* either way. A
+    // second `it` over the same string only looked like independent coverage.
     const source = readRepoSource(PILL_PROCESS);
     const body = extractRustBlock(source, "fn report_unparseable_pill_line(");
     expect(body).toContain("log::warn!");
