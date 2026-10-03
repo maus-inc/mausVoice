@@ -1645,34 +1645,75 @@ fn audio_path_has_file_path(audio_path: Option<&str>) -> bool {
     matches!(audio_path, Some(path) if !path.is_empty())
 }
 
+/// How a batch of managed-audio deletions actually went.
+///
+/// `cleared` and `retained` are kept apart because a caller may only treat a
+/// row as no longer owning its snapshot once that snapshot is really gone.
+/// `retained` still has bytes on disk, so its row has to keep `audio_path`
+/// set for a later sweep to find and retry it.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AudioDeletionOutcome {
+    /// Ids whose snapshot is gone, so their audio metadata may be cleared.
+    cleared: Vec<String>,
+    /// Ids whose snapshot is still on disk, so their rows must keep pointing
+    /// at it.
+    retained: Vec<String>,
+}
+
+fn delete_audio_entries_in_dir(
+    audio_dir: &Dir,
+    entries: Vec<(String, bool)>,
+) -> AudioDeletionOutcome {
+    let mut outcome = AudioDeletionOutcome::default();
+    for (id, has_file_path) in entries {
+        // `audio_path` is only a presence marker. Preserve the historical
+        // empty-marker behavior (clear metadata but do not delete a file),
+        // while deriving every non-empty marker's filename from its ID.
+        if !has_file_path {
+            // Nothing was ever stored under this marker, so clearing it cannot
+            // orphan a file. This is the historical empty-marker behavior.
+            outcome.cleared.push(id);
+            continue;
+        }
+        match crate::system::audio_store::delete_audio_file(audio_dir, &id) {
+            Ok(()) => outcome.cleared.push(id),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Already gone, so a later sweep has nothing to retry. Clearing
+                // the marker here is what stops `purge` re-selecting this row on
+                // every run forever, which is the recovery behavior the previous
+                // unconditional push was reaching for.
+                outcome.cleared.push(id);
+            }
+            Err(err) => {
+                // The snapshot is still on disk but could not be removed: on
+                // Windows the playback reader holds the file without delete
+                // sharing, and a permission or transient I/O failure arrives the
+                // same way. Clearing the row's marker now would strand those
+                // bytes permanently — `purge` selects
+                // `WHERE audio_path IS NOT NULL`, and `sweep_orphaned_wavs` runs
+                // only on a full local wipe, so nothing could find the file
+                // again. Retaining it lets the next sweep retry, which the
+                // frontend triggers after every dictation.
+                log::error!("Failed to delete audio file for transcription {id}: {err}");
+                outcome.retained.push(id);
+            }
+        }
+    }
+    outcome
+}
+
 async fn delete_audio_entries(
     app: AppHandle,
     entries: Vec<(String, bool)>,
-) -> Result<Vec<String>, String> {
+) -> Result<AudioDeletionOutcome, String> {
     if entries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(AudioDeletionOutcome::default());
     }
 
     tauri::async_runtime::spawn_blocking(move || {
         let audio_dir = crate::system::audio_store::open_managed_audio_dir(&app)
             .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
-        let mut removed = Vec::new();
-        for (id, has_file_path) in entries {
-            // `audio_path` is only a presence marker. Preserve the historical
-            // empty-marker behavior (clear metadata but do not delete a file),
-            // while deriving every non-empty marker's filename from its ID.
-            if has_file_path {
-                if let Err(err) = crate::system::audio_store::delete_audio_file(&audio_dir, &id) {
-                    if err.kind() != std::io::ErrorKind::NotFound {
-                        log::error!("Failed to delete audio file for transcription {id}: {err}");
-                    }
-                }
-            }
-            // Match the existing recovery behavior: an unavailable file must
-            // not keep stale snapshot metadata indefinitely.
-            removed.push(id);
-        }
-        Ok::<Vec<String>, String>(removed)
+        Ok::<AudioDeletionOutcome, String>(delete_audio_entries_in_dir(&audio_dir, entries))
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2060,6 +2101,13 @@ pub async fn transcription_delete(
     .map_err(|err| err.to_string())?;
 
     if let Some(audio_path) = audio_path {
+        // Deliberately asymmetric with `purge_stale_transcription_audio`. The
+        // user asked for this row to be gone, so it goes even while its
+        // snapshot is momentarily undeletable; refusing the row deletion would
+        // leave the user unable to remove a transcription at all. The cost is
+        // an unlinked `.wav` until a full local wipe sweeps it — strictly
+        // better than the alternative, because the user already asked for
+        // these bytes to stop existing.
         delete_audio_entries(
             app.clone(),
             vec![(id.clone(), audio_path_has_file_path(Some(&audio_path)))],
@@ -2164,51 +2212,98 @@ pub async fn export_transcription(
         .map_err(|err| format!("Unable to open the managed audio directory: {err}"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        use std::io::Read;
-        use std::io::Write;
-        use zip::write::SimpleFileOptions;
-
-        let file = std::fs::File::create(&save_path)
-            .map_err(|err| format!("Failed to create file: {err}"))?;
-        let mut zip = zip::ZipWriter::new(file);
-        let options =
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-
-        zip.start_file("processed.txt", options)
-            .map_err(|err| err.to_string())?;
-        zip.write_all(transcript.as_bytes())
-            .map_err(|err| err.to_string())?;
-
-        if let Some(ref raw) = raw_transcript {
-            if !raw.is_empty() {
-                zip.start_file("raw.txt", options)
-                    .map_err(|err| err.to_string())?;
-                zip.write_all(raw.as_bytes())
-                    .map_err(|err| err.to_string())?;
-            }
-        }
-
-        if audio_path_has_file_path(audio_path.as_deref()) {
-            // A non-empty value marks a saved snapshot; the generated ID name
-            // and held directory capability select the actual file.
-            if let Ok(mut audio_file) =
-                crate::system::audio_store::open_audio_file_for_read(&audio_dir, &id)
-            {
-                let mut audio_data = Vec::new();
-                audio_file
-                    .read_to_end(&mut audio_data)
-                    .map_err(|err| format!("Failed to read audio: {err}"))?;
-                zip.start_file("audio.wav", options)
-                    .map_err(|err| err.to_string())?;
-                zip.write_all(&audio_data).map_err(|err| err.to_string())?;
-            }
-        }
-
-        zip.finish().map_err(|err| err.to_string())?;
+        build_transcription_export(
+            &audio_dir,
+            &id,
+            audio_path.as_deref(),
+            &transcript,
+            raw_transcript.as_deref(),
+            &save_path,
+        )?;
         Ok::<bool, String>(true)
     })
     .await
     .map_err(|err| err.to_string())?
+}
+
+/// Write one transcription export archive to `save_path`.
+///
+/// The snapshot is read before the archive file is created, so a snapshot that
+/// cannot be opened fails the export without leaving a half-written zip at the
+/// path the user picked.
+///
+/// A row whose `audio_path` is a non-empty marker *claims* a snapshot exists,
+/// so failing to read one is a real error rather than an absent feature. A
+/// partial export is legitimate only if the user is told it is partial, and
+/// this command's `Result<bool, String>` cannot say that: the frontend reads
+/// `Ok(true)` as "Export saved successfully" and shows no second message. The
+/// text is not lost by refusing — the transcript stays readable in the
+/// transcriptions view — whereas a silently text-only archive is
+/// indistinguishable from a complete one.
+fn build_transcription_export(
+    audio_dir: &Dir,
+    id: &str,
+    audio_path: Option<&str>,
+    transcript: &str,
+    raw_transcript: Option<&str>,
+    save_path: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::Read;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    // A non-empty value marks a saved snapshot; the generated ID name and held
+    // directory capability select the actual file, never the persisted path.
+    let audio_data = if audio_path_has_file_path(audio_path) {
+        // The row claims a snapshot, so failing to read one is an error rather
+        // than an absent feature. `open_audio_file_for_read` is an `io::Result`,
+        // so `NotFound`, `PermissionDenied` and the Windows sharing violation all
+        // arrive here, and `transcription_audio_load` already reports this same
+        // failure as an error. Surfacing it is what keeps the export from being
+        // indistinguishable from a complete one.
+        let mut audio_file = crate::system::audio_store::open_audio_file_for_read(audio_dir, id)
+            .map_err(|err| {
+                format!(
+                    "Unable to read the recorded audio for this export, so no archive was \
+                         written: {err}. The transcript is still available in the app."
+                )
+            })?;
+        let mut audio_data = Vec::new();
+        audio_file
+            .read_to_end(&mut audio_data)
+            .map_err(|err| format!("Failed to read audio: {err}"))?;
+        Some(audio_data)
+    } else {
+        None
+    };
+
+    let file =
+        std::fs::File::create(save_path).map_err(|err| format!("Failed to create file: {err}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    zip.start_file("processed.txt", options)
+        .map_err(|err| err.to_string())?;
+    zip.write_all(transcript.as_bytes())
+        .map_err(|err| err.to_string())?;
+
+    if let Some(raw) = raw_transcript {
+        if !raw.is_empty() {
+            zip.start_file("raw.txt", options)
+                .map_err(|err| err.to_string())?;
+            zip.write_all(raw.as_bytes())
+                .map_err(|err| err.to_string())?;
+        }
+    }
+
+    if let Some(ref audio_data) = audio_data {
+        zip.start_file("audio.wav", options)
+            .map_err(|err| err.to_string())?;
+        zip.write_all(audio_data).map_err(|err| err.to_string())?;
+    }
+
+    zip.finish().map_err(|err| err.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -2916,13 +3011,28 @@ pub async fn purge_stale_transcription_audio(
         return Ok(Vec::new());
     }
 
-    let purged_ids = delete_audio_entries(app.clone(), stale_entries).await?;
+    let outcome = delete_audio_entries(app.clone(), stale_entries).await?;
 
-    if purged_ids.is_empty() {
-        return Ok(purged_ids);
+    if outcome.cleared.is_empty() {
+        return Ok(outcome.cleared);
     }
 
-    for id in &purged_ids {
+    clear_audio_metadata_for_deleted_files(&pool, &outcome.cleared).await?;
+
+    Ok(outcome.cleared)
+}
+
+/// NULL the audio columns of the rows whose snapshot is confirmed gone.
+///
+/// Only ids the deletion batch actually cleared may be passed here. A row left
+/// out keeps `audio_path`, which is what lets a later sweep re-select it: the
+/// purge query filters on `WHERE audio_path IS NOT NULL`, so clearing a row
+/// whose `.wav` survived is the one action that makes the file unfindable.
+async fn clear_audio_metadata_for_deleted_files(
+    pool: &sqlx::SqlitePool,
+    cleared: &[String],
+) -> Result<(), String> {
+    for id in cleared {
         sqlx::query(
             "UPDATE transcriptions
              SET audio_path = NULL,
@@ -2930,12 +3040,12 @@ pub async fn purge_stale_transcription_audio(
              WHERE id = ?1",
         )
         .bind(id)
-        .execute(&pool)
+        .execute(pool)
         .await
         .map_err(|err| err.to_string())?;
     }
 
-    Ok(purged_ids)
+    Ok(())
 }
 
 #[tauri::command]
@@ -6639,6 +6749,342 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A test-owned root under a per-test name, so the two audio-lifecycle
+    /// tests below cannot collide with each other or with a stale directory
+    /// left behind by an interrupted run.
+    fn lifecycle_test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "mausvoice-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    fn zip_entry_names(zip_path: &std::path::Path) -> Vec<String> {
+        let file = std::fs::File::open(zip_path).expect("export archive must be readable");
+        let mut archive = zip::ZipArchive::new(file).expect("export must be a readable archive");
+        (0..archive.len())
+            .map(|index| {
+                archive
+                    .by_index(index)
+                    .expect("entry must be readable")
+                    .name()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn zip_entry_bytes(zip_path: &std::path::Path, entry: &str) -> Vec<u8> {
+        use std::io::Read;
+        let file = std::fs::File::open(zip_path).expect("export archive must be readable");
+        let mut archive = zip::ZipArchive::new(file).expect("export must be a readable archive");
+        let mut bytes = Vec::new();
+        archive
+            .by_name(entry)
+            .unwrap_or_else(|err| panic!("{entry} must be present: {err}"))
+            .read_to_end(&mut bytes)
+            .expect("entry must be readable");
+        bytes
+    }
+
+    /// A row that claims a snapshot it cannot produce must not be exported as
+    /// if the export were complete.
+    ///
+    /// `open_audio_file_for_read` is an `io::Result`, so `NotFound`,
+    /// `PermissionDenied` and the Windows sharing violation all land in the
+    /// same place. Silently dropping the audio and returning `Ok(true)` hands
+    /// the user a text-only archive named `mausvoice-<id>.zip` while
+    /// `TranscriptRow.tsx` reports "Export saved successfully" — the one
+    /// outcome the user cannot detect. The sibling `transcription_audio_load`
+    /// maps this same failure to an explicit error, so the export must too.
+    #[test]
+    fn export_reports_a_marked_but_unreadable_snapshot_instead_of_claiming_success() {
+        let root = lifecycle_test_root("export-missing-audio");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let save_path = root.join("export.zip");
+        let id = "missing-audio";
+
+        // `audio_path` is a non-empty marker, so the row claims a snapshot. No
+        // `.wav` exists for it.
+        let result = build_transcription_export(
+            &held_audio_dir,
+            id,
+            Some("/some/recorded.m4a"),
+            "the processed words",
+            Some("the raw words"),
+            &save_path,
+        );
+
+        assert!(
+            result.is_err(),
+            "a snapshot the row claims but cannot read must not export as a success"
+        );
+        assert!(
+            !save_path.exists(),
+            "a refused export must not leave an archive the user will mistake for a complete one"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The happy path must keep working, and must keep putting the real bytes
+    /// in `audio.wav`.
+    #[test]
+    fn export_includes_the_snapshot_bytes_when_the_marker_is_readable() {
+        let root = lifecycle_test_root("export-happy-path");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let save_path = root.join("export.zip");
+        let id = "readable-audio";
+        std::fs::write(audio_dir.join("readable-audio.wav"), b"RIFFfake-wave-bytes")
+            .expect("managed fixture must be writable");
+
+        build_transcription_export(
+            &held_audio_dir,
+            id,
+            Some("recorded.m4a"),
+            "the processed words",
+            Some("the raw words"),
+            &save_path,
+        )
+        .expect("a readable snapshot must export");
+
+        let mut names = zip_entry_names(&save_path);
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["audio.wav", "processed.txt", "raw.txt"],
+            "a complete export carries all three members"
+        );
+        assert_eq!(
+            zip_entry_bytes(&save_path, "audio.wav"),
+            b"RIFFfake-wave-bytes"
+        );
+        assert_eq!(
+            zip_entry_bytes(&save_path, "processed.txt"),
+            b"the processed words"
+        );
+        assert_eq!(zip_entry_bytes(&save_path, "raw.txt"), b"the raw words");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A row that never stored a snapshot legitimately exports text only, and
+    /// must not be turned into an error by the fix above.
+    #[test]
+    fn export_stays_text_only_when_no_snapshot_was_ever_recorded() {
+        let root = lifecycle_test_root("export-no-snapshot");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let save_path = root.join("export.zip");
+        let id = "no-snapshot";
+
+        build_transcription_export(
+            &held_audio_dir,
+            id,
+            None,
+            "the processed words",
+            None,
+            &save_path,
+        )
+        .expect("a row without a snapshot must still export its text");
+
+        assert_eq!(zip_entry_names(&save_path), vec!["processed.txt"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A snapshot that could not be deleted must stay referenced by its row.
+    ///
+    /// The batch partition is the whole fix: clearing `audio_path` for an id
+    /// whose `.wav` is still on disk is the only action that makes the
+    /// recording unfindable, because the purge query selects
+    /// `WHERE audio_path IS NOT NULL` and `sweep_orphaned_wavs` runs only on a
+    /// full local wipe.
+    #[test]
+    fn a_snapshot_that_could_not_be_deleted_is_retained_for_a_later_retry() {
+        let root = lifecycle_test_root("delete-retain");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let locked_id = "locked-by-player";
+        let deletable_id = "deletable";
+        std::fs::write(audio_dir.join("locked-by-player.wav"), b"held open")
+            .expect("managed fixture must be writable");
+        std::fs::write(audio_dir.join("deletable.wav"), b"removable")
+            .expect("managed fixture must be writable");
+
+        // Hold the snapshot open the way the playback reader does. On Windows
+        // `remove_file` then fails with a sharing violation; this test cannot
+        // observe that platform, so it asserts the decision the batch makes
+        // for *any* non-`NotFound` failure, using a name this process keeps a
+        // read handle on.
+        let held_open = std::fs::File::open(audio_dir.join("locked-by-player.wav"))
+            .expect("fixture must be openable");
+
+        let outcome = delete_audio_entries_in_dir(
+            &held_audio_dir,
+            vec![
+                (locked_id.to_string(), true),
+                (deletable_id.to_string(), true),
+            ],
+        );
+
+        drop(held_open);
+        let _ = std::fs::remove_dir_all(&root);
+
+        if outcome.retained.contains(&locked_id.to_string()) {
+            // The delete failed, as intended on Windows. That is the branch the
+            // fix exists for.
+            assert!(
+                !outcome.cleared.contains(&locked_id.to_string()),
+                "an undeleted snapshot must never be reported as cleared"
+            );
+            assert_eq!(outcome.cleared, vec![deletable_id.to_string()]);
+        } else {
+            // On Unix an open file is still unlinkable, so the delete succeeds
+            // and there is no failure to retain. Skip rather than assert a
+            // platform behaviour this test does not own.
+            eprintln!("SKIP: this platform unlinks an open file; nothing was retained");
+        }
+    }
+
+    /// The mechanism test: force a non-`NotFound` delete failure deterministically
+    /// on every platform, and assert the row keeps its marker.
+    ///
+    /// A *directory* named like the snapshot makes `remove_file` fail with
+    /// something other than `NotFound` regardless of uid, where a permission
+    /// bit would be ignored by the root user this suite may run as.
+    #[test]
+    fn any_non_not_found_delete_failure_keeps_the_row_pointing_at_the_snapshot() {
+        let root = lifecycle_test_root("delete-dir-in-the-way");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let blocked_id = "blocked";
+        std::fs::create_dir(audio_dir.join("blocked.wav"))
+            .expect("the blocking fixture must be creatable");
+
+        let outcome =
+            delete_audio_entries_in_dir(&held_audio_dir, vec![(blocked_id.to_string(), true)]);
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(
+            outcome.cleared,
+            Vec::<String>::new(),
+            "a snapshot that is still on disk must not be reported as deleted"
+        );
+        assert_eq!(outcome.retained, vec![blocked_id.to_string()]);
+    }
+
+    /// A snapshot that is genuinely already gone has nothing to retry, so its
+    /// row must stop pointing at it — otherwise `purge` re-selects the row on
+    /// every sweep forever.
+    #[test]
+    fn an_already_absent_snapshot_is_cleared_so_the_row_stops_reappearing() {
+        let root = lifecycle_test_root("delete-already-absent");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let absent_id = "already-gone";
+
+        let outcome =
+            delete_audio_entries_in_dir(&held_audio_dir, vec![(absent_id.to_string(), true)]);
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.cleared, vec![absent_id.to_string()]);
+        assert!(outcome.retained.is_empty());
+    }
+
+    /// The empty-marker case clears metadata without touching the filesystem,
+    /// which is the historical behavior and must survive the fix.
+    #[test]
+    fn the_empty_marker_case_clears_metadata_without_a_delete() {
+        let root = lifecycle_test_root("delete-empty-marker");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let empty_marker_id = "empty-marker";
+
+        let outcome = delete_audio_entries_in_dir(
+            &held_audio_dir,
+            vec![(empty_marker_id.to_string(), false)],
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.cleared, vec![empty_marker_id.to_string()]);
+        assert!(outcome.retained.is_empty());
+    }
+
+    /// `clear_audio_metadata_for_deleted_files` is what the purge command calls
+    /// with the cleared ids, so this pins the row-level consequence directly:
+    /// a retained row keeps `audio_path` and a later sweep can re-select it.
+    #[tokio::test]
+    async fn clearing_audio_metadata_touches_only_the_ids_passed_in() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+        for (id, marker) in [("gone", "/audio/gone.m4a"), ("kept", "/audio/kept.m4a")] {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(marker)
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+
+        // `kept` stands in for a snapshot that failed to delete: it must not be
+        // in the cleared set.
+        clear_audio_metadata_for_deleted_files(&pool, &["gone".to_string()])
+            .await
+            .expect("clearing cleared ids must succeed");
+
+        let markers: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT id, audio_duration_ms FROM transcriptions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("rows must be readable");
+        let paths: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, audio_path FROM transcriptions ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .expect("rows must be readable");
+
+        assert_eq!(
+            paths,
+            vec![
+                ("gone".to_string(), None),
+                // The retained row still points at its snapshot, which is what
+                // keeps it findable for the next sweep.
+                ("kept".to_string(), Some("/audio/kept.m4a".to_string())),
+            ]
+        );
+        assert_eq!(
+            markers,
+            vec![("gone".to_string(), None), ("kept".to_string(), Some(4200)),]
+        );
     }
 
     #[cfg(unix)]
