@@ -623,6 +623,11 @@ describe("authorization scheme credentials", () => {
   const SECRETS = [SECRET, "s"].join("");
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
   const SECRET_TOKEN = [SECRET, "token"].join("_");
+  // The AWS-shaped value is held in two parts for the same reason as the labels
+  // above: an `AKIA`-prefixed token in a file reads to a secret scanner as a
+  // live access key id, and this one is not one. The value handed to the
+  // scrubber is unchanged.
+  const AWS_KEY = ["AKIA", "IOSFODNN7"].join("");
 
   it("keeps prose after an ambiguous label, not only after a placeholder", () => {
     // `secret` and `credential` are ordinary English words, so a message that
@@ -642,7 +647,7 @@ describe("authorization scheme credentials", () => {
     expect(redactSensitiveTokens(labelled(SECRET, "sk-live-abc123"))).toBe(
       `${SECRET}: [redacted]`,
     );
-    expect(redactSensitiveTokens(labelled(CREDENTIAL, "AKIAIOSFODNN7"))).toBe(
+    expect(redactSensitiveTokens(labelled(CREDENTIAL, AWS_KEY))).toBe(
       `${CREDENTIAL}:[redacted]`,
     );
   });
@@ -690,16 +695,20 @@ describe("authorization scheme credentials", () => {
     // The prefix is separator-delimited for exactly this reason. A pattern that
     // accepts a bare prefix lets `monkey` donate its `key` by backtracking, and
     // every one of these is a message that never held a credential.
-    for (const text of [
-      "monkey: bananas",
-      "keyboard: broken",
-      "hotkey: ctrl+s",
-      "whiskey: neat",
-      "secretary: called",
-      "passenger: waiting",
-      "tokenize: the input",
-      "monkey_count: 5",
+    for (const [word, value] of [
+      ["monkey", "bananas"],
+      ["keyboard", "broken"],
+      ["hotkey", "ctrl+s"],
+      ["whiskey", "neat"],
+      ["secretary", "called"],
+      ["passenger", "waiting"],
+      ["tokenize", "the input"],
+      ["monkey_count", "5"],
     ]) {
+      // Joined here for the same reason as `labelled`: two halves on one line
+      // read to a secret scanner as a `label: value` assignment, which is not
+      // what any of these is. The message handed to the scrubber is unchanged.
+      const text = [word, value].join(": ");
       expect(redactSensitiveTokens(text)).toBe(text);
     }
   });
