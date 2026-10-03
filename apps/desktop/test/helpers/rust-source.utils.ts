@@ -34,6 +34,38 @@ export const listRepoEntries = (dir: string): string[] =>
 export const listRepoSources = (dir: string, extension: string): string[] =>
   listRepoEntries(dir).filter((file) => file.endsWith(extension));
 
+/**
+ * Every file with `extension` under `dir` at any depth, as paths from the
+ * repository root.
+ *
+ * `listRepoSources` reads one directory, which is right when a caller knows the
+ * file it wants sits directly inside. It is wrong for a contract that has to
+ * cover a whole tree: the desktop crate's `src` holds 8 Rust files at the top
+ * level and dozens more under `platform/`, `system/`, `db/` and `utils/`, and a
+ * test written against the shallow version silently skips every one of them
+ * while still reporting success.
+ */
+export const listRepoSourcesRecursive = (
+  dir: string,
+  extension: string,
+): string[] => {
+  const found: string[] = [];
+  const walk = (current: string): void => {
+    for (const entry of readdirSync(path.join(REPO_ROOT, current), {
+      withFileTypes: true,
+    })) {
+      const child = `${current}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(child);
+      } else if (entry.name.endsWith(extension)) {
+        found.push(child);
+      }
+    }
+  };
+  walk(dir);
+  return found.sort();
+};
+
 /** Read a file by its path from the repository root. */
 export const readRepoSource = (file: string): string =>
   readFileSync(path.join(REPO_ROOT, file), "utf8");
