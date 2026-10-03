@@ -164,6 +164,66 @@ describe("saveCorrectedTranscript persistence gate", () => {
   });
 });
 
+describe("saveCorrectedTranscript glossary gate", () => {
+  // The glossary is a second write, not a consequence of the first. Learned
+  // terms are proper nouns lifted verbatim out of the corrected text, so a
+  // transcript row that stayed in memory while its nouns went to the dictionary
+  // would leave the sensitive content behind anyway.
+  const learnable = "my wife's name is Soniya";
+
+  it.each([
+    ["incognito mode", { incognito: true }],
+    ["an ephemeral session", { ephemeral: true }],
+  ])("writes no glossary terms during %s", async (_label, mode) => {
+    seed(mode);
+    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: true });
+
+    const result = await saveCorrectedTranscript({
+      transcriptionId: "tx",
+      correctedText: learnable,
+    });
+
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+    expect(result.learnedTerms).toEqual([]);
+    expect(result.failedTerms).toBe(0);
+  });
+
+  // The positive control. Without it the pair above would also pass if
+  // auto-learning never ran for this correction at all, which is the shape a
+  // test-only fix takes.
+  it("writes the glossary terms when persistence is allowed", async () => {
+    seed();
+    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: true });
+    createGlossaryTerms.mockResolvedValue({
+      created: [{ sourceValue: "Soniya" }],
+      failed: 0,
+    });
+
+    const result = await saveCorrectedTranscript({
+      transcriptionId: "tx",
+      correctedText: learnable,
+    });
+
+    expect(createGlossaryTerms).toHaveBeenCalledWith(["Soniya"]);
+    expect(result.learnedTerms).toEqual(["Soniya"]);
+  });
+
+  it("still honours auto-learn being switched off", async () => {
+    // Guard against the gate being implemented by disabling the feature rather
+    // than by refusing the write.
+    seed();
+    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: false });
+
+    await saveCorrectedTranscript({
+      transcriptionId: "tx",
+      correctedText: learnable,
+    });
+
+    expect(updateTranscription).toHaveBeenCalled();
+    expect(createGlossaryTerms).not.toHaveBeenCalled();
+  });
+});
+
 describe("saveCorrectedTranscript error copy", () => {
   it("reports an unknown transcription through the intl layer", async () => {
     // `TranscriptionDetailsDialog` hands a thrown Error straight to the error

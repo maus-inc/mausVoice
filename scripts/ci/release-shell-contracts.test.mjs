@@ -155,6 +155,79 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  it("secret-scan never lets the scanned checkout supply its own baseline", () => {
+    // Measured against gitleaks 8.18.0 rather than assumed: `detect` auto-loads
+    // `<source>/.gitleaksignore` from the tree it scans, and
+    // `--gitleaks-ignore-path` only ADDS a baseline -- it does not suppress that
+    // auto-load. With the untrusted file present, a scan whose trusted baseline
+    // was empty still reported "no leaks found"; the finding only reappeared
+    // after the untrusted file was deleted from the tree. So the file has to
+    // leave the checkout: pinning the flag alone would have left the hole open
+    // while looking fixed, which is the failure mode this pins against.
+    const scan = read(".github/workflows/secret-scan.yml");
+    const steps = extractSteps(scan);
+    const names = steps.map((step) => step.name);
+    const stripAt = names.findIndex((name) =>
+      /Strip an untrusted baseline/.test(name),
+    );
+    assert.notStrictEqual(
+      stripAt,
+      -1,
+      "secret-scan.yml must strip an untrusted .gitleaksignore out of the scanned checkout",
+    );
+
+    const scanSteps = steps.filter((step) => /^Scan /.test(step.name));
+    assert.deepStrictEqual(
+      scanSteps.map((step) => step.name),
+      [
+        "Scan PR commit range for secrets",
+        "Scan pushed commit range for secrets",
+        "Scan working tree for committed updater keys",
+      ],
+      "expected the three gitleaks scans to still exist under their current names",
+    );
+    for (const step of scanSteps) {
+      assert.ok(
+        names.indexOf(step.name) > stripAt,
+        `${step.name} runs before the strip step, so it scans a tree that still carries the untrusted baseline`,
+      );
+      assert.match(
+        step.run.join("\n"),
+        /--gitleaks-ignore-path/,
+        `${step.name} must name the trusted baseline explicitly rather than rely on an unstated default`,
+      );
+    }
+
+    const strip = steps[stripAt];
+    assert.match(
+      strip.run.join("\n"),
+      /rm -f scan-target\/\.gitleaksignore/,
+      "the strip step has to remove the file, not merely warn about it",
+    );
+    // The comparison itself, not just the env plumbing. Asserting that HEAD_REPO
+    // is passed in is satisfied by a step that receives it and never reads it,
+    // and stripping unconditionally would silently drop this repo's own
+    // baseline -- the fork PRs are the ones that need it gone.
+    assert.match(
+      strip.run.join("\n"),
+      /if \[ "\$HEAD_REPO" = "\$BASE_REPO" \]; then[\s\S]*?exit 0/,
+      "the strip step must skip same-repo branches before removing the baseline",
+    );
+    // Fork-only, because the legitimate and hostile cases are the same
+    // mechanism: this repo's own baseline holds a fingerprint for a test
+    // fixture, and base carries no baseline at all.
+    assert.match(
+      scan,
+      /github\.event\.pull_request\.head\.repo\.full_name/,
+      "the strip step must distinguish a fork head from a same-repo branch",
+    );
+    assert.match(
+      scan,
+      /if:\s*github\.event_name == 'pull_request'\s*\n\s*env:\s*\n\s*HEAD_REPO:/,
+      "the strip step must be gated on pull_request and compare HEAD_REPO",
+    );
+  });
+
   it("does not duplicate a step's shell key", () => {
     // YAML duplicate keys are invalid configuration. A last-value-wins parser
     // can hide the mistake locally, then leave the release workflow rejected

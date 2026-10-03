@@ -82,6 +82,11 @@ export const saveCorrectedTranscript = async ({
     draft.transcriptionById[transcriptionId] = updated;
   });
 
+  // One decision, read once, for both writes this function performs: the history
+  // row and the glossary. Reading it separately per write would let the two
+  // disagree if the mode changed while an await was in flight.
+  const persistenceAllowed = isPersistenceAllowed();
+
   let learnedTerms: string[] = [];
   let failedTerms = 0;
   try {
@@ -89,7 +94,7 @@ export const saveCorrectedTranscript = async ({
     // answers the same privacy gate. Under incognito mode or an ephemeral
     // session the correction stays in memory only: writing it out would put
     // back exactly the transcript the mode promised to leave unsaved.
-    const persisted = isPersistenceAllowed()
+    const persisted = persistenceAllowed
       ? await getTranscriptionRepo().updateTranscription(updated)
       : updated;
     produceAppState((draft) => {
@@ -98,7 +103,12 @@ export const saveCorrectedTranscript = async ({
 
     const autoLearnEnabled =
       getMyUserPreferences(getAppState())?.autoLearnDictionaryEnabled ?? true;
-    if (autoLearnEnabled) {
+    // The glossary answers the same gate as the transcript write, and for a
+    // sharper reason: the learned terms are proper nouns lifted verbatim out of
+    // the corrected text, so persisting them would leave the sensitive content
+    // behind in a table the mode never promised to touch. Gating only the
+    // transcript write left the dictionary as the surviving copy.
+    if (autoLearnEnabled && persistenceAllowed) {
       const result = await learnTermsFromCorrection(
         previous.transcript,
         normalized,
