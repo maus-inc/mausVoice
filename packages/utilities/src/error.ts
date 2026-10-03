@@ -85,10 +85,18 @@ const PROVIDER_KEY_PREFIX =
 //   the two lines after it with it. See `KEY_HOLDERS` for why the holder list
 //   was the better place.
 //
-// No camelCase qualifier either: any pattern accepting one lets `monkey` donate
+// No camelCase QUALIFIER either: any pattern accepting one lets `monkey` donate
 // its `key` by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`.
-// `apiKey` still matches because it needs no qualifier; `secretKey` and
-// `mySecret` do not, and that is the stated cost.
+//
+// A camelCase label with no qualifier does match, which is worth being precise
+// about because it reads as a contradiction. The tier-1 names are two words with
+// an OPTIONAL separator and the match is case-insensitive, so `apiKey`,
+// `secretKey`, `clientSecret`, `privateKey`, `accessToken` and `refreshToken`
+// all match as themselves. What cannot cross is a qualifier: in text,
+// `openaiApiKey`, `signingKey` and `userPassword` are not labels, because there
+// is no separator for the qualifier to be recognised by. Measured, that is 7 of
+// 15 qualified camelCase labels unredacted in a message and 0 of 15 as an object
+// key -- see `foldCamelLabel`, which is why the two forms differ here.
 //
 // What anchoring the rule gives up is a credential word in the MIDDLE of a
 // longer key, which the old substring test used to catch: `db_password_hint`,

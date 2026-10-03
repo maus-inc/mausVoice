@@ -624,9 +624,15 @@ describe("authorization scheme credentials", () => {
   const CREDENTIALS = [CREDENTIAL, "s"].join("");
   const CLIENT_SECRET = ["client", "secret"].join("_");
   const SESSION_TOKEN = ["session", "token"].join("_");
-  // Provider-qualified credential labels. Every provider in this repo, because
-  // the four that have a recognised key prefix are the only ones that were safe
-  // before the tier split, and the ones without one are exactly the leak.
+  // Provider-qualified credential labels, in the `<provider>_api_key` spelling.
+  // Every provider here that uses that spelling, because the four with a
+  // recognised key prefix were the only ones safe before the tier split and the
+  // ones without one were exactly the leak.
+  //
+  // NOT every credential this repo handles: Azure's is the `Ocp-Apim-
+  // Subscription-Key` header, which no `<provider>_api_key` rule matches, and
+  // which stays the responsibility of `apps/desktop/src`'s own redactor. That is
+  // stated rather than glossed because "every provider" would be false here.
   const PROVIDER_QUALIFIED = [
     ["azure", "api", "key"].join("_"),
     ["groq", "api", "key"].join("_"),
