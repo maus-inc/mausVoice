@@ -199,61 +199,77 @@ export const playWebAudio = async (
   }
 
   const context = new AudioContext({ sampleRate: data.sampleRate });
-  if (context.state === "suspended") {
-    await context.resume();
-  }
 
-  if (generation !== playbackGeneration) {
-    context.close().catch(() => undefined);
-    return;
-  }
-
-  const channelCount = 1;
-  const floatSamples = Float32Array.from(data.samples ?? []);
-  const buffer = context.createBuffer(
-    channelCount,
-    floatSamples.length,
-    data.sampleRate,
-  );
-  buffer.getChannelData(0).set(floatSamples);
-
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  source.connect(context.destination);
-
-  const playback: ActiveWebAudioPlayback = {
-    transcriptionId,
-    context,
-    source,
-    buffer,
-    rafId: null,
-    startTime: context.currentTime,
-    offsetSeconds: 0,
-    durationSeconds: buffer.duration,
-    onProgress,
-    onStop,
-  };
-  activePlayback = playback;
-
-  source.onended = () => {
-    if (activePlayback === playback) {
-      stopActivePlayback("ended");
+  // An AudioContext holds an OS audio handle, and `activePlayback` only takes
+  // ownership of this one after every await below has settled. An exit between
+  // the allocation and that hand-off — a rejected `resume()`, or a
+  // `createBuffer` that rejects the sample rate — propagates out of here with
+  // no owner left to close it, so the handle survives until the page unloads.
+  // The caller recovers from such a rejection by showing an error snackbar, and
+  // playback is started per transcription row, so these accumulate. Close on
+  // every exit from this window that has not handed the context over.
+  let ownedByActivePlayback = false;
+  try {
+    if (context.state === "suspended") {
+      await context.resume();
     }
-  };
 
-  const startRatio = clampPlaybackProgress(startProgress);
-  if (buffer.duration <= 0 || startRatio >= 1) {
-    onProgress(1);
-    stopActivePlayback("ended");
-    return;
+    if (generation !== playbackGeneration) {
+      return;
+    }
+
+    const channelCount = 1;
+    const floatSamples = Float32Array.from(data.samples ?? []);
+    const buffer = context.createBuffer(
+      channelCount,
+      floatSamples.length,
+      data.sampleRate,
+    );
+    buffer.getChannelData(0).set(floatSamples);
+
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(context.destination);
+
+    const playback: ActiveWebAudioPlayback = {
+      transcriptionId,
+      context,
+      source,
+      buffer,
+      rafId: null,
+      startTime: context.currentTime,
+      offsetSeconds: 0,
+      durationSeconds: buffer.duration,
+      onProgress,
+      onStop,
+    };
+    activePlayback = playback;
+    ownedByActivePlayback = true;
+
+    source.onended = () => {
+      if (activePlayback === playback) {
+        stopActivePlayback("ended");
+      }
+    };
+
+    const startRatio = clampPlaybackProgress(startProgress);
+    if (buffer.duration <= 0 || startRatio >= 1) {
+      onProgress(1);
+      stopActivePlayback("ended");
+      return;
+    }
+
+    const offset = startRatio * buffer.duration;
+    playback.offsetSeconds = offset;
+    playback.startTime = context.currentTime;
+    onProgress(startRatio);
+    source.start(0, offset);
+    armTick(playback);
+  } finally {
+    if (!ownedByActivePlayback) {
+      context.close().catch(() => undefined);
+    }
   }
-
-  const offset = startRatio * buffer.duration;
-  playback.offsetSeconds = offset;
-  playback.startTime = context.currentTime;
-  onProgress(startRatio);
-  source.start(0, offset);
-  armTick(playback);
 };
 
 /** Deterministic decorative bars — not PCM peaks. Same seed → same silhouette. */

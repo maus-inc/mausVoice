@@ -146,3 +146,118 @@ describe("audio source cleanup", () => {
     expect(activePlayback).toBeNull();
   });
 });
+
+// `playWebAudio` allocates an AudioContext, which holds an OS audio handle, and
+// publishes it as `activePlayback` only after every await has settled. An exit
+// between the allocation and that publication — a rejected `resume()`, or a
+// `createBuffer` that rejects the sample rate — therefore propagates out of
+// `playWebAudio` with no owner left to close it. `AudioPlayerPill` catches that
+// rejection and shows "Unable to play audio snippet", so the app recovers on
+// screen while the context stays open for the life of the page. Playback is
+// started per transcription row, so these accumulate.
+describe("audio context lifetime", () => {
+  afterEach(() => {
+    stopActivePlayback("stopped");
+    vi.unstubAllGlobals();
+  });
+
+  const stubIdleWindow = () => {
+    vi.stubGlobal("window", {
+      requestAnimationFrame: vi.fn(() => 1),
+      cancelAnimationFrame: vi.fn(),
+    });
+  };
+
+  it("closes the context when resume rejects", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "suspended";
+        currentTime = 0;
+        destination = {};
+        close = close;
+        resume = vi.fn(() => Promise.reject(new Error("resume blocked")));
+        createBufferSource = vi.fn();
+        createBuffer = vi.fn();
+      },
+    );
+
+    // The caller still has to learn playback failed, so the rejection must
+    // keep propagating — closing the context is not allowed to swallow it.
+    await expect(
+      playWebAudio(
+        "t1",
+        { samples: [0, 0], sampleRate: 16000 },
+        vi.fn(),
+        vi.fn(),
+      ),
+    ).rejects.toThrow("resume blocked");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(activePlayback).toBeNull();
+  });
+
+  it("closes the context when createBuffer rejects the sample rate", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        currentTime = 0;
+        destination = {};
+        close = close;
+        createBufferSource = vi.fn();
+        createBuffer = vi.fn(() => {
+          throw new Error("sample rate 0 outside [3000, 768000]");
+        });
+      },
+    );
+
+    await expect(
+      playWebAudio("t1", { samples: [0, 0], sampleRate: 0 }, vi.fn(), vi.fn()),
+    ).rejects.toThrow("sample rate 0 outside");
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(activePlayback).toBeNull();
+  });
+
+  // The fix must not close the context it is supposed to hand over: that one is
+  // the live playback, and closing it would silence the audio.
+  it("leaves the context open once playback takes ownership of it", async () => {
+    stubIdleWindow();
+    const close = vi.fn(() => Promise.resolve());
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "running";
+        currentTime = 0;
+        destination = {};
+        close = close;
+        createBufferSource = vi.fn(() => ({
+          stop: vi.fn(),
+          disconnect: vi.fn(),
+          connect: vi.fn(),
+          start: vi.fn(),
+          onended: null,
+        }));
+        createBuffer = vi.fn(() => ({
+          duration: 1,
+          getChannelData: () => new Float32Array(2),
+        }));
+      },
+    );
+
+    await playWebAudio(
+      "t1",
+      { samples: [0, 0], sampleRate: 16000 },
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(close).not.toHaveBeenCalled();
+    expect(activePlayback).not.toBeNull();
+  });
+});
