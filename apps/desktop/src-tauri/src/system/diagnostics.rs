@@ -9,6 +9,10 @@ use std::path::Path;
 /// (250 MB ≈ 10 × 25 MB).
 pub const MAX_LOG_DIR_SIZE: u64 = 250 * 1024 * 1024;
 
+/// Name prefix the rotating writer gives its log files (`app.rs`), used to tell
+/// the writer's own files from anything else that shares the log directory.
+const ACTIVE_LOG_NAME_PREFIX: &str = "mausvoice_";
+
 pub fn purge_old_logs(app: &tauri::AppHandle) {
     let logs_dir = match crate::system::paths::logs_dir(app) {
         Ok(dir) => dir,
@@ -78,25 +82,46 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
     // Exactly one file is exempt: the active log the rotating writer holds
     // open. Deleting it fails with a sharing violation on Windows, and on Unix
     // it unlinks the file that is still being appended to, so those writes go
-    // nowhere. It is identified by NAME rather than by its mtime value. Log
-    // file names are `mausvoice_%Y-%m-%d_%H%M%S` (`app.rs`), a zero-padded
-    // second-resolution stamp, so the newest file by name is the one just
-    // created and therefore the active one. Keying on the mtime value instead
-    // would exempt every file sharing the newest mtime, which is what a
-    // rotation burst inside a single second produces on a volume with coarse
-    // timestamps (FAT32 or exFAT, so a USB stick or an external macOS volume):
-    // the directory could then never shrink, because the files that had to go
-    // were all exempt.
-    let Some((_active, purgeable)) = files.split_last() else {
-        return;
-    };
+    // nowhere. It is identified by NAME rather than by its mtime value, and
+    // only among the rotating writer's own files. Log file names are
+    // `mausvoice_%Y-%m-%d_%H%M%S` (`app.rs`), a zero-padded second-resolution
+    // stamp, so the newest `mausvoice_` file by name is the one just created
+    // and therefore the active one.
+    //
+    // Neither half of that is optional. Keying on the mtime value instead would
+    // exempt every file sharing the newest mtime, which is what a rotation burst
+    // inside a single second produces on a volume with coarse timestamps (FAT32
+    // or exFAT, so a USB stick or an external macOS volume): the directory could
+    // then never shrink, because the files that had to go were all exempt. And
+    // taking the newest by name over *every* file in the directory is wrong in
+    // the other direction, because this directory is not the writer's alone —
+    // `startup_diagnostics.log` lands here too, and `s` sorts after every `m`,
+    // so a tie with the live log hands the exemption to the diagnostics file and
+    // unlinks the log that is still open. Any stray file with a newer mtime
+    // (a crash dump, a `.DS_Store`) wins it outright.
+    let active_log = files
+        .iter()
+        .filter(|file| {
+            file.name
+                .to_string_lossy()
+                .starts_with(ACTIVE_LOG_NAME_PREFIX)
+        })
+        .map(|file| &file.name)
+        .max()
+        .cloned();
+    // No rotating log present, so nothing is held open and nothing is exempt:
+    // the cap still has to be enforceable.
+    let is_active = |file: &LogFile| Some(&file.name) == active_log.as_ref();
 
     let mut removed = 0usize;
     let mut running_total = total_size;
 
-    for file in purgeable {
+    for file in &files {
         if running_total <= cap {
             break;
+        }
+        if is_active(file) {
+            continue;
         }
         match fs::remove_file(&file.path) {
             Ok(()) => {
@@ -352,10 +377,10 @@ mod tests {
         let newest = filetime::FileTime::from_system_time(now - Duration::from_secs(1));
 
         for (name, mtime) in [
-            ("mausvoice_old_a.log", old),
-            ("mausvoice_old_b.log", old),
-            ("mausvoice_new_a.log", newest),
-            ("mausvoice_new_b.log", newest),
+            ("mausvoice_2026-01-01_110000.log", old),
+            ("mausvoice_2026-01-01_110100.log", old),
+            ("mausvoice_2026-01-01_115900.log", newest),
+            ("mausvoice_2026-01-01_120000.log", newest),
         ] {
             let path = dir.join(name);
             write_file_with_size(&path, 2048);
@@ -372,16 +397,24 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert!(
-            survivors.iter().any(|n| n == "mausvoice_new_b.log"),
+            survivors
+                .iter()
+                .any(|n| n == "mausvoice_2026-01-01_120000.log"),
             "the newest file by name shares the newest mtime and must survive, got {survivors:?}",
         );
         assert!(
-            survivors.iter().all(|n| n != "mausvoice_new_a.log"),
-            "only the newest file by name may be exempt, so new_a must be purgeable, got {survivors:?}",
+            survivors
+                .iter()
+                .all(|n| n != "mausvoice_2026-01-01_115900.log"),
+            "only the newest file by name may be exempt, so 115900 must be purgeable, got {survivors:?}",
         );
         assert!(
-            survivors.iter().all(|n| n != "mausvoice_old_a.log")
-                && survivors.iter().all(|n| n != "mausvoice_old_b.log"),
+            survivors
+                .iter()
+                .all(|n| n != "mausvoice_2026-01-01_110000.log")
+                && survivors
+                    .iter()
+                    .all(|n| n != "mausvoice_2026-01-01_110100.log"),
             "expected both older files to be purged, got {survivors:?}",
         );
         // The active log alone is left: 4 x 2048 is 8192 and the cap is 1024,
@@ -392,6 +425,57 @@ mod tests {
             "expected only the active log to survive, got {survivors:?}"
         );
         fs::remove_dir_all(&dir).expect("failed to clean up");
+    }
+
+    // `startup_diagnostics.log` is written into this same directory
+    // (`system/paths.rs`), and `s` sorts after every `m`. Exempting "the newest
+    // file by (mtime, name)" therefore exempts the diagnostics file instead of
+    // the log the rotating writer holds open whenever their mtimes tie — which
+    // is what a fast restart produces on the coarse-timestamp volumes the mtime
+    // ordering exists for — and the loop then unlinks the live log. The same
+    // hole hands the exemption to any stray file with a newer mtime.
+    #[test]
+    fn the_exempt_file_is_the_newest_named_log_not_merely_the_newest_file() {
+        let now = SystemTime::now();
+        let log_mtime = filetime::FileTime::from_system_time(now - Duration::from_secs(1));
+        // Both shapes that beat a mtime-first ordering: an exact tie broken on
+        // the name, and a stray file that is simply newer.
+        let stray_mtimes = [
+            ("tied with the log", log_mtime),
+            (
+                "newer than the log",
+                filetime::FileTime::from_system_time(now),
+            ),
+        ];
+
+        for (label, stray_mtime) in stray_mtimes {
+            let dir = unique_tmp_dir("purge-stray-exempt");
+            let active_log = dir.join("mausvoice_2026-01-01_120000.log");
+            let stray = dir.join("startup_diagnostics.log");
+            write_file_with_size(&active_log, 2048);
+            write_file_with_size(&stray, 2048);
+            filetime::set_file_mtime(&active_log, log_mtime).expect("failed to set mtime");
+            filetime::set_file_mtime(&stray, stray_mtime).expect("failed to set mtime");
+
+            // Over the cap, so which file is exempt decides which one survives.
+            purge_old_logs_in_with_cap(&dir, 1024);
+
+            let survivors: Vec<String> = fs::read_dir(&dir)
+                .expect("failed to read dir")
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            assert!(
+                active_log.exists(),
+                "the rotating log the writer holds open was purged with a stray file \
+                 {label}: {survivors:?}"
+            );
+            assert!(
+                !stray.exists(),
+                "a non-log file must never hold the active-log exemption: {survivors:?}"
+            );
+            fs::remove_dir_all(&dir).expect("failed to clean up");
+        }
     }
 
     // A single oversized file that is also the newest is left alone: it is

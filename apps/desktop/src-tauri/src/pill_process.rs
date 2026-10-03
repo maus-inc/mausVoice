@@ -370,6 +370,79 @@ pub(crate) enum PillEvent {
     },
 }
 
+/// Cap on the distinct-error set, so a pill that varies its malformed output
+/// cannot grow this without bound.
+const MAX_REPORTED_PILL_PARSE_ERRORS: usize = 64;
+
+thread_local! {
+    /// Distinct parser errors already reported on this thread.
+    ///
+    /// Thread-local rather than process-global because the parse failures come
+    /// from exactly one place: the stdout reader `start_stdout_reader` spawns,
+    /// one per pill process. Scoping the set to that thread matches the scope
+    /// of the failure, and it means a restarted pill reports its first bad line
+    /// again rather than staying silent for the rest of the app's life because
+    /// an earlier pill process happened to send the same text.
+    static REPORTED_PILL_PARSE_ERRORS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Describe a token that arrived from the pill without reproducing it.
+///
+/// The token is whatever sat in a field this build does not recognise, so it is
+/// user text as far as anything here can tell: a mapping slip that puts the
+/// transcript in `action` is exactly the case the caller is guarding against, and
+/// truncating to 32 characters would still ship the opening words of someone's
+/// speech in a log that travels with bug reports.
+///
+/// A length plus a short non-cryptographic hash keeps the diagnostic useful —
+/// a repeated token is recognisable across lines and builds, and a length
+/// catches a wholesale field swap — without carrying the content.
+fn describe_untrusted_token(token: &str) -> String {
+    // FNV-1a, computed inline to avoid pulling a hashing dependency in for a
+    // diagnostic. Collision resistance is not the goal; only making the content
+    // unrecoverable from the log is.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in token.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("<{} chars, fnv1a:{hash:016x}>", token.chars().count())
+}
+
+/// Report the first occurrence of each distinct parse error, then stay quiet.
+///
+/// Every record is registered against the log directory, stdout and the webview
+/// at once, and the log directory is capped at a few hundred MB that this same
+/// purge exists to shrink. A pill whose output shape drifts emits one of these
+/// for every line it sends, for the whole session, so the unthrottled version
+/// turns a diagnostic into the thing that fills the disk it is meant to protect.
+///
+/// The first occurrence still carries the full message: that is what makes the
+/// failure visible, and it is the one a bug report needs. Only the repeat
+/// count is dropped, so the error stays findable without the volume.
+///
+/// Returns whether the error was new. Extracted so the dedupe can be tested
+/// without installing a logger or asserting on how many records a run emits.
+fn note_unreported_pill_parse_error(error: &serde_json::Error) -> bool {
+    let message = error.to_string();
+    REPORTED_PILL_PARSE_ERRORS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.contains(&message) || seen.len() >= MAX_REPORTED_PILL_PARSE_ERRORS {
+            return false;
+        }
+        seen.insert(message);
+        true
+    })
+}
+
+/// Log an unparseable pill line at most once per distinct parser error.
+fn report_unparseable_pill_line(error: &serde_json::Error) {
+    if note_unreported_pill_parse_error(error) {
+        log::warn!("Ignoring unparseable pill line: {error}");
+    }
+}
+
 pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -380,7 +453,7 @@ pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
     let val: serde_json::Value = match serde_json::from_str(trimmed) {
         Ok(v) => v,
         Err(error) => {
-            log::warn!("Ignoring unparseable pill line: {error}");
+            report_unparseable_pill_line(&error);
             return None;
         }
     };
@@ -632,8 +705,12 @@ impl PillReviewAction {
 /// review. Cancel leaves it out.
 ///
 /// The line carries the user's transcript, so none of the diagnostics below
-/// repeat it — logs travel with bug reports. The unknown-action token is the
-/// one field that cannot be user text, and it is truncated before logging.
+/// repeat it — logs travel with bug reports. That includes the unknown-action
+/// token: nothing enforces that the `action` field holds an action rather than
+/// whatever a mapping slip or a renamed field left there, so the diagnostic
+/// records only the token's length and a short hash of it. A hash is enough to
+/// tell two failing builds apart ("every click reports the same token") without
+/// being able to read the user's words back out of a shipped log.
 pub(crate) fn parse_review_decision_value(
     value: &serde_json::Value,
 ) -> Option<(String, PillReviewAction, Option<String>)> {
@@ -650,8 +727,11 @@ pub(crate) fn parse_review_decision_value(
     };
     let raw_action = value.get("action").and_then(|v| v.as_str());
     let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
-        let token: String = raw_action.unwrap_or("<missing>").chars().take(32).collect();
-        log::warn!("Ignoring pill review decision with an unknown action: {token}");
+        let raw = raw_action.unwrap_or("<missing>");
+        log::warn!(
+            "Ignoring pill review decision with an unknown action: {}",
+            describe_untrusted_token(raw)
+        );
         return None;
     };
     let text = value
@@ -851,7 +931,14 @@ mod review_decision_parse_tests {
 
 #[cfg(test)]
 mod pill_line_log_tests {
+    // The dedupe set is thread-local and `cargo test` gives each test its own
+    // thread, so the tests below start from an empty set whatever order they run
+    // in. `warnings_from` only clears the capture buffer, never the set: doing
+    // so there would let one test hide a duplicate it is meant to observe.
+    use super::describe_untrusted_token;
+    use super::note_unreported_pill_parse_error;
     use super::parse_pill_event;
+    use super::parse_review_decision_value;
     use std::cell::RefCell;
     use std::sync::Once;
 
@@ -895,6 +982,11 @@ mod pill_line_log_tests {
     // A pill that renames a field or emits a shape this build's serde_json
     // rejects used to stop responding to clicks with nothing in the log, which
     // is the failure this pins: the drop has to be visible.
+    //
+    // Reporting is deduped per distinct parser error, and that set is
+    // process-wide, so this asserts the warning is still produced for an error
+    // no other test has spent — a test that merely parsed a line another test
+    // already reported would pass on a build that logs nothing at all.
     #[test]
     fn an_unparseable_line_is_reported() {
         let warnings = warnings_from(|| {
@@ -918,7 +1010,7 @@ mod pill_line_log_tests {
         });
         assert!(
             !warnings.is_empty(),
-            "expected a diagnostic for the unparseable line, got none"
+            "a diagnostic is required here, or the content assertions below are vacuous"
         );
         for warning in &warnings {
             assert!(
@@ -949,6 +1041,96 @@ mod pill_line_log_tests {
         assert!(
             warnings.is_empty(),
             "readable and blank lines must not log, got {warnings:?}"
+        );
+    }
+
+    // Every log record is registered against the log directory, stdout and the
+    // webview, and the log directory is capped at a few hundred MB that the
+    // purge exists to shrink. A pill that drifts emits one parse failure per
+    // line for the whole session, so an unthrottled warn fills the disk it is
+    // meant to protect. The first occurrence of each distinct error is kept — it
+    // is what makes the failure visible — and the repeats are not.
+    #[test]
+    fn a_repeated_parse_error_is_reported_once_and_its_repeats_stay_quiet() {
+        // A message unique to this test, so an earlier assertion in the same
+        // thread having spent the shared one cannot make this pass vacuously.
+        let message = serde_json::from_str::<serde_json::Value>("dedupe-probe-a39f \u{1} extra")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&message),
+            "the first occurrence of a parse error must be reported"
+        );
+        for _ in 0..500 {
+            assert!(
+                !note_unreported_pill_parse_error(&message),
+                "a repeated parse error must not be reported again"
+            );
+        }
+
+        // And the dedupe is per distinct error, not a blanket mute: a different
+        // failure mode still gets through.
+        let other = serde_json::from_str::<serde_json::Value>("{\"unterminated\": ")
+            .expect_err("second probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&other),
+            "a distinct parse error must still be reported after another has been deduped"
+        );
+    }
+
+    // The doc on the unknown-action diagnostic claimed the token "cannot be user
+    // text", but nothing enforced that: the value comes straight out of the
+    // pill's JSON, so a mapping slip that put the transcript in `action` would
+    // write the opening words of someone's speech into a log that ships with bug
+    // reports. The claim has to hold by construction.
+    #[test]
+    fn the_unknown_action_diagnostic_never_repeats_the_token_it_was_given() {
+        let canary = "the user said something private on 4f2a";
+        let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{canary}"}}"#);
+
+        let described = describe_untrusted_token(&canary);
+        assert!(
+            !described.contains(canary),
+            "the diagnostic repeated the token: {described}"
+        );
+        assert!(
+            !described.contains("private"),
+            "the diagnostic leaked part of the token: {described}"
+        );
+
+        // End to end through the parser, not just the helper: the warning this
+        // decision emits must not carry the content either.
+        let warnings = warnings_from(|| {
+            assert!(parse_review_decision_value(
+                &serde_json::from_str(&line).expect("fixture must be valid JSON")
+            )
+            .is_none());
+        });
+        assert!(
+            !warnings.is_empty(),
+            "an unknown action must still be reported, got none"
+        );
+        for warning in &warnings {
+            assert!(
+                !warning.contains("private"),
+                "the unknown-action diagnostic leaked the token: {warning}"
+            );
+        }
+
+        // Still useful: a length and a stable hash, so the same token is
+        // recognisable across lines without being readable.
+        assert!(
+            described.starts_with(&format!("<{} chars,", canary.chars().count())),
+            "the diagnostic should still report the token's length, got {described}"
+        );
+        assert_eq!(
+            described,
+            describe_untrusted_token(&canary),
+            "the hash must be stable for the same token"
+        );
+        assert_ne!(
+            described,
+            describe_untrusted_token("something else entirely"),
+            "different tokens must not collapse to the same description"
         );
     }
 

@@ -49,12 +49,16 @@ impl Drop for ReentryGuard<'_> {
 /// there is never more than one live session and this flag is unambiguous.
 ///
 /// Every backend polls this once per character, before emitting it, so a flag
-/// raised at any point during a session stops the next character — and a flag
-/// already set when the session starts stops the first one.
+/// raised at any point during a session stops the next character. A flag merely
+/// already set when the session starts does not stop the first one:
+/// `begin_typing_session` clears the flag before it takes the latch, so what
+/// stops that first character is a cancel already latched inside its grace
+/// window (`CANCEL_TYPING_DEADLINE`), not the flag standing on its own.
 static CANCEL_TYPING: AtomicBool = AtomicBool::new(false);
 
-/// Wall-clock millisecond at which a cancel that arrived with no live typing
-/// session stops being honoured. `0` means "no cancel is latched".
+/// Millisecond, on the process-monotonic clock from `CANCEL_CLOCK_EPOCH`, at
+/// which a cancel that arrived with no live typing session stops being honoured.
+/// `0` means "no cancel is latched".
 ///
 /// This exists because the frontend registers its blur/Escape handler *before*
 /// it issues the `simulate_type` invoke, so a cancel can be delivered in the
@@ -75,18 +79,35 @@ static CANCEL_TYPING_DEADLINE: std::sync::atomic::AtomicU64 = std::sync::atomic:
 /// still expiring long before a user could start a *new*, unrelated dictation.
 const CANCEL_TYPING_GRACE_MS: u64 = 2_000;
 
+/// Process-lifetime monotonic origin for the cancel grace window.
+///
+/// `SystemTime` is the wrong source for a duration: it follows the wall clock,
+/// so a backwards correction — an NTP step, a manual clock change, a VM
+/// resuming from suspend — of more than `CANCEL_TYPING_GRACE_MS` makes an
+/// already-expired latch satisfy `cancel_is_within_grace` for the whole offset,
+/// and `simulate_type` then returns `Ok(())` while typing nothing at all. A
+/// forward jump expires a live cancel instead, which is exactly the loss the
+/// latch exists to prevent. A grace window is an elapsed time, so it is measured
+/// against a source that cannot be adjusted: `Instant`, captured once here.
+///
+/// `Instant` cannot be stored in an `AtomicU64`, which is why the origin is a
+/// lazy static and every reading is a subtraction from it rather than a stored
+/// absolute value. The reading is milliseconds since this process took its first
+/// cancel, so unlike a Unix timestamp it is small, and unlike `SystemTime` it
+/// only ever moves forward.
+static CANCEL_CLOCK_EPOCH: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
+
 fn cancel_clock_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as u64)
-        .unwrap_or(0)
+    CANCEL_CLOCK_EPOCH.elapsed().as_millis() as u64
 }
 
 /// True when a cancel latched at `deadline` is still inside its grace window.
 ///
-/// `deadline == 0` is the "nothing latched" sentinel, and 0 is never a live
-/// `cancel_clock_millis()` result in any realistic epoch, so the check is
-/// redundant with the deadline test but keeps the sentinel meaning explicit.
+/// `deadline == 0` is the "nothing latched" sentinel. A live latch can never
+/// store it, because `record_typing_cancel` always adds a positive grace to the
+/// reading, so the check is redundant with the deadline test but keeps the
+/// sentinel meaning explicit.
 fn cancel_is_within_grace(deadline: u64) -> bool {
     deadline != 0 && cancel_clock_millis() <= deadline
 }
@@ -1826,8 +1847,11 @@ fn delete_audio_entries_in_dir(
     outcome
 }
 
-/// Ids whose row claims a snapshot that is already gone, found *regardless* of
-/// the retention cap.
+/// Ids in the slice it is given whose row claims a snapshot that is already gone.
+///
+/// The sweep that calls this is what reaches *regardless* of the retention cap:
+/// it passes the rows inside the cap, and this repairs the ones among them whose
+/// files are gone. The cap bounds the size of the result, not its reach.
 ///
 /// `purge_stale_transcription_audio` deletes files first and clears the rows'
 /// metadata afterwards. Anything that interrupts that gap — a pool error, a
@@ -3205,6 +3229,33 @@ pub async fn purge_stale_transcription_audio(
 ///
 /// Steps 1 and 3 are not atomic across the filesystem boundary, which is the
 /// whole reason step 2 exists.
+/// Observation point for the thread the sweep's filesystem work runs on.
+///
+/// The sweep records its own worker thread here so the test claiming the work
+/// is offloaded can check that claim rather than infer it from the function
+/// being `async`. A channel rather than a shared slot, because `cargo test` runs
+/// tests in parallel and another test calling the same sweep would otherwise
+/// overwrite the reading this one is about.
+#[cfg(test)]
+static SWEEP_FS_THREAD_SINK: std::sync::LazyLock<
+    std::sync::Mutex<Option<std::sync::mpsc::Sender<std::thread::ThreadId>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// Note which thread the blocking sweep work is running on.
+///
+/// Inert outside tests: with no registered sink there is nothing to report to,
+/// and the call costs a `current()` that the sweep would pay anyway.
+fn record_sweep_fs_thread() {
+    #[cfg(test)]
+    if let Ok(sink) = SWEEP_FS_THREAD_SINK.lock() {
+        if let Some(sender) = sink.as_ref() {
+            // A closed receiver means the observing test has finished; the send
+            // failing is not the sweep's problem.
+            let _ = sender.send(std::thread::current().id());
+        }
+    }
+}
+
 async fn purge_transcription_audio_in_dir(
     pool: &sqlx::SqlitePool,
     audio_dir: &Dir,
@@ -3217,8 +3268,23 @@ async fn purge_transcription_audio_in_dir(
         .collect();
     let stale_entries: Vec<(String, bool)> = split.collect();
 
-    let outcome = delete_audio_entries_in_dir(audio_dir, stale_entries);
-    let repairs = absent_snapshots_within_retention(audio_dir, retained);
+    // Both steps are blocking filesystem work — `remove_file` and `open` — and
+    // this function runs on a Tauri async worker. `delete_audio_entries` sets
+    // the offload convention for exactly this work and is still what
+    // `transcription_delete` uses, so the sweep follows it: one `spawn_blocking`
+    // for the pair, because they share the held directory and the repair pass
+    // has to see the deletions the first one made.
+    let audio_dir = audio_dir
+        .try_clone()
+        .map_err(|err| format!("Unable to clone the managed audio directory: {err}"))?;
+    let (outcome, repairs) = tauri::async_runtime::spawn_blocking(move || {
+        record_sweep_fs_thread();
+        let outcome = delete_audio_entries_in_dir(&audio_dir, stale_entries);
+        let repairs = absent_snapshots_within_retention(&audio_dir, retained);
+        (outcome, repairs)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
 
     let mut cleared = outcome.cleared;
     cleared.extend(repairs);
@@ -5911,13 +5977,92 @@ mod tests {
     static CANCEL_TYPING_TEST_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> =
         once_cell::sync::Lazy::new(|| std::sync::Mutex::new(()));
 
+    /// Saves both halves of the cancel signal on construction, clears them, and
+    /// puts both back on drop.
+    ///
+    /// The latch is half of that signal, and it is the half a hand-written
+    /// cleanup forgets: `cancel_typing` arms `CANCEL_TYPING_DEADLINE` as well as
+    /// the flag, so restoring only the flag leaves a cancel that is still inside
+    /// its grace window. That is not a neutral leftover — a latch left live is
+    /// consumed by whichever session the *next* test starts, which is how a suite
+    /// that passes locally starts failing on a different thread schedule. Making
+    /// the restore a type turns the lock's promise into something that cannot be
+    /// got wrong one test at a time.
+    struct CancelSignalTestGuard {
+        flag: bool,
+        deadline: u64,
+    }
+
+    impl CancelSignalTestGuard {
+        fn take() -> Self {
+            let guard = Self {
+                flag: CANCEL_TYPING.load(Ordering::SeqCst),
+                deadline: CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst),
+            };
+            CANCEL_TYPING.store(false, Ordering::SeqCst);
+            CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+            guard
+        }
+    }
+
+    impl Drop for CancelSignalTestGuard {
+        fn drop(&mut self) {
+            CANCEL_TYPING.store(self.flag, Ordering::SeqCst);
+            CANCEL_TYPING_DEADLINE.store(self.deadline, Ordering::SeqCst);
+        }
+    }
+
+    /// The guard is what makes the lock's promise hold, so it is pinned directly
+    /// rather than inferred from the tests that use it: a test that raises a
+    /// cancel must leave neither half of the signal behind, and what it leaves
+    /// must be inert for the next session.
+    #[test]
+    fn the_cancel_signal_test_guard_restores_the_latch_as_well_as_the_flag() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Start from a known state whose flag has to survive the round trip.
+        CANCEL_TYPING.store(true, Ordering::SeqCst);
+        CANCEL_TYPING_DEADLINE.store(7, Ordering::SeqCst);
+
+        {
+            let _guard = CancelSignalTestGuard::take();
+            // Exactly what a cancel test does: raise a cancel that is still
+            // inside its grace window when the test ends.
+            cancel_typing().unwrap();
+            assert!(
+                cancel_is_within_grace(CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst)),
+                "the fixture failed to arm a live latch, so this test would pass vacuously"
+            );
+        }
+
+        assert_eq!(
+            CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst),
+            7,
+            "the guard left a live cancel latch behind for whichever test runs next"
+        );
+        assert!(
+            CANCEL_TYPING.load(Ordering::SeqCst),
+            "the guard must put the flag back as well"
+        );
+
+        // And the state it restores cannot abort a session, so restoring the
+        // previous value is not itself a hazard.
+        let _guard = CancelSignalTestGuard::take();
+        let (_session, cancelled) = TypingSession::begin().unwrap();
+        assert!(
+            !cancelled,
+            "the latch this guard restored aborted a session that had no bearing on it"
+        );
+    }
+
     #[test]
     fn a_cancel_delivered_before_the_typing_session_starts_is_not_discarded() {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = CANCEL_TYPING.load(Ordering::SeqCst);
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
+        let _signal = CancelSignalTestGuard::take();
 
         // The frontend registers its blur/Escape handler *before* it issues the
         // `simulate_type` invoke, so a cancel can be delivered in the window
@@ -5931,8 +6076,6 @@ mod tests {
             CANCEL_TYPING.load(Ordering::SeqCst),
             "a cancel delivered before the typing session started was discarded"
         );
-
-        CANCEL_TYPING.store(previous, Ordering::SeqCst);
     }
 
     /// Replaces `cancel_typing_only_signals_a_live_session`, which asserted
@@ -5946,10 +6089,7 @@ mod tests {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous_flag = CANCEL_TYPING.load(Ordering::SeqCst);
-        let previous_deadline = CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst);
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+        let _signal = CancelSignalTestGuard::take();
 
         // No session live: still recorded, because the session may be starting.
         cancel_typing().unwrap();
@@ -5966,9 +6106,6 @@ mod tests {
             );
             assert!(CANCEL_TYPING.load(Ordering::SeqCst));
         }
-
-        CANCEL_TYPING.store(previous_flag, Ordering::SeqCst);
-        CANCEL_TYPING_DEADLINE.store(previous_deadline, Ordering::SeqCst);
     }
 
     /// The delivered-cancel contract: a cancel recorded before the session
@@ -5978,8 +6115,7 @@ mod tests {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+        let _signal = CancelSignalTestGuard::take();
 
         // The pre-start window: the user hit Escape, the handler is live, but
         // `simulate_type` has not taken the session slot yet.
@@ -6002,8 +6138,7 @@ mod tests {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+        let _signal = CancelSignalTestGuard::take();
 
         // A cancel raised during a live session, which then ends...
         {
@@ -6028,8 +6163,7 @@ mod tests {
         let _serialized = CANCEL_TYPING_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        CANCEL_TYPING.store(false, Ordering::SeqCst);
-        CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+        let _signal = CancelSignalTestGuard::take();
 
         // `0` is the "nothing latched" sentinel and never aborts.
         assert!(!cancel_is_within_grace(0));
@@ -6037,7 +6171,13 @@ mod tests {
         cancel_typing().unwrap();
         let fresh = CANCEL_TYPING_DEADLINE.load(Ordering::SeqCst);
         assert!(cancel_is_within_grace(fresh));
-        assert!(!cancel_is_within_grace(fresh - CANCEL_TYPING_GRACE_MS - 1));
+        // `saturating_sub` because on a process-monotonic clock a latch can be
+        // armed within the first millisecond of the process, where the reading
+        // is 0 and the subtraction below would wrap. Saturating lands on the
+        // `0` sentinel, which `cancel_is_within_grace` already rejects.
+        assert!(!cancel_is_within_grace(
+            fresh.saturating_sub(CANCEL_TYPING_GRACE_MS + 1)
+        ));
 
         // A latch left behind from long ago must be consumed without aborting.
         CANCEL_TYPING_DEADLINE.store(1, Ordering::SeqCst);
@@ -6049,6 +6189,54 @@ mod tests {
         );
         // Consuming it also cleared the stale flag.
         assert!(!CANCEL_TYPING.load(Ordering::SeqCst));
+    }
+
+    /// The grace window is a duration, so it has to be measured against a clock
+    /// that cannot be stepped backwards by an NTP correction, a manual clock
+    /// change, or a VM resuming from suspend. A backwards step of more than the
+    /// grace window is enough on its own: an already-expired latch looks live
+    /// for the whole offset, and `simulate_type` returns `Ok(())` having typed
+    /// nothing, so the user's dictation silently disappears.
+    ///
+    /// What is pinned is the *source*, not the arithmetic: `SystemTime` and this
+    /// clock both satisfy "within the grace window" for a freshly armed latch,
+    /// so the assertions below are about the origin rather than the window.
+    #[test]
+    fn the_cancel_grace_clock_is_process_monotonic_rather_than_wall_clock() {
+        let _serialized = CANCEL_TYPING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // A wall clock reading would be roughly 1.8e12 (milliseconds since the
+        // Unix epoch), so this separates the two sources on its own.
+        let observed = cancel_clock_millis();
+        assert!(
+            observed < 1_000_000_000,
+            "the grace clock reported {observed}, which is a wall-clock reading \
+             rather than time since the process took its first cancel"
+        );
+
+        // And it is pinned to the monotonic origin: bracketing the reading
+        // between two `Instant::elapsed` calls around it leaves no window for a
+        // millisecond boundary to fall into, while a wall-clock reading cannot
+        // fall between them.
+        let before = CANCEL_CLOCK_EPOCH.elapsed().as_millis() as u64;
+        let bracketed = cancel_clock_millis();
+        let after = CANCEL_CLOCK_EPOCH.elapsed().as_millis() as u64;
+        assert!(
+            before <= bracketed && bracketed <= after,
+            "the grace clock read {bracketed}, outside the epoch's own [{before}, {after}]"
+        );
+
+        // It also never moves backwards, which is the property a wall clock
+        // cannot offer. Sampled back to back, monotonic readings are
+        // non-decreasing by construction.
+        let first = cancel_clock_millis();
+        let second = cancel_clock_millis();
+        assert!(
+            first <= second,
+            "the grace clock went backwards ({first} then {second})"
+        );
     }
 
     /// The ordering property, not the happy path: whatever the interleaving of
@@ -6067,8 +6255,7 @@ mod tests {
             let _serialized = CANCEL_TYPING_TEST_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            CANCEL_TYPING.store(false, Ordering::SeqCst);
-            CANCEL_TYPING_DEADLINE.store(0, Ordering::SeqCst);
+            let _signal = CancelSignalTestGuard::take();
 
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
             let canceller = {
@@ -7317,11 +7504,6 @@ mod tests {
         std::fs::create_dir(audio_dir.join("blocked.wav"))
             .expect("the blocking fixture must be creatable");
 
-        let marked: Vec<(String, bool)> = ids.iter().map(|id| (id.to_string(), true)).collect();
-        let cleared = purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked)
-            .await
-            .expect("the sweep must succeed");
-
         async fn marker_of(pool: &sqlx::SqlitePool, id: &str) -> Option<String> {
             let row: (Option<String>,) =
                 sqlx::query_as("SELECT audio_path FROM transcriptions WHERE id = ?1")
@@ -7331,6 +7513,37 @@ mod tests {
                     .expect("the fixture row must still be readable");
             row.0
         }
+
+        // Before the sweep, the row advertises audio that is not on disk. That
+        // is the state the chain rests on, and it has to be shown failing here
+        // rather than assumed: `stranded` is handed no `.wav` by the fixture, so
+        // an export that reads its marker must refuse outright. Asserting this
+        // before the sweep is what makes the export afterwards mean something —
+        // without it, a success after the sweep could only be the text-only
+        // branch that any `audio_path` of `None` takes.
+        let stranded_before = marker_of(&pool, "stranded").await;
+        assert_eq!(
+            stranded_before.as_deref(),
+            Some("/audio/stranded.m4a"),
+            "the fixture must start with a row advertising a snapshot that is not there"
+        );
+        let refused_before = build_transcription_export(
+            &held_audio_dir,
+            "stranded",
+            stranded_before.as_deref(),
+            "the processed words",
+            None,
+            &root.join("before-sweep.zip"),
+        );
+        assert!(
+            refused_before.is_err(),
+            "a row advertising a missing snapshot must not export as if it were text-only"
+        );
+
+        let marked: Vec<(String, bool)> = ids.iter().map(|id| (id.to_string(), true)).collect();
+        let cleared = purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked)
+            .await
+            .expect("the sweep must succeed");
 
         assert_eq!(
             marker_of(&pool, "healthy-live").await.as_deref(),
@@ -7359,12 +7572,18 @@ mod tests {
             "the repaired id must be reported so the frontend drops its cached audio"
         );
 
-        // And the user's actual problem is gone: it exports again.
+        // And the user's actual problem is gone: the same row, with the marker the
+        // sweep left behind, exports again. Passing the row's actual marker is
+        // what makes this the end of the chain the test documents rather than a
+        // restatement of the `None` asserted above: the pre-sweep call above
+        // refused with a marker set, and this one succeeds because the sweep
+        // cleared it.
         let save_path = root.join("repaired.zip");
+        let stranded_after = marker_of(&pool, "stranded").await;
         let result = build_transcription_export(
             &held_audio_dir,
             "stranded",
-            None,
+            stranded_after.as_deref(),
             "the processed words",
             None,
             &save_path,
@@ -7511,6 +7730,110 @@ mod tests {
         .expect("a row without a snapshot must still export its text");
 
         assert_eq!(zip_entry_names(&save_path), vec!["processed.txt"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The sweep's filesystem work must not run on a Tauri async worker.
+    ///
+    /// `delete_audio_entries_in_dir` and `absent_snapshots_within_retention` are
+    /// synchronous `remove_file`/`open` calls, and the sweep runs after every
+    /// dictation. Blocking an async worker stalls whatever else the runtime has
+    /// queued behind it, so the offload is the convention — but "this function
+    /// is `async`" and "its blocking work is on a blocking thread" are different
+    /// claims, and only the second is asserted here.
+    ///
+    /// Pinned by where the work lands, not by counting anything: the work
+    /// records the thread it ran on, and the caller is a Tokio test thread, so
+    /// inlining the calls would put both on the same thread and fail.
+    #[tokio::test]
+    async fn the_sweep_runs_its_filesystem_work_off_the_async_runtime_thread() {
+        let root = lifecycle_test_root("sweep-offloads-fs-work");
+        let app_data = root.join("app-data");
+        let held_audio_dir = crate::system::audio_store::open_managed_audio_dir_for_test(&app_data)
+            .expect("managed audio directory must be openable");
+        let audio_dir = app_data.join("transcription-audio");
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool must open");
+        sqlx::query(
+            "CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                audio_path TEXT,
+                audio_duration_ms INTEGER
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("fixture table must be creatable");
+
+        std::fs::write(audio_dir.join("live.wav"), b"live bytes")
+            .expect("managed fixture must be writable");
+
+        // Newest first, as the command's `ORDER BY timestamp DESC` produces, and
+        // more rows than the retention cap so `live` lands in the stale half
+        // that `delete_audio_entries_in_dir` actually deletes from. A row inside
+        // the window would only reach the repair pass, which is a different
+        // call — this test wants the delete.
+        let marked: Vec<(String, bool)> = (0..MAX_RETAINED_TRANSCRIPTION_AUDIO)
+            .map(|index| (format!("filler-{index:02}"), true))
+            .chain(std::iter::once(("live".to_string(), true)))
+            .collect();
+        for (id, _) in &marked {
+            sqlx::query("INSERT INTO transcriptions VALUES (?1, ?2, 4200)")
+                .bind(id)
+                .bind(format!("/audio/{id}.m4a"))
+                .execute(&pool)
+                .await
+                .expect("fixture row must be insertable");
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        *SWEEP_FS_THREAD_SINK
+            .lock()
+            .expect("the sink lock must not be poisoned") = Some(sender);
+
+        let caller_thread = std::thread::current().id();
+        let sweep = purge_transcription_audio_in_dir(&pool, &held_audio_dir, marked);
+        let cleared = sweep.await.expect("the sweep must succeed");
+        let observed_fs_thread = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .ok();
+        *SWEEP_FS_THREAD_SINK
+            .lock()
+            .expect("the sink lock must not be poisoned") = None;
+
+        // The sweep really did its work: if it had not, this assertion is the
+        // one that fails, so the thread assertion below cannot pass vacuously.
+        // `live` and the absent fillers are all reported cleared: `live`'s file
+        // was deleted, and the fillers were already absent so the repair pass
+        // cleared them. Asserted by membership rather than by exact list.
+        assert!(
+            cleared.contains(&"live".to_string()),
+            "the sweep must have deleted live's snapshot, got {cleared:?}"
+        );
+        assert!(
+            !audio_dir.join("live.wav").exists(),
+            "the sweep must actually have deleted the file, or the thread \
+             assertion below proves nothing"
+        );
+
+        assert!(
+            std::thread::current().id() == caller_thread,
+            "the sweep must not have moved its caller off the runtime thread"
+        );
+        // The sweep reports the thread its blocking work ran on, over a channel
+        // this test owns, so a concurrently running test that calls the same
+        // sweep cannot answer for it.
+        let work_thread = observed_fs_thread.expect(
+            "the sweep did not report a thread for its filesystem work, so \
+                     this test cannot see where the blocking calls landed",
+        );
+        assert_ne!(
+            work_thread, caller_thread,
+            "the sweep's remove_file/open work ran inline on the async runtime \
+             thread instead of a blocking one"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
