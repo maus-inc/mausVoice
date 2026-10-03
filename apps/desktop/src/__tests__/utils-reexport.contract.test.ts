@@ -35,7 +35,11 @@ const exportedNames = (): Set<string> => {
     const braced = statement.match(/\{([^}]*)\}/);
     if (braced) {
       for (const part of braced[1].split(",")) {
-        const name = part.trim().split(/\s+as\s+/).pop()?.trim();
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)
+          .pop()
+          ?.trim();
         if (name) names.add(name);
       }
       continue;
@@ -68,7 +72,7 @@ describe("crate::utils path resolution", () => {
       .sort();
     expect(
       missing,
-      `these resolve to nothing, and only the Windows and macOS builds compile the callers:\n  ${missing.join("\n  ")}`
+      `these resolve to nothing, and only the Windows and macOS builds compile the callers:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 
