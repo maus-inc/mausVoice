@@ -48,31 +48,6 @@ const LABELED_SECRET_QUOTED = new RegExp(
  * token, which is right for a token and wrong for a passphrase. Adding it here
  * as well is what makes a multi-word value of that label redact whole.
  */
-const FREE_FORM_SECRET_LABELS: ReadonlySet<string> = new Set([
-  "clientsecret",
-  "privatekey",
-  "sessionkey",
-  "password",
-  "passwd",
-  "pwd",
-  "credential",
-  "secret",
-]);
-
-/**
- * Whether this label's value is free-form.
- *
- * An enumeration of the labels in `SECRET_LABEL` whose value is free-form, and
- * it has to stay in step with that alternation: a label the pattern does not
- * match never reaches this predicate at all, so adding a name here without
- * adding it there does nothing. `isSecretKey` recognises more names than
- * `SECRET_LABEL` does (`secret_key`, `my_secret`, `credentials`), which is a
- * real gap in the string form of this scrubber and a separate piece of work --
- * it needs the label given its own capture group, since these patterns take
- * their arguments positionally.
- */
-const isFreeFormSecretLabel = (label: string): boolean =>
-  FREE_FORM_SECRET_LABELS.has(label.replace(/["_-]/g, "").toLowerCase());
 
 // The scheme words, shared by the two labelled passes so the one that redacts
 // and the one that judges a placeholder cannot drift apart, and exported because
@@ -111,6 +86,23 @@ const LABELED_SECRET_BARE = new RegExp(
 // matched span, so re-reading further into the string from inside the callback
 // redacts the value but leaves its tail in the clear exactly where the old
 // one-token value left it.
+//
+// What ends a value here is the next field separator, or the end of the message.
+// A free-form value has no closing quote to read to -- that is what
+// distinguishes it from a quoted one, which `quotedValueEnd` handles -- so the
+// separators the surrounding text supplies are the only boundaries there are.
+// Whitespace does not end it, and that includes a newline, for two reasons that
+// are both about the same credential: a PEM private key is multi-line by
+// construction, so a rule that stopped at the first newline could not redact one
+// at all; and `redactUnknown` already redacts an entire multi-line string sitting
+// under a secret key, so a newline-bounded rule in text would leak the very
+// secret the structured path removes.
+//
+// The cost is real and is taken deliberately: prose on the same line after a
+// passphrase is indistinguishable from the rest of the passphrase, so it goes
+// too. That is why a separator and not the line end is the stop -- `password:
+// wrong, try again` keeps its diagnosis -- and why `describesField` still runs
+// first, so `password: missing` stays prose.
 const FREE_FORM_SECRET_BARE = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEME_WORDS})\s+)?([^"';\s][^,;]*)`,
   "gi",
@@ -190,34 +182,6 @@ const tokenEnd = (text: string, index: number): number => {
   }
   return end;
 };
-
-/**
- * What ends a free-form value: the next field separator, or the end of the
- * message. A free-form value has no closing quote to read to -- that is what
- * distinguishes it from a quoted one, which `quotedValueEnd` handles and which
- * already redacted whole -- so the separators the surrounding text supplies are
- * the only boundaries there are, and the end of the message is the last of them.
- */
-/**
- * The free-form counterpart of `tokenEnd`, and the reason a passphrase or a key
- * blob ends where it does. Same stops, plus one more: the separator. Whitespace
- * does NOT end a free-form value, and that includes a newline, for two reasons
- * that are both about the same credential. A PEM private key is multi-line by
- * construction, so a rule that stopped at the first newline could not redact one
- * at all. And `redactUnknown` already redacts an entire multi-line string
- * sitting under a secret key, so a newline-bounded rule in text would leak the
- * very secret the structured path removes.
- *
- * The cost is real and is taken deliberately: prose on the same line after a
- * passphrase is indistinguishable from the rest of the passphrase, so it goes
- * too. That is why a separator and not the line end is the stop -- `password:
- * wrong, try again` keeps its diagnosis -- and why `describesField` still runs
- * first, so `password: missing` stays prose.
- *
- * Not referenced directly: the value class in `FREE_FORM_SECRET_BARE` is the same
- * rule written as a pattern, which is what lets the match itself span the run.
- */
-const FREE_FORM_VALUE_STOPPERS = ",;";
 
 /**
  * One end of a quoted run starting at `index`, or `index` when no quote opens
@@ -339,6 +303,49 @@ const isSecretKey = (key: string): boolean => {
     /password|passwd|pwd|secret|privatekey|sessiontoken|credential/i.test(
       normalized,
     )
+  );
+};
+
+/**
+ * The secret aliases whose value is free-form: a passphrase or a key blob,
+ * which routinely contains whitespace and may span lines.
+ *
+ * The other secret aliases are single tokens by construction -- an API key is
+ * one word, an OAuth bearer is one word -- so for those the one token after the
+ * label IS the whole credential and stopping at the space leaks nothing. A
+ * passphrase and a PEM key are not: `password: correct horse battery staple`
+ * and a multi-line `private_key` have spaces in them, and reading only the
+ * first word put the rest of the credential in the clear directly beside a
+ * marker saying it had been redacted.
+ *
+ * Derived as the aliases that are NOT token-shaped rather than listed, because
+ * the free-form set is a strict subset of `SECRET_KEY_ALIASES` and writing it
+ * out repeated eight of those names. A new alias added above lands on the right
+ * side of this line by construction instead of by a second edit nobody
+ * remembers.
+ *
+ * The result has to stay a subset of what `SECRET_LABEL` matches, or these
+ * labels never reach this predicate: a label the pattern does not match is not
+ * recognised at all. `isSecretKey` accepts more names than `SECRET_LABEL` does
+ * (`secret_key`, `my_secret`, `credentials`), which is a real gap in the string
+ * form of this scrubber and a separate piece of work -- it needs the label given
+ * its own capture group, since these patterns take their arguments positionally.
+ */
+const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
+  "apikey",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "sessiontoken",
+  "authorization",
+  "bearer",
+]);
+
+const isFreeFormSecretLabel = (label: string): boolean => {
+  const normalized = label.replace(/["_-]/g, "").toLowerCase();
+  return (
+    SECRET_KEY_ALIASES.has(normalized) &&
+    !TOKEN_SHAPED_SECRET_ALIASES.has(normalized)
   );
 };
 
