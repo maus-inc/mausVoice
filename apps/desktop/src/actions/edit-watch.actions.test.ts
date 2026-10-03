@@ -8,6 +8,7 @@ import {
   pollEditWatch,
   rejectAutoLearnProposal,
 } from "./edit-watch.actions";
+import { dismissToast, showToast } from "./toast.actions";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({
@@ -72,8 +73,13 @@ vi.mock("./dictionary.actions", () => ({
   createGlossaryTerms: vi.fn().mockResolvedValue({ created: [], failed: 0 }),
 }));
 
-vi.mock("./toast.actions", () => ({
+// `runToast` is kept real on purpose: it is what turns a rejected toast IPC into
+// a logged error instead of an unhandled rejection, and stubbing it would let a
+// fix that fires a bare `void dismissToast()` pass without ever noticing.
+vi.mock("./toast.actions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./toast.actions")>()),
   showToast: vi.fn(() => Promise.resolve()),
+  dismissToast: vi.fn(() => Promise.resolve()),
 }));
 
 // Wrapped rather than stubbed, so the real alignment still runs and the tests
@@ -345,6 +351,54 @@ describe("edit-watch baseline", () => {
     await advanceAndPoll(1_500);
 
     expect(state.autoLearn.proposal?.term).toBe("Ralf");
+  });
+});
+
+describe("edit-watch toast supersession", () => {
+  it("takes the previous prompt off the pill when a new dictation replaces it", async () => {
+    // The proposal id and the native toast are separate objects with separate
+    // lifetimes. Clearing the id leaves the toast on screen, so the user is
+    // looking at a prompt whose buttons act on a proposal that no longer exists.
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+    setField("my wife's name is Soniya");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Soniya");
+    (dismissToast as ReturnType<typeof vi.fn>).mockClear();
+
+    beginEditWatch("a different dictation entirely");
+
+    expect(dismissToast).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an expired prompt alone, because its click is still answerable", async () => {
+    // The negative control, and the reason the dismiss is not inside
+    // `clearVisibleProposalId`. A TTL expiry clears the store proposal while the
+    // prompt is still on the pill, and the pill dismisses that toast on its own
+    // timer — so the visible id is deliberately NOT cleared on that path, and the
+    // click stays answerable.
+    //
+    // Stated precisely, because I first wrote this comment as "a fix that
+    // dismissed on every clear would fail here" and then mutation-tested it: it
+    // would not. Moving the dismiss into `clearVisibleProposalId` leaves all 30
+    // tests green, because every other caller of it — `endEditWatch`, accept and
+    // reject — wants the prompt gone anyway. So this pins the TTL path, not the
+    // placement. What it does establish is the property the code relies on: the
+    // expiry does not reach `visibleProposalId` at all.
+    beginEditWatch("my wife's name is Sonia");
+    await settleBaseline("my wife's name is Sonia");
+    setField("my wife's name is Soniya");
+    await advanceAndPoll(1_500);
+    await advanceAndPoll(1_500);
+    expect(state.autoLearn.proposal?.term).toBe("Soniya");
+    (dismissToast as ReturnType<typeof vi.fn>).mockClear();
+    (showToast as ReturnType<typeof vi.fn>).mockClear();
+
+    await advanceAndPoll(13_000);
+
+    expect(state.autoLearn.proposal).toBeNull();
+    expect(dismissToast).not.toHaveBeenCalled();
   });
 });
 

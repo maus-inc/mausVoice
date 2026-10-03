@@ -11,7 +11,7 @@ import { getLogger } from "../utils/log.utils";
 import { getLocalStorage } from "../utils/local-storage.utils";
 import { getMyUserPreferences } from "../utils/user.utils";
 import { createGlossaryTerms } from "./dictionary.actions";
-import { showToast } from "./toast.actions";
+import { dismissToast, runToast, showToast } from "./toast.actions";
 
 const WATCH_WINDOW_MS = 90_000;
 const DENIED_TERMS_KEY = "mausvoice:auto-learn-denied";
@@ -340,8 +340,17 @@ export const beginEditWatch = (text: string): void => {
   // path to compare against: nothing the user is now looking at refers to it.
   recentlyLapsedProposal = null;
   // The prompt from the previous dictation may still be on the pill, but it
-  // answered a question this watch no longer owns.
+  // answered a question this watch no longer owns. Clearing the id is not
+  // enough: the native toast is a separate object with its own lifetime, so
+  // without this the user is left looking at a prompt whose buttons act on a
+  // proposal that no longer exists. Enqueued before any proposal this watch goes
+  // on to raise, so the ordering on the toast queue is the right way round.
+  //
+  // Deliberately not part of `clearVisibleProposalId`: a TTL expiry clears the
+  // store proposal while the prompt is still up, and that click has to stay
+  // answerable. Only a supersession dismisses.
   clearVisibleProposalId();
+  runToast(dismissToast());
   // Fire and forget. captureBaseline swallows its own errors, so this cannot
   // surface as an unhandled rejection.
   void captureBaseline(snapshot);
