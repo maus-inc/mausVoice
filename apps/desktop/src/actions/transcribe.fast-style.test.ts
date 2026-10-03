@@ -73,32 +73,37 @@ describe("applyFastLocalStyle", () => {
   });
 });
 
-// The dropped tail is only recoverable when the transcript is actually written
-// somewhere. `isPersistenceAllowed()` is false under incognito mode and during
-// an ephemeral session, and both store paths honour it, so the warning used to
-// promise a History row that no code path created.
-describe("fast style truncation warning", () => {
-  const OVER_CAP = "dictation word ".repeat(2000);
-  const DROPPED = OVER_CAP.trim().length - FAST_STYLE_MAX_INPUT_CHARS;
+// An over-cap dictation used to be sliced to `FAST_STYLE_MAX_INPUT_CHARS`, so
+// these cases asserted a dropped-character count and a warning whose wording
+// depended on whether History was writable. `applyFastStyle` now styles the whole
+// input across as many chunks as it takes, so nothing is dropped and there is no
+// count to report and no warning to word. These assert that directly, including
+// under the states that used to change the message, because "warns about a loss
+// that did not happen" is the defect in both directions.
+describe("fast style over the chunk size", () => {
+  const TAIL = "zztaillowzz";
+  const OVER_CAP = `${"dictation word ".repeat(2000)} ${TAIL}.`;
 
-  const warn = (mutate: (state: typeof INITIAL_APP_STATE) => void) => {
+  const style = (mutate: (state: typeof INITIAL_APP_STATE) => void) => {
     const state = structuredClone(INITIAL_APP_STATE);
     mutate(state);
     setAppState(state, true);
-    const { warnings } = run(OVER_CAP, "concise");
-    expect(warnings).toHaveLength(1);
-    return warnings[0];
+    return run(OVER_CAP, "concise");
   };
 
   beforeEach(() => {
     setAppState(structuredClone(INITIAL_APP_STATE), true);
   });
 
-  it("points at History for a transcript that was persisted", () => {
-    // No state mutation: this case is about the default (persisted) path.
-    const message = warn(() => undefined);
-    expect(message).toContain(String(DROPPED));
-    expect(message).toContain("History");
+  it("styles the whole dictation and warns about nothing", () => {
+    expect(OVER_CAP.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+    const { result, metadata, warnings } = style(() => undefined);
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected a styled result");
+    // The tail past the cap survives, which is what used to be lost.
+    expect(result.styled.toLowerCase()).toContain(TAIL);
+    expect(metadata.fastStyleTruncatedChars).toBeUndefined();
+    expect(warnings).toHaveLength(0);
   });
 
   it.each([
@@ -116,14 +121,15 @@ describe("fast style truncation warning", () => {
         s.local.ephemeralSessionActive = true;
       },
     ],
-  ])("does not promise History under %s", (_label, mutate) => {
-    const message = warn(mutate);
-    // The count is still true and still actionable, so it stays.
-    expect(message).toContain(String(DROPPED));
-    // The defect is the promise, not the word "History": nothing was written,
-    // so the message must deny the tail is recoverable rather than send the
-    // user looking for a row that was never created.
-    expect(message).not.toContain("saved in History");
-    expect(message).toMatch(/not saved/i);
+  ])("still drops nothing under %s", (_label, mutate) => {
+    // These two states used to switch the warning's wording, which only made
+    // sense because a tail had been discarded. They must not reintroduce a claim
+    // that text was lost.
+    const { result, warnings } = style(mutate);
+    expect(result).not.toBeNull();
+    if (result === null) throw new Error("expected a styled result");
+    expect(result.styled.toLowerCase()).toContain(TAIL);
+    expect(warnings).toHaveLength(0);
+    expect(warnings.join(" ")).not.toMatch(/left unstyled|not saved/i);
   });
 });

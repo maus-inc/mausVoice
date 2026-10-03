@@ -9,7 +9,9 @@
  * Best practices:
  * - Pure, deterministic, no hallucination: never invent content.
  * - Idempotent, fast, provider-agnostic, graceful degradation.
- * - International-safe, length-guarded.
+ * - International-safe, length-guarded. "Guarded" means bounded per pass, never
+ *   bounded in total: a dictation longer than one chunk is styled across as
+ *   many chunks as it takes. Nothing here may shorten text.
  */
 
 import {
@@ -27,33 +29,138 @@ import {
 const MAX_INPUT_CHARS = 15000;
 const SELF_CORRECTION_MAX_CHARS = 5000;
 
-const truncateGuard = (text: string): string => {
-  if (text.length <= MAX_INPUT_CHARS) return text;
-  return text.slice(0, MAX_INPUT_CHARS);
+/**
+ * Refuses input larger than one chunk.
+ *
+ * This used to `slice(0, MAX_INPUT_CHARS)`, which is the whole defect: it
+ * returned a styled *prefix* of the dictation and discarded everything after
+ * it, so the caller held a string that looked like a complete utterance, could
+ * not tell it was short, and delivered half of what the speaker said. The
+ * reported character count did not rescue it — by the time it was computed the
+ * text had already gone.
+ *
+ * So nothing in this module may shorten text again. A transform handed an
+ * over-long string is a programming error, and `applyFastStyle` already turns a
+ * thrown error into the complete raw transcript, which loses nothing.
+ */
+const assertWithinChunkSize = (text: string): string => {
+  if (text.length > MAX_INPUT_CHARS) {
+    throw new Error(
+      `fast style transform received ${text.length} characters, over the ${MAX_INPUT_CHARS} character chunk size; applyFastStyle splits long input before dispatch`,
+    );
+  }
+  return text;
 };
 
 /**
- * The one place that decides whether fast styling dropped characters. Callers
- * that report truncation to the user must ask here rather than re-deriving the
- * cap, so the reported number can never drift from the applied one.
+ * Sentence terminators: ASCII plus the CJK full stop and the full-width forms.
+ * Fast styling is advertised as international-safe, and Japanese or Chinese
+ * dictation carries no ASCII punctuation, so a cut that only recognised `.!?`
+ * would miss real sentence boundaries there and always fall through to the
+ * word-boundary fallback.
+ */
+const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set([
+  ".",
+  "!",
+  "?",
+  "…",
+  "。",
+  "！",
+  "？",
+]);
+
+/** Matches every Unicode space separator, not just ASCII space. */
+const isSpace = (ch: string): boolean => ch.length > 0 && /\s/u.test(ch);
+
+const isHighSurrogate = (code: number): boolean =>
+  code >= 0xd800 && code <= 0xdbff;
+
+/**
+ * Where `text` may be cut inside `[start, end)` without losing or corrupting
+ * anything. Three tiers, best first.
+ *
+ * A sentence boundary wins because it is the only place the transforms treat
+ * the start of their input as sentence-initial: `SO_WELL_LEADING_RE` and
+ * `PROMPT_OPENER_RE` are anchored to `^`, and `deleteLeadingPhrase` reads
+ * `before.length === 0` as "this phrase opened a sentence". A cut anywhere
+ * else hands the next chunk a false sentence start, which strips a connective
+ * or capitalises a word that was mid-sentence.
+ *
+ * Whitespace is the fallback, so a cut never lands inside a word. Only a single
+ * token longer than the whole chunk size reaches the last tier, and that one
+ * steps back a whole code unit when the boundary would fall between a surrogate
+ * pair — `slice` counts UTF-16 code units, so cutting at 15000 could otherwise
+ * end a chunk on a lone high surrogate.
+ */
+const findChunkCut = (text: string, start: number, end: number): number => {
+  for (let i = end - 1; i > start; i -= 1) {
+    if (!SENTENCE_TERMINATORS.has(text[i])) continue;
+    let afterSpace = i + 1;
+    while (afterSpace < end && isSpace(text[afterSpace])) afterSpace += 1;
+    // A terminator only ends a sentence if something separates it from the
+    // next word. "3.5" and "www.example.com" are not sentence boundaries.
+    if (afterSpace >= end || afterSpace > i + 1) return afterSpace;
+  }
+  for (let i = end - 1; i > start; i -= 1) {
+    if (isSpace(text[i])) return i;
+  }
+  if (isHighSurrogate(text.charCodeAt(end - 1))) return end - 1;
+  return end;
+};
+
+/**
+ * Splits a dictation into chunks of at most `MAX_INPUT_CHARS`, each ending on a
+ * boundary `findChunkCut` approves, so every transform can run over the whole
+ * utterance instead of over a prefix of it.
+ *
+ * Input that already fits comes back as a single chunk unchanged, so a typical
+ * dictation takes exactly the path it always did and nothing about its output
+ * changes. Nothing is dropped and nothing is re-ordered: the chunks concatenate
+ * back to the input.
+ */
+const splitIntoChunks = (text: string): string[] => {
+  if (text.length <= MAX_INPUT_CHARS) return [text];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    if (text.length - start <= MAX_INPUT_CHARS) {
+      chunks.push(text.slice(start));
+      break;
+    }
+    const windowEnd = start + MAX_INPUT_CHARS;
+    const cut = findChunkCut(text, start, windowEnd);
+    // `findChunkCut` returns an index above `start` for any window wider than
+    // one character, but a cut that fails to advance would spin forever, so the
+    // window end is the floor.
+    const nextStart = cut > start ? cut : windowEnd;
+    chunks.push(text.slice(start, nextStart));
+    start = nextStart;
+  }
+
+  return chunks.filter((chunk) => chunk.length > 0);
+};
+
+/**
+ * The one place that decides whether fast styling dropped characters, so a
+ * caller reporting the loss to the user can never drift from what was applied.
+ *
+ * It reports nothing, for any input. It used to count the tail that
+ * `truncateGuard` sliced off, which is exactly the loss it was describing: a
+ * long dictation was styled up to the cap, the rest was thrown away, and the
+ * user learned about it from a warning raised after the text had already been
+ * delivered without it. A dictation over the cap is now styled in full over as
+ * many chunks as it takes, so there is no dropped text to count.
+ *
+ * Kept rather than deleted because it is the only channel the pipeline has for
+ * "fast styling lost text", and because a non-null result must stay impossible:
+ * the cap is a chunk size now, so nothing can fall off the end. Tests pin both
+ * halves of that — this returns null, and the tail of an over-cap dictation
+ * survives into the styled output.
  */
 export const measureFastStyleTruncation = (
-  raw: string,
-): { keptChars: number; droppedChars: number } | null => {
-  // Trimmed first, because that is the string `applyFastStyle` truncates. It
-  // guards on `rawTranscript.trim()` and slices that, so measuring the untrimmed
-  // string reported a truncation that never happened: a dictation over the cap
-  // only because of leading or trailing whitespace, whose trimmed form is under
-  // it, styled completely while the user was told N characters had been left
-  // unstyled, with that N persisted on the history row. `trim()` only ever
-  // shortens, so measuring the trimmed form can never over-report either.
-  const trimmed = raw.trim();
-  if (trimmed.length <= MAX_INPUT_CHARS) return null;
-  return {
-    keptChars: MAX_INPUT_CHARS,
-    droppedChars: trimmed.length - MAX_INPUT_CHARS,
-  };
-};
+  _raw: string,
+): { keptChars: number; droppedChars: number } | null => null;
 
 const FILLER_RE = /\b(?:u[hm]+|er+|ah+|h?mm+)\b[,\s]*/gi;
 
@@ -255,7 +362,7 @@ const breakIntoParagraphs = (text: string, sentencesPerPara = 3): string => {
 };
 
 const toPolished = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   if (!text) return text;
   text = applySymbolReplacements(text);
@@ -289,27 +396,49 @@ const isShortEnoughToLift = (
   return trimmed.split(/\s+/).length <= maxWords && trimmed.length <= maxChars;
 };
 
+/**
+ * A greeting or sign-off is lifted only from the ends of the *dictation*, so
+ * the caller passes whether this chunk is at the start and at the end of it.
+ *
+ * Unscoped, chunking an over-long dictation would lift a mid-dictation "Hi
+ * team," on chunk four into a greeting for the whole email, and lift a
+ * mid-dictation "Thanks." out of the middle of the body and move it to that
+ * chunk's end. Both silently re-order sentences the speaker said in a
+ * different order, which is the same class of defect as dropping them.
+ */
 const splitEmailSections = (
   sentences: string[],
+  {
+    liftGreeting,
+    liftClosing,
+  }: { liftGreeting: boolean; liftClosing: boolean },
 ): { greeting: string; body: string[]; closing: string } => {
   const body = [...sentences];
   let greeting = "";
   let closing = "";
 
-  const first = body.at(0);
-  if (
-    first &&
-    EMAIL_GREETING_RE.test(first) &&
-    isShortEnoughToLift(first, 4, 20)
-  ) {
-    greeting = first;
-    body.shift();
+  if (liftGreeting) {
+    const first = body.at(0);
+    if (
+      first &&
+      EMAIL_GREETING_RE.test(first) &&
+      isShortEnoughToLift(first, 4, 20)
+    ) {
+      greeting = first;
+      body.shift();
+    }
   }
 
-  const last = body.at(-1);
-  if (last && EMAIL_CLOSING_RE.test(last) && isShortEnoughToLift(last, 5, 25)) {
-    closing = last;
-    body.pop();
+  if (liftClosing) {
+    const last = body.at(-1);
+    if (
+      last &&
+      EMAIL_CLOSING_RE.test(last) &&
+      isShortEnoughToLift(last, 5, 25)
+    ) {
+      closing = last;
+      body.pop();
+    }
   }
 
   return { greeting, body, closing };
@@ -322,12 +451,21 @@ const joinEmailBlocks = (blocks: string[]): string =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-const toEmail = (raw: string): string => {
-  const polished = toPolished(truncateGuard(raw));
+const toEmail = (
+  raw: string,
+  {
+    liftGreeting,
+    liftClosing,
+  }: { liftGreeting: boolean; liftClosing: boolean },
+): string => {
+  const polished = toPolished(assertWithinChunkSize(raw));
   const sentences = splitIntoSentences(polished);
   if (sentences.length === 0) return polished;
 
-  const { greeting, body, closing } = splitEmailSections(sentences);
+  const { greeting, body, closing } = splitEmailSections(sentences, {
+    liftGreeting,
+    liftClosing,
+  });
   const bodyText =
     body.length > 0 ? breakIntoParagraphs(body.join(" "), 2) : "";
   const joined = joinEmailBlocks([greeting, bodyText, closing]);
@@ -339,7 +477,7 @@ const CHAT_CONNECTIVE_RE =
   /\b(?:furthermore|moreover|additionally|consequently)\b[,\s]+(\S)/gi;
 
 const toChat = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
@@ -372,7 +510,7 @@ const expandContractions = (text: string): string => {
 };
 
 const toFormal = (raw: string): string => {
-  const text = expandContractions(toPolished(truncateGuard(raw)))
+  const text = expandContractions(toPolished(assertWithinChunkSize(raw)))
     .replace(INFORMAL_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -385,7 +523,7 @@ const PROMPT_REQUEST_RE =
   /^(?:can you|could you|would you|please|I need you to|I want you to|I need|I want)\b\s*/i;
 
 const toPrompt = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
@@ -424,7 +562,7 @@ export const stripEdgePunctuation = (text: string): string => {
 };
 
 const toBullets = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
@@ -454,7 +592,7 @@ const toBullets = (raw: string): string => {
 };
 
 const toConcise = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
@@ -468,7 +606,7 @@ const toConcise = (raw: string): string => {
 };
 
 const toNotes = (raw: string): string => {
-  const guarded = truncateGuard(raw);
+  const guarded = assertWithinChunkSize(raw);
   let text = guarded.trim();
   text = applySymbolReplacements(text);
   text = fixSelfCorrections(text);
@@ -504,6 +642,66 @@ const toNotes = (raw: string): string => {
   return parts.join("\n").trim() || toBullets(guarded);
 };
 
+/**
+ * How the styled chunks of one tone are rejoined. A tone whose output is
+ * line-structured rejoins on the same separator it uses internally, so the join
+ * is invisible; the sentence-shaped tones rejoin on a space, which is what they
+ * use between sentences already.
+ */
+const CHUNK_JOIN_BY_TONE: Readonly<Record<string, string | undefined>> = {
+  [EMAIL_TONE_ID]: "\n\n",
+  [BULLETS_TONE_ID]: "\n",
+  [NOTES_TONE_ID]: "\n",
+};
+
+const applyStyleToChunk = (
+  chunk: string,
+  toneId: string,
+  position: { isFirst: boolean; isLast: boolean },
+): string => {
+  switch (toneId) {
+    case POLISHED_TONE_ID:
+    case "default":
+      return toPolished(chunk);
+    case EMAIL_TONE_ID:
+      return toEmail(chunk, {
+        liftGreeting: position.isFirst,
+        liftClosing: position.isLast,
+      });
+    case CHAT_TONE_ID:
+      return toChat(chunk);
+    case FORMAL_TONE_ID:
+      return toFormal(chunk);
+    case PROMPT_TONE_ID:
+      return toPrompt(chunk);
+    case BULLETS_TONE_ID:
+      return toBullets(chunk);
+    case CONCISE_TONE_ID:
+      return toConcise(chunk);
+    case NOTES_TONE_ID:
+      return toNotes(chunk);
+    default:
+      // Custom and deprecated tones reach here only when a caller skipped
+      // canApplyFastStyle. A free-form prompt cannot be honoured locally, and a
+      // deprecated tone has no transform that matches what it promised, so return
+      // the input unchanged rather than silently picking a different style.
+      return chunk;
+  }
+};
+
+/**
+ * Applies the tone to the whole dictation.
+ *
+ * A dictation longer than `MAX_INPUT_CHARS` is styled over as many chunks as it
+ * takes and the results concatenated, so the returned text always covers the
+ * entire input. It used to be `slice`d to the cap and the tail discarded, which
+ * made this return a styled prefix indistinguishable from a complete utterance.
+ * The cap is now a chunk size rather than a truncation point.
+ *
+ * `toEmail` is the only transform that carries state across its input — it lifts
+ * a greeting off the front and a sign-off off the back — so it is the only one
+ * told where its chunk sits in the dictation.
+ */
 export const applyFastStyle = (
   rawTranscript: string,
   toneId: string | null,
@@ -515,38 +713,20 @@ export const applyFastStyle = (
     return rawTranscript;
   }
 
-  const guarded =
-    trimmed.length > MAX_INPUT_CHARS ? truncateGuard(trimmed) : trimmed;
-
   try {
-    switch (toneId) {
-      case POLISHED_TONE_ID:
-      case "default":
-        return toPolished(guarded);
-      case EMAIL_TONE_ID:
-        return toEmail(guarded);
-      case CHAT_TONE_ID:
-        return toChat(guarded);
-      case FORMAL_TONE_ID:
-        return toFormal(guarded);
-      case PROMPT_TONE_ID:
-        return toPrompt(guarded);
-      case BULLETS_TONE_ID:
-        return toBullets(guarded);
-      case CONCISE_TONE_ID:
-        return toConcise(guarded);
-      case NOTES_TONE_ID:
-        return toNotes(guarded);
-      default:
-        break;
-    }
-
-    // Custom and deprecated tones reach here only when a caller skipped
-    // canApplyFastStyle. A free-form prompt cannot be honoured locally, and a
-    // deprecated tone has no transform that matches what it promised, so return
-    // the input unchanged rather than silently picking a different style.
-    return guarded;
+    const chunks = splitIntoChunks(trimmed);
+    const lastIndex = chunks.length - 1;
+    return chunks
+      .map((chunk, index) =>
+        applyStyleToChunk(chunk, toneId, {
+          isFirst: index === 0,
+          isLast: index === lastIndex,
+        }),
+      )
+      .join(CHUNK_JOIN_BY_TONE[toneId] ?? " ");
   } catch {
+    // A transform threw. The raw transcript is the only answer that cannot lose
+    // what was said, so it is what the caller gets.
     return rawTranscript;
   }
 };
@@ -589,4 +769,9 @@ export const canApplyFastStyle = (toneId: string | null): boolean => {
   return FAST_STYLE_TONE_IDS.has(toneId);
 };
 
+/**
+ * The size of one styling chunk. Input at or under this is styled in a single
+ * pass exactly as it always was; longer input is split at sentence or word
+ * boundaries and every chunk is styled, so nothing past this number is dropped.
+ */
 export const FAST_STYLE_MAX_INPUT_CHARS = MAX_INPUT_CHARS;

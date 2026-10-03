@@ -333,10 +333,17 @@ describe("postProcessTranscript fast local style", () => {
     expect(result.transcript).toContain("- ");
   });
 
-  it("records the dropped count on the no-provider fast path", async () => {
+  // An over-cap dictation used to be sliced to the cap, so these two cases
+  // asserted a dropped-character count and a warning telling the user how much
+  // of their dictation had been thrown away. `applyFastStyle` now styles the
+  // whole input across as many chunks as it takes, so there is no dropped text to
+  // count and no warning to give: claiming a truncation here would tell the user
+  // their words were lost when they were not.
+  it("keeps the whole dictation on the no-provider fast path, with no truncation warning", async () => {
     const { FAST_STYLE_MAX_INPUT_CHARS } =
       await import("../utils/fast-style.utils");
-    const overCap = "dictation word ".repeat(2000);
+    const TAIL = "zztaillowzz";
+    const overCap = `${"dictation word ".repeat(2000)} ${TAIL}.`;
     expect(overCap.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
 
     const { postProcessTranscript: run } = await import("./transcribe.actions");
@@ -355,20 +362,18 @@ describe("postProcessTranscript fast local style", () => {
 
     spy.mockRestore();
     expect(result.metadata.postProcessMode).toBe("fast");
-    // Measured against the trimmed length, because that is the string
-    // `applyFastStyle` truncates. This input ends in a space, so the two differ
-    // by one and the reported number has to be the count of characters that were
-    // actually dropped rather than the raw length.
-    const dropped = overCap.trim().length - FAST_STYLE_MAX_INPUT_CHARS;
-    expect(result.metadata.fastStyleTruncatedChars).toBe(dropped);
-    expect(result.warnings.join(" ")).toContain("left unstyled");
-    expect(result.warnings.join(" ")).toContain(String(dropped));
+    // The half that used to be discarded, and the reason this test exists.
+    expect(result.transcript.toLowerCase()).toContain(TAIL);
+    expect(result.metadata.fastStyleTruncatedChars).toBeUndefined();
+    expect(result.warnings.join(" ")).not.toContain("left unstyled");
   });
 
-  it("records the dropped count on the fast fallback path after a provider failure", async () => {
+  it("keeps the whole dictation on the fast fallback path after a provider failure", async () => {
     const { FAST_STYLE_MAX_INPUT_CHARS } =
       await import("../utils/fast-style.utils");
-    const overCap = "dictation word ".repeat(2000);
+    const TAIL = "zztaillowzz";
+    const overCap = `${"dictation word ".repeat(2000)} ${TAIL}.`;
+    expect(overCap.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
     genRepo.generateText.mockRejectedValueOnce(new Error("provider down"));
 
     const result = await postProcessTranscript({
@@ -380,11 +385,9 @@ describe("postProcessTranscript fast local style", () => {
     // provider-less branch.
     expect(result.metadata.postProcessFallback).toBe(true);
     expect(result.metadata.postProcessMode).toBe("fast");
-    // Trimmed, for the same reason as the no-provider case above.
-    expect(result.metadata.fastStyleTruncatedChars).toBe(
-      overCap.trim().length - FAST_STYLE_MAX_INPUT_CHARS,
-    );
-    expect(result.warnings.join(" ")).toContain("left unstyled");
+    expect(result.transcript.toLowerCase()).toContain(TAIL);
+    expect(result.metadata.fastStyleTruncatedChars).toBeUndefined();
+    expect(result.warnings.join(" ")).not.toContain("left unstyled");
   });
 
   it("reports no truncation for input under the cap", async () => {

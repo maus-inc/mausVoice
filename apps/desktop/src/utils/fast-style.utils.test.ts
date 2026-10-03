@@ -7,6 +7,29 @@ import {
   stripEdgePunctuation,
 } from "./fast-style.utils";
 
+/**
+ * A high surrogate not followed by a low one, or a low one not preceded by a
+ * high one. `String.prototype.isWellFormed` would say this directly, but it is
+ * ES2024 and this project targets ES2022, so it is spelled out here rather than
+ * widening the compiler lib for one assertion.
+ */
+const hasLoneSurrogate = (text: string): boolean => {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    const isHigh = code >= 0xd800 && code <= 0xdbff;
+    const isLow = code >= 0xdc00 && code <= 0xdfff;
+    if (!isHigh && !isLow) continue;
+    const next = text.charCodeAt(i + 1);
+    if (isHigh) {
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else {
+      return true;
+    }
+  }
+  return false;
+};
+
 describe("applyFastStyle fast local transforms", () => {
   it("verbatim returns raw exactly (contract)", () => {
     const raw = "um so like I went to the store";
@@ -358,9 +381,11 @@ describe("applyFastStyle fast local transforms", () => {
     expect(median).toBeLessThan(5);
   });
 
-  it("exports the same truncation limit the transforms apply", () => {
-    // Pinned so the caller that warns about truncation cannot drift from the
-    // constant the transform actually uses. The tail marker must not survive.
+  it("exports the same chunk size the transforms apply, and drops nothing past it", () => {
+    // The exported constant is what `applyFastStyle` splits on, so a caller
+    // reporting lengths cannot drift from the number actually used. The tail
+    // marker must survive on BOTH sides of the boundary: this used to assert the
+    // opposite for the over-cap case, which is the data loss being fixed.
     const marker = "TAILMARKER";
     const justUnder = "a".repeat(
       FAST_STYLE_MAX_INPUT_CHARS - marker.length - 1,
@@ -370,9 +395,7 @@ describe("applyFastStyle fast local transforms", () => {
     );
 
     const overBy = "a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 10);
-    expect(applyFastStyle(`${overBy} ${marker}`, "default")).not.toContain(
-      marker,
-    );
+    expect(applyFastStyle(`${overBy} ${marker}`, "default")).toContain(marker);
   });
 
   it("preserves meaning (no hallucination)", () => {
@@ -383,15 +406,19 @@ describe("applyFastStyle fast local transforms", () => {
     expect(out.toLowerCase()).toContain("next week");
   });
 
-  it("handles very long input with truncation guard (no catastrophic backtracking)", () => {
+  it("handles very long input without dropping it (no catastrophic backtracking)", () => {
     const long = "I went to the store. ".repeat(800);
     const out = applyFastStyle(long, "default");
-    expect(out.length).toBeLessThan(16000);
+    // Not a truncation cap any more: every one of the 800 sentences is styled.
+    expect(out.length).toBeGreaterThanOrEqual(long.length - 1);
     expect(out.toLowerCase()).toContain("store");
+    // 800 sentences at 3 per paragraph is 267 paragraphs, so the whole input was
+    // walked rather than one chunk's worth.
+    expect(out.split("\n\n").length).toBeGreaterThan(200);
 
     const fillerLong = `${"um ".repeat(8000)}I went to the store.`;
     const out2 = applyFastStyle(fillerLong, "default");
-    expect(out2.length).toBeLessThan(16000);
+    expect(out2.toLowerCase()).toContain("store");
   });
 
   it("graceful degradation: self-correction skipped on huge input", () => {
@@ -420,33 +447,32 @@ describe("canApplyFastStyle", () => {
 });
 
 describe("measureFastStyleTruncation", () => {
-  it("reports nothing for input at or under the cap", () => {
+  // `applyFastStyle` styles every chunk of a long dictation and concatenates the
+  // results, so there is no tail left unstyled to count. These assertions are
+  // what pin that: each one used to expect a dropped-character count, and each
+  // would go red again the moment truncation came back.
+  it("reports nothing at or under the chunk size", () => {
     expect(measureFastStyleTruncation("")).toBeNull();
     expect(
       measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS)),
     ).toBeNull();
   });
 
-  it("reports the dropped count one character over the cap", () => {
+  it("reports nothing one character over the chunk size, because nothing is dropped", () => {
     expect(
       measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 1)),
-    ).toEqual({ keptChars: FAST_STYLE_MAX_INPUT_CHARS, droppedChars: 1 });
+    ).toBeNull();
   });
 
-  it("reports the full dropped tail, not just that truncation happened", () => {
+  it("reports nothing for a far over-length input", () => {
     expect(
-      measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS + 4321)),
-    ).toEqual({ keptChars: FAST_STYLE_MAX_INPUT_CHARS, droppedChars: 4321 });
+      measureFastStyleTruncation("a".repeat(FAST_STYLE_MAX_INPUT_CHARS * 3)),
+    ).toBeNull();
   });
 
   it("reports nothing when only surrounding whitespace puts the input over", () => {
-    // `applyFastStyle` guards on `rawTranscript.trim()` and slices that, so a
-    // dictation whose raw form is over the cap only because of padding styles
-    // completely. Reporting a truncation here told the user N characters had
-    // been left unstyled, and persisted that N on the history row, for a
-    // truncation that never happened.
-    // Body one under the cap, and enough padding to push the raw form over it:
-    // 14999 trimmed is under 15000, 15001 raw is not.
+    // Body one under the chunk size, and enough padding to push the raw form
+    // over it: 14999 trimmed is under 15000, 15001 raw is not.
     const body = "w".repeat(FAST_STYLE_MAX_INPUT_CHARS - 1);
     const raw = `  ${body} `;
     expect(body.length).toBeLessThanOrEqual(FAST_STYLE_MAX_INPUT_CHARS);
@@ -454,22 +480,13 @@ describe("measureFastStyleTruncation", () => {
     expect(measureFastStyleTruncation(raw)).toBeNull();
   });
 
-  it("still reports a real truncation that happens to have whitespace", () => {
-    // A genuine overrun, with the same padding on top. The padding must not be
-    // counted as dropped, and must not stop the real truncation being reported.
-    const body = "w".repeat(FAST_STYLE_MAX_INPUT_CHARS + 500);
-    const raw = ` ${body} `;
-    expect(measureFastStyleTruncation(raw)).toEqual({
-      keptChars: FAST_STYLE_MAX_INPUT_CHARS,
-      droppedChars: 500,
-    });
-  });
-
-  it("agrees with the cap applyFastStyle actually enforces", () => {
+  it("agrees with applyFastStyle, which styles the whole over-length input", () => {
     const raw = "word ".repeat(6000);
-    const truncation = measureFastStyleTruncation(raw);
-    expect(truncation).not.toBeNull();
-    expect(applyFastStyle(raw, "default").length).toBeLessThanOrEqual(
+    // The reported loss and the applied loss must not disagree.
+    expect(measureFastStyleTruncation(raw)).toBeNull();
+    // And nothing may be missing from what comes back, which is the half of the
+    // agreement that a null report alone would not prove.
+    expect(applyFastStyle(raw, "default").length).toBeGreaterThan(
       FAST_STYLE_MAX_INPUT_CHARS,
     );
   });
@@ -524,6 +541,202 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
     expect(out).toContain("- We shipped it");
     expect(out).toContain("- The build is green");
     expect(out).toContain("- [ ] We need to fix the docs");
+  });
+});
+
+/**
+ * The defect this file's length tests exist for: a dictation longer than the
+ * chunk size used to be `slice`d to the cap, so the styled output was a prefix
+ * of the input and everything after 15,000 characters was delivered nowhere.
+ */
+describe("over-length dictation keeps every character", () => {
+  /** Long enough to need several chunks at the current chunk size. */
+  const overCap = (repeats: number) => "dictation word ".repeat(repeats);
+  const TAIL = "zztaillowzz";
+
+  it("carries a tail marker past the cap into the output", () => {
+    // Sized so the marker sits well beyond one chunk, and the body before it is
+    // padded so the marker cannot survive by staying inside the first chunk.
+    const body = `${overCap(2000)} ${TAIL}.`;
+    expect(body.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+    expect(applyFastStyle(body, "default")).toContain(TAIL);
+  });
+
+  it("concatenates chunks back to the whole input, dropping nothing", () => {
+    // Every numbered token must appear, in order. A dropped tail loses the high
+    // numbers; a chunk boundary landing inside a word splits one token into two
+    // fragments, so the token itself goes missing and this fails.
+    // Token widths grow with the index, so this is sized to clear two full
+    // chunks by a wide margin rather than by arithmetic on the token count.
+    const tokens = Array.from({ length: 6000 }, (_, i) => `tok${i}`);
+    const raw = `${tokens.join(". ")}.`;
+    expect(raw.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS * 2);
+
+    // Bullets prefix each line with "- ", so that is removed before matching.
+    const flat = applyFastStyle(raw, "bullets")
+      .toLowerCase()
+      .replaceAll("- ", " ");
+    let cursor = 0;
+    for (const token of tokens) {
+      // Matched without the sentence period, because `toBullets` strips the
+      // trailing period off every bullet it emits — including the one that
+      // happens to land on a chunk boundary. That is the tone's own behaviour on
+      // any input, not text lost to splitting. Bare tokens still match exactly:
+      // the cursor only advances past a token already consumed, so the prefix
+      // "tok1" cannot stand in for "tok10".
+      const at = flat.indexOf(token, cursor);
+      expect(
+        at,
+        `token ${token} missing or out of order`,
+      ).toBeGreaterThanOrEqual(cursor);
+      cursor = at + token.length;
+    }
+  });
+
+  it("styles every chunk for every tone that has a local transform", () => {
+    // One dispatch bug on any single tone re-introduces the loss for that tone
+    // only, so the sweep covers all of them rather than spot-checking `default`.
+    const tones = [
+      "default",
+      "email",
+      "chat",
+      "formal",
+      "prompt",
+      "bullets",
+      "concise",
+      "notes",
+    ];
+    const body = `${overCap(2000)} The last thing I said was ${TAIL}.`;
+    for (const tone of tones) {
+      expect(canApplyFastStyle(tone)).toBe(true);
+      const out = applyFastStyle(body, tone);
+      // `concise` strips filler, `formal` expands contractions, and `prompt`
+      // drops its politeness framing, so the marker is matched loosely: it is a
+      // run of lowercase letters with no transform that would rewrite it.
+      expect(out.toLowerCase(), `tone ${tone} dropped the tail`).toContain(
+        TAIL,
+      );
+    }
+  });
+
+  it("reports no truncation, because nothing was truncated", () => {
+    const body = `${overCap(2000)} ${TAIL}.`;
+    expect(measureFastStyleTruncation(body)).toBeNull();
+  });
+
+  it("is byte-identical for input under the chunk size", () => {
+    // Pinned to literal expected output, not to a second call: comparing
+    // `applyFastStyle(x)` with `applyFastStyle(x)` would pass even if the single
+    // chunk path changed completely, which is the regression this guards.
+    expect(applyFastStyle("um so I went to the store uh", "default")).toBe(
+      "I went to the store.",
+    );
+    expect(applyFastStyle("I think it is fine.", "concise")).toBe(
+      "It is fine.",
+    );
+    expect(applyFastStyle("I need to buy milk. I need bread.", "bullets")).toBe(
+      "- I need to buy milk\n- I need bread",
+    );
+  });
+
+  it("cuts chunks on a code-point boundary, never inside a surrogate pair", () => {
+    // A cut at a fixed index can land between a surrogate pair, and a lone
+    // surrogate is not encodable: it decodes to U+FFFD, so the character is
+    // silently destroyed. This input has no whitespace at all, so it reaches the
+    // code-point tier of the cut rather than the sentence or word tiers, and the
+    // one-character prefix puts the chunk boundary between a pair.
+    const emoji = "\u{1F600}";
+    const raw = `x${emoji.repeat(8000)}`;
+    expect(raw.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+    // Precondition: the boundary really is between the two units of a pair.
+    const boundaryUnit = FAST_STYLE_MAX_INPUT_CHARS - 1;
+    const atBoundary = raw.charCodeAt(boundaryUnit);
+    expect(atBoundary).toBeGreaterThanOrEqual(0xd800);
+    expect(atBoundary).toBeLessThanOrEqual(0xdbff);
+
+    const out = applyFastStyle(raw, "default");
+    expect(hasLoneSurrogate(out)).toBe(false);
+    expect(out).not.toContain("\uFFFD");
+    // Every emoji survived: the cut dropped nothing.
+    expect(out.split(emoji).length - 1).toBe(8000);
+  });
+
+  /**
+   * `toEmail` lifts a greeting off the front and a sign-off off the back, so it
+   * is the one transform carrying state across its input. Chunking without
+   * scoping it would lift a mid-dictation "Hi." into a greeting for its chunk
+   * and pull a mid-dictation "Thanks." out to the end of it — re-ordering
+   * sentences the speaker said in a different order, which is the same class of
+   * defect as dropping them.
+   *
+   * A lift is observable as a blank line, because `joinEmailBlocks` separates
+   * greeting, body and closing with one. So the marker must sit at a chunk's
+   * first position: a lift moves it to the chunk's own first line, while leaving
+   * it in the body keeps it inline with the sentence after it.
+   *
+   * Sentences are all exactly six characters, so chunk one is precisely
+   * `FAST_STYLE_MAX_INPUT_CHARS / 6` of them and the marker can be placed at a
+   * known chunk start without hard-coding an offset that a cap change would
+   * silently invalidate.
+   */
+  describe("email section lifting stays scoped to the ends of the dictation", () => {
+    const SENTENCE = "AAAA.";
+    const CHUNK_STRIDE = SENTENCE.length + 1;
+
+    /** Sentences that fit in one chunk, all of identical width. */
+    const perChunk = () =>
+      Math.floor(FAST_STYLE_MAX_INPUT_CHARS / CHUNK_STRIDE);
+
+    /**
+     * `chunks` dictations of uniform sentences, with `marker` placed at
+     * sentence index `at` of the built input. Sentence 0 is the dictation's own
+     * opener: it matches neither the greeting nor the closing pattern, so the
+     * whole-dictation lift cannot fire on it and be mistaken for the marker this
+     * test reads. It is the same width as SENTENCE, so replacing it does not
+     * shift every later offset and break the chunk alignment relied on below.
+     */
+    const build = (marker: string, at: number, chunks: number) => {
+      const sentences = Array.from(
+        { length: perChunk() * (chunks + 1) },
+        () => SENTENCE,
+      );
+      sentences[0] = "Bbbb.";
+      sentences[at] = marker;
+      return sentences.join(" ");
+    };
+
+    /** Byte offset of sentence `index` in a `build` input. */
+    const offsetOf = (index: number) => index * CHUNK_STRIDE;
+
+    it("does not lift a chunk-leading greeting into its own block", () => {
+      // The first sentence of the second chunk, so it is first in its chunk and
+      // last in neither. That is the position an unscoped greeting lift would
+      // wrongly treat as the start of a dictation.
+      const raw = build("Hi.", perChunk(), 1);
+      expect(raw.indexOf("Hi.")).toBe(offsetOf(perChunk()));
+      expect(raw.indexOf("Hi.")).toBeGreaterThanOrEqual(
+        FAST_STYLE_MAX_INPUT_CHARS,
+      );
+      const out = applyFastStyle(raw, "email");
+      // The whole-dictation lift must not have fired, so this is the only marker
+      // and it is not at the front.
+      expect(out.startsWith("Bbbb.")).toBe(true);
+      const markerAt = out.indexOf("Hi.");
+      expect(markerAt).toBeGreaterThan(0);
+      // Inline with the sentence that followed it, not separated by the blank
+      // line a lifted greeting block adds.
+      expect(out.slice(markerAt, markerAt + "Hi.".length + 2)).toBe("Hi. A");
+    });
+
+    // NOTE: there is deliberately no matching test for the closing lift. The
+    // scoping flag is kept because lifting a mid-dictation sign-off out of a
+    // chunk is wrong on the same grounds as the greeting, but no input was found
+    // where it changes the output. Every position of the marker was scanned
+    // against an unscoped `liftClosing` and the rendered text was identical or
+    // differed only by one character of offset: `joinEmailBlocks` re-joins the
+    // closing to the end of the body it was taken from, so lifting a chunk's own
+    // last sentence puts it back where it already was. Asserting it here would be
+    // a test that cannot fail, which is worse than no test.
   });
 });
 
