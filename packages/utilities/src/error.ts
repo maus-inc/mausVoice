@@ -17,6 +17,44 @@ const LABELED_SECRET_QUOTED = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*${QUOTED_SECRET_VALUE}`,
   "gi",
 );
+/**
+ * Labels whose value is free-form: a passphrase or a key blob, which routinely
+ * contains whitespace and may span lines.
+ *
+ * This is a fact about the credential's format, not a preference about how much
+ * prose to sacrifice. A `Bearer`/`Basic` credential and a provider API key are
+ * single tokens by construction, so for `api_key`, `access_token`,
+ * `refresh_token`, `id_token` and `session_token` the one token after the label
+ * IS the whole credential and stopping at the space leaks nothing. A passphrase
+ * and a PEM key are not: `password: correct horse battery staple` and a
+ * multi-line `private_key` have a space in them, and reading only the first word
+ * put the rest of the credential in the clear directly beside a marker saying
+ * it had been redacted.
+ *
+ * Compared the way `isSecretKey` compares -- separators and quotes stripped --
+ * so `client_secret`, `clientSecret` and `"private-key"` all reach the same
+ * answer. The quotes matter because `SECRET_LABEL` lets the label itself be
+ * quoted, which is how a JSON body arrives.
+ *
+ * A new label is a decision, not a default: adding one to `SECRET_LABEL` alone
+ * extends the set of things recognised as secret while leaving it a single
+ * token, which is right for a token and wrong for a passphrase. Adding it here
+ * as well is what makes a multi-word value of that label redact whole.
+ */
+const FREE_FORM_SECRET_LABELS: ReadonlySet<string> = new Set([
+  "clientsecret",
+  "privatekey",
+  "sessionkey",
+  "password",
+  "passwd",
+  "pwd",
+  "credential",
+  "secret",
+]);
+
+const isFreeFormSecretLabel = (label: string): boolean =>
+  FREE_FORM_SECRET_LABELS.has(label.replace(/["_-]/g, "").toLowerCase());
+
 // The scheme words, shared by the two labelled passes so the one that redacts
 // and the one that judges a placeholder cannot drift apart, and exported because
 // a provider scrubber has to judge the same words: it decides whether the token
@@ -42,10 +80,22 @@ const LABELED_SECRET_BARE = new RegExp(
   String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEME_WORDS})\s+)?([^\s,;]+)`,
   "gi",
 );
-// A labelled scheme carries a second token after it, so matching the label
-// alone redacted the word `Basic` and left the credential beside it in clear
-// text (`Authorization: Basic <credential>` -> `Authorization:[redacted]
-// <credential>`). Consume the scheme and its credential together, or drop both.
+// The free-form counterpart of `LABELED_SECRET_BARE`. Same label and same
+// scheme-word step-over; the value is a run to the next separator rather than
+// one token, which is the whole difference. The leading character class is what
+// keeps this off a QUOTED value -- a value opening with a quote is left to
+// `LABELED_SECRET_QUOTED`, which reads it to the closing quote, and this pass's
+// own run would stop at the quote and redact only the part before it.
+//
+// It has to be a pattern with a long value class rather than a scanner reading
+// past the end of a match it was given: `String.replace` replaces exactly the
+// matched span, so re-reading further into the string from inside the callback
+// redacts the value but leaves its tail in the clear exactly where the old
+// one-token value left it.
+const FREE_FORM_SECRET_BARE = new RegExp(
+  String.raw`${SECRET_LABEL}\s*([:=])\s*(?:(?:${AUTHORIZATION_SCHEME_WORDS})\s+)?([^"';\s][^,;]*)`,
+  "gi",
+);
 const AUTHORIZATION_SCHEME = new RegExp(
   String.raw`\b(authorization|proxy-authorization)\s*:\s*(?:(${AUTHORIZATION_SCHEME_WORDS})\s+)?([^\r\n]*)`,
   "gi",
@@ -121,6 +171,34 @@ const tokenEnd = (text: string, index: number): number => {
   }
   return end;
 };
+
+/**
+ * What ends a free-form value: the next field separator, or the end of the
+ * message. A free-form value has no closing quote to read to -- that is what
+ * distinguishes it from a quoted one, which `quotedValueEnd` handles and which
+ * already redacted whole -- so the separators the surrounding text supplies are
+ * the only boundaries there are, and the end of the message is the last of them.
+ */
+/**
+ * The free-form counterpart of `tokenEnd`, and the reason a passphrase or a key
+ * blob ends where it does. Same stops, plus one more: the separator. Whitespace
+ * does NOT end a free-form value, and that includes a newline, for two reasons
+ * that are both about the same credential. A PEM private key is multi-line by
+ * construction, so a rule that stopped at the first newline could not redact one
+ * at all. And `redactUnknown` already redacts an entire multi-line string
+ * sitting under a secret key, so a newline-bounded rule in text would leak the
+ * very secret the structured path removes.
+ *
+ * The cost is real and is taken deliberately: prose on the same line after a
+ * passphrase is indistinguishable from the rest of the passphrase, so it goes
+ * too. That is why a separator and not the line end is the stop -- `password:
+ * wrong, try again` keeps its diagnosis -- and why `describesField` still runs
+ * first, so `password: missing` stays prose.
+ *
+ * Not referenced directly: the value class in `FREE_FORM_SECRET_BARE` is the same
+ * rule written as a pattern, which is what lets the match itself span the run.
+ */
+const FREE_FORM_VALUE_STOPPERS = ",;";
 
 /**
  * One end of a quoted run starting at `index`, or `index` when no quote opens
@@ -270,6 +348,31 @@ const splitTrailingClosers = (value: string): [string, string] => {
 
 export const redactSensitiveTokens = (message: string): string =>
   message
+    // First, and only for the labels whose value is free-form. `LABELED_SECRET_BARE`
+    // captures one token, which is the whole of a token-shaped credential but
+    // only the first word of a passphrase or a key blob; this pass re-reads the
+    // run from where that token ended and takes it to the separator.
+    //
+    // It runs before every pass that writes the marker, and that ordering is the
+    // point rather than an accident. A pass that ran after them would have to
+    // recognise the marker to tell an already-redacted value from a credential
+    // that begins with the marker's own characters, and any such test has a
+    // hole: `password: [redacted] hunter2` is either a finished redaction or a
+    // passphrase starting with a bracket. Reading the value first means the
+    // marker is never there to be confused, so both cases redact.
+    .replace(
+      FREE_FORM_SECRET_BARE,
+      (match, label: string, sep: string, rawValue: string) => {
+        // Every other label, including both authorization headers, is left
+        // entirely to the passes below, which is the whole of how this pattern
+        // differs from `LABELED_SECRET_BARE`: same label, same scheme-word
+        // step-over, same guards -- a run for the value instead of one token.
+        if (!isFreeFormSecretLabel(label)) return match;
+        const [value, tail] = splitTrailingClosers(rawValue);
+        if (describesField(value)) return match;
+        return `${label}${sep}${REDACTED}${tail}`;
+      },
+    )
     // Before the labelled passes: those match the `authorization` label and
     // would otherwise consume only the scheme word, leaving the credential
     // beside it. A bare value with no scheme is left to the placeholder

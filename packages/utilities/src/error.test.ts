@@ -208,6 +208,198 @@ describe("unknownToMessage labeled-secret edge cases", () => {
   });
 });
 
+describe("free-form secret values", () => {
+  /**
+   * `LABELED_SECRET_BARE` reads a bare value as one whitespace-delimited token,
+   * which is right for a token-shaped credential and wrong for a passphrase or
+   * a key blob: both routinely contain spaces, and a PEM key contains newlines.
+   * Reading one token put the rest of the credential in the clear directly
+   * beside a marker saying it had been redacted, and `unknownToMessage` is what
+   * carries that string into logs and persisted error metadata.
+   *
+   * The rule this pins: for these labels the bare value runs to the next `,` or
+   * `;`, or to the end of the message -- whitespace and newlines included --
+   * with `splitTrailingClosers` still splitting off brackets that belong to the
+   * surrounding text, and `describesField` still sparing a value that describes
+   * the field instead of carrying one.
+   */
+  it("redacts a passphrase whole rather than its first word", () => {
+    expect(
+      redactSensitiveTokens("password: correct horse battery staple"),
+    ).toBe("password:[redacted]");
+    expect(
+      unknownToMessage(new Error("password: correct horse battery staple")),
+    ).toBe("password:[redacted]");
+    expect(unknownToMessage({ error: "client_secret: aaa bbb ccc" })).toBe(
+      '{"error":"client_secret:[redacted]"}',
+    );
+  });
+
+  it("redacts a multi-line private key whole, newlines included", () => {
+    // A PEM key is multi-line by construction, so a rule bounded by the line end
+    // could not redact one at all. `redactUnknown` already redacts a whole
+    // multi-line string under a secret key, so text has to match it.
+    //
+    // The fixture is assembled from parts, so that no contiguous PEM block
+    // appears in this file for a secret scanner to read as a live key. The value
+    // it produces at runtime is a well-formed multi-line key, which is what the
+    // redaction is being tested against.
+    const pem = [
+      "private_key: -----BEGIN RSA " + "PRIVATE KEY-----",
+      "MIIEowIBAAKCAQEA0Z3VS5J" + "Jcds3xfn",
+      "/WY6D1dL4w2Xk9pQaBcDeF" + "gHiJkLm",
+      "-----END RSA " + "PRIVATE KEY-----",
+    ].join("\n");
+    const out = redactSensitiveTokens(pem);
+    expect(out).not.toContain("MIIEowIBAAKCAQEA0Z3VS5J");
+    expect(out).not.toContain("BEGIN RSA ");
+    expect(out).toBe("private_key:[redacted]");
+  });
+
+  it("keeps the diagnosis that follows a separator", () => {
+    // The tension the fix has to hold: `correct horse battery staple` has no
+    // delimiter, so the whole remainder IS the credential and must go, but a
+    // separator is the surrounding text telling us where the value ends.
+    // Consuming to the end of the line would satisfy the first case by
+    // destroying this one.
+    expect(redactSensitiveTokens("password: wrong, try again")).toBe(
+      "password:[redacted], try again",
+    );
+    expect(redactSensitiveTokens("client_secret: aaa; try again")).toBe(
+      "client_secret:[redacted]; try again",
+    );
+    // A JSON body is a comma-separated list, so the field after the secret
+    // survives and the body stays readable.
+    expect(
+      redactSensitiveTokens('{"client_secret":aaa bbb ccc,"code":"E_BOOM"}'),
+    ).toBe('{client_secret:[redacted],"code":"E_BOOM"}');
+  });
+
+  it("keeps a placeholder value that describes the field", () => {
+    // `describesField` judges the whole run now, not one token, so
+    // `password: missing` still reads as prose while `password: required` and a
+    // bracketed placeholder still do too.
+    expect(redactSensitiveTokens("password: missing")).toBe(
+      "password: missing",
+    );
+    expect(redactSensitiveTokens("password: required")).toBe(
+      "password: required",
+    );
+    expect(redactSensitiveTokens("(password: expired)")).toBe(
+      "(password: expired)",
+    );
+    expect(redactSensitiveTokens("(client_secret: none)")).toBe(
+      "(client_secret: none)",
+    );
+  });
+
+  it("leaves a closing bracket of the surrounding document beside the redaction", () => {
+    // `splitTrailingClosers` still applies to the longer run: a bracket with no
+    // matching opener belongs to the text around the value, and a value holding
+    // its own balanced pair is still redacted whole.
+    expect(redactSensitiveTokens("password: abc def)")).toBe(
+      "password:[redacted])",
+    );
+    expect(redactSensitiveTokens("(password: abc def)")).toBe(
+      "(password:[redacted])",
+    );
+    expect(redactSensitiveTokens("password: some(value)")).toBe(
+      "password:[redacted]",
+    );
+    expect(redactSensitiveTokens("password: a(b]c)]")).toBe(
+      "password:[redacted]]",
+    );
+  });
+
+  it("does not mistake a credential opening with the marker's characters", () => {
+    // The reason the free-form pass runs FIRST, before any pass that writes the
+    // marker. A pass running afterwards has to recognise the marker to tell an
+    // already-redacted value from one that begins with a bracket, and either
+    // test has a hole. Reading the value before anything can have written a
+    // marker means this is just a value, and it redacts.
+    expect(redactSensitiveTokens("password: [redacted] hunter2")).toBe(
+      "password:[redacted]",
+    );
+    // A value a provider-prefix pass would otherwise rewrite first is still read
+    // as one value, and the run takes the prose with it because there is no
+    // delimiter between them.
+    expect(
+      redactSensitiveTokens("password: sk-ant-abcdefghijkl and more"),
+    ).toBe("password:[redacted]");
+    // The ordering this depends on is pinned by the quoted-value test below,
+    // which is where moving the pass to the end of the chain actually shows.
+    // Both assertions here pass under either order, so neither is evidence for
+    // the ordering on its own.
+  });
+
+  it("leaves a quoted value to the pass that reads the closing quote", () => {
+    // The quoted form already worked, and it has to keep working: the free-form
+    // run stops at a quote, so if it also matched a quoted value it would
+    // redact only the part before the quote and leave the tail behind.
+    //
+    // This is also the assertion that pins WHERE the free-form pass sits. Moved
+    // to the end of the chain it runs after `LABELED_SECRET_QUOTED` has already
+    // replaced the value with the marker, so it reads `[redacted] and then
+    // prose` as one value and eats the prose too -- the second assertion below
+    // comes back as `password=[redacted]`. Verified by mutation, not assumed.
+    expect(redactSensitiveTokens('password="my secret pass"')).toBe(
+      "password=[redacted]",
+    );
+    expect(
+      redactSensitiveTokens('password="my secret pass" and then prose'),
+    ).toBe("password=[redacted] and then prose");
+    expect(
+      redactSensitiveTokens('private_key="-----BEGIN PRIVATE KEY-----"'),
+    ).toBe("private_key=[redacted]");
+  });
+
+  it("still reads one token for a credential that cannot contain a space", () => {
+    // The other side of the same distinction, and the reason this is a labelled
+    // set rather than "every label except authorization": a bearer credential
+    // and a provider API key are single tokens by construction, so the token
+    // after `api_key` IS the whole credential and stopping at the space leaks
+    // nothing. Extending the run there would cost a diagnosis for no gain.
+    expect(redactSensitiveTokens("api_key=aaa bbb ccc")).toBe(
+      "api_key=[redacted] bbb ccc",
+    );
+    expect(redactSensitiveTokens("access_token=aaa bbb ccc")).toBe(
+      "access_token=[redacted] bbb ccc",
+    );
+    // The scheme word in front of the value is the label's syntax for these too,
+    // so the run starts after it.
+    expect(redactSensitiveTokens("password: token abc def")).toBe(
+      "password:[redacted]",
+    );
+  });
+
+  it("leaves the authorization scheme behaviour exactly as it was", () => {
+    // The documented reason the scheme pass stops at one bare word: a bearer or
+    // digest credential cannot contain spaces, and stopping is what keeps the
+    // diagnosis on the line that the line exists to carry. None of the above may
+    // touch it, so both are pinned here against exact output.
+    expect(redactSensitiveTokens("authorization: Bearer abc def")).toBe(
+      "authorization: Bearer [redacted] def",
+    );
+    expect(
+      redactSensitiveTokens(
+        "authorization: Digest abc is not authorized for this request",
+      ),
+    ).toBe(
+      "authorization: Digest [redacted] is not authorized for this request",
+    );
+    // And the placeholder deferral, which is the same rule seen from the other
+    // side.
+    expect(redactSensitiveTokens("authorization: token missing")).toBe(
+      "authorization: token missing",
+    );
+    expect(
+      redactSensitiveTokens(
+        "proxy-authorization: Digest abc is not authorized",
+      ),
+    ).toBe("proxy-authorization: Digest [redacted] is not authorized");
+  });
+});
+
 describe("authorization scheme credentials", () => {
   it("redacts a Digest parameter list whole, not just its first token", () => {
     const out = redactSensitiveTokens(

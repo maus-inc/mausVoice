@@ -1139,10 +1139,18 @@ mod tests {
             frames as f64 * FRAME_DT < SETTLE_MAX_TIME,
             "settle took too long"
         );
-        // The glide is capped: even a violent fling travels at most
-        // SETTLE_MAX_GLIDE past the release point.
+        // The glide is capped: even a violent fling travels at most 160px past
+        // the release point. The number is written out rather than read from
+        // SETTLE_MAX_GLIDE, because production clamps to that constant — an
+        // assertion phrased in the constant is true by construction and cannot
+        // fail when the constant moves.
+        //
+        // This release glides 138.9px, so the assertion is a ceiling rather
+        // than a measurement of the cap;
+        // `fast_fling_never_travels_beyond_the_glide_cap` is the test that
+        // saturates the cap and pins its exact value.
         assert!(
-            (prev.0 - last.0).abs() <= SETTLE_MAX_GLIDE + 1.0,
+            (prev.0 - last.0).abs() <= 160.0 + 1.0,
             "glide ran past its cap"
         );
     }
@@ -1164,6 +1172,14 @@ mod tests {
 
     #[test]
     fn fast_fling_never_travels_beyond_the_glide_cap() {
+        // The documented guarantee (see `SETTLE_MAX_GLIDE`) is a number, so it
+        // is pinned as a number. This release glides at ~14_000px/s, which asks
+        // for 1260px, so the cap is what decides where the pill stops: the
+        // settle target lands exactly 160px from the release point. Asserting
+        // `distance <= SETTLE_MAX_GLIDE` instead would compare the clamp against
+        // the constant being clamped to and pass for any value at all.
+        const CAP_PX: f64 = 160.0;
+
         for direction in [-1.0, 1.0] {
             for dt in [1.0 / 30.0, 1.0 / 60.0, 1.0 / 144.0] {
                 let mut drag = DragController::new();
@@ -1172,15 +1188,26 @@ mod tests {
                 let release =
                     drag.advance(&held_frame(direction * 140.0, direction * 140.0, 0.011));
                 drag.end_drag(0.011);
+                // Read before the first frame clears it: `track_settle` drops
+                // `settle_target` on the frame it reports `settled`.
+                let target = drag.advance(&free_frame(0.012, dt));
+                assert!(!target.settled);
+                let (tx, ty) = drag
+                    .settle_target
+                    .expect("the first settle frame picks a glide target");
+                let target_glide = ((tx - release.x).powi(2) + (ty - release.y).powi(2)).sqrt();
+                assert!(
+                    (target_glide - CAP_PX).abs() < 1e-6,
+                    "the settle target sat {target_glide}px past the release point, not \
+                     {CAP_PX}px: the glide cap moved without this test moving with it"
+                );
+
                 let mut done = false;
                 for frame in 1..=150 {
                     let out = drag.advance(&free_frame(0.011 + frame as f64 * dt, dt));
                     let distance =
                         ((out.x - release.x).powi(2) + (out.y - release.y).powi(2)).sqrt();
-                    assert!(
-                        distance <= SETTLE_MAX_GLIDE + 1e-6,
-                        "glide exceeded cap: {distance}"
-                    );
+                    assert!(distance <= CAP_PX + 1e-6, "glide exceeded cap: {distance}");
                     if out.settled {
                         done = true;
                         break;
@@ -1328,7 +1355,15 @@ mod tests {
         drag.end_drag(10.0 * FRAME_DT);
         let out = drag.advance(&free_frame(11.0 * FRAME_DT, 5.0));
         assert!(out.x.is_finite() && out.y.is_finite());
-        assert!((out.x - 90.0).abs() < SETTLE_MAX_GLIDE + 50.0);
+        // One 5-second step cannot carry the pill further than the 160px glide
+        // cap. Written as a number: `SETTLE_MAX_GLIDE + 50.0` was a bound the
+        // clamp made unfalsifiable, and the +50 slack meant the assertion held
+        // even for a cap moved well past its documented value.
+        assert!(
+            (out.x - 90.0).abs() <= 160.0 + 1.0,
+            "a sleep-sized frame threw the pill to {}",
+            out.x
+        );
     }
 
     #[test]

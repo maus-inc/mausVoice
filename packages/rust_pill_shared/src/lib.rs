@@ -276,8 +276,29 @@ pub const PILL_EXPAND_STIFFNESS: f64 = 320.0;
 pub const LABEL_BASE_ALPHA: f64 = 0.55;
 /// Vertical slide offset for the crossfade in pixels.
 pub const LABEL_SLIDE_OFFSET: f64 = 2.0;
-/// Alpha cutoff below which a label is not drawn (avoids pointless draws).
-pub const LABEL_ALPHA_CUTOFF: f64 = 0.01;
+/// Alpha below which a label is not drawn.
+///
+/// This ends one label when the other has taken over; it is not the
+/// sub-perceptual "avoid pointless draws" threshold it used to be. The two
+/// alphas are complementary — they sum to `LABEL_BASE_ALPHA * expand_t` — so a
+/// cutoff near zero is not a cleanup, it is the width of the crossfade. At
+/// `0.01` both labels cleared the bar for `drag_t` in roughly (0.018, 0.982):
+/// 96% of the transition, about 14 frames at 60 Hz, with `label_slide_y`
+/// parting them by `LABEL_SLIDE_OFFSET` (2px) on 12px glyphs. Two different
+/// strings superimposed 2px apart is a smudge, not a crossfade, and it is
+/// drawn while the pill tracks the cursor.
+///
+/// So the cutoff sits just under half the peak. Just under rather than exactly
+/// half, because all three renderers gate with `alpha > LABEL_ALPHA_CUTOFF`: at
+/// exactly half both arms equal the cutoff at `drag_t == 0.5` and the pill
+/// blinks with no label for one frame. At 45% of peak the overlap is ~19ms of
+/// the spring's ~350ms travel — about one frame at 60 Hz, at ~47% of peak
+/// alpha, so no frame ever draws nothing.
+///
+/// Raising it cannot suppress a label the geometry would have drawn: all three
+/// renderers only call the label painter above `expand_t > 0.5`, and at
+/// `drag_t == 0` the idle alpha is already `0.55 * 0.5 = 0.275` there.
+pub const LABEL_ALPHA_CUTOFF: f64 = LABEL_BASE_ALPHA * 0.45;
 
 /// Idle label text shown when not dragging.
 pub const LABEL_IDLE_TEXT: &str = "Click to dictate";
@@ -2357,11 +2378,65 @@ mod tests {
         let shown = preview
             .strip_suffix("\n… [Full transcript preserved for insert]")
             .expect("the truncation notice is appended to a bounded preview");
+        // The floor, not the trim window, is the point: 64 characters back is
+        // the worst a bounded trim can give up. Asserting it against
+        // `MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW` made the
+        // comparison hold for any budget — shrink the budget to 600 and the
+        // fixture still kept 600 characters against a floor of 536. The
+        // numbers are written out so moving either constant has to move this
+        // test deliberately.
         assert!(
-            shown.chars().count() >= MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW,
-            "preview kept {} characters of a {MAX_REVIEW_PREVIEW_CHARS} character budget",
+            shown.chars().count() >= 3000 - 64,
+            "preview kept {} characters of a 3000 character budget",
             shown.chars().count()
         );
+        // This fixture has no whitespace anywhere near the cut, so the trim
+        // cannot fire at all and the preview keeps the budget to the character.
+        // That is the strongest form of the claim and it pins the budget's
+        // size, not just the trim's reach.
+        assert_eq!(
+            shown.chars().count(),
+            3000,
+            "a transcript with no whitespace near the cut must keep the whole budget"
+        );
+    }
+
+    #[test]
+    fn review_preview_budget_is_3000_characters() {
+        // `MAX_REVIEW_PREVIEW_CHARS` is public and every test that mentions it
+        // compares against it, so a change to its value silently changed the
+        // meaning of all of them: 3000 -> 600 left every assertion passing while
+        // the preview quietly shrank to a fifth of its budget. The budget is a
+        // documented promise about layout cost, so it is pinned against the
+        // literal 3000 here, and separately from the trim window.
+        let at_budget = "a".repeat(3000);
+        let (whole, truncated) = bound_review_preview_text(&at_budget);
+        assert!(
+            !truncated,
+            "3000 characters fit the budget, so nothing should be trimmed"
+        );
+        assert_eq!(whole.chars().count(), 3000);
+
+        // One character over: the preview is trimmed, and what survives the
+        // trim is exactly the budget.
+        let over = "a".repeat(3001);
+        let (preview, truncated) = bound_review_preview_text(&over);
+        assert!(truncated);
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert_eq!(shown.chars().count(), 3000);
+
+        // The budget is in characters, not bytes: 3000 CJK characters are 9000
+        // bytes and must still fit whole.
+        let cjk = "あ".repeat(3000);
+        assert!(cjk.len() > 3000);
+        let (preview, truncated) = bound_review_preview_text(&cjk);
+        assert!(
+            !truncated,
+            "3000 characters are 9000 bytes but still on budget"
+        );
+        assert_eq!(preview.chars().count(), 3000);
     }
 
     #[test]
@@ -2405,5 +2480,278 @@ mod tests {
             "a ten-million character transcript produced a different preview length than a \
              barely-over-budget one"
         );
+    }
+
+    // ── Idle/drag label crossfade ──────────────────────────────────────
+    //
+    // `label_crossfade_alpha` and `label_slide_y` are called by all three pill
+    // renderers on every drawn frame and had no test at all: three mutations to
+    // `label_crossfade_alpha` — dropping `(1.0 - drag_t)` from the idle arm,
+    // swapping the two arms, and dropping `expand_t` from the idle arm — left
+    // the suite green. The last is a visible regression by itself, so these
+    // tests pin the contract rather than the arithmetic.
+
+    /// The cutoff is the width of the crossfade, so its value is the thing the
+    /// handoff depends on. Pinned as a number: 0.01 left both labels drawn for
+    /// 96% of the transition, and 0.275 (exactly half the peak) would blink a
+    /// blank frame at `drag_t == 0.5` because the renderers gate on `>`.
+    #[test]
+    fn label_alpha_cutoff_sits_just_under_half_the_peak() {
+        assert!(
+            (LABEL_ALPHA_CUTOFF - 0.2475).abs() < 1e-12,
+            "LABEL_ALPHA_CUTOFF is {}",
+            LABEL_ALPHA_CUTOFF
+        );
+        let half_peak = LABEL_BASE_ALPHA * 0.5;
+        assert!(
+            LABEL_ALPHA_CUTOFF < half_peak,
+            "at or above half the peak, both arms fall under the cutoff together at \
+             drag_t == 0.5 and the pill draws no label for a frame"
+        );
+    }
+
+    #[test]
+    fn label_crossfade_hands_over_around_the_midpoint_without_a_blank_frame() {
+        // Both alphas above the cutoff at once is the smudge the cutoff exists
+        // to prevent; neither above it is a blank frame. At 45% of peak the
+        // overlap is one frame wide and it straddles the midpoint.
+        let mut overlap_frames = Vec::new();
+        let mut blank_frames = Vec::new();
+        let mut both_drawn = 0;
+        let mut neither_drawn = 0;
+        for step in 0..=1000 {
+            let drag_t = step as f64 / 1000.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            let idle_drawn = idle > LABEL_ALPHA_CUTOFF;
+            let drag_drawn = drag > LABEL_ALPHA_CUTOFF;
+            match (idle_drawn, drag_drawn) {
+                (true, true) => both_drawn += 1,
+                (false, false) => neither_drawn += 1,
+                _ => {}
+            }
+            if idle_drawn && drag_drawn {
+                overlap_frames.push(drag_t);
+            }
+            if !idle_drawn && !drag_drawn {
+                blank_frames.push(drag_t);
+            }
+        }
+
+        assert!(
+            blank_frames.is_empty(),
+            "no label is drawn for drag_t in {blank_frames:?}: the pill blinks"
+        );
+        // The window is open at both ends and the grid has 1001 samples, so
+        // (0.45, 0.55) holds 99 of them.
+        assert_eq!(
+            overlap_frames.len(),
+            99,
+            "both labels are drawn across {}/1000 of the transition",
+            both_drawn
+        );
+        // The first and last overlapping samples bracket the window, which is
+        // open: the edges fall at 0.45 and 0.55 in `drag_t`.
+        let (lo, hi) = (overlap_frames[0], overlap_frames[overlap_frames.len() - 1]);
+        assert!(
+            (0.4505..0.452).contains(&lo) && (0.548..0.5495).contains(&hi),
+            "the overlap window runs from {lo} to {hi}, not from 0.45 to 0.55"
+        );
+        // The edges are the cutoff as a fraction of the peak, which is what
+        // makes this a property of the constant rather than a magic number.
+        let fraction = LABEL_ALPHA_CUTOFF / LABEL_BASE_ALPHA;
+        assert!(
+            (fraction - 0.45).abs() < 1e-12,
+            "the cutoff is {fraction} of the peak, so the window edges are not 0.45 and 0.55"
+        );
+
+        // Over 96% of the transition the two labels were both above a 0.01
+        // cutoff. One tenth is the replacement, and the window must stay
+        // centred so the handoff does not drift toward either label.
+        assert_eq!(neither_drawn, 0);
+    }
+
+    #[test]
+    fn label_crossfade_endpoints_pick_exactly_one_label() {
+        // Fully idle: the idle label at full peak, the drag label not drawn.
+        let (idle, drag) = label_crossfade_alpha(0.0, 1.0);
+        assert!(
+            (idle - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the idle label must reach full peak when idle, got {idle}"
+        );
+        assert!(
+            drag <= LABEL_ALPHA_CUTOFF,
+            "the drag label must not be drawn while idle, got {drag}"
+        );
+
+        // Fully dragging: the mirror image. This is the assertion a swapped
+        // pair of arms fails first.
+        let (idle, drag) = label_crossfade_alpha(1.0, 1.0);
+        assert!(
+            idle <= LABEL_ALPHA_CUTOFF,
+            "the idle label must not be drawn while dragging, got {idle}"
+        );
+        assert!(
+            (drag - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the drag label must reach full peak while dragging, got {drag}"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_pill_draws_no_label_at_any_drag_progress() {
+        // `expand_t == 0` is a collapsed pill. Every renderer skips the label
+        // painter below `expand_t > 0.5`, so the multiplier is the last line of
+        // defence — and losing it painted "Click to dictate" on a pill with
+        // nowhere to put it.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 0.0);
+            assert!(
+                idle <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the idle label at {idle}"
+            );
+            assert!(
+                drag <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the drag label at {drag}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alpha_scales_with_expansion_and_clamps_its_inputs() {
+        // Half-expanded is half as opaque, which is what keeps the label from
+        // arriving at full strength on a pill that is still growing.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            for expand_t in [0.25, 0.5, 0.75, 1.0] {
+                let (idle, drag) = label_crossfade_alpha(drag_t, expand_t);
+                let peak = LABEL_BASE_ALPHA * expand_t;
+                assert!(
+                    (idle + drag - peak).abs() < 1e-12,
+                    "alphas must sum to {peak}"
+                );
+                assert!(
+                    idle <= peak + 1e-12 && drag <= peak + 1e-12,
+                    "neither arm may exceed the peak for expand_t {expand_t}"
+                );
+            }
+        }
+
+        // Out-of-range progress is clamped, not propagated: a spring that
+        // overshoots past 1.0 must not paint a label brighter than peak, and a
+        // value below 0 must not paint a negative alpha, which every backend
+        // treats as opaque.
+        for (raw, clamped) in [(-5.0, 0.0), (-0.001, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(raw, 1.0),
+                label_crossfade_alpha(clamped, 1.0),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+        for (raw, clamped) in [(-1.0, 0.0), (2.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(0.5, raw),
+                label_crossfade_alpha(0.5, clamped),
+                "expand_t {raw} was not clamped to {clamped}"
+            );
+        }
+        let (idle, drag) = label_crossfade_alpha(-3.0, -3.0);
+        assert!((idle).abs() < 1e-12 && (drag).abs() < 1e-12);
+    }
+
+    #[test]
+    fn label_slide_y_ends_where_the_labels_belong_and_never_parts_them_further() {
+        // At rest the idle label sits on the base line and the drag label is
+        // parked one offset below it, ready to slide up into place. Fully
+        // dragging, they have swapped: the idle label is one offset above the
+        // base and the drag label is on it.
+        let (idle_y, drag_y) = label_slide_y(100.0, 0.0);
+        assert!(
+            (idle_y - 100.0).abs() < 1e-12,
+            "idle label rest y is {idle_y}"
+        );
+        assert!(
+            (drag_y - 102.0).abs() < 1e-12,
+            "the drag label parks one offset below base, got {drag_y}"
+        );
+
+        let (idle_y, drag_y) = label_slide_y(100.0, 1.0);
+        assert!(
+            (idle_y - 98.0).abs() < 1e-12,
+            "the idle label ends one offset above base, got {idle_y}"
+        );
+        assert!(
+            (drag_y - 100.0).abs() < 1e-12,
+            "drag label rest y is {drag_y}"
+        );
+
+        // The slide is what would separate two overlapping labels, and it is
+        // fixed at `LABEL_SLIDE_OFFSET` for the whole transition — 2px on 12px
+        // glyphs. That is why the cutoff, not the offset, carries the handoff:
+        // pinned here so a larger offset cannot arrive unnoticed.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                (drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12,
+                "at drag_t {drag_t} the labels are parted by {}px, not {LABEL_SLIDE_OFFSET}px",
+                drag_y - idle_y
+            );
+        }
+
+        // base_y is a baseline the renderers computed from font extents, so it
+        // has to pass through untouched at the midpoint rather than be pulled
+        // toward either label.
+        for drag_t in [0.0, 0.5, 1.0] {
+            let (idle_y, drag_y) = label_slide_y(-17.5, drag_t);
+            assert!(
+                idle_y < -17.5 + 1e-12 && drag_y > -17.5 - 1e-12,
+                "a negative baseline must still bracket base_y, got {idle_y} and {drag_y}"
+            );
+        }
+
+        for (raw, clamped) in [(-5.0, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_slide_y(100.0, raw),
+                label_slide_y(100.0, clamped),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alphas_and_slide_agree_about_when_each_label_is_visible() {
+        // The two functions are called back to back by all three renderers with
+        // the same `drag_t`, and the renderers gate drawing on the alphas. So
+        // the visible range of each label is the same window, and it has to be
+        // the one the cutoff intends: nothing drawn, then one label, then both
+        // for about a frame, then the other label, then nothing.
+        let visible = |drag_t: f64| -> (bool, bool) {
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            (idle > LABEL_ALPHA_CUTOFF, drag > LABEL_ALPHA_CUTOFF)
+        };
+
+        assert_eq!(visible(0.0), (true, false));
+        assert_eq!(visible(0.4), (true, false));
+        assert_eq!(visible(0.5), (true, true), "the midpoint must not blink");
+        assert_eq!(visible(0.6), (false, true));
+        assert_eq!(visible(1.0), (false, true));
+
+        // The slide never lifts a suppressed label back over the bar, so the
+        // alpha gate and the geometry gate cannot disagree about which strings
+        // are on screen at the same time.
+        for step in 0..=200 {
+            let drag_t = step as f64 / 200.0;
+            let (idle_drawn, drag_drawn) = visible(drag_t);
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                idle_y.is_finite() && drag_y.is_finite(),
+                "drag_t {drag_t} produced a non-finite baseline"
+            );
+            if idle_drawn && drag_drawn {
+                // Both drawn: they are 2px apart, which is the overlap the
+                // cutoff keeps to a single frame.
+                assert!((drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12);
+            }
+        }
     }
 }
