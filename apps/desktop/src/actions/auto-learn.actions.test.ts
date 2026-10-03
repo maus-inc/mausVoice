@@ -186,6 +186,10 @@ describe("saveCorrectedTranscript glossary gate", () => {
     expect(createGlossaryTerms).not.toHaveBeenCalled();
     expect(result.learnedTerms).toEqual([]);
     expect(result.failedTerms).toBe(0);
+    // Not just an empty list. Without this the caller cannot tell "the
+    // correction taught nothing" from "the mode refused the write", and the
+    // toast reports a promise the code does not keep.
+    expect(result.dictionarySuppressed).toBe(true);
   });
 
   // The positive control. Without it the pair above would also pass if
@@ -206,6 +210,22 @@ describe("saveCorrectedTranscript glossary gate", () => {
 
     expect(createGlossaryTerms).toHaveBeenCalledWith(["Soniya"]);
     expect(result.learnedTerms).toEqual(["Soniya"]);
+    expect(result.dictionarySuppressed).toBe(false);
+  });
+
+  it("does not claim a suppression when auto-learn was never wanted", async () => {
+    // The flag describes a refused write, not a disabled feature. Reporting it
+    // for an auto-learn-off user would put an Incognito explanation on a
+    // correction that had nothing to learn anyway.
+    seed({ incognito: true });
+    getMyUserPreferences.mockReturnValue({ autoLearnDictionaryEnabled: false });
+
+    const result = await saveCorrectedTranscript({
+      transcriptionId: "tx",
+      correctedText: learnable,
+    });
+
+    expect(result.dictionarySuppressed).toBe(false);
   });
 
   it("still honours auto-learn being switched off", async () => {

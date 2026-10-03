@@ -53,11 +53,14 @@ describe("pill review decision logging", () => {
         .filter((line) => line.includes("log::"))
         .map((line) => line.trim());
 
-      // A handler that logs nothing cannot leak the transcript, but it is also
-      // not what this contract is for, so assert it is the handler at all. The
-      // useful form of that is "the block starts at this marker": a length check
-      // passes on any string, including one extracted from the wrong function.
-      expect(body.startsWith(marker)).toBe(true);
+      // No "is this really the handler?" assertion here, and its absence is
+      // deliberate. `extractRustBlock` throws when the marker is not found and
+      // slices from `indexOf(marker)`, so a block extracted by a single marker
+      // always begins with that marker: `expect(body).toContain(marker)` cannot
+      // fail, which is the same vacuity as the `body.length > 0` check it
+      // replaced. What has teeth is the per-handler assertion below -- that the
+      // handler logs at all, and carries the error rather than the line -- which
+      // is why the diagnostic keeps its own test rather than living in this list.
       for (const call of logCalls) {
         expect(call).not.toMatch(PAYLOAD_NAMES);
       }
@@ -71,10 +74,12 @@ describe("pill review decision logging", () => {
     // input, so logging it is safe -- and this is the assertion that says so,
     // because it is the one that would notice if that ever changed.
     //
-    // One block, not two: `extractRustBlock` resolves markers in argument order
-    // and keeps the first it finds, so passing `report_unparseable_pill_line`
-    // alongside `parse_pill_event` returned the *diagnostic* either way. A
-    // second `it` over the same string only looked like independent coverage.
+    // The note below is about the old two-marker call, not about this test
+    // existing: `extractRustBlock` resolves markers in argument order and keeps
+    // the first it finds, and `report_unparseable_pill_line` is defined before
+    // `parse_pill_event`, so passing both returned the diagnostic either way. The
+    // two `it` blocks that used to sit here therefore read the same string, and
+    // the wider negative assertion below is the one worth keeping.
     const source = readRepoSource(PILL_PROCESS);
     const body = extractRustBlock(source, "fn report_unparseable_pill_line(");
     expect(body).toContain("log::warn!");

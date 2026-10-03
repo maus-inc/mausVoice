@@ -279,10 +279,11 @@ export const TranscriptionDetailsDialog = () => {
 
     setIsSavingFinal(true);
     try {
-      const { learnedTerms, failedTerms } = await saveCorrectedTranscript({
-        transcriptionId: transcription.id,
-        correctedText: finalDraft,
-      });
+      const { learnedTerms, failedTerms, dictionarySuppressed } =
+        await saveCorrectedTranscript({
+          transcriptionId: transcription.id,
+          correctedText: finalDraft,
+        });
 
       setIsEditingFinal(false);
       setFinalDraft("");
@@ -321,6 +322,18 @@ export const TranscriptionDetailsDialog = () => {
               "Transcript updated, but the corrected words could not be added to your dictionary.",
           }),
           { mode: "error" },
+        );
+      } else if (dictionarySuppressed) {
+        // Auto-learn was on and the glossary write was refused, so an empty
+        // `learnedTerms` here is a policy decision rather than a correction that
+        // taught nothing. Saying "Transcript updated" and stopping there leaves
+        // the user reading a promise the mode does not keep.
+        showSnackbar(
+          intl.formatMessage({
+            defaultMessage:
+              "Transcript updated. Nothing was added to your dictionary because Incognito is on.",
+          }),
+          { mode: "success" },
         );
       } else {
         showSnackbar(

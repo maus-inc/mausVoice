@@ -14,6 +14,13 @@ export type SaveCorrectedTranscriptResult = {
   learnedTerms: string[];
   /** Glossary-term inserts that failed, so callers can report partial success. */
   failedTerms: number;
+  /**
+   * Auto-learn was wanted but the glossary write was refused, so the caller can
+   * say why the dictionary stayed empty. Without this the caller can only see an
+   * empty list, which is indistinguishable from a correction that taught it
+   * nothing -- and "Incognito is on" is the whole explanation.
+   */
+  dictionarySuppressed: boolean;
 };
 
 const learnTermsFromCorrection = async (
@@ -82,14 +89,18 @@ export const saveCorrectedTranscript = async ({
     draft.transcriptionById[transcriptionId] = updated;
   });
 
-  // One decision, read once, for both writes this function performs: the history
-  // row and the glossary. Reading it separately per write would let the two
-  // disagree if the mode changed while an await was in flight.
-  const persistenceAllowed = isPersistenceAllowed();
-
   let learnedTerms: string[] = [];
   let failedTerms = 0;
+  let dictionarySuppressed = false;
   try {
+    // One decision, read once, for both writes below: the history row and the
+    // glossary. Read separately they could disagree if the mode changed while an
+    // await was in flight. It is the first statement inside the `try` rather than
+    // above it so that every path after the optimistic update at line 81 rolls
+    // back through the `catch` -- resting that on statement order is exactly the
+    // kind of invariant that a later edit moves.
+    const persistenceAllowed = isPersistenceAllowed();
+
     // Editing a transcript is a write to the history row like any other, so it
     // answers the same privacy gate. Under incognito mode or an ephemeral
     // session the correction stays in memory only: writing it out would put
@@ -115,6 +126,11 @@ export const saveCorrectedTranscript = async ({
       );
       learnedTerms = result.learnedTerms;
       failedTerms = result.failedTerms;
+    } else if (autoLearnEnabled) {
+      // Wanted, and refused. Recorded rather than left as an empty list so the
+      // caller can tell the user why, instead of reporting a correction that
+      // appears to have taught the dictionary nothing.
+      dictionarySuppressed = true;
     }
   } catch (error) {
     produceAppState((draft) => {
@@ -124,5 +140,5 @@ export const saveCorrectedTranscript = async ({
     throw error;
   }
 
-  return { learnedTerms, failedTerms };
+  return { learnedTerms, failedTerms, dictionarySuppressed };
 };
