@@ -153,42 +153,29 @@ function missingFromTriggerFilter(text, repoRoot) {
   if (!/^\s*paths:\s*$/m.test(text)) return [];
   const executed = executedSuites(text, repoRoot);
   if (executed.size === 0) return [];
-  // One matcher for the whole filter, because the question is per suite and not
-  // per entry: a suite is missing when no entry in any block names it.
+  // GitHub resolves a `paths:` filter in DECLARATION ORDER and the last
+  // pattern that matches decides, so the entries are evaluated as a sequence
+  // rather than as two sets. That matters: a filter listing `!apps/**` and then
+  // `apps/desktop/**` DOES run a suite under `apps/desktop`, because the later
+  // positive re-includes it.
   //
-  // GitHub's own semantics are `any(positive) AND NOT any(negative)`: a `!`
-  // prefixed entry is an EXCLUSION, so a filter reading
-  //
-  //     paths:
-  //       - "apps/desktop/**"
-  //       - "!apps/desktop/src-tauri/**"
-  //
-  // does not run a suite under `src-tauri`, and reporting it as covered would be
-  // this guard asserting the opposite of what the workflow does. Compiling a
-  // `!` entry as though it were a path pattern cannot even match it, so the
-  // exclusion was silently dropped rather than honoured.
-  const entries = pathsEntries(text);
-  const included = entries
-    .filter((entry) => !entry.startsWith("!"))
-    .map((entry) => globToRegExp(entry));
-  const excluded = entries
-    .filter((entry) => entry.startsWith("!"))
-    .map((entry) => globToRegExp(entry.slice(1)));
-  //
-  // So a suite is COVERED when some positive entry matches it and no negative
-  // entry does, and MISSING when either half fails:
-  //
-  //     covered = included && !excluded
-  //     missing = !included || excluded
-  //
-  // Getting that backwards -- treating "not excluded" as good enough -- is what
-  // let a `!` entry read as coverage: the excluded suite looked excluded, and an
-  // excluded suite is precisely the one this guard has to report.
-  return [...executed].filter(
-    (path) =>
-      excluded.some((matcher) => matcher.test(path)) ||
-      !included.some((matcher) => matcher.test(path)),
-  );
+  // My first attempt modelled this as `any(positive) AND NOT any(negative)`,
+  // which is a simplification of the above and gets that case backwards. It also
+  // compiled a `!` entry as though it were a path pattern, so it could not match
+  // anything and the exclusion was dropped silently -- the guard reporting the
+  // opposite of what the workflow does, for the suite shape it exists to catch.
+  const filter = pathsEntries(text);
+  const decidesIncluded = (path) => {
+    let included = false;
+    for (const entry of filter) {
+      const negated = entry.startsWith("!");
+      if (globToRegExp(negated ? entry.slice(1) : entry).test(path)) {
+        included = !negated;
+      }
+    }
+    return included;
+  };
+  return [...executed].filter((path) => !decidesIncluded(path));
 }
 
 describe("workspace hygiene contracts", () => {
@@ -521,9 +508,13 @@ describe("the trigger filter check compares executed paths to filter entries", (
     // Compiling `!**` as though it were a path pattern cannot match it, so the
     // exclusion used to be dropped silently rather than honoured.
     //
-    // Both paths are real files. An invented one would leave `executed` empty
-    // and the function would return early, which is a second way for this test
-    // to pass without the fix.
+    // Both paths name real files, so the fixture cannot drift away from the tree
+    // without this test noticing. Worth being precise about why that matters,
+    // because my first draft of this comment claimed something untrue:
+    // `executedSuites` adds any non-glob `*.test.mjs` token unconditionally and
+    // only the glob branch touches the filesystem, so an invented path does NOT
+    // leave the set empty and does NOT make the function return early. Only a
+    // glob naming a missing directory does that.
     assert.deepStrictEqual(
       missingFromTriggerFilter(
         workflow(
@@ -537,16 +528,35 @@ describe("the trigger filter check compares executed paths to filter entries", (
     );
   });
 
-  it("still honours the positive entry when nothing excludes the suite", () => {
-    // The control for the one above, and it matters twice over: without it the
-    // fix could pass by treating every entry as an exclusion, and without a
-    // real path on the other side of the filter the excluded case could pass by
-    // finding nothing to run.
+  it("lets a later positive re-include what an earlier negative excluded", () => {
+    // GitHub takes the LAST matching pattern, so order decides. A filter that
+    // excludes broadly and then re-includes narrowly still runs the narrow one,
+    // and a guard that modelled this as two sets -- any positive, minus any
+    // negative -- would report that suite as missing. Modelling it as a sequence
+    // is what gets this case right, and this is the test that pins the
+    // difference between the two models.
     assert.deepStrictEqual(
       missingFromTriggerFilter(
         workflow(
-          ["scripts/**", "!scripts/ci/**"],
-          "node --test scripts/run-tauri-dev.test.mjs",
+          ["!scripts/**", "scripts/ci/**"],
+          "node --test scripts/ci/windows-tauri-imports.test.mjs",
+        ),
+        scanRoot,
+      ),
+      [],
+      "a positive entry after a negative one wins, because the last match decides",
+    );
+  });
+
+  it("still honours the positive entry when nothing excludes the suite", () => {
+    // The control for the one above, and it matters: without it the fix could
+    // pass by treating every entry as an exclusion and reporting every suite as
+    // missing.
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(
+        workflow(
+          ["apps/desktop/**", "!apps/desktop/src-tauri/**"],
+          "node --test apps/desktop/scripts/run-tauri-dev.test.mjs",
         ),
         scanRoot,
       ),
