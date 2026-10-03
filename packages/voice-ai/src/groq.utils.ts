@@ -156,7 +156,7 @@ export class GroqModelUnavailableError extends GroqProviderError {
   constructor(model: string, status = 404) {
     super(
       `Groq did not serve the model \`${model}\` for this key. ` +
-        `It may be retired, renamed, or not enabled for your account.`,
+        "It may be retired, renamed, or not enabled for your account.",
       status,
     );
     this.name = "GroqModelUnavailableError";

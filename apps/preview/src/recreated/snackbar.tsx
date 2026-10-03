@@ -73,8 +73,8 @@ export const SnackbarPreview = ({
         border: `1px solid ${t.vars?.palette.divider ?? t.palette.divider}`,
         boxShadow:
           t.palette.mode === "dark"
-            ? `0 2px 4px rgba(0,0,0,0.4), 0 12px 28px rgba(0,0,0,0.28)`
-            : `0 2px 4px rgba(26,23,18,0.12), 0 12px 28px rgba(26,23,18,0.16)`,
+            ? "0 2px 4px rgba(0,0,0,0.4), 0 12px 28px rgba(0,0,0,0.28)"
+            : "0 2px 4px rgba(26,23,18,0.12), 0 12px 28px rgba(26,23,18,0.16)",
         fontFamily: t.typography.fontFamily,
         fontSize: t.typography.pxToRem(13.5),
       })}

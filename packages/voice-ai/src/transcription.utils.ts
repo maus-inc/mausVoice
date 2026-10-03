@@ -71,15 +71,25 @@ export function parseSdkTranscription(
     );
     if (allSegmentsValid) {
       segments = record.segments.map((segment) => {
-        const s = segment as Record<string, unknown>;
+        const segmentRecord = segment as Record<string, unknown>;
         return {
-          text: s.text as string,
+          text: segmentRecord.text as string,
           noSpeechProb:
-            typeof s.no_speech_prob === "number" ? s.no_speech_prob : undefined,
+            typeof segmentRecord.no_speech_prob === "number"
+              ? segmentRecord.no_speech_prob
+              : undefined,
           avgLogprob:
-            typeof s.avg_logprob === "number" ? s.avg_logprob : undefined,
-          start: typeof s.start === "number" ? s.start : undefined,
-          end: typeof s.end === "number" ? s.end : undefined,
+            typeof segmentRecord.avg_logprob === "number"
+              ? segmentRecord.avg_logprob
+              : undefined,
+          start:
+            typeof segmentRecord.start === "number"
+              ? segmentRecord.start
+              : undefined,
+          end:
+            typeof segmentRecord.end === "number"
+              ? segmentRecord.end
+              : undefined,
         };
       });
     }

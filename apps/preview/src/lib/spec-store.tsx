@@ -135,8 +135,8 @@ export const SpecProvider = ({ children }: { children: ReactNode }) => {
 
   const fieldValue = useCallback(
     (entryId: string, field: SpecField) => {
-      const v = overrides[entryId]?.[field.key];
-      return v === undefined ? field.default : v;
+      const override = overrides[entryId]?.[field.key];
+      return override === undefined ? field.default : override;
     },
     [overrides],
   );
@@ -170,8 +170,8 @@ export const useSpecValue = <T extends number | string>(
   fallback: T,
 ): T => {
   const { overrides } = useSpec();
-  const v = overrides[entryId]?.[key];
-  return (v === undefined ? fallback : v) as T;
+  const override = overrides[entryId]?.[key];
+  return (override === undefined ? fallback : override) as T;
 };
 
 // ─── CSS variable overrides (palette targets) ──────────────────────
@@ -246,22 +246,22 @@ const collectPatches = (overrides: Overrides) => {
   const easings: Record<string, string> = {};
   let shapeRadius: number | undefined;
   for (const { field, value } of overriddenFields(overrides)) {
-    const t = field.target;
-    switch (t.kind) {
+    const target = field.target;
+    switch (target.kind) {
       case "component":
         componentPatches.push({
-          component: t.component,
-          slot: t.slot ?? "root",
-          nested: t.nested,
-          cssProp: t.cssProp,
+          component: target.component,
+          slot: target.slot ?? "root",
+          nested: target.nested,
+          cssProp: target.cssProp,
           value,
         });
         break;
       case "duration":
-        durations[t.token] = Number(value);
+        durations[target.token] = Number(value);
         break;
       case "easing":
-        easings[t.token] = String(value);
+        easings[target.token] = String(value);
         break;
       case "shape":
         shapeRadius = Number(value);

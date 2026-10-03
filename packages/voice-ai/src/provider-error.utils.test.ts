@@ -445,7 +445,7 @@ describe("redactProviderMessage", () => {
   });
 
   it("redacts a second assignment beside the first, and resumes after it", () => {
-    const message = `{"api_key":"one"}{"api_key":"two"}`;
+    const message = '{"api_key":"one"}{"api_key":"two"}';
     const output = providerErrorUtils.redactProviderMessage(message);
     expect(output).toBe(referenceRedact(message));
     expect(output).toBe('{"[redacted]"}{"[redacted]"}');
