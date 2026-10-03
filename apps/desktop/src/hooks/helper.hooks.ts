@@ -7,6 +7,8 @@ import {
   useState,
 } from "react";
 
+import { getLogger } from "../utils/log.utils";
+
 // Canonical lowercase tokens for key names, mapping synonyms ("esc"/"escape",
 // "return"/"enter", "up"/"arrowup", ...) onto a single representation.
 export const KEY_ALIASES: Record<string, string> = {
@@ -281,6 +283,22 @@ export const useInterval = (
   }, [delay, ...dependencies]);
 };
 
+/**
+ * Run an async callback on an interval, never overlapping runs.
+ *
+ * A rejection is caught and logged here rather than left to escape. `tick` is
+ * invoked synchronously on mount and again from `setInterval`, and neither
+ * awaits, so a rejecting callback produced an unhandled rejection: on mount, and
+ * then once per interval for the life of the component. That is not theoretical
+ * for the session heartbeat, whose callback awaits a Firebase write that rejects
+ * when the backend refuses or is unreachable -- so an offline machine produced a
+ * periodic unhandled rejection, while the very similar write a few lines above it
+ * in the same file already had a `.catch`.
+ *
+ * Catching centrally is what makes that class safe for every caller rather than
+ * something each one has to remember; swallowing silently is not the
+ * alternative, hence the log.
+ */
 export const useIntervalAsync = (
   delay: number,
   callback: () => Promise<void>,
@@ -294,6 +312,8 @@ export const useIntervalAsync = (
       running.current = true;
       try {
         await callback();
+      } catch (error) {
+        getLogger().warning(`useIntervalAsync callback failed: ${error}`);
       } finally {
         running.current = false;
       }

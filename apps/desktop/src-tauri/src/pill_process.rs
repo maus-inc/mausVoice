@@ -1087,7 +1087,7 @@ mod pill_line_log_tests {
         let canary = "the user said something private on 4f2a";
         let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{canary}"}}"#);
 
-        let described = describe_untrusted_token(&canary);
+        let described = describe_untrusted_token(canary);
         assert!(
             !described.contains(canary),
             "the diagnostic repeated the token: {described}"
@@ -1124,7 +1124,7 @@ mod pill_line_log_tests {
         );
         assert_eq!(
             described,
-            describe_untrusted_token(&canary),
+            describe_untrusted_token(canary),
             "the hash must be stable for the same token"
         );
         assert_ne!(
