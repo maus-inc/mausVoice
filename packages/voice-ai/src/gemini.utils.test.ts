@@ -306,7 +306,7 @@ describe("Gemini native transport", () => {
       },
       {
         type: "finish",
-        finishReason: "stop",
+        finishReason: "tool-calls",
         usage: { promptTokens: 4, completionTokens: 2 },
       },
     ]);
@@ -321,6 +321,76 @@ describe("Gemini native transport", () => {
       properties: { id: { type: "INTEGER" } },
     });
     expect(body).not.toHaveProperty("generationConfig");
+  });
+
+  it("reports a turn that ended in a function call as tool-calls", async () => {
+    // Gemini has no tool-call finish reason: this turn is reported as a plain
+    // STOP, which reads as "the model finished talking" on a turn that is
+    // waiting on a tool result. The other two providers in this package
+    // report it as `tool-calls`, and nothing in the turn says otherwise.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{"id":7}}}],"role":"model"},"finishReason":"STOP"}]}\r\n\r\n',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [{ name: "lookup", parameters: { type: "object" } }],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({
+      type: "tool-call",
+      id: "gemini-tc-0",
+      name: "lookup",
+      arguments: '{"id":7}',
+    });
+    expect(events[events.length - 1]).toEqual({
+      type: "finish",
+      finishReason: "tool-calls",
+      usage: undefined,
+    });
+  });
+
+  it("keeps a truncated reason on a turn that also called a tool", async () => {
+    // A turn cut off at the token limit is not waiting on a tool result, so
+    // the more specific reason is the one a consumer needs.
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{}}}],"role":"model"},"finishReason":"MAX_TOKENS"}]}\r\n\r\n',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: {
+        messages: [{ role: "user", content: "Hello" }],
+        tools: [{ name: "lookup", parameters: { type: "object" } }],
+      },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    expect(events[events.length - 1]).toEqual({
+      type: "finish",
+      finishReason: "length",
+      usage: undefined,
+    });
   });
 
   it("parses a final event that arrives without its terminating blank line", async () => {

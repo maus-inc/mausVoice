@@ -1273,6 +1273,24 @@ const buildGeminiToolConfig = (
   };
 };
 
+/**
+ * The finish reason for a completed Gemini turn.
+ *
+ * Gemini has no tool-call finish reason: a turn that ends in function-call
+ * parts is reported as a plain STOP, which reads as "the model finished
+ * talking" on a turn that is actually waiting on tool results. OpenAI and
+ * Anthropic both name that turn `tool-calls`, and the emitted parts are the
+ * only signal this API gives, so they are read as the reason they mean.
+ *
+ * The upgrade is deliberately narrow. Only an otherwise ordinary end-of-turn
+ * is re-read, because a turn that was truncated or filtered is not waiting on
+ * a tool result and the more specific reason is the one a consumer needs.
+ */
+const geminiTurnFinishReason = (state: GeminiChunkState): LlmFinishReason =>
+  state.pendingToolCalls.length > 0 && state.finishReason === "stop"
+    ? "tool-calls"
+    : state.finishReason;
+
 const processGeminiChunk = (
   chunk: GeminiGenerateContentResponse,
   state: GeminiChunkState,
@@ -1473,7 +1491,7 @@ export async function* geminiStreamChat({
 
   yield {
     type: "finish",
-    finishReason: state.finishReason,
+    finishReason: geminiTurnFinishReason(state),
     usage:
       state.promptTokens != null || state.completionTokens != null
         ? {

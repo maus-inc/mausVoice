@@ -26,30 +26,38 @@ const AZURE_JSON_SCHEMA = {
   },
 };
 
+/**
+ * The `openai` module mock every chat-completions suite in this file needs.
+ *
+ * Both the Azure client and the default export get the same `create` because
+ * either one can be the constructor the module under test picks, and a change
+ * to the mock's shape then has to be made once here rather than in each
+ * describe that happened to declare its own copy.
+ */
+const mockChatCompletions = (create: ReturnType<typeof vi.fn>) => {
+  vi.doMock("openai", () => ({
+    AzureOpenAI: class MockAzureOpenAI {
+      chat = {
+        completions: {
+          create,
+        },
+      };
+    },
+    default: class MockOpenAI {
+      chat = {
+        completions: {
+          create,
+        },
+      };
+    },
+  }));
+};
+
 describe("azureOpenAIGenerateText deployment coverage", () => {
   afterEach(() => {
     vi.doUnmock("openai");
     vi.resetModules();
   });
-
-  const mockAzureCreate = (create: ReturnType<typeof vi.fn>) => {
-    vi.doMock("openai", () => ({
-      AzureOpenAI: class MockAzureOpenAI {
-        chat = {
-          completions: {
-            create,
-          },
-        };
-      },
-      default: class MockOpenAI {
-        chat = {
-          completions: {
-            create,
-          },
-        };
-      },
-    }));
-  };
 
   // User-deployed models (Llama, Phi, ...) are not in the Azure allow-list, so
   // the request must use json_object or the provider rejects it outright.
@@ -69,7 +77,7 @@ describe("azureOpenAIGenerateText deployment coverage", () => {
       choices: [{ message: { content: JSON.stringify({ result: "ok" }) } }],
       usage: { total_tokens: 5 },
     });
-    mockAzureCreate(create);
+    mockChatCompletions(create);
 
     const { azureOpenAIGenerateText } =
       await import("../src/azure-openai.utils");
@@ -167,6 +175,11 @@ createJsonResponseFormatTests({
 });
 
 describe("azure-openai o-series parameters", () => {
+  afterEach(() => {
+    vi.doUnmock("openai");
+    vi.resetModules();
+  });
+
   // Azure serves the same o-series deployments that reject `temperature` as an
   // unsupported parameter, and it answers with HTTP 400 before generating
   // anything. A user who picked a reasoning deployment got no dictation and no
@@ -179,14 +192,7 @@ describe("azure-openai o-series parameters", () => {
     // Each case needs a fresh module graph: `doMock` after the first import
     // would leave the module holding the previous case's mock.
     vi.resetModules();
-    vi.doMock("openai", () => ({
-      AzureOpenAI: class MockAzureOpenAI {
-        chat = { completions: { create } };
-      },
-      default: class MockOpenAI {
-        chat = { completions: { create } };
-      },
-    }));
+    mockChatCompletions(create);
     const { azureOpenAIGenerateText } =
       await import("../src/azure-openai.utils");
     await azureOpenAIGenerateText({
@@ -217,4 +223,11 @@ describe("azure-openai o-series parameters", () => {
       expect(params).toMatchObject({ temperature: 1 });
     },
   );
+});
+
+describe("TEMP probe: mock does not leak past the o-series describe", () => {
+  it("loads the real openai module", async () => {
+    const loaded = await import("openai");
+    expect(loaded.AzureOpenAI.name).not.toBe("MockAzureOpenAI");
+  });
 });

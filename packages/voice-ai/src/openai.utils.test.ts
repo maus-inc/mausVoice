@@ -150,3 +150,91 @@ describe("openaiGenerateTextResponse sampling parameters", () => {
     expect(params).toMatchObject({ temperature: 1, top_p: 1 });
   });
 });
+
+describe("openaiStreamChat sampling parameters", () => {
+  const streamParams = async (
+    model: string,
+  ): Promise<Record<string, unknown>> => {
+    const create = vi.fn().mockResolvedValue({
+      async *[Symbol.asyncIterator]() {
+        // No chunks: these cases are about the request that went out.
+      },
+    });
+
+    vi.resetModules();
+    vi.doMock("openai", () => ({
+      default: class MockOpenAI {
+        chat = { completions: { create } };
+      },
+    }));
+
+    const { openaiStreamChat } = await import("../src/openai.utils");
+    for await (const _event of openaiStreamChat({
+      apiKey: "test-key",
+      model,
+      input: {
+        messages: [{ role: "user", content: "hi" }],
+        // Every optional parameter the caller can supply, so the assertions
+        // are about the model and not about which fields were left undefined.
+        temperature: 0.4,
+        topP: 0.9,
+        frequencyPenalty: 0.1,
+        presencePenalty: 0.2,
+        seed: 7,
+        stopSequences: ["END"],
+      },
+    })) {
+      // drain
+    }
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const params = create.mock.calls[0][0] as Record<string, unknown>;
+    vi.doUnmock("openai");
+    return params;
+  };
+
+  // This is the streaming half of a fix that already landed on the
+  // non-streaming call above: the same reasoning ids come through this entry
+  // point (Azure by deployment name, OpenRouter by routing prefix) and answer a
+  // request carrying the sampling or penalty fields with a 400 before any
+  // token is generated.
+  it.each(["o1", "o1-mini", "o3-mini", "o4-mini", "openai/o3-mini"])(
+    "sends no sampling or penalty parameter to the o-series model %s",
+    async (model) => {
+      const params = await streamParams(model);
+
+      for (const field of [
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+      ]) {
+        expect(params).not.toHaveProperty(field);
+      }
+
+      // The rest of the request is unchanged: an o-series stream is the same
+      // call with the rejected fields removed rather than a different shape.
+      expect(params).toMatchObject({
+        model,
+        stream: true,
+        stream_options: { include_usage: true },
+        messages: [{ role: "user", content: "hi" }],
+        stop: ["END"],
+        seed: 7,
+      });
+    },
+  );
+
+  it.each(["gpt-4o-mini", "gpt-4.1", "gpt-5.6-sol", "gpt-oss-20b"])(
+    "still pins the sampling parameters on %s",
+    async (model) => {
+      const params = await streamParams(model);
+      expect(params).toMatchObject({
+        temperature: 0.4,
+        top_p: 0.9,
+        frequency_penalty: 0.1,
+        presence_penalty: 0.2,
+      });
+    },
+  );
+});

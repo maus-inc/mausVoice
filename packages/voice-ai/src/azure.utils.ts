@@ -302,6 +302,8 @@ export type AzureTestIntegrationArgs = {
 
 /** Bytes in a canonical 44-byte PCM WAV header. */
 const WAV_HEADER_BYTES = 44;
+/** Every WAV chunk id (`RIFF`, `WAVE`, `fmt `, `data`) is a four-byte field. */
+const WAV_CHUNK_ID_BYTES = 4;
 const PROBE_SAMPLE_RATE = 16_000;
 const PROBE_CHANNELS = 1;
 const PROBE_BITS_PER_SAMPLE = 16;
@@ -309,26 +311,48 @@ const PROBE_BITS_PER_SAMPLE = 16;
 const PROBE_FRAMES = 4_800;
 
 /**
- * Write a WAV chunk id. The field is four ASCII bytes, so a code point above
- * U+007F cannot be encoded at all. `for...of` walks code points rather than
- * UTF-16 code units, so an astral character arrives here whole and is rejected
- * instead of being written as two low bytes, which would corrupt the id for
- * every reader of the file.
+ * Write a WAV chunk id.
+ *
+ * The field is exactly four ASCII bytes, and both halves of that are checked
+ * before anything is written rather than left to the caller to get right: a
+ * shorter tag leaves the id padded with whatever the buffer already held, and a
+ * longer one runs straight into the chunk size or sample-rate field that
+ * follows. Either way the header is one no reader agrees on, and this is an
+ * exported helper, so the length is this function's contract rather than an
+ * internal caller's habit. Validating first also means a refused tag cannot
+ * leave a half-written id behind.
+ *
+ * The ASCII test comes first because `for...of` walks code points rather than
+ * UTF-16 code units: an astral character arrives here whole, and writing its
+ * low byte would corrupt the id for every reader of the file.
  */
 export const writeWavChunkId = (
   view: DataView,
   offset: number,
   tag: string,
 ): void => {
-  let index = 0;
-  for (const character of tag) {
-    const codePoint = character.codePointAt(0);
-    if (codePoint === undefined || codePoint > 0x7f) {
+  // Code points rather than UTF-16 units, so an astral tag is one character
+  // here and is still measured as the one character it is.
+  const characters = [...tag];
+  for (const character of characters) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint > 0x7f) {
       throw new RangeError(
         `A WAV chunk id is ASCII, so "${tag}" cannot be written at offset ${offset}.`,
       );
     }
-    view.setUint8(offset + index, codePoint);
+  }
+  if (characters.length !== WAV_CHUNK_ID_BYTES) {
+    throw new RangeError(
+      `A WAV chunk id is ${WAV_CHUNK_ID_BYTES} bytes, so "${tag}" (${characters.length}) cannot be written at offset ${offset}.`,
+    );
+  }
+
+  // Only now, with the whole tag known to be four ASCII characters, is
+  // anything written.
+  let index = 0;
+  for (const character of characters) {
+    view.setUint8(offset + index, character.codePointAt(0) ?? 0);
     index += 1;
   }
 };

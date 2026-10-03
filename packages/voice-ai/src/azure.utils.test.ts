@@ -896,6 +896,26 @@ describe("writeWavChunkId", () => {
       /A WAV chunk id is ASCII/,
     );
   });
+
+  it("refuses a tag that is not exactly four bytes", () => {
+    // The field is four bytes wide, so a short tag leaves the id padded with
+    // whatever was already in the buffer and a long one runs into the chunk
+    // size or sample-rate field that follows it. Both produce a header no
+    // reader of the file agrees on, so the writer refuses instead.
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    new Uint8Array(buffer).fill(0xaa);
+
+    expect(() => writeWavChunkId(view, 0, "abc")).toThrow(RangeError);
+    expect(() => writeWavChunkId(view, 0, "")).toThrow(RangeError);
+    expect(() => writeWavChunkId(view, 0, "RIFFX")).toThrow(RangeError);
+
+    // A refused tag writes nothing, so a partial write cannot half-corrupt
+    // the header before the throw.
+    expect(Array.from(new Uint8Array(view.buffer))).toEqual(
+      new Array(8).fill(0xaa),
+    );
+  });
 });
 
 describe("cancelling an Azure recognition", () => {

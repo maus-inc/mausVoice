@@ -481,11 +481,21 @@ export async function* openaiCompatibleStreamChat(
       tools: llmToolsToOpenAI(input.tools),
       tool_choice: llmToolChoiceToOpenAI(input.toolChoice),
       max_tokens: input.maxTokens,
-      temperature: input.temperature,
+      // The streaming half of the guard the non-streaming call above already
+      // has: this entry point serves the same reasoning ids (Azure by
+      // deployment name, OpenRouter by routing prefix), and OpenAI documents
+      // these four as unsupported on o-series models, answering a request that
+      // carries them with a 400 before generating anything. `stop` and `seed`
+      // are not in that set, so a reasoning stream keeps them.
+      ...(isOpenAIOReasoningModel(model)
+        ? {}
+        : {
+            temperature: input.temperature,
+            top_p: input.topP,
+            frequency_penalty: input.frequencyPenalty,
+            presence_penalty: input.presencePenalty,
+          }),
       stop: input.stopSequences,
-      top_p: input.topP,
-      frequency_penalty: input.frequencyPenalty,
-      presence_penalty: input.presencePenalty,
       seed: input.seed,
       ...extraBody,
     },
