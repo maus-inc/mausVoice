@@ -57,6 +57,54 @@ describe("unknownToMessage", () => {
     );
   });
 
+  it("never caps a message in the middle of a surrogate pair", () => {
+    // The detector, plus a control that proves the detector works. Without the
+    // control this test could pass by never finding anything: an earlier version
+    // of it did exactly that, because it only flagged a lone unit that sat at the
+    // END of the string, and the ellipsis the cap appends sits after it.
+    const loneSurrogateAt = (text: string): number => {
+      for (let i = 0; i < text.length; i += 1) {
+        const unit = text.charCodeAt(i);
+        if (unit >= 0xd800 && unit <= 0xdbff) {
+          const next = i + 1 < text.length ? text.charCodeAt(i + 1) : -1;
+          if (next < 0xdc00 || next > 0xdfff) return i;
+          i += 1;
+        } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+          return i;
+        }
+      }
+      return -1;
+    };
+    expect(loneSurrogateAt(`a\uD83Cb`)).toBe(1);
+    expect(loneSurrogateAt("a\u{1F389}b")).toBe(-1);
+
+    // Every pad length, with the astral character in the middle, at the end and
+    // at the start. Before the fix, pad 511 in the middle shape was the single
+    // failing case in 1..700 -- the lead surrogate lands on index 511 and the cap
+    // cuts at 512, taking the trail unit and leaving the lead behind.
+    for (let pad = 1; pad <= 700; pad += 1) {
+      const filler = "a".repeat(pad);
+      for (const message of [
+        `${filler}\u{1F389}tail`,
+        `${filler}\u{1F389}`,
+        `\u{1F389}${filler}`,
+      ]) {
+        const capped = unknownToMessage(new Error(message));
+        expect(loneSurrogateAt(capped), `pad ${pad}`).toBe(-1);
+        expect(capped, `pad ${pad}`).not.toContain("\uFFFD");
+      }
+    }
+  });
+
+  it("keeps an astral character that does not straddle the cap", () => {
+    // The fix gives up one code unit at the boundary. It must not start dropping
+    // astral characters everywhere, which is what a blunt "strip them" fix would do.
+    expect(unknownToMessage(new Error("\u{1F389} ok"))).toBe("\u{1F389} ok");
+    expect(unknownToMessage(new Error("ok \u{1F389}"))).toBe("ok \u{1F389}");
+    const short = "a".repeat(400) + "\u{1F389}" + "b".repeat(400);
+    expect(unknownToMessage(new Error(short))).toContain("\u{1F389}");
+  });
+
   it("redacts labeled api keys in both assignment and JSON forms", () => {
     expect(unknownToMessage("api_key=supersecretvalue")).toBe(
       "api_key=[redacted]",

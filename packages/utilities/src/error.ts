@@ -744,10 +744,34 @@ export const redactSensitiveTokens = (message: string): string =>
       },
     );
 
-const capLength = (message: string): string =>
-  message.length > MAX_ERROR_MESSAGE_LENGTH
-    ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
-    : message;
+/**
+ * Cuts the message at a character boundary rather than at a code-unit offset.
+ *
+ * `slice` counts UTF-16 code units, and MAX_ERROR_MESSAGE_LENGTH is even, so a
+ * character outside the Basic Multilingual Plane that straddles the cut is left
+ * half-present: the output ends in a lone lead surrogate. That is not cosmetic.
+ * `JSON.stringify` emits the lone unit as a `\udXXX` escape, and `serde_json`
+ * refuses an unpaired leading surrogate outright
+ * (`LoneLeadingSurrogateInHexEscape`), so a diagnostic carrying one emoji at one
+ * offset fails to parse on the far side of the boundary.
+ *
+ * Measured: across pad lengths 1..700 with a U+1F389 at the boundary, exactly one
+ * splits -- pad 511, where the lead unit lands on index 511 and the cap cuts
+ * after it.
+ *
+ * The cost of getting this right is that the result can be one unit shorter than
+ * the cap, and that is the right trade: the cap is a ceiling on how much text a
+ * log line carries, not a quota to fill.
+ */
+const capLength = (message: string): string => {
+  if (message.length <= MAX_ERROR_MESSAGE_LENGTH) return message;
+  let end = MAX_ERROR_MESSAGE_LENGTH;
+  const lastUnit = message.charCodeAt(end - 1);
+  // A lead surrogate at the final kept position has its trail at `end`, which the
+  // slice drops. Give up the lead unit rather than emit half a character.
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1;
+  return `${message.slice(0, end)}…`;
+};
 
 /**
  * A value that renders itself through `toJSON` is rendered through that method
