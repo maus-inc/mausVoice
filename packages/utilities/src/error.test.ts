@@ -666,6 +666,10 @@ describe("authorization scheme credentials", () => {
     ["secretary", "v"],
     ["passenger", "v"],
     ["tokenize", "v"],
+    // Metadata about a credential rather than one. Masked until the object-key
+    // predicate stopped searching for a credential word anywhere in the key.
+    [["secret", "rotation", "enabled"].join("_"), "true"],
+    [["db", "password", "hint"].join("_"), "set"],
   ] as const;
   const SECRET_TOKEN = [SECRET, "token"].join("_");
   // The AWS-shaped value is held in two parts for the same reason as the labels
@@ -692,6 +696,26 @@ describe("authorization scheme credentials", () => {
     for (const [label, value] of NON_SECRET_FIELDS) {
       expect(redactSensitiveTokens(labelled(label, value))).toBe(
         `${label}: ${value}`,
+      );
+    }
+  });
+
+  it("leaves the same fields alone as an object key, which the text path alone did not cover", () => {
+    // The other direction, and the reason the table is read twice. The object-key
+    // predicate used to search for `secret` ANYWHERE in a key, so `secretary`
+    // and `keyboard` came back as `[redacted]` from `unknownToMessage` while the
+    // message `secretary: v` stayed readable -- two spellings of the same field
+    // with two opposite answers.
+    //
+    // `secret_rotation_enabled` and `db_password_hint` are here for a different
+    // reason: they hold a credential word in the middle and were masked by that
+    // substring test. They are metadata ABOUT a credential rather than one, so
+    // the anchored rule stops masking them, and that is the measured cost of
+    // having one rule instead of two. It is pinned here so it stays a decision
+    // rather than becoming a hole nobody noticed.
+    for (const [label, value] of NON_SECRET_FIELDS) {
+      expect(unknownToMessage({ [label]: value })).toBe(
+        `{"${label}":"${value}"}`,
       );
     }
   });
@@ -881,5 +905,220 @@ describe("authorization scheme credentials", () => {
     expect(
       redactSensitiveTokens("authorization: Bearer abc123def456"),
     ).not.toContain("abc123def456");
+  });
+});
+
+/**
+ * One credential-label rule, read by both redaction paths.
+ *
+ * Every fixture here is the shape a secret scanner reads as a live credential
+ * -- Gitleaks `generic-api-key` fires on a label followed by a long mixed-case
+ * token, entropy and all -- so the halves are joined at runtime and no
+ * contiguous `label: value` or credential-shaped literal exists in this file.
+ * What reaches the scrubber is byte-for-byte what the assertions expect, which
+ * is the only part that matters for what is being tested.
+ */
+describe("one credential-label rule on both paths", () => {
+  const labelled = (label: string, value: string): string =>
+    [label, value].join(": ");
+  // Prefix-free, so `PROVIDER_KEY_PREFIX` cannot mask a result into looking
+  // redacted when the label rule never fired. Held in two parts for the scanner
+  // reason above.
+  const VALUE = ["Kx7Qm2Zp9", "Rt4Vw8Lc3Nd6Hs1Jf5Bg0Ya"].join("");
+  /** A valid JSON body, which is the shape a provider error actually arrives in. */
+  const jsonBody = (label: string, value: string): string =>
+    ["{", '"', label, '"', ":", '"', value, '"', "}"].join("");
+
+  /**
+   * Labels that must redact, on the text path AND in a JSON body AND as an
+   * object key. Three shapes per label, because "redacts somewhere" is not the
+   * property: the defect was a label that redacted in one form and leaked in
+   * another, so each label is read through all three.
+   */
+  const QUALIFIED = [
+    ["openai", "api", "key"],
+    ["azure", "api", "key"],
+    ["groq", "api", "key"],
+    ["xai", "api", "key"],
+    ["azure", "openai", "api", "key"],
+    ["signing", "key"],
+    ["vault", "key"],
+    ["encryption", "key"],
+    ["master", "key"],
+    ["oauth", "token"],
+    ["service", "account", "key"],
+    // Finding 2. `aws` and `azure` were not in the holder list, and the labels
+    // that leaked end in `key` behind a vendor segment -- so the vendor segment
+    // had to be named. Tier-1 names `access_key` and `subscription_key` also
+    // cover these and were tried first; they additionally match
+    // `Ocp-Apim-Subscription-Key`, which then read as a free-form label and took
+    // the next two lines of a provider error with it.
+    ["aws", "secret", "access", "key"],
+    ["azure", "subscription", "key"],
+  ].map((words) => words.join("_"));
+
+  const AWS_ACCESS_KEY = ["aws", "secret", "access", "key"].join("_");
+
+  it("redacts a qualified label on every path, not only the text path", () => {
+    // The JSON path was strictly WORSE than the text path on this shape. Every
+    // one of these redacted in a message and reached `unknownToMessage` in the
+    // clear inside a JSON body, because the object-key predicate normalised
+    // `openai_api_key` to `openaiapikey` and looked for `api_key` inside it.
+    for (const label of QUALIFIED) {
+      expect(redactSensitiveTokens(labelled(label, VALUE))).toBe(
+        `${label}:[redacted]`,
+      );
+      expect(unknownToMessage(jsonBody(label, VALUE))).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+      expect(unknownToMessage({ [label]: VALUE })).toBe(
+        `{"${label}":"[redacted]"}`,
+      );
+    }
+  });
+
+  it("redacts a vendor-prefixed access key whatever the case", () => {
+    // Case is not a signal about whether a key is a credential: an uppercase
+    // field name is the AWS convention and arrives from AWS and from anyone
+    // copying their config.
+    const shouted = AWS_ACCESS_KEY.toUpperCase();
+    expect(redactSensitiveTokens(labelled(shouted, VALUE))).toBe(
+      `${shouted}:[redacted]`,
+    );
+    expect(unknownToMessage(jsonBody(shouted, VALUE))).toBe(
+      `{"${shouted}":"[redacted]"}`,
+    );
+    // And the shape that isolated the cause: adding a leading holder segment is
+    // what made it redact before, which is what pointed at the leading segment.
+    const prefixed = ["my", ...AWS_ACCESS_KEY.split("_")].join("_");
+    expect(redactSensitiveTokens(labelled(prefixed, VALUE))).toBe(
+      `${prefixed}:[redacted]`,
+    );
+  });
+
+  it("gives both paths the same answer for every label it is shown", () => {
+    // The property the defect was about, asserted directly rather than per
+    // label. Before the fix this failed on `openai_api_key` (redacted in text,
+    // clear in JSON) AND on `secretary` (readable in text, masked in JSON), so it
+    // caught both directions of the disagreement at once.
+    const labels = [
+      ...QUALIFIED,
+      ...[
+        "api_key",
+        "apikey",
+        "apiKey",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "client_secret",
+        "private_key",
+        "session_token",
+        "session_key",
+        "secret_key",
+        "my_secret",
+        "password",
+        "passwd",
+        "pwd",
+        "credential",
+        "secret",
+        "credentials",
+        "secrets",
+        "authorization",
+        "bearer",
+        "authorization_header",
+        "x-api-key",
+        "api_keys",
+        // Non-credentials, so the agreement is pinned in both directions.
+        "sort_key",
+        "max_tokens",
+        "token_usage",
+        "response_id",
+        "secretary",
+        "keyboard",
+        "key",
+        "id_token_endpoint",
+        "authorization_endpoint",
+        "access_key_id",
+        "client_id",
+        // A real Azure header carrying a real key, and the reason the Finding-2
+        // labels are handled by naming `aws`/`azure` as holders rather than by
+        // adding tier-1 names `access_key` and `subscription_key`. Those names
+        // also match this label, which then read as a free-form one and took the
+        // two lines after its value with it -- including the `Reason:` a user is
+        // meant to read. As a holder-qualified label it is not a label at all, so
+        // the free-form pass never sees it.
+        "Ocp-Apim-Subscription-Key",
+      ],
+    ];
+    for (const label of labels) {
+      const asText = redactSensitiveTokens(labelled(label, VALUE));
+      const asObject = unknownToMessage({ [label]: VALUE });
+      expect(
+        asText.includes("[redacted]"),
+        `${label} disagreed: text=${asText} object=${asObject}`,
+      ).toBe(asObject.includes("[redacted]"));
+    }
+  });
+});
+
+describe("a value that renders itself through toJSON", () => {
+  const VALUE = ["Kx7Qm2Zp9", "Rt4Vw8Lc3Nd6Hs1Jf5Bg0Ya"].join("");
+  const rendered = (value: unknown): { toJSON: () => unknown } => ({
+    toJSON: () => value,
+  });
+
+  it("redacts a credential reachable only through a top-level toJSON", () => {
+    // `redactUnknown` copies a value's own enumerable properties into a plain
+    // object, and `Object.entries` reports `toJSON` as an ordinary own property,
+    // so the copy carried the method through with the original as its receiver.
+    // `JSON.stringify` then called it and printed the result with no redaction
+    // pass at all -- which leaked even a BARE `api_key`.
+    const out = unknownToMessage(rendered({ api_key: VALUE }));
+    expect(out).not.toContain(VALUE);
+    expect(out).toBe('{"api_key":"[redacted]"}');
+  });
+
+  it("redacts a nested toJSON too, which a top-level guard would have missed", () => {
+    // The same escape under an ordinary key, which is the shape a provider
+    // actually hands over: `{ error: <an object that renders itself> }`.
+    const out = unknownToMessage({ error: rendered({ api_key: VALUE }) });
+    expect(out).not.toContain(VALUE);
+    expect(out).toBe('{"error":{"api_key":"[redacted]"}}');
+
+    // Twice down, inside an array, so the resolution is shown to run at every
+    // depth rather than only where a key happens to sit.
+    const deep = unknownToMessage({ items: [rendered({ password: VALUE })] });
+    expect(deep).not.toContain(VALUE);
+    expect(deep).toBe('{"items":[{"password":"[redacted]"}]}');
+  });
+
+  it("does not let a toJSON that throws leak, and does not recurse on a self-returning one", () => {
+    // A `toJSON` that throws cannot be rendered by `JSON.stringify` either, so
+    // there is no value to print and the marker is the honest outcome. The
+    // quotes are `messageFromUnknown` running `JSON.stringify` over the marker
+    // it was handed, which is what it already did for a depth-capped scalar; the
+    // point asserted here is that nothing behind the throw survives.
+    const hostile = unknownToMessage({
+      toJSON: () => {
+        throw new Error("no");
+      },
+    });
+    expect(hostile).not.toContain("no");
+    expect(hostile).toBe('"[redacted]"');
+
+    // Depth is charged for the resolution, so this terminates instead of
+    // recursing until the stack gives out.
+    const recursive: { toJSON: () => unknown } = { toJSON: () => null };
+    recursive.toJSON = () => recursive;
+    expect(unknownToMessage(recursive)).toBe('"[redacted]"');
+  });
+
+  it("keeps a toJSON that renders no credential readable", () => {
+    // The fix resolves the rendered form; it must not blank out every value that
+    // happens to have one, or a Date or a Decimal would vanish from a diagnostics
+    // export along with the credential.
+    expect(unknownToMessage(rendered({ model: "llama-3", tokens: 42 }))).toBe(
+      '{"model":"llama-3","tokens":42}',
+    );
   });
 });

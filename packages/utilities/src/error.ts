@@ -10,13 +10,41 @@ const PROVIDER_KEY_PREFIX =
   /\b(?:csk[_-]|gsk[_-]|sk-ant-|xai-|sk-)[0-9a-z_-]{8,}/gi;
 // A label naming a secret.
 //
-// Two tiers, because one list cannot do both jobs. The first alternative is a
-// spelling that names a credential unambiguously -- `api_key`, `client_secret`,
-// `password`, `secret` and so on -- and ANY separator-delimited qualifier may sit
-// in front of it. The second is the ambiguous words `token` and `key`, which
-// need a qualifier drawn from a listed vocabulary.
+// ONE vocabulary, read by both redaction paths. There used to be two: the
+// pattern below, and a separate alias set plus a substring test behind
+// `isSecretKey` for object keys. They disagreed, and every disagreement was a
+// defect in one direction or the other:
 //
-// Three measurements shaped this, and each one was wrong before it was right.
+//   `openai_api_key` was redacted in a message and printed in the clear in a
+//   provider's JSON body. `isSecretKey` normalised the key to `openaiapikey` and
+//   looked for `api_key` inside it, which is not there. The JSON path was
+//   strictly WORSE than the text path on the shape that matters most, because a
+//   provider error body is a JSON object.
+//
+//   `secretary` was masked in a JSON body and left readable in a message,
+//   because `isSecretKey` searched for `secret` anywhere in a string. The same
+//   test masked `keyboard`, `hotkey` and `whiskey` used as object keys.
+//
+// So both paths now run the same rule. The names below are the only place a
+// credential label is written down: `isCredentialLabel` applies this pattern
+// anchored to a whole label to judge an object key, and the three labelled-value
+// patterns further down embed the same pattern unanchored to find the same
+// labels in free text. A label cannot redact in one form and leak in the other,
+// because there is only one list for it to be missing from.
+//
+// Each name is a word sequence joined with an OPTIONAL separator, so `api_key`,
+// `api-key` and `apikey` are one entry. There is deliberately no `["apikey"]`
+// entry -- `api[_-]?key` already accepts that spelling, and an entry that changes
+// nothing is one the next reader has to check.
+//
+// Two tiers, because one list cannot do both jobs. The first is a spelling that
+// names a credential unambiguously -- `api_key`, `client_secret`, `password`,
+// `secret`, `subscription_key` -- and ANY separator-delimited qualifier may sit
+// in front of it. The second is the ambiguous words `token` and `key`, which
+// need a qualifier drawn from the holder list.
+//
+// The measurements behind that split are worth keeping, because each one was
+// wrong before it was right:
 //
 //   An arbitrary qualifier over BOTH tiers redacts ordinary fields. Any
 //   `(?:[a-z0-9]+[_-])*` in front reaches `sort_key`, `partition_key`,
@@ -26,7 +54,7 @@ const PROVIDER_KEY_PREFIX =
 //   credential labels the other way, so an enumeration is the trade being made:
 //   unbounded recall for precision, not a way of having both.
 //
-//   `azure_api_key` is the case that set the tier boundary. `api[_-]?key`
+//   `azure_api_key` is the case that set the tier boundary. `api[_-]?key`
 //   cannot match inside `azure_api_key` -- `_` is a word character, so there is
 //   no boundary -- and `PROVIDER_KEY_PREFIX` recognises only `csk_`, `gsk_`,
 //   `sk-ant-`, `xai-` and `sk-`, so an Azure subscription key and a Deepgram key
@@ -45,16 +73,154 @@ const PROVIDER_KEY_PREFIX =
 //   caught that. `secret[_-]?key` is therefore spelled out as a tier-1
 //   alternative, and a lone `key: <value>` is not recognised at all.
 //
+//   The missing leading segments are handled by the holder list. `aws` and
+//   `azure` were not in it, and `aws_secret_access_key` and
+//   `azure_subscription_key` both leaked in a message AND in a JSON body, while
+//   `my_aws_secret_access_key` redacted -- because `my` was listed. Tier 2 is
+//   anchored at `\b` against a fixed holder list precisely so that an arbitrary
+//   qualifier cannot be mistaken for a credential, so the leading segment has to
+//   be named. Adding tier-1 names `access_key` and `subscription_key` covers both
+//   labels too, and that was tried first; it also matches
+//   `Ocp-Apim-Subscription-Key`, which then read as a free-form label and took
+//   the two lines after it with it. See `KEY_HOLDERS` for why the holder list
+//   was the better place.
+//
 // No camelCase qualifier either: any pattern accepting one lets `monkey` donate
 // its `key` by backtracking, so `monkey: bananas` becomes `monkey:[redacted]`.
 // `apiKey` still matches because it needs no qualifier; `secretKey` and
 // `mySecret` do not, and that is the stated cost.
 //
-// What is given up is the spelling that is most often prose and least often a
-// credential. Where this set and `isSecretKey` still differ -- an object key may
-// reach the predicate by a route the string pattern does not have -- that is
-// recorded at `isFreeFormSecretLabel`.
-const SECRET_LABEL = String.raw`("?\b(?:(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|secret[_-]?key|password|passwd|pwd|credential|secret)|(?:oauth|auth|bearer|signing|master|encryption|private|client|session|access|refresh|id|api|user|db|account|service|provider|vault|keyring|updater|licence|license|secret|my)[_-](?:[a-z0-9]+[_-])*(?:token|key))(?:s|[_-]?\d+)?\b"?)`;
+// What anchoring the rule gives up is a credential word in the MIDDLE of a
+// longer key, which the old substring test used to catch: `db_password_hint`,
+// `secret_rotation_enabled` and `client_secret_value` now survive. All three are
+// metadata ABOUT a credential rather than one, so that is the side the loss falls
+// on, and a test pins it so it stays a decision instead of a hole. Measured over
+// a corpus of 56 credential names and 55 ordinary provider fields, this rule
+// gains 18 labels the object path missed (`openai_api_key`, `oauth_token`,
+// `signing_key`, `encryption_key`, `x-api-key` among them), loses those 8
+// middle-word names, fixes the `secretary` and `keyboard` over-redaction, and
+// introduces NO new over-redaction anywhere in the ordinary corpus.
+//
+// `bearer` is a tier-1 name AND a tier-2 holder, which looks like a duplicate
+// and is not: as a name it recognises `{ "bearer": <token> }`, and as a holder it
+// recognises `bearer_token`. The old alias set had only the bare spelling, so the
+// name is here to keep that.
+const CREDENTIAL_NAMES: readonly (readonly string[])[] = [
+  ["api", "key"],
+  ["authorization"],
+  ["access", "token"],
+  ["refresh", "token"],
+  ["id", "token"],
+  ["secret", "token"],
+  ["client", "secret"],
+  ["private", "key"],
+  ["session", "token"],
+  ["session", "key"],
+  ["secret", "key"],
+  ["password"],
+  ["passwd"],
+  ["pwd"],
+  ["credential"],
+  ["secret"],
+  ["bearer"],
+];
+
+/**
+ * The roles whose `token` or `key` holds a credential.
+ *
+ * `aws` and `azure` are here, and they read as vendor names in a list of roles
+ * like `vault`, `keyring`, `account` and `service`. That is the point: those are
+ * all the same kind of thing -- the system that ISSUES and holds the key -- and
+ * an Azure subscription key is held by Azure rather than by a `service`, so
+ * adding the two clouds puts them where the list's own definition puts them.
+ *
+ * They were added here rather than as tier-1 names `access_key` and
+ * `subscription_key`, which also cover `aws_secret_access_key` and
+ * `azure_subscription_key`, and the reason is measured rather than preferred. A
+ * tier-1 `subscription_key` also matches `Ocp-Apim-Subscription-Key`, the Azure
+ * API Management header, which is a real header carrying a real key -- and that
+ * label then became a free-form one, so the free-form pass read past the end of
+ * its value and swallowed the next two lines of a provider error, including the
+ * `Reason:` the user is meant to read. Two entries here fix the two labels that
+ * actually leaked and leave every other label's classification untouched.
+ */
+const KEY_HOLDERS: readonly string[] = [
+  "aws",
+  "azure",
+  "oauth",
+  "auth",
+  "bearer",
+  "signing",
+  "master",
+  "encryption",
+  "private",
+  "client",
+  "session",
+  "access",
+  "refresh",
+  "id",
+  "api",
+  "user",
+  "db",
+  "account",
+  "service",
+  "provider",
+  "vault",
+  "keyring",
+  "updater",
+  "licence",
+  "license",
+  "secret",
+  "my",
+];
+
+const OPTIONAL_SEPARATOR = "[_-]?";
+// The shape, written out, because the grouping here is load-bearing and a
+// misplaced bracket silently NARROWS the rule instead of failing to compile:
+//
+//   (?: <tier 1> | <tier 2> )(?: plural | numbered )?
+//
+// The suffix group belongs OUTSIDE the alternation. Left inside it, it applies
+// to tier 2 only, and `credentials` and `secrets` quietly stop being labels
+// while `signing_key` keeps working -- which presents as a flaky rule rather
+// than as a misplaced bracket.
+const CREDENTIAL_LABEL_CORE =
+  "(?:" +
+  // Tier 1: an unambiguous name, behind any separator-delimited qualifier.
+  `(?:[a-z0-9]+[_-])*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
+  // Tier 2: the ambiguous words, behind a qualifier from the holder list.
+  `|(?:${KEY_HOLDERS.join("|")})[_-](?:[a-z0-9]+[_-])*(?:token|key)` +
+  ")" +
+  // A plural or a numbered variant is the same label.
+  `(?:s|[_-]?\\d+)?`;
+// The same core twice, and that is the point: unanchored, to find a label
+// somewhere in free text with the document's own quotes and word boundaries
+// around it, and anchored, to judge a bare object key that has no surrounding
+// document. They are built from one source, so they cannot drift.
+const SECRET_LABEL = String.raw`("?\b${CREDENTIAL_LABEL_CORE}\b"?)`;
+
+/**
+ * The one credential-label test, and both redaction paths call it.
+ *
+ * Anchored, because the alternative is searching for a credential word anywhere
+ * in the key, and that masks `secretary`, `keyboard`, `hotkey` and `whiskey` as
+ * object keys. An object key is a whole label, so the whole-label rule is the
+ * right one; the unanchored form above exists only to LOCATE a label inside a
+ * larger message, where `\b` and the following `[:=]` are what keep
+ * `monkey: bananas` readable.
+ *
+ * Quotes and whitespace are trimmed first, so a label that arrived from the
+ * quoted form of the pattern -- `SECRET_LABEL` captures the surrounding quotes
+ * so a replacement can put them back -- is judged on the label itself.
+ */
+const ANCHORED_CREDENTIAL_LABEL = new RegExp(`^${CREDENTIAL_LABEL_CORE}$`, "i");
+const LABEL_EDGE = /^["'\s]+|["'\s]+$/g;
+const isCredentialLabel = (label: string): boolean =>
+  ANCHORED_CREDENTIAL_LABEL.test(label.replace(LABEL_EDGE, ""));
+// The one tier-1 name that denotes a header rather than a stored credential, so
+// it is matched as the END of a label: `authorization` and `proxy-authorization`
+// are the two spellings, and `AUTHORIZATION_SCHEME` handles both.
+const AUTHORIZATION_LABEL_END = /authorization$/i;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
 // the whole value is replaced either way.
@@ -309,34 +475,6 @@ export const schemeValueEnd = (text: string): number => {
   return end;
 };
 
-const SECRET_KEY_ALIASES = new Set([
-  "apikey",
-  "authorization",
-  "accesstoken",
-  "refreshtoken",
-  "idtoken",
-  "clientsecret",
-  "privatekey",
-  "sessiontoken",
-  "sessionkey",
-  "password",
-  "passwd",
-  "pwd",
-  "credential",
-  "secret",
-  "bearer",
-]);
-
-const isSecretKey = (key: string): boolean => {
-  const normalized = key.replace(/[_-]/g, "").toLowerCase();
-  return (
-    SECRET_KEY_ALIASES.has(normalized) ||
-    /password|passwd|pwd|secret|privatekey|sessiontoken|credential/i.test(
-      normalized,
-    )
-  );
-};
-
 /**
  * The secret aliases whose value is a single token, so the one token after the
  * label is the whole credential.
@@ -349,18 +487,24 @@ const isSecretKey = (key: string): boolean => {
  * had been redacted. Those are the ones `isFreeFormSecretLabel` excludes from
  * this set.
  *
- * Stated as the complement rather than as a list of the free-form names,
- * because the free-form set is a strict subset of `SECRET_KEY_ALIASES` and
- * listing it repeated eight of those names. A new alias added above lands on the
- * right side of this line by construction instead of by a second edit nobody
- * remembers.
+ * Stated as the complement rather than as a list of the free-form names, because
+ * this set is what says "one token" and the rest of the vocabulary says
+ * "credential at all". A new credential name added to `CREDENTIAL_NAMES` lands on
+ * the free-form side of this line by construction, which is the safe side: an
+ * over-wide read of a credential that cannot contain a space costs a diagnosis,
+ * and an under-wide read prints the tail of a passphrase in the clear.
  *
- * The result has to stay a subset of what `SECRET_LABEL` matches, or those
- * labels never reach this predicate at all: a label the pattern does not match
- * is not recognised in a string. `isSecretKey` accepts more names than
- * `SECRET_LABEL` does, which is a real gap in the string form of this scrubber
- * and a separate piece of work -- it needs the label given its own capture
- * group, since these patterns take their arguments positionally.
+ * The membership is separator-free (`accesstoken`, not `access_token`) because
+ * `isFreeFormSecretLabel` looks the label up by that form, and the question here
+ * is which credential it is rather than whether it is one.
+ *
+ * Every name here is also a name `SECRET_LABEL` matches. That is not a
+ * coincidence to be re-established by hand: `isFreeFormSecretLabel` consults
+ * `isCredentialLabel`, which runs the same pattern `SECRET_LABEL` embeds, so a
+ * name this set holds is a name the string path recognises, and a name the
+ * string path recognises is a name that reaches this predicate at all. The old
+ * arrangement could not say that -- `isSecretKey` accepted names the pattern
+ * never matched, and `secret_key` was the case that caught it.
  */
 const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   "apikey",
@@ -387,16 +531,35 @@ const TOKEN_SHAPED_SECRET_ALIASES: ReadonlySet<string> = new Set([
   // re-breaks the diagnosis in one move.
 ]);
 
+/**
+ * Labels whose value is read as a whole run rather than as one token.
+ *
+ * The credential head decides it, and the head is read from the label WITH its
+ * separators. Normalising first erases the `_` that makes `signing` a holder of
+ * a `key`, so `signing_key` stops being recognisable and the free-form pass
+ * leaves it to the one-token pass below -- still redacted, but only the first
+ * word of anything longer. `TOKEN_SHAPED_SECRET_ALIASES` is keyed on the
+ * separator-free form because that is the question being asked of it ("is this
+ * credential one token?"), while `isCredentialLabel` needs the separators
+ * ("is this a credential at all?").
+ */
 const isFreeFormSecretLabel = (label: string): boolean => {
-  const normalized = label.replace(/["_-]/g, "").toLowerCase();
-  // `isSecretKey` rather than the set, so the string form and the object-key
-  // form of this scrubber agree by construction. That set does not contain
-  // `secretkey`, which `isSecretKey` does accept, so deriving from the set left
-  // `secret_key` reading a single token while the same key inside an object was
-  // redacted whole.
-  return (
-    isSecretKey(normalized) && !TOKEN_SHAPED_SECRET_ALIASES.has(normalized)
-  );
+  const bare = label.replace(LABEL_EDGE, "");
+  const joined = bare.replace(/[_-]/g, "").toLowerCase();
+  // `authorization` and `proxy-authorization` are the one label the free-form
+  // pass must not claim, because `AUTHORIZATION_SCHEME` owns them and reads the
+  // scheme word as syntax rather than as part of the credential. A free-form run
+  // starts at the value, so it swallowed the scheme word too and turned
+  // `proxy-authorization: Digest abc` into `proxy-authorization:[redacted]`.
+  //
+  // It has to be a test on the label rather than an entry in
+  // `TOKEN_SHAPED_SECRET_ALIASES`, which is keyed on the separator-free form
+  // and so cannot distinguish `authorization` from `proxy-authorization`. This
+  // used to fall out of `isSecretKey` by accident: normalising
+  // `proxy-authorization` to `proxyauthorization` left no credential word in it,
+  // so the free-form pass skipped it. That was never the reason it worked.
+  if (AUTHORIZATION_LABEL_END.test(bare)) return false;
+  return isCredentialLabel(bare) && !TOKEN_SHAPED_SECRET_ALIASES.has(joined);
 };
 
 /**
@@ -501,6 +664,41 @@ const capLength = (message: string): string =>
     ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…`
     : message;
 
+/**
+ * A value that renders itself through `toJSON` is rendered through that method
+ * by `JSON.stringify`, so walking its own properties would replace the rendered
+ * form -- and the rendered form is the one that gets printed. Such a value is
+ * resolved instead and its rendered form redacted, so a secret reachable ONLY
+ * through `toJSON` cannot escape the key rules.
+ *
+ * Walking the properties was not enough, and the reason is specific rather than
+ * incidental: `redactUnknown` builds a plain object from `Object.entries`, and
+ * `Object.entries` reports `toJSON` as an ordinary own property, so the copy
+ * carried the method through with the original as its receiver. `JSON.stringify`
+ * then called it and stringified the result with no redaction pass at all,
+ * which leaked even a bare `api_key`.
+ */
+const hasJsonForm = (value: object): value is { toJSON(): unknown } =>
+  typeof (value as { toJSON?: unknown }).toJSON === "function";
+
+const redactJsonForm = (
+  value: { toJSON(): unknown },
+  depth: number,
+  seen: WeakSet<object>,
+): unknown => {
+  // Depth is charged for the resolution, so a `toJSON` that returns itself -- or
+  // two objects whose `toJSON` methods hand each other back -- runs into the
+  // same ceiling as any other deep structure instead of recursing.
+  if (depth >= MAX_REDACT_DEPTH) return REDACTED;
+  try {
+    return redactUnknown(value.toJSON(), depth + 1, seen);
+  } catch {
+    // A `toJSON` that throws cannot be rendered by `JSON.stringify` either, so
+    // a marker is the honest outcome; the value behind it is never printed.
+    return REDACTED;
+  }
+};
+
 const redactUnknown = (
   value: unknown,
   depth: number,
@@ -514,7 +712,7 @@ const redactUnknown = (
     }
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(collection)) {
-      out[key] = isSecretKey(key)
+      out[key] = isCredentialLabel(key)
         ? REDACTED
         : redactUnknown(child, depth + 1, seen);
     }
@@ -523,6 +721,9 @@ const redactUnknown = (
 
   if (typeof value === "string") return redactSensitiveTokens(value);
   if (value === null || typeof value !== "object") return value;
+  // Resolved at every depth, not only at the top: a nested `toJSON` leaked too,
+  // under an ordinary key, and a top-level-only guard would have left that one.
+  if (hasJsonForm(value)) return redactJsonForm(value, depth, seen);
   if (depth >= MAX_REDACT_DEPTH) return REDACTED;
   return walkCollection(value);
 };
