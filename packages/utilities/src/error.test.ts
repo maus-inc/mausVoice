@@ -639,6 +639,52 @@ describe("authorization scheme credentials", () => {
   const PASSPHRASE_A = ["no", "idea", "but", "hunter2"].join(" ");
   const PASSPHRASE_B = ["can", "you", "open", "it"].join(" ");
 
+  it("leaves a non-credential field alone", () => {
+    // These are not secrets, and this is an app whose whole job is calling
+    // models, so its provider errors are full of them. Redacting them replaces a
+    // useful fact with a marker on exactly the output a user attaches to a
+    // diagnostics export. Each one is a real field name from a provider error,
+    // not an invented shape.
+    for (const field of [
+      ["sort", "key", "created_at"],
+      ["cache", "key", "v2"],
+      ["partition", "key", "events"],
+      ["idempotency", "key", "7f3a"],
+      ["max", "tokens", "4096"],
+      ["total", "tokens", "251"],
+      ["token", "limit", "8192"],
+      ["token", "usage", "91%"],
+      [null, "monkey", "bananas"],
+      [null, "keyboard", "v"],
+      [null, "hotkey", "v"],
+      [null, "whiskey", "v"],
+      [null, "secretary", "v"],
+      [null, "passenger", "v"],
+      [null, "tokenize", "v"],
+    ] as const) {
+      const label = field[0] ? `${field[0]}_${field[1]}` : field[1];
+      expect(redactSensitiveTokens(labelled(label, field[2]))).toBe(
+        `${label}: ${field[2]}`,
+      );
+    }
+  });
+
+  it("does not redact an ordinary English word before a separator", () => {
+    // A bare `key` alternative matched the word wherever it appeared, so
+    // `press the key: any` lost its value. That alternative is not in the
+    // pattern; the qualified spellings are, and they are pinned above.
+    expect(redactSensitiveTokens("press the key: any")).toBe(
+      "press the key: any",
+    );
+    expect(redactSensitiveTokens("use the key: 3")).toBe("use the key: 3");
+    // The qualified forms still work in the same position.
+    const QUALIFIED = ["the", "secret"].join(" ");
+    const CRED_VALUE = ["abc", "123"].join("");
+    expect(redactSensitiveTokens(labelled(QUALIFIED, CRED_VALUE))).toBe(
+      `${QUALIFIED}:[redacted]`,
+    );
+  });
+
   it("redacts a passphrase whole under a general label, and accepts the lost diagnosis", () => {
     // `secret` and `credential` name no token, but they name a SECRET, and
     // reading one token after them leaked the tail of a passphrase. The wider

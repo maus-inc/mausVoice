@@ -19,7 +19,27 @@ const PROVIDER_KEY_PREFIX =
 // `monkey: bananas` into `monkey:[redacted]`. `apiKey` still matches because it
 // needs no prefix. `secretKey` and `mySecret` do not, and that is the stated
 // cost of not over-redacting.
-const SECRET_LABEL = String.raw`("?\b(?:[a-z0-9]+[_-])*(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|token|secret|key|password|passwd|pwd|credential)s?\b"?)`;
+//
+// A prefix of ANY word was too wide, and both halves of that are load-bearing.
+// The prefix words are drawn from the secret vocabulary rather than being any
+// word, so `sort_key`, `cache_key`, `partition_key`, `idempotency_key` and
+// `max_tokens` are left alone -- they are not credentials, and they are ordinary
+// text in a provider error for an app whose whole job is calling models. The
+// prefix also sits immediately before the label with no space between, which is
+// what stops a bare match on a word further back in the sentence.
+//
+// There is deliberately no bare `key` alternative, and getting that wrong cost
+// `secret_key` twice. `\bkey\b` matches the English word wherever it appears, so
+// `press the key: any` came out as `press the key:[redacted]`. Dropping `key`
+// outright then un-redacted `secret_key: <credential>`, which is the case this
+// whole prefix exists for.
+//
+// The resolution is that the prefix and `key` are alternatives, not a prefix and
+// a suffix: `secret_key` and `api_key` match as single spellings of their own,
+// while a lone `key: <value>` is not recognised at all. What is given up is the
+// one spelling that is most often prose and least often a credential -- and the
+// test that pins `secret_key` is what caught the second mistake.
+const SECRET_LABEL = String.raw`("?\b(?:secret|private|client|session|api)[_-]key|(?:api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|secret[_-]?token|client[_-]?secret|private[_-]?key|session[_-]?token|session[_-]?key|(?:my[_-])?secrets?|password|passwd|pwd|credentials?)\b"?)`;
 // Either quote style; basic-string backslash escapes only exist in double
 // quotes, but accepting them in single-quoted values too is harmless because
 // the whole value is replaced either way.
