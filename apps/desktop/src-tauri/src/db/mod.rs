@@ -48,10 +48,15 @@ pub const APP_TARGETS_MIGRATION_SQL: &str = include_str!("migrations/019_app_tar
 pub const APP_TARGET_TONE_ID_MIGRATION_SQL: &str =
     include_str!("migrations/020_app_target_tone_id.sql");
 // NOTE: Migration "version" numbers here are the tauri_plugin_sql migration
-// versions, NOT sequential filenames. Some version numbers (e.g. 021, 070)
+// versions, NOT sequential filenames. Some version numbers (e.g. 021)
 // were removed/rebased during early development before public release and
 // are intentionally absent — inserting placeholders would re-run them
-// against existing databases. Version 069 was historically absent as well,
+// against existing databases. 070 was in that set until this build claimed
+// it: it is `070_post_process_fallback`, which runs *after* the
+// consolidation step rather than being folded into it, so it is a real
+// migration and deliberately absent from
+// RETIRED_CONSOLIDATION_ERA_VERSIONS. Version 069 was historically absent as
+// well,
 // but is now the single post-0.1.5 consolidation step: 0.1.5 shipped through
 // 68, and every schema change after it lives in
 // migrations/069_consolidated_v0_1_6_schema.sql. The gap in filenames is

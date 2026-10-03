@@ -206,8 +206,16 @@ async fn retire_consolidated_migrations(
 ///
 /// The list is every `NNN_*.sql` file that a build recorded under
 /// `_sqlx_migrations` between 069 and 089 and that 069 folds in, and nothing
-/// for 070, 080 or 088. A ledger row for one of those three is therefore never
-/// retired and still surfaces as a downgrade. The header of
+/// for 080 or 088. A ledger row for one of those two is therefore never
+/// retired and still surfaces as a downgrade.
+///
+/// 070 was the third such gap until this build claimed it, for
+/// `070_post_process_fallback`. A colliding ledger row at 70 is therefore no
+/// longer quarantined as an unknown step: `configured.contains(70)` is true, so
+/// control reaches the checksum comparison and the open fails with "migration 70
+/// (post_process_fallback) was previously applied but has been modified". That
+/// still refuses to open, so the safety property holds, but it now names 070 as
+/// the culprit instead of reporting a bare downgrade. The header of
 /// `migrations/069_consolidated_v0_1_6_schema.sql` names the same 16 steps,
 /// `expansion_flags` included, because that column arrived on the 075 step
 /// rather than on a step of its own.
@@ -235,7 +243,7 @@ async fn retire_consolidated_migrations(
 /// `consolidated_intermediate_migration_rows_are_retired` below exercises the
 /// retirement path, and
 /// `unretired_consolidation_era_numbers_surface_as_a_downgrade` covers the
-/// three gaps.
+/// two gaps that are left, 080 and 088.
 const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[(i64, &str)] = &[
     (71, "remove_cloud_modes"),
     (72, "drop_is_enterprise"),
@@ -1519,6 +1527,58 @@ mod tests {
         assert_not_quarantined(
             &temp.dir,
             "retiring consolidation-era rows must never quarantine the database",
+        );
+    }
+
+    #[tokio::test]
+    async fn a_colliding_row_at_070_names_the_step_instead_of_reporting_a_downgrade() {
+        // 070 used to be one of the three unused numbers in the 070-to-088 range,
+        // and this build spends it on `post_process_fallback`. That changes what a
+        // foreign ledger row at 70 does, and the doc comment on
+        // RETIRED_CONSOLIDATION_ERA_VERSIONS states the new outcome, so pin it
+        // here rather than leave it as prose that can rot the way the "three gaps"
+        // wording did.
+        //
+        // While 070 was unused, a row at 70 was absent from the current migration
+        // set and surfaced as "is recorded but is not in the current migration
+        // set". It is a configured migration now, so that branch cannot fire for
+        // it: control reaches the checksum comparison, the stored checksum
+        // disagrees, and the open fails naming the number and the step that owns
+        // it. Still refuses to open -- only the diagnosis changed.
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let pool = try_open(path).await.expect("initial migrate");
+        // UPDATE, not INSERT: `try_open` has already applied this build's 070, so
+        // the row is there and 70 is the primary key. Replacing its recorded
+        // history is also the faithful shape of the collision -- some other line
+        // really did record a step of its own under this number.
+        sqlx::query(
+            "UPDATE _sqlx_migrations
+             SET description = 'never_shipped', checksum = x'deadbeef'
+             WHERE version = ?1",
+        )
+        .bind(70_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let error = open_app_database(path)
+            .await
+            .expect_err("a checksum disagreement at 70 must not open silently");
+        assert!(
+            !error.contains("not in the current migration set"),
+            "70 is a configured migration now, so it must not be reported as a downgrade, got: {error}"
+        );
+        assert!(
+            error.contains(
+                "migration 70 (post_process_fallback) was previously applied but has been modified"
+            ),
+            "the open must name the step that owns the number, got: {error}"
+        );
+        assert_not_quarantined(
+            &temp.dir,
+            "a checksum disagreement is a repairable disagreement about history, not corruption",
         );
     }
 

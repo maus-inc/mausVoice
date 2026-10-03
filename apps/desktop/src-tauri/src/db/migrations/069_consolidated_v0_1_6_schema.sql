@@ -4,7 +4,9 @@
 -- Former individual migrations now folded in here. Every number below is a
 -- step some ref in this repository carried, and the list is the same 16
 -- versions RETIRED_CONSOLIDATION_ERA_VERSIONS retires on open. No step is
--- claimed for 070, 080 or 088, which no ref ever used.
+-- claimed for 080 or 088, which no ref ever used. 070 was in that set until
+-- this build claimed it for post_process_fallback, which runs after this step
+-- and so is not folded in here.
 --   071 remove_cloud_modes (data rewrite), 072 drop is_enterprise,
 --   073 pill_reset_monitor_strategy, 074 always_request_admin_on_startup,
 --   075 expansion_flags, tone structured fields, or
