@@ -164,12 +164,12 @@ describe("BatchTranscriptionSession pretranscription wiring", () => {
     // The first committed span parks until its abort signal fires, the way a
     // real provider request unwinds on cancellation. It must be released by
     // the doomed pretranscriber, before the fallback request is issued.
-    let requests = 0;
     let open = 0;
     let maxOpen = 0;
+    // The exact array below is what pins "never requests the whole recording",
+    // so there is no counter here to keep in step with it.
     const order: string[] = [];
     mocks.transcribeAudio.mockImplementation(async ({ samples, signal }) => {
-      requests += 1;
       const isSpan = samples.length < recording.length;
       if (!isSpan) {
         order.push("whole:open");
