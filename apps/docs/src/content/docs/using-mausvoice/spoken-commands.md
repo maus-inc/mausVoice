@@ -9,7 +9,7 @@ Spoken formatting commands allow you to control layout and punctuation hands-fre
 
 ## Enable or disable spoken commands
 
-1. Open **Settings → General → More settings**.
+1. Open **Settings → Dictation**.
 2. Locate the **Spoken commands** switch.
 3. Toggle the switch to turn hands-free formatting commands on or off. By default, spoken commands are enabled.
 

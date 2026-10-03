@@ -742,7 +742,7 @@ fn process_message(msg: InMessage, state: &PillState, _hwnd: HWND) {
                 .map(|r| r.id.clone());
             let review_id = review.as_ref().map(|r| r.id.clone());
             let review_text = review.as_ref().map(|r| r.text.clone());
-            *state.assistant_review.borrow_mut() = review;
+            *state.assistant_review.borrow_mut() = review.map(|review| *review);
 
             // The entry is the review surface: a new transcript loads into it
             // for editing, and answering the review empties it again. An

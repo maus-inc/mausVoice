@@ -1885,6 +1885,13 @@ fn draw_review_actions(
     panel_w: f64,
     alpha: f64,
 ) {
+    // Bound to a local: the borrow cannot live inside the temporaries of a
+    // single statement, because `hint` outlives them.
+    let hint_binding = state.assistant_review.borrow();
+    let hint = hint_binding
+        .as_ref()
+        .and_then(|review| review.hint.as_deref())
+        .unwrap_or("Edit below, then press Enter to insert");
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
     cr.select_font_face(
         "Satoshi",
@@ -1896,18 +1903,34 @@ fn draw_review_actions(
         panel_x + PANEL_CONTENT_SIDE_INSET,
         y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0,
     );
-    let _ = cr.show_text("Edit below, then press Enter to insert");
+    let _ = cr.show_text(hint);
 
-    // Rendered right to left so "Insert" (the default action) sits closest to
-    // the edge of the panel, matching the permission card's layout.
+    // Every caption here is drawn by the pill, so every caption has to come
+    // from the desktop's locale. The English fallbacks only apply to a sender
+    // that predates these fields.
     let review = state.assistant_review.borrow();
     let edit_label = review
         .as_ref()
         .and_then(|review| review.edit_label.as_deref())
         .unwrap_or("Edit");
+    let insert_label = review
+        .as_ref()
+        .and_then(|review| review.insert_label.as_deref())
+        .unwrap_or("Insert");
+    let copy_label = review
+        .as_ref()
+        .and_then(|review| review.copy_label.as_deref())
+        .unwrap_or("Copy");
+    let cancel_label = review
+        .as_ref()
+        .and_then(|review| review.cancel_label.as_deref())
+        .unwrap_or("Cancel");
+
+    // Rendered right to left so Insert (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
     let buttons = [
         (
-            "Insert",
+            insert_label,
             ClickAction::ReviewInsert(review_id.to_string()),
             0.92,
         ),
@@ -1916,9 +1939,13 @@ fn draw_review_actions(
             ClickAction::ReviewEdit(review_id.to_string()),
             0.8,
         ),
-        ("Copy", ClickAction::ReviewCopy(review_id.to_string()), 0.7),
         (
-            "Cancel",
+            copy_label,
+            ClickAction::ReviewCopy(review_id.to_string()),
+            0.7,
+        ),
+        (
+            cancel_label,
             ClickAction::ReviewCancel(review_id.to_string()),
             0.5,
         ),

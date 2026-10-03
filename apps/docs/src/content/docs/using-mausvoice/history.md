@@ -19,13 +19,13 @@ Export opens a file picker and writes a ZIP named from the record ID. It contain
 
 ## Edit and auto-learn
 
-The **Final transcription** block in the details dialog has an Edit action. Use it to fix a misspelled name or term, then save. mausVoice persists the corrected text. When **More settings → Auto-learn dictionary** is on, it also adds the corrected words to your glossary terms automatically. A toast names the learned words so you can review or remove them in **Dictionary**.
+The **Final transcription** block in the details dialog has an Edit action. Use it to fix a misspelled name or term, then save. mausVoice persists the corrected text. When **Settings → Privacy and data → Auto-learn dictionary** is on, it also adds the corrected words to your glossary terms automatically. A toast names the learned words so you can review or remove them in **Dictionary**.
 
 Auto-learn is conservative. It only adds words that are new in the correction, look like a proper noun, and are not already in your dictionary. A large rewrite adds nothing.
 
 ## Learn from corrections in other apps
 
-Turn on **More settings → Learn from corrections** to watch the target app after a dictation lands. When you fix a mistaken name in place, mausVoice asks on the dictation pill whether to add the corrected spelling to your glossary. Choose **Add** to keep it or **Ignore** to decline; ignored words are not asked about again.
+Turn on **Settings → Privacy and data → Learn from corrections** to watch the target app after a dictation lands. When you fix a mistaken name in place, mausVoice asks on the dictation pill whether to add the corrected spelling to your glossary. Choose **Add** to keep it or **Ignore** to decline; ignored words are not asked about again.
 
 This works on macOS and Windows, where mausVoice can read the focused text field through the accessibility permission. It watches for up to 90 seconds after the final transcript is inserted, and only proposes names, never common words or words already in your dictionary.
 

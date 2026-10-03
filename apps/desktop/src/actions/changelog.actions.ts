@@ -1,4 +1,9 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import {
+  BETA_CHANNEL_TAG,
+  GITHUB_RELEASES_API_URL,
+  githubReleasePageUrl,
+} from "@maus-inc/desktop-utils";
 
 export type ChangelogEntry = {
   version: string;
@@ -9,7 +14,8 @@ export type ChangelogEntry = {
   url: string;
 };
 
-type ChangelogErrorCode = "network" | "http" | "invalid-response";
+type ChangelogErrorCode =
+  "network" | "http" | "rate-limited" | "invalid-response";
 
 export class ChangelogFetchError extends Error {
   readonly code: ChangelogErrorCode;
@@ -22,9 +28,6 @@ export class ChangelogFetchError extends Error {
     this.status = status;
   }
 }
-
-const RELEASES_URL =
-  "https://api.github.com/repos/maus-inc/mausVoice/releases?per_page=20";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -43,7 +46,7 @@ const toChangelogEntry = (
   row: Record<string, unknown>,
 ): ChangelogEntry | null => {
   const tag = asString(row.tag_name);
-  if (!tag || tag === "beta-channel") {
+  if (!tag || tag === BETA_CHANNEL_TAG) {
     return null;
   }
   return {
@@ -52,9 +55,7 @@ const toChangelogEntry = (
     date: asString(row.published_at),
     body: asString(row.body) ?? "",
     prerelease: row.prerelease === true,
-    url:
-      asString(row.html_url) ??
-      `https://github.com/maus-inc/mausVoice/releases/tag/${tag}`,
+    url: asString(row.html_url) ?? githubReleasePageUrl(tag),
   };
 };
 
@@ -62,18 +63,53 @@ const toChangelogEntry = (
 const isAbortError = (error: unknown): boolean =>
   isRecord(error) && error.name === "AbortError";
 
+/**
+ * Whether a 403 or 429 from the releases endpoint is actually a rate limit.
+ *
+ * GitHub answers 403 for several unrelated conditions: a primary or secondary
+ * rate limit, an abuse block, a private or renamed repository, a policy block.
+ * Only the first is fixed by waiting, so telling every 403 to wait sends the
+ * user down the wrong path for the rest. The rate-limit responses carry
+ * `x-ratelimit-remaining: 0` or a `retry-after`, which is what separates them.
+ */
+const isRateLimitResponse = (response: Response): boolean => {
+  if (response.headers.get("retry-after")) {
+    return true;
+  }
+  return response.headers.get("x-ratelimit-remaining") === "0";
+};
+
+/**
+ * Re-throw an abort, and swallow nothing else.
+ *
+ * Both the request and the body read need this, and the two cases differ only
+ * in which typed failure they raise when the failure was *not* an abort.
+ */
+const rethrowIfAborted = (error: unknown, signal?: AbortSignal): void => {
+  if (signal?.aborted || isAbortError(error)) {
+    throw error;
+  }
+};
+
 const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
   let response: Response;
   try {
-    response = await tauriFetch(RELEASES_URL, {
+    response = await tauriFetch(GITHUB_RELEASES_API_URL, {
       headers: { Accept: "application/vnd.github+json" },
       signal,
     });
   } catch (error) {
-    if (signal?.aborted || isAbortError(error)) {
-      throw error;
-    }
+    rethrowIfAborted(error, signal);
     throw new ChangelogFetchError("network");
+  }
+  // The releases endpoint is unauthenticated, so GitHub caps it per IP, and a
+  // rate limit on this URL would otherwise read as a failed connection check.
+  // Only responses that identify themselves as rate limits get that label.
+  if (
+    (response.status === 403 || response.status === 429) &&
+    isRateLimitResponse(response)
+  ) {
+    throw new ChangelogFetchError("rate-limited", response.status);
   }
   if (!response.ok) {
     throw new ChangelogFetchError("http", response.status);
@@ -81,9 +117,7 @@ const fetchReleasesJson = async (signal?: AbortSignal): Promise<unknown> => {
   try {
     return await response.json();
   } catch (error) {
-    if (signal?.aborted || isAbortError(error)) {
-      throw error;
-    }
+    rethrowIfAborted(error, signal);
     throw new ChangelogFetchError("invalid-response");
   }
 };

@@ -1,4 +1,5 @@
 import { Channel, invoke, Resource } from "@tauri-apps/api/core";
+import { GITHUB_RELEASE_DOWNLOAD_BASE } from "./github-releases";
 import type { DesktopPlatform } from "./platform";
 
 // Minimal re-implementation of the bits of `@tauri-apps/plugin-updater` and
@@ -57,8 +58,6 @@ const relaunch = async (): Promise<void> => {
   await invoke("plugin:process|restart");
 };
 
-const GITHUB_RELEASE_DOWNLOAD_BASE =
-  "https://github.com/maus-inc/mausVoice/releases/download";
 const RELEASE_TAG_REGEX = /\/releases\/download\/([^/]+)\//;
 
 export type AvailableUpdateInfo = {

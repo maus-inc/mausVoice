@@ -100,12 +100,60 @@ describe("fetchChangelog", () => {
     expect(entries[0]?.tag).toBe("mausVoice-v0.1.7");
   });
 
-  it("returns the HTTP status as structured error data", async () => {
-    fetchMock.mockResolvedValue({ ok: false, status: 403 });
+  it("reports a rate limit as its own failure, not as a transport error", async () => {
+    // The releases endpoint is unauthenticated, so GitHub caps it per IP. The
+    // response identifies itself as a rate limit, so the dialog must not send
+    // the user to check their connection.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: {
+        get: (name: string) => (name === "x-ratelimit-remaining" ? "0" : null),
+      },
+    });
+
+    await expect(fetchChangelog()).rejects.toMatchObject({
+      code: "rate-limited",
+      status: 403,
+    });
+  });
+
+  it("treats a retry-after as a rate limit too", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: {
+        get: (name: string) => (name === "retry-after" ? "60" : null),
+      },
+    });
+
+    await expect(fetchChangelog()).rejects.toMatchObject({
+      code: "rate-limited",
+      status: 429,
+    });
+  });
+
+  it("does not call an unlabelled 403 a rate limit", async () => {
+    // GitHub uses 403 for private repositories and policy blocks too, and
+    // waiting does not help either. Those must surface as a plain HTTP error.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: { get: () => null },
+    });
 
     await expect(fetchChangelog()).rejects.toMatchObject({
       code: "http",
       status: 403,
+    });
+  });
+
+  it("returns the HTTP status as structured error data for other failures", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 });
+
+    await expect(fetchChangelog()).rejects.toMatchObject({
+      code: "http",
+      status: 500,
     });
   });
 

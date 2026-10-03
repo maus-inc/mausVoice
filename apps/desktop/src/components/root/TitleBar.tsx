@@ -13,8 +13,12 @@ import { MorphNavIcon } from "../common/MorphNavIcon";
 import { ThemeModeToggle } from "./ThemeModeToggle";
 import {
   CAPTION_BUTTON_WIDTH,
+  COMPACT_CAPTION_BUTTON_WIDTH,
   hasRightCaptionButtons,
+  isCompactWidth,
   TITLE_BAR_HEIGHT,
+  TRAFFIC_DOT_SIZE,
+  TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
 import { WindowResizeHandles } from "./WindowResizeHandles";
 
@@ -64,6 +68,61 @@ const useMaximized = () => {
   }, []);
 
   return [maximized, setMaximized] as const;
+};
+
+/**
+ * Whether the bar should render in its compact form.
+ *
+ * Storing the decision rather than the raw width means a resize drag re-renders
+ * the bar only when the density actually changes, not on every tick. An unknown
+ * window size reads as not compact, so browser preview keeps the roomy bar.
+ */
+const useWindowWidthDensity = (): boolean => {
+  const [compact, setCompact] = useState(false);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    let canceled = false;
+    const win = getCurrentWindow();
+
+    // `outerSize()` reports physical device pixels, but every length in the
+    // bar is a logical CSS pixel. Comparing the two directly would make the
+    // threshold fire late on a scaled display: at 200% scaling a 1000px window
+    // measures 2000, so a 900px threshold would never trigger.
+    // `onResized` fires on every tick of a resize drag. Each tick used to
+    // change the stored width, so the bar re-rendered for the whole drag even
+    // though only the density matters. Storing the density instead means the
+    // component re-renders only when it actually flips.
+    const read = () =>
+      Promise.all([win.outerSize(), win.scaleFactor()])
+        .then(([size, scale]) => {
+          if (!canceled) setCompact(isCompactWidth(size.width / (scale || 1)));
+        })
+        .catch(() => undefined);
+    void read();
+
+    win
+      .onResized(read)
+      .then((fn) => {
+        // `onResized` resolves asynchronously. If the effect cleaned up before
+        // it resolved (StrictMode double-invoke, or fast navigation), release
+        // the listener immediately instead of storing a value nothing reads.
+        if (canceled) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      canceled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  return compact;
 };
 
 const useWindowFocused = () => {
@@ -155,24 +214,34 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
   return { minimize, toggleMax, close };
 };
 
-const captionButtonSx = {
-  width: CAPTION_BUTTON_WIDTH,
-  height: TITLE_BAR_HEIGHT,
-  borderRadius: 0,
-  color: "text.secondary",
-  transition:
-    "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
-  "&:hover": {
-    backgroundColor: "action.hover",
-    color: "text.primary",
-  },
-  "&:focus-visible": {
-    outline: "2px solid",
-    outlineColor: "primary.main",
-    outlineOffset: -2,
-  },
-} as const;
+const captionButtonSx = (compact: boolean) =>
+  ({
+    width: compact ? COMPACT_CAPTION_BUTTON_WIDTH : CAPTION_BUTTON_WIDTH,
+    height: TITLE_BAR_HEIGHT,
+    borderRadius: 0,
+    color: "text.secondary",
+    transition:
+      "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
+    "&:hover": {
+      backgroundColor: "action.hover",
+      color: "text.primary",
+    },
+    "&:focus-visible": {
+      outline: "2px solid",
+      outlineColor: "primary.main",
+      outlineOffset: -2,
+    },
+  }) as const;
 
+/**
+ * A macOS-style traffic light.
+ *
+ * The painted dot stays at `TRAFFIC_DOT_SIZE` because that is the native
+ * proportion, but the button itself is `TRAFFIC_HIT_SIZE` square so the target
+ * meets the WCAG 2.2 minimum target size. A 12px target is close to
+ * unacquirable on a trackpad, which is the "poor icon clarity on small
+ * windows" complaint stated as a hit-area problem rather than a glyph problem.
+ */
 const TrafficButton = ({
   label,
   color,
@@ -194,8 +263,9 @@ const TrafficButton = ({
     onClick={onClick}
     className="traffic-btn"
     sx={{
-      width: 12,
-      height: 12,
+      // The hit target, not the visible dot.
+      width: TRAFFIC_HIT_SIZE,
+      height: TRAFFIC_HIT_SIZE,
       borderRadius: "50%",
       border: "none",
       padding: 0,
@@ -203,27 +273,47 @@ const TrafficButton = ({
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: color,
-      color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
-      transition: "filter 120ms ease",
-      "&:hover": {
-        filter: "brightness(1.08)",
-      },
+      backgroundColor: "transparent",
+      // No hover backplate here. The dot already shows a hover treatment, and
+      // painting one on the 24px box as well makes a single hover read as two
+      // separate highlights. The dot reacting is also what macOS does.
       "&:focus-visible": {
         outline: "2px solid",
         outlineColor: "primary.main",
         outlineOffset: 2,
       },
-      "& .traffic-glyph": {
-        opacity: 0,
-        display: "flex",
-      },
-      "&:hover .traffic-glyph": {
-        opacity: 0.85,
-      },
     }}
   >
-    <span className="traffic-glyph">{glyph}</span>
+    <Box
+      className="traffic-dot"
+      sx={{
+        width: TRAFFIC_DOT_SIZE,
+        height: TRAFFIC_DOT_SIZE,
+        borderRadius: "50%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: color,
+        color: dark ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.55)",
+        transition: "filter 120ms ease",
+        // The hover rule lives on the button, not on the dot. The hit target is
+        // six pixels larger on each side than the painted dot, so a `:hover`
+        // scoped to the dot left the outer ring of a perfectly reachable target
+        // dead.
+        ".traffic-btn:hover &": {
+          filter: "brightness(1.08)",
+        },
+        "& .traffic-glyph": {
+          opacity: 0,
+          display: "flex",
+        },
+        ".traffic-btn:hover & .traffic-glyph": {
+          opacity: 0.85,
+        },
+      }}
+    >
+      <span className="traffic-glyph">{glyph}</span>
+    </Box>
   </Box>
 );
 
@@ -290,6 +380,7 @@ const MacTrafficLights = ({
 
 type CaptionButtonProps = {
   focused: boolean;
+  compact: boolean;
   minimizeLabel: string;
   maximizeLabel: string;
   closeLabel: string;
@@ -301,6 +392,7 @@ type CaptionButtonProps = {
 
 const CaptionButtons = ({
   focused,
+  compact,
   minimizeLabel,
   maximizeLabel,
   closeLabel,
@@ -308,54 +400,57 @@ const CaptionButtons = ({
   onMinimize,
   onToggleMax,
   onClose,
-}: CaptionButtonProps) => (
-  <Stack
-    direction="row"
-    spacing={0}
-    sx={{
-      alignItems: "stretch",
-      alignSelf: "stretch",
-      position: "relative",
-      zIndex: 1,
-      opacity: focused ? 1 : 0.6,
-    }}
-  >
-    <IconButton
-      size="small"
-      onClick={onMinimize}
-      aria-label={minimizeLabel}
-      sx={captionButtonSx}
-    >
-      <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
-    </IconButton>
-    <IconButton
-      size="small"
-      onClick={onToggleMax}
-      aria-label={maximizeLabel}
-      sx={captionButtonSx}
-    >
-      {maximized ? (
-        <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
-      ) : (
-        <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
-      )}
-    </IconButton>
-    <IconButton
-      size="small"
-      onClick={onClose}
-      aria-label={closeLabel}
+}: CaptionButtonProps) => {
+  const sx = captionButtonSx(compact);
+  return (
+    <Stack
+      direction="row"
+      spacing={0}
       sx={{
-        ...captionButtonSx,
-        "&:hover": {
-          backgroundColor: "rgba(232, 77, 77, 0.92)",
-          color: chalkSolid.base,
-        },
+        alignItems: "stretch",
+        alignSelf: "stretch",
+        position: "relative",
+        zIndex: 1,
+        opacity: focused ? 1 : 0.6,
       }}
     >
-      <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
-    </IconButton>
-  </Stack>
-);
+      <IconButton
+        size="small"
+        onClick={onMinimize}
+        aria-label={minimizeLabel}
+        sx={sx}
+      >
+        <MorphNavIcon icon={Minus} size={CONTROL_ICON_SIZE} />
+      </IconButton>
+      <IconButton
+        size="small"
+        onClick={onToggleMax}
+        aria-label={maximizeLabel}
+        sx={sx}
+      >
+        {maximized ? (
+          <MorphNavIcon icon={Copy} size={CONTROL_ICON_SIZE} />
+        ) : (
+          <MorphNavIcon icon={Square} size={CONTROL_ICON_SIZE} />
+        )}
+      </IconButton>
+      <IconButton
+        size="small"
+        onClick={onClose}
+        aria-label={closeLabel}
+        sx={{
+          ...sx,
+          "&:hover": {
+            backgroundColor: "rgba(232, 77, 77, 0.92)",
+            color: chalkSolid.base,
+          },
+        }}
+      >
+        <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
+      </IconButton>
+    </Stack>
+  );
+};
 const titleBarSx = (dark: boolean, trafficLights: boolean) =>
   ({
     height: TITLE_BAR_HEIGHT,
@@ -391,6 +486,10 @@ export const TitleBar = () => {
   const [maximized, setMaximized] = useMaximized();
   const focused = useWindowFocused();
   const { minimize, toggleMax, close } = useWindowControls(setMaximized);
+  // Density follows the measured window width. `null` renders the roomy bar, so
+  // the chrome never flashes narrow on first paint and browser preview keeps
+  // the roomy default it has always shown.
+  const compact = useWindowWidthDensity();
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized
@@ -443,7 +542,7 @@ export const TitleBar = () => {
           }}
         >
           <ThemeModeToggle />
-          <LogoWithText />
+          <LogoWithText compact={compact} />
         </Stack>
 
         <Box
@@ -455,6 +554,7 @@ export const TitleBar = () => {
         {trafficLights ? null : (
           <CaptionButtons
             focused={focused}
+            compact={compact}
             minimizeLabel={minimizeLabel}
             maximizeLabel={maximizeLabel}
             closeLabel={closeLabel}

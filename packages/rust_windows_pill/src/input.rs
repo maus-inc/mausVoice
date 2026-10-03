@@ -326,6 +326,44 @@ mod tests {
     /// a write that never reached the desktop destroys text that cannot be
     /// recovered and cannot be re-sent, because the pipe it would be re-sent
     /// on is the one that just failed.
+    /// The desktop's action vocabulary has one owner, `send_review_decision_with`,
+    /// so the insert decision's wire shape is pinned here rather than left to
+    /// whichever caller happens to build it. The surrounding text travels exactly
+    /// as the user left it, including spacing that can be deliberate when the
+    /// transcript lands in a document.
+    #[test]
+    fn a_review_submit_sends_an_insert_decision_carrying_the_text() {
+        let entry = std::cell::RefCell::new("  spaced transcript  ".to_string());
+        let sent_json = std::cell::RefCell::new(None);
+        let sent = submit_entry_inner(&entry, Some("review-9"), |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(
+                r#"{"type":"review_decision","review_id":"review-9","action":"insert","text":"  spaced transcript  "}"#
+            )
+        );
+        assert!(entry.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_plain_submit_sends_a_typed_message() {
+        let entry = std::cell::RefCell::new("hello".to_string());
+        let sent_json = std::cell::RefCell::new(None);
+        let sent = submit_entry_inner(&entry, None, |msg| {
+            *sent_json.borrow_mut() = Some(serde_json::to_string(msg).unwrap());
+            true
+        });
+        assert!(sent);
+        assert_eq!(
+            sent_json.borrow().as_deref(),
+            Some(r#"{"type":"typed_message","text":"hello"}"#)
+        );
+    }
+
     #[test]
     fn a_failed_submit_keeps_the_entry_text() {
         let entry = std::cell::RefCell::new("a typed message".to_string());

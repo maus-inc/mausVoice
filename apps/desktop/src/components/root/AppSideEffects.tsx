@@ -26,7 +26,7 @@ import {
 import { handleRemoteFinalTextReceived } from "../../actions/remote-transcript.actions";
 import {
   checkForAppUpdates,
-  installAvailableUpdate,
+  openUpdateDialog,
 } from "../../actions/updater.actions";
 import { INITIAL_ONBOARDING_STATE } from "../../state/onboarding.state";
 import {
@@ -895,12 +895,17 @@ export const AppSideEffects = () => {
 
   useTauriListen<void>("tray-install-update", () => {
     if (!isMainWindow) return;
+    // Route through the dialog rather than installing straight from the tray.
+    // The dialog is the only surface that shows the release notes before an
+    // update applies, so installing from here would make the notes unreachable
+    // for anyone who never opens the update entry point. `openUpdateDialog`
+    // reuses a live offer and falls back to a fresh check when none is held.
     // Fire-and-forget: the listener body is not async, so it never receives the
-    // promise from `installAvailableUpdate`. The `.catch` is what keeps a failed
-    // install from becoming an unhandled rejection.
+    // promise. The `.catch` is what keeps a failed check from becoming an
+    // unhandled rejection.
     void surfaceMainWindow();
-    void installAvailableUpdate().catch((error: unknown) => {
-      getLogger().error(`Failed to start update install: ${error}`);
+    void openUpdateDialog().catch((error: unknown) => {
+      getLogger().error(`Failed to open the update dialog: ${error}`);
     });
   });
 

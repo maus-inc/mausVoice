@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type { Transition, Variants } from "framer-motion";
 
 /** Emil Kowalski–style motion tokens for product UI. */
@@ -87,3 +88,51 @@ export const reducedMotionQuery = "(prefers-reduced-motion: reduce)";
  * carry a resting state under this query, or it is invisible on touch.
  */
 export const noHoverQuery = "(hover: none)";
+
+/**
+ * Shared subscription for {@link noHoverQuery}.
+ *
+ * `useMediaQuery` attaches a fresh `matchMedia` listener per call, so calling
+ * it once per rendered message means a hundred messages add a hundred
+ * subscriptions that all fire on the same change. One module-level listener
+ * feeds every caller instead.
+ */
+const noHoverListeners = new Set<(matches: boolean) => void>();
+let noHoverMediaQuery: MediaQueryList | null = null;
+
+/** Whether the environment can answer the query at all. */
+const canMatchMedia = (): boolean =>
+  typeof globalThis.matchMedia === "function";
+
+const readNoHover = (): boolean => {
+  if (!noHoverMediaQuery && canMatchMedia()) {
+    noHoverMediaQuery = globalThis.matchMedia(noHoverQuery);
+    // Only the modern registration is used. `addListener` is deprecated and
+    // kept the deprecated-call lint open; every engine that can answer a hover
+    // query can also register for it.
+    if (typeof noHoverMediaQuery.addEventListener === "function") {
+      noHoverMediaQuery.addEventListener("change", (event) => {
+        for (const each of noHoverListeners) each(event.matches);
+      });
+    }
+  }
+  return noHoverMediaQuery?.matches ?? false;
+};
+
+const subscribeNoHover = (listener: (matches: boolean) => void) => {
+  noHoverListeners.add(listener);
+  readNoHover();
+  return () => {
+    noHoverListeners.delete(listener);
+  };
+};
+
+/**
+ * True when the pointer cannot hover, so a hover-only affordance would never
+ * appear. One subscription is shared across every caller.
+ *
+ * Assumes hover, which is the safe default: a caller that only reveals on hover
+ * then keeps its resting state rather than hiding a control entirely.
+ */
+export const useNoHoverPointer = (): boolean =>
+  useSyncExternalStore(subscribeNoHover, readNoHover, () => false);

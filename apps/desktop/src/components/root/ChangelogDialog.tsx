@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { GITHUB_RELEASES_PAGE_URL } from "@maus-inc/desktop-utils";
 import { useCallback, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
 import { ReleaseNotesMarkdown } from "./ReleaseNotesMarkdown";
@@ -38,6 +39,10 @@ const ChangelogErrorMessage = ({ error }: { error: unknown }) => {
             defaultMessage="The release history returned status {status}."
             values={{ status: error.status }}
           />
+        );
+      case "rate-limited":
+        return (
+          <FormattedMessage defaultMessage="GitHub is rate-limiting release history requests from this network. Try again later, or read the notes on the releases page." />
         );
       case "invalid-response":
         return (
@@ -207,11 +212,22 @@ export const ChangelogDialog = ({
             <Alert severity="error">
               <ChangelogErrorMessage error={error} />
             </Alert>
-            <Box>
+            <Stack direction="row" spacing={1}>
               <Button variant="outlined" size="small" onClick={handleRetry}>
                 <FormattedMessage defaultMessage="Retry" />
               </Button>
-            </Box>
+              <Button
+                variant="text"
+                size="small"
+                onClick={() => {
+                  // `openUrl` rejects when no browser handler is available, and
+                  // discarding the promise would leave that unhandled.
+                  openUrl(GITHUB_RELEASES_PAGE_URL).catch(() => undefined);
+                }}
+              >
+                <FormattedMessage defaultMessage="Open releases page" />
+              </Button>
+            </Stack>
           </Stack>
         )}
         {status === "done" &&

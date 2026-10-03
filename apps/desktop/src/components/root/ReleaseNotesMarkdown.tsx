@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ComponentProps } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 // Release notes are remote content. Only absolute web links may cross the
 // native opener boundary; relative links must never navigate the app route.
@@ -44,6 +45,11 @@ const ReleaseNoteLink = ({ href, children }: ComponentProps<"a">) => {
 
 const components = { a: ReleaseNoteLink };
 
+// Release bodies are written as GFM by the release pipeline, and the same
+// dialect renders everywhere else in the app, so tables and strikethrough in
+// the notes must not degrade to raw pipe text here.
 export const ReleaseNotesMarkdown = ({ children }: { children: string }) => (
-  <Markdown components={components}>{children}</Markdown>
+  <Markdown remarkPlugins={[remarkGfm]} components={components}>
+    {children}
+  </Markdown>
 );

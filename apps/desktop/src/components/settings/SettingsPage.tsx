@@ -122,11 +122,18 @@ import {
 import { UpdateChannelSetting } from "./UpdateChannelSetting";
 import { AudioTransmissionDisclosure } from "./AudioTransmissionDisclosure";
 import { UpdateSettingSection } from "./UpdateSettingSection";
+import {
+  sectionAnchorId,
+  sectionFromScrollTop,
+  SettingsSectionNav,
+} from "./SettingsSectionNav";
 import { SegmentedControl } from "../common/SegmentedControl";
 import {
   searchSettings,
   SETTING_ENTRIES,
+  SETTING_SECTIONS,
   type SettingAvailability,
+  type SettingSectionId,
 } from "../../utils/settings-registry";
 import { produceAppState, useAppStore } from "../../store";
 import { getAdditionalLanguageEntries } from "../../utils/keyboard.utils";
@@ -210,6 +217,52 @@ export default function SettingsPage() {
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
   const [groqSaving, setGroqSaving] = useState(false);
   const [groqError, setGroqError] = useState<string | null>(null);
+
+  const [activeSection, setActiveSection] = useState<SettingSectionId | null>(
+    null,
+  );
+
+  const jumpToSection = useCallback((section: SettingSectionId) => {
+    document
+      .getElementById(sectionAnchorId(section))
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Set immediately rather than waiting for the scroll to land: the smooth
+    // scroll fires scroll events along the way, and leaving the rail unselected
+    // until then reads as a dropped click.
+    setActiveSection(section);
+  }, []);
+
+  // Track which section the reader is in. Measured against the viewport rather
+  // than a scroll container, because the dashboard scrolls the window itself,
+  // and sampled through rAF so a fast scroll does not run layout per event.
+  useEffect(() => {
+    if (query.trim()) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const tops = SETTING_SECTIONS.map(
+        (entry) =>
+          [
+            entry.id,
+            document
+              .getElementById(sectionAnchorId(entry.id))
+              ?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY,
+          ] as const,
+      );
+      setActiveSection(sectionFromScrollTop(tops, 0));
+    };
+    const onScroll = () => {
+      if (frame === 0) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [query]);
 
   const [setupConfirmOpen, setSetupConfirmOpen] = useState(false);
   const [setupRunning, setSetupRunning] = useState(false);
@@ -1746,16 +1799,22 @@ export default function SettingsPage() {
             )}
           </List>
         ) : (
-          <>
-            <Box id="section-general">{general}</Box>
-            <Box id="section-dictation">{dictation}</Box>
-            <Box id="section-ai-processing">{processing}</Box>
-            <Box id="section-pill-appearance">{pillAppearance}</Box>
-            <Box id="section-shortcuts">{shortcuts}</Box>
-            <Box id="section-privacy-data">{privacyData}</Box>
-            <Box id="section-updates">{updates}</Box>
-            <Box id="section-advanced">{advanced}</Box>
-          </>
+          <Stack direction="row" spacing={4} sx={{ alignItems: "flex-start" }}>
+            <SettingsSectionNav
+              active={activeSection}
+              onSelect={jumpToSection}
+            />
+            <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
+              <Box id="section-general">{general}</Box>
+              <Box id="section-dictation">{dictation}</Box>
+              <Box id="section-ai-processing">{processing}</Box>
+              <Box id="section-pill-appearance">{pillAppearance}</Box>
+              <Box id="section-shortcuts">{shortcuts}</Box>
+              <Box id="section-privacy-data">{privacyData}</Box>
+              <Box id="section-updates">{updates}</Box>
+              <Box id="section-advanced">{advanced}</Box>
+            </Stack>
+          </Stack>
         )}
         <Box sx={{ py: 4, textAlign: "center" }}>
           <Typography

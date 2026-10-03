@@ -69,7 +69,6 @@ Use the most specific page below. Local describes the speech-recognition stage o
 - [AI post-processing](https://maus-inc.github.io/mausVoice/docs/configuration/post-processing/): Configure the optional rewrite stage without conflating it with speech recognition.
 - [API key management](https://maus-inc.github.io/mausVoice/docs/configuration/api-keys/): Add, test, select, rotate, and remove task-specific provider credentials.
 - [Microphone and audio settings](https://maus-inc.github.io/mausVoice/docs/configuration/microphone-and-audio/): Select an input device, control interaction sound, and understand system-playback dimming.
-- [More settings](https://maus-inc.github.io/mausVoice/docs/configuration/more-settings/): Configure privacy, updates, tray behavior, pill behavior, styles, limits, and real-time output.
 - [Text insertion options](https://maus-inc.github.io/mausVoice/docs/configuration/text-insertion-options/): Set global and per-application paste or simulated-typing behavior.
 - [Multi-device output](https://maus-inc.github.io/mausVoice/docs/configuration/multi-device-output/): Pair a sender and receiver, route final text, and understand the current LAN transport boundary.
 - [Diagnostics](https://maus-inc.github.io/mausVoice/docs/configuration/diagnostics/): Open the log directory and export a reviewable troubleshooting archive.

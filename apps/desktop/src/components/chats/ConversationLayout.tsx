@@ -8,6 +8,7 @@ import { useAppStore } from "../../store";
 import { getLogger } from "../../utils/log.utils";
 import { FadingScrollArea } from "../common/FadingScrollArea";
 import { TipCard } from "../onboarding/TipCard";
+import { AgentLiveAnnouncer } from "./AgentLiveAnnouncer";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { ChatPromptBox } from "./ChatPromptBox";
 import { ToolPermissionCard } from "./ToolPermissionCard";
@@ -29,6 +30,11 @@ export const ConversationLayout = ({
   const messageIds = useAppStore(
     (s) => s.chatMessageIdsByConversationId[conversationId] ?? [],
   );
+  const latestMessage = useAppStore((s) => {
+    const ids = s.chatMessageIdsByConversationId[conversationId];
+    const latestId = ids?.[ids.length - 1];
+    return latestId ? s.chatMessageById[latestId] : undefined;
+  });
   const toolPermissions = useAppStore((s) => s.toolPermissionById);
   const agentRunning = useAppStore((s) => {
     const status = s.agentStateByConversationId?.[conversationId]?.status;
@@ -125,6 +131,11 @@ export const ConversationLayout = ({
       <Box sx={{ px: 2, pt: 2 }}>
         <TipCard id="assistant-mode" />
       </Box>
+      <AgentLiveAnnouncer
+        agentRunning={agentRunning}
+        latestMessageId={messageIds.at(-1) ?? null}
+        latestMessageRole={latestMessage?.role ?? null}
+      />
       <FadingScrollArea
         fadeHeight={32}
         viewportRef={scrollViewportRef}

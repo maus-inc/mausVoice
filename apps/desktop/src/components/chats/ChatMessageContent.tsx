@@ -100,7 +100,22 @@ export const MessageEditForm = ({
     inputRef.current?.focus();
   }, []);
   return (
-    <Stack spacing={1}>
+    <Stack
+      spacing={1}
+      onKeyDown={(event) => {
+        // Escape cancels the edit, matching every other dismissible surface in
+        // the app. Without it the only way out is hunting for the Cancel button
+        // with a pointer, which strands keyboard and screen-reader users.
+        //
+        // While an input method is composing, Escape belongs to the IME: it
+        // dismisses the candidate window. Acting on it here would close the
+        // editor and throw away a half-typed word.
+        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+          event.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
       <TextField
         multiline
         inputRef={inputRef}

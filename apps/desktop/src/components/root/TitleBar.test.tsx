@@ -12,12 +12,17 @@ const { platformState, windowMocks, focusHandlers, showError } = vi.hoisted(
       // returns a Promise that `TitleBar` consumes with `.then()`/`.catch()`.
       // A mock that returned `undefined` would make those chains throw a
       // TypeError, so the promise is the contract being faked, not decoration.
+      // Hence `Promise.resolve(...)` rather than a bare value, and rather than
+      // `async` — the promise is what is being faked, and marking the mock
+      // `async` says nothing the returned promise does not already say.
       minimize: vi.fn(() => Promise.resolve(undefined)),
       maximize: vi.fn(() => Promise.resolve(undefined)),
       unmaximize: vi.fn(() => Promise.resolve(undefined)),
       close: vi.fn(() => Promise.resolve(undefined)),
       isMaximized: vi.fn(() => Promise.resolve(false)),
       onResized: vi.fn((): Promise<() => void> => Promise.resolve(vi.fn())),
+      outerSize: vi.fn(() => Promise.resolve({ width: 1280, height: 800 })),
+      scaleFactor: vi.fn(() => Promise.resolve(1)),
       isFocused: vi.fn(() => Promise.resolve(true)),
       onFocusChanged: vi.fn((..._args: unknown[]): Promise<() => void> =>
         Promise.resolve(vi.fn()),
@@ -60,6 +65,13 @@ vi.mock("./WindowResizeHandles", () => ({
 }));
 
 import { TitleBar } from "./TitleBar";
+import {
+  CAPTION_BUTTON_WIDTH,
+  COMPACT_CAPTION_BUTTON_WIDTH,
+  MIN_TARGET_SIZE,
+  TRAFFIC_DOT_SIZE,
+  TRAFFIC_HIT_SIZE,
+} from "./titleBarGeometry";
 
 import {
   ensureUiHarness,
@@ -75,6 +87,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   focusHandlers.length = 0;
   windowMocks.isMaximized.mockResolvedValue(false);
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  windowMocks.scaleFactor.mockResolvedValue(1);
   windowMocks.onFocusChanged.mockImplementation((handler: unknown) => {
     focusHandlers.push(handler as (event: { payload: boolean }) => void);
     return Promise.resolve(vi.fn());
@@ -107,8 +121,22 @@ const renderBar = async () => {
   });
 };
 
+/** Read a px dimension off MUI's emotion classes; jsdom reports 0 for layout. */
+const pxOf = (element: HTMLElement, property: "width" | "height"): number =>
+  Number.parseFloat(getComputedStyle(element)[property]) || 0;
+
 const buttonByLabel = (label: string) =>
   document.querySelector(`button[aria-label="${label}"]`) as HTMLElement | null;
+
+/**
+ * The same lookup, but failing with a readable message instead of a TypeError
+ * on null when the control is not rendered.
+ */
+const requireByLabel = (label: string) => {
+  const button = buttonByLabel(label);
+  if (!button) throw new Error(`No button with aria-label "${label}"`);
+  return button;
+};
 
 describe("TitleBar on Windows and Linux", () => {
   it("does not let a late initial focus query overwrite a live focus event", async () => {
@@ -149,7 +177,8 @@ describe("TitleBar on Windows and Linux", () => {
     async (platform) => {
       platformState.value = platform;
       await renderBar();
-      const bar = document.querySelector("[data-focused]")!;
+      const bar = document.querySelector("[data-focused]");
+      if (!bar) throw new Error("the title bar did not render");
       expect(Number.parseFloat(getComputedStyle(bar).paddingRight)).toBe(0);
     },
   );
@@ -159,7 +188,7 @@ describe("TitleBar on Windows and Linux", () => {
     expect(document.body.textContent).toContain("mausVoice");
     expect(windowMocks.isMaximized).not.toHaveBeenCalled();
     expect(windowMocks.isFocused).not.toHaveBeenCalled();
-    await act(() => buttonByLabel("Minimize")!.click());
+    await act(() => requireByLabel("Minimize").click());
     expect(windowMocks.minimize).not.toHaveBeenCalled();
   });
   it("shows caption buttons, not traffic lights, in the browser preview", async () => {
@@ -173,7 +202,7 @@ describe("TitleBar on Windows and Linux", () => {
   it("uses the shared reduced-motion-aware timing for both caption colors", async () => {
     await renderBar();
     expect(
-      getComputedStyle(buttonByLabel("Minimize")!)
+      getComputedStyle(requireByLabel("Minimize"))
         .transition.split(",")
         .map((value) => value.trim()),
     ).toEqual([
@@ -267,24 +296,125 @@ describe("TitleBar on macOS", () => {
     );
   });
 
+  it("gives every macOS traffic light a hit target at or above the WCAG 2.2 minimum", async () => {
+    platformState.value = "macos";
+    await renderBar();
+
+    for (const label of ["Close", "Minimize", "Maximize"]) {
+      const button = buttonByLabel(label);
+      expect(button, `${label} should render`).not.toBeNull();
+      // jsdom reports 0 for unlaid-out boxes, so assert against the computed
+      // inline sizing MUI applies rather than a layout-derived measurement.
+      expect(
+        pxOf(button!, "width"),
+        `${label} hit target must be >= ${MIN_TARGET_SIZE}px`,
+      ).toBeGreaterThanOrEqual(MIN_TARGET_SIZE);
+      expect(pxOf(button!, "height")).toBeGreaterThanOrEqual(MIN_TARGET_SIZE);
+    }
+  });
+
+  it("keeps the painted dot smaller than the hit target on macOS", async () => {
+    platformState.value = "macos";
+    await renderBar();
+
+    const dot = document.querySelector(".traffic-dot");
+    if (!(dot instanceof HTMLElement)) {
+      throw new Error("the macOS traffic-light dot did not render");
+    }
+    // The 12px dot is the native proportion and stays; only the hit area grew.
+    expect(pxOf(dot, "width")).toBe(TRAFFIC_DOT_SIZE);
+    expect(pxOf(dot, "height")).toBe(TRAFFIC_DOT_SIZE);
+    expect(TRAFFIC_HIT_SIZE).toBeGreaterThan(TRAFFIC_DOT_SIZE);
+  });
+
   it("wires traffic buttons to window actions", async () => {
     await renderBar();
 
     await act(() => {
-      buttonByLabel("Close")!.click();
+      requireByLabel("Close").click();
     });
     expect(windowMocks.close).toHaveBeenCalledTimes(1);
 
     await act(() => {
-      buttonByLabel("Minimize")!.click();
+      requireByLabel("Minimize").click();
     });
     expect(windowMocks.minimize).toHaveBeenCalledTimes(1);
 
     await act(() => {
-      buttonByLabel("Maximize")!.click();
+      requireByLabel("Maximize").click();
     });
     expect(windowMocks.maximize).toHaveBeenCalledTimes(1);
   });
+});
+
+it("narrows the caption buttons and hides the wordmark on a narrow window", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 400, height: 600 });
+  await renderBar();
+
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+  // The wordmark is the first thing to go on a narrow bar.
+  expect(getComputedStyle(wordmark!).display).toBe("none");
+});
+
+it("keeps the roomy bar on a wide window", async () => {
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  await renderBar();
+
+  const wordmark = [...document.querySelectorAll("span")].find(
+    (node) => node.textContent === "mausVoice",
+  );
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+  expect(getComputedStyle(wordmark!).display).not.toBe("none");
+});
+
+it("re-evaluates density when the window is resized", async () => {
+  // Every other density test sets the size before mount, so only the initial
+  // read is covered. The resize path is the one that runs in real use.
+  let fireResize: (() => void) | undefined;
+  // Tauri's `onResized` hands the callback to the runtime, but its published
+  // type takes no arguments, so the captured handler needs a cast here.
+  windowMocks.onResized.mockImplementation(((
+    handler: () => void,
+  ): Promise<() => void> => {
+    fireResize = handler;
+    return Promise.resolve(() => undefined);
+  }) as never);
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  await renderBar();
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
+
+  windowMocks.outerSize.mockResolvedValue({ width: 820, height: 700 });
+  await act(async () => {
+    fireResize?.();
+  });
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+});
+
+it("compares against logical pixels, so a scaled display still compacts", async () => {
+  // A 200% display reports twice the physical width for the same window. The
+  // threshold is in CSS pixels, so a narrow window must still compact.
+  windowMocks.scaleFactor.mockResolvedValue(2);
+  windowMocks.outerSize.mockResolvedValue({ width: 1640, height: 1200 });
+  await renderBar();
+
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+});
+
+it("keeps the roomy bar when the window size is not known yet", async () => {
+  // Browser preview has no window to measure. It must not flash compact.
+  platformState.native = false;
+  await renderBar();
+
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(CAPTION_BUTTON_WIDTH);
 });
 
 it.each([
@@ -301,7 +431,7 @@ it.each([
     const error = new Error("window command failed");
     windowMocks[command].mockRejectedValueOnce(error);
     await renderBar();
-    await act(() => buttonByLabel(label)!.click());
+    await act(() => requireByLabel(label).click());
     expect(showError).toHaveBeenCalledWith(error);
   },
 );
