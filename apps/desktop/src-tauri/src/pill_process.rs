@@ -374,6 +374,16 @@ pub(crate) enum PillEvent {
 /// cannot grow this without bound.
 const MAX_REPORTED_PILL_PARSE_ERRORS: usize = 64;
 
+/// Separate budget for the unknown-review-action diagnostic, and the reason it
+/// is not the parse budget above.
+///
+/// Sharing one set made the two failure modes able to silence each other: a pill
+/// that emitted 64 distinct parse failures filled the set, and from then on every
+/// unknown review action — the drift this diagnostic exists to surface — was
+/// dropped silently. The reverse held too. Each keeps its own budget so neither
+/// can spend the other's.
+const MAX_REPORTED_PILL_REVIEW_ACTIONS: usize = 64;
+
 thread_local! {
     /// Distinct parser errors already reported on this thread.
     ///
@@ -384,6 +394,13 @@ thread_local! {
     /// again rather than staying silent for the rest of the app's life because
     /// an earlier pill process happened to send the same text.
     static REPORTED_PILL_PARSE_ERRORS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// Deliberately not the set above. A parse-failure flood and an
+    /// action-vocabulary drift are different failures with different fixes, and
+    /// sharing one budget let whichever happened first blind the other. See
+    /// `MAX_REPORTED_PILL_REVIEW_ACTIONS`.
+    static REPORTED_PILL_REVIEW_ACTIONS: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
@@ -460,10 +477,10 @@ fn report_unparseable_pill_line(error: &serde_json::Error) {
 /// occurrence of each distinct drift is still reported. Returns whether it was
 /// new, so the dedupe is testable without installing a logger.
 fn note_unreported_pill_review_decision(action: &str) -> bool {
-    REPORTED_PILL_PARSE_ERRORS.with(|seen| {
+    REPORTED_PILL_REVIEW_ACTIONS.with(|seen| {
         let mut seen = seen.borrow_mut();
-        let key = format!("review action: {action}");
-        if seen.contains(&key) || seen.len() >= MAX_REPORTED_PILL_PARSE_ERRORS {
+        let key = action.to_string();
+        if seen.contains(&key) || seen.len() >= MAX_REPORTED_PILL_REVIEW_ACTIONS {
             return false;
         }
         seen.insert(key);
@@ -1152,6 +1169,73 @@ mod pill_line_log_tests {
         assert!(
             parse_review_decision_value(&parsed).is_none(),
             "an unknown action must stay unparseable no matter how often it repeats"
+        );
+    }
+
+    // The two throttles shared one set and one 64-entry budget, so either
+    // failure mode could spend the other's: a pill emitting 64 distinct parse
+    // failures left every unknown review action unreported, which is the exact
+    // drift the review diagnostic exists to surface, and the reverse held too.
+    //
+    // Two tests rather than one, because the budgets are per-thread and a single
+    // test cannot both exhaust the parse budget and then expect a parse error to
+    // still get through. That was the mistake in the first version: it asserted
+    // the second direction after filling the first budget, so it failed at
+    // baseline for a reason that had nothing to do with the defect.
+    //
+    // The dedupe keys on `serde_json::Error::to_string()`, which carries a column
+    // and not the input, so probes of one shape collapse to a single key. Varying
+    // the LENGTH of the input varies the reported column, which is what makes
+    // these distinct.
+    #[test]
+    fn a_parse_failure_flood_does_not_silence_the_unknown_action_diagnostic() {
+        for index in 0..super::MAX_REPORTED_PILL_PARSE_ERRORS {
+            let error = serde_json::from_str::<serde_json::Value>(&format!(
+                "{{\"{}\": ",
+                "x".repeat(index)
+            ))
+            .expect_err("probe is not valid JSON");
+            assert!(
+                note_unreported_pill_parse_error(&error),
+                "parse probe {index} should have been reported ({error})"
+            );
+        }
+        // The budget is real: one more distinct parse error stays quiet. Without
+        // this the test could pass with no cap in place at all.
+        let overflow = serde_json::from_str::<serde_json::Value>("{\"one-over-the-top\": ")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            !note_unreported_pill_parse_error(&overflow),
+            "the parse budget must actually be exhausted"
+        );
+
+        // And the review diagnostic, on its own budget, is unaffected.
+        assert!(
+            note_unreported_pill_review_decision("flood-probe-review"),
+            "a parse-failure flood must not silence the unknown-action diagnostic"
+        );
+    }
+
+    #[test]
+    fn an_action_vocabulary_flood_does_not_silence_the_parse_diagnostic() {
+        for index in 0..super::MAX_REPORTED_PILL_REVIEW_ACTIONS {
+            assert!(
+                note_unreported_pill_review_decision(&format!("flood-probe-review-{index}")),
+                "review probe {index} should have been reported"
+            );
+        }
+        assert!(
+            !note_unreported_pill_review_decision("flood-probe-review-overflow"),
+            "the review budget must actually be exhausted"
+        );
+
+        // The other direction: the parse diagnostic, on its own budget, still
+        // reports a failure it has never seen.
+        let survivor = serde_json::from_str::<serde_json::Value>("{\"still-reported\": ")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&survivor),
+            "an action-vocabulary flood must not silence the parse diagnostic"
         );
     }
 
