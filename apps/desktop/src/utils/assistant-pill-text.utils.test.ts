@@ -255,21 +255,25 @@ describe("unsafe HTML is neutralized", () => {
     const raw = (cjk.repeat(599) + party + tail.repeat(80)).slice(0, 600);
     expect(loneSurrogateAt(raw)).toBe(599);
     // And it is exactly the shape serde_json refuses: an unpaired escape.
-    expect(JSON.stringify({ text: raw })).toMatch(/\ud[89ab][0-9a-f]{2}/i);
+    expect(JSON.stringify({ text: raw })).toMatch(/\\ud[89ab][0-9a-f]{2}/i);
   });
 
-    it("drops exactly one code unit, not a character", () => {
-      // The guard must remove only the unpaired lead. Dropping two units would
-      // silently swallow a real character on every input that triggers it, which
-      // is the failure a lone-surrogate check is supposed to make impossible --
-      // and an earlier version of this test did not notice, because its inputs
-      // never ended in a lead surrogate with a real character in front of it.
-      const prefix = cjk.repeat(598);
-      const input = `${prefix}${party}${tail.repeat(80)}`;
-      const out = markdownToPillText(input, { maxLength: 600 });
-      expect(loneSurrogateAt(out)).toBe(-1);
-      // 598 CJK + the emoji's 2 units fills 600; the lead is dropped, so exactly
-      // one real character is lost and not two.
-      expect(out).toBe(`${prefix}\u2026`);
-    });
+  it("drops exactly one code unit, not a character", () => {
+    // The guard must remove only the unpaired lead. Dropping two units would
+    // silently swallow a real character on every input that triggers it, which
+    // is the failure a lone-surrogate check is supposed to make impossible --
+    // and an earlier version of this test did not notice, because its inputs
+    // never ended in a lead surrogate with a real character in front of it.
+    // 599 CJK puts the emoji's LEAD unit on the 600th code unit, which is what
+    // makes the guard fire at all: with 598 the slice ends on the low surrogate,
+    // the string is already well-formed, and the guard correctly does nothing --
+    // so an over-eager one that fired there would go unnoticed by this test.
+    const prefix = cjk.repeat(599);
+    const input = `${prefix}${party}${tail.repeat(80)}`;
+    const out = markdownToPillText(input, { maxLength: 600 });
+    expect(loneSurrogateAt(out)).toBe(-1);
+    // Exactly the unpaired lead goes: 599 CJK then the ellipsis. Dropping two
+    // units would swallow the 599th character as well, and this asserts that.
+    expect(out).toBe(`${prefix}\u2026`);
+  });
 });
