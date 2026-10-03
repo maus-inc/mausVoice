@@ -100,6 +100,9 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
       maxChunkDurationMs: 100,
       maxBufferedSamples: outputSampleRate * STARTUP_BUFFER_SECONDS,
       canSend: () => this.session !== null && this.streamReady,
+      // Once finalizing there is no later flush, so audio that fails to send
+      // has nowhere to go and must not be re-queued.
+      isFinalizing: () => this.finalized,
       sendChunk: (chunk) => {
         if (chunk.length > 0) {
           this.session?.sendAudio(convertFloat32ToPCM16(chunk));
@@ -232,7 +235,7 @@ export class GladiaTranscriptionSession implements TranscriptionSession {
         );
       }
     }
-    this.pump?.flushPendingSamples(true);
+    this.pump?.flushPendingSamples(true, true);
 
     try {
       return await finalizeStreamingSession({

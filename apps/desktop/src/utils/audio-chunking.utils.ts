@@ -3,7 +3,7 @@ import { drainSamples as drainSamplesFromQueue } from "../sessions/audio-buffer.
 export type AudioChunkPump = {
   pushSamples: (samples: Float32Array) => void;
   resetBuffers: () => void;
-  flushPendingSamples: (force?: boolean) => void;
+  flushPendingSamples: (force?: boolean, final?: boolean) => void;
 };
 
 export type AudioChunkPumpCallbacks = {
@@ -19,6 +19,12 @@ export type AudioChunkPumpCallbacks = {
   sendChunk: (chunk: Float32Array, isLastChunk: boolean) => void;
   onError: (error: unknown) => void;
   maxBufferedSamples?: number;
+  /**
+   * True once the session is finalizing. The final forced flush has no later
+   * flush behind it, so audio it fails to send cannot be carried by a
+   * subsequent one -- see the restore in `flushPendingSamples`.
+   */
+  isFinalizing?: () => boolean;
 };
 
 /**
@@ -51,6 +57,7 @@ export const createAudioChunkPump = ({
   sendChunk,
   onError,
   maxBufferedSamples,
+  isFinalizing,
 }: AudioChunkPumpCallbacks): AudioChunkPump => {
   const minSamplesPerChunk = Math.max(
     1,
@@ -103,7 +110,7 @@ export const createAudioChunkPump = ({
     return chunk;
   };
 
-  const flushPendingSamples = (force = false) => {
+  const flushPendingSamples = (force = false, final = false) => {
     if (!canSend()) {
       return;
     }
@@ -128,12 +135,22 @@ export const createAudioChunkPump = ({
       } catch (error) {
         // The samples left the queue before they went on the wire, so a failed
         // send is a silent drop: the socket can recover, and the audio in hand
-        // is the only copy there is. Restoring them in front of the queue is
-        // what lets the next flush carry them instead of silence. They go back
-        // unpadded, because the padding is a send-time artefact and putting it
-        // back would inflate the buffered count a little more on every retry.
-        pendingChunks.unshift(drained);
-        pendingSampleCount += drained.length;
+        // is the only copy there is.
+        //
+        // Restoring them in front of the queue is what lets a later flush carry
+        // that audio instead of silence. The exception is the finalizing
+        // flush: there is no later one, because the buffer is reset once the
+        // session is done. Samples parked there would never reach the provider
+        // and would leave the tracked count claiming audio that is already
+        // gone, so that loss is reported through onError instead.
+        //
+        // They go back unpadded either way: the padding is a send-time
+        // artefact, and putting it back would inflate the buffered count a
+        // little more on every retry.
+        if (!(final || isFinalizing?.())) {
+          pendingChunks.unshift(drained);
+          pendingSampleCount += drained.length;
+        }
         onError(error);
         break;
       }
