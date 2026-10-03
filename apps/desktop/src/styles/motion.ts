@@ -104,7 +104,16 @@ let noHoverMediaQuery: MediaQueryList | null = null;
 const canMatchMedia = (): boolean =>
   typeof globalThis.matchMedia === "function";
 
-const readNoHover = (): boolean => {
+/**
+ * Build the shared `MediaQueryList` and wire its one `change` listener.
+ *
+ * Called from {@link subscribeNoHover} rather than from the snapshot reader,
+ * because React requires `getSnapshot` to be free of side effects: a
+ * concurrent render can be started and thrown away without ever committing,
+ * and an abandoned render must not leave a listener attached. Subscribing runs
+ * in the effect phase, which is the phase that is allowed to do work.
+ */
+const ensureNoHoverMediaQuery = (): MediaQueryList | null => {
   if (!noHoverMediaQuery && canMatchMedia()) {
     noHoverMediaQuery = globalThis.matchMedia(noHoverQuery);
     // Only the modern registration is used. `addListener` is deprecated and
@@ -116,12 +125,17 @@ const readNoHover = (): boolean => {
       });
     }
   }
-  return noHoverMediaQuery?.matches ?? false;
+  return noHoverMediaQuery;
 };
 
+/** Pure read of the current match state. Never builds anything. */
+const readNoHover = (): boolean => noHoverMediaQuery?.matches ?? false;
+
 const subscribeNoHover = (listener: (matches: boolean) => void) => {
+  // Subscribing is what creates the query, so a caller that only ever renders
+  // without committing never leaves a listener behind.
+  ensureNoHoverMediaQuery();
   noHoverListeners.add(listener);
-  readNoHover();
   return () => {
     noHoverListeners.delete(listener);
   };

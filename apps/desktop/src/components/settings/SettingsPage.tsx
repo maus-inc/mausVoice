@@ -232,9 +232,21 @@ export default function SettingsPage() {
     setActiveSection(section);
   }, []);
 
-  // Track which section the reader is in. Measured against the viewport rather
-  // than a scroll container, because the dashboard scrolls the window itself,
-  // and sampled through rAF so a fast scroll does not run layout per event.
+  // Track which section the reader is in.
+  //
+  // The scrolling element is the dashboard's `Outlet` Box (`overflow: "auto"`),
+  // NOT the window: `DashboardPage` sets `overflow: "hidden"` on the stack that
+  // fills the viewport, so the window itself never scrolls. A `scroll` event
+  // fired on an element does not bubble, so a listener on `window` in the
+  // bubble phase would never run for settings scrolling at all — which is why
+  // this registers on `window` with the capture flag instead, the same reason
+  // `ContextMenu.tsx` passes `true`. Capture sees the event on its way down to
+  // the scrolling Box regardless of which element scrolls.
+  //
+  // Positions are measured against the viewport (`getBoundingClientRect().top`
+  // with an offset of 0), so the measurement stays correct whichever element
+  // is doing the scrolling. Sampling through rAF keeps a fast scroll from
+  // running layout per event.
   useEffect(() => {
     if (query.trim()) return;
     let frame = 0;
@@ -255,11 +267,16 @@ export default function SettingsPage() {
       if (frame === 0) frame = requestAnimationFrame(measure);
     };
     measure();
-    window.addEventListener("scroll", onScroll, { passive: true });
+    // `capture: true` is load-bearing here, not a default: it is what makes a
+    // scroll inside the dashboard's Box reach this listener at all.
+    window.addEventListener("scroll", onScroll, {
+      passive: true,
+      capture: true,
+    });
     window.addEventListener("resize", onScroll);
     return () => {
       if (frame !== 0) cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll, { capture: true });
       window.removeEventListener("resize", onScroll);
     };
   }, [query]);
@@ -1804,15 +1821,21 @@ export default function SettingsPage() {
               active={activeSection}
               onSelect={jumpToSection}
             />
+            {/* Anchors come from the same helper the rail scrolls with, so a
+                section id cannot exist here under one spelling and be looked
+                up under another. The order is the registry's, which is what
+                keeps the rail and the page reading the same way down. */}
             <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
-              <Box id="section-general">{general}</Box>
-              <Box id="section-dictation">{dictation}</Box>
-              <Box id="section-ai-processing">{processing}</Box>
-              <Box id="section-pill-appearance">{pillAppearance}</Box>
-              <Box id="section-shortcuts">{shortcuts}</Box>
-              <Box id="section-privacy-data">{privacyData}</Box>
-              <Box id="section-updates">{updates}</Box>
-              <Box id="section-advanced">{advanced}</Box>
+              <Box id={sectionAnchorId("general")}>{general}</Box>
+              <Box id={sectionAnchorId("dictation")}>{dictation}</Box>
+              <Box id={sectionAnchorId("ai-processing")}>{processing}</Box>
+              <Box id={sectionAnchorId("pill-appearance")}>
+                {pillAppearance}
+              </Box>
+              <Box id={sectionAnchorId("shortcuts")}>{shortcuts}</Box>
+              <Box id={sectionAnchorId("privacy-data")}>{privacyData}</Box>
+              <Box id={sectionAnchorId("updates")}>{updates}</Box>
+              <Box id={sectionAnchorId("advanced")}>{advanced}</Box>
             </Stack>
           </Stack>
         )}

@@ -26,29 +26,57 @@ import { WindowResizeHandles } from "./WindowResizeHandles";
  * theme toggle without crowding the button. */
 const CONTROL_ICON_SIZE = 16;
 
-const useMaximized = () => {
+/**
+ * One `onResized` subscription carrying both the maximized flag and the bar
+ * density.
+ *
+ * These used to be two hooks each registering `win.onResized`, so every tick of
+ * a resize drag issued three IPC calls for two pieces of state that change in
+ * the same event. Sharing the listener also means sharing the sequence guard,
+ * which is what keeps a slow earlier tick from overwriting a newer reading --
+ * the responses to a burst of resize events are unordered, so "last write wins"
+ * is not the same as "newest measurement wins".
+ *
+ * Returns the maximized flag and whether the bar should render compact.
+ */
+const useWindowMetrics = () => {
   const [maximized, setMaximized] = useState(false);
+  const [compact, setCompact] = useState(false);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
     let canceled = false;
     const win = getCurrentWindow();
+    // Monotonic ticket per measurement. A response is applied only if no newer
+    // measurement has started since, so a late reply for an older size is
+    // dropped rather than reverting the bar to a density the window has left.
+    let ticket = 0;
+
+    const read = async () => {
+      const current = ++ticket;
+      const settled = () => !canceled && current === ticket;
+      try {
+        const [size, maximizedNow, scale] = await Promise.all([
+          win.outerSize(),
+          win.isMaximized(),
+          win.scaleFactor(),
+        ]);
+        if (!settled()) return;
+        // `outerSize()` reports physical device pixels, but every length in the
+        // bar is a logical CSS pixel. Comparing the two directly would make the
+        // threshold fire late on a scaled display: at 200% scaling a 1000px
+        // window measures 2000, so a 900px threshold would never trigger.
+        setCompact(isCompactWidth(size.width / (scale || 1)));
+        setMaximized(maximizedNow);
+      } catch {
+        /* the window went away mid-measurement; the next tick re-reads */
+      }
+    };
+    void read();
+
     win
-      .isMaximized()
-      .then((value) => {
-        if (!canceled) setMaximized(value);
-      })
-      .catch(() => undefined);
-    win
-      .onResized(async () => {
-        try {
-          const value = await win.isMaximized();
-          if (!canceled) setMaximized(value);
-        } catch {
-          /* ignore */
-        }
-      })
+      .onResized(read)
       .then((fn) => {
         // `onResized` resolves asynchronously. If the effect cleaned up before
         // it resolved (e.g. React StrictMode double-invoke, or fast navigation),
@@ -61,60 +89,6 @@ const useMaximized = () => {
         }
       })
       .catch(() => undefined);
-    return () => {
-      canceled = true;
-      unlisten?.();
-    };
-  }, []);
-
-  return [maximized, setMaximized] as const;
-};
-
-/**
- * Whether the bar should render in its compact form.
- *
- * Storing the decision rather than the raw width means a resize drag re-renders
- * the bar only when the density actually changes, not on every tick. An unknown
- * window size reads as not compact, so browser preview keeps the roomy bar.
- */
-const useWindowWidthDensity = (): boolean => {
-  const [compact, setCompact] = useState(false);
-
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    let canceled = false;
-    const win = getCurrentWindow();
-
-    // `outerSize()` reports physical device pixels, but every length in the
-    // bar is a logical CSS pixel. Comparing the two directly would make the
-    // threshold fire late on a scaled display: at 200% scaling a 1000px window
-    // measures 2000, so a 900px threshold would never trigger.
-    // `onResized` fires on every tick of a resize drag. Each tick used to
-    // change the stored width, so the bar re-rendered for the whole drag even
-    // though only the density matters. Storing the density instead means the
-    // component re-renders only when it actually flips.
-    const read = () =>
-      Promise.all([win.outerSize(), win.scaleFactor()])
-        .then(([size, scale]) => {
-          if (!canceled) setCompact(isCompactWidth(size.width / (scale || 1)));
-        })
-        .catch(() => undefined);
-    void read();
-
-    win
-      .onResized(read)
-      .then((fn) => {
-        // `onResized` resolves asynchronously. If the effect cleaned up before
-        // it resolved (StrictMode double-invoke, or fast navigation), release
-        // the listener immediately instead of storing a value nothing reads.
-        if (canceled) {
-          fn();
-        } else {
-          unlisten = fn;
-        }
-      })
-      .catch(() => undefined);
 
     return () => {
       canceled = true;
@@ -122,7 +96,15 @@ const useWindowWidthDensity = (): boolean => {
     };
   }, []);
 
-  return compact;
+  // Storing the decision rather than the raw width means a resize drag
+  // re-renders the bar only when the density actually changes, not on every
+  // tick. An unknown window size reads as not compact, so browser preview keeps
+  // the roomy default it has always shown.
+  //
+  // The setter is handed back so a caption-button click can update the flag
+  // optimistically, without the bar waiting for the next resize event to
+  // confirm what the window just did.
+  return [maximized, setMaximized, compact] as const;
 };
 
 const useWindowFocused = () => {
@@ -483,13 +465,12 @@ export const TitleBar = () => {
   // Same predicate the resize grips use, so the chrome and the grips can never
   // disagree. Browser preview ("unknown") gets right-side caption buttons.
   const trafficLights = !hasRightCaptionButtons(platform);
-  const [maximized, setMaximized] = useMaximized();
+  // Maximized flag and bar density come from one subscription: they change in
+  // the same event, so reading them separately issued duplicated IPC on every
+  // tick of a resize drag.
+  const [maximized, setMaximized, compact] = useWindowMetrics();
   const focused = useWindowFocused();
   const { minimize, toggleMax, close } = useWindowControls(setMaximized);
-  // Density follows the measured window width. `null` renders the roomy bar, so
-  // the chrome never flashes narrow on first paint and browser preview keeps
-  // the roomy default it has always shown.
-  const compact = useWindowWidthDensity();
 
   const minimizeLabel = intl.formatMessage({ defaultMessage: "Minimize" });
   const maximizeLabel = maximized

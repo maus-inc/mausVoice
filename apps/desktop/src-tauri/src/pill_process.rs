@@ -443,6 +443,34 @@ fn report_unparseable_pill_line(error: &serde_json::Error) {
     }
 }
 
+/// Report the first occurrence of each distinct unknown review action, then
+/// stay quiet.
+///
+/// This is the same reasoning as [`note_unreported_pill_parse_error`], applied
+/// to the review-decision branch. The token arrives from the pill's JSON with
+/// nothing enforcing that it is an action rather than whatever a mapping slip
+/// left in that field, so the record carries a length and a hash of it; and
+/// every record is registered against the log directory, stdout and the webview
+/// at once. A pill whose action vocabulary has drifted repeats the same unknown
+/// token on every review click, so an unthrottled warn here produces one record
+/// per click for the whole session — the same unbounded growth the parse path
+/// is throttled against.
+///
+/// The key is the token as received, not the described form, so the first
+/// occurrence of each distinct drift is still reported. Returns whether it was
+/// new, so the dedupe is testable without installing a logger.
+fn note_unreported_pill_review_decision(action: &str) -> bool {
+    REPORTED_PILL_PARSE_ERRORS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        let key = format!("review action: {action}");
+        if seen.contains(&key) || seen.len() >= MAX_REPORTED_PILL_PARSE_ERRORS {
+            return false;
+        }
+        seen.insert(key);
+        true
+    })
+}
+
 pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -722,16 +750,24 @@ pub(crate) fn parse_review_decision_value(
         .and_then(|v| v.as_str())
         .filter(|id| !id.is_empty());
     let Some(review_id) = review_id else {
-        log::warn!("Ignoring pill review decision with no review id");
+        // Throttled for the same reason as the unknown action below: both are
+        // per-line records registered against the log directory, stdout and the
+        // webview at once, and a pill that drops the field does so on every
+        // review click.
+        if note_unreported_pill_review_decision("<no review id>") {
+            log::warn!("Ignoring pill review decision with no review id");
+        }
         return None;
     };
     let raw_action = value.get("action").and_then(|v| v.as_str());
     let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
         let raw = raw_action.unwrap_or("<missing>");
-        log::warn!(
-            "Ignoring pill review decision with an unknown action: {}",
-            describe_untrusted_token(raw)
-        );
+        if note_unreported_pill_review_decision(raw) {
+            log::warn!(
+                "Ignoring pill review decision with an unknown action: {}",
+                describe_untrusted_token(raw)
+            );
+        }
         return None;
     };
     let text = value
@@ -937,6 +973,7 @@ mod pill_line_log_tests {
     // so there would let one test hide a duplicate it is meant to observe.
     use super::describe_untrusted_token;
     use super::note_unreported_pill_parse_error;
+    use super::note_unreported_pill_review_decision;
     use super::parse_pill_event;
     use super::parse_review_decision_value;
     use std::cell::RefCell;
@@ -1074,6 +1111,47 @@ mod pill_line_log_tests {
         assert!(
             note_unreported_pill_parse_error(&other),
             "a distinct parse error must still be reported after another has been deduped"
+        );
+    }
+
+    // The unknown-action diagnostic carries a length and a hash of a token that
+    // could be user dictation text, and every record lands in the log directory,
+    // stdout and the webview at once. The parse-failure path above throttles for
+    // exactly that reason; this branch did not, so a pill whose action vocabulary
+    // drifts emitted one record per review click for the whole session.
+    #[test]
+    fn a_repeated_unknown_action_is_reported_once_and_its_repeats_stay_quiet() {
+        // A token unique to this test, so an earlier assertion on the shared
+        // per-thread set cannot make this pass vacuously. It has to survive a
+        // JSON round trip, since it is interpolated into the probe line.
+        let token = "dedupe-probe-review-7c1e-drifted";
+        let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{token}"}}"#);
+
+        assert!(
+            note_unreported_pill_review_decision(token),
+            "the first unknown action must be reported"
+        );
+        for _ in 0..500 {
+            assert!(
+                !note_unreported_pill_review_decision(token),
+                "a repeated unknown action must not be reported again"
+            );
+        }
+
+        // And the dedupe is per distinct token, not a blanket mute: a second
+        // failing build with a different vocabulary still gets through.
+        assert!(
+            note_unreported_pill_review_decision("dedupe-probe-review-other"),
+            "a distinct unknown action must still be reported after another has been deduped"
+        );
+
+        // The decision is still dropped either way; throttling the log must not
+        // turn an unreadable action into an accepted one.
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&line).expect("probe parses as JSON");
+        assert!(
+            parse_review_decision_value(&parsed).is_none(),
+            "an unknown action must stay unparseable no matter how often it repeats"
         );
     }
 

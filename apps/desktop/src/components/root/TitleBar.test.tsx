@@ -397,6 +397,70 @@ it("re-evaluates density when the window is resized", async () => {
   );
 });
 
+it("keeps the newest density when resize ticks resolve out of order", async () => {
+  // A resize drag fires `onResized` on every tick, and each tick awaits an IPC
+  // round trip. Those responses are unordered, so a slow earlier tick can land
+  // after a newer one. Without a sequence guard the stale width wins and the
+  // bar keeps a density that no longer matches the window.
+  let fireResize: (() => void) | undefined;
+  windowMocks.onResized.mockImplementation(((
+    handler: () => void,
+  ): Promise<() => void> => {
+    fireResize = handler;
+    return Promise.resolve(() => undefined);
+  }) as never);
+
+  // Two ticks in flight: the first (wide) resolves last, the second (narrow)
+  // resolves first. Only the second reflects the window's final size.
+  let resolveWide!: (size: { width: number; height: number }) => void;
+  let resolveNarrow!: (size: { width: number; height: number }) => void;
+  windowMocks.outerSize
+    .mockReturnValueOnce(
+      new Promise((done) => {
+        resolveWide = done;
+      }),
+    )
+    .mockReturnValueOnce(
+      new Promise((done) => {
+        resolveNarrow = done;
+      }),
+    )
+    .mockResolvedValue({ width: 820, height: 700 });
+  await renderBar();
+
+  await act(async () => {
+    fireResize?.();
+    fireResize?.();
+  });
+
+  // The newer tick lands first and compacts the bar.
+  await act(async () => {
+    resolveNarrow({ width: 820, height: 700 });
+  });
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+
+  // The older, wider tick now lands late. It must be discarded rather than
+  // widening the bar back to a size the window is no longer at.
+  await act(async () => {
+    resolveWide({ width: 1280, height: 800 });
+  });
+  expect(pxOf(requireByLabel("Close"), "width")).toBe(
+    COMPACT_CAPTION_BUTTON_WIDTH,
+  );
+});
+
+it("registers a single onResized listener", async () => {
+  // Two independent `onResized` subscriptions meant every tick of a resize
+  // drag issued duplicated IPC. `useMaximized` and the density hook now share
+  // one subscription.
+  windowMocks.outerSize.mockResolvedValue({ width: 1280, height: 800 });
+  await renderBar();
+
+  expect(windowMocks.onResized).toHaveBeenCalledTimes(1);
+});
+
 it("compares against logical pixels, so a scaled display still compacts", async () => {
   // A 200% display reports twice the physical width for the same window. The
   // threshold is in CSS pixels, so a narrow window must still compact.
