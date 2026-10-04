@@ -19,7 +19,13 @@ export function format(messages) {
   const sorted = sortEntries(nextEntries);
 
   return sorted.reduce((acc, [id, descriptor]) => {
-    acc[id] = descriptor.defaultMessage ?? "";
+    const message = descriptor.defaultMessage ?? "";
+    if (Object.hasOwn(acc, id) && acc[id] !== message) {
+      throw new Error(
+        `Message ID collision for "${id}". Use distinct message text.`,
+      );
+    }
+    acc[id] = message;
     return acc;
   }, {});
 }
