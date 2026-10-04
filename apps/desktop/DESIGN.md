@@ -61,11 +61,13 @@ The two schemes have their own temperature rather than being inversions of each 
 
 ## Window planes
 
-The window is two planes meeting at one seam. The **chrome plane** is the title bar plus the navigation rail: one continuous L-shaped surface, tinted one step above the canvas with a top-lit wash so light reads as falling from the top of the window. The **content plane** is the routed page, recessed beside it.
+The window is two planes meeting at one seam. The **chrome plane** is the title bar plus the navigation rail, tinted one step above the canvas with a top-lit wash so light reads as falling from the top of the window. The **content plane** is the routed page, recessed beside it.
 
 - Chrome and content are separated by a change of material, not by a shadow thrown from one onto the other. `chromeWash` in `palette.ts` is the single token for the chrome plane, so the bar and the rail cannot be retuned into a visible step where they meet.
+- The bar and the rail share a material but are **not contiguous**. The page header sits between them, so roughly 60px of canvas separates the bar's bottom edge from the rail's top. Do not describe them as one L-shaped surface; they read as two pieces of the same material with a gap, and closing that gap is a layout change, not a token change.
 - The title bar does **not** cast downward. `titleBarShadow` is a single inset bottom rim and nothing else. A shadow thrown straight down out of the bar reads as the bar hovering over the page, which is the opposite of how the window sits.
 - `raisedEdge` casts the rail onto the page beside it. `recessedEdge` pushes the content away from the rail in the opposite direction, so the two have a direction to separate in. Both are skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
+- In dark, these two shadows do almost nothing. A near-black canvas swallows a black cast, so the plane separation rests entirely on the hairline borders and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
 - Rounded corners belong on the edge that faces open canvas only. The rail is flush and square against the window's left edge and rounded on its right; the content card is rounded on its left and square against the right and bottom. Rounding a corner that touches the window frame leaves a notch.
 - Corner radius 16 for the two planes, against 14 for cards inside the content plane. The planes are larger, so they carry a slightly larger radius.
 

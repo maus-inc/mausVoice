@@ -2,6 +2,7 @@ import { toLocalUser } from "../repos/user.repo";
 import { toLocalPreferences } from "../repos/preferences.repo";
 import { getAppState, setAppState } from "../store";
 import { LOCAL_USER_ID } from "../utils/user.utils";
+import { PreviewOperationError } from "./PreviewOperationError";
 import {
   createPreviewScenario,
   isPreviewScenarioId,
@@ -14,18 +15,12 @@ import {
  * Error returned when a page asks the browser preview to perform a privileged
  * desktop operation. Keeping this explicit is safer than implying that audio,
  * accessibility, files, or external programs were touched.
+ *
+ * Defined in its own module so the low-level Tauri stubs can raise it without
+ * importing this file, and re-exported here so there is still one import path
+ * and `instanceof` keeps working for app code and the runtime's own tests.
  */
-export class PreviewOperationError extends Error {
-  readonly command: string;
-
-  constructor(command: string) {
-    super(
-      `“${command}” is unavailable in the browser preview. It requires the native mausVoice desktop app.`,
-    );
-    this.name = "PreviewOperationError";
-    this.command = command;
-  }
-}
+export { PreviewOperationError };
 
 /**
  * System commands the preview accepts and answers with `undefined`.
