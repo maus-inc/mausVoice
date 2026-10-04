@@ -5,7 +5,7 @@
 //
 // Runs in two phases:
 //   1. Offline (always): asserts the configured [[rules]] regex would match a
-//      Base64-only preamble and a full hardcoded minisign key. This validates
+//      A real key file and a base64-wrapped one. This validates
 //      the gitleaks.toml wiring without any network or binary.
 //   2. Live (if `gitleaks` is on PATH): builds a throwaway git repo with an
 //      add-then-delete key, runs `gitleaks detect` over its history, and
@@ -22,7 +22,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  PREAMBLE,
   rulesSection,
   stripTomlComments,
   updaterRulePattern,
@@ -77,16 +76,18 @@ const wrappedKeyFixture = Buffer.from(realKeyFixture, "utf8").toString("base64")
 // `realKeyFixture` above proves the same property: the plaintext arm of the rule matches
 // it. A third copy added no coverage the first two did not already give.
 
-for (const [label, fixture] of [
+const MATCHES = [
   ["a real key file", realKeyFixture],
   ["a base64-wrapped key file", wrappedKeyFixture],
-]) {
+];
+for (const [label, fixture] of MATCHES) {
   if (!re.test(fixture))
     fail(`Rule regex does NOT match ${label}.`);
 }
-console.log(
-  "OK (offline): gitleaks.toml rule matches a real key file, a base64-wrapped key file, and a full hardcoded key.",
-);
+// Built from the list, not written out. The previous version was a literal naming three
+// fixtures, one of which this change deleted -- so the line reported on something the file
+// no longer carried. Anything derived from the thing it describes cannot say that.
+console.log(`OK (offline): gitleaks.toml rule matches ${MATCHES.map(([l]) => l).join(", ")}.`);
 
 // Add-then-delete simulation (offline): commit A adds the key, commit B deletes
 // it, so the final tree is clean. A tree-only scan (the old `--no-git`) would

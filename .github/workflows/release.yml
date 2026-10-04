@@ -413,10 +413,20 @@ jobs:
           # a failing pipeline makes the ASSIGNMENT fail, so the step aborted on the
           # assignment line and the `::error::` never printed: the operator got a bare exit 1
           # from "Sign macOS DMG for manual updater" with nothing pointing at the missing
-          # bundle directory. Measured, with the same three lines:
+          # bundle directory.
           #
-          #     directory missing            exit 1, guard NOT reached
-          #     directory present but empty  exit 3, guard reached
+          # Measured, this body against the one with `| head -n1` in place of
+          # `-print -quit`. Note that NO exit code changes -- every failing case is 1 either
+          # way, which is why the bug was invisible from the check alone. What changes is
+          # whether the diagnostic is printed:
+          #
+          #     case                       | head -n1        -print -quit
+          #     -------------------------- | --------------- | ----------------
+          #     directory missing          | 1, no ::error:: | 1, with ::error::
+          #     directory present, empty   | 1, with ::error:: | 1, with ::error::
+          #     directory with one .dmg    | 0, proceeds     | 0, proceeds
+          #
+          # The one row that moved is the row the guard exists for.
           DMG=$(find "$GITHUB_WORKSPACE/${{ matrix.bundle_dir }}" -name '*.dmg' -print -quit) || true
           if [ -z "$DMG" ]; then
             echo "::error::No macOS DMG found under ${{ matrix.bundle_dir }} to sign" >&2

@@ -482,35 +482,61 @@ pub(crate) fn debug_keys_enabled() -> bool {
 
 /// The whole lock graph of this file, in one place.
 ///
-/// Three stores are ever held together, and the shape is a shallow V into the stdin slot:
+/// Six mutexes, and one of them sits above all the others:
+///
+///     lifecycle_lock                     a ROOT -- see below
+///        │
+///        ├──> listener_app               its own block in `start_key_listener`
+///        ├──> listener_state             held across `start_external_listener`
+///        ├──> child_stdin_store          via `stop_listener_locked` -> `stop_listener_child`
+///        └──> child_store                ditto
 ///
 ///     combo_store   ─┐
 ///                    ├──> child_stdin_store        (a leaf: nothing is acquired while
 ///     child_store  ─┘                                    it is held)
-///     listener_state ──> child_store                 (never together with either of the above)
+///     listener_state  and  listener_app  never overlap: `start_key_listener` releases the
+///                                           app guard before taking the state guard.
 ///
-/// Two rules, and they are the whole of it:
+/// `lifecycle_lock` is a root because `with_lifecycle_lock` takes it before the closure
+/// runs and nothing anywhere acquires it while holding another mutex. That single fact is
+/// what makes the four edges above safe no matter what order the two lower ones acquire
+/// in, and it is why `listener_state -> child_store` is NOT an edge, which an earlier
+/// version of this comment claimed: `stop_listener_locked` takes the handle out in its own
+/// block and drops the guard before it calls `stop_listener_child`, and
+/// `run_listener_thread` -- which does reach `child_store` -- is a separate thread, which
+/// inherits no guards.
 ///
-///   1. Never acquire anything while holding `child_stdin_store`. It is the shared leaf,
-///      so anything that leads out of it can close a cycle with either edge above.
-///   2. Never hold `combo_store` and `child_store` together. They are siblings, so there is
-///      no order between them and any nesting of the two is an inversion waiting for a
-///      second thread.
+/// Three rules, and they are the whole of it:
 ///
-/// `stop_listener_child` satisfies both by SCOPING rather than ordering: it takes the stdin
-/// guard in its own block, drops it, and only then takes `child_store`. Sequential, not
-/// nested -- which is why it needs no place in the graph.
+///   1. Never acquire anything while holding `child_stdin_store`. It is the shared leaf
+///      that both lower edges point at, so anything leading out of it can close a cycle
+///      with either of them.
+///   2. Never hold `combo_store` and `child_store` together. They are siblings with no
+///      order between them, and neither is under `lifecycle_lock` -- `sync_combos` and
+///      `ensure_listener_child` are reached from a Tauri command and a spawned thread
+///      respectively -- so any nesting of the two is an inversion waiting for a second
+///      thread.
+///   3. Never acquire `lifecycle_lock` while holding any of the other five, or the root
+///      stops being a root and the first two rules stop being sufficient on their own.
+///
+/// `stop_listener_child` satisfies rule 1 by SCOPING rather than ordering: it takes the
+/// stdin guard in its own block, drops it, and only then takes `child_store`. Sequential,
+/// not nested -- which is why it needs no place in the graph.
 ///
 /// What is pinned and what is not, so this paragraph does not read as more than it is:
 ///
 ///   * `overlapping_writers_take_the_stores_in_one_order` drives `publish_child_stdin` and
 ///     fails if the `combo_store` edge is reversed. That pair is covered by a test.
-///   * The `child_store` edge, in the discard branch of `ensure_listener_child`, is NOT.
-///     Reaching it needs a real spawned child, which a unit test should not own, and the
-///     decision above it is already extracted and tested as a pure function. So that edge
-///     rests on this comment alone. Adding a nesting of `child_stdin_store` around a
-///     `child_store` acquisition would deadlock with nothing failing first -- which is the
-///     cost of the gap, stated so it is a known gap.
+///   * `overlapping_listener_transitions_are_serialized` covers that `lifecycle_lock`
+///     serialises. It does NOT cover rule 3: a thread that took `child_stdin_store` and
+///     then asked for `lifecycle_lock` would serialise perfectly well and still deadlock.
+///   * The `child_store` edge, in the discard branch of `ensure_listener_child`, is NOT
+///     covered. Reaching it needs a real spawned child, which a unit test should not own,
+///     and the decision above it is already extracted and tested as a pure function. So
+///     that edge rests on this comment alone -- as does rule 3. Nesting `child_stdin_store`
+///     around a `child_store` acquisition, or taking `lifecycle_lock` under any store,
+///     would deadlock with nothing failing first, which is the cost of those gaps, stated
+///     so they are known gaps.
 fn child_store() -> &'static Mutex<Option<Child>> {
     static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
     CHILD.get_or_init(|| Mutex::new(None))

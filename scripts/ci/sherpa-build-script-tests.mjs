@@ -564,8 +564,15 @@ function candidateCargoHomes() {
   return [...new Set(candidates.filter(Boolean))];
 }
 
-/** True when `home` holds at least one cached `.crate` file. */
-function hasCachedCrates(home) {
+/**
+ * True when `home` holds at least one cached `.crate` file.
+ *
+ * Exported so the empty case can be pinned. The bug the guard inside fixes only appears
+ * when `CARGO_HOME` is UNSET, which is the default -- and the function was module-private,
+ * so nothing in the suite could reach it. Removing the guard again would have left every
+ * test green, which is how it survived the first review round intact.
+ */
+export function hasCachedCrates(home) {
   // A falsy `home` must be false, never a probe of the relative path
   // `registry/cache`. `join("", "registry", "cache")` drops the empty first segment and
   // yields `registry/cache`, which `existsSync` resolves against `process.cwd()` -- the

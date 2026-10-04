@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -7,6 +15,7 @@ import {
   buildScriptBinaryName,
   cargoOutputExcerpt,
   findBuildScriptInvocation,
+  hasCachedCrates,
   parseEnvPrefix,
   replayedTestBinaryName,
   rewriteInvocation,
@@ -481,6 +490,40 @@ describe("the harness says what cargo printed when it cannot use the output", ()
     // An empty excerpt still has to be framed, or the reader cannot tell "cargo printed
     // nothing" from "the harness did not bother".
     assert.match(cargoOutputExcerpt(""), /--- last \d+ lines cargo printed ---/);
+  });
+});
+
+describe("hasCachedCrates", () => {
+  // The bug this pins: `join("", "registry", "cache")` yields the RELATIVE path
+  // `registry/cache`, which resolves against the process cwd -- the repo root under
+  // `node scripts/ci/...`. So a `registry/cache/<hash>/*.crate` tree anywhere under the
+  // checkout made the default `$HOME/.cargo` look warm, `candidateCargoHomes()` was skipped,
+  // and the offline probe failed with a message about the network. Measured, not argued.
+  it("reports nothing for an unset CARGO_HOME rather than checking a relative path", () => {
+    assert.equal(hasCachedCrates(""), false);
+    assert.equal(hasCachedCrates(undefined), false);
+    assert.equal(hasCachedCrates(null), false);
+  });
+
+  it("does not consult the cwd when CARGO_HOME is unset", () => {
+    // The positive control: with a relative registry tree present, an unset CARGO_HOME
+    // still reports cold. Run in a temp cwd so the answer cannot come from this repo.
+    const dir = mkdtempSync(join(tmpdir(), "warm-cargo-"));
+    const hash = join(dir, "registry", "cache", "deadbeef");
+    mkdirSync(hash, { recursive: true });
+    writeFileSync(join(hash, "bzip2-0.4.4.crate"), "");
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      assert.equal(hasCachedCrates(""), false);
+      assert.equal(hasCachedCrates(join(dir, "registry", "cache")), false);
+      // ...and the same directory IS warm when named absolutely, which is what the early
+      // return must not break.
+      assert.equal(hasCachedCrates(dir), true);
+    } finally {
+      process.chdir(cwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
