@@ -255,50 +255,81 @@ describe("release workflow shell contracts", () => {
     assert.ok(verdict, "secret-scan.yml needs the closing verdict step");
     const body = verdict.run.join("\n");
 
-    // 2. The verdict reads the trusted policy by NAME out of git's object store.
+    // 2. Every party to the gate resolves the trusted policy the SAME way.
     //
-    // Reading the trusted checkout's working tree is not enough, and this is the third
-    // time that has been tried. The verdict runs after the three steps that resolve
-    // `node scripts/ci/*.mjs` out of the scanned checkout -- the branch under review,
-    // running as the uid that owns `trusted-scanner/` -- so any of them can rewrite
-    // `../trusted-scanner/gitleaks.toml`. The argument that "no other step is
-    // involved" was true of the read and false of the file. `git cat-file blob
-    // <commit>:<path>` resolves the path through the base commit's tree and returns
-    // the blob those bytes name, which rewriting a working file cannot change.
-    assert.match(
-      body,
-      /git -C \.\.\/trusted-scanner cat-file blob "\$POLICY_REF:gitleaks\.toml"/,
-      "the closing verdict must read the trusted policy through git cat-file, by " +
-        "name: the working tree is writable by the pull-request-controlled steps " +
-        "that run before this one",
+    //    Three wrong answers so far, in order, and each was introduced by the fix for
+    //    the one before it:
+    //
+    //    (a) a file on disk that a later step could delete  -> an unscanned range went green
+    //    (b) the same file, in a directory the branch cannot name -> nothing changed, because
+    //        every step runs as the same uid
+    //    (c) `git cat-file` for the VERDICT only, while the scans still read the tree
+    //        -> worse than (a): the forgery suppressed findings in all three scans
+    //        while the verdict read the real capable blob and exited 0
+    //
+    //    So the property is not "the verdict is content-addressed". It is that the three
+    //    scans and the verdict all resolve the same bytes, by name, out of the base
+    //    commit's object store, into a file the step itself owns.
+    const resolver = "git -C ../trusted-scanner cat-file blob \"$POLICY_REF:gitleaks.toml\" > \"$POLICY_TMP\"";
+    assert.equal(
+      [...scan.matchAll(new RegExp(resolver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))]
+        .length,
+      4,
+      "the policy must be resolved by name out of the base commit in all three scans " +
+        "and in the verdict",
     );
     assert.doesNotMatch(
-      body,
+      scan,
       /TRUSTED_POLICY="\.\.\/trusted-scanner\/gitleaks\.toml"/,
-      "the verdict must not read the trusted policy off disk",
+      "no step may read the trusted policy off disk; the working tree is writable by " +
+        "the pull-request-controlled steps",
     );
-    assert.match(
-      body,
-      /if ! POLICY_BLOB="\$\(git -C/,
-      "an unreadable policy must fail the job, not be treated as an empty one",
+    // The baseline, by the same argument as the policy: a `.gitleaksignore` written
+    // into the checkout by a later step suppresses findings just as effectively, and
+    // the scan then reports the range clean. Asserted POSITIVELY -- a mutation that
+    // swapped the resolution for a `cp` off disk left the ban on the old assignment
+    // satisfied, because the assignment was never what made it readable.
+    assert.equal(
+      [...scan.matchAll(
+        /cat-file blob "\$POLICY_REF:\.gitleaksignore"/g,
+      )].length,
+      3,
+      "the baseline ignore file must be resolved by name from the base commit in all " +
+        "three scans, or a written .gitleaksignore suppresses findings undetected",
     );
+
+    // stderr must not be folded into the bytes the predicate parses
+    assert.equal(
+      [...scan.matchAll(/2> "\$POLICY_ERR"/g)].length,
+      4,
+      "git's stderr must be captured separately, not merged into the policy's bytes",
+    );
+
+    // and a rewrite of either side alone must be caught rather than absorbed
+    assert.equal(
+      [...scan.matchAll(/cmp -s "\$POLICY_TMP" \.\.\/trusted-scanner\/gitleaks\.toml/g)]
+        .length,
+      4,
+      "each resolver must compare the blob against the checkout and refuse on a difference",
+    );
+
     assert.match(
       body,
       /::error::Cannot read gitleaks\.toml at \$POLICY_REF/,
-      "the verdict must say the pull request is unscanned when it cannot read the " +
-        "policy",
+      "the verdict must say the pull request is unscanned when it cannot read the policy",
     );
     assert.match(
       body,
-      /printf '%s' "\$POLICY_BLOB" \| awk/,
-      "the predicate must run over the blob's bytes, not over a path",
+      /if \[ -s "\$POLICY_ERR" \]; then[\s\S]*?exit 1/,
+      "diagnostics on an otherwise successful read must fail the job, not be ignored: " +
+        "a warning folded into the parsed bytes is bytes the predicate did not ask about",
     );
     assert.match(
       body,
-      /useDefault/,
-      "the verdict must test for the extend declaration",
+      /END \{ exit !found \}' "\$TRUSTED_POLICY"/,
+      "the verdict must run its predicate over the resolved file, the same one the " +
+        "scans hand to gitleaks",
     );
-
     // 3. An inert policy is an ERROR at the verdict. An `::warning::` here would
     //    restore the blind green this job exists to prevent.
     assert.match(
@@ -428,10 +459,19 @@ describe("release workflow shell contracts", () => {
 
       // Case 1: trusted policy unreadable -> refuse. This is the part a contributor
       // can reach, and it must stay a refusal.
+      // Fail closed on a policy this step cannot resolve by name. It used to be a
+      // readability test on a path, which a later step could rewrite; the resolver is
+      // what replaced it, and both of its own failure paths have to exit non-zero.
       assert.match(
         run,
-        /if \[ ! -r "\$TRUSTED_POLICY" \]; then[\s\S]*?exit 1/,
-        `${step.name} must fail closed when the trusted policy is absent or unreadable`,
+        /if ! git -C \.\.\/trusted-scanner cat-file blob "\$POLICY_REF:gitleaks\.toml"[\s\S]*?exit 1/,
+        `${step.name} must fail closed when the trusted policy cannot be resolved by ` +
+          `name from the base commit`,
+      );
+      assert.match(
+        run,
+        /if \[ -s "\$POLICY_ERR" \]; then[\s\S]*?exit 1/,
+        `${step.name} must fail closed when resolving the policy emitted diagnostics`,
       );
 
       // Case 2: trusted policy readable -> always use it. Matched as two
