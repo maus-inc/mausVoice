@@ -643,16 +643,29 @@ const useTutorialToneSync = ({
     setChatToneRef.current = setChatTone;
   }, [setChatTone]);
 
+  // `setChatTone` rejects when the tone cannot be persisted: it awaits
+  // `setSelectedToneId`, which awaits `updateUser`, whose own catch rethrows after
+  // showing the snackbar. Nothing in between catches, so a failed tone write
+  // surfaces as a rejection on the promise this effect discards. The `userExists`
+  // guard does not help -- it gates this effect to `true`, which is the one case
+  // where `setChatTone` does not return early. The unmount cleanup earlier in this
+  // file already handles this for the same function; this effect did not, which is
+  // why a save failure during onboarding became an unhandled rejection rather than
+  // a logged one.
+  const reportToneFailure = (error: unknown): void => {
+    console.error("Failed to apply the tutorial writing style", error);
+  };
+
   useEffect(() => {
     if (!userExists) {
       return;
     }
     if (stepIndex === 0) {
       // Notes step
-      void setChatToneRef.current(POLISHED_TONE_ID);
+      void setChatToneRef.current(POLISHED_TONE_ID).catch(reportToneFailure);
     } else if (stepIndex === 1) {
       // Email step
-      void setChatToneRef.current(EMAIL_TONE_ID);
+      void setChatToneRef.current(EMAIL_TONE_ID).catch(reportToneFailure);
     }
   }, [stepIndex, userExists]);
 };
