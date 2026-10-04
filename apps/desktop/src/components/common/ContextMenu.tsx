@@ -131,11 +131,6 @@ const getContentEditableHost = (target: HTMLElement): HTMLElement | null => {
   return null;
 };
 
-/** Whether an event target belongs to a user-editable control. */
-export const isEditableEventTarget = (target: EventTarget | null): boolean =>
-  target instanceof HTMLElement &&
-  (isTextInput(target) || getContentEditableHost(target) !== null);
-
 /**
  * Resolve the editable root for a right-click target. Returns null when the
  * click is not on (or inside) an editable surface.
@@ -652,10 +647,18 @@ export const useContextMenu = (): UseContextMenuReturn => {
     const handleScroll = (e: Event) => {
       // Scrolling inside a long menu (overflowY: auto) must NOT close it —
       // that's the user navigating the menu itself. Only an external scroll
-      // (the page, a parent list) dismisses the menu. The scroll listener is
-      // registered with capture, so `e.target` is the scrolled element.
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(MENU_SELECTOR)) return;
+      // (the page, a parent list) dismisses the menu. The listener is registered
+      // on `window` with capture, so `e.target` is whatever scrolled -- and that is
+      // not always an Element.
+      //
+      // Usually it is not. A page-level scroll has `document` as its target, and
+      // `Document` has no `closest`, so the previous `target?.closest(MENU_SELECTOR)`
+      // threw a TypeError on exactly the event it was written to handle, taking the
+      // `closeMenu(false)` below with it: the menu logged an error AND failed to
+      // dismiss. The `as HTMLElement` cast is what hid that, so this checks the
+      // runtime type instead of asserting one.
+      const target = e.target;
+      if (target instanceof Element && target.closest(MENU_SELECTOR)) return;
       closeMenu(false);
     };
 

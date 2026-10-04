@@ -1865,7 +1865,16 @@ export const DictationSideEffects = () => {
   useHotkeyFire({
     actionName: OPEN_CHAT_HOTKEY,
     isDisabled: !isMainWindow,
-    onFire: openPillConversation,
+    // `onFire` is typed `() => void` and `desktop-utils/src/hotkey.ts` calls it
+    // bare (`onFire?.()` at :332 and :342), so handing it an async function
+    // discards the promise with nobody to catch a rejection. That is the third
+    // discard path on this function, and the one my previous commit named while
+    // leaving it in place. Wrapping here rather than in the shared hotkey helper
+    // keeps the fix local to a caller that has a logger, and keeps every other
+    // `onFire` caller untouched.
+    onFire: () => {
+      void openPillConversation().catch(reportConversationOpenFailure);
+    },
   });
 
   const pauseDictation = useCallback(async () => {

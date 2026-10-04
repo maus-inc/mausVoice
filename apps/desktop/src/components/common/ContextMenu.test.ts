@@ -604,6 +604,26 @@ describe("useContextMenu", () => {
     });
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
+
+  // The scroll listener is on `window` with capture, so `e.target` is whatever
+  // scrolled. A page-level scroll targets `document`, not an Element -- and
+  // `Document` has no `closest`, so the handler used to throw a TypeError on
+  // exactly this event and the `closeMenu` below it never ran. The test above
+  // dispatches on `document.body`, which is an Element, so it passed regardless.
+  it("closes the menu when the document itself scrolls, without throwing", () => {
+    act(() => {
+      root.render(createElement(Harness));
+    });
+    const button = queryRequired(container, "button");
+    nativeContextMenu(button);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
 });
 
 describe("surface yields editable right-clicks to the provider", () => {
