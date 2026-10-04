@@ -249,6 +249,53 @@ describe("secureFetch", () => {
     expect(pluginFetchMock).toHaveBeenCalledTimes(2);
   });
 
+  // A downgrade is refused when this function is about to FOLLOW the hop, and handed back
+  // when the caller asked to handle it. `manual` existed to return the redirect unfollowed
+  // so the caller could read `Location`; validating the target first made that mode throw
+  // `TypeError` on exactly the response it exists to return.
+  it("hands back a downgrade under manual rather than refusing it", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "http://api.example.com/v1/moved" },
+      }),
+    );
+
+    const response = await secureFetch("https://api.example.com/v1/models", {
+      redirect: "manual",
+    });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(
+      "http://api.example.com/v1/moved",
+    );
+    // One hop: `manual` did not follow it, and it did not refuse it either.
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ...and the confinement is still there for a mode that WOULD follow it. Without this the
+  // change above reads as "the downgrade check was removed".
+  it("still refuses to follow a downgrade", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "http://api.example.com/v1/moved" },
+      }),
+    );
+
+    await expect(
+      secureFetch("https://api.example.com/v1/models"),
+    ).rejects.toThrow();
+
+    // The discriminating assertion, and the reason this case exists rather than being left
+    // to the sibling test that already covers the refusal: the hop count. An earlier version
+    // asserted only that the call rejected, which it still did once the guard was gone --
+    // the walker followed the downgrade, the mock answered the same 302 again, and the
+    // rejection came from somewhere else entirely. `rejects.toThrow()` was passing for a
+    // reason that had nothing to do with the guard it was written to pin.
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
   // ...and `init` still wins over the object, because `new Request(input, init)` does the
   // same. Without this the inheritance above could be implemented as "the Request wins",
   // which would break every caller that spells the mode in `init`.

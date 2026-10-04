@@ -246,14 +246,28 @@ const followHttpsRedirects = async (
         signal: init?.signal ?? requestSignal ?? undefined,
       },
     );
+    // `manual` is answered BEFORE the target is validated, and the order is the point.
+    //
+    // `nextHopUrl` refuses a target that is not HTTPS, which is right for a hop this
+    // function is about to follow and wrong for one it is about to hand back: `manual`
+    // means the caller reads `Location` itself, so whether that Location downgrades is the
+    // caller's decision to make and not this function's to pre-empt. Validating first made
+    // `redirect: "manual"` throw `TypeError` on an HTTPS -> HTTP redirect -- the one mode
+    // whose entire purpose is to return the response unfollowed.
+    //
+    // A non-redirect answer falls out of this for free: `manual` returns the response
+    // whether or not there was a redirect to follow, which is what the line below did too.
+    if (redirectMode === "manual") return response;
+
     const targetUrl = nextHopUrl(response, chain.url);
     if (!targetUrl) return response;
 
     // The caller's redirect mode is decided here rather than handed to the
     // plugin, which drops `RequestInit.redirect`. `manual` hands the redirect
-    // response back so the caller can read `Location` itself; `error` refuses
-    // it. Both used to be forwarded to a plugin that ignored them, so a caller
-    // asking for `redirect: "error"` silently got follow behaviour instead.
+    // response back so the caller can read `Location` itself, above; `error`
+    // refuses it, here. Both used to be forwarded to a plugin that ignored them,
+    // so a caller asking for `redirect: "error"` silently got follow behaviour
+    // instead.
     //
     // No shipped caller asks for either mode today -- every `redirect:` in this
     // repository is in a test or goes to the bare global `fetch`. An earlier
@@ -261,7 +275,6 @@ const followHttpsRedirects = async (
     // this, but that file passes `redirect: "error"` to the engine's own `fetch`
     // and never reaches here, so it was evidence for nothing. The mode is honoured
     // because `fetch` promises it, not because a caller was observed needing it.
-    if (redirectMode === "manual") return response;
     if (redirectMode === "error") {
       throw new TypeError(
         `Redirect not allowed: ${response.status} from ${chain.url.href} to ${targetUrl.href}`,
