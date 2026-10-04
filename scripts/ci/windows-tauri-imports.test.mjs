@@ -120,6 +120,31 @@ function jobBlocks(workflowText) {
   return jobs;
 }
 
+// The body of one `- name:` step, from its own line to the start of the next
+// step or the next job.
+//
+// Steps are six-space-indented inside a job, and their bodies are eight, so the
+// boundary is unambiguous from indentation alone -- which matters because a
+// guard has to see a step's OWN keys. A regex over the whole file would match
+// `working-directory:` or an `if:` belonging to a different step and report
+// coverage that step does not have.
+function stepBlock(workflowText, name) {
+  const lines = workflowText.split("\n");
+  const opener = new RegExp(`^ {6}- name: ${name}\\s*$`);
+  const start = lines.findIndex((line) => opener.test(line));
+  if (start === -1) return null;
+  let end = start + 1;
+  while (
+    end < lines.length &&
+    !/^ {6}- /.test(lines[end]) &&
+    !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[end]) &&
+    !/^\S/.test(lines[end])
+  ) {
+    end += 1;
+  }
+  return lines.slice(start, end).join("\n");
+}
+
 // Whether a job body can run on a Windows runner.
 //
 // `runs-on: ${{ matrix.os }}` was invisible to the previous version, so a
@@ -588,85 +613,101 @@ describe("the job splitter both guards share", () => {
 });
 
 describe("macOS-gated coverage is recorded, not silent", () => {
-  // The mirror of the Windows record above, and it exists for the same reason:
-  // a half of the desktop crate that nothing lints is a half that rots quietly.
-  // `platform/macos/` is 15 files, `accessibility.rs` about 86 KB of them, and
-  // `Build Desktop (macOS)` compiles it -- so a type error was always caught --
-  // while nothing checked a lint. `lint-desktop.yml` runs clippy on
-  // `packages/rust_macos_pill`, which shares no code with that directory.
+  // This block used to assert that a dedicated `rust-macos-gated` job existed,
+  // and it did -- because an audit told me `platform/macos/` was "compiled but
+  // never linted". That was wrong, and a reviewer caught it. `lint-desktop.yml`
+  // has a matrix that includes `os: macos-14`, its "Lint Rust" step has no `if:`
+  // guard, and it runs `cargo clippy --locked -- -D warnings` with
+  // `working-directory: apps/desktop/src-tauri`. So the directory was linted on a
+  // macOS runner the whole time. What I had actually read was line 101 of that
+  // same file, which lints `packages/rust_macos_pill` -- a different crate.
   //
-  // This is not a hypothetical gap. Commit `849b979f` shipped a
-  // `clippy::needless_borrow` in `platform/windows/accessibility.rs` behind a
-  // commit message claiming `clippy --all-targets` was clean, because Linux
-  // clippy exits 0 without compiling any `cfg(windows)` or `cfg(macos)` file.
-  // Pinning both jobs is what stops that shape from recurring on either side.
-  const MACOS_JOB = "rust-macos-gated";
+  // The job I added on top was therefore a duplicate of two existing gates:
+  // `--all-targets` is equivalent to a plain clippy for this crate, because
+  // `src-tauri`'s Cargo.toml declares no `[[bench]]`, no `[[example]]` and no
+  // `[[test]]` target, so there is nothing for the extra flag to add; and
+  // `Check Rust formatting` in the same workflow already loops
+  // `apps/desktop/src-tauri`, so the `fmt` step was an exact copy. A full macOS
+  // runner and cargo cache spent to run the same two commands twice is not a
+  // gate, it is a bill.
+  //
+  // So the invariant worth pinning is the real one, and it is the one a
+  // "consolidate the lint jobs" or "trim the slow matrix" refactor would break:
+  // macOS lint coverage of the desktop crate exists ONLY as a matrix entry. Drop
+  // `macos-14` from that matrix and `cfg(target_os = "macos")` silently stops
+  // being linted anywhere, with no job left to notice the absence. That is the
+  // failure this file is for.
+  const LINT_WORKFLOW = ".github/workflows/lint-desktop.yml";
+  const lintText = read(LINT_WORKFLOW);
 
-  const macosJobBody = (() => {
-    const lines = read(WINDOWS_JOB_WORKFLOW).split("\n");
-    const job = jobBlocks(lines.join("\n")).find(
-      (entry) => entry.name === MACOS_JOB,
-    );
-    assert.ok(job, `${MACOS_JOB} must exist in the workflow`);
-    return { lines, start: job.start, text: job.text };
-  })();
-
-  it("lints the cfg(macos) code on a macOS runner", () => {
+  it("keeps a macOS runner in the lint matrix", () => {
     assert.match(
-      macosJobBody.text,
-      /runs-on: macos-14/,
-      'only a macOS runner compiles `cfg(target_os = "macos")`; a Linux runner ' +
-        "exits 0 without looking at it",
-    );
-    assert.match(
-      macosJobBody.text,
-      /cargo clippy --locked --all-targets -- -D warnings/,
-      "--all-targets is what compiles the `cfg(macos)` code and its test " +
-        "modules; --lib or --bin would leave the whole directory unchecked",
-    );
-    assert.match(
-      macosJobBody.text,
-      /working-directory: apps\/desktop\/src-tauri/,
-      "the lint must run against the desktop crate, not the standalone pill " +
-        "crate that `lint-desktop.yml` already covers",
-    );
-    assert.match(
-      macosJobBody.text,
-      /TAURI_CONFIG:/,
-      "without `bundle.externalBin` emptied the tauri build script aborts on " +
-        "the missing sidecar binary and the crate never compiles",
+      lintText,
+      /os: macos-14/,
+      "`lint-desktop.yml` must keep a macOS entry in its matrix: that entry is " +
+        'the ONLY thing that lints `cfg(target_os = "macos")`, since Linux ' +
+        "clippy exits 0 without compiling it",
     );
   });
 
-  it("records that it lints rather than tests, and why", () => {
-    // There are no `#[cfg(test)]` modules under `platform/macos/` at all, so a
-    // test step would report "0 passed" and prove nothing -- which is a
-    // different claim from "cannot be run", and the Windows record above is
-    // explicit about that distinction. Assert the job does not quietly grow a
-    // test step that reports success without running anything.
+  it("lints the desktop crate on every matrix entry, macOS included", () => {
+    const step = stepBlock(lintText, "Lint Rust");
+    assert.ok(step, "`lint-desktop.yml` must keep a `Lint Rust` step");
+    // No `if:` is the load-bearing part. A guard such as
+    // `if: matrix.os == 'ubuntu-22.04'` would leave the macOS half compiled but
+    // unlinted while this file still passed.
     assert.doesNotMatch(
-      macosJobBody.text,
-      /cargo test/,
-      `${MACOS_JOB} must lint, not test: platform/macos has no #[cfg(test)] ` +
-        "modules, so a test step would report 0 passed and read as coverage",
+      step,
+      /^\s*if:/m,
+      "the `Lint Rust` step must not be OS-guarded: it is the only lint of " +
+        "`apps/desktop/src-tauri` on macOS, and a guard would silently " +
+        "uncover `platform/macos/` again",
+    );
+    assert.match(
+      step,
+      /working-directory: apps\/desktop\/src-tauri/,
+      "the step must run against the desktop crate -- the one holding " +
+        "`platform/macos/` -- and not only the standalone pill crates",
+    );
+    assert.match(
+      step,
+      /cargo clippy .*--locked.* -D warnings/,
+      "the step must deny warnings, since the defect this exists to catch " +
+        "(`clippy::needless_borrow` from commit 849b979f) is a warning",
     );
   });
 
-  it("keeps the Windows job, so neither half can be dropped for the other", () => {
+  it("keeps formatting checked for the desktop crate", () => {
+    // The macOS job's `fmt` step was removed as an exact duplicate of this, so
+    // this is now the only thing asserting `src-tauri` formatting.
+    assert.match(
+      read(WINDOWS_JOB_WORKFLOW),
+      /Check Rust[\s\S]*?apps\/desktop\/src-tauri/,
+      "`Check Rust formatting` must keep covering `apps/desktop/src-tauri`",
+    );
+  });
+
+  it("keeps the Windows job, which is the only --all-targets authority", () => {
     // The Windows record above already asserts its own job exists. This is the
-    // other direction: adding macOS coverage must not have replaced it, which is
-    // the shape a "consolidate the gated jobs" refactor would take.
+    // other direction: the Windows half is NOT covered by `lint-desktop.yml`,
+    // which never runs clippy with `--all-targets` on any platform. That job is
+    // therefore load-bearing where the macOS matrix entry is not, and dropping it
+    // would remove the only authority for test and bench code in the crate.
     const windowsJob = jobBlocks(read(WINDOWS_JOB_WORKFLOW)).find(
       (entry) => entry.name === WINDOWS_JOB,
     );
-    assert.ok(
-      windowsJob,
-      `${WINDOWS_JOB} must still exist alongside ${MACOS_JOB}`,
-    );
+    assert.ok(windowsJob, `${WINDOWS_JOB} must exist in the workflow`);
     assert.match(
       windowsJob.text,
       /runs-on: windows-2022/,
       `${WINDOWS_JOB} must stay on a Windows runner`,
+    );
+    assert.match(
+      windowsJob.text,
+      /cargo clippy .*--all-targets.* -D warnings/,
+      `${WINDOWS_JOB} must keep --all-targets: \`lint-desktop.yml\` runs clippy ` +
+        "without that flag on every platform, so this job is the only authority " +
+        "for the crate's test and bench code",
     );
   });
 });
