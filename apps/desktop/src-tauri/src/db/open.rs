@@ -41,18 +41,97 @@ fn historical_migration_checksum(sql: &str) -> Vec<u8> {
     Sha384::digest(sql.replace("\r\n", "\n").replace("\n", "\r\n").as_bytes()).to_vec()
 }
 
+/// SHA-384 digests of migration 069's SQL as earlier builds recorded them, with the ref each
+/// came from.
+///
+/// 069 has three distinct blobs across the refs this repository still carries. The commit that
+/// diverged two of them, `bc17875a` ("Correct four comments that still claimed migration 070
+/// was never used"), changed three lines and every one of them was a comment -- so the schema
+/// those builds produce is identical to this build's and only the text differs. A database
+/// written by one of them recorded that text's digest, this build computes its own, and the
+/// mismatch path returns `OpenError` WITHOUT quarantining: the app reports that it cannot
+/// open the database and there is no in-app way back.
+///
+/// Two entries, not three: `fix/pr208-audit-findings` and `arena/0.1.6-feature-completion`
+/// carry the same blob.
+///
+/// This is an allowlist, and deliberately the narrower of the two available fixes. The wider
+/// one -- recording a digest of the comment-stripped SQL, so equivalence stays decidable from
+/// the ledger forever -- was implemented, and its own test rejected it: a build records the
+/// RAW digest of its own text, so a digest of the stripped text can never match one.
+///
+///     raw digest of a commented text   e18edfc9e5c015f7...
+///     digest of the stripped text      1051159cde5420ef...
+///
+/// So that arm was inert while reading as tolerance. Making the stripped form the RECORDED one
+/// would work, and would give up the property that lets this digest stand in for `sqlx`'s --
+/// which is why these are two named digests rather than one folded rule.
+///
+/// The cost, stated: the next COMMENT-only edit to 069 breaks this again and someone has to add
+/// a row. That is a smaller problem than an unreadable database, and it is visible.
+const MIGRATION_069_SUPERSEDED_DIGESTS: &[(&str, &str)] = &[
+    (
+        "d112bf2cedb20a47c868663d87025caab7c7a6b28be61d95b09e4d907cc90e9a\
+         33bbeddf72bdea0e60060af8ab7b0859",
+        "integration/0.1.6-staging",
+    ),
+    (
+        "6ec29f6389926fe988145bc833451538c783c423d9e134e767bb4e5fcc5fdbc6be6\
+         a1e10cd05b4deb53d9f1eb15ccfb1",
+        "fix/pr208-audit-findings and arena/0.1.6-feature-completion",
+    ),
+];
+
+/// The digest `hex` names. Only ever called on the two literals above, so a malformed entry
+/// would be a bug in this table rather than anything a caller can reach.
+fn decode_sha384_hex(hex: &str) -> Vec<u8> {
+    assert_eq!(hex.len(), 96, "a SHA-384 is 48 bytes, so 96 hex characters");
+    hex.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let hi = (pair[0] as char)
+                .to_digit(16)
+                .expect("table holds hex digits");
+            let lo = (pair[1] as char)
+                .to_digit(16)
+                .expect("table holds hex digits");
+            ((hi << 4) | lo) as u8
+        })
+        .collect()
+}
+
+/// Whether `stored` is a digest some earlier build of `version` legitimately wrote.
+///
+/// Only 069 has any, and only the two comment-only variants named in the table. Every other
+/// version returns false, so a modified migration is still refused.
+fn is_superseded_checksum(version: i64, stored: &[u8]) -> bool {
+    version == 69
+        && MIGRATION_069_SUPERSEDED_DIGESTS
+            .iter()
+            .any(|(hex, _)| decode_sha384_hex(hex) == stored)
+}
+
 /// Whether a recorded checksum is one this build could legitimately have written.
 ///
-/// Both forms, and the reason is not symmetry: the canonical one is what every row written
-/// by this code carries, and the historical one is what `sqlx` wrote for a build whose
-/// checkout had CRLF in the `.sql` files. Accepting only the canonical form makes an
-/// unrecoverable `OpenError` out of a database this build could read perfectly well, and
+/// Three sources, and none is accepted for symmetry -- each is a digest some build actually
+/// wrote:
+///
+///   1. `migration_checksum` -- the canonical form, which every row this code writes carries,
+///      and which `sqlx` agreed with for LF input.
+///   2. `historical_migration_checksum` -- what `sqlx` wrote for a build whose checkout held
+///      CRLF in the `.sql` files.
+///   3. `is_superseded_checksum` -- what a build carrying one of 069's two comment-only
+///      variants recorded. See that table for why this is a list and not a rule.
+///
+/// Accepting only the first turns a readable database into an unrecoverable `OpenError`, and
 /// the failure path deliberately does not quarantine, so there is no in-app way back.
 ///
-/// This cannot mask a genuinely modified migration: a changed file matches neither.
-fn migration_checksum_matches(stored: &[u8], sql: &str) -> bool {
+/// None of the three can mask a genuinely modified migration: the first two hash this build's
+/// own text, and the third names the two known other texts exactly.
+fn migration_checksum_matches(version: i64, stored: &[u8], sql: &str) -> bool {
     stored == migration_checksum(sql).as_slice()
         || stored == historical_migration_checksum(sql).as_slice()
+        || is_superseded_checksum(version, stored)
 }
 
 #[derive(Debug)]
@@ -420,7 +499,7 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
         }
         let version = migration.version;
         if let Some(stored) = applied_checksums.get(&version) {
-            if !migration_checksum_matches(stored, migration.sql) {
+            if !migration_checksum_matches(version, stored, migration.sql) {
                 // A modified migration file is a disagreement about what this
                 // build's history should have been, not damage to the database.
                 // Quarantining here would discard a perfectly readable file and
@@ -930,6 +1009,126 @@ mod tests {
         );
     }
 
+    /// A database whose `069` row was written by a build carrying one of the two
+    /// comment-only variants must still open.
+    ///
+    /// This is the reviewer's scenario exactly. `069_consolidated_v0_1_6_schema.sql` has three
+    /// blobs across the refs this repository carries, and `bc17875a` -- "Correct four comments
+    /// that still claimed migration 070 was never used" -- diverged two of them by changing
+    /// three lines, every one a comment. So those builds produce the identical schema and this
+    /// build refuses their databases: the recorded digest is of their text, the computed one
+    /// of this build's, and the mismatch path returns `OpenError` WITHOUT quarantining, so
+    /// there is no in-app way back.
+    ///
+    /// Each of the two digests is exercised, and so is the scoping: the same digest recorded
+    /// against a DIFFERENT version is still refused, because the table is keyed on 69 and a
+    /// general allowance would stop being an allowance.
+    #[tokio::test]
+    async fn a_database_recorded_from_a_superseded_069_variant_still_opens() {
+        assert_eq!(
+            super::MIGRATION_069_SUPERSEDED_DIGESTS.len(),
+            2,
+            "one entry per distinct historical blob; a third ref pair shares one of them"
+        );
+        for (index, (hex, origin)) in super::MIGRATION_069_SUPERSEDED_DIGESTS.iter().enumerate() {
+            let temp = TempDb::new();
+            let path = &temp.path;
+            let up_to_69: Vec<_> = migrations()
+                .into_iter()
+                .filter(|m| {
+                    matches!(m.kind, tauri_plugin_sql::MigrationKind::Up) && m.version <= 69
+                })
+                .collect();
+            assert!(
+                up_to_69.iter().any(|m| m.version == 69),
+                "migration 069 must be in the set this test drives"
+            );
+
+            {
+                let pool = connect_pool(path).await.expect("connect");
+                sqlx::query(
+                    "CREATE TABLE _sqlx_migrations (
+                        version BIGINT PRIMARY KEY,
+                        description TEXT NOT NULL,
+                        installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        success BOOLEAN NOT NULL,
+                        checksum BLOB NOT NULL,
+                        execution_time BIGINT NOT NULL
+                    )",
+                )
+                .execute(&pool)
+                .await
+                .expect("create _sqlx_migrations");
+                for migration in &up_to_69 {
+                    sqlx::raw_sql(migration.sql)
+                        .execute(&pool)
+                        .await
+                        .expect("apply prior migration");
+                    // The superseded build recorded its OWN text's digest for 069 and this
+                    // build's canonical digest for everything else, which is what a branch
+                    // carrying only the comment change would have done.
+                    let checksum = if migration.version == 69 {
+                        super::decode_sha384_hex(hex)
+                    } else {
+                        migration_checksum(migration.sql)
+                    };
+                    sqlx::query(
+                        "INSERT INTO _sqlx_migrations
+                         (version, description, success, checksum, execution_time)
+                         VALUES (?1, ?2, true, ?3, 0)",
+                    )
+                    .bind(migration.version)
+                    .bind(migration.description)
+                    .bind(checksum)
+                    .execute(&pool)
+                    .await
+                    .expect("record prior migration");
+                }
+                pool.close().await;
+            }
+
+            // The digest must genuinely NOT be this build's, or the test proves nothing.
+            let this_builds = migrations()
+                .into_iter()
+                .find(|m| m.version == 69)
+                .map(|m| migration_checksum(m.sql))
+                .expect("069 is registered");
+            assert_ne!(
+                this_builds,
+                super::decode_sha384_hex(hex),
+                "the {origin} digest must differ from this build's"
+            );
+
+            let opened = open_app_database(path).await.unwrap_or_else(|err| {
+                panic!(
+                    "a database written by a build carrying the {origin} variant of 069 \
+                        must open under this one, and did not: {err:?}"
+                )
+            });
+            opened.close().await;
+            assert_not_quarantined(
+                &temp.dir,
+                "a ledger row whose migration only gained a comment is not corruption",
+            );
+
+            // And the scoping: the same digest against a different version is a modified
+            // migration, and is refused.
+            let sql_69 = migrations()
+                .into_iter()
+                .find(|m| m.version == 69)
+                .map(|m| m.sql)
+                .expect("069 is registered");
+            assert!(
+                !migration_checksum_matches(68, &super::decode_sha384_hex(hex), sql_69),
+                "the allowance is keyed on 69 and must not generalise to another version"
+            );
+            assert!(
+                migration_checksum_matches(69, &super::decode_sha384_hex(hex), sql_69),
+                "and the same digest IS accepted for 69, or the row above proves nothing"
+            );
+        }
+    }
+
     /// The ledger row `sqlx` wrote, and this build has to accept it.
     ///
     /// `sqlx` hashes `sql.as_bytes()` with no normalization. This build's own digest folds
@@ -1056,19 +1255,20 @@ mod tests {
         );
 
         // Accepted: the canonical form, and the form sqlx recorded from a CRLF checkout.
-        assert!(migration_checksum_matches(&migration_checksum(lf), lf));
-        assert!(migration_checksum_matches(&crlf_digest, lf));
-        assert!(migration_checksum_matches(&crlf_digest, crlf));
+        assert!(migration_checksum_matches(70, &migration_checksum(lf), lf));
+        assert!(migration_checksum_matches(70, &crlf_digest, lf));
+        assert!(migration_checksum_matches(70, &crlf_digest, crlf));
 
         // Refused: a genuinely modified migration. This is what stops the second accepted
         // form from becoming a loophole.
         let modified_crlf = crlf.replace("test", "other");
         assert!(!migration_checksum_matches(
+            70,
             &Sha384::digest(modified_crlf.as_bytes()),
             crlf
         ));
-        assert!(!migration_checksum_matches(b"deadbeef", lf));
-        assert!(!migration_checksum_matches(&[], lf));
+        assert!(!migration_checksum_matches(70, b"deadbeef", lf));
+        assert!(!migration_checksum_matches(70, &[], lf));
     }
 
     #[tokio::test]
