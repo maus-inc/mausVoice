@@ -4,8 +4,6 @@ use crate::ipc::{Phase, PillPermission, PillStreaming};
 use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
-/// Paints the whole pill window: begins the Direct2D frame, clears, then
-/// draws the pill, panel, transcript, and overlays in z-order.
 thread_local! {
     /// The comet's shaded segments, kept between frames.
     ///
@@ -25,6 +23,8 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Paints the whole pill window: begins the Direct2D frame, clears, then
+/// draws the pill, panel, transcript, and overlays in z-order.
 pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     gfx.begin_frame();
     gfx.clear();
