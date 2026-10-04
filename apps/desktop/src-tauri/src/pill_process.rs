@@ -9,9 +9,12 @@ use tauri::{Emitter, Manager};
 use crate::domain::{OverlayPhase, PillWindowSize};
 
 /// `child` is behind a `Mutex` so a spawn that `manage` REJECTS can still kill the process
-/// it started. Nothing reads it -- it exists to keep the child alive for as long as the
-/// managed state exists -- but `Child::kill` needs `&mut Child`, and without the `Mutex` the
-/// only handle is inside a value that `manage` has already taken by value.
+/// it started. While the state is managed nothing reads it -- it exists to keep the child
+/// alive for as long as the managed state does -- but `Child::kill` needs `&mut Child`, and
+/// on the reject path the only handle is inside a value `manage` has already taken by value.
+///
+/// The `_` prefix is not a claim that the field is unread; it marks the field as not part of
+/// `PillProcess`'s own API. The one read is [`publish_pill_process`]'s reject branch.
 pub struct PillProcess {
     _child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
@@ -57,6 +60,75 @@ impl PillProcess {
 
         Ok(())
     }
+}
+
+/// Publish `process` as the managed pill, killing the child it owns if the app already has
+/// one. Returns whether the pill is now managed.
+///
+/// `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694), and
+/// `StateManager::set` returns `!already_set` WITHOUT inserting when the type is already
+/// present (tauri-2.10.3/src/state.rs:118) -- tauri's own `two_put_get` asserts that a second
+/// `set::<String>` returns false and leaves the first value in place, and `test_no_drop_on_set`
+/// exists to pin that the rejected value does not displace it. So a rejected `PillProcess` is
+/// dropped at the end of `set`, and the result used to be discarded here.
+///
+/// That made a second spawn leak a process: `command.spawn()` had already succeeded,
+/// `wait_for_ready` had returned a reader, and then the new `PillProcess` -- holding the only
+/// handle to that `Child` -- was dropped. `Child`'s `Drop` does not kill, so the overlay ran
+/// with nothing owning it while the app kept writing to the first one.
+///
+/// Split out of `try_spawn_pill` so this branch is reachable from a test. Getting here the
+/// obvious way needs a real overlay executable, which a test runner does not have, so the
+/// branch was both untested and unreachable in tests -- and untested is not the same as
+/// unreachable: `try_spawn_pill` has one caller today (`try_spawn_native_overlays`, from
+/// `setup`), but nothing about this function prevents a second one, and the failure mode is
+/// an orphaned overlay process rather than an error message.
+fn publish_pill_process<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    process: std::sync::Arc<PillProcess>,
+) -> bool {
+    if app.manage(process.clone()) {
+        return true;
+    }
+
+    // `set` rejects on the TYPE, so publishing the handle the app already manages is a
+    // rejection too -- and in that case the child is not an orphan, it is the pill the app
+    // is using right now. Check before killing, or a second publish of the same handle tears
+    // down the live overlay. `try_spawn_pill` builds a fresh `PillProcess` every time so this
+    // cannot happen on the current path, but the branch is cheap and the failure it prevents
+    // is the app losing its overlay rather than leaking a duplicate.
+    if let Some(live) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        if std::sync::Arc::ptr_eq(&live, &process) {
+            log::warn!(
+                "The managed pill was published again; it is the same handle, so it was left \
+                 running"
+            );
+            return false;
+        }
+    }
+
+    // Rejected, so this `Arc` is the only handle to a live process and dropping it leaks the
+    // process. Kill it, and report what the kill actually did -- which is not always "killed".
+    // Both of these can fail and the previous version claimed success either way: `kill()`
+    // errors once the child has already exited, and the mutex is poisoned if anything
+    // panicked while holding it. This is the one log that matters most, because it is what a
+    // support answer reads when a second overlay turns up.
+    match process._child.lock() {
+        Ok(mut child) => match child.kill() {
+            Ok(()) => log::error!(
+                "A pill overlay is already managed; killed the duplicate this call spawned"
+            ),
+            Err(err) => log::error!(
+                "A pill overlay is already managed; could not kill the duplicate this call \
+                 spawned ({err}). It may still be running."
+            ),
+        },
+        Err(_) => log::error!(
+            "A pill overlay is already managed; the duplicate's child lock is poisoned, so it \
+             could not be killed and may still be running."
+        ),
+    }
+    false
 }
 
 pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bool {
@@ -113,22 +185,7 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
         stdin: Mutex::new(stdin),
     });
 
-    // `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694),
-    // and `StateManager::set` returns `!already_set` WITHOUT inserting when the type is
-    // already present (tauri-2.10.3/src/state.rs:118). So a rejected value is dropped, and
-    // the result used to be discarded.
-    //
-    // That made a second spawn leak a process: `command.spawn()` had already succeeded,
-    // `wait_for_ready` had returned a reader and a reader thread was about to be started,
-    // and then the new `PillProcess` -- holding the only handle to that `Child` -- was
-    // dropped. `Child`'s `Drop` does not kill, so the overlay ran with nothing owning it
-    // while the app kept writing to the first one. The `Mutex` above is what lets this kill
-    // it.
-    if !app.manage(process.clone()) {
-        if let Ok(mut child) = process._child.lock() {
-            let _ = child.kill();
-        }
-        log::error!("A pill overlay is already managed; killed the duplicate this call spawned");
+    if !publish_pill_process(app, process) {
         return false;
     }
 
@@ -1396,5 +1453,119 @@ mod pill_event_dispatch_tests {
                 text: "hello world".to_string()
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod pill_publish_tests {
+    // The reject branch of `publish_pill_process`, driven with real child processes.
+    //
+    // `tauri::test::mock_app` is unconditional in the tauri crate -- `pub mod test;` at
+    // `tauri-2.10.3/src/lib.rs:1102`, no feature gate -- so an `AppHandle` that already has a
+    // managed `PillProcess` is reachable here without a feature change and without the
+    // overlay binary `try_spawn_pill` would otherwise need.
+    use super::{publish_pill_process, PillProcess};
+    use std::process::{Child, ChildStdin, Command, Stdio};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    /// A child that outlives the test unless something kills it. `sh`/`cmd` are present on a
+    /// runner and neither is gated, which matters because this module is not behind a `cfg`
+    /// either.
+    fn idle_child() -> (Child, ChildStdin) {
+        #[cfg(windows)]
+        let mut command = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "ping", "-n", "120", "127.0.0.1"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "sleep 120"]);
+            c
+        };
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = command.spawn().expect("spawn an idle child");
+        let stdin = child.stdin.take().expect("piped stdin");
+        (child, stdin)
+    }
+
+    fn pill_process() -> Arc<PillProcess> {
+        let (child, stdin) = idle_child();
+        Arc::new(PillProcess {
+            _child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+        })
+    }
+
+    /// Whether `process`'s child has exited, polled rather than slept on: `kill()` raises a
+    /// signal and the operating system reaps on its own schedule, so a fixed sleep would be
+    /// racing it rather than measuring it.
+    fn has_exited(process: &PillProcess) -> bool {
+        let mut child = process._child.lock().expect("child lock");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if child
+                .try_wait()
+                .expect("try_wait on an idle child")
+                .is_some()
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_second_pill_is_rejected_and_the_child_it_started_is_killed() {
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+
+        let first = pill_process();
+        assert!(
+            publish_pill_process(&handle, first.clone()),
+            "the first pill must be managed"
+        );
+
+        let second = pill_process();
+        assert!(
+            !publish_pill_process(&handle, second.clone()),
+            "a second pill must be rejected"
+        );
+
+        // The point of the branch: the rejected spawn's process is not left running with
+        // nothing owning it. `Child`'s `Drop` does not kill, so without the explicit kill this
+        // outlives the test.
+        assert!(
+            has_exited(&second),
+            "the duplicate pill process was left running after being rejected"
+        );
+
+        // ...and the kill is scoped to the REJECTED spawn. If it were not, this would take the
+        // live overlay down with it, which is the worse failure of the two.
+        assert!(
+            !has_exited(&first),
+            "the already-managed pill must not be killed by a rejected spawn"
+        );
+    }
+
+    #[test]
+    fn the_same_process_can_be_published_twice_and_the_second_is_still_rejected() {
+        // The rejection is keyed on the TYPE, not on the value, so publishing the same
+        // `Arc` twice takes the same branch -- and must not kill the pill the app is using.
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        let only = pill_process();
+
+        assert!(publish_pill_process(&handle, only.clone()));
+        assert!(!publish_pill_process(&handle, only.clone()));
+        assert!(!has_exited(&only));
     }
 }
