@@ -1030,7 +1030,7 @@ mod tests {
             2,
             "one entry per distinct historical blob; a third ref pair shares one of them"
         );
-        for (index, (hex, origin)) in super::MIGRATION_069_SUPERSEDED_DIGESTS.iter().enumerate() {
+        for (hex, origin) in super::MIGRATION_069_SUPERSEDED_DIGESTS {
             let temp = TempDb::new();
             let path = &temp.path;
             let up_to_69: Vec<_> = migrations()
