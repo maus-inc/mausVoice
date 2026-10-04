@@ -76,11 +76,25 @@ export const isOpenAIJsonObjectOnlyModel = (model: string): boolean =>
  * above serves, and they are reachable as discovered model ids, so the same
  * request shape that works on gpt-4o-mini has to keep working on them.
  */
-const buildMaxTokensParams = (
+export const buildMaxTokensParams = (
   model: string,
   maxTokens = 1024,
+  /**
+   * Decides whether `model` is one of the legacy deployments that reject
+   * `max_completion_tokens`. Defaults to the OpenAI classifier, which is right for OpenAI's
+   * own endpoints and for the aggregators that reuse the same ids.
+   *
+   * It is a parameter because a caller's set can be strictly larger. Azure's is: it also
+   * matches the `gpt-35-turbo` spelling, the open-model deployment prefixes, and it matches
+   * case-insensitively, because deployment names there are user-chosen aliases. Consulting
+   * the OpenAI set on the Azure path left `gpt-35-turbo`, `llama-3` and `gpt-4-1106` capping
+   * with the field their own `response_format` had already identified them as unable to
+   * accept. Passing the classifier in is what makes the two axes the same decision rather
+   * than two decisions about the same set.
+   */
+  isLegacy: (model: string) => boolean = isOpenAIJsonObjectOnlyModel,
 ): Record<string, number> =>
-  isOpenAIJsonObjectOnlyModel(model)
+  isLegacy(model)
     ? { max_tokens: maxTokens }
     : { max_completion_tokens: maxTokens };
 

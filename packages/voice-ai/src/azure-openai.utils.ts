@@ -12,6 +12,7 @@ import type {
   LlmStreamEvent,
 } from "@maus-inc/types";
 import {
+  buildMaxTokensParams,
   isOpenAIOReasoningModel,
   openaiCompatibleStreamChat,
 } from "./openai.utils";
@@ -173,10 +174,21 @@ export const azureOpenAIGenerateText = ({
       // An o-series deployment rejects `temperature` outright, which is an HTTP
       // 400 before any tokens are generated -- so a user who picked a reasoning
       // model got no dictation and no explanation.
+      //
+      // The token cap is spelled by the SAME classifier that chose `response_format`, passed
+      // in rather than defaulted. `AZURE_JSON_OBJECT_ONLY_MODELS` starts from
+      // `OPENAI_LEGACY_CHAT_MODELS` and then adds Azure's own spellings, so it is a strict
+      // superset -- and using the OpenAI predicate here left `gpt-35-turbo`, `llama-3` and
+      // `gpt-4-1106` capping with the field their own response format had already identified
+      // them as unable to accept. One predicate, so the two axes cannot drift.
       const params = {
         messages,
         model: deploymentName,
-        max_completion_tokens: maxTokens ?? 1024,
+        ...buildMaxTokensParams(
+          deploymentName,
+          maxTokens ?? 1024,
+          isAzureJsonObjectOnlyModel,
+        ),
         response_format,
         ...(isOpenAIOReasoningModel(deploymentName) ? {} : { temperature: 1 }),
       };
