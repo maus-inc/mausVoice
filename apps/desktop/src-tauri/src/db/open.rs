@@ -229,6 +229,26 @@ fn rename_all_or_restore(moves: &[(PathBuf, PathBuf)]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The prefix `quarantine_sqlite_file` gives every directory it creates.
+///
+/// Always followed by a decimal nanosecond stamp, which is what lets
+/// `is_quarantine_name` recognise its own output exactly rather than by prefix alone.
+pub const QUARANTINE_PREFIX: &str = "mausvoice.broken-";
+
+/// Whether `name` is a quarantine directory this module created.
+///
+/// `quarantine_sqlite_file` builds every one of them as `QUARANTINE_PREFIX` followed by
+/// `SystemTime::now().as_nanos()`, so an all-digit suffix is precisely the set it can
+/// produce. Matching the bare prefix instead makes a user-directed privacy wipe recursively
+/// delete anything else that happens to share it -- and `remove_dir_all` over a directory
+/// the user named is not a privacy wipe, it is data loss.
+fn is_quarantine_name(name: &str) -> bool {
+    match name.strip_prefix(QUARANTINE_PREFIX) {
+        Some(stamp) => !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
 pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
     let parent = path.parent().unwrap_or(path);
     let mut stamp = SystemTime::now()
@@ -236,7 +256,7 @@ pub fn quarantine_sqlite_file(path: &Path) -> std::io::Result<PathBuf> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let dir = loop {
-        let candidate = parent.join(format!("mausvoice.broken-{stamp}"));
+        let candidate = parent.join(format!("{QUARANTINE_PREFIX}{stamp}"));
         match std::fs::create_dir(&candidate) {
             Ok(()) => break candidate,
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -282,7 +302,7 @@ pub fn delete_quarantined_databases(parent_or_db: &Path) -> std::io::Result<usiz
         let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with("mausvoice.broken-") {
+        if is_quarantine_name(&name_str) {
             let path = entry.path();
             if path.is_dir() {
                 std::fs::remove_dir_all(&path)?;
@@ -701,13 +721,13 @@ mod tests {
         }
     }
 
-    /// The `mausvoice.broken-*` quarantine directories currently in `dir`.
+    /// The quarantine directories currently in `dir`, as `is_quarantine_name` defines them.
     fn quarantined_archives(dir: &Path) -> Vec<String> {
         std::fs::read_dir(dir)
             .unwrap()
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with("mausvoice.broken-"))
+            .filter(|name| is_quarantine_name(name))
             .collect()
     }
 
@@ -810,31 +830,93 @@ mod tests {
             std::fs::read(dest.with_file_name("mausvoice.db-wal")).unwrap(),
             b"wal"
         );
-        assert!(dest
+        let quarantine_name = dest
             .parent()
             .unwrap()
             .file_name()
             .unwrap()
             .to_string_lossy()
-            .starts_with("mausvoice.broken-"));
+            .into_owned();
+        assert!(
+            is_quarantine_name(&quarantine_name),
+            "quarantine must name its directory the way `is_quarantine_name` recognises, \
+             or the wipe will not find it. Got {quarantine_name:?}"
+        );
     }
 
+    /// The wipe removes exactly what `quarantine_sqlite_file` creates, and nothing that
+    /// merely shares the prefix.
+    ///
+    /// The survival half used to be asserted the other way: this test created
+    /// `mausvoice.broken-67890.bak` and asserted it was DELETED. Nothing in this module can
+    /// produce that name -- the stamp is always a decimal integer -- so the assertion was
+    /// pinning the collateral damage rather than the intent, and `remove_dir_all` over a
+    /// directory a user happened to name is data loss wearing a privacy wipe's clothes.
     #[test]
-    fn delete_quarantined_databases_removes_broken_directories_and_files() {
+    fn delete_quarantined_databases_removes_only_its_own_directories() {
         let temp = TempDb::new();
-        let broken_dir = temp.dir.join("mausvoice.broken-12345");
-        let broken_file = temp.dir.join("mausvoice.broken-67890.bak");
+        // A real one: created through the function under test, not spelled out.
+        let real = quarantine_sqlite_file(&{
+            std::fs::write(temp.dir.join("mausvoice.db"), b"db").unwrap();
+            temp.dir.join("mausvoice.db")
+        })
+        .unwrap();
+
+        // Names sharing the prefix that the function cannot produce.
+        let unrelated_file = temp.dir.join("mausvoice.broken-67890.bak");
+        let unrelated_dir = temp.dir.join("mausvoice.broken-my-backup");
+        std::fs::write(&unrelated_file, b"mine").unwrap();
+        std::fs::create_dir(&unrelated_dir).unwrap();
+        std::fs::write(unrelated_dir.join("holiday.png"), b"mine").unwrap();
         let untouched_db = temp.dir.join("mausvoice.db");
-        std::fs::create_dir(&broken_dir).unwrap();
-        std::fs::write(broken_dir.join("mausvoice.db"), b"broken").unwrap();
-        std::fs::write(&broken_file, b"broken").unwrap();
         std::fs::write(&untouched_db, b"keep").unwrap();
 
         let removed = delete_quarantined_databases(&temp.dir).unwrap();
-        assert_eq!(removed, 2);
-        assert!(!broken_dir.exists());
-        assert!(!broken_file.exists());
+
+        assert_eq!(removed, 1, "only the quarantine directory is ours");
+        assert!(
+            !real.parent().unwrap().exists(),
+            "the real quarantine is removed"
+        );
+        assert!(
+            unrelated_file.exists(),
+            "a file we never create is not ours to delete"
+        );
+        assert!(
+            unrelated_dir.join("holiday.png").exists(),
+            "`remove_dir_all` over a directory the user named is data loss, not a wipe"
+        );
         assert!(untouched_db.exists());
+    }
+
+    /// The predicate, on its own, because it is what the wipe's safety rests on and the
+    /// case above can only reach the names it happens to construct.
+    #[test]
+    fn is_quarantine_name_recognises_only_what_quarantine_creates() {
+        // Exactly the shape `quarantine_sqlite_file` builds: prefix plus a decimal
+        // nanosecond stamp.
+        assert!(is_quarantine_name("mausvoice.broken-1728000000000000000"));
+        assert!(is_quarantine_name("mausvoice.broken-1"));
+
+        // Every near miss. Each of these shares the prefix and is not ours.
+        for name in [
+            "mausvoice.broken-",          // empty stamp
+            "mausvoice.broken-67890.bak", // the old test's case
+            "mausvoice.broken-my-backup", // a user's directory, removed recursively before
+            "mausvoice.broken-12a",       // not all digits
+            "mausvoice.broken-1 ",        // trailing space
+            "mausvoice.broken--1",        // sign
+            "mausvoice.broken-1e3",       // exponent notation, not our format
+            "mausvoice.db",
+            "broken-1",
+            "mausvoice.broken",
+            "MAUSVOICE.BROKEN-1", // the prefix is case-sensitive
+        ] {
+            assert!(
+                !is_quarantine_name(name),
+                "{name:?} shares the prefix but is not a name this module creates"
+            );
+        }
     }
 
     #[test]

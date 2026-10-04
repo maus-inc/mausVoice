@@ -144,9 +144,18 @@ fn publish_pill_process<R: tauri::Runtime>(
     // support answer reads when a second overlay turns up.
     match process._child.lock() {
         Ok(mut child) => match child.kill() {
-            Ok(()) => log::error!(
-                "A pill overlay is already managed; killed the duplicate this call spawned"
-            ),
+            Ok(()) => {
+                // `kill()` signals and returns; it does not reap, and `Child`'s `Drop` does
+                // not reap either -- it only closes the handles. So without this the killed
+                // duplicate stays a zombie until the app exits, one per duplicate spawn,
+                // and the comment above this block would be right about the process and
+                // wrong about what is left over. `wait()` on an already-signalled child
+                // returns immediately.
+                let _ = child.wait();
+                log::error!(
+                    "A pill overlay is already managed; killed the duplicate this call spawned"
+                );
+            }
             Err(err) => log::error!(
                 "A pill overlay is already managed; could not kill the duplicate this call \
                  spawned ({err}). It may still be running."
