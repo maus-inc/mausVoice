@@ -45,7 +45,14 @@ on:
       - ".github/workflows/**"
 permissions: {}
 
-# These workflows run on branch pushes or manual requests, not PR events.
+# These workflows run on branch pushes only, not PR events, and they do not
+# declare `workflow_dispatch` either, so they cannot be requested by hand
+# either. An earlier version of this comment said "or manual requests", which
+# was false: `format-and-i18n`, `release`, `test-docs` and
+# `test-package-rust-transcription` declare `workflow_dispatch`, and the rest of
+# this group does not. If manual triggering is wanted here, it needs adding
+# to the `on:` block -- saying so in the comment is cheaper than leaving a
+# reader to assume a trigger that does not exist.
 # Cancel superseded runs for the same branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

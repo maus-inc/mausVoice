@@ -155,6 +155,38 @@ describe("release workflow shell contracts", () => {
     );
   });
 
+  // Five workflows carried one shared sentence saying they run on "branch pushes or
+  // manual requests". Four of them declare no `workflow_dispatch`, so for those it was
+  // false; `test-docs` does declare it, so a single corrected sentence cannot serve both.
+  // A comment is invisible to every other gate, which is why this needs pinning: the
+  // first fix I wrote was itself false for `test-docs` and only a validator that reads
+  // each file's own `on:` block caught it.
+  for (const file of [
+    "build-desktop",
+    "lint-desktop",
+    "test-desktop-integration",
+    "test-desktop-unit",
+    "test-docs",
+  ]) {
+    const text = read(`.github/workflows/${file}.yml`);
+    const on = /^on:\n((?:[ \t]+.*\n|\n)*)/m.exec(text);
+    assert.ok(on, `${file}.yml must have an on: block`);
+    // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
+    // a job's `if:` would otherwise satisfy this and pin nothing.
+    const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
+    // The claim is the absence of the denial. Phrasing it as "does the comment
+    // contain this phrase" is what let my first fix pass while being false, because
+    // the corrected comment still quotes the old sentence while explaining it.
+    const claimsManual = !/cannot be requested by hand/.test(text);
+
+    assert.equal(
+      declaresManual,
+      claimsManual,
+      `${file}.yml: its trigger comment must agree with its own on: block ` +
+        `(declares workflow_dispatch: ${declaresManual})`,
+    );
+  }
+
   it("secret-scan's policy-resolution note is placed where a reader will find it, and agrees with the code", () => {
     // The 38-line rationale for the resolver is the only record of why `-c` on
     // this repository's base policy detects nothing. It drifted twice: it sat
