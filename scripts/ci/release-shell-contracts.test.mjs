@@ -28,7 +28,8 @@ const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 // is enough and keeps this test dependency-free.
 const extractSteps = (workflowText) => {
   const lines = workflowText.split("\n");
-  /** @type {{ name: string, shell: string | null, shells: string[], run: string[] }[]} */
+  /** @type {{ name: string, shell: string | null, shells: string[], run: string[],
+   *          if: string | null, workingDirectory: string | null }[]} */
   const steps = [];
   let current = null;
   let inRun = false;
@@ -38,7 +39,14 @@ const extractSteps = (workflowText) => {
     const stepMatch = line.match(/^\s*-\s+name:\s*(.+?)\s*$/);
     if (stepMatch) {
       if (current) steps.push(current);
-      current = { name: stepMatch[1], shell: null, shells: [], run: [] };
+      current = {
+        name: stepMatch[1],
+        shell: null,
+        shells: [],
+        run: [],
+        if: null,
+        workingDirectory: null,
+      };
       inRun = false;
       continue;
     }
@@ -58,6 +66,18 @@ const extractSteps = (workflowText) => {
       runIndent = runMatch[1].length;
       continue;
     }
+
+    // A single-line `run:`. This parser used to capture only the `run: |` block form, so
+    // every `step.run` assertion in this file was silently blind to any step written
+    // inline -- and the three steps this branch's ordering turns on are exactly that.
+    // A check that cannot see half the steps is worse than none, because it reports a
+    // coverage it does not have.
+    const inlineRun = line.match(/^\s*run:\s*(\S.*?)\s*$/);
+    if (inlineRun) {
+      current.run.push(inlineRun[1]);
+      inRun = false;
+      continue;
+    }
     if (inRun) {
       const indent = line.match(/^(\s*)/)?.[1].length ?? 0;
       if (line.trim() === "" || indent > runIndent) {
@@ -65,6 +85,21 @@ const extractSteps = (workflowText) => {
         continue;
       }
       inRun = false;
+    }
+
+    // Step-level keys the ordering assertion below needs. Read here rather than beside
+    // `shell:`, so a line inside a `run: |` body cannot be taken for a key.
+    if (!inRun) {
+      const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
+      if (ifMatch) {
+        current.if = ifMatch[1];
+        continue;
+      }
+      const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
+      if (wdMatch) {
+        current.workingDirectory = wdMatch[1];
+        continue;
+      }
     }
   }
   if (current) steps.push(current);
@@ -216,6 +251,94 @@ describe("release workflow shell contracts", () => {
     return programs;
   };
 
+  // Ordering, asserted POSITIVELY. Every other check in this file asks whether the verdict
+  // reads the right BYTES; this one asks whether the branch has had a chance to change them
+  // first, which no amount of correct resolution answers.
+  //
+  // The verdict's two inputs are `../trusted-scanner/.git`, read through `git cat-file`, and
+  // `../trusted-scanner/gitleaks.toml`. `cat-file blob <rev>:<path>` does NOT re-hash what it
+  // reads, so bytes planted at `.git/objects/<2>/<38>` come back verbatim -- measured on git
+  // 2.43.0, returning forged content with exit 0. The `cmp -s` between the object and the
+  // working tree therefore only ever caught an edit to ONE side, and forging both is two
+  // writes. Three steps resolve `node scripts/ci/*.mjs` out of the SCANNED checkout, which is
+  // the branch under review running as the uid that owns `trusted-scanner/`.
+  //
+  // Measured by running this job's real verdict body against a real two-checkout layout:
+  //
+  //     capable base, nothing touched                exit 0   correct
+  //     inert base, nothing touched                  exit 1   correct
+  //     inert base, object AND tree forged alike     exit 0   the hole
+  //
+  // So the verdict now runs BEFORE those three. That reverses the old comment's reasoning --
+  // it said the verdict had to come last so an inert-policy skip could not make the
+  // self-verification steps unreachable -- which was true and cost the integrity of the files
+  // the verdict reads. `if: always()` on each of the three buys the reachability back without
+  // depending on order, and is asserted below.
+  it("runs no step from the scanned checkout before the verdict reads the trusted one", () => {
+    const scan = read(".github/workflows/secret-scan.yml");
+    const steps = extractSteps(scan);
+    const verdictIndex = steps.findIndex((step) =>
+      step.name.startsWith("Require a secret-scan policy"),
+    );
+    assert.ok(
+      verdictIndex >= 0,
+      "secret-scan.yml needs the closing verdict step",
+    );
+
+    // Positive: there ARE such steps, so emptying the list cannot make this pass.
+    const branchCode = steps.filter((step) =>
+      /(?:^|[\s;&|(])(?:node|npx|bun|deno)\s[^\n]*scripts\/ci\//.test(
+        step.run.join("\n"),
+      ),
+    );
+    assert.equal(
+      branchCode.length,
+      3,
+      "expected the three config-guard/history-scan steps to resolve scripts/ci/ out of " +
+        "the scanned checkout; a different count means this assertion has lost its subject",
+    );
+
+    for (const step of branchCode) {
+      const index = steps.indexOf(step);
+      assert.ok(
+        index > verdictIndex,
+        `${step.name} resolves scripts/ci/ out of the scanned checkout and runs BEFORE the ` +
+          `verdict, so the branch under review can forge both inputs the verdict compares ` +
+          "(../trusted-scanner/.git and ../trusted-scanner/gitleaks.toml) and make an inert " +
+          "base policy read as capable",
+      );
+      // The reachability the old ordering was there to buy, now bought by `if:`.
+      assert.equal(
+        step.if,
+        "always()",
+        `${step.name} runs branch code and must keep if: always(), or a failing verdict ` +
+          "makes it unreachable -- which is what the ordering used to guarantee",
+      );
+      assert.equal(
+        step.workingDirectory,
+        "scan-target",
+        `${step.name} is expected to run from the scanned checkout; if that changes, this ` +
+          "assertion is no longer looking at the step it was written for",
+      );
+    }
+
+    // And the verdict itself must not EXECUTE anything out of the scanned checkout.
+    //
+    // Matched against code lines only. This verdict's own comment explains the hazard by
+    // name, so it contains the string `scripts/ci/` several times in prose; a `doesNotMatch`
+    // over the raw body fails on the explanation. That is the same trap as a `grep -c` over
+    // a directory of commented-out code -- the count describes the prose, not the code.
+    const verdictCode = steps[verdictIndex].run
+      .filter((line) => line.trim() === "" || !line.trim().startsWith("#"))
+      .join("\n");
+    assert.doesNotMatch(
+      verdictCode,
+      /(?:^|[\s;&|(])(?:node|npx|bun|deno)\s[^\n]*scripts\/ci\//,
+      "the verdict must not execute anything out of the scanned checkout; it runs before " +
+        "the three steps that do, and its own comment is not an exception",
+    );
+  });
+
   it("the verdict re-derives policy capability itself, crossing no step boundary", () => {
     // This job's verdict used to be a question about another step: the scans wrote a
     // sentinel file when they had to skip, and the closing step failed when it found
@@ -270,10 +393,14 @@ describe("release workflow shell contracts", () => {
     //    So the property is not "the verdict is content-addressed". It is that the three
     //    scans and the verdict all resolve the same bytes, by name, out of the base
     //    commit's object store, into a file the step itself owns.
-    const resolver = "git -C ../trusted-scanner cat-file blob \"$POLICY_REF:gitleaks.toml\" > \"$POLICY_TMP\"";
+    const resolver =
+      'git -C ../trusted-scanner cat-file blob "$POLICY_REF:gitleaks.toml" > "$POLICY_TMP"';
     assert.equal(
-      [...scan.matchAll(new RegExp(resolver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))]
-        .length,
+      [
+        ...scan.matchAll(
+          new RegExp(resolver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+        ),
+      ].length,
       4,
       "the policy must be resolved by name out of the base commit in all three scans " +
         "and in the verdict",
@@ -290,9 +417,8 @@ describe("release workflow shell contracts", () => {
     // swapped the resolution for a `cp` off disk left the ban on the old assignment
     // satisfied, because the assignment was never what made it readable.
     assert.equal(
-      [...scan.matchAll(
-        /cat-file blob "\$POLICY_REF:\.gitleaksignore"/g,
-      )].length,
+      [...scan.matchAll(/cat-file blob "\$POLICY_REF:\.gitleaksignore"/g)]
+        .length,
       3,
       "the baseline ignore file must be resolved by name from the base commit in all " +
         "three scans, or a written .gitleaksignore suppresses findings undetected",
@@ -307,8 +433,11 @@ describe("release workflow shell contracts", () => {
 
     // and a rewrite of either side alone must be caught rather than absorbed
     assert.equal(
-      [...scan.matchAll(/cmp -s "\$POLICY_TMP" \.\.\/trusted-scanner\/gitleaks\.toml/g)]
-        .length,
+      [
+        ...scan.matchAll(
+          /cmp -s "\$POLICY_TMP" \.\.\/trusted-scanner\/gitleaks\.toml/g,
+        ),
+      ].length,
       4,
       "each resolver must compare the blob against the checkout and refuse on a difference",
     );
