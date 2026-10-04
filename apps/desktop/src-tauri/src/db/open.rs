@@ -103,7 +103,14 @@ fn decode_sha384_hex(hex: &str) -> Vec<u8> {
 /// Whether `stored` is a digest some earlier build of `version` legitimately wrote.
 ///
 /// Only 069 has any, and only the two comment-only variants named in the table. Every other
-/// version returns false, so a modified migration is still refused.
+/// version returns false, so a modified migration anywhere else is still refused.
+///
+/// 069 itself is the exception this function documents rather than avoids: it decides on the
+/// version number and a fixed list, and never looks at the current text. So if 069 is edited a
+/// THIRD time -- even to change the schema -- a database carrying either of those two digests
+/// still opens, because nothing here re-derives them. That is the price of a list over a rule,
+/// and it is why the list is short, labelled with the ref each entry came from, and asserted to
+/// have exactly the number of entries the history has.
 fn is_superseded_checksum(version: i64, stored: &[u8]) -> bool {
     version == 69
         && MIGRATION_069_SUPERSEDED_DIGESTS
@@ -126,8 +133,16 @@ fn is_superseded_checksum(version: i64, stored: &[u8]) -> bool {
 /// Accepting only the first turns a readable database into an unrecoverable `OpenError`, and
 /// the failure path deliberately does not quarantine, so there is no in-app way back.
 ///
-/// None of the three can mask a genuinely modified migration: the first two hash this build's
-/// own text, and the third names the two known other texts exactly.
+/// The first two cannot mask a genuinely modified migration: they hash this build's own text,
+/// so a changed file matches neither.
+///
+/// The third CAN, for 069 only, and an earlier version of this comment claimed otherwise. It
+/// compares against a fixed list rather than re-deriving anything, so a third edit to 069 would
+/// not be noticed for a database already carrying one of the two superseded digests. An earlier
+/// version of this doc defended the third arm by saying it "names the two known other texts
+/// exactly", which is true of what it names and not a statement about what happens next. The
+/// cost is bounded and deliberate -- an unreadable database has no in-app recovery -- and it is
+/// recorded in `is_superseded_checksum` where the list lives rather than smoothed over here.
 fn migration_checksum_matches(version: i64, stored: &[u8], sql: &str) -> bool {
     stored == migration_checksum(sql).as_slice()
         || stored == historical_migration_checksum(sql).as_slice()
@@ -505,9 +520,11 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
                 // Quarantining here would discard a perfectly readable file and
                 // open an empty one in its place, so this surfaces for repair.
                 //
-                // Neither accepted form matching means the file really did change:
-                // `migration_checksum_matches` accepts the canonical digest and the
-                // one sqlx wrote, and a modified file is different from both.
+                // Two of the three accepted sources hash this build's own text, so neither
+                // matching means the file really did change. The third does not: for 069 it is
+                // a fixed list of two superseded digests, so this is unreachable for 069 by
+                // construction and a later edit to that one file would not be caught here.
+                // `is_superseded_checksum` says so where the list is.
                 return Err(OpenError::Other(format!(
                     "migration {version} ({}) was previously applied but has been modified; \
                      the database is readable but its history does not match this build",
