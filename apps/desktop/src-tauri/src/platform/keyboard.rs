@@ -480,6 +480,37 @@ pub(crate) fn debug_keys_enabled() -> bool {
     *DEBUG.get_or_init(|| matches!(env::var("MAUSVOICE_DEBUG_KEYS"), Ok(value) if value == "1"))
 }
 
+/// The whole lock graph of this file, in one place.
+///
+/// Three stores are ever held together, and the shape is a shallow V into the stdin slot:
+///
+///     combo_store   ─┐
+///                    ├──> child_stdin_store        (a leaf: nothing is acquired while
+///     child_store  ─┘                                    it is held)
+///     listener_state ──> child_store                 (never together with either of the above)
+///
+/// Two rules, and they are the whole of it:
+///
+///   1. Never acquire anything while holding `child_stdin_store`. It is the shared leaf,
+///      so anything that leads out of it can close a cycle with either edge above.
+///   2. Never hold `combo_store` and `child_store` together. They are siblings, so there is
+///      no order between them and any nesting of the two is an inversion waiting for a
+///      second thread.
+///
+/// `stop_listener_child` satisfies both by SCOPING rather than ordering: it takes the stdin
+/// guard in its own block, drops it, and only then takes `child_store`. Sequential, not
+/// nested -- which is why it needs no place in the graph.
+///
+/// What is pinned and what is not, so this paragraph does not read as more than it is:
+///
+///   * `overlapping_writers_take_the_stores_in_one_order` drives `publish_child_stdin` and
+///     fails if the `combo_store` edge is reversed. That pair is covered by a test.
+///   * The `child_store` edge, in the discard branch of `ensure_listener_child`, is NOT.
+///     Reaching it needs a real spawned child, which a unit test should not own, and the
+///     decision above it is already extracted and tested as a pure function. So that edge
+///     rests on this comment alone. Adding a nesting of `child_stdin_store` around a
+///     `child_store` acquisition would deadlock with nothing failing first -- which is the
+///     cost of the gap, stated so it is a known gap.
 fn child_store() -> &'static Mutex<Option<Child>> {
     static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
     CHILD.get_or_init(|| Mutex::new(None))
@@ -497,9 +528,18 @@ fn child_store() -> &'static Mutex<Option<Child>> {
 ///     `stop_listener_child` cannot take the slot to `None` in between and leave the new
 ///     child with an empty combo set and no way to be sent them again.
 ///
-/// The lock order is `combo_store` then `child_stdin_store`, which is the order
-/// `sync_combos` uses, so holding both introduces no inversion. `overlapping_writers_take
-/// _the_stores_in_one_order` is the test that fails if that ever stops being true.
+/// This function holds the `combo_store` -> `child_stdin_store` edge of the graph
+/// documented at the store definitions, and takes it in that order, which is the order
+/// `sync_combos` already uses -- so holding both introduces no inversion.
+/// `overlapping_writers_take_the_stores_in_one_order` is the test that fails if that edge
+/// is ever reversed.
+///
+/// An earlier version of this comment stated the order as a fact about this function alone
+/// ("the lock order is `combo_store` then `child_stdin_store`"), which read as though it
+/// covered the file. It did not: the discard branch in `ensure_listener_child` nests
+/// `child_store` inside the same slot, so the graph has three nodes and this comment named
+/// two. A partial statement of an invariant is worse than none, because it is the one a
+/// later edit checks against.
 fn publish_child_stdin(mut stdin: Option<ChildStdin>) {
     let combos_guard = lock(combo_store());
     let combos = combos_guard.clone();
