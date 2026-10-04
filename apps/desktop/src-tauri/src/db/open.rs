@@ -13,12 +13,14 @@ use super::migrations;
 /// replaced -- hashes `sql.as_bytes()` with no normalization at all
 /// (`sqlx-core-0.8.6/src/migrate/migration.rs:25`), so for LF input the two agree and for
 /// CRLF input they do not. That matters because the SQL reaches the binary through
-/// `include_str!` from whatever the *building* checkout held: this file's `.gitattributes`
-/// pins `*.sql text eol=lf`, but it did not exist before this change, and `build-desktop.yml`
-/// builds a `windows-latest` leg. So a build from a Windows checkout at the base branch
-/// embedded CRLF SQL and wrote `Sha384(CRLF)` into `_sqlx_migrations`. Those rows cannot be
-/// rewritten -- the database is the only record -- which is why verification accepts the
-/// historical digest too. See `migration_checksum_matches`.
+/// `include_str!` from whatever the *building* checkout held. The repository-root
+/// `.gitattributes` pins `*.sql text eol=lf` -- there is no `.gitattributes` beside this
+/// file or these migrations, and the rule that matters is the root one. That file did not
+/// exist before this change, and `build-desktop.yml` builds a `windows-latest` leg, so a
+/// build from a Windows checkout at the base branch embedded CRLF SQL and wrote
+/// `Sha384(CRLF)` into `_sqlx_migrations`. Those rows cannot be rewritten -- the database is
+/// the only record -- which is why verification accepts the historical digest too. See
+/// `migration_checksum_matches`.
 pub fn migration_checksum(sql: &str) -> Vec<u8> {
     let normalized = sql.replace("\r\n", "\n");
     Sha384::digest(normalized.as_bytes()).to_vec()
