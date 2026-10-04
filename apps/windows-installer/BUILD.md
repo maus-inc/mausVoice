@@ -19,7 +19,7 @@ The commands below are **bash**. On a native Windows host that means Git Bash (o
 PowerShell — PowerShell has no `\` line continuation, so the multi-line `cp` below will not run
 there as written. A PowerShell equivalent is given alongside step 2.
 
-1. Build the main desktop NSIS installer from the repo root / `apps/desktop` (sidecars first):
+1. Build the main desktop NSIS installer from the repo root (sidecars first):
 
 ```bash
 pnpm --filter desktop tauri -- build
@@ -57,8 +57,15 @@ The same step in PowerShell, which uses backtick continuation:
 ```powershell
 $TargetTriple = if ($env:TARGET_TRIPLE) { "$env:TARGET_TRIPLE/" } else { "" }
 $TargetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { "apps/desktop/src-tauri/target" }
-Copy-Item "$TargetDir/$TargetTriple/release/bundle/nsis/mausVoice_*-setup.exe" `
-          apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
+# Same hazard as the bash step above: the glob also matches installers left by
+# earlier builds, and Copy-Item with more than one source needs a *directory*
+# destination. Resolve it to the most recent one, and refuse to continue when
+# there is none rather than embedding a stale installer.
+$nsis = "$TargetDir/$TargetTriple/release/bundle/nsis"
+$setup = Get-ChildItem "$nsis/mausVoice_*-setup.exe" |
+         Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $setup) { throw "no mausVoice_*-setup.exe under $nsis" }
+Copy-Item $setup.FullName apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 ```
 
 3. Build the bootstrapper:

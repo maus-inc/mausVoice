@@ -55,7 +55,11 @@ export default defineConfig({
           .filter(Boolean)
       : [".localhost", "127.0.0.1", "[::1]"],
     fs: {
-      allow: [rootDir, path.resolve(rootDir, ".."), desktopSrc],
+      // `rootDir` and `desktopSrc` are the only two roots the preview reads: specs and
+      // components live under the first, and `@desktop/*` aliases into the second. Listing
+      // their shared parent admitted every other workspace package under `apps/` --
+      // `apps/firebase/**`, `apps/docs/**` -- which a demo dev server has no reason to serve.
+      allow: [rootDir, desktopSrc],
     },
   },
   preview: {

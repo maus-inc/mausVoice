@@ -167,6 +167,42 @@ const decodeNumericEntity = (entity: string, codePoint: number): string =>
     ? String.fromCodePoint(codePoint)
     : entity;
 
+/**
+ * HTML allows an astral character to be spelled as a surrogate PAIR of numeric
+ * references, so `&#xD83D;&#xDE00;` is a legitimate way to write U+1F600. Combine
+ * those back into the single code point, and drop any surrogate left unpaired.
+ *
+ * The lone case matters because a lone surrogate survives `JSON.stringify` as a
+ * `\udXXX` escape, and the pill's `serde_json` rejects that escape outright — so one
+ * stray `&#xD800;` in a model reply costs the whole pill sync, not one character.
+ * Rejecting the surrogate range inside `decodeNumericEntity` instead would also
+ * break the legitimate pair above, so the pair is rebuilt here.
+ */
+const normalizeSurrogates = (input: string): string => {
+  let out = "";
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      // A low surrogate with no high surrogate before it can never form a pair.
+      continue;
+    }
+    if (code < 0xd800 || code > 0xdbff) {
+      out += input[i];
+      continue;
+    }
+    const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
+    if (next >= 0xdc00 && next <= 0xdfff) {
+      out += String.fromCodePoint(
+        0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00),
+      );
+      i += 1;
+      continue;
+    }
+    // Unpaired high surrogate: drop it rather than emit a rejected escape.
+  }
+  return out;
+};
+
 const unescapeEntities = (input: string): string =>
   input
     .replaceAll("&amp;", "&")
@@ -185,7 +221,9 @@ const stripHtml = (input: string): string => {
   // Strip real tags, decode entities, then strip again so a source-encoded
   // tag like `&lt;script&gt;` cannot re-materialise after decoding. Each
   // pass is a single linear scan (no regex backtracking).
-  return stripTagsOnce(unescapeEntities(stripTagsOnce(input)));
+  return normalizeSurrogates(
+    stripTagsOnce(unescapeEntities(stripTagsOnce(input))),
+  );
 };
 
 /**

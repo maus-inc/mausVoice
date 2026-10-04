@@ -47,6 +47,11 @@ export const OllamaModelPicker = ({
     let cancelled = false;
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // One controller for the whole effect. `withTimeout` stops WAITING on a host that
+    // accepts the connection and then stalls; it does not stop the request, so
+    // without this every 3s retry armed another live probe and they accumulated.
+    // The timeout path and the unmount/endpoint-change path both abort it.
+    const controller = new AbortController();
 
     // A new endpoint or key means the previous answer describes a DIFFERENT server, so it is
     // cleared here rather than left for the first `await` to overwrite.
@@ -72,18 +77,20 @@ export const OllamaModelPicker = ({
         // without editing the URL to rebuild the effect. Rejecting instead lands in the catch
         // below and re-arms the 3s retry like any other failure.
         const available = await withTimeout(
-          repo.checkAvailability(),
+          repo.checkAvailability(controller.signal),
           PROBE_TIMEOUT_MS,
           "Ollama availability probe",
+          () => controller.abort(),
         );
         if (cancelled) return;
         setIsAvailable(available);
 
         if (available) {
           const fetchedModels = await withTimeout(
-            repo.getAvailableModels(),
+            repo.getAvailableModels(controller.signal),
             PROBE_TIMEOUT_MS,
             "Ollama model list",
+            () => controller.abort(),
           );
           if (cancelled) return;
           setModels(fetchedModels);
@@ -109,6 +116,7 @@ export const OllamaModelPicker = ({
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      controller.abort();
     };
   }, [effectiveUrl, apiKey]);
 

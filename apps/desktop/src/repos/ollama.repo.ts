@@ -4,8 +4,11 @@ import { appendOpenAICompatiblePath } from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseOllamaRepo extends BaseRepo {
-  abstract checkAvailability(): Promise<boolean>;
-  abstract getAvailableModels(): Promise<string[]>;
+  // `signal` is optional so existing callers are unaffected, but the pickers need it:
+  // a probe bounded by `withTimeout` stops WAITING on a stalled host, it does not stop the
+  // request, so without an abort every retry left another live fetch behind.
+  abstract checkAvailability(signal?: AbortSignal): Promise<boolean>;
+  abstract getAvailableModels(signal?: AbortSignal): Promise<string[]>;
 }
 
 export class OllamaRepo extends BaseOllamaRepo {
@@ -18,10 +21,11 @@ export class OllamaRepo extends BaseOllamaRepo {
     this.apiKey = apiKey;
   }
 
-  override async checkAvailability(): Promise<boolean> {
+  override async checkAvailability(signal?: AbortSignal): Promise<boolean> {
     try {
       const health = await fetch(`${this.ollamaUrl}`, {
         headers: getOllamaHeaders(this.apiKey),
+        signal,
       });
       return health.ok;
     } catch {
@@ -29,9 +33,10 @@ export class OllamaRepo extends BaseOllamaRepo {
     }
   }
 
-  async getAvailableModels(): Promise<string[]> {
+  async getAvailableModels(signal?: AbortSignal): Promise<string[]> {
     const response = await fetch(new URL("/api/tags", this.ollamaUrl).href, {
       headers: getOllamaHeaders(this.apiKey),
+      signal,
     });
     if (!response.ok) {
       throw new Error(
@@ -69,12 +74,13 @@ export class OpenAICompatibleRepo extends BaseOllamaRepo {
     this.fetchFn = customFetch;
   }
 
-  override async checkAvailability(): Promise<boolean> {
+  override async checkAvailability(signal?: AbortSignal): Promise<boolean> {
     try {
       const health = await this.fetchFn(
         appendOpenAICompatiblePath(this.baseUrl, "models"),
         {
           headers: getOllamaHeaders(this.apiKey),
+          signal,
         },
       );
       return health.ok;
@@ -83,11 +89,12 @@ export class OpenAICompatibleRepo extends BaseOllamaRepo {
     }
   }
 
-  async getAvailableModels(): Promise<string[]> {
+  async getAvailableModels(signal?: AbortSignal): Promise<string[]> {
     const response = await this.fetchFn(
       appendOpenAICompatiblePath(this.baseUrl, "models"),
       {
         headers: getOllamaHeaders(this.apiKey),
+        signal,
       },
     );
     if (!response.ok) {

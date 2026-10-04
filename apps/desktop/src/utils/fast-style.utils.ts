@@ -99,7 +99,16 @@ const findChunkCut = (text: string, start: number, end: number): number => {
     while (afterSpace < end && isSpace(text[afterSpace])) afterSpace += 1;
     // A terminator only ends a sentence if something separates it from the
     // next word. "3.5" and "www.example.com" are not sentence boundaries.
-    if (afterSpace >= end || afterSpace > i + 1) return afterSpace;
+    //
+    // The window edge is not a separator either. When the terminator is the
+    // last character of the chunk, the character after it belongs to the NEXT
+    // chunk, so returning here would split "3.5" into "3." + "5 ..." and
+    // "example.com" into "example." + "com" across two pill syncs.
+    if (afterSpace > i + 1) return afterSpace;
+    if (afterSpace >= end) {
+      if (afterSpace < text.length && !isSpace(text[afterSpace])) continue;
+      return afterSpace;
+    }
   }
   for (let i = end - 1; i > start; i -= 1) {
     if (isSpace(text[i])) return i;

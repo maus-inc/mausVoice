@@ -184,6 +184,16 @@ const followHttpsRedirects = async (
     body: init?.body,
     url: startUrl,
   };
+  // A caller-supplied `ReadableStream` body is spent by hop 0: the transport reads
+  // it with `arrayBuffer()`, which locks and disturbs it. `replayBody` below covers
+  // only a `Request` input, so on a 307/308 — the two codes that must replay the
+  // body — an `init.body` stream was handed back to the transport already consumed,
+  // and it threw `TypeError: Response body object should not be disturbed or locked`.
+  // Buffer it once here, the last point the bytes still exist, so both hop 0 and
+  // every replay read the same ArrayBuffer.
+  if (init?.body instanceof ReadableStream) {
+    chain.body = await new Response(init.body).arrayBuffer();
+  }
   const requestSignal = input instanceof Request ? input.signal : null;
   // A `Request` input carries its body on the object rather than in `init`, and a
   // URL cannot name one. So hop one is issued against that Request and lets the
