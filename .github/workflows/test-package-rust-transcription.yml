@@ -6,6 +6,7 @@ on:
       - "scripts/ci/run-with-diagnostics.sh"
       - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
       - "scripts/ci/sherpa-build-script-tests.mjs"
+      - "scripts/ci/sherpa-build-script-tests.test.mjs"
       - "packages/rust_transcription/**"
       - "patches/sherpa-onnx-sys-1.13.5/**"
       - "rust-toolchain.toml"
@@ -19,6 +20,7 @@ on:
       - "scripts/ci/run-with-diagnostics.sh"
       - "scripts/ci/sherpa-onnx-link-mode.test.mjs"
       - "scripts/ci/sherpa-build-script-tests.mjs"
+      - "scripts/ci/sherpa-build-script-tests.test.mjs"
       - "packages/rust_transcription/**"
       - "patches/sherpa-onnx-sys-1.13.5/**"
       - "rust-toolchain.toml"
@@ -123,6 +125,19 @@ jobs:
         # local cargo cache; the step above is what puts them there.
         run: |
           bash "$GITHUB_WORKSPACE/scripts/ci/run-with-diagnostics.sh" sherpa-build-script-tests node scripts/ci/sherpa-build-script-tests.mjs
+      # The selection rule and the rewrite this harness rests on, tested without cargo.
+      # Before this step the four helpers those tests cover were exported "so
+      # `sherpa-build-script-tests.test.mjs` can pin the selection rule" -- and no such
+      # file existed, because the module ran the whole cargo replay on import, so the test
+      # could not exist. That is the state `check-workspace-hygiene.test.mjs` exists to
+      # catch, and it caught it the moment the file appeared: a guard in scripts/ci that
+      # no workflow runs asserts nothing.
+      #
+      # Cheap and first, so a broken selection rule fails in seconds rather than after the
+      # cargo work above. It needs no toolchain and no dependencies.
+      - name: Test the sherpa build-script harness helpers
+        shell: bash
+        run: node --test scripts/ci/sherpa-build-script-tests.test.mjs
       - name: Run non-ignored integration tests
         shell: bash
         run: |

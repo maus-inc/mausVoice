@@ -128,6 +128,9 @@ const REQUIRED_TESTS = [
 
 class HarnessError extends Error {}
 
+/** How much of cargo's own output to echo when the harness cannot use it. */
+const CARGO_OUTPUT_EXCERPT_LINES = 40;
+
 /** Report why the harness could not do its job, and exit non-zero. */
 function fail(msg) {
   throw new HarnessError(msg);
@@ -144,7 +147,33 @@ function fail(msg) {
 export function tokenizeCargoCommand(line) {
   const match = /^\s*Running\s+`([\s\S]*)`\s*$/.exec(line);
   if (!match) return null;
-  const body = match[1];
+  return splitCommandWords(match[1]);
+}
+
+/**
+ * The same, for a line whose prefix is not the literal word `Running`.
+ *
+ * Cargo has changed what it puts in front of a replayed command before, and the prefix is
+ * cosmetic: what matters is that the command is backtick-quoted, which is how cargo has
+ * always quoted it. Taking the text between the FIRST and the LAST backtick tolerates
+ * `[0.04s] Running \`...\``, `Fresh \`...\`` and whatever comes next.
+ *
+ * This is not a licence to match anything. Both markers are still required --
+ * `CARGO_PKG_NAME=sherpa-onnx-sys` AND `--crate-name build_script_build` -- so a line that
+ * merely mentions backticks produces words that match neither. The cost of this being too
+ * permissive is a diagnostic that is harder to read, not a wrong build script compiled:
+ * a false positive here still has to satisfy the package name and the crate name, and the
+ * replayed command is checked against what cargo would accept.
+ */
+export function tokenizeCargoCommandLoose(line) {
+  const first = line.indexOf("`");
+  if (first === -1) return null;
+  const last = line.lastIndexOf("`");
+  if (last <= first) return null;
+  return splitCommandWords(line.slice(first + 1, last));
+}
+
+function splitCommandWords(body) {
   const words = [];
   let current = "";
   let started = false;
@@ -219,7 +248,7 @@ export function findBuildScriptInvocation(verboseOutput) {
   for (const line of verboseOutput.split("\n")) {
     let words;
     try {
-      words = tokenizeCargoCommand(line);
+      words = tokenizeCargoCommand(line) ?? tokenizeCargoCommandLoose(line);
     } catch {
       continue;
     }
@@ -561,6 +590,15 @@ function runHarness(workDir) {
     fail(`could not parse cargo's -vv output: ${err.message}`);
   }
   if (matches.length === 0) {
+    // Print what cargo said. Without this the step reports "no rustc invocation" and
+    // nothing else: the output is captured in a variable, so the CI log contains the
+    // conclusion and none of the evidence, and the obvious next question -- what did
+    // cargo 1.99 actually print -- cannot be answered from the run that failed.
+    console.error(
+      `--- last ${CARGO_OUTPUT_EXCERPT_LINES} lines cargo printed ---\n` +
+        output.split("\n").slice(-CARGO_OUTPUT_EXCERPT_LINES).join("\n") +
+        "\n--- end ---",
+    );
     const sawAny = output.includes("Running `");
     fail(
       "cargo build -vv printed no rustc invocation for the " +

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 
 import {
@@ -7,6 +8,7 @@ import {
   parseEnvPrefix,
   rewriteInvocation,
   tokenizeCargoCommand,
+  tokenizeCargoCommandLoose,
 } from "./sherpa-build-script-tests.mjs";
 
 const SHERPA_PKG = "sherpa-onnx-sys";
@@ -238,6 +240,118 @@ describe("rewriteInvocation", () => {
 
   it("keeps rustc as argv[0]", () => {
     assert.equal(rewrite(0, false).argv[0], RUSTC);
+  });
+});
+
+describe("tokenizeCargoCommandLoose", () => {
+  // Cargo has changed the prefix it puts in front of a replayed command before, and the
+  // prefix is cosmetic. What is not cosmetic is that a harness which cannot parse the
+  // line reports "no rustc invocation" and nothing else -- the CI log then contains the
+  // conclusion and none of the evidence. So the finder tolerates the prefix, and the
+  // evidence is printed when even that is not enough.
+  const body = `${RUSTC} --crate-name build_script_build --edition=2021 build.rs`;
+
+  it("accepts a timestamped prefix", () => {
+    assert.deepEqual(tokenizeCargoCommandLoose("   [0.04s] Running `" + body + "`"), [
+      RUSTC,
+      "--crate-name",
+      "build_script_build",
+      "--edition=2021",
+      "build.rs",
+    ]);
+  });
+
+  it("accepts a bare Fresh prefix", () => {
+    assert.deepEqual(tokenizeCargoCommandLoose("    Fresh `" + body + "`"), [
+      RUSTC,
+      "--crate-name",
+      "build_script_build",
+      "--edition=2021",
+      "build.rs",
+    ]);
+  });
+
+  it("returns nothing for a line with no backticks, rather than guessing", () => {
+    assert.equal(tokenizeCargoCommandLoose("   Compiling foo v0.1.0"), null);
+    assert.equal(tokenizeCargoCommandLoose(""), null);
+  });
+
+  it("returns nothing for a single backtick", () => {
+    assert.equal(tokenizeCargoCommandLoose("   Running `unterminated"), null);
+  });
+
+  it("finds the invocation behind any prefix, and only that one", () => {
+    // Built by hand rather than through `withEnv`, which hardcodes the `Running`
+    // prefix and would therefore have produced the same strict line four times -- so
+    // three of these cases asserted nothing. Removing the loose fallback leaves this
+    // green, which is how that was found.
+    const withEnvPrefix = (prefix) =>
+      prefix +
+      "`CARGO_PKG_NAME=" +
+      SHERPA_PKG +
+      " CARGO_MANIFEST_DIR=/probe " +
+      body +
+      "`";
+
+    for (const prefix of [
+      "   Running ",
+      "   [0.04s] Running ",
+      "    Fresh ",
+      "  Compiling sherpa-onnx-sys v1.13.5 ",
+    ]) {
+      // the strict tokenizer must reject three of these, or the case proves nothing
+      if (prefix !== "   Running ") {
+        assert.equal(
+          tokenizeCargoCommand(withEnvPrefix(prefix)),
+          null,
+          `the strict tokenizer unexpectedly accepted ${JSON.stringify(prefix)}, so ` +
+            `this case is not testing the fallback`,
+        );
+      }
+      const found = findBuildScriptInvocation(withEnvPrefix(prefix));
+      assert.equal(
+        found.length,
+        1,
+        `prefix not tolerated: ${JSON.stringify(prefix)}`,
+      );
+    }
+  });
+  it("still refuses a line that only mentions backticks", () => {
+    // Tolerating the prefix must not become matching anything: both markers are still
+    // required, so prose that happens to quote a command cannot be replayed.
+    const prose = "   Running `the crate named build_script_build is sherpa-onnx-sys`";
+    assert.deepEqual(findBuildScriptInvocation(withEnv(prose, SHERPA_PKG)), []);
+  });
+});
+
+describe("the harness says what cargo printed when it cannot use the output", () => {
+  // Without this the CI log carries the conclusion and none of the evidence: cargo's
+  // output is captured into a variable, so "no rustc invocation" cannot be diagnosed from
+  // the run that produced it. That is not hypothetical -- this is exactly the log that
+  // cost a round on a cargo whose `-vv` prefix the strict tokenizer did not accept.
+  //
+  // Driven for real, with a `cargo` that succeeds and prints nothing: no compile, no
+  // network, no disk. The harness reaches the same failure a format change would cause.
+  it("echoes cargo's own output on the path that reports no invocation", () => {
+    const result = spawnSync(
+      process.execPath,
+      [new URL("./sherpa-build-script-tests.mjs", import.meta.url).pathname],
+      {
+        encoding: "utf8",
+        env: { ...process.env, CARGO: "/bin/true" },
+      },
+    );
+    assert.notEqual(result.status, 0, "a silent cargo must not let the harness pass");
+    assert.match(
+      result.stderr,
+      /printed no rustc invocation/,
+      "expected the harness to reach the no-invocation path",
+    );
+    assert.match(
+      result.stderr,
+      /--- last \d+ lines cargo printed ---/,
+      "the harness must echo cargo's output, or the failure cannot be diagnosed from CI",
+    );
   });
 });
 
