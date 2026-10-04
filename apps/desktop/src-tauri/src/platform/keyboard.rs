@@ -485,6 +485,57 @@ fn child_store() -> &'static Mutex<Option<Child>> {
     CHILD.get_or_init(|| Mutex::new(None))
 }
 
+/// Send the current combos to a freshly spawned child's stdin and publish the handle.
+///
+/// Exists as one function because two properties have to hold together and neither is
+/// visible in the caller:
+///
+///   * `combo_store` is held across the write, so a concurrent `sync_combos` cannot
+///     deliver newer combos between this snapshot and this write and then be overwritten
+///     by the stale snapshot.
+///   * `child_stdin_store` is held across BOTH the write and the publish, so a
+///     `stop_listener_child` cannot take the slot to `None` in between and leave the new
+///     child with an empty combo set and no way to be sent them again.
+///
+/// The lock order is `combo_store` then `child_stdin_store`, which is the order
+/// `sync_combos` uses, so holding both introduces no inversion. `overlapping_writers_take
+/// _the_stores_in_one_order` is the test that fails if that ever stops being true.
+fn publish_child_stdin(mut stdin: Option<ChildStdin>) {
+    let combos_guard = lock(combo_store());
+    let combos = combos_guard.clone();
+    let mut stdin_guard = lock(child_stdin_store());
+    if !combos.is_empty() {
+        if let Some(handle) = stdin.as_mut() {
+            if let Ok(json) = serde_json::to_string(&combos) {
+                if let Err(err) = writeln!(handle, "{json}") {
+                    log::error!("Failed to send initial combos to child: {err}");
+                }
+                let _ = handle.flush();
+            }
+        }
+    }
+    *stdin_guard = stdin;
+    drop(stdin_guard);
+    drop(combos_guard);
+}
+
+/// Bumped by every `stop_listener_child`, read either side of a spawn.
+///
+/// A stop is a request about a child that may not be in `child_store` yet. `stop_listener_child`
+/// clears the stdin slot, then takes and kills whatever `child_store` holds. A spawn in
+/// flight holds its `Child` in a local, so a stop landing in that window finds nothing to
+/// kill and the spawn then stores a process that nothing owns: no one signals it, and its
+/// stdin slot is `None`, so `sync_combos` cannot reach it either. It runs until the machine
+/// reboots.
+///
+/// The counter makes that window visible. The spawn records the value before it starts and
+/// compares after it stores; if a stop happened in between, this child is one the caller
+/// has already asked to be rid of, so the spawn kills it rather than publishing it.
+fn stop_epoch() -> &'static AtomicU64 {
+    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    &EPOCH
+}
+
 fn start_external_listener(
     emitter: Arc<KeyEventEmitter>,
 ) -> Result<(JoinHandle<()>, Arc<AtomicBool>), String> {
@@ -692,40 +743,54 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         return Ok(());
     }
 
+    // Read before spawning, compare after storing. See `stop_epoch`.
+    let epoch = stop_epoch().load(Ordering::SeqCst);
+
     let mut child = spawn_listener_child(port)?;
 
-    let stdin = child.stdin.take();
+    // Send the initial combos and PUBLISH the handle as one step, under both locks.
+    //
+    // Both locks, for the reason given on `sync_combos`: releasing the combo lock between
+    // the snapshot and the write lets a concurrent `sync_combos` deliver newer combos
+    // first and have this call overwrite them with the stale snapshot.
+    //
+    // One hold of the stdin lock across BOTH the write and the install, because an earlier
+    // version released it in between. A `stop_listener_child` landing in that window took
+    // the slot to `None`, so `if let Some(stdin) = ...` was false and the initial send was
+    // skipped with no log line -- the handle had already been moved into the store and was
+    // dropped by the stop. The new child then sat in `child_store` with an empty combo set,
+    // and `ensure_listener_child` returns early whenever the child is alive, so nothing ever
+    // resent them. macOS and Windows self-heal, because the child's reader thread takes the
+    // EOF branch and exits, and the respawn loop tries again. Linux does not self-heal at
+    // all: its reader thread is cfg-gated off, so nothing notices.
+    publish_child_stdin(child.stdin.take());
+
+    let id = child.id();
     {
-        let mut stdin_guard = lock(child_stdin_store());
-        *stdin_guard = stdin;
+        let mut guard = lock(child_store());
+        *guard = Some(child);
     }
 
-    // Read the combos and send them under both locks, for the reason given on
-    // `sync_combos`: releasing the combo lock between the snapshot and the write
-    // lets a concurrent `sync_combos` deliver newer combos first and have this
-    // call overwrite them with the stale snapshot.
-    let combos_guard = lock(combo_store());
-    let mut stdin_guard = lock(child_stdin_store());
-    let combos = combos_guard.clone();
-    if !combos.is_empty() {
-        if let Some(stdin) = stdin_guard.as_mut() {
-            if let Ok(json) = serde_json::to_string(&combos) {
-                if let Err(err) = writeln!(stdin, "{json}") {
-                    log::error!("Failed to send initial combos to child: {err}");
-                }
-                let _ = stdin.flush();
+    // A stop that landed while this child was being spawned found nothing to kill. Honour
+    // it, rather than leaving a process behind that nothing owns. Scoped to THIS child by
+    // id: if another spawn won the race and published its own, this must not kill that one.
+    if stop_epoch().load(Ordering::SeqCst) != epoch {
+        let mut guard = lock(child_store());
+        let ours = guard.as_ref().map(|c| c.id()) == Some(id);
+        if ours {
+            if let Some(mut child) = guard.take() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
-    drop(stdin_guard);
-    drop(combos_guard);
-
-    let mut guard = lock(child_store());
-    *guard = Some(child);
     Ok(())
 }
 
 fn stop_listener_child() {
+    // First, so a spawn that is between "read the epoch" and "stored the child" sees it.
+    stop_epoch().fetch_add(1, Ordering::SeqCst);
+
     {
         let mut stdin_guard = lock(child_stdin_store());
         *stdin_guard = None;
@@ -1414,6 +1479,74 @@ mod tests {
 /// them.
 #[cfg(test)]
 mod lifecycle_tests {
+    use super::{
+        child_stdin_store, combo_store, lock, publish_child_stdin, stop_epoch,
+        stop_listener_child,
+    };
+    use std::sync::atomic::Ordering;
+
+    /// The two locks must be taken in ONE order, and it is `combo_store` first.
+    ///
+    /// This is a property of `publish_child_stdin`, so the test drives that function
+    /// rather than asserting anything about the source text. It discriminates: if the
+    /// order were reversed, the publishing thread would block on `child_stdin_store`
+    /// while holding nothing, and the `try_lock` below would succeed.
+    ///
+    /// It also covers the other half. A stop landing between the write and the publish
+    /// used to leave the new child with an empty combo set, silently and with no way to
+    /// be sent them again, because `ensure_listener_child` returns early whenever the
+    /// child is alive. Here the handle has to arrive PUBLISHED, under the same hold that
+    /// performed the write.
+    #[test]
+    fn overlapping_writers_take_the_stores_in_one_order() {
+        // Hold the stdin store so the publishing thread cannot get past it.
+        let held = lock(child_stdin_store());
+
+        let publisher = std::thread::spawn(|| publish_child_stdin(None));
+
+        // The publisher must be blocked on the stdin store AND holding the combo store,
+        // because that is the only order that makes the snapshot-and-write atomic.
+        let mut saw_combo_held = false;
+        for _ in 0..200 {
+            if combo_store().try_lock().is_err() {
+                saw_combo_held = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(
+            saw_combo_held,
+            "the publishing thread does not hold combo_store while waiting for \
+             child_stdin_store, so the stores are being taken in more than one order and \
+             a same-order acquisition is exactly what would deadlock"
+        );
+
+        drop(held);
+        publisher.join().expect("publisher thread");
+    }
+
+    /// A stop must be visible to a spawn that is in flight.
+    ///
+    /// `stop_listener_child` clears the stdin slot and then takes and kills whatever
+    /// `child_store` holds. A spawn keeps its `Child` in a local until it stores it, so a
+    /// stop landing in that window finds nothing to kill -- and the spawn then publishes a
+    /// process that nothing owns and that `sync_combos` cannot reach. The epoch is what
+    /// makes that window visible; without it the counter is the whole mechanism and this
+    /// is the only thing testing it.
+    #[test]
+    fn a_stop_is_visible_to_a_spawn_in_flight() {
+        let before = stop_epoch().load(Ordering::SeqCst);
+        // With no child running this is a no-op beyond the bump, so it is safe to call
+        // directly rather than through a spawn.
+        stop_listener_child();
+        assert_ne!(
+            stop_epoch().load(Ordering::SeqCst),
+            before,
+            "stop_listener_child must bump the epoch, or a spawn that is between \
+             reading it and storing its child cannot tell that it was asked to stop"
+        );
+    }
+
     /// Regression test for issue #488: the Windows resume path calls
     /// `restart_key_listener` (which is `start_key_listener` under the
     /// hood) after sleep/wake or session unlock, and may receive a second
