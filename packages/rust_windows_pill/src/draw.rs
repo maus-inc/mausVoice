@@ -2181,7 +2181,7 @@ fn wrap_text(gfx: &Gfx, text: &str, max_width: f64) -> Vec<String> {
             let test = if current_line.is_empty() {
                 word.to_string()
             } else {
-                format!("{} {}", current_line, word)
+                format!("{current_line} {word}")
             };
             let (tw, _) = gfx.measure_text(&test, 14.0, false);
             if tw > max_width && !current_line.is_empty() {

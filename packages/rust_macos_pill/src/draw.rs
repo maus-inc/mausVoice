@@ -2033,7 +2033,7 @@ fn wrap_text(ctx: &Ctx, text: &str, max_width: f64) -> Vec<String> {
             let test = if current_line.is_empty() {
                 word.to_string()
             } else {
-                format!("{} {}", current_line, word)
+                format!("{current_line} {word}")
             };
             let extents = ctx.text_extents(&test);
             if extents.width > max_width && !current_line.is_empty() {
