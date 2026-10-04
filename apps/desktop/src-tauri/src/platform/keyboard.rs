@@ -1579,6 +1579,52 @@ mod lifecycle_tests {
         publisher.join().expect("publisher thread");
     }
 
+    /// The handle has to arrive PUBLISHED, under the same hold that wrote to it.
+    ///
+    /// This is the other half of what `publish_child_stdin` exists to guarantee, and the
+    /// ordering test cannot reach it: it passes `None`, so nothing is written and nothing
+    /// is published. A stop landing between the write and the store used to leave the
+    /// child with an empty combo set and no way to be sent them again, silently.
+    ///
+    /// A real `ChildStdin` is needed, because `None` publishes `None` and the assertion
+    /// would pass either way. `cat` on unix and `cmd` on Windows: both are present on a
+    /// runner, neither needs to be talked to, and neither is gated -- which matters,
+    /// because the whole point of this module is that it is not behind a `cfg`.
+    #[test]
+    fn the_handle_is_published_under_the_same_hold_that_wrote_to_it() {
+        let mut helper = std::process::Command::new(if cfg!(windows) { "cmd" } else { "cat" })
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn a helper process to obtain a ChildStdin");
+        let handle = helper.stdin.take().expect("piped stdin");
+
+        // Put something in the store so the write is not skipped by an empty combo set.
+        {
+            let mut combos = lock(combo_store());
+            combos.push(vec!["ctrl".to_string(), "shift".to_string()]);
+        }
+
+        publish_child_stdin(Some(handle));
+
+        assert!(
+            lock(child_stdin_store()).is_some(),
+            "publish_child_stdin did not leave the handle in the store, so a stop could \
+             take it away and the child would never be sent its combos"
+        );
+
+        // Leave the process-global state as the rest of the suite expects it.
+        {
+            let mut stdin_guard = lock(child_stdin_store());
+            *stdin_guard = None;
+        }
+        {
+            let mut combos = lock(combo_store());
+            combos.clear();
+        }
+        let _ = helper.kill();
+        let _ = helper.wait();
+    }
+
     /// A stop must be visible to a spawn that is in flight.
     ///
     /// `stop_listener_child` clears the stdin slot and then takes and kills whatever
