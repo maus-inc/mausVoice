@@ -196,83 +196,110 @@ describe("release workflow shell contracts", () => {
         `(declares workflow_dispatch: ${declaresManual})`,
     );
   }
-  it("the inert-policy sentinel lives where the pull request cannot delete it", () => {
-    // The verdict in the closing step reads a sentinel file that the scan steps
-    // write when the trusted policy cannot detect anything. That file used to live
-    // in $RUNNER_TEMP, which every step in this job can write -- and steps 11-13 are
-    // `node scripts/ci/*.mjs` executed from the SCANNED checkout, i.e. arbitrary code
-    // from the branch under review. One `rm -rf "$RUNNER_TEMP"` in any of them makes
-    // the gate report a scan it never performed, which is the one failure this whole
-    // job exists to prevent. So the sentinel moved into the trusted checkout, which
-    // only this job's own steps write.
+  // The shape of the capability check, as it appears in the scans and in the verdict.
+  // Pulled out as a function so the two contracts below compare the SAME text.
+  const capabilityPredicate = (text) => {
+    const blocks = [...text.matchAll(/^[ \t]*active=0$/gm)].map((m) => {
+      const rest = text.slice(m.index);
+      const end = rest.search(/\n[ \t]*fi\n/);
+      assert.notEqual(end, -1, "unterminated capability predicate");
+      return rest.slice(0, end + 1).replace(/^[ \t]*active=0$/gm, "active=0");
+    });
+    return blocks.map((b) =>
+      b
+        .split("\n")
+        .map((l) => l.replace(/^[ \t]+/, ""))
+        .join("\n"),
+    );
+  };
+
+  it("the verdict re-derives policy capability itself, crossing no step boundary", () => {
+    // This job's verdict used to be a question about another step: the scans wrote a
+    // sentinel file when they had to skip, and the closing step failed when it found
+    // one. Two reviewers killed that, correctly and in this order. First the file
+    // lived in $RUNNER_TEMP, which steps 12-14 (`node scripts/ci/*.mjs` run from the
+    // SCANNED checkout, i.e. arbitrary code from the branch under review) could
+    // `rm -rf`, so deleting one file turned an unscanned range green. Moving it into
+    // the trusted checkout closed that and opened nothing: every step here runs as the
+    // same uid, so `rm trusted-scanner/.inert-policy-sentinel` works identically -- and
+    // so does WRITING it, which let a pull request fail a perfectly scannable base.
+    // Either way, the pull request decided its own verdict.
     //
-    // Three properties, each separately load-bearing, and none of them observable
-    // from any other gate in this repository:
-    //   1. its path is under the trusted checkout, never under runner temp;
-    //   2. it is cleared before anything can write one, so a stale file from an
-    //      earlier run cannot make a later inert scan look like a working one;
-    //   3. that reset step comes before every step that writes the sentinel.
+    // So the sentinel is gone rather than relocated, and the closing step answers the
+    // capability question from the trusted checkout directly. Nothing crosses a step
+    // boundary, so there is nothing for another step to delete or forge.
     const scan = read(".github/workflows/secret-scan.yml");
-
-    const sentinel = scan.match(/^\s*INERT_SENTINEL:\s*(.+?)\s*$/m);
-    assert.ok(
-      sentinel,
-      "secret-scan.yml must set INERT_SENTINEL as a step env var",
-    );
-    assert.match(
-      sentinel[1],
-      /^\$\{\{ github\.workspace \}\}\/trusted-scanner\//,
-      `INERT_SENTINEL must sit under the trusted checkout, got: ${sentinel[1]}`,
-    );
-    assert.doesNotMatch(
-      sentinel[1],
-      /runner\.temp|RUNNER_TEMP/,
-      "INERT_SENTINEL must not sit under runner temp: the scanned checkout's own " +
-        "scripts run as the same uid and can delete anything there",
-    );
-
     const steps = extractSteps(scan);
-    const writers = steps.filter((step) =>
-      step.run.some((l) => l.includes("$INERT_SENTINEL") && l.includes(">")),
-    );
-    assert.ok(
-      writers.length >= 3,
-      `expected at least 3 sentinel writers, found ${writers.length}`,
-    );
-    const resetIndex = steps.findIndex((step) =>
-      step.name.startsWith("Reset the inert-policy sentinel"),
-    );
-    assert.notEqual(
-      resetIndex,
-      -1,
-      "secret-scan.yml needs a step that resets the sentinel",
-    );
-    // Matched on the raw text rather than through extractSteps: this step's body is
-    // an inline `run:`, which the block-scalar scanner reports as empty.
-    assert.match(
+
+    // 1. No sentinel survives anywhere: not declared, not written, not read.
+    assert.doesNotMatch(
       scan,
-      /- name: Reset the inert-policy sentinel\n\s+run: rm -f "\$INERT_SENTINEL"\n/,
-      'the reset step must be exactly `rm -f "$INERT_SENTINEL"`',
+      /^\s*INERT_SENTINEL:/m,
+      "no step may publish INERT_SENTINEL: a file on disk is reachable by the " +
+        "pull-request-controlled steps 12-14, which run as this job's uid",
     );
-    for (const writer of writers) {
-      assert.ok(
-        steps.indexOf(writer) > resetIndex,
-        `${writer.name} writes the sentinel but runs before it is reset, so a ` +
-          "sentinel left by an earlier run would be read as this run's verdict",
+    for (const step of steps) {
+      assert.doesNotMatch(
+        step.run.join("\n"),
+        /\$INERT_SENTINEL/,
+        `${step.name} references INERT_SENTINEL; the verdict must not depend on a file`,
       );
     }
 
-    // The verdict must still be fail-closed: it is an error, not a warning.
     const verdict = steps.find((step) =>
       step.name.startsWith("Require a secret-scan policy"),
     );
     assert.ok(verdict, "secret-scan.yml needs the closing verdict step");
-    assert.ok(
-      verdict.run.some(
-        (l) => l.includes("::error::") && l.includes("INERT_SENTINEL"),
-      ),
-      "the closing verdict must fail the job when no scan ran",
+    const body = verdict.run.join("\n");
+
+    // 2. The verdict reads the trusted policy itself, and fails closed on it.
+    assert.match(
+      body,
+      /TRUSTED_POLICY="\.\.\/trusted-scanner\/gitleaks\.toml"/,
+      "the closing verdict must resolve the trusted policy from the trusted checkout",
     );
+    assert.match(
+      body,
+      /\[ ! -r "\$TRUSTED_POLICY" \]/,
+      "the closing verdict must fail closed when the trusted policy is unreadable",
+    );
+    assert.match(
+      body,
+      /useDefault/,
+      "the verdict must test for the extend declaration",
+    );
+
+    // 3. An inert policy is an ERROR at the verdict. An `::warning::` here would
+    //    restore the blind green this job exists to prevent.
+    assert.match(
+      body,
+      /echo "::error::The trusted gitleaks policy at \$POLICY_REF does not extend/,
+      "an inert trusted policy must fail the job at the verdict, not warn",
+    );
+    assert.doesNotMatch(
+      body,
+      /::warning::No scan in this job ran/,
+      "the old file-based verdict warned instead of failing",
+    );
+
+    // 4. All four copies of the predicate are byte-identical. The workflow keeps the
+    //    check in four places because failing inside the scans made every
+    //    self-verification step after them unreachable; a drifted copy is exactly how
+    //    that trade turns back into a blind green.
+    const blocks = capabilityPredicate(scan);
+    assert.equal(
+      blocks.length,
+      4,
+      `expected the capability predicate in all three scans plus the verdict, found ${blocks.length}`,
+    );
+    const [reference, ...rest] = blocks;
+    for (const block of rest) {
+      assert.equal(
+        block,
+        reference,
+        "the four copies of the capability predicate have drifted apart",
+      );
+    }
   });
 
   it("the policy-resolution rationale describes skipping, not failing, inside the scan", () => {
@@ -435,26 +462,53 @@ describe("release workflow shell contracts", () => {
         run.includes("in_extend && /^[[:space:]]*useDefault"),
         `${step.name} must require useDefault = true inside an [extend] body, not anywhere in the file`,
       );
-      // An inert policy must SKIP this scan and leave a sentinel -- not fail here.
+      // An inert policy must SKIP this scan -- not fail here.
       //
       // Failing here is what the previous version did, and it was worse than it
-      // looked: the scans are steps 5-7 and the six steps after them carry no
+      // looked: the scans are steps 6-8 and the six steps after them carry no
       // `if:`, so an `exit 1` made this job never run a single one of its own
       // self-verification steps -- the updater-key fixture, the built-in detector
       // fixture, both config-guard steps and the history-scan integration test all
       // became unreachable against this repository's own base. The job reported a
       // policy problem while proving nothing about itself.
+      //
+      // It used to skip by writing a sentinel file for the closing step to find.
+      // That is gone: the file was reachable by steps 12-14, which run the
+      // pull request's own `scripts/ci/*.mjs` as this job's uid, so the branch
+      // under review could both hide a skipped scan and fabricate one. The scan
+      // now records nothing and simply says so; the closing verdict re-derives the
+      // answer from the trusted checkout. See "the verdict re-derives policy
+      // capability itself" for the full argument.
       assert.match(
         run,
-        /if \[ "\$active" -ne 1 \]; then[\s\S]*?printf 'inert %s\\n' "\$POLICY_REF" > "\$INERT_SENTINEL"/,
-        `${step.name} must record an inert policy in the sentinel instead of failing`,
+        /if \[ "\$active" -ne 1 \]; then[\s\S]*?echo "::warning::Trusted gitleaks policy at/,
+        `${step.name} must warn and skip on an inert policy instead of failing`,
       );
-      const inertArm = run.slice(run.indexOf('if [ "$active" -ne 1 ]; then'));
       assert.doesNotMatch(
-        inertArm.slice(0, inertArm.indexOf("fi")),
+        run,
+        /\$INERT_SENTINEL/,
+        `${step.name} must not write a sentinel file; the pull request can delete or ` +
+          `forge any file this job's steps can write`,
+      );
+      // Bounded by a line-anchored `fi`, not by `indexOf("fi")`. That version matched
+      // the word "first" inside the comment above the arm, so the slice stopped inside a
+      // comment and never reached the `exit` at all: replacing `exit 0` with `exit 1`
+      // left this assertion green. Found by mutating the workflow, which is the only
+      // way an assertion this shape fails -- it looks like it is checking something.
+      const inertArm = run.slice(run.indexOf('if [ "$active" -ne 1 ]; then'));
+      const armEnd = /^\s*fi\s*$/m.exec(inertArm);
+      assert.ok(armEnd, `${step.name}: unterminated inert arm`);
+      assert.doesNotMatch(
+        inertArm.slice(0, armEnd.index),
         /exit 1/,
         `${step.name} must not exit non-zero on the inert path, or the ` +
           `self-verification steps after it never run`,
+      );
+      assert.match(
+        inertArm.slice(0, armEnd.index),
+        /exit 0/,
+        `${step.name} must exit 0 on the inert path, so the job's own ` +
+          `self-verification steps after it still run`,
       );
 
       // The verdict belongs at the end of the job, where `always()` reaches it.
@@ -467,18 +521,21 @@ describe("release workflow shell contracts", () => {
         /if: always\(\)/,
         "the closing gate must run under always(), or a failure above hides it",
       );
+      // The gate must pass once the base policy is fixed, and fail while it is not,
+      // from a check it makes itself. Both arms are asserted positively, because the
+      // inert arm used to be "a branch that has to be added later" -- it was reached
+      // only by a file existing, and deleting that file deleted the failure.
       assert.match(
         scan.slice(gate),
-        /if \[ ! -f "\$INERT_SENTINEL" \]; then[\s\S]*?exit 0/,
-        "the closing gate must pass when no scan had to skip itself, so it is " +
-          "not unconditionally red once the base policy is fixed",
+        /echo "The trusted gitleaks policy at \$POLICY_REF extends gitleaks' built-in detectors[\s\S]*?$/m,
+        "the closing gate must pass when the trusted policy extends the built-in " +
+          "detectors, so it is not unconditionally red once the base policy is fixed",
       );
       assert.match(
         scan.slice(gate),
-        /if \[ ! -f "\$INERT_SENTINEL" \]; then[\s\S]*?exit 0\s*fi[\s\S]*?exit 1/,
-        "the closing gate must exit 0 only while no scan skipped itself, and " +
-          "exit 1 once the sentinel exists -- i.e. the inert case is the " +
-          "fall-through, not a branch that has to be added later",
+        /if \[ "\$active" -ne 1 \]; then[\s\S]*?exit 1/,
+        "the closing gate must exit 1 on an inert trusted policy, decided by its " +
+          "own check of the trusted checkout rather than by a file a step left behind",
       );
       assert.match(
         scan.slice(gate),
