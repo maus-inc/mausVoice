@@ -8,6 +8,59 @@ import {
 // `redactSensitiveTokens` is the pass that knows about authorization schemes;
 // the exported entry point needs an error object to unwrap first.
 
+// `redactUnknown` walks the real object graph, and an SDK error body routinely hangs one
+// object off several keys. `seen` used to be add-only, so the marker it produced meant
+// "already visited" rather than "on a cycle" -- a plain DAG rendered as
+// `{ a: {...}, b: "[Circular]" }`, asserting a cycle that does not exist and dropping the
+// second copy.
+describe("unknownToMessage on a shared reference", () => {
+  it("renders both copies of an object referenced twice", () => {
+    const shared = { host: "api.example.com", status: 500 };
+    expect(unknownToMessage({ a: shared, b: shared })).toBe(
+      '{"a":{"host":"api.example.com","status":500},' +
+        '"b":{"host":"api.example.com","status":500}}',
+    );
+  });
+
+  it("renders a shared object repeated inside an array", () => {
+    const shared = { id: 7 };
+    expect(unknownToMessage([shared, shared])).toBe('[{"id":7},{"id":7}]');
+  });
+
+  it("still marks a real cycle", () => {
+    // The marker must not simply be gone. A cycle re-enters an ANCESTOR whose entry has
+    // not been removed yet, which is why removing on the way out is safe.
+    const node: Record<string, unknown> = { name: "root" };
+    node.self = node;
+    expect(unknownToMessage(node)).toBe('{"name":"root","self":"[Circular]"}');
+  });
+
+  it("still marks a two-object cycle", () => {
+    const a: Record<string, unknown> = { name: "a" };
+    const b: Record<string, unknown> = { name: "b", a };
+    a.b = b;
+    expect(unknownToMessage(a)).toBe(
+      '{"name":"a","b":{"name":"b","a":"[Circular]"}}',
+    );
+  });
+
+  it("still marks an array that contains itself", () => {
+    const list: unknown[] = [1];
+    list.push(list);
+    expect(unknownToMessage(list)).toBe('[1,"[Circular]"]');
+  });
+
+  it("still redacts a credential inside a shared object", () => {
+    // The fix changes which objects are REVISITED, not whether they are inspected, so a
+    // shared object carrying a credential is still redacted on every appearance.
+    const shared = { authorization: "Bearer sk-secret-value" };
+    const rendered = unknownToMessage({ a: shared, b: shared });
+    expect(rendered).not.toContain("sk-secret-value");
+    // The marker is lowercase `[redacted]` -- see REDACTED in error.ts.
+    expect(rendered.match(/\[redacted\]/g)).toHaveLength(2);
+  });
+});
+
 describe("unknownToMessage", () => {
   it("returns Error.message", () => {
     expect(unknownToMessage(new Error("boom"))).toBe("boom");

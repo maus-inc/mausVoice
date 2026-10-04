@@ -62,16 +62,29 @@ export type TimingAggregate = {
   stages: Record<string, number[]>;
 };
 
+/** How many samples per stage are kept when a caller does not say. */
+const DEFAULT_TIMING_SAMPLES = 20;
+
 export const appendTimingSample = (
   previous: TimingAggregate | undefined,
   summary: PipelineSummary,
-  maxSamples = 20,
+  maxSamples = DEFAULT_TIMING_SAMPLES,
 ): TimingAggregate => {
+  // `slice(-0)` is `slice(0)`, which returns the WHOLE array -- so a cap of 0, or a
+  // negative one, made this function unbounded, in the one function that exists to bound
+  // something. Measured: `[1,2,3].slice(-0).length` is 3.
+  //
+  // `Math.max(1, Math.floor(n))` alone is not enough: `Math.floor(NaN)` is NaN, so
+  // `slice(-NaN)` is `slice(0)` again. Hence the `isFinite` branch, which falls back to the
+  // same default the parameter has rather than inventing a second policy.
+  const cap = Number.isFinite(maxSamples)
+    ? Math.max(1, Math.floor(maxSamples))
+    : DEFAULT_TIMING_SAMPLES;
   const stages: Record<string, number[]> = {
     ...previous?.stages,
   };
   for (const [stage, ms] of Object.entries(summary.stages)) {
-    stages[stage] = [...(stages[stage] ?? []), ms].slice(-maxSamples);
+    stages[stage] = [...(stages[stage] ?? []), ms].slice(-cap);
   }
   return { samples: (previous?.samples ?? 0) + 1, stages };
 };

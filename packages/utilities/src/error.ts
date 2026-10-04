@@ -957,19 +957,37 @@ const redactUnknown = (
   depth: number,
   seen: WeakSet<object>,
 ): unknown => {
+  // `seen` is the current PATH, not the set of everything visited, so it is removed on
+  // the way back out.
+  //
+  // It used to only ever be added to, which made the marker mean "already visited". That
+  // is a different thing from "on a cycle", and the two are common: an SDK error body
+  // routinely hangs one `request` or `headers` object off several keys, so
+  // `{ a: shared, b: shared }` rendered as `{ a: {...}, b: "[Circular]" }` -- asserting a
+  // cycle that does not exist and dropping the second copy's content. Redaction is not
+  // weakened either way (dropping is conservative), so this is fidelity.
+  //
+  // Removing on the way out still catches real cycles, because a cycle re-enters an
+  // ANCESTOR whose entry has not been removed yet: `x.self = x` walks x, sees x on the way
+  // back in, and stops. Only a cross-branch back-reference to a sibling that has already
+  // finished is followed, and that is not a cycle.
   const walkCollection = (collection: object): unknown => {
     if (seen.has(collection)) return "[Circular]";
     seen.add(collection);
-    if (Array.isArray(collection)) {
-      return collection.map((item) => redactUnknown(item, depth + 1, seen));
+    try {
+      if (Array.isArray(collection)) {
+        return collection.map((item) => redactUnknown(item, depth + 1, seen));
+      }
+      const out: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(collection)) {
+        out[key] = isCredentialLabel(key)
+          ? REDACTED
+          : redactUnknown(child, depth + 1, seen);
+      }
+      return out;
+    } finally {
+      seen.delete(collection);
     }
-    const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(collection)) {
-      out[key] = isCredentialLabel(key)
-        ? REDACTED
-        : redactUnknown(child, depth + 1, seen);
-    }
-    return out;
   };
 
   if (typeof value === "string") return redactSensitiveTokens(value);

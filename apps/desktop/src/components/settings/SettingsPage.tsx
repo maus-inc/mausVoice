@@ -371,9 +371,17 @@ export default function SettingsPage() {
 
   const handleDictationLanguageChange = (event: SelectChangeEvent<string>) => {
     const nextValue = event.target.value;
-    void setPreferredLanguage(nextValue).then(() => {
-      loadTones();
-    });
+    // `logOnRejection` rather than a bare `void`: `updateUser` shows the error snackbar
+    // and then RETHROWS (actions/user.actions.ts), so this chain rejects, and `void`
+    // discards a value without handling a rejection. Every other call site in this file
+    // already went through the helper -- this one was the last, and it predates the import
+    // being added.
+    logOnRejection(
+      setPreferredLanguage(nextValue).then(() => {
+        loadTones();
+      }),
+      "settings: setPreferredLanguage",
+    );
   };
 
   const openTranscriptionDialog = () => {
