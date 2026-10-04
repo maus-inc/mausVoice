@@ -119,7 +119,11 @@ const findSentenceBoundary = (
   return null;
 };
 
-const findChunkCut = (text: string, start: number, end: number): number => {
+export const findChunkCut = (
+  text: string,
+  start: number,
+  end: number,
+): number => {
   const sentence = findSentenceBoundary(text, start, end);
   if (sentence !== null) return sentence;
   for (let i = end - 1; i > start; i -= 1) {

@@ -3,6 +3,7 @@ import {
   FAST_STYLE_MAX_INPUT_CHARS,
   applyFastStyle,
   canApplyFastStyle,
+  findChunkCut,
   measureFastStyleTruncation,
   stripEdgePunctuation,
 } from "./fast-style.utils";
@@ -549,6 +550,49 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
  * chunk size used to be `slice`d to the cap, so the styled output was a prefix
  * of the input and everything after 15,000 characters was delivered nowhere.
  */
+describe("chunk boundaries never land where the next chunk opens mid-word", () => {
+  it("keeps scanning past a terminator that ends the window", () => {
+    // Every other chunking test here puts a SPACE after the terminator, so none
+    // of them reaches the case where a terminator is the LAST character of the
+    // window and the character after it belongs to the next chunk. Returning
+    // there hands that chunk a false sentence start, which strips a connective
+    // or capitalises a word that was mid-sentence.
+    //
+    // "First sentence here. " earlier in the window is what makes this
+    // observable: there is a real boundary to fall back to, so the correct cut is
+    // that one rather than the window edge. Measured on this input, the version
+    // that returned the window edge unconditionally cut at 15000 and this cut is
+    // 21.
+    const early = "First sentence here. ";
+    const text = `${early}${"a".repeat(
+      FAST_STYLE_MAX_INPUT_CHARS - early.length - 1,
+    )}.com`;
+    // The window's last character is the terminator and the next is not a space,
+    // so the pair really does sit on the boundary.
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS - 1]).toBe(".");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS]).toBe("c");
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      early.length,
+    );
+  });
+
+  it("still takes a real boundary that falls on the window edge", () => {
+    // The control for the case above: with a space after the terminator there is
+    // nothing to keep scanning for, so the edge IS a sentence end and must be
+    // taken. Without this the previous test would also pass if the scan simply
+    // refused to cut on a window edge.
+    const early = "First sentence here. ";
+    const text = `${early}${"a".repeat(
+      FAST_STYLE_MAX_INPUT_CHARS - early.length - 1,
+    )}. `;
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS - 1]).toBe(".");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS]).toBe(" ");
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      FAST_STYLE_MAX_INPUT_CHARS,
+    );
+  });
+});
+
 describe("over-length dictation keeps every character", () => {
   /** Long enough to need several chunks at the current chunk size. */
   const overCap = (repeats: number) => "dictation word ".repeat(repeats);
