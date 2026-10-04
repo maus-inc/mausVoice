@@ -796,18 +796,27 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         published_child_id(),
         id,
     ) {
-        {
-            let mut stdin_guard = lock(child_stdin_store());
-            *stdin_guard = None;
-        }
+        // Both halves of this branch are scoped to THIS child, and they have to be
+        // scoped together. An earlier version cleared the stdin slot unconditionally and
+        // then guarded only the kill, so a spawn that lost the race dropped the winner's
+        // `ChildStdin` while leaving the winner's child in place -- and nothing pairs a
+        // handle with the child it belongs to, so `sync_combos` could not reach that child
+        // again until the next spawn. `run_listener_thread` is the only caller of
+        // `ensure_listener_child` today, so the window does not open in practice; the
+        // comment above this branch argues from the case where another spawn wins, so it
+        // is written as though that can happen.
         let mut guard = lock(child_store());
         if guard.as_ref().map(|c| c.id()) == Some(id) {
+            {
+                let mut stdin_guard = lock(child_stdin_store());
+                *stdin_guard = None;
+            }
             if let Some(mut child) = guard.take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
+            return Err("a stop raced this spawn, so the child was discarded".to_string());
         }
-        return Err("a stop raced this spawn, so the child was discarded".to_string());
     }
     Ok(())
 }
@@ -1532,6 +1541,32 @@ mod lifecycle_tests {
         child_stdin_store, combo_store, lock, publish_child_stdin, stop_epoch, stop_listener_child,
     };
     use std::sync::atomic::Ordering;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Serialises every test in this module that touches `combo_store` or
+    /// `child_stdin_store`.
+    ///
+    /// Both are process-global `OnceLock<Mutex<..>>`, and `cargo test` runs these tests
+    /// concurrently in one process, so without this they interfere in both directions and
+    /// neither failure has anything to do with the code under test:
+    ///
+    ///   * `a_stop_is_visible_to_a_spawn_in_flight` and `stop_key_listener_is_idempotent`
+    ///     both call `stop_listener_child`, whose first action after the epoch bump is to
+    ///     set the stdin slot to `None`. That landing between the publishing test's call
+    ///     returning and its assertion failed it for an unrelated reason.
+    ///   * the reverse, and worse: any sibling holding `combo_store` makes the ordering
+    ///     test's `try_lock` fail, so `saw_combo_held` becomes true without the publisher
+    ///     thread holding anything, and a test that cannot fail reports success.
+    ///
+    /// `with_lifecycle_lock` would only cover the one caller that takes it, so this is its
+    /// own lock. It is taken by the test body only, never by a thread the test spawns: the
+    /// ordering test holds the stdin store while its publisher waits for it, so a publisher
+    /// that also wanted this lock would deadlock.
+    static STORE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn serialise_stores() -> MutexGuard<'static, ()> {
+        lock(&STORE_TEST_LOCK)
+    }
 
     /// The two locks must be taken in ONE order, and it is `combo_store` first.
     ///
@@ -1547,6 +1582,7 @@ mod lifecycle_tests {
     /// performed the write.
     #[test]
     fn overlapping_writers_take_the_stores_in_one_order() {
+        let _serialised = serialise_stores();
         // Hold the stdin store so the publishing thread cannot get past it.
         let held = lock(child_stdin_store());
 
@@ -1579,19 +1615,25 @@ mod lifecycle_tests {
         publisher.join().expect("publisher thread");
     }
 
-    /// The handle has to arrive PUBLISHED, under the same hold that wrote to it.
+    /// A real handle must survive into the store.
     ///
-    /// This is the other half of what `publish_child_stdin` exists to guarantee, and the
-    /// ordering test cannot reach it: it passes `None`, so nothing is written and nothing
-    /// is published. A stop landing between the write and the store used to leave the
-    /// child with an empty combo set and no way to be sent them again, silently.
+    /// The ordering test cannot reach this: it passes `None`, and `None` publishes `None`,
+    /// so a presence check cannot tell the two apart. A real `ChildStdin` is needed for
+    /// that reason -- `cat` on unix and `cmd` on Windows, both present on a runner, neither
+    /// talked to, and neither gated, which matters because the point of this module is
+    /// that it is not behind a `cfg`.
     ///
-    /// A real `ChildStdin` is needed, because `None` publishes `None` and the assertion
-    /// would pass either way. `cat` on unix and `cmd` on Windows: both are present on a
-    /// runner, neither needs to be talked to, and neither is gated -- which matters,
-    /// because the whole point of this module is that it is not behind a `cfg`.
+    /// What this does NOT assert, and what the doc used to claim, is that the handle
+    /// arrives under the same hold that wrote to it. That half has no test: the version
+    /// this replaced installed the handle in one critical section and wrote in another,
+    /// and it would satisfy every assertion here just as well, because by the time this
+    /// runs both versions have returned. Observing the hold needs a pipe this test can read
+    /// and a way to catch the write mid-flight, which is timing rather than a property.
+    /// So the property is stated in the code that has it -- `publish_child_stdin`'s own
+    /// doc comment -- and not claimed to be covered here.
     #[test]
     fn the_handle_is_published_under_the_same_hold_that_wrote_to_it() {
+        let _serialised = serialise_stores();
         let mut helper = std::process::Command::new(if cfg!(windows) { "cmd" } else { "cat" })
             .stdin(std::process::Stdio::piped())
             .spawn()
@@ -1625,14 +1667,6 @@ mod lifecycle_tests {
         let _ = helper.wait();
     }
 
-    /// A stop must be visible to a spawn that is in flight.
-    ///
-    /// `stop_listener_child` clears the stdin slot and then takes and kills whatever
-    /// `child_store` holds. A spawn keeps its `Child` in a local until it stores it, so a
-    /// stop landing in that window finds nothing to kill -- and the spawn then publishes a
-    /// process that nothing owns and that `sync_combos` cannot reach. The epoch is what
-    /// makes that window visible; without it the counter is the whole mechanism and this
-    /// is the only thing testing it.
     /// The decision the epoch exists to drive, tested directly.
     ///
     /// Driving it through `ensure_listener_child` needs a real spawned child, which a unit
@@ -1656,8 +1690,17 @@ mod lifecycle_tests {
         assert!(!super::should_discard_spawned_child(7, 8, Some(4243), 4242));
     }
 
+    /// A stop must be visible to a spawn that is in flight.
+    ///
+    /// `stop_listener_child` clears the stdin slot and then takes and kills whatever
+    /// `child_store` holds. A spawn keeps its `Child` in a local until it stores it, so a
+    /// stop landing in that window finds nothing to kill -- and the spawn then publishes a
+    /// process that nothing owns and that `sync_combos` cannot reach. The epoch is what
+    /// makes that window visible; without it the counter is the whole mechanism and this
+    /// is the only thing testing it.
     #[test]
     fn a_stop_is_visible_to_a_spawn_in_flight() {
+        let _serialised = serialise_stores();
         let before = stop_epoch().load(Ordering::SeqCst);
         // With no child running this is a no-op beyond the bump, so it is safe to call
         // directly rather than through a spawn.
