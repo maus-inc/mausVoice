@@ -1,8 +1,10 @@
 pub mod api_key_queries;
 pub mod app_target_queries;
 pub mod chat_message_queries;
+mod consolidation;
 pub mod conversation_queries;
 pub mod hotkey_queries;
+pub mod open;
 pub mod paired_remote_device_queries;
 pub mod preferences_queries;
 pub mod term_queries;
@@ -46,11 +48,20 @@ pub const APP_TARGETS_MIGRATION_SQL: &str = include_str!("migrations/019_app_tar
 pub const APP_TARGET_TONE_ID_MIGRATION_SQL: &str =
     include_str!("migrations/020_app_target_tone_id.sql");
 // NOTE: Migration "version" numbers here are the tauri_plugin_sql migration
-// versions, NOT sequential filenames. Some version numbers (e.g. 021, 069,
-// 070) were removed/rebased during early development before public release
-// and are intentionally absent — inserting placeholders would re-run them
-// against existing databases. The gap in filenames is cosmetic only; the
-// `version:` field in the vec![] below is what the plugin keys off.
+// versions, NOT sequential filenames. Some version numbers (e.g. 021)
+// were removed/rebased during early development before public release and
+// are intentionally absent — inserting placeholders would re-run them
+// against existing databases. 070 was in that set until this build claimed
+// it: it is `070_post_process_fallback`, which runs *after* the
+// consolidation step rather than being folded into it, so it is a real
+// migration and deliberately absent from
+// RETIRED_CONSOLIDATION_ERA_VERSIONS. Version 069 was historically absent as
+// well,
+// but is now the single post-0.1.5 consolidation step: 0.1.5 shipped through
+// 68, and every schema change after it lives in
+// migrations/069_consolidated_v0_1_6_schema.sql. The gap in filenames is
+// cosmetic only; the `version:` field in the vec![] below is what the plugin
+// keys off.
 pub const USER_PREFERENCES_INITIAL_TONES_MIGRATION_SQL: &str =
     include_str!("migrations/022_user_preferences_initial_tones.sql");
 pub const APP_TARGET_ICON_PATH_MIGRATION_SQL: &str =
@@ -135,15 +146,39 @@ pub const INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/067_insertion_method.sql");
 pub const APP_TARGET_INSERTION_METHOD_MIGRATION_SQL: &str =
     include_str!("migrations/068_app_target_insertion_method.sql");
-pub const REMOVE_CLOUD_MODES_MIGRATION_SQL: &str =
-    include_str!("migrations/071_remove_cloud_modes.sql");
-pub const DROP_IS_ENTERPRISE_MIGRATION_SQL: &str =
-    include_str!("migrations/072_drop_is_enterprise.sql");
-pub const PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL: &str =
-    include_str!("migrations/073_pill_reset_monitor_strategy.sql");
-pub const ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL: &str =
-    include_str!("migrations/074_always_request_admin_on_startup.sql");
-
+/// The single post-0.1.5 consolidation step: every schema change that shipped
+/// after the 0.1.5 release (former migrations 071-088) plus the 0.1.6 update
+/// channel column, folded into one migration.
+pub const CONSOLIDATED_V0_1_6_MIGRATION_SQL: &str =
+    include_str!("migrations/069_consolidated_v0_1_6_schema.sql");
+/// Persists `post_process_fallback`, the row-level marker for a transcription
+/// that was saved after post-processing failed and local fast styling took over.
+pub const POST_PROCESS_FALLBACK_MIGRATION_SQL: &str =
+    include_str!("migrations/070_post_process_fallback.sql");
+/// `user_profiles.created_at` / `onboarded_at`, the real account-creation and
+/// onboarding instants the TS `User` type promises. Until this step they were
+/// fabricated at every read, which pinned the release-dialog gate shut and
+/// reported a tenure of zero days to analytics.
+///
+/// The version is 89, not 70: versions 71-88 are the retirement window for the
+/// steps the 0.1.6 consolidation folded into 69 (see `db::open`), and some of
+/// them genuinely shipped on intermediate builds. Any number inside that window
+/// would be checksum-compared against those databases and a mismatch quarantines
+/// the user's file. 89 sits above the window, so it is a plain forward step.
+pub const USER_PROFILE_TIMESTAMPS_MIGRATION_SQL: &str =
+    include_str!("migrations/089_user_profile_timestamps.sql");
+/// Ids whose transcription row is gone but whose audio snapshot outlived the
+/// delete, so `drain_pending_audio_deletions` can still find and remove it.
+///
+/// Version 90 for the same reason 89 is 89: 71-88 are the retirement window for
+/// the steps folded into 69, and a number inside it would be checksum-compared
+/// against databases that already applied some of those steps individually.
+pub const PENDING_AUDIO_DELETIONS_MIGRATION_SQL: &str =
+    include_str!("migrations/090_pending_audio_deletions.sql");
+/// Schema pieces folded into [`CONSOLIDATED_V0_1_6_MIGRATION_SQL`] /
+/// [`migrations`]: `preserve_audio_on_failure`, `transcription_path`,
+/// `pill_placement`, `hands_free_delay_ms`, `auto_learn_dictionary_enabled`,
+/// `auto_learn_from_edits_enabled`, and `eleven_labs_keyterms_enabled`.
 pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
     vec![
         tauri_plugin_sql::Migration {
@@ -555,27 +590,27 @@ pub fn migrations() -> Vec<tauri_plugin_sql::Migration> {
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 71,
-            description: "remove_cloud_modes",
-            sql: REMOVE_CLOUD_MODES_MIGRATION_SQL,
+            version: 69,
+            description: "consolidated_v0_1_6_schema",
+            sql: CONSOLIDATED_V0_1_6_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 72,
-            description: "drop_is_enterprise",
-            sql: DROP_IS_ENTERPRISE_MIGRATION_SQL,
+            version: 70,
+            description: "post_process_fallback",
+            sql: POST_PROCESS_FALLBACK_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 73,
-            description: "add_pill_reset_monitor_strategy",
-            sql: PILL_RESET_MONITOR_STRATEGY_MIGRATION_SQL,
+            version: 89,
+            description: "add_user_profile_timestamps",
+            sql: USER_PROFILE_TIMESTAMPS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
         tauri_plugin_sql::Migration {
-            version: 74,
-            description: "add_always_request_admin_on_startup",
-            sql: ALWAYS_REQUEST_ADMIN_ON_STARTUP_MIGRATION_SQL,
+            version: 90,
+            description: "create_pending_audio_deletions_table",
+            sql: PENDING_AUDIO_DELETIONS_MIGRATION_SQL,
             kind: tauri_plugin_sql::MigrationKind::Up,
         },
     ]

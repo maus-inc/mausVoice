@@ -51,7 +51,7 @@ pub(crate) fn paste_text_into_focused_field(
 fn is_console_window() -> bool {
     let target_info = get_foreground_window_target_info();
     if let Some(class_name) = target_info.class_name {
-        log::debug!("foreground window class: {}", class_name);
+        log::debug!("foreground window class: {class_name}");
         return class_name == "ConsoleWindowClass";
     }
     false

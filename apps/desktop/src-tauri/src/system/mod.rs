@@ -1,7 +1,7 @@
 pub mod audio_feedback;
-pub mod capabilities;
 pub mod audio_store;
 pub mod bridge_server;
+pub mod capabilities;
 pub mod crypto;
 pub mod diagnostics;
 pub mod gpu;
