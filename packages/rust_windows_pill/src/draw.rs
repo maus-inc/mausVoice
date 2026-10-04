@@ -6,6 +6,25 @@ use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectA
 
 /// Paints the whole pill window: begins the Direct2D frame, clears, then
 /// draws the pill, panel, transcript, and overlays in z-order.
+thread_local! {
+    /// The comet's shaded segments, kept between frames.
+    ///
+    /// `resample_perimeter` writes into a caller-owned buffer precisely so the render path does
+    /// not allocate -- its own doc says so -- and the ring honours that by writing into
+    /// `state.ring_points`. The comet then discarded that and built a fresh
+    /// `Vec::with_capacity(points.len())` every frame: roughly 138 segments at 60 Hz, about
+    /// 11 KB of short-lived heap traffic per frame on the UI thread, on the one backend that
+    /// cannot be profiled from Linux.
+    ///
+    /// Thread-local rather than a `PillState` field: the draw runs on the UI thread and
+    /// `ShadedSegment` lives in `gfx`, so a field would put a rendering type into the state
+    /// struct for nothing. Taken out and put back rather than borrowed across the loop, so a
+    /// frame that bails out midway simply loses the buffer and the next one allocates --
+    /// slower, never wrong.
+    static COMET_SHADED: std::cell::RefCell<Vec<ShadedSegment>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 pub(crate) fn draw_all(gfx: &mut Gfx, state: &PillState) {
     gfx.begin_frame();
     gfx.clear();
@@ -2323,7 +2342,12 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
             // evaluated per evenly-spaced segment — the portable stand-in for
             // a gradient along a path, which Direct2D cannot stroke directly.
             let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-            let mut shaded: Vec<ShadedSegment> = Vec::with_capacity(points.len());
+            // Reused across frames; see `COMET_SHADED`. `mem::take` leaves an empty
+            // Vec in the cell, so nothing is aliased while the loop fills this one.
+            let mut shaded: Vec<ShadedSegment> =
+                COMET_SHADED.with(|cell| std::mem::take(&mut *cell.borrow_mut()));
+            shaded.clear();
+            shaded.reserve(points.len());
             for w in points.windows(2) {
                 let (x1, y1, _) = w[0];
                 let (x2, y2, d) = w[1];
@@ -2352,6 +2376,7 @@ fn draw_long_press_ring(gfx: &Gfx, state: &PillState, ww: f64, wh: f64) {
                 });
             }
             gfx.draw_line_shaded(&shaded);
+            COMET_SHADED.with(|cell| *cell.borrow_mut() = shaded);
 
             // Secondary layer: the soft head. Concentric discs approximate a
             // radial falloff without allocating a gradient every frame. It

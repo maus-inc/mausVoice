@@ -11,7 +11,37 @@
 //! frame clock and is cancelled the moment a new drag begins. Platforms own
 //! the work-area bounds, applying the output position, and persisting the drop
 //! point; this module owns samples, release velocity, and settle physics, so
-//! all three pills feel identical and stay testable without a display.
+//! all three pills move identically and stay testable without a display.
+//!
+//! "Move identically" is exactly that. It does not extend to WHERE a drag may
+//! start, which each platform decides in its own `input.rs`, and where the three
+//! currently disagree in a way nobody chose:
+//!
+//!   * GTK gates on the painted rect from `draw::pill_position`, whose height is
+//!     `lerp(MIN_PILL_HEIGHT, EXPANDED_PILL_HEIGHT, expand_t)` -- 6 px when
+//!     collapsed, since `MIN_PILL_HEIGHT` is 6.0. The pointer has to be on the
+//!     pill.
+//!   * Windows and macOS gate on `PILL_AREA_HEIGHT`, 48.0 in both, measured up
+//!     from the bottom of a window that is `DICTATION_WINDOW_HEIGHT` = 86 tall
+//!     -- so the band is `y` 38..86 while the pill itself is a 6 px strip near
+//!     the bottom. Roughly 36 px of transparent window above the pill will arm
+//!     a long-press drag, and neither platform sets a window region that would
+//!     reject the off-content hit.
+//!
+//! Those four constants were read rather than taken from a description:
+//! `MIN_PILL_HEIGHT` 6.0 and `DICTATION_WINDOW_HEIGHT` 86 are identical in all three crates,
+//! `PILL_AREA_HEIGHT` 48.0 exists in two of the three.
+//!
+//! Neither is obviously wrong -- a deliberate finger-sized target for a 6 px pill
+//! is defensible, and the macOS panel may reject off-content hits -- but they cannot both
+//! be the intent, and the difference predates this branch rather than being introduced by
+//! it. It is written down here because this is the file a reader opens to find out whether
+//! the three are meant to match, and until now the answer looked like "yes, everywhere".
+//!
+//! Unifying it is a UX decision, not a refactor: shrinking the 48 px band makes the Windows
+//! and macOS pills harder to grab, and widening GTK's to match makes clicks on empty space
+//! above the pill start a drag. Neither can be checked from here -- all three are behind
+//! platform gates -- so the fix belongs with someone who can use all three.
 
 use crate::edge::{ease_point, DragRegion, EdgeMask, EdgeWork, MonitorRect, SeamTracker};
 
