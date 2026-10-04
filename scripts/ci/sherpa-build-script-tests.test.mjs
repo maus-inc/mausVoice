@@ -134,6 +134,86 @@ describe("parseEnvPrefix", () => {
   });
 });
 
+describe("the windows shape of a replayed command", () => {
+  // Taken from a CI log rather than written from an assumption about `cmd`. Cargo emits
+  // `set K=V&& ` per assignment on Windows because the shell is `cmd`, so the unix shape
+  // a parser expects is not there at all -- and the harness reported "cargo printed no
+  // rustc invocation" on every Windows leg until this was read out of the log.
+  const windowsLine =
+    "   Running `set CARGO='C:\\Users\\runneradmin\\.rustup\\toolchains\\" +
+    "stable-x86_64-pc-windows-msvc\\bin\\cargo.exe'&& " +
+    "set CARGO_CRATE_NAME=build_script_build&& " +
+    "set CARGO_MANIFEST_DIR='C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\" +
+    "sherpa-build-script-tests-FJLxV3\\crate'&& " +
+    "set CARGO_PKG_LICENSE='MIT OR Apache-2.0'&& set CARGO_PKG_NAME=sherpa-onnx-sys&& " +
+    "rustc --crate-name build_script_build --edition=2021 --crate-type bin " +
+    "--out-dir C:\\out build.rs`";
+
+  it("parses the `set K=V&&` prefix and finds the invocation", () => {
+    const found = findBuildScriptInvocation(windowsLine);
+    assert.equal(found.length, 1, "the windows command shape must be recognised");
+    assert.equal(found[0].env.CARGO_PKG_NAME, "sherpa-onnx-sys");
+    assert.equal(found[0].env.CARGO_CRATE_NAME, "build_script_build");
+  });
+
+  it("unquotes values, including one containing a space", () => {
+    // `cmd` quotes whenever the value has a space, so a quoted and an unquoted value have
+    // to compare equal or the package-name check misses on Windows.
+    const found = findBuildScriptInvocation(windowsLine);
+    assert.equal(
+      found[0].env.CARGO_PKG_LICENSE,
+      "MIT OR Apache-2.0",
+      "a quoted value must arrive unquoted",
+    );
+    assert.ok(
+      !found[0].env.CARGO_MANIFEST_DIR.startsWith("'"),
+      "the manifest dir must arrive unquoted",
+    );
+  });
+
+  it("keeps a backslash-bearing path intact", () => {
+    const found = findBuildScriptInvocation(windowsLine);
+    // A string comparison, not a regex: `/^C:\Users\.../` has \U collapsing to U, so it
+    // can never match a path that has backslashes in it. Which is what it did -- and the
+    // failure read like a parsing bug rather than a broken assertion.
+    assert.ok(
+      found[0].env.CARGO_MANIFEST_DIR.startsWith("C:\\Users\\RUNNER~1\\"),
+      `got ${JSON.stringify(found[0].env.CARGO_MANIFEST_DIR)}`,
+    );
+  });
+
+  it("accepts rustc.exe, which is what the name is on windows", () => {
+    // Permissive rather than observed: the CI log line is truncated before the command,
+    // so whether cargo spells it `rustc` or `rustc.exe` there is not established from
+    // here. Accepting both costs nothing and a wrong guess in the strict direction would
+    // fail a leg for a cosmetic reason.
+    const line = windowsLine.replace("&& rustc --crate-name", "&& rustc.exe --crate-name");
+    assert.equal(findBuildScriptInvocation(line).length, 1);
+  });
+
+  it("still rejects a different command under the windows shape", () => {
+    const line = windowsLine.replace("&& rustc --crate-name", "&& cc --crate-name");
+    assert.deepEqual(findBuildScriptInvocation(line), []);
+  });
+
+  it("does not mistake the `set` verb for the command", () => {
+    const { argv } = parseEnvPrefix([
+      "set",
+      "A=1&&",
+      "set",
+      "B='x y'&&",
+      "rustc",
+      "--flag",
+    ]);
+    assert.deepEqual(argv, ["rustc", "--flag"]);
+  });
+
+  it("still rejects a windows-shaped line for another package", () => {
+    const other = windowsLine.replace("CARGO_PKG_NAME=sherpa-onnx-sys", "CARGO_PKG_NAME=tar");
+    assert.deepEqual(findBuildScriptInvocation(other), []);
+  });
+});
+
 describe("findBuildScriptInvocation", () => {
   it("returns both of this package's build-script invocations", () => {
     // Two: cargo compiles the build script once as a bin and once as a test

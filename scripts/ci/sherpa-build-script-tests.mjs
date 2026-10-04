@@ -224,16 +224,52 @@ function splitCommandWords(body) {
   return words;
 }
 
-/** Splits the `NAME=value` assignments cargo prefixes a `Running` line with. */
+/**
+ * Splits the `NAME=value` assignments cargo prefixes a command with.
+ *
+ * Two shapes, because cargo emits two:
+ *
+ *     unix     CARGO_PKG_NAME=sherpa-onnx-sys CARGO_MANIFEST_DIR=/x rustc ...
+ *     windows  set CARGO_PKG_NAME=sherpa-onnx-sys&& set CARGO_MANIFEST_DIR=C:\x&& rustc ...
+ *
+ * The Windows form is `set K=V&& ` per assignment, because the shell is `cmd`. Measured
+ * from a CI log rather than guessed:
+ *
+ *     Running `set CARGO='C:\...\cargo.exe'&& set CARGO_CRATE_NAME=build_script_build&& set
+ *     CARGO_MANIFEST_DIR='C:\...\crate'&& ... && set CARGO_PKG_NAME=sherpa-onnx-sys&& ...
+ *
+ * A parser written for the unix form sees `set` as the command, `CARGO='...&&` as a word
+ * that is not an assignment, and therefore reports that cargo printed no invocation --
+ * which is what it did on every Windows leg until this was fixed.
+ *
+ * Values arrive unquoted, because `tokenizeCargoCommand` consumes the quoted run and
+ * appends its contents: `CARGO_PKG_LICENSE='MIT OR Apache-2.0'` arrives as one word with
+ * the space intact and no quotes, which is what makes the two shapes compare equal.
+ */
 export function parseEnvPrefix(words) {
   const env = {};
+  const cleaned = [];
+  for (const word of words) {
+    if (word === "set") continue;
+    if (word === "&&") continue;
+    // `CARGO='...'&&` -- the separator is glued to the assignment by `cmd` quoting rules.
+    cleaned.push(word.endsWith("&&") ? word.slice(0, -2) : word);
+  }
   let index = 0;
-  while (index < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index])) {
-    const at = words[index].indexOf("=");
-    env[words[index].slice(0, at)] = words[index].slice(at + 1);
+  while (
+    index < cleaned.length &&
+    /^[A-Za-z_][A-Za-z0-9_]*=/.test(cleaned[index])
+  ) {
+    const at = cleaned[index].indexOf("=");
+    const name = cleaned[index].slice(0, at);
+    // No unquoting here: `tokenizeCargoCommand` consumes the quoted run and appends its
+    // contents, so by this point the quotes are already gone. An earlier version carried
+    // an unquote branch that could not execute, and it read as though it were what made
+    // the windows form work.
+    env[name] = cleaned[index].slice(at + 1);
     index += 1;
   }
-  return { env, argv: words.slice(index) };
+  return { env, argv: cleaned.slice(index) };
 }
 
 /**
@@ -255,7 +291,8 @@ export function findBuildScriptInvocation(verboseOutput) {
     if (!words) continue;
     const { env, argv } = parseEnvPrefix(words);
     if (env.CARGO_PKG_NAME !== SHERPA_PKG_NAME) continue;
-    if (basename(argv[0] ?? "") !== "rustc") continue;
+    // `rustc.exe` on Windows: the replayed command is whatever cargo invoked there.
+    if (!/^rustc(\.exe)?$/.test(basename(argv[0] ?? ""))) continue;
     const at = argv.indexOf("--crate-name");
     if (at === -1 || argv[at + 1] !== BUILD_SCRIPT_CRATE_NAME) continue;
     matches.push({ env, argv });
