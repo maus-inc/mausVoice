@@ -83,11 +83,30 @@ paths = [
   '''packages/utilities/src/.*\.test\.ts''',
   '''packages/voice-ai/src/.*\.test\.ts''',
 
-  # Narrow exemptions so scanning the whole repo does not self-detect the
-  # detector definition or the config-structure guard that contains the preamble
-  # constant. NOT a broad workflow exemption.
+  # Narrow exemptions so scanning the whole repo does not self-detect the detector
+  # that names it. NOT a broad workflow exemption, and not a secret-shaped value being
+  # hidden: the minisign preamble is a fixed public string, so what these three files
+  # would otherwise be reporting is the detector's own definition.
+  #
+  # Four files carry it, and each is here for a different reason:
+  #   gitleaks.toml                          the rule's own regex
+  #   scripts/ci/check-gitleaks-config.mjs   PREAMBLE, the constant the guard asserts on
+  #   scripts/ci/check-gitleaks-config.test.mjs
+  #                                         the regression tests that assert the guard
+  #                                         REJECTS a rule missing the plaintext arm
+  #   scripts/ci/test-secret-history-scan.mjs
+  #                                         fixtures that must look like a real key
+  #
+  # The guard's TEST file is the one that is easy to forget: it was written after the
+  # first three entries existed, and without it the history scan reports the very rule
+  # this policy adds. Measured with gitleaks 8.18.0 over this branch's range with this
+  # policy: 1 finding, `tauri-minisign-updater-private-key` in that file, exit 1.
+  #
+  # The exemption is scoped to the exact paths, not to the string, so a real key
+  # committed anywhere else is still reported.
   '''gitleaks\.toml''',
   '''scripts/ci/check-gitleaks-config\.mjs''',
+  '''scripts/ci/check-gitleaks-config\.test\.mjs''',
   # Test fixture deliberately embeds a hardcoded minisign updater key
   '''(^|/)scripts/ci/test-secret-history-scan\.mjs''',
 ]
