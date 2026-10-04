@@ -72,9 +72,6 @@ const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set([
 /** Matches every Unicode space separator, not just ASCII space. */
 const isSpace = (ch: string): boolean => ch.length > 0 && /\s/u.test(ch);
 
-const isHighSurrogate = (code: number): boolean =>
-  code >= 0xd800 && code <= 0xdbff;
-
 /**
  * Where `text` may be cut inside `[start, end)` without losing or corrupting
  * anything. Three tiers, best first.
@@ -129,7 +126,23 @@ export const findChunkCut = (
   for (let i = end - 1; i > start; i -= 1) {
     if (isSpace(text[i])) return i;
   }
-  if (isHighSurrogate(text.charCodeAt(end - 1))) return end - 1;
+  // Only a single token longer than the whole window reaches this tier. Step back
+  // when the boundary falls between the two units of an astral character, so the
+  // chunk never ends on half of one.
+  //
+  // Asked from both sides, for the same reason as `capLength` in
+  // `packages/utilities/src/error.ts`: `codePointAt` combines a lead with the trail
+  // after it, so reading `end - 1` alone returns the finished character and the
+  // split becomes invisible. A trail at `end` is that pair's second half, and an
+  // unpaired lead at `end - 1` is what `codePointAt` there still reports unchanged.
+  const atEnd = end < text.length ? (text.codePointAt(end) as number) : -1;
+  const beforeEnd = text.codePointAt(end - 1) as number;
+  if (
+    (atEnd >= 0xdc00 && atEnd <= 0xdfff) ||
+    (beforeEnd >= 0xd800 && beforeEnd <= 0xdbff)
+  ) {
+    return end - 1;
+  }
   return end;
 };
 

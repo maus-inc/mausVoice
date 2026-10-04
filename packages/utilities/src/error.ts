@@ -910,10 +910,22 @@ export const redactSensitiveTokens = (message: string): string =>
 const capLength = (message: string): string => {
   if (message.length <= MAX_ERROR_MESSAGE_LENGTH) return message;
   let end = MAX_ERROR_MESSAGE_LENGTH;
-  const lastUnit = message.charCodeAt(end - 1);
   // A lead surrogate at the final kept position has its trail at `end`, which the
   // slice drops. Give up the lead unit rather than emit half a character.
-  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff) end -= 1;
+  //
+  // The question is asked from both sides because `codePointAt` combines a lead
+  // with the trail that follows it, so reading `end - 1` alone can no longer see the
+  // split -- it returns the finished character and the cut looks clean. A trail at
+  // `end` is that pair's second half, and an *unpaired* lead at `end - 1` is exactly
+  // what `codePointAt` there still reports unchanged. Between them they cover every
+  // cut `charCodeAt(end - 1)` caught, and over-trigger only on a trail with no lead
+  // before it, which costs one unit -- and the cap is a ceiling, not a quota.
+  const atEnd = message.codePointAt(end) as number;
+  const beforeEnd = message.codePointAt(end - 1) as number;
+  const splitsPair =
+    (atEnd >= 0xdc00 && atEnd <= 0xdfff) ||
+    (beforeEnd >= 0xd800 && beforeEnd <= 0xdbff);
+  if (splitsPair) end -= 1;
   return `${message.slice(0, end)}…`;
 };
 

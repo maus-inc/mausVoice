@@ -180,25 +180,21 @@ const decodeNumericEntity = (entity: string, codePoint: number): string =>
  */
 const normalizeSurrogates = (input: string): string => {
   let out = "";
-  for (let i = 0; i < input.length; i += 1) {
-    const code = input.charCodeAt(i);
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      // A low surrogate with no high surrogate before it can never form a pair.
-      continue;
-    }
-    if (code < 0xd800 || code > 0xdbff) {
-      out += input[i];
-      continue;
-    }
-    const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
-    if (next >= 0xdc00 && next <= 0xdfff) {
-      out += String.fromCodePoint(
-        0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00),
-      );
+  // Walk by CODE POINT rather than by code unit. `codePointAt` returns the
+  // combined value when the unit at `i` opens a surrogate pair, and returns the
+  // raw surrogate when it does not — so one call answers both questions, and the
+  // pair is emitted by `fromCodePoint` instead of being stitched from two reads.
+  // The cursor advances by the width the code point actually occupies, which is
+  // what keeps the pair from being split on the next iteration.
+  for (let i = 0; i < input.length;) {
+    const point = input.codePointAt(i) as number;
+    if (point >= 0xd800 && point <= 0xdfff) {
+      // Not combined, so this surrogate stands alone and names no character.
       i += 1;
       continue;
     }
-    // Unpaired high surrogate: drop it rather than emit a rejected escape.
+    out += String.fromCodePoint(point);
+    i += point > 0xffff ? 2 : 1;
   }
   return out;
 };
@@ -238,19 +234,20 @@ const stripHtml = (input: string): string => {
  * state, the permissions and the pending review card together, so the parse error
  * discarded all of it, including the review the user was being asked to answer.
  *
- * `charCodeAt` rather than `codePointAt`, because the guard is about the *unit* at
- * the end rather than the character. I first wrote that `codePointAt` would decode
- * the pair and never fire, then checked it: over 265,678 prefix slices the two
- * guards never disagree, because a prefix can only end in a lone lead surrogate and
- * never in a lone trailing one, so the complete-pair case is a no-op either way.
- * `charCodeAt` is kept because it says what is being tested. (The two are NOT
- * interchangeable in `fast-style.utils.ts`, where the check asks whether a cut would
- * *split* a pair -- there `codePointAt` does answer a different question, and using
- * it is a regression.)
+ * `codePointAt` rather than `charCodeAt`: equivalent here, and checked rather than
+ * assumed. Over 265,678 prefix slices the two guards never disagree, because a
+ * prefix can only end in a lone lead surrogate and never in a lone trailing one,
+ * so the complete-pair case is a no-op either way.
+ *
+ * (The two are NOT interchangeable in `fast-style.utils.ts` or
+ * `packages/utilities/src/error.ts`, where the check asks whether a cut would
+ * *split* a pair. There `codePointAt` answers a different question -- it combines
+ * the lead with the trail, which is exactly the pair the split test needs to see
+ * -- so those two sites keep `charCodeAt`.)
  */
 const dropLoneTrailingSurrogate = (s: string): string => {
   if (s.length === 0) return s;
-  const last = s.charCodeAt(s.length - 1);
+  const last = s.codePointAt(s.length - 1) as number;
   return last >= 0xd800 && last <= 0xdbff ? s.slice(0, -1) : s;
 };
 
