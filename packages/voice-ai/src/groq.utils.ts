@@ -284,6 +284,12 @@ const createClient = (apiKey: string, customFetch?: CustomFetch) => {
     // through the desktop's secure-fetch bridge when customFetch is set.
     dangerouslyAllowBrowser: true,
     fetch: customFetch,
+    // The SDK's own retry layer is OFF. `retry()` below is this package's single retry
+    // layer, and it carries the parts the SDK's does not: `isRetryable`, a wait the caller's
+    // abort signal can cut short, and `Retry-After` as far as the header parser allows. With
+    // both layers live the attempts multiply -- measured, one failed call issued 9 requests
+    // for a 500 -- and each of those is a chargeable request.
+    maxRetries: 0,
   });
 };
 
@@ -494,6 +500,12 @@ export async function* groqStreamChat({
     // through the desktop secure-fetch bridge when customFetch is set.
     dangerouslyAllowBrowser: true,
     fetch: customFetch,
+    // The SDK's own retry layer is OFF. `retry()` below is this package's single retry
+    // layer, and it carries the parts the SDK's does not: `isRetryable`, a wait the caller's
+    // abort signal can cut short, and `Retry-After` as far as the header parser allows. With
+    // both layers live the attempts multiply -- measured, one failed call issued 9 requests
+    // for a 500 -- and each of those is a chargeable request.
+    maxRetries: 0,
   });
   yield* openaiCompatibleStreamChat(client, model, input);
 }

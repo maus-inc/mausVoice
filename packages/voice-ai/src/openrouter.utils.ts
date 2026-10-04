@@ -70,6 +70,12 @@ const createClient = (apiKey: string, customFetch?: CustomFetch) => {
     baseURL: OPENROUTER_BASE_URL,
     dangerouslyAllowBrowser: true,
     fetch: customFetch,
+    // The SDK's own retry layer is OFF. `retry()` below is this package's single retry
+    // layer, and it carries the parts the SDK's does not: `isRetryable`, a wait the caller's
+    // abort signal can cut short, and `Retry-After` as far as the header parser allows. With
+    // both layers live the attempts multiply -- measured, one failed call issued 9 requests
+    // for a 500 -- and each of those is a chargeable request.
+    maxRetries: 0,
     defaultHeaders: {
       "HTTP-Referer": OPENROUTER_APP_URL,
       "X-Title": OPENROUTER_APP_NAME,
@@ -200,6 +206,11 @@ export const openrouterGenerateTextResponse = ({
     isRetryable: () => !signal?.aborted,
     // An abort during the wait is honoured: `retry` hands the signal to its
     // own wait, so a cancelled caller stops there instead of sitting it out.
+    // The SDK's own retry layer is off -- `maxRetries: 0` at the client -- so its
+    // `APIError` reaches `retry` on the FIRST attempt. That is what makes the wait below the
+    // only wait. Before that setting the SDK retried three times underneath, honouring
+    // `Retry-After` on the way, so the caller sat through three of its own waits before this
+    // one began and a single call issued nine requests.
     // That wait is the helper's own 20ms, because the helper only stretches
     // a wait for a `Retry-After` hint and reads that hint off an `HttpError`.
     // OpenRouter is called through the OpenAI SDK, whose own `APIError`
