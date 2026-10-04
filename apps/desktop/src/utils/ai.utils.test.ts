@@ -1,101 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { unwrapNestedLlmResponse, extractJsonFromMarkdown } from "./ai.utils";
-
-describe("unwrapNestedLlmResponse", () => {
-  it("should return original object when value is already a string", () => {
-    const input = { processedTranscription: "Hello world" };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "Hello world" });
-  });
-
-  it("should unwrap nested response when LLM wraps in schema name", () => {
-    const input = {
-      processedTranscription: {
-        type: "transcription_cleaning",
-        processedTranscription: "Hello world",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "Hello world" });
-  });
-
-  it("should preserve other fields when unwrapping", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: "Hello world",
-      },
-      otherField: "preserved",
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({
-      processedTranscription: "Hello world",
-      otherField: "preserved",
-    });
-  });
-
-  it("should not unwrap when nested value is not a string", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: 123,
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual(input);
-  });
-
-  it("should not unwrap arrays", () => {
-    const input = {
-      items: ["a", "b", "c"],
-    };
-    const result = unwrapNestedLlmResponse(input, "items");
-    expect(result).toEqual(input);
-  });
-
-  it("should handle null values", () => {
-    const input = { processedTranscription: null };
-    const result = unwrapNestedLlmResponse(
-      input as Record<string, unknown>,
-      "processedTranscription",
-    );
-    expect(result).toEqual({ processedTranscription: null });
-  });
-
-  it("should handle undefined values", () => {
-    const input = { processedTranscription: undefined };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: undefined });
-  });
-
-  it("should not unwrap when key does not exist in nested object", () => {
-    const input = {
-      processedTranscription: {
-        someOtherKey: "value",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual(input);
-  });
-
-  it("should work with different key names", () => {
-    const input = {
-      result: {
-        result: "extracted value",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "result");
-    expect(result).toEqual({ result: "extracted value" });
-  });
-
-  it("should handle empty string values", () => {
-    const input = {
-      processedTranscription: {
-        processedTranscription: "",
-      },
-    };
-    const result = unwrapNestedLlmResponse(input, "processedTranscription");
-    expect(result).toEqual({ processedTranscription: "" });
-  });
-});
+import {
+  applyTranscriptionEdits,
+  extractJsonFromMarkdown,
+  isLikelyTruncatedJson,
+  MAX_TRANSCRIPTION_EDITS,
+  parsePostProcessingJson,
+  resolveProcessedTranscription,
+} from "./ai.utils";
 
 describe("extractJsonFromMarkdown", () => {
   describe("Standard JSON Code Blocks", () => {
@@ -426,5 +337,712 @@ Example 2:
       const result = extractJsonFromMarkdown(input);
       expect(result).toContain('{"text": "value with \\');
     });
+  });
+});
+
+describe("applyTranscriptionEdits", () => {
+  it("applies edits in order against the evolving text", () => {
+    const result = applyTranscriptionEdits("um so we should ah ship it", [
+      { find: "um ", replace: "" },
+      { find: " ah", replace: "" },
+      { find: "ship it", replace: "ship it Friday" },
+    ]);
+
+    expect(result).toEqual({
+      text: "so we should ship it Friday",
+      applied: 3,
+      skipped: 0,
+    });
+  });
+
+  it("skips edits whose find text is absent or ambiguous", () => {
+    const transcript = "the cat sat on the mat, the cat";
+    const result = applyTranscriptionEdits(transcript, [
+      { find: "cat", replace: "dog" },
+      { find: "the mat", replace: "the rug" },
+      { find: "not in the transcript", replace: "x" },
+    ]);
+
+    // "cat" appears twice, so replacing either occurrence could corrupt the
+    // dictation; only the unique match is applied.
+    expect(result.text).toBe("the cat sat on the rug, the cat");
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toBe(2);
+  });
+
+  it("skips an empty find instead of looping", () => {
+    const result = applyTranscriptionEdits("hello", [
+      { find: "", replace: "x" },
+    ]);
+
+    expect(result).toMatchObject({ text: "hello", applied: 0, skipped: 1 });
+  });
+
+  it("skips a find that lands inside a word", () => {
+    // "can" is unique here, but it is the head of "cannot". Applying it would
+    // splice the dictation into "couldnot" with nothing to show for it.
+    const result = applyTranscriptionEdits("I cannot attend the meeting", [
+      { find: "can", replace: "could" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "I cannot attend the meeting",
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("skips a find that starts or ends inside a word", () => {
+    const transcript = "he could not come";
+    const result = applyTranscriptionEdits(transcript, [
+      // Starts inside "could".
+      { find: "ould", replace: "might" },
+      // Starts on a boundary but ends inside "could".
+      { find: "co", replace: "will" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: transcript,
+      applied: 0,
+      skipped: 2,
+    });
+  });
+
+  it("treats accented and non-latin letters as word characters", () => {
+    // `\w` is ASCII, so a find that landed inside `café` passed the adjacency
+    // check and left `Xé`. Letter-and-digit classification is what a word edge
+    // means in every script that has edges.
+    const transcript = "I had a café there";
+    const result = applyTranscriptionEdits(transcript, [
+      // Ends inside "café".
+      { find: "caf", replace: "X" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: transcript,
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("still applies an edit whose find is a whole accented word", () => {
+    const result = applyTranscriptionEdits("I had a café there", [
+      { find: "café", replace: "tea" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "I had a tea there",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("treats a letter outside the basic plane as a word character", () => {
+    // A letter above the basic plane is one character that offsets into the
+    // text by two, so both ends of it have to be read from the right place. A
+    // find pinned against a letter on either side lands inside one word, and a
+    // find standing between spaces is a whole word.
+    expect(
+      applyTranscriptionEdits("I had a𐐀 there", [{ find: "𐐀", replace: "X" }]),
+    ).toMatchObject({ applied: 0, skipped: 1 });
+
+    expect(
+      applyTranscriptionEdits("I had a𐐀a there", [{ find: "𐐀", replace: "X" }]),
+    ).toMatchObject({ applied: 0, skipped: 1 });
+
+    expect(
+      applyTranscriptionEdits("I had a 𐐀 there", [
+        { find: "𐐀", replace: "tea" },
+      ]),
+    ).toMatchObject({ text: "I had a tea there", applied: 1, skipped: 0 });
+  });
+
+  it("applies a find that spans whole words", () => {
+    const result = applyTranscriptionEdits("he could not come", [
+      { find: "could", replace: "can" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "he can not come",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("applies a find that carries a leading space or trailing punctuation", () => {
+    // The prompt tells the model to include the surrounding space in "find"
+    // when deleting a word, so a match that ends on punctuation is a normal
+    // request and not a mid-word one.
+    const result = applyTranscriptionEdits("the cat sat on the mat, ok", [
+      { find: " the mat,", replace: " the rug," },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "the cat sat on the rug, ok",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("skips an edit that arrived without replacement text", () => {
+    // A missing "replace" is not a deletion the model asked for. Reading it
+    // as one removes the dictated text and leaves the user with no warning.
+    const result = applyTranscriptionEdits("the meeting is at noon", [
+      { find: "the meeting", replace: null },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "the meeting is at noon",
+      applied: 0,
+      skipped: 1,
+    });
+  });
+
+  it("still deletes text when the model sends an empty replacement", () => {
+    const result = applyTranscriptionEdits("the meeting is at noon", [
+      { find: "the meeting ", replace: "" },
+    ]);
+
+    expect(result).toMatchObject({
+      text: "is at noon",
+      applied: 1,
+      skipped: 0,
+    });
+  });
+
+  it("caps the number of edits it will apply", () => {
+    const edits = Array.from({ length: MAX_TRANSCRIPTION_EDITS + 2 }, () => ({
+      find: "a",
+      replace: "a",
+    }));
+
+    const result = applyTranscriptionEdits("a b c", edits);
+
+    expect(result.applied).toBe(MAX_TRANSCRIPTION_EDITS);
+    expect(result.skipped).toBe(2);
+  });
+
+  // The word-edge check reads the ends of `find` with a character scan rather
+  // than with the two edge patterns it replaced, so equivalence is proved
+  // against those patterns rather than assumed. They are kept here, in an
+  // excluded-from-analysis file, so the patterns Sonar flags are never
+  // reintroduced into the module. Only the word-edge check is under test: the
+  // uniqueness guard below is the one the module still owns unchanged.
+  const REFERENCE_WORD_CHARACTER = /[\p{L}\p{N}]/u;
+  const REFERENCE_LEADING_NON_WORD = /^[^\p{L}\p{N}]+/u;
+  const REFERENCE_TRAILING_NON_WORD = /[^\p{L}\p{N}]+$/u;
+
+  const referenceSplitsWord = (
+    text: string,
+    find: string,
+    index: number,
+  ): boolean => {
+    const leading = find.match(REFERENCE_LEADING_NON_WORD)?.[0].length ?? 0;
+    const trailing = find.match(REFERENCE_TRAILING_NON_WORD)?.[0].length ?? 0;
+    const start = index + leading;
+    const end = index + find.length - trailing;
+    if (start >= end) return false;
+    return (
+      (text[start - 1] !== undefined &&
+        REFERENCE_WORD_CHARACTER.test(text[start - 1])) ||
+      (text[end] !== undefined && REFERENCE_WORD_CHARACTER.test(text[end]))
+    );
+  };
+
+  const referenceApplied = (text: string, find: string): boolean => {
+    const index = find.length > 0 ? text.indexOf(find) : -1;
+    if (index === -1 || index !== text.lastIndexOf(find)) return false;
+    return !referenceSplitsWord(text, find, index);
+  };
+
+  const expectSameDecisionAsPatterns = (text: string, find: string): void => {
+    const applied = referenceApplied(text, find);
+    const index = applied ? text.indexOf(find) : -1;
+    expect(
+      applyTranscriptionEdits(text, [{ find, replace: "X" }]),
+      `word-edge check disagreed with the patterns on text ${JSON.stringify(text)} find ${JSON.stringify(find)}`,
+    ).toEqual({
+      text: applied
+        ? `${text.slice(0, index)}X${text.slice(index + find.length)}`
+        : text,
+      applied: applied ? 1 : 0,
+      skipped: applied ? 0 : 1,
+    });
+  };
+
+  it("reads the same word edges off every script it did before", () => {
+    // Every script the check has an opinion on, plus the shapes that decide
+    // whether a character counts as part of a word at all: a combining mark is
+    // not a letter, so a decomposed accent is a word boundary, and a character
+    // outside the basic plane is one character that offsets into the text by
+    // two.
+    const WORDS = [
+      "cat",
+      "café",
+      "Grüße",
+      "日本語",
+      "привет",
+      "123",
+      "🎉",
+      "𐐀",
+      "café",
+      "a",
+      "  ",
+      "cat🎉",
+      "🎉cat",
+      "cat\u0301",
+    ];
+    // The same word on its own, and with a letter or punctuation against it,
+    // so a span of it is tested both on a word edge and inside a word.
+    const CONTEXTS = (word: string): string[] => [
+      word,
+      `a${word}`,
+      `${word}a`,
+      `a${word}a`,
+      `. ${word} .`,
+    ];
+    let compared = 0;
+    for (const word of WORDS) {
+      // Every span of the word, so every interior landing is covered.
+      for (let start = 0; start <= word.length; start += 1) {
+        for (let end = start; end <= word.length; end += 1) {
+          const find = word.slice(start, end);
+          for (const text of CONTEXTS(word)) {
+            compared += 1;
+            expectSameDecisionAsPatterns(text, find);
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(300);
+  });
+
+  it("reads the same word edges off a find that carries punctuation and space", () => {
+    // The prompt asks the model to copy the space around a word when deleting
+    // it, so the runs at either end of `find` are ordinary rather than
+    // unusual, and they are what the two edge patterns used to trim.
+    const EDGES = [
+      "",
+      " ",
+      "  ",
+      ".",
+      "!",
+      "…",
+      "-",
+      "'",
+      "\n",
+      "   .  ",
+      // A character outside the basic plane is one character that the run it
+      // sits in counts as two, and a combining mark is no letter at all, so
+      // neither belongs in a word.
+      "🎉",
+      "\u0301",
+      "a",
+      "🎉  ",
+    ];
+    const WORDS = ["café", "日本語", "🎉", "𐐀", "cat"];
+    let compared = 0;
+    for (const word of WORDS) {
+      for (const before of EDGES) {
+        for (const after of EDGES) {
+          for (let start = 0; start <= word.length; start += 1) {
+            for (let end = start; end <= word.length; end += 1) {
+              const find = `${before}${word.slice(start, end)}${after}`;
+              for (const text of [`${word}`, `a ${word} a`]) {
+                compared += 1;
+                expectSameDecisionAsPatterns(text, find);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(compared).toBeGreaterThan(1_000);
+  });
+
+  it("reads a find of nothing but punctuation as no word at all", () => {
+    // The scan reports the same length from both ends for a find with no word
+    // character in it, which is what makes the match unable to land inside a
+    // word.
+    for (const find of [" ", "  ", "...", " . ", "\n", "!!", ""]) {
+      expectSameDecisionAsPatterns("a cat sat", find);
+      expectSameDecisionAsPatterns("a café sat", find);
+    }
+  });
+});
+
+describe("resolveProcessedTranscription", () => {
+  // The warning names every reason an edit cannot apply, so no skipped or
+  // unread entry is a silent no-op.
+  const SKIP_RULE =
+    " (an edit only applies when it names find text as a string, its replacement is a string, and that find text matches the transcript exactly once, on the edges of a word).";
+  const ONE_EDIT_SKIPPED = `Applied 0 of 1 post-processing edits; 1 could not be applied${SKIP_RULE}`;
+  const ONE_OF_TWO_EDITS_SKIPPED = `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`;
+
+  it("applies edits and reports skipped ones as a warning", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "missing phrase", replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to ship",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("notes the edit cap when a reply exceeds it", () => {
+    const edits = Array.from(
+      { length: MAX_TRANSCRIPTION_EDITS + 1 },
+      (_, index) => ({ find: `w${index}`, replace: `w${index}` }),
+    );
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits, result: "" }),
+      "w0 w1",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "cleaned",
+      transcript: "w0 w1",
+    });
+    if (resolution.status === "cleaned") {
+      expect(resolution.warning).toContain(
+        `Only the first ${MAX_TRANSCRIPTION_EDITS} edits were attempted.`,
+      );
+    }
+  });
+
+  it("keeps the rewrite when no edit matched", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [{ find: "not present", replace: "x" }],
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    // The rewrite covers the skipped edit, so there is nothing to warn about:
+    // the cleaned text was still produced.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "We are going to ship.",
+      warning: null,
+    });
+  });
+
+  it("unwraps one level of schema-name nesting", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        transcription_cleaning: {
+          edits: [{ find: "raw", replace: "cleaned" }],
+          result: "",
+        },
+      }),
+      "raw text",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "cleaned text",
+      warning: null,
+    });
+  });
+
+  it.each(["null", "42", "true", "{}"])(
+    "skips an edit whose replacement is not a string: %s",
+    (replace) => {
+      const resolution = resolveProcessedTranscription(
+        JSON.stringify({
+          edits: [{ find: "uh ", replace: JSON.parse(replace) }],
+        }),
+        "uh so anyway",
+      );
+
+      // A non-string replacement is a provider dropping the key, not the model
+      // asking to delete "uh ", so the edit is skipped and counted. Reading it
+      // as a deletion used to remove the word and report a clean success.
+      expect(resolution).toEqual({
+        status: "cleaned",
+        transcript: "uh so anyway",
+        warning: ONE_EDIT_SKIPPED,
+      });
+    },
+  );
+
+  it("keeps the transcript when an edit arrives without a replacement", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [{ find: "the meeting" }], result: "" }),
+      "the meeting is at noon",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "the meeting is at noon",
+      warning: ONE_EDIT_SKIPPED,
+    });
+  });
+
+  it("applies the valid edits of a reply that also carries an unusable one", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: "the meeting" },
+        ],
+        result: "",
+      }),
+      "we are gonna join the meeting",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to join the meeting",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("skips a mid-word find and applies the whole-word edit beside it", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "can", replace: "could" },
+          { find: "tomorrow", replace: "next week" },
+        ],
+        result: "",
+      }),
+      "I cannot attend the meeting tomorrow",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I cannot attend the meeting next week",
+      warning: ONE_OF_TWO_EDITS_SKIPPED,
+    });
+  });
+
+  it("reports a reply that carries neither an edit list nor a rewrite", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ result: "" }),
+      "raw text",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "empty",
+      warning:
+        "Post-processing returned no usable text; kept the raw transcript. The reply may have been truncated at the model's token limit.",
+    });
+  });
+
+  it("treats a no-change reply as clean instead of failed", () => {
+    // Both keys are required by the schema, so this is the answer the model
+    // gives when the tone already matches the speaker. Calling it a failure
+    // blamed the model's token limit for a correct dictation.
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "" }),
+      "I finished the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I finished the report today",
+      warning: null,
+    });
+  });
+
+  it("treats a no-change reply with a blank result as clean too", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "   " }),
+      "I finished the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "I finished the report today",
+      warning: null,
+    });
+  });
+
+  it("reports a reply whose edit list could not be read at all", () => {
+    // The reply declared an edit, so the model asked for a change. Reading the
+    // entry away and calling the result a clean no-op told the user nothing
+    // while the change they asked for was lost.
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [{ find: 42, replace: "x" }], result: "" }),
+      "I will send the report today",
+    );
+
+    expect(resolution).toEqual({
+      status: "unusable",
+      reason: "unreadable-edits",
+      warning:
+        "Post-processing returned edits that could not be read; kept the raw transcript. The reply may not match the shape the provider was asked for.",
+    });
+  });
+
+  it.each([
+    ["a non-string find", { find: 42, replace: "x" }],
+    ["a missing find", { replace: "x" }],
+    ["a null entry", null],
+    ["a bare string", "gonna"],
+  ])("reports an edit list holding %s", (_label, entry) => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [entry], result: "" }),
+      "we are gonna ship",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unreadable-edits",
+    });
+  });
+
+  it("counts an unread entry beside the ones it did apply", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [
+          { find: "gonna", replace: "going to" },
+          { find: 42, replace: "x" },
+        ],
+        result: "",
+      }),
+      "we are gonna ship",
+    );
+
+    // The totals describe every entry the model sent, so the unread one is
+    // reported rather than quietly missing from the count.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "we are going to ship",
+      warning: `Applied 1 of 2 post-processing edits; 1 could not be applied${SKIP_RULE}`,
+    });
+  });
+
+  it("keeps the rewrite when the edit list beside it could not be read", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({
+        edits: [{ find: 42, replace: "x" }],
+        result: "We are going to ship.",
+      }),
+      "we are gonna ship",
+    );
+
+    // The rewrite carries the text the unread edit asked for, so there is
+    // nothing left to report.
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "We are going to ship.",
+      warning: null,
+    });
+  });
+
+  it("treats an empty transcript as clean instead of failed", () => {
+    const resolution = resolveProcessedTranscription(
+      JSON.stringify({ edits: [], result: "" }),
+      "   ",
+    );
+
+    expect(resolution).toEqual({
+      status: "cleaned",
+      transcript: "   ",
+      warning: null,
+    });
+  });
+
+  it("keeps the raw transcript when a truncated edit list cannot be repaired", () => {
+    // The reply stops mid-edit, so no complete edit survived. The resolver
+    // must not guess at partial edits: the raw transcript wins with a warning.
+    const resolution = resolveProcessedTranscription(
+      '{"edits":[{"find":"um ","replace":""},{"find":"gonna","replace":"going t',
+      "um we are gonna ship it",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
+    });
+  });
+
+  it("keeps the raw transcript when a reply is only missing its closing brace", () => {
+    // Repairing a cut-off reply once turned it into a shorter transcript that
+    // was pasted as a success, silently dropping the end of the dictation.
+    // A reply that does not parse keeps the full raw transcript instead.
+    const resolution = resolveProcessedTranscription(
+      '{"edits":[],"result":"going to ship it"',
+      "we are gonna ship it",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
+    });
+  });
+
+  it("flags a non-JSON reply as unparseable", () => {
+    const resolution = resolveProcessedTranscription(
+      "Sure! Here is the cleaned text:",
+      "raw text",
+    );
+
+    expect(resolution).toMatchObject({
+      status: "unusable",
+      reason: "unparseable",
+    });
+    if (resolution.status === "unusable") {
+      expect(resolution.warning).toContain(
+        "Failed to parse post-processing response",
+      );
+    }
+  });
+});
+
+describe("parsePostProcessingJson", () => {
+  it("parses complete JSON, including fenced blocks", () => {
+    expect(parsePostProcessingJson('{"result":"Hello."}')).toEqual({
+      result: "Hello.",
+    });
+    expect(parsePostProcessingJson('```json\n{"result":"Hi"}\n```')).toEqual({
+      result: "Hi",
+    });
+  });
+
+  it("rejects output cut off at the token limit instead of shortening it", () => {
+    expect(() =>
+      parsePostProcessingJson('{"result":"We agreed to push the beta to'),
+    ).toThrow(SyntaxError);
+    expect(() => parsePostProcessingJson('{"result":"Done."')).toThrow(
+      SyntaxError,
+    );
+  });
+});
+
+describe("isLikelyTruncatedJson", () => {
+  it.each([
+    '{"result":"We agreed to push the beta to',
+    '```json\n{"result":"We agreed to push',
+    '  {"result":"Done."  ',
+    '{"result":"He said }',
+    '{"result":"Use {braces} and \\"quotes\\" like }',
+    '{"result":{"text":"Done."}',
+  ])("flags an object that never closes: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(true);
+  });
+
+  it.each([
+    '{"result":"Done."}',
+    '```json\n{"result":"Done."}\n```',
+    "Sure, here is the cleaned text.",
+    '{"result":"He said }"}',
+    '{"result":"Done."} trailing words',
+    "",
+  ])("does not flag complete JSON or prose: %s", (raw) => {
+    expect(isLikelyTruncatedJson(raw)).toBe(false);
   });
 });
