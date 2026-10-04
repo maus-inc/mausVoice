@@ -43,7 +43,7 @@ export default defineConfig({
     // this server and read the app, which serves the real desktop source through `fs.allow`.
     //
     // So the hosts are named instead. Loopback keeps working with no setup; serving anyone
-    else on the LAN is now an explicit opt-in.
+    // else on the LAN is now an explicit opt-in.
     //
     //   PREVIEW_ALLOWED_HOSTS=preview-host.local,192.168.1.20 pnpm --filter @maus-inc/preview dev
     //

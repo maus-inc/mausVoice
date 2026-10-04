@@ -30,7 +30,7 @@ A native Windows host writes `mausVoice_*-setup.exe` under
 
 - `CARGO_TARGET_DIR` replaces `apps/desktop/src-tauri/target` **entirely** — CI sets it (on
   Windows: `D:\cargo`), so the literal path below matches nothing there.
-- `--target x86_64-pc-windows-msvc` inserts the target triple *before* `release`.
+- `--target x86_64-pc-windows-msvc` inserts the target triple _before_ `release`.
 
 The copy step reads both from the environment so it stays correct under either.
 
