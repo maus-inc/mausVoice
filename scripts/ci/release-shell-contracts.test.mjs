@@ -180,6 +180,18 @@ describe("release workflow shell contracts", () => {
       "the note must not promise a warning for the inert case: the resolver " +
         "emits ::error:: and exits 1 for it, so there is no warning to promise",
     );
+    // Matched against whitespace-normalised text. A mutation that reintroduced the
+    // claim with different line wrapping left this green on the first attempt,
+    // because the phrase was no longer contiguous in the file -- a mutation that
+    // proved nothing while appearing to survive.
+    const squashed = scan.replace(/\s+/g, " ");
+    assert.doesNotMatch(
+      squashed,
+      /the only gate that can block it before it reaches main/,
+      "the trigger comment must not promise a gate that cannot run: against a " +
+        "base whose policy cannot extend the built-in detectors, no scan here " +
+        "runs at all, so that claim is false exactly when it is most reassuring",
+    );
   });
 
   it("secret-scan resolves its policy two ways, refuses an inert one, and never from the scanned tree", () => {
@@ -280,10 +292,56 @@ describe("release workflow shell contracts", () => {
         run.includes("in_extend && /^[[:space:]]*useDefault"),
         `${step.name} must require useDefault = true inside an [extend] body, not anywhere in the file`,
       );
+      // An inert policy must SKIP this scan and leave a sentinel -- not fail here.
+      //
+      // Failing here is what the previous version did, and it was worse than it
+      // looked: the scans are steps 5-7 and the six steps after them carry no
+      // `if:`, so an `exit 1` made this job never run a single one of its own
+      // self-verification steps -- the updater-key fixture, the built-in detector
+      // fixture, both config-guard steps and the history-scan integration test all
+      // became unreachable against this repository's own base. The job reported a
+      // policy problem while proving nothing about itself.
       assert.match(
         run,
-        /if \[ "\$active" -ne 1 \]; then[\s\S]*?exit 1/,
-        `${step.name} must fail closed when the trusted policy is inert`,
+        /if \[ "\$active" -ne 1 \]; then[\s\S]*?printf 'inert %s\\n' "\$POLICY_REF" > "\$INERT_SENTINEL"/,
+        `${step.name} must record an inert policy in the sentinel instead of failing`,
+      );
+      const inertArm = run.slice(run.indexOf('if [ "$active" -ne 1 ]; then'));
+      assert.doesNotMatch(
+        inertArm.slice(0, inertArm.indexOf("fi")),
+        /exit 1/,
+        `${step.name} must not exit non-zero on the inert path, or the ` +
+          `self-verification steps after it never run`,
+      );
+
+      // The verdict belongs at the end of the job, where `always()` reaches it.
+      const gate = scan.indexOf(
+        "- name: Require a secret-scan policy that can actually detect secrets",
+      );
+      assert.ok(gate !== -1, "the closing policy gate must exist");
+      assert.match(
+        scan.slice(gate),
+        /if: always\(\)/,
+        "the closing gate must run under always(), or a failure above hides it",
+      );
+      assert.match(
+        scan.slice(gate),
+        /if \[ ! -f "\$INERT_SENTINEL" \]; then[\s\S]*?exit 0/,
+        "the closing gate must pass when no scan had to skip itself, so it is " +
+          "not unconditionally red once the base policy is fixed",
+      );
+      assert.match(
+        scan.slice(gate),
+        /if \[ ! -f "\$INERT_SENTINEL" \]; then[\s\S]*?exit 0\s*fi[\s\S]*?exit 1/,
+        "the closing gate must exit 0 only while no scan skipped itself, and " +
+          "exit 1 once the sentinel exists -- i.e. the inert case is the " +
+          "fall-through, not a branch that has to be added later",
+      );
+      assert.match(
+        scan.slice(gate),
+        /Do not read a green run of this job as evidence that no credential was added/,
+        "the closing gate must say that a green run is not evidence of a clean " +
+          "range, which is the property that was silently false",
       );
 
       // The message must name the ref the trusted checkout actually used. Asserted
