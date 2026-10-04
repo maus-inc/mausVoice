@@ -1480,8 +1480,7 @@ mod tests {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::{
-        child_stdin_store, combo_store, lock, publish_child_stdin, stop_epoch,
-        stop_listener_child,
+        child_stdin_store, combo_store, lock, publish_child_stdin, stop_epoch, stop_listener_child,
     };
     use std::sync::atomic::Ordering;
 
