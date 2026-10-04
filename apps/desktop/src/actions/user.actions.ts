@@ -2,11 +2,14 @@ import {
   type AgentMode,
   DictationPillVisibility,
   Nullable,
+  PillPlacement,
   PillResetMonitorStrategy,
   StylingMode,
+  UpdateChannel,
   User,
   UserPreferences,
 } from "@maus-inc/types";
+import { invoke } from "@tauri-apps/api/core";
 import dayjs from "dayjs";
 import { getIntl } from "../i18n";
 import { getUserPreferencesRepo, getUserRepo } from "../repos";
@@ -15,11 +18,14 @@ import {
   type PostProcessingMode,
   type TranscriptionMode,
 } from "../types/ai.types";
-import { AsyncLock } from "../utils/async-lock.utils";
 import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
 } from "../utils/dictation-limit.utils";
+import {
+  DEFAULT_HANDS_FREE_DELAY_MS,
+  normalizeHandsFreeDelayMs,
+} from "../utils/hands-free-delay.utils";
 import { PRIMARY_LANGUAGE_SENTINEL } from "../utils/language.utils";
 import {
   isGpuPreferredTranscriptionDevice,
@@ -28,6 +34,8 @@ import {
   supportsGpuTranscriptionDevice,
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
+import { createMutationQueue } from "../utils/mutation-queue";
+import { pushPillPlacementToNative } from "./windows-sync.actions";
 import { sendPillFireworks, sendPillFlame } from "../utils/overlay.utils";
 import {
   getMyEffectiveUserId,
@@ -38,49 +46,68 @@ import {
   setUserPreferences,
 } from "../utils/user.utils";
 import { showErrorSnackbar } from "./app.actions";
+import { refreshUpdatesForChannelChange } from "./updater.actions";
 import { setLocalStorageValue } from "./local-storage.actions";
 
-const userSaveLock = new AsyncLock();
+// Serializes profile mutations. `setMyUser` upserts the whole row, so two
+// overlapping writes can clobber each other: whichever lands last wins, and a
+// stale payload reverts every field the newer one changed. Each task reads the
+// latest committed user when it actually runs, so its payload builds on the
+// previous task's result rather than on a snapshot taken at call time.
+const { enqueue: enqueueUserMutation } = createMutationQueue();
 
-const updateUser = async (
+const updateUser = (
   updateCallback: (user: User) => void,
   errorMessage: string,
   saveErrorMessage: string,
-): Promise<void> => {
-  const state = getAppState();
-  const existing = getMyUser(state);
-  if (!existing) {
-    getLogger().warning(`updateUser: user not found (${errorMessage})`);
-    showErrorSnackbar(errorMessage);
-    return;
-  }
+): Promise<void> =>
+  enqueueUserMutation(async () => {
+    const state = getAppState();
+    const existing = getMyUser(state);
+    if (!existing) {
+      getLogger().warning(`updateUser: user not found (${errorMessage})`);
+      showErrorSnackbar(errorMessage);
+      return;
+    }
 
-  const repo = getUserRepo();
-  const payload: User = {
-    ...existing,
-    updatedAt: new Date().toISOString(),
-  };
+    const repo = getUserRepo();
+    const payload: User = {
+      ...existing,
+      updatedAt: new Date().toISOString(),
+    };
 
-  updateCallback(payload);
-  produceAppState((draft) => {
-    setCurrentUser(draft, payload);
-  });
+    updateCallback(payload);
+    produceAppState((draft) => {
+      setCurrentUser(draft, payload);
+    });
 
-  await userSaveLock.run(async () => {
     try {
       getLogger().verbose(`Saving user (id=${payload.id})`);
       await repo.setMyUser(payload);
       getLogger().verbose("User saved successfully");
     } catch (error) {
       getLogger().error(`Failed to update user: ${error}`);
+      // Re-read instead of restoring the pre-call snapshot. Another task may
+      // have committed a change after this one started, and writing the
+      // snapshot back would erase it. If the re-read also fails the optimistic
+      // value stays and the error surfaces, which is the honest outcome.
+      const reloaded = await getUserRepo()
+        .getMyUser()
+        .catch((reloadError: unknown) => {
+          getLogger().error(
+            `Failed to re-read user after a failed save: ${reloadError}`,
+          );
+          return null;
+        });
       produceAppState((draft) => {
-        setCurrentUser(draft, existing);
+        if (reloaded) {
+          setCurrentUser(draft, reloaded);
+        }
       });
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
   });
-};
 
 export const createDefaultPreferences = (): UserPreferences => ({
   userId: LOCAL_USER_ID,
@@ -105,11 +132,15 @@ export const createDefaultPreferences = (): UserPreferences => ({
   ignoreUpdateDialog: false,
   incognitoModeEnabled: false,
   incognitoModeIncludeInStats: false,
+  preserveAudioOnFailure: true,
   dictationLimitMinutes: DEFAULT_DICTATION_LIMIT_MINUTES,
   dictationPillVisibility: "while_active",
   pillResetMonitorStrategy: "current",
+  pillPlacement: "bottom",
+  updateChannel: "stable",
 
   alwaysRequestAdminOnStartup: false,
+  spokenCommandsEnabled: true,
   realtimeOutputEnabled: false,
   remoteOutputEnabled: false,
   remoteTargetDeviceId: null,
@@ -120,45 +151,66 @@ export const createDefaultPreferences = (): UserPreferences => ({
   menuBarIconHidden: false,
   insertionMethod: null,
   typingSpeedMs: null,
+  handsFreeDelayMs: DEFAULT_HANDS_FREE_DELAY_MS,
+  inDictationStyleSwitchingEnabled: false,
+  hallucinationFilterEnabled: true,
+  reviewBeforeInsert: null,
+  agentEnabledTools: null,
+  agentMaxIterations: 20,
+  agentPermissionTimeoutMs: 60_000,
+  autoLearnDictionaryEnabled: true,
+  autoLearnFromEditsEnabled: false,
+  elevenLabsKeytermsEnabled: false,
+  expansionFlags: "{}",
 });
 
-export const updateUserPreferences = async (
-  updateCallback: (preferences: UserPreferences) => void,
-  saveErrorMessage = "Failed to save AI preferences. Please try again.",
-): Promise<void> => {
-  const state = getAppState();
-  const myUserId = getMyEffectiveUserId(state);
+// Serializes preference mutations so overlapping tool toggles or numeric edits
+// cannot read a stale snapshot and clobber each other's change. Each task reads
+// the latest committed preferences when it actually runs.
+const { enqueue: enqueuePrefsMutation } = createMutationQueue();
 
-  let existing = getMyUserPreferences(state);
-  if (!existing) {
+export const updateUserPreferences = (
+  updateCallback: (preferences: UserPreferences) => void,
+  saveErrorMessage = getIntl().formatMessage({
+    defaultMessage: "Failed to save AI preferences. Please try again.",
+  }),
+): Promise<void> =>
+  enqueuePrefsMutation(async () => {
+    const state = getAppState();
+    const myUserId = getMyEffectiveUserId(state);
+
+    let existing = getMyUserPreferences(state);
+    if (!existing) {
+      try {
+        existing = await getUserPreferencesRepo().getUserPreferences();
+      } catch (error) {
+        getLogger().error(
+          `Failed to load existing preferences before update: ${error}`,
+        );
+        showErrorSnackbar(saveErrorMessage);
+        throw error;
+      }
+    }
+
+    const safeExisting = existing ?? createDefaultPreferences();
+    // The mutation runs when this task reaches the front of the queue, so it
+    // always derives from the most recently committed preferences.
+    const payload: UserPreferences = { ...safeExisting, userId: myUserId };
+    updateCallback(payload);
+
     try {
-      existing = await getUserPreferencesRepo().getUserPreferences();
+      getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
+      const saved = await getUserPreferencesRepo().setUserPreferences(payload);
+      produceAppState((draft) => {
+        setUserPreferences(draft, saved);
+      });
+      getLogger().verbose("User preferences saved successfully");
     } catch (error) {
-      getLogger().error(
-        `Failed to load existing preferences before update: ${error}`,
-      );
+      getLogger().error(`Failed to update user preferences: ${error}`);
       showErrorSnackbar(saveErrorMessage);
       throw error;
     }
-  }
-
-  const safeExisting = existing ?? createDefaultPreferences();
-  const payload: UserPreferences = { ...safeExisting, userId: myUserId };
-  updateCallback(payload);
-
-  try {
-    getLogger().verbose(`Saving user preferences (userId=${myUserId})`);
-    const saved = await getUserPreferencesRepo().setUserPreferences(payload);
-    produceAppState((draft) => {
-      setUserPreferences(draft, saved);
-    });
-    getLogger().verbose("User preferences saved successfully");
-  } catch (error) {
-    getLogger().error(`Failed to update user preferences: ${error}`);
-    showErrorSnackbar(saveErrorMessage);
-    throw error;
-  }
-};
+  });
 
 const getCurrentUsageMonth = (): string => {
   const now = new Date();
@@ -323,9 +375,12 @@ export const addWordsToCurrentUser = async (
   );
 };
 
-export const refreshCurrentUser = async (): Promise<void> => {
-  await userSaveLock.wait();
-
+// Runs on the same chain as `updateUser` so a refresh never reads a row that a
+// queued save is halfway through writing. It must never be called from inside
+// a queued task: the chain is already occupied there and the call would wait on
+// itself forever. The failure path in `updateUser` therefore re-reads the row
+// inline rather than calling this.
+const refreshUserAndPreferences = async (): Promise<void> => {
   try {
     getLogger().verbose("Refreshing current user and preferences");
     const [userResult, preferencesResult] = await Promise.allSettled([
@@ -367,6 +422,9 @@ export const refreshCurrentUser = async (): Promise<void> => {
     getLogger().error(`Failed to refresh user: ${error}`);
   }
 };
+
+export const refreshCurrentUser = (): Promise<void> =>
+  enqueueUserMutation(refreshUserAndPreferences);
 
 export const setPreferredMicrophone = async (
   preferredMicrophone: Nullable<string>,
@@ -434,6 +492,41 @@ export const setInteractionChimeEnabled = async (enabled: boolean) => {
     },
     "Unable to update interaction chime. User not found.",
     "Failed to save interaction chime preference. Please try again.",
+  );
+  // A23: Mirror the pref into Rust so native pill thocks honor it too.
+  // Fire-and-forget: the persisted value is the source of truth and the
+  // command only controls the in-memory flag used by audio_feedback. The
+  // command can fail on a non-main window, which is expected and safe to
+  // ignore, but we still surface it for diagnostics.
+  invoke("set_interaction_chime_enabled", { enabled }).catch((error) =>
+    getLogger().verbose(`Failed to set interaction chime on pill: ${error}`),
+  );
+};
+
+export const setInteractionFeedbackVolume = async (
+  volume: number,
+): Promise<void> => {
+  // Persist the user-facing preference (clamped to [0.05, 0.5]) and mirror the
+  // same clamped value into Rust so the IPC payload matches the persisted
+  // record. The Rust side clamps again to its safe window as a
+  // defence-in-depth measure; this clamp guarantees the on-the-wire
+  // payload never exceeds the effective [0.05, 0.5] range. The Rust
+  // sink clamps playback to the same window, so clamping here keeps the
+  // persisted value, the IPC payload, and what the user actually hears
+  // identical — a slider at maximum must not silently play at half.
+  const clamped = Math.max(0.05, Math.min(0.5, volume));
+  await updateUser(
+    (user) => {
+      user.interactionFeedbackVolume = clamped;
+    },
+    "Unable to update interaction feedback volume. User not found.",
+    "Failed to save interaction feedback volume. Please try again.",
+  );
+  invoke("set_interaction_feedback_volume", { volume: clamped }).catch(
+    (error) =>
+      getLogger().verbose(
+        `Failed to set interaction feedback volume on pill: ${error}`,
+      ),
   );
 };
 
@@ -608,6 +701,14 @@ export const setIncognitoModeIncludeInStats = async (
   }, "Failed to save incognito mode stats preference. Please try again.");
 };
 
+export const setPreserveAudioOnFailure = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.preserveAudioOnFailure = enabled;
+  }, "Failed to save failed-transcription audio preference. Please try again.");
+};
+
 export const setDictationPillVisibility = async (
   visibility: DictationPillVisibility,
 ): Promise<void> => {
@@ -624,12 +725,50 @@ export const setPillResetMonitorStrategy = async (
   }, "Failed to save pill reset monitor strategy. Please try again.");
 };
 
+export const setPillPlacement = async (
+  placement: PillPlacement,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.pillPlacement = placement;
+  }, "Failed to save pill placement preference. Please try again.");
+  try {
+    await pushPillPlacementToNative(placement);
+  } catch (error) {
+    getLogger().warning(
+      `Failed to push pill placement to native pill: ${error}`,
+    );
+  }
+};
+
+export const setUpdateChannel = async (
+  channel: UpdateChannel,
+): Promise<void> => {
+  await updateUserPreferences(
+    (preferences) => {
+      preferences.updateChannel = channel;
+    },
+    getIntl().formatMessage({
+      defaultMessage:
+        "Failed to save update channel preference. Please try again.",
+    }),
+  );
+  await refreshUpdatesForChannelChange();
+};
+
 export const setAlwaysRequestAdminOnStartup = async (
   enabled: boolean,
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.alwaysRequestAdminOnStartup = enabled;
   }, "Failed to save admin on startup preference. Please try again.");
+};
+
+export const setSpokenCommandsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.spokenCommandsEnabled = enabled;
+  }, "Failed to save spoken commands preference. Please try again.");
 };
 
 export const setDictationLimitMinutes = async (
@@ -640,11 +779,51 @@ export const setDictationLimitMinutes = async (
   }, "Failed to save dictation limit preference. Please try again.");
 };
 
+export const setHandsFreeDelayMs = async (
+  delayMs: Nullable<number>,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.handsFreeDelayMs =
+      delayMs == null ? null : normalizeHandsFreeDelayMs(delayMs);
+  }, "Failed to save hands-free delay preference. Please try again.");
+};
+
+export const setAutoLearnDictionaryEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnDictionaryEnabled = enabled;
+  }, "Failed to save auto-learn dictionary preference. Please try again.");
+};
+
+export const setAutoLearnFromEditsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.autoLearnFromEditsEnabled = enabled;
+  }, "Failed to save learn-from-corrections preference. Please try again.");
+};
+
+export const setElevenLabsKeytermsEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.elevenLabsKeytermsEnabled = enabled;
+  }, "Failed to save ElevenLabs keyterms preference. Please try again.");
+};
+
 export const setRealtimeOutputEnabled = async (
   enabled: boolean,
 ): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.realtimeOutputEnabled = enabled;
+    // Real-time output streams interim segments straight into the focused
+    // app (skipReview), so review-before-insert can never apply while it is
+    // on. Keep the pair mutually exclusive instead of silently ignoring the
+    // review preference.
+    if (enabled) {
+      preferences.reviewBeforeInsert = false;
+    }
   }, "Failed to save real-time output preference. Please try again.");
 };
 
@@ -691,6 +870,85 @@ export const setDictationAudioDim = async (value: number): Promise<void> => {
   await updateUserPreferences((preferences) => {
     preferences.dictationAudioDim = Math.max(0, Math.min(1, value));
   }, "Failed to save audio dim preference. Please try again.");
+};
+
+export const setInDictationStyleSwitchingEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.inDictationStyleSwitchingEnabled = enabled;
+  }, "Failed to save in-dictation style switching preference. Please try again.");
+};
+
+export const setHallucinationFilterEnabled = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.hallucinationFilterEnabled = enabled;
+  }, "Failed to save silence filtering preference. Please try again.");
+};
+
+export const setReviewBeforeInsert = async (
+  enabled: boolean,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.reviewBeforeInsert = enabled;
+    // A review step conflicts with live interim streaming; see the realtime
+    // counterpart above. Turning review on therefore turns real-time output
+    // off in the same persisted write.
+    if (enabled) {
+      preferences.realtimeOutputEnabled = false;
+    }
+  }, "Failed to save review-before-insert preference. Please try again.");
+};
+
+export const setAgentEnabledTools = async (
+  toolIds: string[] | null,
+): Promise<void> => {
+  await updateUserPreferences((preferences) => {
+    preferences.agentEnabledTools = toolIds;
+  }, "Failed to save enabled agent tools. Please try again.");
+};
+
+export const setAgentToolEnabled = (
+  toolId: string,
+  enabled: boolean,
+): Promise<void> =>
+  updateUserPreferences((preferences) => {
+    const toolInfos = Object.values(getAppState().toolInfoById);
+    const current =
+      preferences.agentEnabledTools ?? toolInfos.map((toolInfo) => toolInfo.id);
+    const next = new Set(current);
+    if (enabled) {
+      next.add(toolId);
+    } else {
+      next.delete(toolId);
+    }
+    const allEnabled =
+      toolInfos.length > 0 &&
+      toolInfos.every((toolInfo) => next.has(toolInfo.id));
+    preferences.agentEnabledTools = allEnabled ? null : [...next];
+  }, "Failed to save enabled agent tools. Please try again.");
+
+export const setAgentMaxIterations = async (
+  iterations: number,
+): Promise<void> => {
+  const normalized = Math.min(100, Math.max(1, Math.trunc(iterations)));
+  await updateUserPreferences((preferences) => {
+    preferences.agentMaxIterations = normalized;
+  }, "Failed to save agent iteration limit. Please try again.");
+};
+
+export const setAgentPermissionTimeoutMs = async (
+  timeoutMs: number,
+): Promise<void> => {
+  const normalized = Math.min(
+    10 * 60_000,
+    Math.max(5_000, Math.trunc(timeoutMs)),
+  );
+  await updateUserPreferences((preferences) => {
+    preferences.agentPermissionTimeoutMs = normalized;
+  }, "Failed to save agent permission timeout. Please try again.");
 };
 
 export const setStylingMode = async (
