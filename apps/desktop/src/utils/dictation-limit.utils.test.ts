@@ -3,6 +3,7 @@ import {
   DEFAULT_DICTATION_LIMIT_MINUTES,
   getDictationRecordingTimerDurations,
   getEffectiveDictationLimitMinutes,
+  getProviderRecordingTimerDurations,
   MAX_DICTATION_LIMIT_MINUTES,
   normalizeDictationLimitMinutes,
   shouldEnableDictationLimit,
@@ -49,6 +50,32 @@ describe("shouldEnableDictationLimit", () => {
     expect(shouldEnableDictationLimit("local")).toBe(true);
     expect(shouldEnableDictationLimit("api")).toBe(true);
     expect(shouldEnableDictationLimit(null)).toBe(false);
+  });
+});
+
+describe("getProviderRecordingTimerDurations", () => {
+  it("warns at 178 minutes and stops at Gladia's 179-minute safety cap", () => {
+    expect(getProviderRecordingTimerDurations(179 * 60_000)).toEqual({
+      warningDurationMs: 178 * 60_000,
+      autoStopDurationMs: 179 * 60_000,
+    });
+  });
+
+  it("rejects invalid or unsafe provider timeout values", () => {
+    expect(getProviderRecordingTimerDurations(null)).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: null,
+    });
+    expect(getProviderRecordingTimerDurations(Number.NaN)).toEqual({
+      warningDurationMs: null,
+      autoStopDurationMs: null,
+    });
+    expect(getProviderRecordingTimerDurations(Number.MAX_SAFE_INTEGER)).toEqual(
+      {
+        warningDurationMs: null,
+        autoStopDurationMs: null,
+      },
+    );
   });
 });
 

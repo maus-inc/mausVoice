@@ -5,9 +5,11 @@ sidebar:
   order: 9
 ---
 
+The on-disk file is `mausvoice.db` (`DB_CONNECTION` = `sqlite:mausvoice.db`). Query modules in `db/` include `api_key_queries`, `transcription_queries`, `preferences_queries`, `tone_queries`, and `hotkey_queries`.
+
 SQLite SQL files live in `apps/desktop/src-tauri/src/db/migrations/`, but filenames alone do not register them. `db/mod.rs` must `include_str!` the file and add a `tauri_plugin_sql::Migration` with a unique version, stable description, SQL constant, and `Up` kind. Tauri installs that migration list for `sqlite:mausvoice.db` during startup; Rust query modules also access an SQLx pool.
 
-The historical numbering is intentionally irregular. `000_schema.sql` is registered as version 1, `021` is absent, and the current sequence jumps from `068` to `071`. Files `058` and `059` share a stem, but 59 is a compatibility no-op with its own description. Do not rename, renumber, reorder, or rewrite an applied migration to make the directory look cleaner.
+The historical numbering is intentionally irregular. `000_schema.sql` is registered as version 1, `021` and `070` are absent, and the sequence runs through `069_consolidated_v0_1_6_schema.sql` — a single migration that folds every post-0.1.5 schema change (the former `071`-`088` files: cloud removal, enterprise drop, feature preferences, auto-learn, expansion flags, the update-channel column, and more) into the first step after `068`, the last migration the 0.1.5 release shipped. Files `058` and `059` share a stem, but 59 is a compatibility no-op with its own description. Do not rename, renumber, reorder, or rewrite an applied migration to make the directory look cleaner; extend the consolidated migration only while 0.1.6 remains unreleased, and start numbering again at 070 for the next shipped release.
 
 A durable preference change usually needs all of these:
 

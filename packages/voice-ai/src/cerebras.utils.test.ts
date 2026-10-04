@@ -1,0 +1,262 @@
+import { describe, expect, it, vi } from "vitest";
+
+// The redaction rules key on the provider prefix, so the fixture is realistic in the value it produces; it is assembled from two parts so that a secret scanner reading this repository does not report a live key.
+const CEREBRAS_KEY = "csk" + "_test";
+
+const { clientOptions, listModels, createChatCompletion } = vi.hoisted(() => ({
+  clientOptions: vi.fn(),
+  listModels: vi.fn().mockResolvedValue({ data: [{ id: "gpt-oss-120b" }] }),
+  createChatCompletion: vi.fn(),
+}));
+
+vi.mock("openai", () => ({
+  default: class MockOpenAI {
+    models = { list: listModels };
+    chat = {
+      completions: { create: createChatCompletion },
+    };
+
+    constructor(options: unknown) {
+      clientOptions(options);
+    }
+  },
+}));
+
+import {
+  CEREBRAS_MODELS,
+  CerebrasProviderError,
+  cerebrasGenerateTextResponse,
+  cerebrasTestIntegration,
+  isCerebrasTerminalStatus,
+  normalizeCerebrasError,
+  redactCerebrasMessage,
+} from "./cerebras.utils";
+
+describe("Cerebras provider", () => {
+  it("uses the current public models as offline fallbacks", () => {
+    expect(CEREBRAS_MODELS).toEqual(["gpt-oss-120b", "gemma-4-31b"]);
+  });
+
+  it("tests credentials by listing live models instead of calling a stale fixed model", async () => {
+    const customFetch = vi.fn();
+
+    await expect(
+      cerebrasTestIntegration({ apiKey: ` ${CEREBRAS_KEY} `, customFetch }),
+    ).resolves.toBe(true);
+    expect(listModels).toHaveBeenCalledOnce();
+    expect(clientOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: CEREBRAS_KEY,
+        baseURL: "https://api.cerebras.ai/v1",
+        fetch: customFetch,
+      }),
+    );
+  });
+});
+
+describe("redactCerebrasMessage", () => {
+  it("redacts sk- keys without matching inside identifiers like task-123", () => {
+    expect(redactCerebrasMessage("key sk-liveAbCd1234 used")).toBe(
+      "key [redacted] used",
+    );
+    expect(redactCerebrasMessage("ticket task-123 is open")).toBe(
+      "ticket task-123 is open",
+    );
+  });
+
+  it("redacts bearer tokens case-insensitively without leaking the value", () => {
+    expect(redactCerebrasMessage("Authorization: Bearer Abc_123")).toContain(
+      "[redacted]",
+    );
+    expect(redactCerebrasMessage("Authorization: Bearer Abc_123")).not.toMatch(
+      /Abc_123/,
+    );
+  });
+});
+
+describe("normalizeCerebrasError", () => {
+  it("maps a 402 with no body to an actionable Cerebras billing error", () => {
+    // The OpenAI SDK raises APIError with `status` set; an empty response body
+    // is exactly what the user reported ("402 status code (no body)").
+    const sdkError = Object.assign(new Error("402 status code (no body)"), {
+      status: 402,
+    });
+
+    const normalized = normalizeCerebrasError(sdkError);
+
+    expect(normalized).toBeInstanceOf(CerebrasProviderError);
+    expect((normalized as CerebrasProviderError).status).toBe(402);
+    expect(normalized.message).toMatch(/cerebras/i);
+    expect(normalized.message).toMatch(/credit|quota|billing|access/i);
+    // The error must never carry the API key or authorization material.
+    expect(normalized.message).not.toMatch(/csk_|bearer|authorization/i);
+  });
+
+  it("passes a 5xx through as retriable", () => {
+    const sdkError = Object.assign(new Error("bad gateway"), { status: 502 });
+    const normalized = normalizeCerebrasError(sdkError);
+    expect(normalized).not.toBeInstanceOf(CerebrasProviderError);
+    expect(normalized.message).toBe("bad gateway");
+  });
+
+  it("redacts key material echoed by a transient 5xx proxy error", () => {
+    const proxyError = Object.assign(
+      new Error("upstream 500: Authorization: Bearer csk_proxy12345"),
+      { status: 500 },
+    );
+    const normalized = normalizeCerebrasError(proxyError);
+    // Retriable, but the key must not survive to logs/metadata.
+    expect(normalized).not.toBeInstanceOf(CerebrasProviderError);
+    expect(normalized.message).not.toMatch(/csk_[A-Za-z0-9]/);
+    expect(normalized.message).toContain("[redacted]");
+  });
+
+  it("wraps other terminal 4xx statuses", () => {
+    const sdkError = Object.assign(new Error("unauthorized"), { status: 401 });
+    const normalized = normalizeCerebrasError(sdkError);
+    expect(normalized).toBeInstanceOf(CerebrasProviderError);
+    expect((normalized as CerebrasProviderError).status).toBe(401);
+  });
+
+  it("redacts an API key embedded in a terminal SDK error message", () => {
+    // The OpenAI SDK echoes the supplied key in its 401 APIError message.
+    const sdkError = Object.assign(
+      new Error(
+        "Incorrect API key provided: " +
+          "csk_" +
+          "liveAbCd1234. You can find your API key at https://console.cerebras.ai",
+      ),
+      { status: 401 },
+    );
+
+    const normalized = normalizeCerebrasError(sdkError);
+
+    expect(normalized).toBeInstanceOf(CerebrasProviderError);
+    expect(normalized.message).toContain("Incorrect API key provided");
+    expect(normalized.message).not.toMatch(/csk_[A-Za-z0-9]/);
+    expect(normalized.message).toContain("[redacted]");
+    // A key truncated by the provider must not be reconstructed; the whole
+    // token is replaced, never partially preserved.
+    expect(normalized.message).not.toContain("csk_" + "liveAbCd1234");
+  });
+
+  it("coerces a non-error throwable", () => {
+    expect(normalizeCerebrasError("boom").message).toBe("boom");
+  });
+
+  it("marks the billing statuses as non-retryable", () => {
+    expect(isCerebrasTerminalStatus(402)).toBe(true);
+    expect(isCerebrasTerminalStatus(401)).toBe(true);
+    expect(isCerebrasTerminalStatus(429)).toBe(false);
+    expect(isCerebrasTerminalStatus(500)).toBe(false);
+  });
+
+  // The whole set, not a sample of it. A status dropped from it becomes a retry
+  // the caller pays for twice; a status added to it turns a transient failure
+  // into a dead end. Both are invisible to the four assertions above, which is
+  // why the membership is written out here rather than sampled.
+  it("pins the full terminal-status set", () => {
+    for (const status of [400, 401, 402, 403, 404, 422]) {
+      expect(
+        isCerebrasTerminalStatus(status),
+        `expected ${status} to be non-retryable`,
+      ).toBe(true);
+    }
+    for (const status of [200, 408, 409, 425, 429, 500, 502, 503]) {
+      expect(
+        isCerebrasTerminalStatus(status),
+        `expected ${status} to stay retryable`,
+      ).toBe(false);
+    }
+  });
+});
+
+describe("cerebrasGenerateTextResponse 402 handling", () => {
+  it("surfaces a provider-specific error and does not retry a 402", async () => {
+    const sdkError = Object.assign(new Error("402 status code (no body)"), {
+      status: 402,
+    });
+    createChatCompletion.mockRejectedValueOnce(sdkError);
+
+    await expect(
+      cerebrasGenerateTextResponse({
+        apiKey: CEREBRAS_KEY,
+        prompt: "hello",
+      }),
+    ).rejects.toMatchObject({
+      name: "CerebrasProviderError",
+      status: 402,
+    });
+
+    // A terminal 402 must not be retried.
+    expect(createChatCompletion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("cerebrasGenerateTextResponse reasoning effort", () => {
+  it.each([
+    ["gpt-oss-120b", "low"],
+    ["gemma-4-31b", undefined],
+  ] as const)(
+    "sends reasoning_effort=%s only when the model accepts it",
+    async (model, expected) => {
+      createChatCompletion.mockReset();
+      createChatCompletion.mockResolvedValueOnce({
+        choices: [{ message: { content: "ok" } }],
+      });
+
+      await cerebrasGenerateTextResponse({
+        apiKey: CEREBRAS_KEY,
+        model,
+        prompt: "hello",
+        reasoningEffort: "low",
+      });
+
+      const [body] = createChatCompletion.mock.calls[0] ?? [];
+      expect(body?.reasoning_effort).toBe(expected);
+    },
+  );
+
+  it.each(["medium", "high"] as const)(
+    "honours a caller effort of %s rather than the package default",
+    async (effort) => {
+      // `buildGptOssReasoningParams` hardcodes `reasoning_effort` to the package
+      // default, so spreading it after `buildReasoningEffortParams` discarded
+      // whatever the caller asked for. The table above could not see it because
+      // it only ever passed "low", which is the default anyway.
+      createChatCompletion.mockReset();
+      createChatCompletion.mockResolvedValueOnce({
+        choices: [{ message: { content: "ok" } }],
+      });
+
+      await cerebrasGenerateTextResponse({
+        apiKey: CEREBRAS_KEY,
+        model: "gpt-oss-120b",
+        prompt: "hello",
+        reasoningEffort: effort,
+      });
+
+      const [body] = createChatCompletion.mock.calls[0] ?? [];
+      expect(body?.reasoning_effort).toBe(effort);
+      // The rest of the gpt-oss policy still applies.
+      expect(body?.reasoning_format).toBe("hidden");
+    },
+  );
+
+  it("keeps the gpt-oss default when the caller passes no effort", async () => {
+    createChatCompletion.mockReset();
+    createChatCompletion.mockResolvedValueOnce({
+      choices: [{ message: { content: "ok" } }],
+    });
+
+    await cerebrasGenerateTextResponse({
+      apiKey: CEREBRAS_KEY,
+      model: "gpt-oss-120b",
+      prompt: "hello",
+    });
+
+    const [body] = createChatCompletion.mock.calls[0] ?? [];
+    expect(body?.reasoning_effort).toBe("low");
+    expect(body?.reasoning_format).toBe("hidden");
+  });
+});

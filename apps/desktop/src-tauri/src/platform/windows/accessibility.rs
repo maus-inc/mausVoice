@@ -440,11 +440,11 @@ unsafe fn format_dump_element(
     if let Some(ref v) = value {
         let v = v.trim();
         if !v.is_empty() {
-            let display = if v.len() > 100 {
-                format!("{}...", &v[..100])
-            } else {
-                v.to_string()
-            };
+            // `v` is already `&str` after `trim()`, so borrowing it again is a
+            // `&&str` and clippy's `needless_borrow` rejects it under the gate's
+            // `-D warnings`. This file is `cfg(windows)`, so a Linux clippy run
+            // never compiles it and cannot see this class of error.
+            let display = crate::utils::truncate_display(v, 100, "...");
             line.push_str(&format!(" value=\"{}\"", display));
         }
     }

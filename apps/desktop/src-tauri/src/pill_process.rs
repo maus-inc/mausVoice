@@ -157,6 +157,17 @@ pub fn notify_visibility(app: &tauri::AppHandle, visibility: &str) {
     }
 }
 
+pub fn notify_pill_placement(app: &tauri::AppHandle, placement: &str) {
+    if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
+        let msg = format!(r#"{{"type":"pill_placement","placement":"{placement}"}}"#);
+        if let Err(err) = pill.send(&msg) {
+            log::error!("Failed to notify pill of placement: {err}");
+        }
+    }
+}
+
+/// Forwards the active writing-style name and total count to the native
+/// pill so it can render its style indicator.
 pub fn notify_style_info(app: &tauri::AppHandle, count: u32, name: &str) {
     if let Some(pill) = app.try_state::<std::sync::Arc<PillProcess>>() {
         if let Ok(json) = serde_json::to_string(&serde_json::json!({
@@ -191,6 +202,17 @@ pub fn notify_assistant_state(app: &tauri::AppHandle, payload: &str) {
         if let Err(err) = pill.send(payload) {
             log::error!("Failed to notify pill of assistant state: {err}");
         }
+    }
+}
+
+/// Ask the pill to re-publish its geometry so the desktop can anchor windows
+/// to it before the user has ever moved it.
+pub fn notify_request_position(app: &tauri::AppHandle) -> Result<(), String> {
+    match app.try_state::<std::sync::Arc<PillProcess>>() {
+        Some(pill) => pill
+            .send(r#"{"type":"request_position"}"#)
+            .map_err(|err| format!("failed to request pill position: {err}")),
+        None => Err("Pill position requested with no managed pill process".to_string()),
     }
 }
 
@@ -248,7 +270,7 @@ fn wait_for_ready(
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut reader = std::io::BufReader::new(stdout);
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
@@ -291,88 +313,1067 @@ fn wait_for_ready(
 fn start_stdout_reader(app: tauri::AppHandle, reader: std::io::BufReader<ChildStdout>) {
     std::thread::spawn(move || {
         let mut reader = reader;
-        let mut line = String::new();
+        let mut line = String::default();
         loop {
             line.clear();
             match reader.read_line(&mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    if line.contains("\"click\"") {
-                        let _ = app.emit_to("main", "on-click-dictate", ());
-                    } else if line.contains("\"agent_talk\"") {
-                        let _ = app.emit_to("main", "on-click-agent-talk", ());
-                    } else if line.contains("\"assistant_close\"") {
-                        let _ = app.emit_to("main", "assistant-mode-close", ());
-                    } else if line.contains("\"enable_type_mode\"") {
-                        let _ = app.emit_to("main", "assistant-enable-type-mode", ());
-                    } else if line.contains("\"cancel_dictation\"") {
-                        let _ = app.emit_to("main", "cancel-dictation", ());
-                    } else if line.contains("\"pause_dictation\"") {
-                        let _ = app.emit_to("main", "pause-dictation", ());
-                    } else if line.contains("\"resume_dictation\"") {
-                        let _ = app.emit_to("main", "resume-dictation", ());
-                    } else if line.contains("\"typed_message\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
-                                let payload = serde_json::json!({ "text": text });
-                                let _ = app.emit_to("main", "assistant-typed-message", payload);
-                            }
-                        }
-                    } else if line.contains("\"open_conversation\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(id) = val.get("conversation_id").and_then(|v| v.as_str()) {
-                                let payload = serde_json::json!({ "conversationId": id });
-                                let _ = app.emit_to("main", "open-pill-conversation", payload);
-                            }
-                        }
-                        let _ = app.emit_to("main", "assistant-mode-close", ());
-                    } else if line.contains("\"resolve_permission\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            let permission_id = val
-                                .get("permission_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let status = val
-                                .get("status")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("denied");
-                            let always_allow = val
-                                .get("always_allow")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let payload = serde_json::json!({
-                                "permissionId": permission_id,
-                                "status": status,
-                                "alwaysAllow": always_allow,
-                            });
-                            let _ = app.emit_to("main", "overlay-resolve-permission", payload);
-                        }
-                    } else if line.contains("\"style_switch\"") {
-                        if line.contains("\"forward\"") {
-                            let _ = app.emit_to("main", "tone-switch-forward", ());
-                        } else if line.contains("\"backward\"") {
-                            let _ = app.emit_to("main", "tone-switch-backward", ());
-                        }
-                    } else if line.contains("\"toast_action\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if let Some(action) = val.get("action").and_then(|v| v.as_str()) {
-                                let payload = serde_json::json!({ "action": action });
-                                let _ = app.emit_to("main", "toast-action", payload);
-                            }
-                        }
-                    } else if line.contains("\"position_changed\"") {
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) {
-                            let has_saved = val
-                                .get("has_saved_position")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let payload = serde_json::json!({ "hasSavedPosition": has_saved });
-                            let _ = app.emit_to("main", "pill-position-changed", payload);
-                        }
+                    if let Some(event) = parse_pill_event(&line) {
+                        dispatch_pill_event(&app, event);
                     }
                 }
             }
         }
         log::info!("Pill overlay process stdout closed");
     });
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PillEvent {
+    Click,
+    AgentTalk,
+    AssistantClose,
+    EnableTypeMode,
+    CancelDictation,
+    PauseDictation,
+    ResumeDictation,
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
+    ResolvePermission {
+        permission_id: String,
+        status: String,
+        always_allow: bool,
+    },
+    ReviewDecision {
+        review_id: String,
+        action: PillReviewAction,
+        text: Option<String>,
+    },
+    StyleSwitch {
+        direction: PillStyleSwitchDirection,
+    },
+    ToastAction {
+        action: String,
+    },
+    HapticFeedback {
+        kind: String,
+    },
+    PositionChanged {
+        has_saved_position: bool,
+        rect: Option<serde_json::Value>,
+        monitor: Option<serde_json::Value>,
+    },
+}
+
+/// Cap on the distinct-error set, so a pill that varies its malformed output
+/// cannot grow this without bound.
+const MAX_REPORTED_PILL_PARSE_ERRORS: usize = 64;
+
+/// Separate budget for the unknown-review-action diagnostic, and the reason it
+/// is not the parse budget above.
+///
+/// Sharing one set made the two failure modes able to silence each other: a pill
+/// that emitted 64 distinct parse failures filled the set, and from then on every
+/// unknown review action — the drift this diagnostic exists to surface — was
+/// dropped silently. The reverse held too. Each keeps its own budget so neither
+/// can spend the other's.
+const MAX_REPORTED_PILL_REVIEW_ACTIONS: usize = 64;
+
+thread_local! {
+    /// Distinct parser errors already reported on this thread.
+    ///
+    /// Thread-local rather than process-global because the parse failures come
+    /// from exactly one place: the stdout reader `start_stdout_reader` spawns,
+    /// one per pill process. Scoping the set to that thread matches the scope
+    /// of the failure, and it means a restarted pill reports its first bad line
+    /// again rather than staying silent for the rest of the app's life because
+    /// an earlier pill process happened to send the same text.
+    static REPORTED_PILL_PARSE_ERRORS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+
+    /// Deliberately not the set above. A parse-failure flood and an
+    /// action-vocabulary drift are different failures with different fixes, and
+    /// sharing one budget let whichever happened first blind the other. See
+    /// `MAX_REPORTED_PILL_REVIEW_ACTIONS`.
+    static REPORTED_PILL_REVIEW_ACTIONS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Describe a token that arrived from the pill without reproducing it.
+///
+/// The token is whatever sat in a field this build does not recognise, so it is
+/// user text as far as anything here can tell: a mapping slip that puts the
+/// transcript in `action` is exactly the case the caller is guarding against, and
+/// truncating to 32 characters would still ship the opening words of someone's
+/// speech in a log that travels with bug reports.
+///
+/// A length plus a short non-cryptographic hash keeps the diagnostic useful —
+/// a repeated token is recognisable across lines and builds, and a length
+/// catches a wholesale field swap — without carrying the content.
+fn describe_untrusted_token(token: &str) -> String {
+    // FNV-1a, computed inline to avoid pulling a hashing dependency in for a
+    // diagnostic. Collision resistance is not the goal; only making the content
+    // unrecoverable from the log is.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in token.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("<{} chars, fnv1a:{hash:016x}>", token.chars().count())
+}
+
+/// Report the first occurrence of each distinct parse error, then stay quiet.
+///
+/// Every record is registered against the log directory, stdout and the webview
+/// at once, and the log directory is capped at a few hundred MB that this same
+/// purge exists to shrink. A pill whose output shape drifts emits one of these
+/// for every line it sends, for the whole session, so the unthrottled version
+/// turns a diagnostic into the thing that fills the disk it is meant to protect.
+///
+/// The first occurrence still carries the full message: that is what makes the
+/// failure visible, and it is the one a bug report needs. Only the repeat
+/// count is dropped, so the error stays findable without the volume.
+///
+/// Returns whether the error was new. Extracted so the dedupe can be tested
+/// without installing a logger or asserting on how many records a run emits.
+fn note_unreported_pill_parse_error(error: &serde_json::Error) -> bool {
+    let message = error.to_string();
+    REPORTED_PILL_PARSE_ERRORS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        if seen.contains(&message) || seen.len() >= MAX_REPORTED_PILL_PARSE_ERRORS {
+            return false;
+        }
+        seen.insert(message);
+        true
+    })
+}
+
+/// Log an unparseable pill line at most once per distinct parser error.
+fn report_unparseable_pill_line(error: &serde_json::Error) {
+    if note_unreported_pill_parse_error(error) {
+        log::warn!("Ignoring unparseable pill line: {error}");
+    }
+}
+
+/// Report the first occurrence of each distinct unknown review action, then
+/// stay quiet.
+///
+/// This is the same reasoning as [`note_unreported_pill_parse_error`], applied
+/// to the review-decision branch. The token arrives from the pill's JSON with
+/// nothing enforcing that it is an action rather than whatever a mapping slip
+/// left in that field, so the record carries a length and a hash of it; and
+/// every record is registered against the log directory, stdout and the webview
+/// at once. A pill whose action vocabulary has drifted repeats the same unknown
+/// token on every review click, so an unthrottled warn here produces one record
+/// per click for the whole session — the same unbounded growth the parse path
+/// is throttled against.
+///
+/// The key is the token as received, not the described form, so the first
+/// occurrence of each distinct drift is still reported. Returns whether it was
+/// new, so the dedupe is testable without installing a logger.
+fn note_unreported_pill_review_decision(action: &str) -> bool {
+    REPORTED_PILL_REVIEW_ACTIONS.with(|seen| {
+        let mut seen = seen.borrow_mut();
+        let key = action.to_string();
+        if seen.contains(&key) || seen.len() >= MAX_REPORTED_PILL_REVIEW_ACTIONS {
+            return false;
+        }
+        seen.insert(key);
+        true
+    })
+}
+
+pub(crate) fn parse_pill_event(line: &str) -> Option<PillEvent> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // The line carries the user's transcript, so this reports the parse error
+    // and never repeats the line: logs travel with bug reports.
+    let val: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(error) => {
+            report_unparseable_pill_line(&error);
+            return None;
+        }
+    };
+    let event_type = val.get("type").and_then(|v| v.as_str())?;
+    match event_type {
+        "click" => Some(PillEvent::Click),
+        "agent_talk" => Some(PillEvent::AgentTalk),
+        "assistant_close" => Some(PillEvent::AssistantClose),
+        "enable_type_mode" => Some(PillEvent::EnableTypeMode),
+        "cancel_dictation" => Some(PillEvent::CancelDictation),
+        "pause_dictation" => Some(PillEvent::PauseDictation),
+        "resume_dictation" => Some(PillEvent::ResumeDictation),
+        "typed_message" => {
+            let text = val.get("text").and_then(|v| v.as_str())?.to_string();
+            Some(PillEvent::TypedMessage { text })
+        }
+        "open_conversation" => {
+            let conversation_id = val
+                .get("conversation_id")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            Some(PillEvent::OpenConversation { conversation_id })
+        }
+        "resolve_permission" => {
+            let permission_id = val
+                .get("permission_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = val
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("denied")
+                .to_string();
+            let always_allow = val
+                .get("always_allow")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(PillEvent::ResolvePermission {
+                permission_id,
+                status,
+                always_allow,
+            })
+        }
+        "review_decision" => {
+            let (review_id, action, text) = parse_review_decision_value(&val)?;
+            Some(PillEvent::ReviewDecision {
+                review_id,
+                action,
+                text,
+            })
+        }
+        "style_switch" => {
+            let direction = parse_style_switch_direction_value(&val)?;
+            Some(PillEvent::StyleSwitch { direction })
+        }
+        "toast_action" => {
+            let action = val.get("action").and_then(|v| v.as_str())?.to_string();
+            Some(PillEvent::ToastAction { action })
+        }
+        "haptic_feedback" => {
+            let kind = val.get("kind").and_then(|v| v.as_str())?.to_string();
+            Some(PillEvent::HapticFeedback { kind })
+        }
+        "position_changed" => {
+            let has_saved_position = val
+                .get("has_saved_position")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let rect = val.get("rect").cloned().filter(|v| v.is_object());
+            let monitor = val.get("monitor").cloned().filter(|v| v.is_object());
+            Some(PillEvent::PositionChanged {
+                has_saved_position,
+                rect,
+                monitor,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn dispatch_pill_event(app: &tauri::AppHandle, event: PillEvent) {
+    match event {
+        PillEvent::Click => {
+            let _ = app.emit_to("main", "on-click-dictate", ());
+        }
+        PillEvent::AgentTalk => {
+            let _ = app.emit_to("main", "on-click-agent-talk", ());
+        }
+        PillEvent::AssistantClose => {
+            let _ = app.emit_to("main", "assistant-mode-close", ());
+        }
+        PillEvent::EnableTypeMode => {
+            let _ = app.emit_to("main", "assistant-enable-type-mode", ());
+        }
+        PillEvent::CancelDictation => {
+            let _ = app.emit_to("main", "cancel-dictation", ());
+        }
+        PillEvent::PauseDictation => {
+            let _ = app.emit_to("main", "pause-dictation", ());
+        }
+        PillEvent::ResumeDictation => {
+            let _ = app.emit_to("main", "resume-dictation", ());
+        }
+        PillEvent::TypedMessage { text } => {
+            let payload = serde_json::json!({ "text": text });
+            let _ = app.emit_to("main", "assistant-typed-message", payload);
+        }
+        PillEvent::OpenConversation { conversation_id } => {
+            let payload = serde_json::json!({ "conversationId": conversation_id });
+            let _ = app.emit_to("main", "open-pill-conversation", payload);
+            let _ = app.emit_to("main", "assistant-mode-close", ());
+        }
+        PillEvent::ResolvePermission {
+            permission_id,
+            status,
+            always_allow,
+        } => {
+            let payload = serde_json::json!({
+                "permissionId": permission_id,
+                "status": status,
+                "alwaysAllow": always_allow,
+            });
+            let _ = app.emit_to("main", "overlay-resolve-permission", payload);
+        }
+        PillEvent::ReviewDecision {
+            review_id,
+            action,
+            text,
+        } => {
+            let payload = serde_json::json!({
+                "reviewId": review_id,
+                "action": action.as_str(),
+                "text": text,
+            });
+            if let Err(err) = app.emit_to("main", "pill-review-decision", payload) {
+                log::error!("Failed to deliver a pill review decision: {err}");
+            }
+        }
+        PillEvent::StyleSwitch { direction } => {
+            emit_pill_style_switch(app, direction);
+        }
+        PillEvent::ToastAction { action } => {
+            let payload = serde_json::json!({ "action": action });
+            let _ = app.emit_to("main", "toast-action", payload);
+        }
+        PillEvent::HapticFeedback { kind } => {
+            crate::system::audio_feedback::play_thock(&kind);
+        }
+        PillEvent::PositionChanged {
+            has_saved_position,
+            rect,
+            monitor,
+        } => {
+            let payload = serde_json::json!({
+                "hasSavedPosition": has_saved_position,
+                "rect": rect,
+                "monitor": monitor,
+            });
+            let _ = app.emit_to("main", "pill-position-changed", payload);
+        }
+    }
+}
+
+/// Direction of a pill style switch. A closed enum lets the emit path match
+/// exhaustively instead of defensively warning on a value the parser already
+/// guarantees is valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillStyleSwitchDirection {
+    Forward,
+    Backward,
+}
+
+impl PillStyleSwitchDirection {
+    /// Case-insensitive parse from the direction string the pills emit.
+    pub fn parse(direction: &str) -> Option<Self> {
+        if direction.eq_ignore_ascii_case("forward") {
+            Some(Self::Forward)
+        } else if direction.eq_ignore_ascii_case("backward") {
+            Some(Self::Backward)
+        } else {
+            None
+        }
+    }
+}
+
+pub(crate) fn parse_style_switch_direction_value(
+    value: &serde_json::Value,
+) -> Option<PillStyleSwitchDirection> {
+    if value.get("type").and_then(|v| v.as_str()) != Some("style_switch") {
+        return None;
+    }
+    let Some(raw_direction) = value.get("direction").and_then(|v| v.as_str()) else {
+        log::warn!("Ignoring pill style-switch line missing direction");
+        return None;
+    };
+    match PillStyleSwitchDirection::parse(raw_direction) {
+        Some(direction) => Some(direction),
+        None => {
+            log::warn!("Ignoring unknown pill style-switch direction from payload");
+            None
+        }
+    }
+}
+
+/// What the user chose for the transcript shown on the pill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PillReviewAction {
+    Insert,
+    Copy,
+    Cancel,
+    Open,
+    Edit,
+}
+
+impl PillReviewAction {
+    /// Case-insensitive so a casing drift cannot silently drop a decision.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "insert" => Some(Self::Insert),
+            "copy" => Some(Self::Copy),
+            "cancel" => Some(Self::Cancel),
+            "open" => Some(Self::Open),
+            "edit" => Some(Self::Edit),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Insert => "insert",
+            Self::Copy => "copy",
+            Self::Cancel => "cancel",
+            Self::Open => "open",
+            Self::Edit => "edit",
+        }
+    }
+}
+
+/// The `review_decision` payload out of a pill stdout line.
+///
+/// The id and the action are both required. A decision this cannot read is
+/// dropped instead of guessed at, because assuming an action would throw away
+/// the very transcript the user is being asked about. Dropping it leaves the
+/// transcript on the pill, so the click can simply be repeated.
+///
+/// The text is what the pill's entry held at the time. Insert, Copy, Open,
+/// and Edit carry it so the desktop can preserve the edit before settling the
+/// review. Cancel leaves it out.
+///
+/// The line carries the user's transcript, so none of the diagnostics below
+/// repeat it — logs travel with bug reports. That includes the unknown-action
+/// token: nothing enforces that the `action` field holds an action rather than
+/// whatever a mapping slip or a renamed field left there, so the diagnostic
+/// records only the token's length and a short hash of it. A hash is enough to
+/// tell two failing builds apart ("every click reports the same token") without
+/// being able to read the user's words back out of a shipped log.
+pub(crate) fn parse_review_decision_value(
+    value: &serde_json::Value,
+) -> Option<(String, PillReviewAction, Option<String>)> {
+    if value.get("type").and_then(|v| v.as_str()) != Some("review_decision") {
+        return None;
+    }
+    let review_id = value
+        .get("review_id")
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.is_empty());
+    let Some(review_id) = review_id else {
+        // Throttled for the same reason as the unknown action below: both are
+        // per-line records registered against the log directory, stdout and the
+        // webview at once, and a pill that drops the field does so on every
+        // review click.
+        if note_unreported_pill_review_decision("<no review id>") {
+            log::warn!("Ignoring pill review decision with no review id");
+        }
+        return None;
+    };
+    let raw_action = value.get("action").and_then(|v| v.as_str());
+    let Some(action) = raw_action.and_then(PillReviewAction::parse) else {
+        let raw = raw_action.unwrap_or("<missing>");
+        if note_unreported_pill_review_decision(raw) {
+            log::warn!(
+                "Ignoring pill review decision with an unknown action: {}",
+                describe_untrusted_token(raw)
+            );
+        }
+        return None;
+    };
+    let text = value
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|text| text.to_string());
+    Some((review_id.to_string(), action, text))
+}
+
+/// Tauri event names the pill bridge emits for a chevron click. These must
+/// stay in sync with the `useTauriListen` event strings in
+/// `DictationSideEffects.tsx` (currently the hard-coded `"tone-switch-forward"`
+/// / `"tone-switch-backward"` listeners), which are the webview's counterpart.
+pub const PILL_STYLE_SWITCH_FORWARD_EVENT: &str = "tone-switch-forward";
+pub const PILL_STYLE_SWITCH_BACKWARD_EVENT: &str = "tone-switch-backward";
+
+/// Emit the pill chevron click to the desktop webview.
+///
+/// Prefer the main window (dictation is owned there) but fall back to a
+/// broadcast so a hidden/relabeled window cannot swallow the switch.
+pub fn emit_pill_style_switch(app: &tauri::AppHandle, direction: PillStyleSwitchDirection) {
+    let event = match direction {
+        PillStyleSwitchDirection::Forward => PILL_STYLE_SWITCH_FORWARD_EVENT,
+        PillStyleSwitchDirection::Backward => PILL_STYLE_SWITCH_BACKWARD_EVENT,
+    };
+    log::debug!("Pill style switch: {direction:?}");
+    if let Err(err) = app.emit_to("main", event, ()) {
+        log::warn!("Failed to emit {event} to main: {err}; broadcasting");
+        if let Err(err) = app.emit(event, ()) {
+            log::error!("Failed to broadcast {event}: {err}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod style_switch_parse_tests {
+    use super::{parse_pill_event, PillEvent, PillStyleSwitchDirection};
+
+    // These go through `parse_pill_event`, the only entry point
+    // `start_stdout_reader` uses, so they cover the path a real pill click
+    // takes rather than a test-only wrapper around it.
+
+    #[test]
+    fn parses_canonical_pill_line() {
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_switch","direction":"forward"}"#),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Forward
+            })
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_switch","direction":"backward"}"#),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Backward
+            })
+        );
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            parse_pill_event("{\"type\":\"style_switch\",\"direction\":\"Forward\"}\n"),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Forward
+            })
+        );
+        assert_eq!(
+            parse_pill_event("{\"type\":\"style_switch\",\"direction\":\"BACKWARD\"}\r\n"),
+            Some(PillEvent::StyleSwitch {
+                direction: PillStyleSwitchDirection::Backward
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_unrelated_lines() {
+        // A click line is a click, never a style switch: the two carry
+        // different payloads and a crossover would fire the wrong action.
+        assert_eq!(
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_switch","direction":"sideways"}"#),
+            None
+        );
+        assert_eq!(parse_pill_event("not json"), None);
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_switch"}"#),
+            None,
+            "a style switch with no direction cannot be resolved"
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"style_info","name":"forward"}"#),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod review_decision_parse_tests {
+    use super::{parse_pill_event, PillEvent, PillReviewAction};
+
+    // As with the style-switch tests above, these exercise `parse_pill_event`,
+    // the entry point the stdout reader actually calls.
+
+    fn decision(line: &str) -> Option<(String, PillReviewAction, Option<String>)> {
+        match parse_pill_event(line) {
+            Some(PillEvent::ReviewDecision {
+                review_id,
+                action,
+                text,
+            }) => Some((review_id, action, text)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn parses_every_decision() {
+        for (raw, expected) in [
+            ("insert", PillReviewAction::Insert),
+            ("copy", PillReviewAction::Copy),
+            ("cancel", PillReviewAction::Cancel),
+            ("open", PillReviewAction::Open),
+            ("edit", PillReviewAction::Edit),
+        ] {
+            let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{raw}"}}"#);
+            assert_eq!(decision(&line), Some(("r1".to_string(), expected, None)));
+            assert_eq!(expected.as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn keeps_the_text_edited_on_the_pill() {
+        assert_eq!(
+            decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"insert","text":"edited words"}"#
+            ),
+            Some((
+                "r1".to_string(),
+                PillReviewAction::Insert,
+                Some("edited words".to_string())
+            ))
+        );
+    }
+
+    #[test]
+    fn keeps_the_text_edited_before_opening_history() {
+        assert_eq!(
+            decision(
+                r#"{"type":"review_decision","review_id":"r1","action":"open","text":"edited words"}"#
+            ),
+            Some((
+                "r1".to_string(),
+                PillReviewAction::Open,
+                Some("edited words".to_string())
+            ))
+        );
+    }
+
+    #[test]
+    fn accepts_trailing_newline_and_mixed_case() {
+        assert_eq!(
+            decision("{\"type\":\"review_decision\",\"review_id\":\"r1\",\"action\":\"Insert\"}\n"),
+            Some(("r1".to_string(), PillReviewAction::Insert, None))
+        );
+    }
+
+    #[test]
+    fn drops_a_decision_it_cannot_read_instead_of_guessing() {
+        // A missing or unknown action must never fall back to cancel: that
+        // would discard the transcript the card is asking about.
+        assert_eq!(
+            decision(r#"{"type":"review_decision","review_id":"r1"}"#),
+            None
+        );
+        assert_eq!(
+            decision(r#"{"type":"review_decision","review_id":"r1","action":"delete"}"#),
+            None
+        );
+        assert_eq!(
+            decision(r#"{"type":"review_decision","action":"insert"}"#),
+            None
+        );
+        assert_eq!(
+            decision(r#"{"type":"review_decision","review_id":"","action":"insert"}"#),
+            None
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click),
+            "a click line is a click, never a review decision"
+        );
+        assert_eq!(parse_pill_event("not json"), None);
+    }
+}
+
+#[cfg(test)]
+mod pill_line_log_tests {
+    // The dedupe set is thread-local and `cargo test` gives each test its own
+    // thread, so the tests below start from an empty set whatever order they run
+    // in. `warnings_from` only clears the capture buffer, never the set: doing
+    // so there would let one test hide a duplicate it is meant to observe.
+    use super::describe_untrusted_token;
+    use super::note_unreported_pill_parse_error;
+    use super::note_unreported_pill_review_decision;
+    use super::parse_pill_event;
+    use super::parse_review_decision_value;
+    use std::cell::RefCell;
+    use std::sync::Once;
+
+    thread_local! {
+        /// Records emitted on the current thread. A thread-local buffer keeps
+        /// this correct under the test harness's parallelism: `log::log!` is
+        /// synchronous, so a record is always pushed on the thread that parsed
+        /// the line, never on another test's thread.
+        static CAPTURED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            CAPTURED.with(|captured| {
+                captured
+                    .borrow_mut()
+                    .push(format!("{}: {}", record.level(), record.args()))
+            });
+        }
+        fn flush(&self) {}
+    }
+
+    static INSTALL: Once = Once::new();
+
+    /// Run `f` and return the warnings it logged on this thread.
+    fn warnings_from(f: impl FnOnce()) -> Vec<String> {
+        INSTALL.call_once(|| {
+            log::set_boxed_logger(Box::new(Capture)).expect("capture logger must install");
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        CAPTURED.with(|captured| captured.borrow_mut().clear());
+        f();
+        CAPTURED.with(|captured| captured.borrow().clone())
+    }
+
+    // A pill that renames a field or emits a shape this build's serde_json
+    // rejects used to stop responding to clicks with nothing in the log, which
+    // is the failure this pins: the drop has to be visible.
+    //
+    // Reporting is deduped per distinct parser error, and that set is
+    // process-wide, so this asserts the warning is still produced for an error
+    // no other test has spent — a test that merely parsed a line another test
+    // already reported would pass on a build that logs nothing at all.
+    #[test]
+    fn an_unparseable_line_is_reported() {
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event("not json at all"), None);
+        });
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("WARN") && w.contains("unparseable pill line")),
+            "an unparseable pill line must be reported, got {warnings:?}"
+        );
+    }
+
+    // The line carries the user's transcript and logs travel with bug reports,
+    // so the diagnostic may name the failure but never the content.
+    #[test]
+    fn the_report_never_repeats_the_line() {
+        let canary = "transcript-canary-4f2a";
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event(canary), None);
+        });
+        assert!(
+            !warnings.is_empty(),
+            "a diagnostic is required here, or the content assertions below are vacuous"
+        );
+        for warning in &warnings {
+            assert!(
+                !warning.contains(canary),
+                "the diagnostic repeated the pill line: {warning}"
+            );
+        }
+    }
+
+    // The warn is for a line that failed to parse, not for routine framing: a
+    // reader would otherwise emit one record per blank line forever.
+    #[test]
+    fn readable_lines_and_blank_lines_stay_quiet() {
+        let warnings = warnings_from(|| {
+            assert_eq!(parse_pill_event(""), None);
+            assert_eq!(parse_pill_event("   \n"), None);
+            assert_eq!(
+                parse_pill_event(r#"{"type":"click"}"#),
+                Some(super::PillEvent::Click)
+            );
+            assert_eq!(
+                parse_pill_event(r#"{"type":"typed_message","text":"hello"}"#),
+                Some(super::PillEvent::TypedMessage {
+                    text: "hello".to_string()
+                })
+            );
+        });
+        assert!(
+            warnings.is_empty(),
+            "readable and blank lines must not log, got {warnings:?}"
+        );
+    }
+
+    // Every log record is registered against the log directory, stdout and the
+    // webview, and the log directory is capped at a few hundred MB that the
+    // purge exists to shrink. A pill that drifts emits one parse failure per
+    // line for the whole session, so an unthrottled warn fills the disk it is
+    // meant to protect. The first occurrence of each distinct error is kept — it
+    // is what makes the failure visible — and the repeats are not.
+    #[test]
+    fn a_repeated_parse_error_is_reported_once_and_its_repeats_stay_quiet() {
+        // A message unique to this test, so an earlier assertion in the same
+        // thread having spent the shared one cannot make this pass vacuously.
+        let message = serde_json::from_str::<serde_json::Value>("dedupe-probe-a39f \u{1} extra")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&message),
+            "the first occurrence of a parse error must be reported"
+        );
+        for _ in 0..500 {
+            assert!(
+                !note_unreported_pill_parse_error(&message),
+                "a repeated parse error must not be reported again"
+            );
+        }
+
+        // And the dedupe is per distinct error, not a blanket mute: a different
+        // failure mode still gets through.
+        let other = serde_json::from_str::<serde_json::Value>("{\"unterminated\": ")
+            .expect_err("second probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&other),
+            "a distinct parse error must still be reported after another has been deduped"
+        );
+    }
+
+    // The unknown-action diagnostic carries a length and a hash of a token that
+    // could be user dictation text, and every record lands in the log directory,
+    // stdout and the webview at once. The parse-failure path above throttles for
+    // exactly that reason; this branch did not, so a pill whose action vocabulary
+    // drifts emitted one record per review click for the whole session.
+    #[test]
+    fn a_repeated_unknown_action_is_reported_once_and_its_repeats_stay_quiet() {
+        // A token unique to this test, so an earlier assertion on the shared
+        // per-thread set cannot make this pass vacuously. It has to survive a
+        // JSON round trip, since it is interpolated into the probe line.
+        let token = "dedupe-probe-review-7c1e-drifted";
+        let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{token}"}}"#);
+
+        assert!(
+            note_unreported_pill_review_decision(token),
+            "the first unknown action must be reported"
+        );
+        for _ in 0..500 {
+            assert!(
+                !note_unreported_pill_review_decision(token),
+                "a repeated unknown action must not be reported again"
+            );
+        }
+
+        // And the dedupe is per distinct token, not a blanket mute: a second
+        // failing build with a different vocabulary still gets through.
+        assert!(
+            note_unreported_pill_review_decision("dedupe-probe-review-other"),
+            "a distinct unknown action must still be reported after another has been deduped"
+        );
+
+        // The decision is still dropped either way; throttling the log must not
+        // turn an unreadable action into an accepted one.
+        let parsed =
+            serde_json::from_str::<serde_json::Value>(&line).expect("probe parses as JSON");
+        assert!(
+            parse_review_decision_value(&parsed).is_none(),
+            "an unknown action must stay unparseable no matter how often it repeats"
+        );
+    }
+
+    // The two throttles shared one set and one 64-entry budget, so either
+    // failure mode could spend the other's: a pill emitting 64 distinct parse
+    // failures left every unknown review action unreported, which is the exact
+    // drift the review diagnostic exists to surface, and the reverse held too.
+    //
+    // Two tests rather than one, because the budgets are per-thread and a single
+    // test cannot both exhaust the parse budget and then expect a parse error to
+    // still get through. That was the mistake in the first version: it asserted
+    // the second direction after filling the first budget, so it failed at
+    // baseline for a reason that had nothing to do with the defect.
+    //
+    // The dedupe keys on `serde_json::Error::to_string()`, which carries a column
+    // and not the input, so probes of one shape collapse to a single key. Varying
+    // the LENGTH of the input varies the reported column, which is what makes
+    // these distinct.
+    #[test]
+    fn a_parse_failure_flood_does_not_silence_the_unknown_action_diagnostic() {
+        for index in 0..super::MAX_REPORTED_PILL_PARSE_ERRORS {
+            let error = serde_json::from_str::<serde_json::Value>(&format!(
+                "{{\"{}\": ",
+                "x".repeat(index)
+            ))
+            .expect_err("probe is not valid JSON");
+            assert!(
+                note_unreported_pill_parse_error(&error),
+                "parse probe {index} should have been reported ({error})"
+            );
+        }
+        // The budget is real: one more distinct parse error stays quiet. Without
+        // this the test could pass with no cap in place at all.
+        let overflow = serde_json::from_str::<serde_json::Value>("{\"one-over-the-top\": ")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            !note_unreported_pill_parse_error(&overflow),
+            "the parse budget must actually be exhausted"
+        );
+
+        // And the review diagnostic, on its own budget, is unaffected.
+        assert!(
+            note_unreported_pill_review_decision("flood-probe-review"),
+            "a parse-failure flood must not silence the unknown-action diagnostic"
+        );
+    }
+
+    #[test]
+    fn an_action_vocabulary_flood_does_not_silence_the_parse_diagnostic() {
+        for index in 0..super::MAX_REPORTED_PILL_REVIEW_ACTIONS {
+            assert!(
+                note_unreported_pill_review_decision(&format!("flood-probe-review-{index}")),
+                "review probe {index} should have been reported"
+            );
+        }
+        assert!(
+            !note_unreported_pill_review_decision("flood-probe-review-overflow"),
+            "the review budget must actually be exhausted"
+        );
+
+        // The other direction: the parse diagnostic, on its own budget, still
+        // reports a failure it has never seen.
+        let survivor = serde_json::from_str::<serde_json::Value>("{\"still-reported\": ")
+            .expect_err("probe is not valid JSON");
+        assert!(
+            note_unreported_pill_parse_error(&survivor),
+            "an action-vocabulary flood must not silence the parse diagnostic"
+        );
+    }
+
+    // The doc on the unknown-action diagnostic claimed the token "cannot be user
+    // text", but nothing enforced that: the value comes straight out of the
+    // pill's JSON, so a mapping slip that put the transcript in `action` would
+    // write the opening words of someone's speech into a log that ships with bug
+    // reports. The claim has to hold by construction.
+    #[test]
+    fn the_unknown_action_diagnostic_never_repeats_the_token_it_was_given() {
+        let canary = "the user said something private on 4f2a";
+        let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{canary}"}}"#);
+
+        let described = describe_untrusted_token(canary);
+        assert!(
+            !described.contains(canary),
+            "the diagnostic repeated the token: {described}"
+        );
+        assert!(
+            !described.contains("private"),
+            "the diagnostic leaked part of the token: {described}"
+        );
+
+        // End to end through the parser, not just the helper: the warning this
+        // decision emits must not carry the content either.
+        let warnings = warnings_from(|| {
+            assert!(parse_review_decision_value(
+                &serde_json::from_str(&line).expect("fixture must be valid JSON")
+            )
+            .is_none());
+        });
+        assert!(
+            !warnings.is_empty(),
+            "an unknown action must still be reported, got none"
+        );
+        for warning in &warnings {
+            assert!(
+                !warning.contains("private"),
+                "the unknown-action diagnostic leaked the token: {warning}"
+            );
+        }
+
+        // Still useful: a length and a stable hash, so the same token is
+        // recognisable across lines without being readable.
+        assert!(
+            described.starts_with(&format!("<{} chars,", canary.chars().count())),
+            "the diagnostic should still report the token's length, got {described}"
+        );
+        assert_eq!(
+            described,
+            describe_untrusted_token(canary),
+            "the hash must be stable for the same token"
+        );
+        assert_ne!(
+            described,
+            describe_untrusted_token("something else entirely"),
+            "different tokens must not collapse to the same description"
+        );
+    }
+
+    // A payload the desktop understands but cannot act on is a different
+    // failure from an unparseable line: the `*_value` parsers report it, and
+    // `parse_pill_event` must not double-report it as a parse error.
+    #[test]
+    fn a_known_type_with_a_bad_payload_is_not_reported_as_unparseable() {
+        let warnings = warnings_from(|| {
+            assert_eq!(
+                parse_pill_event(r#"{"type":"style_switch","direction":"sideways"}"#),
+                None
+            );
+        });
+        for warning in &warnings {
+            assert!(
+                !warning.contains("unparseable pill line"),
+                "a readable payload must not be reported as unparseable, got {warnings:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod pill_event_dispatch_tests {
+    use super::{parse_pill_event, PillEvent, PillReviewAction};
+
+    #[test]
+    fn review_decision_containing_click_is_not_misdispatched_as_click() {
+        let line = r#"{"type":"review_decision","review_id":"r1","action":"insert","text":"click here to dictate"}"#;
+        assert_eq!(
+            parse_pill_event(line),
+            Some(PillEvent::ReviewDecision {
+                review_id: "r1".to_string(),
+                action: PillReviewAction::Insert,
+                text: Some("click here to dictate".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn review_decision_containing_typed_message_is_not_misdispatched_as_typed_message() {
+        let line = r#"{"type":"review_decision","review_id":"r2","action":"copy","text":"here is a typed_message from assistant"}"#;
+        assert_eq!(
+            parse_pill_event(line),
+            Some(PillEvent::ReviewDecision {
+                review_id: "r2".to_string(),
+                action: PillReviewAction::Copy,
+                text: Some("here is a typed_message from assistant".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn drops_malformed_unrelated_or_empty_lines() {
+        assert_eq!(parse_pill_event(""), None);
+        assert_eq!(parse_pill_event("   \n"), None);
+        assert_eq!(parse_pill_event("not a json payload"), None);
+        assert_eq!(parse_pill_event(r#"{"random":"field"}"#), None);
+        assert_eq!(parse_pill_event(r#"{"type":"unknown_future_event"}"#), None);
+    }
+
+    #[test]
+    fn dispatches_other_valid_events_by_exact_type() {
+        assert_eq!(
+            parse_pill_event(r#"{"type":"click"}"#),
+            Some(PillEvent::Click)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"agent_talk"}"#),
+            Some(PillEvent::AgentTalk)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"cancel_dictation"}"#),
+            Some(PillEvent::CancelDictation)
+        );
+        assert_eq!(
+            parse_pill_event(r#"{"type":"typed_message","text":"hello world"}"#),
+            Some(PillEvent::TypedMessage {
+                text: "hello world".to_string()
+            })
+        );
+    }
 }

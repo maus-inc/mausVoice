@@ -32,6 +32,24 @@ export type DictationRecordingTimerDurations = {
   autoStopDurationMs: number | null;
 };
 
+export const getProviderRecordingTimerDurations = (
+  maximumDurationMs: number | null | undefined,
+): DictationRecordingTimerDurations => {
+  if (
+    typeof maximumDurationMs !== "number" ||
+    !Number.isFinite(maximumDurationMs) ||
+    maximumDurationMs <= 0 ||
+    maximumDurationMs > MAX_TIMEOUT_MS
+  ) {
+    return { warningDurationMs: null, autoStopDurationMs: null };
+  }
+  return {
+    warningDurationMs:
+      maximumDurationMs > 60_000 ? maximumDurationMs - 60_000 : null,
+    autoStopDurationMs: maximumDurationMs,
+  };
+};
+
 export const getDictationRecordingTimerDurations = (
   limitMinutes: number,
 ): DictationRecordingTimerDurations => {

@@ -15,6 +15,7 @@ export const CANCEL_TRANSCRIPTION_HOTKEY = "cancel-transcription";
 export const OPEN_CHAT_HOTKEY = "open-chat";
 export const ADD_TO_DICTIONARY_HOTKEY = "add-to-dictionary";
 export const ADDITIONAL_LANGUAGE_HOTKEY_PREFIX = "additional-language:";
+export const SWITCH_TO_STYLE_HOTKEY_PREFIX = "switch-to-style:";
 
 type CompositorBinding = {
   actionName: string;
@@ -32,7 +33,8 @@ const STATIC_COMPOSITOR_TRIGGER_ACTIONS = [
 
 const isCompositorTriggerAction = (actionName: string): boolean =>
   STATIC_COMPOSITOR_TRIGGER_ACTIONS.includes(actionName) ||
-  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX);
+  actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX) ||
+  actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX);
 
 export const getAdditionalLanguageActionName = (language: string): string =>
   `${ADDITIONAL_LANGUAGE_HOTKEY_PREFIX}${language}`;
@@ -48,62 +50,16 @@ export const getAdditionalLanguageCode = (
   return raw.length > 0 ? raw : null;
 };
 
-export const isHoldActionHotkey = (actionName: string): boolean => {
-  return (
-    actionName === DICTATE_HOTKEY ||
-    actionName === AGENT_DICTATE_HOTKEY ||
-    actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)
-  );
-};
+export const getSwitchToStyleActionName = (toneId: string): string =>
+  `${SWITCH_TO_STYLE_HOTKEY_PREFIX}${toneId}`;
 
-const isModifierLikeKey = (key: string): boolean => {
-  const lower = key.toLowerCase();
-  return (
-    lower.startsWith("meta") ||
-    lower.startsWith("control") ||
-    lower.startsWith("shift") ||
-    lower.startsWith("alt") ||
-    lower.startsWith("option") ||
-    lower.startsWith("function")
-  );
-};
-
-export const isModifierOnlyCombo = (combo: string[]): boolean => {
-  return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
-};
-
-export const getPrettyKeyName = (key: string): string => {
-  const lower = key.toLowerCase();
-  if (lower.startsWith("key")) {
-    return key.slice(3).toUpperCase();
+export const getSwitchToStyleToneId = (actionName: string): string | null => {
+  if (!actionName.startsWith(SWITCH_TO_STYLE_HOTKEY_PREFIX)) {
+    return null;
   }
 
-  if (lower.startsWith("meta")) {
-    return getPlatform() === "macos" ? "⌘" : "⊞";
-  }
-
-  if (lower.startsWith("control")) {
-    return getPlatform() === "macos" ? "⌃" : "Ctrl";
-  }
-
-  if (lower.startsWith("shift")) {
-    return getPlatform() === "macos" ? "⇧" : "Shift";
-  }
-
-  if (lower.startsWith("alt") || lower.startsWith("option")) {
-    return getPlatform() === "macos" ? "⌥" : "Alt";
-  }
-
-  if (lower.startsWith("function")) {
-    return "Fn";
-  }
-
-  if (key === "LeftArrow") return "←";
-  if (key === "RightArrow") return "→";
-  if (key === "UpArrow") return "↑";
-  if (key === "DownArrow") return "↓";
-
-  return key;
+  const raw = actionName.slice(SWITCH_TO_STYLE_HOTKEY_PREFIX.length);
+  return raw.length > 0 ? raw : null;
 };
 
 type PlatformHotkeyCombos = {
@@ -164,6 +120,145 @@ export const getHotkeyCombosForAction = (
   return getDefaultHotkeyCombosForAction(actionName);
 };
 
+export type SwitchToStyleEntry = {
+  actionName: string;
+  toneId: string;
+  toneName: string;
+  hotkeyCombos: string[][];
+};
+
+export const getSwitchToStyleEntries = (
+  state: AppState,
+): SwitchToStyleEntry[] =>
+  Object.values(state.toneById)
+    .filter((tone) => !tone.isDeprecated)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((tone) => ({
+      actionName: getSwitchToStyleActionName(tone.id),
+      toneId: tone.id,
+      toneName: tone.name,
+      hotkeyCombos: getHotkeyCombosForAction(
+        state,
+        getSwitchToStyleActionName(tone.id),
+      ),
+    }));
+
+/**
+ * Action-name prefixes for style-switch hotkeys. The hotkey spam filter may
+ * debounce these while the pill is active. Kept in one place so the filter
+ * (hotkey-filter.utils.ts) and the release wiring (AppSideEffects keys_held
+ * handler) can't drift apart.
+ */
+export const STYLE_SWITCH_ACTION_PREFIXES: readonly string[] = [
+  "switch-writing-style-",
+  SWITCH_TO_STYLE_HOTKEY_PREFIX,
+];
+
+/**
+ * Return the style-switch action names bound to the given physical key.
+ *
+ * Used to release the hotkey filter's "held" state when the physical key is
+ * released — the previous wiring released only on *all* keys up, which never
+ * happens during hold-to-talk dictation (the dictate key stays held), wedging
+ * style switching after the first press.
+ */
+export const getStyleSwitchActionNamesForKey = (
+  state: AppState,
+  key: string,
+): string[] => {
+  const normalized = key.toLowerCase();
+  // Include every configured action covered by the shared debounce prefixes,
+  // plus built-ins which can resolve to platform defaults on macOS/Windows.
+  // Linux has no default cycle bindings, so absent user configuration there is
+  // correctly not releasable: it could not have triggered or become held.
+  const isStyleSwitchAction = (actionName: string): boolean =>
+    STYLE_SWITCH_ACTION_PREFIXES.some((prefix) =>
+      actionName.toLowerCase().startsWith(prefix),
+    );
+  const actionNames = new Set(
+    Object.keys(DEFAULT_HOTKEY_COMBOS).filter(isStyleSwitchAction),
+  );
+  for (const hotkey of Object.values(state.hotkeyById)) {
+    if (isStyleSwitchAction(hotkey.actionName)) {
+      actionNames.add(hotkey.actionName);
+    }
+  }
+  return [...actionNames].filter((actionName) =>
+    getHotkeyCombosForAction(state, actionName).some((combo) =>
+      combo.some((comboKey) => comboKey.toLowerCase() === normalized),
+    ),
+  );
+};
+
+export const isHoldActionHotkey = (actionName: string): boolean => {
+  return (
+    actionName === DICTATE_HOTKEY ||
+    actionName === AGENT_DICTATE_HOTKEY ||
+    actionName.startsWith(ADDITIONAL_LANGUAGE_HOTKEY_PREFIX)
+  );
+};
+
+const isModifierLikeKey = (key: string): boolean => {
+  const lower = key.toLowerCase();
+  return (
+    lower.startsWith("meta") ||
+    lower.startsWith("control") ||
+    lower.startsWith("shift") ||
+    lower.startsWith("alt") ||
+    lower.startsWith("option") ||
+    lower.startsWith("function")
+  );
+};
+
+export const isModifierOnlyCombo = (combo: string[]): boolean => {
+  return combo.length > 0 && combo.every((key) => isModifierLikeKey(key));
+};
+
+const MODIFIER_SIDE_RE = /(Left|Right)$/i;
+
+const appendSideLabel = (base: string, key: string): string => {
+  // `match[1]` is the only capture group and it is non-optional in the pattern,
+  // so a successful `exec` always yields it. Reading it through `?.[1]` and
+  // bailing on `undefined` keeps that fact explicit instead of asserting it.
+  const side = MODIFIER_SIDE_RE.exec(key)?.[1];
+  if (side === undefined) return base;
+  return `${base} ${side.charAt(0).toUpperCase()}`;
+};
+
+export const getPrettyKeyName = (key: string): string => {
+  const lower = key.toLowerCase();
+  if (lower.startsWith("key")) {
+    return key.slice(3).toUpperCase();
+  }
+
+  if (lower.startsWith("meta")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌘" : "⊞", key);
+  }
+
+  if (lower.startsWith("control")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌃" : "Ctrl", key);
+  }
+
+  if (lower.startsWith("shift")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⇧" : "Shift", key);
+  }
+
+  if (lower.startsWith("alt") || lower.startsWith("option")) {
+    return appendSideLabel(getPlatform() === "macos" ? "⌥" : "Alt", key);
+  }
+
+  if (lower.startsWith("function")) {
+    return "Fn";
+  }
+
+  if (key === "LeftArrow") return "←";
+  if (key === "RightArrow") return "→";
+  if (key === "UpArrow") return "↑";
+  if (key === "DownArrow") return "↓";
+
+  return key;
+};
+
 export type AdditionalLanguageEntry = {
   actionName: string;
   language: string;
@@ -217,22 +312,6 @@ const isActionGrabbable = (state: AppState, actionName: string): boolean => {
   }
 
   return true;
-};
-
-// Serializes native combo syncs. The store subscription in AppSideEffects
-// fires this once per grab-relevant change, and those arrive in bursts while
-// startup data loads — overlapping calls snapshot `getState()` at call time,
-// so an older push could resolve last and leave the native listener grabbing
-// a stale combo set. Chaining each run onto the previous one (and reading the
-// store when the run actually starts, not when it was requested) guarantees
-// the last applied set is always the latest state. A failed run must not
-// break the chain, hence the trailing catch.
-let syncQueue: Promise<void> = Promise.resolve();
-
-export const syncHotkeyCombosToNative = (): Promise<void> => {
-  const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
-  syncQueue = run.catch(() => undefined);
-  return run;
 };
 
 const collectActionNames = (state: AppState): Set<string> => {
@@ -299,17 +378,29 @@ const syncHotkeyCombosToNativeNow = async (): Promise<void> => {
     }
   }
 
-  try {
-    await invoke("sync_hotkey_combos", { combos });
-  } catch (err) {
-    console.error("Failed to sync hotkey combos to native", err);
-  }
+  await invoke("sync_hotkey_combos", { combos });
 
   if (state.hotkeyStrategy === "bridge") {
-    try {
-      await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
-    } catch (err) {
-      console.error("Failed to sync compositor hotkeys", err);
-    }
+    await invoke("sync_compositor_hotkeys", { bindings: compositorBindings });
   }
+};
+
+// Serializes native combo syncs. The store subscription in AppSideEffects
+// fires this once per grab-relevant change, and those arrive in bursts while
+// startup data loads — overlapping calls snapshot `getState()` at call time,
+// so an older push could resolve last and leave the native listener grabbing
+// a stale combo set. Chaining each run onto the previous one (and reading the
+// store when the run actually starts, not when it was requested) guarantees
+// the last applied set is always the latest state. A failed run must not
+// break the chain for later callers, hence the separate caught `syncQueue`.
+// The returned promise is the run itself (NOT `syncQueue`): callers like
+// AppSideEffects, hotkey.actions and StyleHotkeysDialog deliberately catch
+// rejections to surface native-grab failures — returning the caught queue
+// value would silently swallow them.
+let syncQueue: Promise<void> = Promise.resolve();
+
+export const syncHotkeyCombosToNative = (): Promise<void> => {
+  const run = syncQueue.then(() => syncHotkeyCombosToNativeNow());
+  syncQueue = run.catch(() => undefined);
+  return run;
 };

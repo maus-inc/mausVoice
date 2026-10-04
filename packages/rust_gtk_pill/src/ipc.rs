@@ -3,12 +3,35 @@ use std::sync::mpsc::Sender;
 
 use serde::{Deserialize, Serialize};
 
+/// Axis-aligned screen rectangle, top-left origin, y-down. Each platform's
+/// pill reports it in its own window-position space — physical pixels on
+/// Windows and X11 Linux, points on macOS — and the pill `rect` and its
+/// `monitor` are always in the same space, which is what the desktop's
+/// composer anchoring relies on.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
     Hidden,
     WhileActive,
     Persistent,
+}
+
+impl From<Visibility> for rust_pill_shared::PillVisibility {
+    fn from(value: Visibility) -> Self {
+        match value {
+            Visibility::Hidden => Self::Hidden,
+            Visibility::WhileActive => Self::WhileActive,
+            Visibility::Persistent => Self::Persistent,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -19,7 +42,6 @@ pub enum Phase {
     Loading,
     Paused,
 }
-
 
 /// Which monitor a reset-position re-homes the pill onto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -57,6 +79,28 @@ pub struct PillStreaming {
     pub is_streaming: bool,
 }
 
+/// Review-before-insert state: one finished transcript waiting for the user
+/// to decide what happens to it. Reviews are queued by the desktop, so the
+/// pill only ever holds the one it is currently showing.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PillReview {
+    pub id: String,
+    pub text: String,
+    /// Translated by the owning desktop webview. Older senders omit these,
+    /// so each falls back to the English caption the pill used to hardcode.
+    #[serde(default)]
+    pub edit_label: Option<String>,
+    #[serde(default)]
+    pub insert_label: Option<String>,
+    #[serde(default)]
+    pub copy_label: Option<String>,
+    #[serde(default)]
+    pub cancel_label: Option<String>,
+    /// The "Edit below, then press Enter to insert" hint above the row.
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PillPermission {
     pub id: String,
@@ -76,22 +120,44 @@ pub enum InMessage {
         #[serde(default)]
         seq: u64,
     },
-    Levels { levels: Vec<f32> },
-    StyleInfo { count: u32, name: String },
-    Visibility { visibility: Visibility },
-    WindowSize { size: String },
+    Levels {
+        levels: Vec<f32>,
+    },
+    StyleInfo {
+        count: u32,
+        name: String,
+    },
+    Visibility {
+        visibility: Visibility,
+    },
+    WindowSize {
+        size: String,
+    },
     Toast {
         message: String,
         toast_type: Option<String>,
         duration: Option<f64>,
         action: Option<String>,
         action_label: Option<String>,
+        #[serde(default)]
+        reject_action: Option<String>,
+        #[serde(default)]
+        reject_action_label: Option<String>,
     },
     DismissToast,
-    Fireworks { message: String },
-    Flame { message: String },
+    Fireworks {
+        message: String,
+    },
+    Flame {
+        message: String,
+    },
     FlashBlue,
-    BroadcastTranscript { text: String },
+    BroadcastTranscript {
+        text: String,
+    },
+    StageText {
+        text: Option<String>,
+    },
     AssistantState {
         active: bool,
         input_mode: String,
@@ -101,6 +167,14 @@ pub enum InMessage {
         messages: Vec<PillMessage>,
         streaming: Option<PillStreaming>,
         permissions: Vec<PillPermission>,
+        /// Transcript awaiting a review decision, if any.
+        ///
+        /// Boxed: a review carries five localized captions, which makes this
+        /// variant much larger than its neighbours. Boxing keeps the enum at
+        /// the size of its largest other field, and a review arrives once per
+        /// sync rather than once per frame.
+        #[serde(default)]
+        review: Option<Box<PillReview>>,
     },
     /// Clears the saved position; `strategy` picks which monitor the pill
     /// re-homes onto ("current" = the monitor it lives on, "cursor" = the
@@ -109,6 +183,14 @@ pub enum InMessage {
         #[serde(default)]
         strategy: ResetStrategy,
     },
+    /// Ask the pill to re-publish its current geometry.
+    ///
+    /// The pill only emits `PositionChanged` when the user moves it, so a
+    /// freshly started session has no geometry on the desktop side and
+    /// windows anchored to the pill (the review composer) fall back to the
+    /// OS-centred placement. The desktop asks for the geometry once the
+    /// listener is live instead of waiting for the first drag.
+    RequestPosition,
     Quit,
 }
 
@@ -116,14 +198,22 @@ pub enum InMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OutMessage {
     Ready,
-    Hover { hovered: bool },
+    Hover {
+        hovered: bool,
+    },
     Click,
-    StyleSwitch { direction: String },
+    StyleSwitch {
+        direction: String,
+    },
     AgentTalk,
     AssistantClose,
     EnableTypeMode,
-    TypedMessage { text: String },
-    OpenConversation { conversation_id: String },
+    TypedMessage {
+        text: String,
+    },
+    OpenConversation {
+        conversation_id: String,
+    },
     ResolvePermission {
         permission_id: String,
         status: String,
@@ -132,15 +222,51 @@ pub enum OutMessage {
     CancelDictation,
     PauseDictation,
     ResumeDictation,
-    ToastAction { action: String },
-    PositionChanged { has_saved_position: bool },
+    ToastAction {
+        action: String,
+    },
+    /// Haptic/audio feedback request for the desktop process.
+    /// `kind` values: "press", "deep", "release".
+    HapticFeedback {
+        kind: String,
+    },
+    /// The user's decision on the transcript under review.
+    /// `action` is one of "insert", "copy", "cancel", "open".
+    ///
+    /// `text` carries what the entry holds for Insert, Copy, and Open. Open
+    /// lets the desktop preserve the edited text before it settles the
+    /// review; Cancel leaves it out.
+    ReviewDecision {
+        review_id: String,
+        action: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+    PositionChanged {
+        has_saved_position: bool,
+        rect: Option<Rect>,
+        monitor: Option<Rect>,
+    },
 }
 
-pub fn send(msg: &OutMessage) {
+/// Send one message to the desktop process over stdout.
+///
+/// Returns whether the bytes were actually handed to the pipe. A write to a
+/// desktop process that has exited fails with EPIPE, and callers that would
+/// otherwise discard the user's text — the entry clearing itself on submit —
+/// need that to decide whether the message really landed. The write itself is
+/// still non-blocking from the caller's perspective: this is a single small
+/// write to a pipe that is drained by the desktop, and a failure returns
+/// immediately rather than retrying, so it is safe on the GTK main loop.
+pub fn send(msg: &OutMessage) -> bool {
     let mut stdout = io::stdout().lock();
-    let _ = serde_json::to_writer(&mut stdout, msg);
-    let _ = stdout.write_all(b"\n");
-    let _ = stdout.flush();
+    if serde_json::to_writer(&mut stdout, msg).is_err() {
+        return false;
+    }
+    if stdout.write_all(b"\n").is_err() {
+        return false;
+    }
+    stdout.flush().is_ok()
 }
 
 pub fn start_stdin_reader(sender: Sender<InMessage>) {
@@ -165,4 +291,71 @@ pub fn start_stdin_reader(sender: Sender<InMessage>) {
         }
         let _ = sender.send(InMessage::Quit);
     });
+}
+
+#[cfg(test)]
+mod review_localization_tests {
+    use super::PillReview;
+
+    #[test]
+    fn review_edit_label_accepts_legacy_and_localized_payloads() {
+        let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
+        assert!(legacy.edit_label.is_none());
+        let localized: PillReview =
+            serde_json::from_str(r#"{"id":"r1","text":"draft","edit_label":"Bearbeiten"}"#)
+                .unwrap();
+        assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
+        assert_eq!(localized.text, "draft");
+    }
+
+    /// Every caption the pill draws for a review has to arrive from the desktop
+    /// locale. A sender that omits one must still parse, so the draw site can
+    /// fall back rather than the pill refusing the whole review.
+    #[test]
+    fn review_captions_default_to_none_and_accept_every_locale() {
+        let legacy: PillReview = serde_json::from_str(r#"{"id":"r1","text":"draft"}"#).unwrap();
+        assert!(legacy.insert_label.is_none());
+        assert!(legacy.copy_label.is_none());
+        assert!(legacy.cancel_label.is_none());
+        assert!(legacy.hint.is_none());
+
+        let localized: PillReview = serde_json::from_str(
+            r#"{
+                "id":"r1",
+                "text":"draft",
+                "edit_label":"Bearbeiten",
+                "insert_label":"Einfuegen",
+                "copy_label":"Kopieren",
+                "cancel_label":"Abbrechen",
+                "hint":"Unten bearbeiten, dann Enter druecken"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(localized.edit_label.as_deref(), Some("Bearbeiten"));
+        assert_eq!(localized.insert_label.as_deref(), Some("Einfuegen"));
+        assert_eq!(localized.copy_label.as_deref(), Some("Kopieren"));
+        assert_eq!(localized.cancel_label.as_deref(), Some("Abbrechen"));
+        assert_eq!(
+            localized.hint.as_deref(),
+            Some("Unten bearbeiten, dann Enter druecken"),
+        );
+    }
+
+    /// The review variant is boxed so a five-caption review does not inflate the
+    /// whole message enum. This pins the wire shape, because a boxed field
+    /// still deserializes from the same flat JSON object.
+    #[test]
+    fn the_boxed_review_variant_still_reads_a_flat_json_object() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            review: Option<Box<PillReview>>,
+        }
+        let parsed: Wrapper = serde_json::from_str(
+            r#"{"review":{"id":"r1","text":"draft","insert_label":"Einfuegen"}}"#,
+        )
+        .unwrap();
+        let review = parsed.review.expect("review should be present");
+        assert_eq!(review.id, "r1");
+        assert_eq!(review.insert_label.as_deref(), Some("Einfuegen"));
+    }
 }

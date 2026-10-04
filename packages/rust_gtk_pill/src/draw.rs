@@ -5,9 +5,11 @@ use gtk::cairo;
 use crate::ipc::{Phase, PillPermission, PillStreaming};
 
 use crate::constants::*;
-use crate::state::{ClickAction, ClickRegion, PillState, RocketPhase};
+use crate::state::{rect_contains, ClickAction, ClickRegion, PillState, RocketPhase};
 use rust_pill_shared::{path_distances, rounded_rectangle_perimeter, RoundedRectArcSteps};
 
+// Cairo retains paint errors on the context; the draw callback reports them.
+// Saved-state boundaries abort on failure rather than applying unmatched transforms.
 pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     cr.set_operator(cairo::Operator::Source);
     cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
@@ -20,7 +22,9 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
     let wh = state.draw_height.get();
     let (ox, oy) = state.content_offset();
 
-    cr.save().ok();
+    if cr.save().is_err() {
+        return;
+    }
     cr.translate(ox, oy);
 
     if state.assistant_active.get() || state.panel_open_t.get() > 0.01 {
@@ -33,10 +37,14 @@ pub(crate) fn draw_all(cr: &cairo::Context, state: &PillState) {
         draw_flame(cr, state, ww, wh);
     }
 
-    draw_pill(cr, state, ww, wh);
+    paint_pill_attached(cr, state, ww, wh, |cr| {
+        draw_pill(cr, state, ww, wh);
+    });
 
     if state.flash_blue_active.get() {
-        draw_flash_blue(cr, state, ww, wh);
+        paint_pill_attached(cr, state, ww, wh, |cr| {
+            draw_flash_blue(cr, state, ww, wh);
+        });
     }
 
     if state.assistant_active.get() {
@@ -133,6 +141,34 @@ pub(crate) fn pill_radius(pill_w: f64, pill_h: f64, inflate: f64) -> f64 {
     (pill_w.min(pill_h) * 0.5).min(cap)
 }
 
+/// Share the exact paint-only transform between the body and attached outlines.
+/// Register click regions in unscaled coordinates and preserve overlay order.
+fn paint_pill_attached(
+    cr: &cairo::Context,
+    state: &PillState,
+    ww: f64,
+    wh: f64,
+    paint: impl FnOnce(&cairo::Context),
+) {
+    let (dsx, dsy) = state.crossing.borrow().scales();
+    let deformed = dsx != 1.0 || dsy != 1.0;
+    if deformed {
+        let (rx, ry, pill_w, pill_h) = pill_position(state, ww, wh);
+        let (dcx, dcy) = (rx + pill_w / 2.0, ry + pill_h / 2.0);
+        if cr.save().is_err() {
+            return;
+        }
+        cr.translate(dcx, dcy);
+        cr.scale(dsx, dsy);
+        cr.translate(-dcx, -dcy);
+    }
+
+    paint(cr);
+    if deformed {
+        let _ = cr.restore();
+    }
+}
+
 /// Renders the pill body and its current content (waveform, paused bar,
 /// loading, transcript, controls) and registers the pill's click region.
 fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
@@ -142,9 +178,9 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let bg_alpha = lerp(IDLE_BG_ALPHA, ACTIVE_BG_ALPHA, expand_t);
     let radius = pill_radius(pill_w, pill_h, state.inflate_t.get());
 
-    let is_typing = state.assistant_active.get()
-        && *state.assistant_input_mode.borrow() == "type";
-    if is_typing {
+    // Typing (and a transcript under review) replaces the pill body with the
+    // panel and its entry.
+    if state.is_typing() {
         return;
     }
 
@@ -152,7 +188,14 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     cr.set_source_rgba(0.0, 0.0, 0.0, bg_alpha);
     let _ = cr.fill();
 
-    rounded_rect(cr, rx + 0.5, ry + 0.5, pill_w - 1.0, pill_h - 1.0, radius - 0.5);
+    rounded_rect(
+        cr,
+        rx + 0.5,
+        ry + 0.5,
+        pill_w - 1.0,
+        pill_h - 1.0,
+        radius - 0.5,
+    );
     cr.set_source_rgba(1.0, 1.0, 1.0, BORDER_ALPHA);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
@@ -174,7 +217,7 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             draw_loading(cr, rx, ry, pill_w, pill_h, radius, expand_t, state);
         }
         Phase::Idle if expand_t > 0.5 && (state.hovered.get() || state.assistant_active.get()) => {
-            draw_idle_label(cr, rx, ry, pill_w, pill_h, expand_t);
+            draw_idle_label(cr, rx, ry, pill_w, pill_h, expand_t, state);
         }
         _ => {}
     }
@@ -183,7 +226,10 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     draw_cancel_flash(cr, rx, ry, pill_w, pill_h, state);
 
     state.click_regions.borrow_mut().push(ClickRegion {
-        x: rx, y: ry, w: pill_w, h: pill_h,
+        x: rx,
+        y: ry,
+        w: pill_w,
+        h: pill_h,
         action: ClickAction::Pill,
     });
 }
@@ -193,7 +239,12 @@ fn draw_pill(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 /// Opacity is owned by `state.ring_alpha` (pinned while held, eased out after
 /// release), never by the press-progress ramp.
 fn draw_long_press_ring(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    state: &PillState,
 ) {
     let alpha = state.ring_alpha.get();
     let pulsing = rust_pill_shared::pulse_is_running(state.arm_pulse.get());
@@ -259,9 +310,9 @@ fn draw_long_press_ring(
     }
 
     if alpha > 0.0 && head_len > 0.0 {
-        // Primary layer: the comet. Brightness is envelope × glimmer evaluated
-        // per evenly-spaced segment — the portable stand-in for a gradient
-        // along a path, which Cairo has no primitive for.
+        // One resampled perimeter drives the shadow, the comet and the head,
+        // so the layers can never drift apart and no geometry is built more
+        // than once per frame.
         let mut points = state.ring_points.borrow_mut();
         rust_pill_shared::resample_perimeter(
             &path,
@@ -271,56 +322,84 @@ fn draw_long_press_ring(
             &mut points,
         );
 
-        let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
-        for w in points.windows(2) {
-            let (x1, y1, _) = w[0];
-            let (x2, y2, d) = w[1];
-            if d > head_len {
-                break;
+        // Degenerate geometry cannot occur with the shared perimeter (this
+        // block is only entered when `head_len > 0`), but the shadow slice
+        // and head placement below must never index an empty buffer — which
+        // `RingLayers::new` reports as `None`.
+        if let Some(layers) =
+            rust_pill_shared::RingLayers::new(&points, head_len, total_len, progress, arm_t, alpha)
+        {
+            // Shadow layer: a soft dark halo behind the silver ring so it stays
+            // readable on light backdrops. Cairo has no cheap blur on the
+            // render path, so the ring path is stroked several times with
+            // growing widths and shrinking alphas — the passes sum to a
+            // falloff that is darkest right under the ring and gone within a
+            // few pixels. Widths, alphas and the arc's extent all come from
+            // the shared plan; only the stroking is platform code.
+            for (width, layer_alpha) in layers.shadow_passes() {
+                cr.set_line_width(width);
+                cr.set_source_rgba(0.0, 0.0, 0.0, layer_alpha);
+                cr.move_to(points[0].0, points[0].1);
+                for p in &points[1..=layers.head_index] {
+                    cr.line_to(p.0, p.1);
+                }
+                let _ = cr.stroke();
             }
-            let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
-            let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
-            let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
-            if a < 0.012 {
-                continue;
-            }
-            cr.set_line_width(
-                rust_pill_shared::RING_CORE_WIDTH
-                    + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
-            );
-            cr.set_source_rgba(
-                LONG_PRESS_OUTLINE_COLOR.0,
-                LONG_PRESS_OUTLINE_COLOR.1,
-                LONG_PRESS_OUTLINE_COLOR.2,
-                a,
-            );
-            cr.move_to(x1, y1);
-            cr.line_to(x2, y2);
-            let _ = cr.stroke();
-        }
 
-        // Secondary layer: the soft head. Concentric discs approximate a radial
-        // falloff without allocating a gradient every frame. It dissolves and
-        // blooms before completion so nothing bright is left at the seam.
-        let head_fade = rust_pill_shared::ring_head_fade(progress, arm_t);
-        let head_alpha = rust_pill_shared::RING_HEAD_ALPHA * head_fade * alpha;
-        if head_alpha > 0.004 && points.len() >= 2 {
-            let idx = (((head_len / total_len) * (points.len() - 1) as f64).round() as usize)
-                .clamp(1, points.len() - 1);
-            let (hx, hy, _) = points[idx];
-            let head_r = rust_pill_shared::ring_head_radius(progress);
-            let steps = rust_pill_shared::RING_HEAD_STEPS;
-            for k in (1..=steps).rev() {
-                let rr = head_r * (k as f64 / steps as f64);
-                let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(2.2);
+            // Dark underlay beneath the comet head so the soft silver blob
+            // also separates from a light backdrop; mirrors the head's disc
+            // shading.
+            for disc in layers.underlay_discs() {
+                cr.set_source_rgba(0.0, 0.0, 0.0, disc.alpha);
+                cr.new_sub_path();
+                cr.arc(disc.cx, disc.cy, disc.radius, 0.0, 2.0 * PI);
+                let _ = cr.fill();
+            }
+
+            // Primary layer: the comet. Brightness is envelope × glimmer
+            // evaluated per evenly-spaced segment — the portable stand-in for
+            // a gradient along a path, which Cairo has no primitive for.
+            let lift = 1.0 + rust_pill_shared::RING_ARM_LIFT * arm_t;
+            for w in points.windows(2) {
+                let (x1, y1, _) = w[0];
+                let (x2, y2, d) = w[1];
+                if d > head_len {
+                    break;
+                }
+                let env = rust_pill_shared::ring_envelope(d, head_len, progress, total_len);
+                let glim = rust_pill_shared::ring_glimmer(d, total_len, wave_phase, progress);
+                let a = (env * glim * lift).clamp(0.0, 1.0) * alpha;
+                if a < rust_pill_shared::RING_SEGMENT_ALPHA_CUTOFF {
+                    continue;
+                }
+                cr.set_line_width(
+                    rust_pill_shared::RING_CORE_WIDTH
+                        + rust_pill_shared::RING_WIDTH_SWELL * env * (1.0 - 0.35 * arm_t),
+                );
                 cr.set_source_rgba(
                     LONG_PRESS_OUTLINE_COLOR.0,
                     LONG_PRESS_OUTLINE_COLOR.1,
                     LONG_PRESS_OUTLINE_COLOR.2,
-                    head_alpha * falloff * 0.5,
+                    a,
+                );
+                cr.move_to(x1, y1);
+                cr.line_to(x2, y2);
+                let _ = cr.stroke();
+            }
+
+            // Secondary layer: the soft head. Concentric discs approximate a
+            // radial falloff without allocating a gradient every frame. It
+            // dissolves and blooms before completion so nothing bright is left
+            // at the seam — once it has, the shared plan yields no discs.
+            for disc in layers.head_discs() {
+                cr.set_source_rgba(
+                    LONG_PRESS_OUTLINE_COLOR.0,
+                    LONG_PRESS_OUTLINE_COLOR.1,
+                    LONG_PRESS_OUTLINE_COLOR.2,
+                    disc.alpha,
                 );
                 cr.new_sub_path();
-                cr.arc(hx, hy, rr, 0.0, 2.0 * PI);
+                cr.arc(disc.cx, disc.cy, disc.radius, 0.0, 2.0 * PI);
                 let _ = cr.fill();
             }
         }
@@ -367,7 +446,12 @@ fn draw_long_press_ring(
 }
 
 fn draw_cancel_flash(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, state: &PillState,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    state: &PillState,
 ) {
     let cf = state.cancel_flash.get();
     if cf <= 0.0 {
@@ -394,15 +478,28 @@ fn draw_cancel_flash(
 /// visibility while the pill expands.
 #[allow(clippy::too_many_arguments)]
 fn draw_waveform(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    expand_t: f64, fade: f64, state: &PillState,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    fade: f64,
+    state: &PillState,
 ) {
     let wave_phase = state.wave_phase.get();
     let level = state.current_level.get();
     let baseline = ry + pill_h / 2.0;
 
     cr.save().ok();
-    rounded_rect(cr, rx, ry, pill_w, pill_h, pill_radius(pill_w, pill_h, state.inflate_t.get()));
+    rounded_rect(
+        cr,
+        rx,
+        ry,
+        pill_w,
+        pill_h,
+        pill_radius(pill_w, pill_h, state.inflate_t.get()),
+    );
     cr.clip();
 
     for config in WAVE_CONFIGS {
@@ -439,8 +536,13 @@ fn draw_waveform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_edge_gradient(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    radius: f64,
+    expand_t: f64,
 ) {
     cr.save().ok();
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
@@ -468,12 +570,47 @@ fn draw_edge_gradient(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_loading(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64, state: &PillState,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    radius: f64,
+    expand_t: f64,
+    state: &PillState,
 ) {
     cr.save().ok();
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
     cr.clip();
+
+    if let Some(stage) = state.stage_text.borrow().as_deref() {
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
+        cr.set_font_size(12.0);
+        // Cairo only fails to measure when the font backend is already in an
+        // error state, so there is no origin worth falling back to: the Ok arm
+        // below hands move_to a left edge and a baseline, not a centre point,
+        // and the pill centre would draw the label from the middle of the word
+        // on the pill's mid-line. Skip the label for this frame instead. This
+        // also keeps the failure inside the drawing area's draw callback, where
+        // unwinding out of the signal trampoline aborts the process rather than
+        // just skipping the frame.
+        if let Ok(ext) = cr.text_extents(stage) {
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * expand_t);
+            cr.move_to(
+                rx + (pill_w - ext.width()) / 2.0 - ext.x_bearing(),
+                ry + (pill_h - ext.height()) / 2.0 - ext.y_bearing(),
+            );
+            let _ = cr.show_text(stage);
+        }
+        cr.restore().ok();
+
+        draw_edge_gradient(cr, rx, ry, pill_w, pill_h, radius, expand_t);
+        return;
+    }
 
     let bar_h = 2.0;
     let bar_y = ry + (pill_h - bar_h) / 2.0;
@@ -508,8 +645,14 @@ fn draw_loading(
 /// waveform), crossfading in with `fade`.
 #[allow(clippy::too_many_arguments)]
 fn draw_paused_bar(
-    cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64,
-    radius: f64, expand_t: f64, fade: f64,
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    radius: f64,
+    expand_t: f64,
+    fade: f64,
 ) {
     cr.save().ok();
     rounded_rect(cr, rx, ry, pill_w, pill_h, radius);
@@ -536,16 +679,52 @@ fn draw_paused_bar(
     cr.restore().ok();
 }
 
-fn draw_idle_label(cr: &cairo::Context, rx: f64, ry: f64, pill_w: f64, pill_h: f64, expand_t: f64) {
-    cr.set_source_rgba(1.0, 1.0, 1.0, 0.55 * expand_t);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+fn draw_idle_label(
+    cr: &cairo::Context,
+    rx: f64,
+    ry: f64,
+    pill_w: f64,
+    pill_h: f64,
+    expand_t: f64,
+    state: &PillState,
+) {
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(12.0);
-    let text = "Click to dictate";
-    let extents = cr.text_extents(text).unwrap();
-    let tx = rx + (pill_w - extents.width()) / 2.0 - extents.x_bearing();
-    let ty = ry + (pill_h - extents.height()) / 2.0 - extents.y_bearing();
-    cr.move_to(tx, ty);
-    let _ = cr.show_text(text);
+
+    let drag_t = state.drag_label_t.get();
+    let text_idle = rust_pill_shared::LABEL_IDLE_TEXT;
+    let text_drag = rust_pill_shared::LABEL_DRAG_TEXT;
+
+    // `text_extents` errors only when the font backend is already in an error
+    // state, in which case nothing else this frame will draw either. Unwrapping
+    // would unwind out of the drawing area's draw signal and abort the process
+    // rather than skip one label, so both labels are skipped instead.
+    let (ext_idle, ext_drag) = match (cr.text_extents(text_idle), cr.text_extents(text_drag)) {
+        (Ok(idle), Ok(drag)) => (idle, drag),
+        _ => return,
+    };
+    let base_y = ry + (pill_h - ext_idle.height()) / 2.0 - ext_idle.y_bearing();
+
+    let (alpha_idle, alpha_drag) = rust_pill_shared::label_crossfade_alpha(drag_t, expand_t);
+    let (y_idle, y_drag) = rust_pill_shared::label_slide_y(base_y, drag_t);
+
+    if alpha_idle > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        cr.set_source_rgba(1.0, 1.0, 1.0, alpha_idle);
+        let tx = rx + (pill_w - ext_idle.width()) / 2.0 - ext_idle.x_bearing();
+        cr.move_to(tx, y_idle);
+        let _ = cr.show_text(text_idle);
+    }
+
+    if alpha_drag > rust_pill_shared::LABEL_ALPHA_CUTOFF {
+        cr.set_source_rgba(1.0, 1.0, 1.0, alpha_drag);
+        let tx = rx + (pill_w - ext_drag.width()) / 2.0 - ext_drag.x_bearing();
+        cr.move_to(tx, y_drag);
+        let _ = cr.show_text(text_drag);
+    }
 }
 
 // ── Tooltip (dictation style selector) ────────────────────────────
@@ -559,39 +738,113 @@ pub(crate) fn tooltip_entry_offset(tooltip_t: f64) -> f64 {
     (1.0 - tooltip_t) * TOOLTIP_ENTRY_SLIDE
 }
 
-/// Top-left corner of the style tooltip, which sits directly above the pill.
-///
-/// Drawing, hit testing and the Wayland input region all resolve the tooltip
-/// through this one helper. They previously each derived it separately: draw
-/// used a fixed `pill_area_top`, while the input region used the live `pill_y`.
-/// Those disagreed by the tooltip gap even at rest, and on Wayland — where a
-/// drag translates the draw offset rather than moving the toplevel — they
-/// diverged by the whole drag distance, leaving the visible style selector
-/// outside its own input region and unclickable.
-pub(crate) fn tooltip_origin(pill_x: f64, pill_y: f64, pill_w: f64, tooltip_w: f64) -> (f64, f64) {
-    let x = pill_x + (pill_w - tooltip_w) / 2.0;
-    let y = pill_y - TOOLTIP_GAP - TOOLTIP_HEIGHT;
-    (x, y)
+/// Top-left corner of the style tooltip, on the side the shared placement
+/// controller picked. Drawing, hit testing and the Wayland input region all
+/// resolve the tooltip through this one helper (plus the entry offset in
+/// `tooltip_rendered_origin`). They previously each derived it separately:
+/// draw used a fixed `pill_area_top`, while the input region used the live
+/// `pill_y`. Those disagreed by the tooltip gap even at rest, and on Wayland —
+/// where a drag translates the draw offset rather than moving the toplevel —
+/// they diverged by the whole drag distance, leaving the visible style
+/// selector outside its own input region and unclickable.
+pub(crate) fn tooltip_origin(
+    pill_x: f64,
+    pill_y: f64,
+    pill_w: f64,
+    pill_h: f64,
+    tooltip_w: f64,
+    blend: f64,
+) -> (f64, f64) {
+    rust_pill_shared::placement::tooltip_origin(
+        pill_x,
+        pill_y,
+        pill_w,
+        pill_h,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_GAP,
+        blend,
+    )
 }
 
 /// Where the tooltip is actually painted, including the entry animation.
 ///
 /// This is the geometry drawing, hit testing and the input region must all
-/// agree on. `tooltip_origin()` alone is the resting position.
+/// agree on. `tooltip_origin()` alone is the resting position. The entry
+/// slide mirrors across the side: above slides up into place, below slides
+/// down, so the motion always reads as arriving from the pill.
 pub(crate) fn tooltip_rendered_origin(
     pill_x: f64,
     pill_y: f64,
     pill_w: f64,
+    pill_h: f64,
     tooltip_w: f64,
     tooltip_t: f64,
+    blend: f64,
 ) -> (f64, f64) {
-    let (x, y) = tooltip_origin(pill_x, pill_y, pill_w, tooltip_w);
-    (x, y + tooltip_entry_offset(tooltip_t))
+    let (x, y) = tooltip_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, blend);
+    (x, y + tooltip_entry_offset(tooltip_t) * (1.0 - 2.0 * blend))
+}
+
+pub(crate) fn selector_click_regions(
+    pill: (f64, f64, f64, f64),
+    width: f64,
+    progress: f64,
+    blend: f64,
+) -> [ClickRegion; 2] {
+    let (x, y) = tooltip_rendered_origin(pill.0, pill.1, pill.2, pill.3, width, progress, blend);
+    [
+        ClickRegion {
+            x,
+            y,
+            w: width / 2.0,
+            h: TOOLTIP_HEIGHT,
+            action: ClickAction::StyleBackward,
+        },
+        ClickRegion {
+            x: x + width / 2.0,
+            y,
+            w: width / 2.0,
+            h: TOOLTIP_HEIGHT,
+            action: ClickAction::StyleForward,
+        },
+    ]
+}
+
+/// Rebuild selector targets without waiting for GTK's queued paint. Retain
+/// the original drawing order: the pill and panel targets stay above these.
+pub(crate) fn refresh_selector_click_regions(state: &PillState) {
+    let mut regions = state.click_regions.borrow_mut();
+    regions.retain(|r| {
+        !matches!(
+            r.action,
+            ClickAction::StyleBackward | ClickAction::StyleForward
+        )
+    });
+    if state.assistant_active.get()
+        || state.panel_open_t.get() > 0.01
+        || state.flash_t.get() >= 0.01
+        || state.tooltip_opacity() < TOOLTIP_VISIBLE_T
+        || state.style_count.get() <= 1
+        || state.style_name.borrow().is_empty()
+        || state.tooltip_width.get() <= 0.0
+    {
+        return;
+    }
+    let pill = pill_position(state, state.draw_width.get(), state.draw_height.get());
+    let targets = selector_click_regions(
+        pill,
+        state.tooltip_width.get(),
+        state.tooltip_t.get(),
+        state.selector_placement.borrow().blend(),
+    );
+    regions.splice(0..0, targets);
 }
 
 fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let tooltip_t = state.tooltip_t.get();
-    if tooltip_t < TOOLTIP_VISIBLE_T {
+    let alpha = state.tooltip_opacity();
+    if alpha < TOOLTIP_VISIBLE_T {
         return;
     }
 
@@ -607,9 +860,21 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         return;
     }
 
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(12.0);
-    let text_extents = cr.text_extents(&style_name).unwrap();
+    // Skip the tooltip rather than unwrap: see the note in `draw_idle_label`.
+    // The width goes with it, for the reason the branch above gives: an unpainted
+    // tooltip that keeps its measured width is an invisible rectangle the input
+    // shape still carries, and the draw callback only rebuilds that shape when
+    // the width changes.
+    let Ok(text_extents) = cr.text_extents(&style_name) else {
+        state.tooltip_width.set(0.0);
+        return;
+    };
     let text_w = text_extents.width().clamp(20.0, 100.0);
 
     let chevron_area = 20.0;
@@ -619,16 +884,30 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     // Anchor to the live pill so the tooltip tracks a Wayland drag, and stays
     // inside the input region built from the same helper.
-    let (pill_x, pill_y, pill_w, _) = pill_position(state, ww, wh);
+    let (pill_x, pill_y, pill_w, pill_h) = pill_position(state, ww, wh);
+    let blend = state.selector_placement.borrow().blend();
     let (tooltip_rx, tooltip_ry) =
-        tooltip_rendered_origin(pill_x, pill_y, pill_w, tooltip_w, tooltip_t);
-    let alpha = tooltip_t;
+        tooltip_rendered_origin(pill_x, pill_y, pill_w, pill_h, tooltip_w, tooltip_t, blend);
 
-    rounded_rect(cr, tooltip_rx, tooltip_ry, tooltip_w, TOOLTIP_HEIGHT, TOOLTIP_RADIUS);
+    rounded_rect(
+        cr,
+        tooltip_rx,
+        tooltip_ry,
+        tooltip_w,
+        TOOLTIP_HEIGHT,
+        TOOLTIP_RADIUS,
+    );
     cr.set_source_rgba(0.0, 0.0, 0.0, 0.92 * alpha);
     let _ = cr.fill();
 
-    rounded_rect(cr, tooltip_rx + 0.5, tooltip_ry + 0.5, tooltip_w - 1.0, TOOLTIP_HEIGHT - 1.0, TOOLTIP_RADIUS - 0.5);
+    rounded_rect(
+        cr,
+        tooltip_rx + 0.5,
+        tooltip_ry + 0.5,
+        tooltip_w - 1.0,
+        TOOLTIP_HEIGHT - 1.0,
+        TOOLTIP_RADIUS - 0.5,
+    );
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
@@ -659,7 +938,11 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
 
     // Style name text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(11.0);
     let text_area_left = tooltip_rx + padding_h + chevron_area;
     let text_area_right = tooltip_rx + tooltip_w - padding_h - chevron_area;
@@ -668,22 +951,18 @@ fn draw_tooltip(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
     let ty = center_y - text_extents.height() / 2.0 - text_extents.y_bearing();
 
     cr.save().ok();
-    cr.rectangle(text_area_left, tooltip_ry, text_area_right - text_area_left, TOOLTIP_HEIGHT);
+    cr.rectangle(
+        text_area_left,
+        tooltip_ry,
+        text_area_right - text_area_left,
+        TOOLTIP_HEIGHT,
+    );
     cr.clip();
     cr.move_to(tx, ty);
     let _ = cr.show_text(&style_name);
     cr.restore().ok();
 
-    // Click regions for tooltip
-    let mid_x = tooltip_rx + tooltip_w / 2.0;
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: tooltip_rx, y: tooltip_ry, w: mid_x - tooltip_rx, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleBackward,
-    });
-    state.click_regions.borrow_mut().push(ClickRegion {
-        x: mid_x, y: tooltip_ry, w: tooltip_rx + tooltip_w - mid_x, h: TOOLTIP_HEIGHT,
-        action: ClickAction::StyleForward,
-    });
+    refresh_selector_click_regions(state);
 }
 
 // ── Flash message ────────────────────────────────────────────────
@@ -701,7 +980,9 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     let is_error = state.flash_is_error.get();
     let action_label = state.flash_action_label.borrow();
+    let reject_label = state.flash_reject_action_label.borrow();
     let has_action = action_label.is_some();
+    let has_reject = reject_label.is_some();
 
     let layout = pangocairo::functions::create_layout(cr);
     let font_desc = pango::FontDescription::from_string("Satoshi Bold 12");
@@ -721,7 +1002,25 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     } else {
         (0.0, None)
     };
-    let action_section = if has_action { FLASH_ACTION_GAP + action_w } else { 0.0 };
+
+    let (reject_w, reject_layout) = if let Some(ref label) = *reject_label {
+        let rl = pangocairo::functions::create_layout(cr);
+        let rf = pango::FontDescription::from_string("Satoshi Bold 11");
+        rl.set_font_description(Some(&rf));
+        rl.set_text(label);
+        let (rw, _) = rl.pixel_size();
+        (rw as f64 + FLASH_ACTION_PADDING_H * 2.0, Some(rl))
+    } else {
+        (0.0, None)
+    };
+
+    let mut action_section = 0.0;
+    if has_action {
+        action_section += FLASH_ACTION_GAP + action_w;
+    }
+    if has_reject {
+        action_section += FLASH_ACTION_GAP + reject_w;
+    }
 
     let flash_w = (text_w + FLASH_PADDING_H * 2.0 + action_section).max(80.0);
 
@@ -741,14 +1040,18 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     cr.translate(-center_x, -center_y);
 
     // Background
-    let (bg_r, bg_g, bg_b) = if is_error { (0.35, 0.05, 0.05) } else { (0.0, 0.0, 0.0) };
+    let (bg_r, bg_g, bg_b) = if is_error {
+        (0.35, 0.05, 0.05)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
     rounded_rect(cr, full_x, full_y, flash_w, FLASH_HEIGHT, FLASH_RADIUS);
     cr.set_source_rgba(bg_r, bg_g, bg_b, 0.92 * alpha);
     let _ = cr.fill();
 
     // Message text
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.9 * alpha);
-    let text_left = if has_action {
+    let text_left = if has_action || has_reject {
         full_x + FLASH_PADDING_H
     } else {
         full_x + (flash_w - text_w) / 2.0
@@ -757,12 +1060,68 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
     cr.move_to(text_left, ty);
     pangocairo::functions::show_layout(cr, &layout);
 
+    // Reject button (drawn to the left of the accept button)
+    if let Some(rl) = reject_layout {
+        let accept_offset = if has_action {
+            action_w + FLASH_ACTION_GAP
+        } else {
+            0.0
+        };
+        let btn_x = full_x + flash_w - FLASH_PADDING_H - accept_offset - reject_w;
+        let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
+
+        rounded_rect(
+            cr,
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            FLASH_ACTION_RADIUS,
+        );
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
+        let _ = cr.fill();
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.95 * alpha);
+        let (lw, lh) = rl.pixel_size();
+        let lx = btn_x + (reject_w - lw as f64) / 2.0;
+        let ly = btn_y + (FLASH_ACTION_HEIGHT - lh as f64) / 2.0;
+        cr.move_to(lx, ly);
+        pangocairo::functions::show_layout(cr, &rl);
+
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            reject_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
+            action: ClickAction::FlashReject,
+        });
+    }
+
     // Action button
     if let Some(al) = action_layout {
         let btn_x = full_x + flash_w - FLASH_PADDING_H - action_w;
         let btn_y = full_y + (FLASH_HEIGHT - FLASH_ACTION_HEIGHT) / 2.0;
 
-        rounded_rect(cr, btn_x, btn_y, action_w, FLASH_ACTION_HEIGHT, FLASH_ACTION_RADIUS);
+        rounded_rect(
+            cr,
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            FLASH_ACTION_RADIUS,
+        );
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.2 * alpha);
         let _ = cr.fill();
 
@@ -773,11 +1132,23 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
         cr.move_to(lx, ly);
         pangocairo::functions::show_layout(cr, &al);
 
+        // The banner is painted inside the scale transform above, and a click
+        // arrives in unscaled window space, so the region has to be the painted
+        // rectangle rather than the laid-out one.
+        let (region_x, region_y, region_w, region_h) = rust_pill_shared::scaled_click_rect(
+            btn_x,
+            btn_y,
+            action_w,
+            FLASH_ACTION_HEIGHT,
+            center_x,
+            center_y,
+            scale,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x,
-            y: btn_y,
-            w: action_w,
-            h: FLASH_ACTION_HEIGHT,
+            x: region_x,
+            y: region_y,
+            w: region_w,
+            h: region_h,
             action: ClickAction::FlashAction,
         });
     }
@@ -788,7 +1159,12 @@ fn draw_flash_message(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 // ── Flame ────────────────────────────────────────────────────────
 
 fn draw_flame_tongue(
-    cr: &cairo::Context, cx: f64, base_y: f64, h: f64, hw: f64, sway: f64,
+    cr: &cairo::Context,
+    cx: f64,
+    base_y: f64,
+    h: f64,
+    hw: f64,
+    sway: f64,
     gradient_stops: &[(f64, f64, f64, f64, f64)],
 ) {
     let tip_x = cx + sway;
@@ -799,14 +1175,20 @@ fn draw_flame_tongue(
     cr.new_sub_path();
     cr.move_to(cx - hw, base_y - base_r);
     cr.curve_to(
-        cx - hw * 1.15, base_y - h * 0.35,
-        cx - hw * 0.12 + sway * 0.3, base_y - h * 0.72,
-        tip_x, tip_y,
+        cx - hw * 1.15,
+        base_y - h * 0.35,
+        cx - hw * 0.12 + sway * 0.3,
+        base_y - h * 0.72,
+        tip_x,
+        tip_y,
     );
     cr.curve_to(
-        cx + hw * 0.12 + sway * 0.3, base_y - h * 0.72,
-        cx + hw * 1.15, base_y - h * 0.35,
-        cx + hw, base_y - base_r,
+        cx + hw * 0.12 + sway * 0.3,
+        base_y - h * 0.72,
+        cx + hw * 1.15,
+        base_y - h * 0.35,
+        cx + hw,
+        base_y - base_r,
     );
     cr.arc(cx, base_y - base_r, hw, 0.0, PI);
     cr.close_path();
@@ -848,13 +1230,19 @@ fn draw_flame(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
         let w = tongue.width * (0.85 + 0.15 * flicker);
         let hw = w / 2.0;
 
-        let sway = tongue.phase.sin() * FLAME_SWAY
-            + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
+        let sway =
+            tongue.phase.sin() * FLAME_SWAY + (tongue.phase * 1.7 + 1.0).sin() * FLAME_SWAY * 0.4;
 
         let base_x = pill_x + inset + usable * tongue.t;
         let cx = base_x + sway * 0.3;
 
-        draw_flame_tongue(cr, cx, base_y, h * 1.2, hw * 1.5, sway * 1.1,
+        draw_flame_tongue(
+            cr,
+            cx,
+            base_y,
+            h * 1.2,
+            hw * 1.5,
+            sway * 1.1,
             &[
                 (0.0, 0.7, 0.7, 0.7, alpha * 0.15),
                 (0.4, 0.4, 0.4, 0.4, alpha * 0.08),
@@ -862,7 +1250,13 @@ fn draw_flame(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             ],
         );
 
-        draw_flame_tongue(cr, cx, base_y, h, hw, sway,
+        draw_flame_tongue(
+            cr,
+            cx,
+            base_y,
+            h,
+            hw,
+            sway,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.85),
                 (0.25, 1.0, 1.0, 1.0, alpha * 0.65),
@@ -871,7 +1265,13 @@ fn draw_flame(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) {
             ],
         );
 
-        draw_flame_tongue(cr, cx, base_y, h * 0.55, hw * 0.35, sway * 0.5,
+        draw_flame_tongue(
+            cr,
+            cx,
+            base_y,
+            h * 0.55,
+            hw * 0.35,
+            sway * 0.5,
             &[
                 (0.0, 1.0, 1.0, 1.0, alpha * 0.95),
                 (0.5, 1.0, 1.0, 1.0, alpha * 0.5),
@@ -907,7 +1307,14 @@ fn draw_fireworks(cr: &cairo::Context, state: &PillState, _ww: f64, _wh: f64) {
         if rocket.phase == RocketPhase::Rising {
             let hs = FIREWORKS_HEAD_SIZE / 2.0;
             cr.set_source_rgba(rc, gc, bc, 0.95);
-            rounded_rect(cr, rocket.x - hs, rocket.y - hs, FIREWORKS_HEAD_SIZE, FIREWORKS_HEAD_SIZE, hs);
+            rounded_rect(
+                cr,
+                rocket.x - hs,
+                rocket.y - hs,
+                FIREWORKS_HEAD_SIZE,
+                FIREWORKS_HEAD_SIZE,
+                hs,
+            );
             let _ = cr.fill();
         }
 
@@ -944,10 +1351,23 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         return;
     }
 
-    let is_compact = state.assistant_compact.get();
-    let is_typing = *state.assistant_input_mode.borrow() == "type";
+    // A pending review always needs the full panel: the transcript and its
+    // buttons do not fit the compact surface.
+    let review_id = state.pending_review_id();
+    let is_compact = state.assistant_compact.get() && review_id.is_none();
+    // A review types into the same entry the assistant uses.
+    let is_typing = state.is_typing();
+    let review_actions_h = if review_id.is_some() {
+        REVIEW_ACTIONS_HEIGHT
+    } else {
+        0.0
+    };
 
-    let panel_w = if is_compact { PANEL_COMPACT_WIDTH } else { PANEL_EXPANDED_WIDTH };
+    let panel_w = if is_compact {
+        PANEL_COMPACT_WIDTH
+    } else {
+        PANEL_EXPANDED_WIDTH
+    };
     let panel_x = (ww - panel_w) / 2.0;
     let panel_y = PANEL_TOP_MARGIN;
     let panel_h = wh - PANEL_TOP_MARGIN - PANEL_BOTTOM_MARGIN;
@@ -957,11 +1377,25 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
     // Panel background
     cr.save().ok();
-    rounded_rect(cr, panel_x, panel_y + y_shift, panel_w, panel_h, PANEL_RADIUS);
+    rounded_rect(
+        cr,
+        panel_x,
+        panel_y + y_shift,
+        panel_w,
+        panel_h,
+        PANEL_RADIUS,
+    );
     cr.set_source_rgba(0.0, 0.0, 0.0, PANEL_BG_ALPHA * alpha);
     let _ = cr.fill();
 
-    rounded_rect(cr, panel_x + 0.5, panel_y + y_shift + 0.5, panel_w - 1.0, panel_h - 1.0, PANEL_RADIUS - 0.5);
+    rounded_rect(
+        cr,
+        panel_x + 0.5,
+        panel_y + y_shift + 0.5,
+        panel_w - 1.0,
+        panel_h - 1.0,
+        PANEL_RADIUS - 0.5,
+    );
     cr.set_source_rgba(1.0, 1.0, 1.0, PANEL_BORDER_ALPHA * alpha);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
@@ -984,7 +1418,7 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         // Scroll view spans the full panel height (minus input bar if typing).
         // Header, pill, and input are layered on top.
         let scroll_bottom = if is_typing {
-            py + panel_h - PANEL_INPUT_HEIGHT
+            py + panel_h - PANEL_INPUT_HEIGHT - review_actions_h
         } else {
             py + panel_h
         };
@@ -999,7 +1433,9 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
             PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT + SCROLL_BOTTOM_PAD
         };
 
-        draw_transcript(cr, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad);
+        draw_transcript(
+            cr, state, content_x, py, content_w, scroll_h, alpha, top_pad, bottom_pad,
+        );
 
         // Top gradient: opaque over header area, fades into content
         let grad_h = PANEL_TRANSCRIPT_TOP_OFFSET + 16.0;
@@ -1012,7 +1448,11 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         let _ = cr.fill();
 
         // Bottom gradient: opaque over pill/bottom area, fades into content
-        let bot_area = if is_typing { 0.0 } else { PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT };
+        let bot_area = if is_typing {
+            0.0
+        } else {
+            PILL_BOTTOM_INSET + EXPANDED_PILL_HEIGHT
+        };
         let bot_grad_h = bot_area + 16.0;
         let bot_y = scroll_bottom - bot_grad_h;
         let bot_grad = cairo::LinearGradient::new(0.0, bot_y, 0.0, scroll_bottom);
@@ -1031,13 +1471,35 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
         }
 
         let open_x = panel_x + PANEL_HEADER_OFFSET_LEFT + HEADER_BUTTON_SIZE + 4.0;
-        draw_panel_button(cr, open_x, py + PANEL_HEADER_OFFSET_TOP,
-            HEADER_BUTTON_SIZE, alpha, ButtonIcon::OpenInNew);
+        draw_panel_button(
+            cr,
+            open_x,
+            py + PANEL_HEADER_OFFSET_TOP,
+            HEADER_BUTTON_SIZE,
+            alpha,
+            ButtonIcon::OpenInNew,
+        );
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: open_x, y: py + PANEL_HEADER_OFFSET_TOP,
-            w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+            x: open_x,
+            y: py + PANEL_HEADER_OFFSET_TOP,
+            w: HEADER_BUTTON_SIZE,
+            h: HEADER_BUTTON_SIZE,
             action: ClickAction::OpenInNew,
         });
+
+        // Review buttons sit between the text and the input bar, outside the
+        // scroll area so they cannot be scrolled out of reach.
+        if let Some(ref review_id) = review_id {
+            draw_review_actions(
+                cr,
+                state,
+                review_id,
+                panel_x,
+                py + panel_h - PANEL_INPUT_HEIGHT - REVIEW_ACTIONS_HEIGHT,
+                panel_w,
+                alpha,
+            );
+        }
 
         // Input bar drawn on top of scroll view + gradients
         if is_typing {
@@ -1071,7 +1533,10 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
             if has_text {
                 state.click_regions.borrow_mut().push(ClickRegion {
-                    x: send_x, y: send_y, w: send_btn_size, h: send_btn_size,
+                    x: send_x,
+                    y: send_y,
+                    w: send_btn_size,
+                    h: send_btn_size,
                     action: ClickAction::SendButton,
                 });
             }
@@ -1079,27 +1544,49 @@ fn draw_assistant_panel(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     }
 
     // Close button drawn last so it's always on top of gradients
-    draw_panel_button(cr, panel_x + PANEL_HEADER_OFFSET_LEFT, py + PANEL_HEADER_OFFSET_TOP,
-        HEADER_BUTTON_SIZE, alpha, ButtonIcon::Close);
+    draw_panel_button(
+        cr,
+        panel_x + PANEL_HEADER_OFFSET_LEFT,
+        py + PANEL_HEADER_OFFSET_TOP,
+        HEADER_BUTTON_SIZE,
+        alpha,
+        ButtonIcon::Close,
+    );
     state.click_regions.borrow_mut().push(ClickRegion {
         x: panel_x + PANEL_HEADER_OFFSET_LEFT,
         y: py + PANEL_HEADER_OFFSET_TOP,
-        w: HEADER_BUTTON_SIZE, h: HEADER_BUTTON_SIZE,
+        w: HEADER_BUTTON_SIZE,
+        h: HEADER_BUTTON_SIZE,
         action: ClickAction::AssistantClose,
     });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn draw_compact_content(
-    cr: &cairo::Context, panel_x: f64, panel_y: f64, panel_w: f64,
-    content_height: f64, alpha: f64, state: &PillState,
+    cr: &cairo::Context,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    content_height: f64,
+    alpha: f64,
+    state: &PillState,
 ) {
     let text = "What can I help you with?";
-    let text_alpha = if state.phase.get() == Phase::Recording { 0.96 } else { 0.8 };
+    let text_alpha = if state.phase.get() == Phase::Recording {
+        0.96
+    } else {
+        0.8
+    };
     cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(18.0);
-    let extents = cr.text_extents(text).unwrap();
+    let Ok(extents) = cr.text_extents(text) else {
+        return;
+    };
     let tx = panel_x + (panel_w - extents.width()) / 2.0 - extents.x_bearing();
     let ty = panel_y + (content_height - extents.height()) / 2.0 - extents.y_bearing();
     cr.move_to(tx, ty);
@@ -1108,15 +1595,33 @@ fn draw_compact_content(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_transcript(
-    cr: &cairo::Context, state: &PillState,
-    area_x: f64, area_y: f64, area_w: f64, area_h: f64, alpha: f64,
-    top_pad: f64, bottom_pad: f64,
+    cr: &cairo::Context,
+    state: &PillState,
+    area_x: f64,
+    area_y: f64,
+    area_w: f64,
+    area_h: f64,
+    alpha: f64,
+    top_pad: f64,
+    bottom_pad: f64,
 ) {
     let messages = state.assistant_messages.borrow();
     let streaming = state.assistant_streaming.borrow();
     let permissions = state.assistant_permissions.borrow();
+    let review = state.assistant_review.borrow();
 
-    if messages.is_empty() && permissions.is_empty() {
+    if messages.is_empty() && permissions.is_empty() && review.is_none() {
+        // Both halves of the scroll state go with the content. Nothing sets
+        // them on this path below, so a panel that has just been emptied keeps
+        // the height of the transcript it used to hold: the wheel can then
+        // scroll the next transcript past its own last line, and the content is
+        // not visible even though it is there. The offset is the other half of
+        // the same state, and it is what the next transcript is laid out from —
+        // a panel emptied while scrolled drew the following transcript starting
+        // above its own first line, and its opening lines were off the top.
+        // An empty panel has no scrollable content and no place in it.
+        state.scroll_offset.set(0.0);
+        state.content_height.set(0.0);
         return;
     }
 
@@ -1124,10 +1629,19 @@ fn draw_transcript(
     cr.rectangle(area_x, area_y, area_w, area_h);
     cr.clip();
 
+    // Everything drawn from here on scrolls, so its click regions have to be
+    // checked against the visible band before they are handed to the input
+    // layer. See the filter at the end of this function.
+    let region_start = state.click_regions.borrow().len();
+
     let scroll = state.scroll_offset.get();
     let mut y = area_y + top_pad - scroll;
 
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(14.0);
 
     let line_height = 20.0;
@@ -1150,7 +1664,9 @@ fn draw_transcript(
         }
 
         if msg.is_tool_result {
-            let tool_desc = msg.tool_description.as_deref()
+            let tool_desc = msg
+                .tool_description
+                .as_deref()
                 .or(msg.tool_name.as_deref())
                 .unwrap_or("Tool");
             let reason = msg.reason.as_deref().unwrap_or("");
@@ -1161,7 +1677,11 @@ fn draw_transcript(
             };
 
             cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face(
+                "Satoshi",
+                cairo::FontSlant::Normal,
+                cairo::FontWeight::Normal,
+            );
             cr.set_font_size(12.0);
 
             draw_wrench_icon(cr, area_x, y + 2.0, 12.0, 0.5 * alpha);
@@ -1171,10 +1691,18 @@ fn draw_transcript(
             y += 18.0;
         } else if let Some(ref content) = msg.content {
             let color_alpha = if msg.is_error { 0.94 } else { 0.92 };
-            let (r, g, b) = if msg.is_error { (1.0, 0.4, 0.4) } else { (1.0, 1.0, 1.0) };
+            let (r, g, b) = if msg.is_error {
+                (1.0, 0.4, 0.4)
+            } else {
+                (1.0, 1.0, 1.0)
+            };
 
             cr.set_source_rgba(r, g, b, color_alpha * alpha);
-            cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.select_font_face(
+                "Satoshi",
+                cairo::FontSlant::Normal,
+                cairo::FontWeight::Normal,
+            );
             cr.set_font_size(14.0);
 
             let lines = wrap_text(cr, content, area_w);
@@ -1193,17 +1721,46 @@ fn draw_transcript(
         y = draw_permission_card(cr, state, perm, area_x, y, area_w, alpha);
     }
 
+    if review.is_some() {
+        if !messages.is_empty() || !permissions.is_empty() {
+            y += 12.0;
+        }
+        y = draw_review_text(cr, state, area_x, y, area_w, alpha);
+    }
+
     let total_height = y + scroll - area_y + bottom_pad;
     state.content_height.set(total_height);
+
+    // Trim the click targets to the part of the panel still on screen. A
+    // button the user cannot see must not take their click, and a button that
+    // is half out must only answer on the half that shows.
+    {
+        let mut regions = state.click_regions.borrow_mut();
+        let scrolled = regions.split_off(region_start);
+        regions.extend(scrolled.into_iter().filter_map(|mut region| {
+            let (y, h) = rust_pill_shared::clip_span_to_band(region.y, region.h, area_y, area_h)?;
+            region.y = y;
+            region.h = h;
+            Some(region)
+        }));
+    }
 
     cr.restore().ok();
 }
 
 fn draw_streaming_activity(
-    cr: &cairo::Context, streaming: &PillStreaming,
-    x: f64, mut y: f64, _w: f64, alpha: f64,
+    cr: &cairo::Context,
+    streaming: &PillStreaming,
+    x: f64,
+    mut y: f64,
+    _w: f64,
+    alpha: f64,
 ) -> f64 {
-    cr.select_font_face("Satoshi", cairo::FontSlant::Italic, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Italic,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(12.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
 
@@ -1219,7 +1776,11 @@ fn draw_streaming_activity(
     }
 
     if !streaming.reasoning.is_empty() {
-        let label = if streaming.is_streaming { "Thinking…" } else { "Thought process" };
+        let label = if streaming.is_streaming {
+            "Thinking…"
+        } else {
+            "Thought process"
+        };
         cr.move_to(x, y + 12.0);
         let _ = cr.show_text(label);
         y += 16.0;
@@ -1228,13 +1789,22 @@ fn draw_streaming_activity(
     y
 }
 
-fn draw_thinking_text(
-    cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &PillState,
-) -> f64 {
+fn draw_thinking_text(cr: &cairo::Context, x: f64, y: f64, alpha: f64, state: &PillState) -> f64 {
     let text = "Thinking";
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(14.0);
-    let extents = cr.text_extents(text).unwrap();
+    // The returned height is what the caller lays out after, and the caller
+    // assigns it to the panel's cursor, so this cannot answer with a number
+    // nothing was drawn at: zero would move every later message, permission and
+    // review card back to the top of the panel. A font that cannot be measured
+    // leaves the cursor where it was, which is where the label would have gone.
+    let Ok(extents) = cr.text_extents(text) else {
+        return y;
+    };
 
     let shimmer = state.shimmer_phase.get();
     let text_y = y + 14.0;
@@ -1244,7 +1814,12 @@ fn draw_thinking_text(
     cr.clip();
 
     let grad_offset = shimmer * extents.width() * 4.0 - extents.width();
-    let gradient = cairo::LinearGradient::new(x + grad_offset, 0.0, x + grad_offset + extents.width() * 2.0, 0.0);
+    let gradient = cairo::LinearGradient::new(
+        x + grad_offset,
+        0.0,
+        x + grad_offset + extents.width() * 2.0,
+        0.0,
+    );
     gradient.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.34 * alpha);
     gradient.add_color_stop_rgba(0.5, 1.0, 1.0, 1.0, 0.92 * alpha);
     gradient.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.34 * alpha);
@@ -1256,10 +1831,209 @@ fn draw_thinking_text(
     y + 20.0
 }
 
+/// The transcript under review, drawn in the panel body like an assistant
+/// message. The text comes from the entry, which is loaded with the transcript
+/// when the review arrives, so what is shown here is exactly what will be
+/// inserted, edits included. It scrolls with the rest of the panel, so there is
+/// no cap on its length.
+fn draw_review_text(
+    cr: &cairo::Context,
+    state: &PillState,
+    x: f64,
+    y: f64,
+    w: f64,
+    alpha: f64,
+) -> f64 {
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
+    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(11.0);
+    cr.move_to(x, y + 12.0);
+    let _ = cr.show_text("REVIEW TRANSCRIPT");
+
+    let mut text_y = y + REVIEW_TITLE_HEIGHT;
+
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(14.0);
+    cr.set_source_rgba(1.0, 1.0, 1.0, 0.92 * alpha);
+    let text = state.entry_text.borrow();
+    let (preview, _) = rust_pill_shared::bound_review_preview_text(&text);
+    for line in wrap_text(cr, preview.as_str(), w)
+        .into_iter()
+        .take(rust_pill_shared::MAX_REVIEW_PREVIEW_LINES)
+    {
+        cr.move_to(x, text_y + REVIEW_LINE_HEIGHT * 0.75);
+        let _ = cr.show_text(&line);
+        text_y += REVIEW_LINE_HEIGHT;
+    }
+
+    text_y
+}
+
+/// The decisions the user can take on the transcript. Drawn as a fixed row
+/// above the input bar, so a long transcript can scroll behind it without ever
+/// taking the buttons with it.
+fn draw_review_actions(
+    cr: &cairo::Context,
+    state: &PillState,
+    review_id: &str,
+    panel_x: f64,
+    y: f64,
+    panel_w: f64,
+    alpha: f64,
+) {
+    // Bound to a local: the borrow cannot live inside the temporaries of a
+    // single statement, because `hint` outlives them.
+    let hint_binding = state.assistant_review.borrow();
+    let hint = hint_binding
+        .as_ref()
+        .and_then(|review| review.hint.as_deref())
+        .unwrap_or("Edit below, then press Enter to insert");
+
+    // Every caption here is drawn by the pill, so every caption has to come
+    // from the desktop's locale. The English fallbacks only apply to a sender
+    // that predates these fields.
+    let review = state.assistant_review.borrow();
+    let edit_label = review
+        .as_ref()
+        .and_then(|review| review.edit_label.as_deref())
+        .unwrap_or("Edit");
+    let insert_label = review
+        .as_ref()
+        .and_then(|review| review.insert_label.as_deref())
+        .unwrap_or("Insert");
+    let copy_label = review
+        .as_ref()
+        .and_then(|review| review.copy_label.as_deref())
+        .unwrap_or("Copy");
+    let cancel_label = review
+        .as_ref()
+        .and_then(|review| review.cancel_label.as_deref())
+        .unwrap_or("Cancel");
+
+    // Rendered right to left so Insert (the default action) sits closest to
+    // the edge of the panel, matching the permission card's layout.
+    let buttons = [
+        (
+            insert_label,
+            ClickAction::ReviewInsert(review_id.to_string()),
+            0.92,
+        ),
+        (
+            edit_label,
+            ClickAction::ReviewEdit(review_id.to_string()),
+            0.8,
+        ),
+        (
+            copy_label,
+            ClickAction::ReviewCopy(review_id.to_string()),
+            0.7,
+        ),
+        (
+            cancel_label,
+            ClickAction::ReviewCancel(review_id.to_string()),
+            0.5,
+        ),
+    ];
+
+    // The hint and the buttons share this line, so the hint has to know how much
+    // room the button row leaves before it can be drawn. Measuring the buttons
+    // first is what makes that possible; previously the hint was drawn first
+    // and the French and German translations -- both far longer than the English
+    // default -- ran under the leftmost button by 35.7px and 32.6px.
+    let btn_widths: Vec<f64> = buttons
+        .iter()
+        .map(|(label, _, _)| {
+            let text_width = cr.text_extents(label).map(|ext| ext.width()).unwrap_or(0.0);
+            (text_width + 20.0).max(PERM_BUTTON_WIDTH * 0.8)
+        })
+        .collect();
+    let row_width: f64 =
+        btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
+    let buttons_left = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - row_width;
+    let hint_x = panel_x + PANEL_CONTENT_SIDE_INSET;
+    let hint_budget = buttons_left - PERM_BUTTON_GAP - hint_x;
+
+    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget.max(0.0), "…", |s| {
+        cr.text_extents(s).map(|ext| ext.width()).unwrap_or(0.0)
+    });
+    if !hint.is_empty() {
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.45 * alpha);
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
+        cr.set_font_size(11.0);
+        cr.move_to(hint_x, y + REVIEW_ACTIONS_HEIGHT / 2.0 + 4.0);
+        let _ = cr.show_text(&hint);
+    }
+
+    let btn_y = y + (REVIEW_ACTIONS_HEIGHT - PERM_BUTTON_HEIGHT) / 2.0;
+    let mut btn_x = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET;
+
+    for ((label, action, text_alpha), btn_w) in buttons.into_iter().zip(btn_widths) {
+        btn_x -= btn_w;
+
+        rounded_rect(cr, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
+        let _ = cr.fill();
+
+        rounded_rect(
+            cr,
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+        );
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
+        cr.set_line_width(1.0);
+        let _ = cr.stroke();
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
+        cr.set_font_size(11.0);
+        // Cairo only fails to measure when the font backend is in an error
+        // state. Draw the label at a sane offset rather than dropping it.
+        let (label_x, label_y) = match cr.text_extents(label) {
+            Ok(ext) => (
+                btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
+                btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
+            ),
+            Err(_) => (btn_x + 8.0, btn_y + PERM_BUTTON_HEIGHT * 0.7),
+        };
+        cr.move_to(label_x, label_y);
+        let _ = cr.show_text(label);
+
+        state.click_regions.borrow_mut().push(ClickRegion {
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
+        });
+
+        btn_x -= PERM_BUTTON_GAP;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_permission_card(
-    cr: &cairo::Context, state: &PillState, perm: &PillPermission,
-    x: f64, y: f64, w: f64, alpha: f64,
+    cr: &cairo::Context,
+    state: &PillState,
+    perm: &PillPermission,
+    x: f64,
+    y: f64,
+    w: f64,
+    alpha: f64,
 ) -> f64 {
     let card_h = PERM_CARD_HEIGHT;
 
@@ -1281,7 +2055,11 @@ fn draw_permission_card(
 
     if let Some(ref reason) = perm.reason {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
         cr.set_font_size(11.0);
         cr.move_to(x + 12.0, y + 32.0);
         let _ = cr.show_text(reason);
@@ -1292,24 +2070,46 @@ fn draw_permission_card(
     let mut btn_x = x + w - 12.0;
 
     for (i, (label, text_alpha)) in btn_labels.iter().rev().enumerate() {
-        let btn_w = if i == 0 { PERM_BUTTON_WIDTH + 16.0 } else { PERM_BUTTON_WIDTH };
+        let btn_w = if i == 0 {
+            PERM_BUTTON_WIDTH + 16.0
+        } else {
+            PERM_BUTTON_WIDTH
+        };
         btn_x -= btn_w;
 
         rounded_rect(cr, btn_x, btn_y, btn_w, PERM_BUTTON_HEIGHT, 6.0);
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.08 * alpha);
         let _ = cr.fill();
 
-        rounded_rect(cr, btn_x + 0.5, btn_y + 0.5, btn_w - 1.0, PERM_BUTTON_HEIGHT - 1.0, 5.5);
+        rounded_rect(
+            cr,
+            btn_x + 0.5,
+            btn_y + 0.5,
+            btn_w - 1.0,
+            PERM_BUTTON_HEIGHT - 1.0,
+            5.5,
+        );
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.15 * alpha);
         cr.set_line_width(1.0);
         let _ = cr.stroke();
 
         cr.set_source_rgba(1.0, 1.0, 1.0, text_alpha * alpha);
-        cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+        cr.select_font_face(
+            "Satoshi",
+            cairo::FontSlant::Normal,
+            cairo::FontWeight::Normal,
+        );
         cr.set_font_size(11.0);
-        let ext = cr.text_extents(label).unwrap();
-        cr.move_to(btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(), btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing());
-        let _ = cr.show_text(label);
+        // The label is skipped rather than unwrapped, but the button is still
+        // registered as a click region: a font that cannot be measured leaves the
+        // geometry correct and denying or allowing must keep working.
+        if let Ok(ext) = cr.text_extents(label) {
+            cr.move_to(
+                btn_x + (btn_w - ext.width()) / 2.0 - ext.x_bearing(),
+                btn_y + (PERM_BUTTON_HEIGHT - ext.height()) / 2.0 - ext.y_bearing(),
+            );
+            let _ = cr.show_text(label);
+        }
 
         let action = match 2 - i {
             0 => ClickAction::PermissionDeny(perm.id.clone()),
@@ -1317,7 +2117,11 @@ fn draw_permission_card(
             _ => ClickAction::PermissionAlwaysAllow(perm.id.clone()),
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: btn_w, h: PERM_BUTTON_HEIGHT, action,
+            x: btn_x,
+            y: btn_y,
+            w: btn_w,
+            h: PERM_BUTTON_HEIGHT,
+            action,
         });
 
         btn_x -= PERM_BUTTON_GAP;
@@ -1327,27 +2131,40 @@ fn draw_permission_card(
 }
 
 fn draw_user_prompt_preview(
-    cr: &cairo::Context, panel_x: f64, panel_y: f64, panel_w: f64,
-    prompt: &str, alpha: f64,
+    cr: &cairo::Context,
+    panel_x: f64,
+    panel_y: f64,
+    panel_w: f64,
+    prompt: &str,
+    alpha: f64,
 ) {
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.5 * alpha);
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(14.0);
 
     let max_w = panel_w * 0.5;
     let mut display = prompt.to_string();
     loop {
-        let ext = cr.text_extents(&display).unwrap();
-        if ext.width() <= max_w || display.len() < 4 {
-            break;
+        match cr.text_extents(&display) {
+            Ok(ext) if ext.width() <= max_w || display.len() < 4 => break,
+            Ok(_) => {}
+            Err(_) => return,
         }
         display.truncate(display.len() - 4);
         display.push('…');
     }
 
-    let ext = cr.text_extents(&display).unwrap();
+    let Ok(ext) = cr.text_extents(&display) else {
+        return;
+    };
     let tx = panel_x + panel_w - PANEL_HEADER_OFFSET_RIGHT - ext.width() - ext.x_bearing();
-    let ty = panel_y + PANEL_HEADER_OFFSET_TOP + HEADER_BUTTON_SIZE / 2.0 - ext.height() / 2.0 - ext.y_bearing();
+    let ty = panel_y + PANEL_HEADER_OFFSET_TOP + HEADER_BUTTON_SIZE / 2.0
+        - ext.height() / 2.0
+        - ext.y_bearing();
     cr.move_to(tx, ty);
     let _ = cr.show_text(&display);
 }
@@ -1358,10 +2175,7 @@ enum ButtonIcon {
     OpenInNew,
 }
 
-fn draw_panel_button(
-    cr: &cairo::Context,
-    x: f64, y: f64, size: f64, alpha: f64, icon: ButtonIcon,
-) {
+fn draw_panel_button(cr: &cairo::Context, x: f64, y: f64, size: f64, alpha: f64, icon: ButtonIcon) {
     rounded_rect(cr, x, y, size, size, size / 4.0);
     cr.set_source_rgba(1.0, 1.0, 1.0, 0.06 * alpha);
     let _ = cr.fill();
@@ -1421,11 +2235,23 @@ fn draw_keyboard_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
     cr.scale(scale, scale);
     cr.translate(-(KB_BUTTON_SIZE / 2.0), -(KB_BUTTON_SIZE / 2.0));
 
-    cr.arc(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, 0.0, TAU);
+    cr.arc(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        0.0,
+        TAU,
+    );
     cr.set_source_rgba(0.0, 0.0, 0.0, 0.92 * alpha);
     let _ = cr.fill();
 
-    cr.arc(KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0, KB_BUTTON_SIZE / 2.0 - 0.5, 0.0, TAU);
+    cr.arc(
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0,
+        KB_BUTTON_SIZE / 2.0 - 0.5,
+        0.0,
+        TAU,
+    );
     cr.set_source_rgba(1.0, 1.0, 1.0, BORDER_ALPHA * alpha);
     cr.set_line_width(1.0);
     let _ = cr.stroke();
@@ -1459,7 +2285,10 @@ fn draw_keyboard_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64
 
     if kb_t > 0.5 {
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: KB_BUTTON_SIZE, h: KB_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: KB_BUTTON_SIZE,
+            h: KB_BUTTON_SIZE,
             action: ClickAction::KeyboardButton,
         });
     }
@@ -1502,7 +2331,10 @@ fn draw_cancel_button(cr: &cairo::Context, state: &PillState, ww: f64, wh: f64) 
 
     if t > 0.5 {
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: btn_x, y: btn_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: btn_x,
+            y: btn_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action: ClickAction::CancelDictation,
         });
     }
@@ -1564,7 +2396,10 @@ fn draw_pause_resume_button(cr: &cairo::Context, state: &PillState, ww: f64, wh:
             ClickAction::PauseDictation
         };
         state.click_regions.borrow_mut().push(ClickRegion {
-            x: pause_x, y: pause_y, w: CANCEL_BUTTON_SIZE, h: CANCEL_BUTTON_SIZE,
+            x: pause_x,
+            y: pause_y,
+            w: CANCEL_BUTTON_SIZE,
+            h: CANCEL_BUTTON_SIZE,
             action,
         });
     }
@@ -1688,7 +2523,11 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
         return;
     }
 
-    cr.select_font_face("Satoshi", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+    cr.select_font_face(
+        "Satoshi",
+        cairo::FontSlant::Normal,
+        cairo::FontWeight::Normal,
+    );
     cr.set_font_size(TRANSCRIPT_FONT_SIZE);
     let extents = match cr.text_extents(&text) {
         Ok(e) => e,
@@ -1702,7 +2541,14 @@ fn draw_broadcast_transcript(cr: &cairo::Context, state: &PillState, ww: f64, wh
     let rise = (1.0 - alpha) * 6.0;
     let box_y = pill_y - TRANSCRIPT_GAP - TRANSCRIPT_HEIGHT + rise;
 
-    rounded_rect(cr, box_x, box_y, box_w, TRANSCRIPT_HEIGHT, TRANSCRIPT_RADIUS);
+    rounded_rect(
+        cr,
+        box_x,
+        box_y,
+        box_w,
+        TRANSCRIPT_HEIGHT,
+        TRANSCRIPT_RADIUS,
+    );
     cr.set_source_rgba(0.0, 0.0, 0.0, alpha);
     let _ = cr.fill();
 
@@ -1809,9 +2655,8 @@ pub(crate) fn over_side_control(
 ) -> bool {
     let (px, py) = pause_button_origin(pill_x, pill_y, pill_h);
     let (cx, cy) = cancel_button_origin(pill_x, pill_y, pill_w, pill_h);
-    let inside = |ox: f64, oy: f64| {
-        x >= ox && x <= ox + CANCEL_BUTTON_SIZE && y >= oy && y <= oy + CANCEL_BUTTON_SIZE
-    };
+    let inside =
+        |ox: f64, oy: f64| rect_contains(x, y, ox, oy, CANCEL_BUTTON_SIZE, CANCEL_BUTTON_SIZE);
     inside(px, py) || inside(cx, cy)
 }
 
@@ -1857,5 +2702,13 @@ mod control_layout_tests {
         assert_eq!(py, cy, "both controls share a baseline");
         let pill_centre = PILL_Y + PILL_H / 2.0;
         assert!((py + CANCEL_BUTTON_SIZE / 2.0 - pill_centre).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn long_transcript_review_bounds_text() {
+        let long_transcript = "Transcription word ".repeat(4000);
+        let (preview, truncated) = rust_pill_shared::bound_review_preview_text(&long_transcript);
+        assert!(truncated);
+        assert!(preview.len() <= rust_pill_shared::MAX_REVIEW_PREVIEW_CHARS + 60);
     }
 }

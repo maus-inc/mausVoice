@@ -5,7 +5,22 @@ sidebar:
   order: 1
 ---
 
-mausVoice is a pnpm 10.11.0/Turborepo workspace whose root package is marked private. It contains a Tauri desktop product, static web properties, reusable TypeScript packages, and standalone Rust binaries.
+mausVoice is a pnpm 10.34.5/Turborepo workspace whose root package is marked private. It contains a Tauri desktop product, static web properties, reusable TypeScript packages, and standalone Rust binaries.
+
+| Path | Purpose |
+| --- | --- |
+| `apps/desktop` | Main Tauri app (React + Zustand) |
+| `apps/desktop/src-tauri` | Rust API, SQLite migrations, platform code |
+| `apps/docs` | Authoritative Astro/Starlight docs |
+| `apps/windows-installer` | Tauri wrapper around the Windows NSIS setup |
+| `packages/types` | Zod schemas and shared types |
+| `packages/utilities` | Shared TypeScript helpers |
+| `packages/voice-ai` | Provider HTTP/WebSocket clients |
+| `packages/agent` (`@repo/agent`) | Tool-calling agent loop |
+| `packages/desktop-native-apis` | Specta-generated Tauri bindings |
+| `packages/rust_transcription` | Local Whisper/ONNX sidecar |
+
+Root scripts: `pnpm run build`, `lint`, `check-types`, `test`, `format`, `gen:bindings`. Internal deps use `workspace:*`.
 
 ## Applications and sites
 
@@ -20,7 +35,7 @@ mausVoice is a pnpm 10.11.0/Turborepo workspace whose root package is marked pri
 
 ## Rust and native code
 
-- `packages/rust_transcription/` builds CPU and GPU HTTP sidecars that run whisper.cpp GGML models and ONNX Runtime Parakeet/Canary models.
+- `packages/rust_transcription/` builds CPU and GPU HTTP sidecars that run whisper.cpp GGML models, ONNX Runtime Parakeet/Canary models, and the sherpa-onnx SenseVoice model.
 - `packages/rust_{macos,windows,gtk}_pill/` implement each native overlay.
 - `packages/rust_pill_shared/` shares geometry and ring-animation math, not the entire platform message protocol.
 - `patches/` contains checked-in dependency fixes used by the Tauri Cargo manifest.

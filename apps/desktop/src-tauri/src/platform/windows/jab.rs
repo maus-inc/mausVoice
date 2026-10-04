@@ -88,8 +88,17 @@ fn find_jab_dll() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. `where java` on PATH
-    if let Ok(output) = std::process::Command::new("where").arg("java").output() {
+    // 2. `where java` on PATH. This binary is GUI-subsystem in release, so it
+    // owns no console and a console-subsystem child started without
+    // CREATE_NO_WINDOW is given a new one, which flashes on screen.
+    let mut where_cmd = std::process::Command::new("where");
+    where_cmd.arg("java");
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        where_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Ok(output) = where_cmd.output() {
         if let Ok(path_str) = String::from_utf8(output.stdout) {
             if let Some(line) = path_str.lines().next() {
                 if let Some(bin_dir) = std::path::Path::new(line.trim()).parent() {
@@ -584,11 +593,7 @@ unsafe fn dump_jab_element(
     let mut line = format!("{}[{}] \"{}\"", indent, role_display, name);
 
     if !description.is_empty() {
-        let d = if description.len() > 100 {
-            format!("{}...", &description[..100])
-        } else {
-            description
-        };
+        let d = crate::utils::truncate_display(&description, 100, "...");
         line.push_str(&format!(" desc=\"{}\"", d));
     }
 
@@ -633,11 +638,7 @@ unsafe fn extract_text_append(api: &JabApi, vm_id: i32, ac: JOBJECT64, line: &mu
         if (api.get_text_range)(vm_id, ac, 0, len - 1, buf.as_mut_ptr(), buf.len() as i16) != 0 {
             let text = wchar_to_string(&buf);
             if !text.is_empty() {
-                let display = if text.len() > 100 {
-                    format!("{}...", &text[..100])
-                } else {
-                    text
-                };
+                let display = crate::utils::truncate_display(&text, 100, "...");
                 line.push_str(&format!(" text=\"{}\"", display));
             }
         }

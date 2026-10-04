@@ -7,9 +7,16 @@ export class EndConversationTool extends BaseTool {
     return {};
   }
 
-  getAlwaysAllow(): boolean {
+  getAlwaysAllow(_params: Record<string, unknown>, _scope?: string): boolean {
     return true;
   }
 
-  setAlwaysAllow(): void {}
+  setAlwaysAllow(
+    _params: Record<string, unknown>,
+    _allowed: boolean,
+    _scope?: string,
+  ): void {
+    // End-conversation is inherently safe and never persists an allow-list decision.
+    return undefined;
+  }
 }

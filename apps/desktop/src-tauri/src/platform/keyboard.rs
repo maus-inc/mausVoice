@@ -11,14 +11,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
-use tauri::{AppHandle, Emitter, EventTarget};
+use tauri::{AppHandle, Emitter};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 
+static MAUSVOICE_KEYBOARD_PORT: &str = "MAUSVOICE_KEYBOARD_PORT";
+
 /// Helper to acquire a mutex lock, always returning a guard by recovering from poison errors.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(target_os = "linux")]
@@ -84,7 +88,13 @@ impl KeyEventEmitter {
     }
 
     fn emit(&self, payload: KeysHeldPayload) {
-        if let Err(err) = self.app.emit_to(EventTarget::any(), EVT_KEYS_HELD, payload) {
+        // Scope the broadcast to the main window only. The composer popout is a
+        // separate webview that loads the same SPA; if it received `keys_held`
+        // it would run its own dictation/style-switch pipeline in parallel with
+        // the main window, producing duplicate dictation. The main window is
+        // the only surface that owns dictation input. A raw label string is the
+        // canonical `EventTarget::Window` form (see `emit_to("main", ...)`).
+        if let Err(err) = self.app.emit_to("main", EVT_KEYS_HELD, payload) {
             log::error!("Failed to emit keys-held event: {err}");
         }
     }
@@ -332,10 +342,19 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 }
 
 pub fn sync_combos(combos: Vec<Vec<String>>) {
-    {
-        let mut guard = lock(combo_store());
-        *guard = combos.clone();
-    }
+    // The combo lock is held across the write, not released before it. Both
+    // writers of the child's stdin -- this and the initial send in the spawn
+    // path -- must read the store and write the child as one step, or a spawn
+    // that snapshotted older combos can write them after this call has already
+    // sent newer ones, leaving the child holding a configuration the store says
+    // was superseded.
+    //
+    // The order is combo_store then child_stdin_store, which is the order this
+    // function already used across its two acquisitions and the order the spawn
+    // path uses below, so holding both at once introduces no inversion. Nothing
+    // in this file takes them in the reverse order.
+    let mut combos_guard = lock(combo_store());
+    combos_guard.clone_from(&combos);
 
     let mut guard = lock(child_stdin_store());
     if let Some(stdin) = guard.as_mut() {
@@ -356,41 +375,49 @@ pub fn reset_pressed_keys() {
     }
 }
 
-/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
-/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
-/// first thread + child. Held across the entire stop→spawn→store operation.
 fn lifecycle_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+/// Serializes the whole stop/start sequence. Without this, two overlapping `start_key_listener`
+/// calls could each see "nothing to stop", both spawn, and the later store would orphan the
+/// first thread + child. Held across the entire stop→spawn→store operation.
+///
+/// Every entry point goes through here rather than locking at each call
+/// site, so the guarantee is a property of the one function below instead of
+/// something each caller has to remember to do.
+fn with_lifecycle_lock<R>(transition: impl FnOnce() -> R) -> R {
     let _lifecycle = lock(lifecycle_lock());
+    transition()
+}
 
-    stop_listener_locked();
+pub fn start_key_listener(app: &AppHandle) -> Result<(), String> {
+    with_lifecycle_lock(|| {
+        stop_listener_locked();
 
-    {
-        let mut app_guard = lock(listener_app());
-        *app_guard = Some(app.clone());
-    }
+        {
+            let mut app_guard = lock(listener_app());
+            *app_guard = Some(app.clone());
+        }
 
-    let mut state = lock(listener_state());
+        let mut state = lock(listener_state());
 
-    log::info!("Starting keyboard listener");
-    let emitter = Arc::new(KeyEventEmitter::new(app));
-    let (join_handle, running) = start_external_listener(emitter.clone())?;
-    *state = Some(ListenerHandle {
-        join_handle,
-        running,
-        emitter,
-    });
+        log::info!("Starting keyboard listener");
+        let emitter = Arc::new(KeyEventEmitter::new(app));
+        let (join_handle, running) = start_external_listener(emitter.clone())?;
+        *state = Some(ListenerHandle {
+            join_handle,
+            running,
+            emitter,
+        });
 
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn stop_key_listener() -> Result<(), String> {
-    let _lifecycle = lock(lifecycle_lock());
-    stop_listener_locked();
+    with_lifecycle_lock(stop_listener_locked);
     Ok(())
 }
 
@@ -673,21 +700,25 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         *stdin_guard = stdin;
     }
 
-    {
-        let combos = lock(combo_store())
-            .clone();
-        if !combos.is_empty() {
-            let mut guard = lock(child_stdin_store());
-            if let Some(stdin) = guard.as_mut() {
-                if let Ok(json) = serde_json::to_string(&combos) {
-                    if let Err(err) = writeln!(stdin, "{json}") {
-                        log::error!("Failed to send initial combos to child: {err}");
-                    }
-                    let _ = stdin.flush();
+    // Read the combos and send them under both locks, for the reason given on
+    // `sync_combos`: releasing the combo lock between the snapshot and the write
+    // lets a concurrent `sync_combos` deliver newer combos first and have this
+    // call overwrite them with the stale snapshot.
+    let combos_guard = lock(combo_store());
+    let mut stdin_guard = lock(child_stdin_store());
+    let combos = combos_guard.clone();
+    if !combos.is_empty() {
+        if let Some(stdin) = stdin_guard.as_mut() {
+            if let Ok(json) = serde_json::to_string(&combos) {
+                if let Err(err) = writeln!(stdin, "{json}") {
+                    log::error!("Failed to send initial combos to child: {err}");
                 }
+                let _ = stdin.flush();
             }
         }
     }
+    drop(stdin_guard);
+    drop(combos_guard);
 
     let mut guard = lock(child_store());
     *guard = Some(child);
@@ -887,6 +918,25 @@ pub(crate) fn matches_any_combo(pressed: &HashSet<String>, combos: &[Vec<String>
     false
 }
 
+/// Whether this key is a member of any configured combo.
+///
+/// `matches_any_combo` asks whether the pressed SET is a combo; this asks whether
+/// the key is PART OF one, which is a different question and is what decides
+/// whether a press should stay swallowed after the combo has fired. Normalized
+/// the same way, so a combo spelled `KeyZ` matches a press spelled `keyz`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn key_in_any_combo(key_label: &str, combos: &[Vec<String>]) -> bool {
+    let normalized = key_label.to_ascii_lowercase();
+    combos
+        .iter()
+        .filter(|combo| !combo.is_empty())
+        .any(|combo| {
+            combo
+                .iter()
+                .any(|key| key.to_ascii_lowercase() == normalized)
+        })
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn is_modifier_like_key_label(key_label: &str) -> bool {
     let normalized = key_label.to_ascii_lowercase();
@@ -967,8 +1017,23 @@ pub(crate) fn update_grab_hotkey_state(
                 }
                 return GrabDecision::PassThrough;
             }
-            state.suppressed_keys.insert(key_label.to_string());
-            return GrabDecision::Suppress;
+            // The combo has already fired, so the keys that make it up stay
+            // swallowed -- but nothing else does.
+            //
+            // This used to suppress every press unconditionally once
+            // `suppressed_keys` was non-empty, so a key in no combo was swallowed
+            // too, and swallowed *inconsistently*: holding a modifier and
+            // pressing an unrelated key passed through when `suppressed_keys`
+            // happened to be empty, and was suppressed once any suppressed key
+            // was still held. The same keystroke gave different answers
+            // depending on unrelated state, which is not a policy, it is a
+            // fallthrough. An exhaustive search over the reachable states found
+            // eleven distinct swallowed presses from one combo.
+            if key_in_any_combo(key_label, combos) {
+                state.suppressed_keys.insert(key_label.to_string());
+                return GrabDecision::Suppress;
+            }
+            return GrabDecision::PassThrough;
         }
 
         return GrabDecision::PassThrough;
@@ -993,7 +1058,7 @@ pub(crate) struct ListenerContext {
 }
 
 pub(crate) fn setup_listener_process() -> Result<ListenerContext, String> {
-    let port = env::var("MAUSVOICE_KEYBOARD_PORT")
+    let port = env::var(MAUSVOICE_KEYBOARD_PORT)
         .map_err(|_| "MAUSVOICE_KEYBOARD_PORT env var missing".to_string())?
         .parse::<u16>()
         .map_err(|err| format!("invalid MAUSVOICE_KEYBOARD_PORT: {err}"))?;
@@ -1084,10 +1149,10 @@ pub(crate) fn run_listen_loop(
 #[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
 mod tests {
     use super::{
-        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff,
-        should_promote, update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState,
-        HealthState, KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING,
-        FAILURE_CAP, HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
+        connection_proved_alive, failure_capped, matches_any_combo, retry_backoff, should_promote,
+        update_grab_hotkey_state, ControlState, GrabDecision, GrabHotkeyState, HealthState,
+        KeyboardEventPayload, WireEventKind, WireMessage, BACKOFF_CEILING, FAILURE_CAP,
+        HEALTHY_GRAB_GRACE, SLOW_RETRY_INTERVAL,
     };
     use std::collections::HashSet;
     use std::time::Duration;
@@ -1339,5 +1404,73 @@ mod tests {
         // Once capped, switch to the slow-retry auto-recovery interval.
         assert_eq!(retry_backoff(FAILURE_CAP), SLOW_RETRY_INTERVAL);
         assert_eq!(retry_backoff(FAILURE_CAP + 5), SLOW_RETRY_INTERVAL);
+    }
+}
+
+/// The lifecycle serialization is platform-agnostic, and these live outside
+/// the `macos`/`windows`-gated module above so the Linux unit-test job is
+/// what runs them. They were in the gated module, where neither the CI
+/// desktop unit-test job (ubuntu) nor the Windows clippy job ever executed
+/// them.
+#[cfg(test)]
+mod lifecycle_tests {
+    /// Regression test for issue #488: the Windows resume path calls
+    /// `restart_key_listener` (which is `start_key_listener` under the
+    /// hood) after sleep/wake or session unlock, and may receive a second
+    /// `desktop_resume` event while the first restart is still in flight.
+    /// The platform-agnostic entry point must therefore be safe to call
+    /// twice in quick succession.
+    ///
+    /// The start half needs an `AppHandle` and spawns a child process, so
+    /// what is under test here is the serialization both halves run inside:
+    /// every entry point goes through `with_lifecycle_lock`, and that is
+    /// what stops two overlapping transitions from each seeing "nothing to
+    /// stop" and both spawning. The test drives that same function
+    /// concurrently and fails if the critical section is not exclusive.
+    #[test]
+    fn overlapping_listener_transitions_are_serialized() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let inside = Arc::new(AtomicBool::new(false));
+        let overlapped = Arc::new(AtomicBool::new(false));
+
+        let mut threads = Vec::new();
+        for _ in 0..8 {
+            let inside = inside.clone();
+            let overlapped = overlapped.clone();
+            threads.push(std::thread::spawn(move || {
+                for _ in 0..500 {
+                    super::with_lifecycle_lock(|| {
+                        if inside.swap(true, Ordering::SeqCst) {
+                            overlapped.store(true, Ordering::SeqCst);
+                        }
+                        // Hold the section long enough that an unguarded
+                        // transition is certain to be found inside it.
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                        inside.store(false, Ordering::SeqCst);
+                    });
+                }
+            }));
+        }
+        for thread in threads {
+            thread.join().expect("lifecycle thread panicked");
+        }
+
+        assert!(
+            !overlapped.load(Ordering::SeqCst),
+            "two listener transitions ran inside the lifecycle section at once, so a \
+             restart could observe an empty slot and orphan the running listener"
+        );
+    }
+
+    /// A stop with nothing running must stay harmless, which is the state a
+    /// duplicate `desktop_resume` finds when the first restart has already
+    /// finished.
+    #[test]
+    fn stop_key_listener_is_idempotent() {
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
+        assert!(super::stop_key_listener().is_ok());
     }
 }

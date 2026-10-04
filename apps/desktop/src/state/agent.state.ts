@@ -4,7 +4,13 @@ export type AgentToolCallState = {
   params: Record<string, unknown>;
   permissionId?: string;
   result?: Record<string, unknown>;
-  status: "pending" | "awaiting-permission" | "executing" | "done" | "denied";
+  status:
+    | "pending"
+    | "awaiting-permission"
+    | "executing"
+    | "done"
+    | "denied"
+    | "failed";
 };
 
 export type AgentStatus =

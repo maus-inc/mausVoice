@@ -1,4 +1,4 @@
-import { LocalFireDepartmentRounded } from "@mui/icons-material";
+import { Flame } from "lucide-react";
 import {
   Box,
   Card,
@@ -16,7 +16,7 @@ import {
   getDictationSpeed,
   getEffectiveStreak,
   getMyUser,
-  getMyUserName,
+  getMyUserFirstName,
 } from "../../utils/user.utils";
 import { DictationInstruction } from "../common/DictationInstruction";
 import { DashboardEntryLayout } from "../dashboard/DashboardEntryLayout";
@@ -76,7 +76,7 @@ function StatCard({
  */
 export default function HomePage() {
   const user = useAppStore(getMyUser);
-  const userName = useAppStore(getMyUserName);
+  const userFirstName = useAppStore(getMyUserFirstName);
   const streak = useAppStore(getEffectiveStreak);
   const intl = useIntl();
 
@@ -112,7 +112,7 @@ export default function HomePage() {
                       fontSize: "0.92em",
                     }}
                   >
-                    {userName}
+                    {userFirstName}
                   </span>
                 ),
               }}
@@ -126,11 +126,7 @@ export default function HomePage() {
             <StatCard
               value={streak.toString()}
               label={intl.formatMessage({ defaultMessage: "Day streak" })}
-              icon={
-                <LocalFireDepartmentRounded
-                  sx={{ color: "#FF6B35", fontSize: 24 }}
-                />
-              }
+              icon={<Flame size={22} strokeWidth={2} color="#FF6B35" />}
             />
             <StatCard
               value={wordsThisMonth.toLocaleString()}

@@ -1,5 +1,12 @@
-import { ArrowBack } from "@mui/icons-material";
-import { Box, Button, Stack, SxProps, useColorScheme } from "@mui/material";
+import { ArrowBack, ArrowForward } from "@mui/icons-material";
+import {
+  Box,
+  Button,
+  Stack,
+  SxProps,
+  Typography,
+  useColorScheme,
+} from "@mui/material";
 import { FormattedMessage } from "react-intl";
 import { useNavigate } from "react-router-dom";
 import { goBackOnboardingPage } from "../../actions/onboarding.actions";
@@ -37,6 +44,65 @@ export type OnboardingFormLayoutProps = {
   actions?: React.ReactNode;
 };
 
+// The fade strips below need a pseudo-element, and Emotion rejects an unquoted
+// `content`: development throws on `''` and production emits `content:` with no
+// value, which the CSS parser drops. An empty string has to be spelled quoted.
+const EMPTY_PSEUDO_CONTENT = '""';
+
+export const OnboardingContinueButton = ({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) => {
+  return (
+    <Button
+      variant="contained"
+      endIcon={<ArrowForward />}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <FormattedMessage defaultMessage="Continue" />
+    </Button>
+  );
+};
+
+export const OnboardingFormHeader = ({
+  title,
+  subtitle,
+}: {
+  title: React.ReactNode;
+  subtitle: React.ReactNode;
+}) => {
+  return (
+    <Box>
+      <Typography
+        variant="h4"
+        // Each onboarding page renders only this title, and `OnboardingPage`
+        // puts it straight inside a plain `Stack` with no other heading, so an
+        // `h4` here was a skipped-level heading under no `h1`. `component` keeps
+        // the h4 typography and its size while making the level correct.
+        component="h1"
+        sx={{
+          fontWeight: 600,
+          pb: 1,
+        }}
+      >
+        {title}
+      </Typography>
+      <Typography
+        variant="body1"
+        sx={{
+          color: "text.secondary",
+        }}
+      >
+        {subtitle}
+      </Typography>
+    </Box>
+  );
+};
+
 export const OnboardingFormLayout = ({
   back,
   children,
@@ -55,7 +121,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::after": {
-            content: '""',
+            content: EMPTY_PSEUDO_CONTENT,
             position: "absolute",
             left: 0,
             right: 0,
@@ -90,7 +156,7 @@ export const OnboardingFormLayout = ({
           position: "relative",
           zIndex: 1,
           "&::before": {
-            content: '""',
+            content: EMPTY_PSEUDO_CONTENT,
             position: "absolute",
             left: 0,
             right: 0,

@@ -13,7 +13,7 @@ Choose **Add API key** or **Add another key**, enter a descriptive **Key name**,
 
 Saving creates and selects the record. If a task has compatible records but no selected ID, the dialog automatically selects the first displayed one. A generic model picker may load provider models and also accepts a typed model name. A model must match the task: a chat model cannot transcribe merely because the same credential can access both.
 
-**Test** makes a provider-specific network call. It checks basic credentials or endpoint reachability, not the exact selected model in every case, available quota, streaming behavior, language support, future requests, or provider retention. For example, the OpenAI-compatible test lists models, and the Speaches test calls `/health`.
+**Test** makes a provider-specific network call. It checks basic credentials or endpoint reachability, not the exact selected model in every case, available quota, streaming behavior, language support, future requests, or provider retention. For example, the OpenAI-compatible test lists models, Speaches calls `/health`, and Gladia performs an authenticated pre-recorded-list request that does not create a billable transcription job.
 
 ## Quick Groq and Deepgram rows
 

@@ -1,8 +1,15 @@
 # rust_transcription
 
 Rust sidecar service for local speech transcription in mausVoice. It runs
-whisper.cpp GGML models (Whisper Tiny through Large v3) and ONNX Runtime models
-(NVIDIA Parakeet CTC/TDT 0.6B and Canary 1B).
+whisper.cpp GGML models (Whisper Tiny through Large v3), ONNX Runtime models
+(NVIDIA Parakeet CTC/TDT 0.6B and Canary 1B), and SenseVoice via sherpa-onnx.
+
+The desktop app starts this process on an ephemeral loopback port. Standalone
+defaults are `127.0.0.1:7771` (CPU) and `:7772` (GPU). Session "streaming" is
+chunked Float32 upload plus in-memory buffering; inference runs at **finalize**,
+not per chunk. Idle sessions expire after ~10 minutes.
+
+See [Rust transcription sidecar](https://maus-inc.github.io/mausVoice/docs/development/transcription-sidecar/).
 
 It exposes one REST interface for both CPU and GPU binaries:
 
@@ -21,6 +28,7 @@ Supported models:
 
 - Whisper (whisper.cpp / GGML): `tiny`, `base`, `small`, `medium`, `large`, `turbo`
 - NVIDIA ONNX: `parakeet-ctc-0.6b`, `parakeet-tdt-0.6b`, `canary-1b`
+- sherpa-onnx: `sense-voice` (aliases `sensevoice`, `sense_voice`)
 
 ## Build
 

@@ -11,9 +11,13 @@ sidebar:
 
 Choose **Chats**, then use **New chat** (`+`) to create a conversation. Type in the composer and press Enter or choose the send button; use Shift+Enter for a line break. A voice-assistant session also creates a conversation, and the **Open chat** shortcut opens the current pill conversation in this view.
 
+A conversation stays listed as **New conversation** until you send its first message. The sidebar then names it from that message and orders the list by latest activity. Each row shows the conversation date and switches to the time when you hover over it or open it.
+
 The response streams into the conversation. Tool activity appears alongside model output, and a tool that needs access pauses for a permission card. Review its parameters and reason, then choose **Deny**, **Allow**, or **Always allow**. Denial returns a failed tool result to the assistant; it does not undo an action that was already approved and completed.
 
-See [Assistant mode](../assistant-mode/) before approving screen reads, paste operations, or terminal commands.
+When an agent's **Paste** action is reviewed in the pill and you choose **Open**, the review text is saved here as a pending manual-paste card. Opening Chats changes the focused app, so the card copies the saved text instead of trying to insert it into the wrong window. Choose **Copy for manual paste**, focus the intended app, and paste there; **Cancel** leaves the saved text visible but marks the action dismissed.
+
+See [Assistant mode](./assistant-mode/) before approving screen reads, paste operations, or terminal commands.
 
 ## What is stored and sent
 

@@ -36,6 +36,7 @@ build
 dist
 .astro/
 apps/desktop/src/i18n/locales/.cache/
+apps/desktop/src-tauri/icons/nsis-sidebar.bmp
 apps/windows-installer/src-tauri/installer/mausVoice_Setup.exe
 
 
@@ -52,7 +53,42 @@ yarn-error.log*
 .DS_Store
 *.pem
 
+# Signing keys and credentials. These must never be committed: the updater
+# private key is the anchor installed copies of mausVoice trust to execute
+# code. Tauri's `signer generate -w ~/...` does not expand "~" in PowerShell,
+# so on Windows it writes the key to a literal "~" directory inside the repo
+# (apps/desktop/~/.tauri/) — that path is covered explicitly.
+*.key
+*.key.pub
+.tauri/
+**/~/
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+*.asc
+*.gpg
+
+# Build-time updater manifest. `build-updater-manifest.mjs` defaults to
+# writing latest.json at the repo root when OUTPUT_PATH is unset; in CI it
+# goes to dist/, but a local run would drop one here.
+/latest.json
+
+# Tauri bundler toolchains, downloaded into src-tauri during a Windows build.
+WixTools/
+NSIS/
+
+# Logs
+*.log
+
+# Python caches (scripts/ and packages/rust_transcription carry .py tooling)
+__pycache__/
+*.py[cod]
+
 target/
+.toolchain/
 nul
 
 *.exe
@@ -76,5 +112,31 @@ nul
 # Local handoff artifact (not committed)
 HANDOFF.md
 
+# Secrets and local CI/log artifacts (must never be committed)
+.ghtoken
+/logs/
 #Agent 
 .mausagent/
+.kilo/
+
+# TypeScript incremental build state
+*.tsbuildinfo
+
+# Ephemeral local review/tool caches
+/.cache/
+
+# Harvested pull-request review artifacts. These are working notes for a
+# consolidation pass: the durable record is the disposition comment on the PR
+# itself, not a copy of the raw threads in the release tree.
+reports/pr*/
+.prompts/
+
+# Locally installed Rust toolchain (CARGO_HOME/RUSTUP_HOME for local gates).
+# Never committed: hundreds of megabytes of binaries, and CI provisions its own.
+.tooling/
+
+# The block above was repeated 3 more times, byte for byte. `.gitignore`
+# semantics make the later entries no-ops, so the only effect was that a
+# future edit to the comment had to be made 4 times and 3 copies would be
+# left stale. One copy now, with the reason recorded so the next append is a
+# merge rather than a copy.

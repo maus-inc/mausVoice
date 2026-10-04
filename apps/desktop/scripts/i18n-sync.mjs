@@ -35,37 +35,56 @@ if (!fs.existsSync(baseLocalePath)) {
 }
 
 const baseMessages = JSON.parse(fs.readFileSync(baseLocalePath, "utf8"));
-const sortedKeys = Object.keys(baseMessages).sort();
+// Deterministic code-unit order: `localeCompare()` without an explicit locale
+// follows the host's ICU collation, so identical sources could produce
+// differently ordered catalogs on machines with different system locales and
+// trip the CI "no diff after sync" check.
+const compareKeys = (a, b) => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+const sortedKeys = Object.keys(baseMessages).sort(compareKeys);
 
 const cacheDir = path.join(localesDir, ".cache");
 const cacheFilePath = path.join(cacheDir, `${sourceLocale}.json`);
 
-let previousBaseMessages = {};
-const cacheExists = fs.existsSync(cacheFilePath);
-
-if (cacheExists) {
+const readCachedBase = (file) => {
+  if (!fs.existsSync(file)) return {};
   try {
-    previousBaseMessages = JSON.parse(fs.readFileSync(cacheFilePath, "utf8"));
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      Object.values(parsed).some((value) => typeof value !== "string")
+    ) {
+      throw new TypeError("Expected a cached string-message catalog");
+    }
+    return parsed;
   } catch (error) {
     console.warn(
       `[i18n] Unable to read cached base for "${sourceLocale}": ${error.message}`,
     );
+    // Missing history is not evidence that every existing translation is stale.
+    return {};
   }
-}
+};
 
-const changedKeys = new Set();
-
-if (cacheExists) {
-  for (const key of sortedKeys) {
-    const previousMessage = previousBaseMessages[key];
-    if (
-      previousMessage === undefined ||
-      previousMessage !== baseMessages[key]
-    ) {
-      changedKeys.add(key);
-    }
-  }
-}
+const changedKeysFor = (locale) => {
+  const targetCache = path.join(cacheDir, `${sourceLocale}--${locale}.json`);
+  // Migrate the old shared cache lazily. Each target must thereafter track its
+  // own baseline: a partial --locale sync cannot acknowledge changes for others.
+  const previous = readCachedBase(
+    fs.existsSync(targetCache) ? targetCache : cacheFilePath,
+  );
+  return new Set(
+    sortedKeys.filter(
+      (key) =>
+        Object.hasOwn(previous, key) && previous[key] !== baseMessages[key],
+    ),
+  );
+};
 
 const localeArg = args.find((arg) => arg.startsWith("--locale="));
 
@@ -105,6 +124,7 @@ const writeLocaleFile = (locale) => {
     existingMessages = JSON.parse(fs.readFileSync(targetFile, "utf8"));
   }
 
+  const changedKeys = changedKeysFor(locale);
   const nextMessages = {};
   let added = 0;
   let retained = 0;
@@ -134,6 +154,12 @@ const writeLocaleFile = (locale) => {
 
   fs.writeFileSync(targetFile, `${JSON.stringify(nextMessages, null, 2)}\n`);
 
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(cacheDir, `${sourceLocale}--${locale}.json`),
+    `${JSON.stringify(baseMessages, null, 2)}\n`,
+  );
+
   const removedLabel =
     removedKeys.length > 0 ? `, removed ${removedKeys.length}` : "";
   console.log(
@@ -143,9 +169,15 @@ const writeLocaleFile = (locale) => {
   );
 };
 
-localesToSync.forEach((locale) => {
-  writeLocaleFile(locale);
-});
+// Validate the whole selection before mutating even the first target.
+localesToSync.forEach(ensureLocale);
+localesToSync.forEach(writeLocaleFile);
 
-fs.mkdirSync(cacheDir, { recursive: true });
-fs.writeFileSync(cacheFilePath, `${JSON.stringify(baseMessages, null, 2)}\n`);
+// Preserve a usable migration baseline for targets not yet synced individually.
+const syncedAll = supportedLocales.every(
+  (locale) => locale === sourceLocale || localesToSync.includes(locale),
+);
+if (syncedAll) {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(cacheFilePath, `${JSON.stringify(baseMessages, null, 2)}\n`);
+}

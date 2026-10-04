@@ -1,0 +1,38 @@
+# Release-note categories for mausVoice. GitHub groups auto-generated notes
+# under these headings; the release pipeline also uses the same input for
+# the release body, changelog.json, and updater manifest notes.
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - dependabot[bot]
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking
+        - breaking-change
+    - title: New features
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - fix
+        - bug
+    - title: Performance
+      labels:
+        - performance
+    - title: Documentation
+      labels:
+        - docs
+        - documentation
+    - title: Maintenance
+      labels:
+        - chore
+        - refactor
+        - ci
+        - dependencies
+    - title: Other changes
+      labels:
+        - "*"

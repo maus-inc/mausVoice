@@ -1,4 +1,7 @@
-use std::{fs, io, path::{Path, PathBuf}};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 use tauri::Manager;
 
 use super::models::WhisperModelSize;
@@ -33,9 +36,7 @@ pub fn database_path(app: &tauri::AppHandle) -> io::Result<PathBuf> {
 
 fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::Result<()> {
     let legacy_dir = match app.path().app_config_dir() {
-        Ok(dir) => dir
-            .parent()
-            .map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
+        Ok(dir) => dir.parent().map(|base| base.join(LEGACY_CONFIG_DIR_NAME)),
         Err(_) => None,
     };
     let Some(legacy_dir) = legacy_dir else {
@@ -58,10 +59,10 @@ fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::R
     for sidecar in ["-wal", "-shm"] {
         let legacy_sidecar = legacy_dir.join(format!("{LEGACY_DB_FILENAME}{sidecar}"));
         if legacy_sidecar.exists() {
-            let _ = fs::copy(&legacy_sidecar, current_path.with_file_name(format!(
-                "{}{sidecar}",
-                crate::db::DB_FILENAME
-            )));
+            let _ = fs::copy(
+                &legacy_sidecar,
+                current_path.with_file_name(format!("{}{sidecar}", crate::db::DB_FILENAME)),
+            );
         }
     }
     log::info!(
