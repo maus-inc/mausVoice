@@ -313,6 +313,24 @@ describe("release workflow shell contracts", () => {
       "each resolver must compare the blob against the checkout and refuse on a difference",
     );
 
+    // The resolved file's NAME is load-bearing, and a bare `mktemp` breaks the job.
+    //
+    // Gitleaks dispatches config parsing on the file extension. Given a path with none it
+    // answers `Unsupported Config Type "<suffix>"` and exits 1 -- which the scan reads as
+    // findings, so every scan failed on a perfectly capable base. The local job simulator
+    // did not catch it because it stubbed gitleaks out; CI did.
+    assert.equal(
+      [...scan.matchAll(/POLICY_TMP="\$POLICY_DIR\/gitleaks\.toml"/g)].length,
+      4,
+      "the resolved policy must be named gitleaks.toml: gitleaks selects its config " +
+        "parser by file extension and rejects an extensionless path",
+    );
+    assert.doesNotMatch(
+      scan,
+      /POLICY_TMP="\$\(mktemp\)/,
+      "a bare mktemp path has no extension and gitleaks will not load it",
+    );
+
     assert.match(
       body,
       /::error::Cannot read gitleaks\.toml at \$POLICY_REF/,
