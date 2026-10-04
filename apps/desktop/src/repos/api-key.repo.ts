@@ -12,10 +12,11 @@ type LocalApiKey = {
   keyFull?: string | null;
   transcriptionModel?: string | null;
   postProcessingModel?: string | null;
-  openrouterConfig?: string | null;
+  openRouterConfig?: string | null;
   baseUrl?: string | null;
   azureRegion?: string | null;
   includeV1Path?: boolean | null;
+  transcriptionPath?: string | null;
 };
 
 const parseOpenRouterConfig = (
@@ -38,10 +39,11 @@ const fromLocalApiKey = (apiKey: LocalApiKey): ApiKey => ({
   keyFull: apiKey.keyFull ?? null,
   transcriptionModel: apiKey.transcriptionModel ?? null,
   postProcessingModel: apiKey.postProcessingModel ?? null,
-  openRouterConfig: parseOpenRouterConfig(apiKey.openrouterConfig),
+  openRouterConfig: parseOpenRouterConfig(apiKey.openRouterConfig),
   baseUrl: apiKey.baseUrl ?? null,
   azureRegion: apiKey.azureRegion ?? null,
   includeV1Path: apiKey.includeV1Path ?? null,
+  transcriptionPath: apiKey.transcriptionPath ?? null,
 });
 
 export type CreateApiKeyPayload = {
@@ -52,6 +54,7 @@ export type CreateApiKeyPayload = {
   baseUrl?: string;
   azureRegion?: string;
   includeV1Path?: boolean;
+  transcriptionPath?: string;
 };
 
 export type UpdateApiKeyPayload = {
@@ -64,6 +67,8 @@ export type UpdateApiKeyPayload = {
   baseUrl?: string | null;
   azureRegion?: string | null;
   includeV1Path?: boolean | null;
+  transcriptionPath?: string | null;
+  clearTranscriptionPath?: boolean | null;
 };
 
 export abstract class BaseApiKeyRepo extends BaseRepo {
@@ -87,8 +92,12 @@ export class LocalApiKeyRepo extends BaseApiKeyRepo {
   }
 
   async updateApiKey(payload: UpdateApiKeyPayload): Promise<ApiKey> {
+    const clearTranscriptionPath =
+      payload.clearTranscriptionPath ??
+      (payload.transcriptionPath === null ? true : undefined);
     const request = {
       ...payload,
+      clearTranscriptionPath,
       openRouterConfig:
         payload.openRouterConfig !== undefined
           ? payload.openRouterConfig
