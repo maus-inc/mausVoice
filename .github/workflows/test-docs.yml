@@ -25,16 +25,14 @@ on:
 
 permissions: {}
 
+# trigger-manual: true
+
 # This workflow runs on branch pushes and on manual requests, not PR events.
-# An earlier version of this comment was shared verbatim with four workflows that
-# declare no `workflow_dispatch` at all, so it told their readers they could
-# trigger a run by hand -- which they could not. Corrected here and there
-# separately because the two facts are genuinely different: one shared sentence
-# could not be right for both, and making it right for one made it wrong for the
-# other. `format-and-i18n`, `release`, `test-docs` and
-# `test-package-rust-transcription` declare `workflow_dispatch`; the rest of this
-# group does not.
-# Cancel superseded runs for the same branch.
+# An earlier version of this comment was shared verbatim with four workflows whose
+# `on:` blocks declare no `workflow_dispatch`, so it told their readers they could
+# trigger a run by hand -- which they could not. Corrected here and there separately
+# because the two facts are genuinely different: one shared sentence could not be
+# right for both, and making it right for one made it wrong for the other.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -174,10 +174,20 @@ describe("release workflow shell contracts", () => {
     // The `on:` block only: a `workflow_dispatch:` key appearing in a comment or in
     // a job's `if:` would otherwise satisfy this and pin nothing.
     const declaresManual = /^\s*workflow_dispatch:/m.test(on[1]);
-    // The claim is the absence of the denial. Phrasing it as "does the comment
-    // contain this phrase" is what let my first fix pass while being false, because
-    // the corrected comment still quotes the old sentence while explaining it.
-    const claimsManual = !/cannot be requested by hand/.test(text);
+    // The claim comes from a machine-readable marker beside the `on:` block, never
+    // from the prose. Every version of this assertion that read the comment text
+    // broke the moment the comment was reworded -- which is not a change to the
+    // `on:` block at all, and happened three times while writing these comments.
+    // Reading prose also cannot work here: a corrected comment still quotes the
+    // old sentence while explaining it, so any phrase search for the claim finds
+    // the history rather than the assertion.
+    const marker = /^#\s*trigger-manual:\s*(true|false)\s*$/m.exec(text);
+    assert.ok(
+      marker,
+      `${file}.yml must carry a "# trigger-manual: true|false" line beside its on: ` +
+        `block, so this contract never has to interpret prose`,
+    );
+    const claimsManual = marker[1] === "true";
 
     assert.equal(
       declaresManual,
@@ -186,6 +196,107 @@ describe("release workflow shell contracts", () => {
         `(declares workflow_dispatch: ${declaresManual})`,
     );
   }
+  it("the inert-policy sentinel lives where the pull request cannot delete it", () => {
+    // The verdict in the closing step reads a sentinel file that the scan steps
+    // write when the trusted policy cannot detect anything. That file used to live
+    // in $RUNNER_TEMP, which every step in this job can write -- and steps 11-13 are
+    // `node scripts/ci/*.mjs` executed from the SCANNED checkout, i.e. arbitrary code
+    // from the branch under review. One `rm -rf "$RUNNER_TEMP"` in any of them makes
+    // the gate report a scan it never performed, which is the one failure this whole
+    // job exists to prevent. So the sentinel moved into the trusted checkout, which
+    // only this job's own steps write.
+    //
+    // Three properties, each separately load-bearing, and none of them observable
+    // from any other gate in this repository:
+    //   1. its path is under the trusted checkout, never under runner temp;
+    //   2. it is cleared before anything can write one, so a stale file from an
+    //      earlier run cannot make a later inert scan look like a working one;
+    //   3. that reset step comes before every step that writes the sentinel.
+    const scan = read(".github/workflows/secret-scan.yml");
+
+    const sentinel = scan.match(/^\s*INERT_SENTINEL:\s*(.+?)\s*$/m);
+    assert.ok(
+      sentinel,
+      "secret-scan.yml must set INERT_SENTINEL as a step env var",
+    );
+    assert.match(
+      sentinel[1],
+      /^\$\{\{ github\.workspace \}\}\/trusted-scanner\//,
+      `INERT_SENTINEL must sit under the trusted checkout, got: ${sentinel[1]}`,
+    );
+    assert.doesNotMatch(
+      sentinel[1],
+      /runner\.temp|RUNNER_TEMP/,
+      "INERT_SENTINEL must not sit under runner temp: the scanned checkout's own " +
+        "scripts run as the same uid and can delete anything there",
+    );
+
+    const steps = extractSteps(scan);
+    const writers = steps.filter((step) =>
+      step.run.some((l) => l.includes("$INERT_SENTINEL") && l.includes(">")),
+    );
+    assert.ok(
+      writers.length >= 3,
+      `expected at least 3 sentinel writers, found ${writers.length}`,
+    );
+    const resetIndex = steps.findIndex((step) =>
+      step.name.startsWith("Reset the inert-policy sentinel"),
+    );
+    assert.notEqual(
+      resetIndex,
+      -1,
+      "secret-scan.yml needs a step that resets the sentinel",
+    );
+    // Matched on the raw text rather than through extractSteps: this step's body is
+    // an inline `run:`, which the block-scalar scanner reports as empty.
+    assert.match(
+      scan,
+      /- name: Reset the inert-policy sentinel\n\s+run: rm -f "\$INERT_SENTINEL"\n/,
+      'the reset step must be exactly `rm -f "$INERT_SENTINEL"`',
+    );
+    for (const writer of writers) {
+      assert.ok(
+        steps.indexOf(writer) > resetIndex,
+        `${writer.name} writes the sentinel but runs before it is reset, so a ` +
+          "sentinel left by an earlier run would be read as this run's verdict",
+      );
+    }
+
+    // The verdict must still be fail-closed: it is an error, not a warning.
+    const verdict = steps.find((step) =>
+      step.name.startsWith("Require a secret-scan policy"),
+    );
+    assert.ok(verdict, "secret-scan.yml needs the closing verdict step");
+    assert.ok(
+      verdict.run.some(
+        (l) => l.includes("::error::") && l.includes("INERT_SENTINEL"),
+      ),
+      "the closing verdict must fail the job when no scan ran",
+    );
+  });
+
+  it("the policy-resolution rationale describes skipping, not failing, inside the scan", () => {
+    // In c4cd6517 the scans stopped failing the job and a closing step took over as
+    // the verdict, because failing inside them made every self-verification step
+    // after them unreachable. Four copies of the rationale still said the scan
+    // "fails the job on purpose" and that an unusable policy "is refused", which is
+    // the opposite of what the code does. Nothing executes a comment, so no gate
+    // catches this; only a pinned assertion does.
+    const scan = read(".github/workflows/secret-scan.yml");
+    assert.doesNotMatch(
+      scan,
+      /fails the job on purpose|carry it is refused rather than assumed/,
+      "the rationale still describes the scan as failing the job; it skips and the " +
+        "closing step is what fails",
+    );
+    // ...and the corrected wording must be present, so the comment cannot simply be
+    // deleted to satisfy the assertion above.
+    assert.match(
+      scan,
+      /carry it is SKIPPED rather than assumed/,
+      "the rationale must say the scan skips, naming the closing step as the verdict",
+    );
+  });
 
   it("secret-scan's policy-resolution note is placed where a reader will find it, and agrees with the code", () => {
     // The 38-line rationale for the resolver is the only record of why `-c` on

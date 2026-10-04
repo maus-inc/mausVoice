@@ -19,15 +19,14 @@ on:
       - "scripts/generate-windows-installer-sidebar.mjs"
 permissions: {}
 
-# These workflows run on branch pushes only, not PR events, and they do not
-# declare `workflow_dispatch` either, so they cannot be requested by hand
-# either. An earlier version of this comment said "or manual requests", which
-# was false for all five workflows carrying it: `format-and-i18n`, `release`,
-# `test-docs` and `test-package-rust-transcription` declare
-# `workflow_dispatch`, these do not. If manual triggering is wanted here, it
-# needs adding to the `on:` block -- and saying so in the comment is cheaper
-# than leaving a reader to assume a trigger that does not exist.
-# Cancel superseded runs for the same branch.
+# trigger-manual: false
+
+# These workflows run on branch pushes only, not PR events.
+# An earlier version of this comment was shared verbatim with `test-docs` and said
+# "or manual requests". That was true of `test-docs` alone and false here, so it
+# told these readers they could trigger a run they could not. If manual triggering
+# is wanted it needs adding to the `on:` block, which is a maintainer's decision
+# and not a comment's.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
