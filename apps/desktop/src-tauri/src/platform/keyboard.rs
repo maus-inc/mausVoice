@@ -772,19 +772,68 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
     }
 
     // A stop that landed while this child was being spawned found nothing to kill. Honour
-    // it, rather than leaving a process behind that nothing owns. Scoped to THIS child by
-    // id: if another spawn won the race and published its own, this must not kill that one.
-    if stop_epoch().load(Ordering::SeqCst) != epoch {
+    // it, rather than leaving a process behind that nothing owns.
+    //
+    // Two details that are easy to get wrong and are therefore a named function with a
+    // test rather than an inline block:
+    //
+    //   * the stdin slot is cleared in the same breath. `publish_child_stdin` installed
+    //     a handle a few lines above; killing the child without clearing it leaves
+    //     `Some(ChildStdin)` pointing at a dead process, so every `sync_combos` until the
+    //     next spawn or stop writes to it and logs an error. On the disconnect path that
+    //     is a real window, because `stop_listener_child` runs only after
+    //     `wait_for_connection` returns.
+    //   * the kill is scoped to THIS child by id. If another spawn won the race and
+    //     published its own, this must not kill that one.
+    //
+    // And it returns `Err`, not `Ok`: reporting success hands `run_listener_thread` a
+    // listener that is not there, which parks it in `wait_for_connection` for the full
+    // CONNECT_TIMEOUT before retrying. The error path is the one that counts the failure
+    // and backs off.
+    if should_discard_spawned_child(
+        epoch,
+        stop_epoch().load(Ordering::SeqCst),
+        published_child_id(),
+        id,
+    ) {
+        {
+            let mut stdin_guard = lock(child_stdin_store());
+            *stdin_guard = None;
+        }
         let mut guard = lock(child_store());
-        let ours = guard.as_ref().map(|c| c.id()) == Some(id);
-        if ours {
+        if guard.as_ref().map(|c| c.id()) == Some(id) {
             if let Some(mut child) = guard.take() {
                 let _ = child.kill();
                 let _ = child.wait();
             }
         }
+        return Err("a stop raced this spawn, so the child was discarded".to_string());
     }
     Ok(())
+}
+
+/// The id of whatever child `child_store` currently holds, or `None`.
+///
+/// Separate from `should_discard_spawned_child` so that call stays a pure decision and can
+/// be tested without a process, which is the point: the id comparison inside it is exactly
+/// the part a later edit could get wrong with nothing else failing.
+fn published_child_id() -> Option<u32> {
+    lock(child_store()).as_ref().map(|c| c.id())
+}
+
+/// Whether a spawn that recorded `epoch_at_spawn` should throw away the child it just
+/// published.
+///
+/// True when a stop happened during the spawn (`epoch_now` moved) AND the child in the
+/// store is still this one. Both halves matter. Without the first, every spawn would
+/// discard itself. Without the second, a spawn that lost the race would kill the winner.
+fn should_discard_spawned_child(
+    epoch_at_spawn: u64,
+    epoch_now: u64,
+    published: Option<u32>,
+    mine: u32,
+) -> bool {
+    epoch_now != epoch_at_spawn && published == Some(mine)
 }
 
 fn stop_listener_child() {
@@ -1505,13 +1554,19 @@ mod lifecycle_tests {
 
         // The publisher must be blocked on the stdin store AND holding the combo store,
         // because that is the only order that makes the snapshot-and-write atomic.
+        //
+        // A deadline rather than a spin count: 200 `yield_now` calls can complete before
+        // the other thread is ever scheduled on a loaded runner, which turns this into a
+        // false failure. Two seconds is far longer than scheduling one thread needs, and
+        // a real ordering inversion never satisfies the condition at all.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut saw_combo_held = false;
-        for _ in 0..200 {
+        while std::time::Instant::now() < deadline {
             if combo_store().try_lock().is_err() {
                 saw_combo_held = true;
                 break;
             }
-            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(
             saw_combo_held,
@@ -1532,6 +1587,29 @@ mod lifecycle_tests {
     /// process that nothing owns and that `sync_combos` cannot reach. The epoch is what
     /// makes that window visible; without it the counter is the whole mechanism and this
     /// is the only thing testing it.
+    /// The decision the epoch exists to drive, tested directly.
+    ///
+    /// Driving it through `ensure_listener_child` needs a real spawned child, which a unit
+    /// test should not own. The decision itself is pure, so it is extracted and tested
+    /// here -- including the id comparison, which is the half a later edit could invert.
+    #[test]
+    fn a_spawn_is_discarded_only_when_a_stop_ran_and_the_child_is_still_ours() {
+        // A stop during the spawn, and our child is the one published.
+        assert!(super::should_discard_spawned_child(7, 8, Some(4242), 4242));
+
+        // No stop during the spawn: never discard, however the ids line up.
+        assert!(!super::should_discard_spawned_child(7, 7, Some(4242), 4242));
+
+        // A stop ran, but another spawn's child is published: this one must not kill it.
+        assert!(!super::should_discard_spawned_child(7, 8, Some(9999), 4242));
+
+        // A stop ran and nothing is published at all: nothing to discard.
+        assert!(!super::should_discard_spawned_child(7, 8, None, 4242));
+
+        // The id comparison is the part that must not be written as a presence check.
+        assert!(!super::should_discard_spawned_child(7, 8, Some(4243), 4242));
+    }
+
     #[test]
     fn a_stop_is_visible_to_a_spawn_in_flight() {
         let before = stop_epoch().load(Ordering::SeqCst);
