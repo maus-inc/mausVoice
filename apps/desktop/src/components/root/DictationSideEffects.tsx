@@ -1757,11 +1757,23 @@ export const DictationSideEffects = () => {
   // map, strategy) and repushes on any change, so a per-component effect keyed
   // to just recording/styling state can't leave the listener stale.
 
+  // Both calls below are discarded, so a rejection from either would be
+  // unhandled rather than reported. They can both reject: `loadChatMessages`
+  // awaits a Tauri IPC with no try/catch of its own, and this callback awaits
+  // `surfaceMainWindow()` at the end. One reporter for both, so the two sites
+  // cannot drift apart in wording -- and named, because the same file already
+  // caught `navigate` on its promise six lines below with the inline form.
+  const reportConversationOpenFailure = (error: unknown): void => {
+    getLogger().warning(
+      `Failed to open the conversation: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  };
+
   const openPillConversation = useCallback(
     async (conversationId?: string) => {
       const id = conversationId ?? getAppState().pillConversationId;
       if (id) {
-        void loadChatMessages(id);
+        void loadChatMessages(id).catch(reportConversationOpenFailure);
         // `navigate` returns a promise; a rejection here would otherwise be
         // unhandled, so it is caught on the promise rather than by a surrounding
         // try/catch that cannot see it.
@@ -1844,7 +1856,9 @@ export const DictationSideEffects = () => {
     "open-pill-conversation",
     (payload) => {
       if (!isMainWindow) return;
-      openPillConversation(payload.conversationId);
+      void openPillConversation(payload.conversationId).catch(
+        reportConversationOpenFailure,
+      );
     },
   );
 
