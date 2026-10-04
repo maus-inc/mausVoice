@@ -347,6 +347,70 @@ describe("Gemini native transport", () => {
     expect(customFetch).toHaveBeenCalledTimes(1);
   });
 
+  // The frame that reports token counts need not carry content: a turn stopped by a
+  // content filter or a token ceiling has a finish reason and nothing to say, and the counts
+  // arrive alone. `usageMetadata` used to be read AFTER the `candidates` early return, so
+  // exactly that frame lost its usage and the turn reported zero tokens.
+  //
+  // The control is the same payload WITH `candidates`, which already reported usage -- so a
+  // test that only used the control would pass either way.
+  it("reports usage from a frame that carries no candidates", async () => {
+    const customFetch = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":22}}\r\n\r\n',
+          'data: {"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":22}}\r\n\r\n',
+        ]),
+      );
+
+    const events = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: { messages: [{ role: "user", content: "Hello" }] },
+      customFetch,
+    })) {
+      events.push(event);
+    }
+
+    // Both frames carry the same counts, so the last one to be read decides what is reported.
+    // Before the fix the second frame returned early and the usage survived only because the
+    // first frame had already set it -- which is why the control below is the real assertion.
+    expect(events).toContainEqual({
+      type: "finish",
+      finishReason: "stop",
+      usage: { promptTokens: 11, completionTokens: 22 },
+    });
+
+    // And with ONLY the usage-only frame, which is the case that used to report nothing.
+    const usageOnly = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([
+          'data: {"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}\r\n\r\n',
+        ]),
+      );
+    const onlyEvents = [];
+    for await (const event of geminiStreamChat({
+      apiKey: "gemini-key",
+      model: "gemini-3.8-flash",
+      input: { messages: [{ role: "user", content: "Hello" }] },
+      customFetch: usageOnly,
+    })) {
+      onlyEvents.push(event);
+    }
+    // `finishReason` is "other" here and that is correct: a frame with no candidates carries
+    // no finish reason either. The property under test is the usage, so that is what is
+    // asserted -- and before the fix this was absent entirely.
+    expect(onlyEvents).toContainEqual(
+      expect.objectContaining({
+        type: "finish",
+        usage: { promptTokens: 7, completionTokens: 3 },
+      }),
+    );
+  });
+
   it("buffers split SSE chunks from the injected fetch", async () => {
     const customFetch = vi
       .fn()

@@ -1305,6 +1305,21 @@ const processGeminiChunk = (
   state: GeminiChunkState,
 ): GeminiChunkEvent[] => {
   const events: GeminiChunkEvent[] = [];
+  // Usage is read BEFORE the candidate check, because the two are independent and a frame
+  // can carry one without the other. It used to be read after, which meant the early return
+  // below discarded `usageMetadata` on any frame without `candidates` -- and the frame that
+  // reports token counts is exactly the kind that need not carry content, since a turn cut
+  // short by a content filter or a max-token stop has a finish reason and nothing to say.
+  //
+  // Measured on one payload differing only in the presence of `candidates`:
+  //
+  //     with candidates   finish{finishReason:"stop", usage:{promptTokens:111, ...}}
+  //     usage only        finish{finishReason:"stop"}
+  if (chunk.usageMetadata) {
+    state.promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
+    state.completionTokens =
+      chunk.usageMetadata.candidatesTokenCount ?? undefined;
+  }
   const candidate = chunk.candidates?.[0];
   if (!candidate) return events;
   for (const part of candidate.content?.parts ?? []) {
@@ -1323,12 +1338,6 @@ const processGeminiChunk = (
 
   if (candidate.finishReason) {
     state.finishReason = geminiFinishReason(candidate.finishReason as string);
-  }
-
-  if (chunk.usageMetadata) {
-    state.promptTokens = chunk.usageMetadata.promptTokenCount ?? undefined;
-    state.completionTokens =
-      chunk.usageMetadata.candidatesTokenCount ?? undefined;
   }
 
   return events;

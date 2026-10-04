@@ -35,11 +35,18 @@ export const deepgramTestIntegration = ({
       resolve(false);
     };
 
-    ws.onclose = (event) => {
+    // Every close resolves, not only the three codes that used to be listed.
+    //
+    // The 5s timeout is cleared here, so a close whose code is not 1008/4001/4003 left the
+    // promise pending forever: the card's pending state never cleared and the caller waited
+    // on a socket that had already gone. 1000 (a normal close), 1006 (abnormal, no status)
+    // and 1011 (server error) are all reachable without `open` or `error` firing first.
+    //
+    // Resolving unconditionally is safe because a promise settles once: after `onopen` has
+    // resolved `true`, a later close resolving `false` changes nothing.
+    ws.onclose = () => {
       clearTimeout(timeout);
-      if (event.code === 1008 || event.code === 4001 || event.code === 4003) {
-        resolve(false);
-      }
+      resolve(false);
     };
   });
 };
