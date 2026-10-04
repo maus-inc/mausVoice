@@ -443,6 +443,13 @@ extern "C" fn control_text_did_change(_this: &Object, _sel: Sel, notification: i
     with_ctx(|ctx| unsafe {
         let control: id = msg_send![notification, object];
         *ctx.state.entry_text.borrow_mut() = field_string(control);
+        // ...and the other direction: the mirror emptied without the field being told, so
+        // it is still showing text that has already gone. Safe to read here because
+        // `entry_text` mirrors every keystroke, so it is empty only when something emptied
+        // it. The Windows pill reconciles the same way; GTK does it where the entry reloads.
+        if input::entry_should_be_cleared(&ctx.state.entry_text.borrow(), &field_string(control)) {
+            set_entry_text("");
+        }
     });
 }
 

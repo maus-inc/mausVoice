@@ -49,6 +49,22 @@ pub(crate) fn send_review_decision(review_id: &str, action: &str, text: Option<S
     })
 }
 
+/// Whether the entry field has to be emptied because the mirror already is.
+///
+/// The mirror is `state.entry_text`; the field is the `NSTextField` the user is looking at.
+/// They are separate objects and clearing one does not clear the other, which is the whole
+/// of the defect this predicate now covers: a send cleared the mirror, the Send-button click
+/// never told the field, and the sent text stayed on screen.
+///
+/// The second half of the condition is the one with teeth. A non-empty mirror must never
+/// cause a clear, because that is the user's typing. `control_text_did_change` mirrors every
+/// keystroke into `entry_text`, so an empty mirror means something emptied it rather than
+/// that it fell behind -- and the Windows pill relies on the same invariant for its own
+/// reconciliation.
+pub(crate) fn entry_should_be_cleared(state_text: &str, widget_text: &str) -> bool {
+    state_text.is_empty() && !widget_text.is_empty()
+}
+
 /// Send whatever the entry holds.
 ///
 /// While a transcript is under review the entry holds that transcript, so
@@ -220,7 +236,16 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     });
                 }
                 ClickAction::SendButton => {
-                    submit_entry(state);
+                    // Only `state.entry_text` -- the mirror -- is cleared by
+                    // `submit_entry`; the NSTextField the user is looking at is not, and
+                    // only the Enter path emptied it (see `text_field_action` in
+                    // `app.rs`). So a Send-button click left the sent text on screen. The
+                    // review path recovered because answering changes the review id and the
+                    // entry reloads; the plain assistant path did not, so the same message
+                    // could be sent twice.
+                    if submit_entry(state) {
+                        crate::app::set_entry_text("");
+                    }
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
@@ -438,4 +463,29 @@ pub(crate) fn is_interactive_at(state: &PillState, x: f64, y: f64) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod entry_reconcile_tests {
+    use super::entry_should_be_cleared;
+
+    // These check the DIRECTION that matters. A predicate that cleared on any difference
+    // would pass the first case and wipe the user's typing, so the non-empty-mirror cases
+    // are the ones worth having.
+
+    #[test]
+    fn clears_a_field_the_mirror_says_is_already_empty() {
+        assert!(entry_should_be_cleared("", "sent text"));
+    }
+
+    #[test]
+    fn leaves_a_field_alone_when_the_mirror_still_has_text() {
+        assert!(!entry_should_be_cleared("being typed", "sent text"));
+        assert!(!entry_should_be_cleared("being typed", ""));
+    }
+
+    #[test]
+    fn leaves_an_already_empty_field_alone() {
+        assert!(!entry_should_be_cleared("", ""));
+    }
 }

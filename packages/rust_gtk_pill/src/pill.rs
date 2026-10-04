@@ -115,6 +115,10 @@ pub fn run(receiver: Receiver<InMessage>) {
     overlay_widget.add(&drawing_area);
 
     let entry = gtk::Entry::new();
+    // Kept so a send can empty the widget from anywhere, the way the Windows pill reaches
+    // its Edit control. `connect_activate` closes over its own clone; the Send-button click
+    // is handled in `input.rs`, which has no widget.
+    ENTRY.with(|slot| *slot.borrow_mut() = Some(entry.clone()));
     entry.set_placeholder_text(Some("Type a message..."));
     entry.set_has_frame(false);
     entry.set_halign(gtk::Align::Fill);
@@ -680,6 +684,16 @@ pub fn run(receiver: Receiver<InMessage>) {
                         let text = review_text.unwrap_or_default();
                         *state_tick.entry_text.borrow_mut() = text.clone();
                         entry_tick.set_text(&text);
+                    } else if crate::input::entry_should_be_cleared(
+                        &state_tick.entry_text.borrow(),
+                        &entry_tick.text(),
+                    ) {
+                        // The mirror was emptied somewhere that had no widget -- the
+                        // Send-button click, or `submit_entry` -- and the id did not change,
+                        // so the reload above did not run. Without this the widget keeps
+                        // showing text that has already been sent. Windows reconciles the
+                        // same way in its window procedure; this is that line.
+                        entry_tick.set_text("");
                     }
 
                     if (active && !was_active)
@@ -1007,6 +1021,27 @@ fn clear_pointer_pin(state: &PillState, window: &gtk::Window) {
     state.long_press_active.set(false);
     state.long_press_elapsed.set(0.0);
     state.pointer_down.set(false);
+}
+
+thread_local! {
+    /// The pill's entry widget, for the code paths that must empty it without holding a
+    /// clone. Same shape as the Windows pill's `EDIT_HWND`, and for the same reason: the
+    /// mirror (`state.entry_text`) is not the widget, and clearing one does not clear the
+    /// other.
+    static ENTRY: std::cell::RefCell<Option<gtk::Entry>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Empty the entry widget, if there is one.
+///
+/// Does nothing when the widget is already empty, and does not touch `state.entry_text`:
+/// that is the mirror's own business, and the caller has just cleared it.
+pub(crate) fn clear_entry() {
+    ENTRY.with(|slot| {
+        if let Some(entry) = slot.borrow().as_ref() {
+            entry.set_text("");
+        }
+    });
 }
 
 thread_local! {

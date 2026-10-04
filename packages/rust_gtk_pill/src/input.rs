@@ -146,6 +146,20 @@ pub(crate) fn submit_entry(state: &PillState) -> bool {
     )
 }
 
+/// Whether the entry widget has to be emptied because the mirror already is.
+///
+/// Extracted because the reconciliation runs on a frame tick and is otherwise invisible,
+/// and because a test can check the DIRECTION that matters: a non-empty mirror must never
+/// cause a clear, since that is the user's typing.
+///
+/// Windows had this inline and unconditional in its window procedure. It is safe only
+/// because all three pills mirror every keystroke into `entry_text` -- here on
+/// `connect_changed`, on macOS in `control_text_did_change`, on Windows in the `EN_CHANGE`
+/// handler -- so an empty mirror means something emptied it, not that it fell behind.
+pub(crate) fn entry_should_be_cleared(state_text: &str, widget_text: &str) -> bool {
+    state_text.is_empty() && !widget_text.is_empty()
+}
+
 /// The body of [`submit_entry`], with the entry and the sink as parameters so
 /// the decision can be tested without a `PillState` (which has no constructor)
 /// or a live desktop pipe.
@@ -320,7 +334,23 @@ pub(crate) fn handle_click(state: &PillState, x: f64, y: f64) {
                     });
                 }
                 ClickAction::SendButton => {
-                    submit_entry(state);
+                    // `submit_entry` returns whether the desktop took the message, and it
+                    // clears `state.entry_text` -- the MIRROR. The widget the user is
+                    // looking at is a different thing, and only the Enter path emptied it:
+                    //
+                    //     entry.connect_activate(|e| { if submit_entry(state) { e.set_text("") } })
+                    //
+                    // so clicking Send left the sent text on screen with the mirror empty.
+                    // `entry.connect_changed` keeps the two in step on every keystroke, which
+                    // is why nothing else noticed: after this clear they disagreed.
+                    //
+                    // Not harmless either. The review path recovers -- answering a review
+                    // changes the id, and `pill.rs` reloads the entry when it does -- but the
+                    // plain assistant path leaves the id alone, so nothing reloads and the
+                    // user can press Send again and send the same message twice.
+                    if submit_entry(state) {
+                        crate::pill::clear_entry();
+                    }
                 }
                 ClickAction::FlashAction => {
                     if let Some(ref action) = *state.flash_action.borrow() {
@@ -627,6 +657,55 @@ mod entry_submit_tests {
         let sent = submit_entry_inner(&entry, Some("review-7"), |_| false);
         assert!(!sent);
         assert_eq!(entry.borrow().as_str(), "an edited transcript");
+    }
+
+    /// The Send-button arm must empty the widget. STRUCTURAL, and labelled as such: there
+    /// is no display here, so nothing can observe the widget, and deleting the
+    /// `clear_entry()` call left all 41 tests in this crate green. That was measured, not
+    /// assumed -- it is the same shape as every other "the function is tested but the call
+    /// is not" gap this suite has produced.
+    ///
+    /// So the call is asserted on the source. It is the wrong instrument, and it is here
+    /// because the alternative is a defect that can return silently: the send clears the
+    /// mirror, the widget keeps showing the text, and every behavioural test still passes.
+    /// The window is 1600 characters because the comment above the call is longer than
+    /// smaller windows, which failed at baseline -- a structural assertion that fails at
+    /// baseline is worse than none.
+    #[test]
+    fn the_send_button_arm_empties_the_widget() {
+        let source =
+            std::fs::read_to_string(format!("{}/src/input.rs", env!("CARGO_MANIFEST_DIR")))
+                .expect("read this module's own source");
+        let arm = source
+            .find("ClickAction::SendButton => {")
+            .expect("the Send-button arm must exist");
+        assert!(
+            source[arm..arm + 1600].contains("clear_entry()"),
+            "the Send-button arm must call clear_entry(), or a sent message stays on \
+             screen: submit_entry clears state.entry_text, which is the mirror, and \
+             nothing else empties the gtk::Entry"
+        );
+    }
+
+    /// `state.entry_text` is the MIRROR; the `gtk::Entry` is what the user reads. Clearing
+    /// the first does not clear the second, which is how a Send-button click came to leave a
+    /// sent message on screen.
+    ///
+    /// `a_successful_submit_clears_the_entry` below checks the mirror, and cannot see this:
+    /// building a `gtk::Entry` needs a display, so the widget is not something a unit test
+    /// here can assert against. These cover the condition the reconciliation is built from.
+    /// What they do NOT cover is the Send-button arm actually calling `clear_entry`, or the
+    /// widget actually emptying -- both need a display, and neither is checked here.
+    #[test]
+    fn clears_the_widget_only_when_the_mirror_is_already_empty() {
+        // The defect: a send emptied the mirror and left the field showing it.
+        assert!(super::entry_should_be_cleared("", "sent text"));
+        // The direction that matters. A predicate that cleared on any difference would pass
+        // the line above and wipe what the user is typing.
+        assert!(!super::entry_should_be_cleared("being typed", "sent text"));
+        assert!(!super::entry_should_be_cleared("being typed", ""));
+        // Nothing to do.
+        assert!(!super::entry_should_be_cleared("", ""));
     }
 
     #[test]
