@@ -20,8 +20,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
 const configPath = resolve(repoRoot, "gitleaks.toml");
 
-// Base64 of "untrusted comment: rsign" — the first line of every Tauri/Minisign
-// private key file. This is the exact string the detection rule must match.
+// The marker a Tauri/Minisign private key file actually carries.
+//
+// `tauri signer generate` writes the untrusted-comment line in PLAINTEXT and only
+// the key payload as base64:
+//
+//     untrusted comment: rsign encrypted secret key
+//     RWQ5...base64 of (algorithm || key id || secret key)...
+//
+// So the plaintext form is the arm that does the work, and requiring it is the
+// point of this guard. An earlier version of the rule matched only PREAMBLE_B64,
+// on the belief that the preamble appears base64-encoded in a key file. It does
+// not, so that rule detected no real Tauri updater key -- measured, not argued:
+// against a key file in the shape above it exits 0 having found nothing.
+export const PREAMBLE = "untrusted comment: rsign";
+
+// Base64 of the same text, which appears when a key FILE is embedded whole in a
+// base64-wrapped CI artifact. Kept as a second arm so that case stays covered.
 export const PREAMBLE_B64 = "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu";
 
 function fail(msg) {
@@ -337,11 +352,13 @@ function main() {
 
   // (a) The preamble must NOT be exempted by the global allowlist.
   const allowlist = section(raw, "[allowlist]", "[[rules]]");
-  if (allowlist.includes(PREAMBLE_B64)) {
-    fail(
-      "gitleaks.toml: the updater private-key preamble is still in [allowlist] " +
-        "and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
-    );
+  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
+    if (allowlist.includes(marker)) {
+      fail(
+        `gitleaks.toml: the updater private-key preamble (${marker}) is still in ` +
+          "[allowlist] and would be EXEMPTED from scanning. Move it to a [[rules]] detector.",
+      );
+    }
   }
 
   // (d) `useDefault` must NOT be nested inside the [allowlist] section.
@@ -380,19 +397,31 @@ function main() {
       "gitleaks.toml: could not find regex for id tauri-minisign-updater-private-key.",
     );
   }
-  if (!rulePattern.includes(PREAMBLE_B64)) {
-    fail(
-      "gitleaks.toml: no [[rules]] detector regex matches the updater " +
-        "private-key preamble. Add the preamble base64 as the rule regex.",
-    );
+  for (const marker of [PREAMBLE, PREAMBLE_B64]) {
+    if (!rulePattern.includes(marker)) {
+      fail(
+        "gitleaks.toml: the tauri-minisign-updater-private-key regex does not match " +
+          `"${marker}". ` +
+          (marker === PREAMBLE
+            ? "The PLAINTEXT arm is the one that detects a real key: `tauri signer " +
+              "generate` writes the untrusted-comment line as text and base64-encodes only " +
+              "the key payload, so a rule matching the base64 of that text alone matches no " +
+              "real key file."
+            : "Keep the base64 arm too, for a key file embedded whole in a base64-wrapped " +
+              "CI artifact."),
+      );
+    }
   }
 
-  // (c) The [[rules]] block must have NO `keywords` key, which would
-  // short-circuit detection of a Base64-only key (no plaintext "rsign").
+  // (c) The [[rules]] block must have NO `keywords` key. A keyword pre-filter is
+  // matched against the file's lowercased text before the regex runs, so a keyword
+  // that a real key file does not contain suppresses the rule entirely -- which is
+  // the same class of defect as a rule that matches nothing.
   if (/^\s*keywords\s*=/m.test(rules)) {
     fail(
       "gitleaks.toml: the [[rules]] updater-key detector uses `keywords`, which " +
-        "would short-circuit detection of a Base64-only key. Remove it.",
+        "pre-filters the file before the regex runs and so can suppress detection " +
+        "of a real key. Remove it.",
     );
   }
 
@@ -406,14 +435,28 @@ function main() {
     fail(`gitleaks.toml: rule regex is not valid: ${err.message}`);
   }
 
-  // A fake private key: the untrusted-comment preamble (base64 form) followed by
-  // junk. This mirrors the first line of a committed Tauri signing key.
-  const fixture = `untrusted comment: rsign\n${PREAMBLE_B64}\nRWRfakesecretkeymaterialforupdaterforgerytesting==\n`;
-  if (!re.test(fixture)) {
-    fail(
-      "gitleaks.toml: the configured rule does NOT match a fixture containing " +
-        "the updater private-key preamble — key commits would slip through.",
-    );
+  // Two fixtures, both shaped like something that actually gets committed.
+  //
+  // The first is what `tauri signer generate` writes: a plaintext untrusted-comment
+  // line, then base64 of the key payload. The previous fixture was
+  // `<plaintext line>\n<base64 of the preamble>\n<junk>`, a shape no tool produces
+  // and which the previous rule matched -- so it proved the rule matched the
+  // fixture rather than that it matched a key.
+  const realKey =
+    "untrusted comment: rsign encrypted secret key\n" +
+    "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
+  // The second is that same file base64-wrapped whole, as a CI artifact carries it.
+  const wrappedKey = Buffer.from(realKey, "utf8").toString("base64") + "\n";
+  for (const [label, fixture] of [
+    ["a key file", realKey],
+    ["a base64-wrapped key file", wrappedKey],
+  ]) {
+    if (!re.test(fixture)) {
+      fail(
+        `gitleaks.toml: the configured rule does NOT match ${label} shaped like a ` +
+          "committed Tauri updater signing key — key commits would slip through.",
+      );
+    }
   }
 
   console.log(

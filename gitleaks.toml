@@ -99,7 +99,26 @@ regexes = [
   '''Iv1\.[A-Za-z0-9_-]{10,}''',
 ]
 
+
+# A committed updater signing key lets a fork forge updates the updater will
+# install, so it must never reach the repository.
+#
+# Matched on minisign's own untrusted-comment preamble rather than on a key-shaped
+# regex, because that preamble is fixed by the tool and is therefore a far narrower
+# thing to match on than key material.
+#
+# It is matched in PLAINTEXT, which is what `tauri signer generate` writes:
+#
+#     untrusted comment: rsign encrypted secret key
+#     RWQ5...base64 of (algorithm || key id || secret key)...
+#
+# An earlier version of this rule matched only the base64 of the preamble text,
+# on the stated belief that the preamble appears base64-encoded in a key file. It
+# does not: the payload is base64, the comment is not. So that rule matched no
+# real Tauri updater key at all, while passing every fixture written to match it.
+# The base64 alternative is kept as well, for a key file embedded whole in a
+# base64-wrapped CI artifact, but the plaintext arm is what does the work.
 [[rules]]
 id = "tauri-minisign-updater-private-key"
-description = "Tauri/Minisign updater private signing key ('untrusted comment: rsign'). A committed updater signing key lets a fork forge trusted auto-updates, so it must never be committed."
-regex = '''dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu'''
+description = "Tauri/Minisign updater private signing key. A committed updater signing key lets a fork forge trusted auto-updates, so it must never be committed."
+regex = '''(untrusted comment: rsign|dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu)'''

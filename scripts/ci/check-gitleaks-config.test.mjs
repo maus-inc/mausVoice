@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import {
+  PREAMBLE,
   PREAMBLE_B64,
   hasTopLevelUseDefaultFalse,
   hasUseDefaultFalse,
@@ -263,7 +264,7 @@ describe("updaterRulePattern", () => {
       'description = """',
       "The rule below is the one CI looks for:",
       'id = "tauri-minisign-updater-private-key"',
-      `regex = '${PREAMBLE_B64}'`,
+      `regex = '${RULE_PATTERN}'`,
       '"""',
       "entropy = 3.5",
     ].join("\n");
@@ -282,9 +283,9 @@ describe("updaterRulePattern", () => {
       'id = "tauri-minisign-updater-private-key"',
       '"""',
       'id = "tauri-minisign-updater-private-key"',
-      `regex = '${PREAMBLE_B64}'`,
+      `regex = '${RULE_PATTERN}'`,
     ].join("\n");
-    assert.equal(updaterRulePattern(toml), PREAMBLE_B64);
+    assert.equal(updaterRulePattern(toml), RULE_PATTERN);
   });
 });
 
@@ -320,11 +321,89 @@ describe("tomlTableBody [extend]", () => {
   });
 });
 
+describe("the guard rejects a rule that cannot detect a real key", () => {
+  // The defect this pins. The rule used to match only the base64 of the preamble
+  // text, on the stated belief that a Tauri signing key carries that text
+  // base64-encoded. It does not: `tauri signer generate` writes the untrusted-comment
+  // line in plain text and base64-encodes only the key payload. Measured with gitleaks
+  // 8.18.0 against a key file in that shape:
+  //
+  //     rule = base64 of the preamble only     ->  exit 0, no findings
+  //     rule = plaintext arm added             ->  exit 1, tauri-minisign-updater-private-key
+  //
+  // So the previous rule matched no real Tauri updater key, while passing every test
+  // written against it. These cases are the regression net for exactly that.
+  const run = (t, toml) => {
+    const root = mkdtempSync(join(tmpdir(), "gitleaks-config-regress-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const dir = join(root, "scripts", "ci");
+    mkdirSync(dir, { recursive: true });
+    const script = join(dir, "check-gitleaks-config.mjs");
+    copyFileSync(
+      new URL("./check-gitleaks-config.mjs", import.meta.url),
+      script,
+    );
+    writeFileSync(join(root, "gitleaks.toml"), toml);
+    return spawnSync(process.execPath, [script], {
+      cwd: root,
+      encoding: "utf8",
+    });
+  };
+
+  const config = (ruleRegex) =>
+    [
+      "[extend]",
+      "useDefault = true",
+      "",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '${ruleRegex}'`,
+      "",
+    ].join("\n");
+
+  it("rejects a base64-only rule, which detects no real key file", (t) => {
+    const result = run(t, config(PREAMBLE_B64));
+    assert.notEqual(result.status, 0, "a base64-only rule must be refused");
+    assert.match(result.stderr, /does not match "untrusted comment: rsign"/);
+  });
+
+  it("rejects a plaintext-only rule, so the wrapped form stays covered", (t) => {
+    const result = run(t, config(PREAMBLE));
+    assert.notEqual(result.status, 0, "a plaintext-only rule must be refused");
+    assert.match(result.stderr, /Keep the base64 arm/);
+  });
+
+  it("accepts both arms", (t) => {
+    const result = run(t, config(`(${PREAMBLE}|${PREAMBLE_B64})`));
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("rejects a `keywords` pre-filter, which can suppress the rule entirely", (t) => {
+    const toml = [
+      "[extend]",
+      "useDefault = true",
+      "",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '(${PREAMBLE}|${PREAMBLE_B64})'`,
+      'keywords = ["rsign"]',
+      "",
+    ].join("\n");
+    const result = run(t, toml);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /keywords/);
+  });
+});
+
+// The rule pattern the guard requires: BOTH arms, because the plaintext one is
+// the only one that matches a key file as `tauri signer generate` writes it.
+const RULE_PATTERN = `(${PREAMBLE}|${PREAMBLE_B64})`;
+
 describe("CLI requires explicit built-in rule extension", () => {
   // The rule block is a column so a case can replace it: the point of the last
   // case is a config whose only `regex =` line is inside a description, which
   // the shared trailing rule would otherwise satisfy.
-  const realRule = `[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n`;
+  const realRule = `[[rules]]\nid = "tauri-minisign-updater-private-key"\nregex = '${RULE_PATTERN}'\n`;
   for (const [name, extension, status, rules = realRule] of [
     ["missing extension", "", 1],
     ["ignored top-level option", "useDefault = true\n", 1],
@@ -344,7 +423,7 @@ describe("CLI requires explicit built-in rule extension", () => {
       "a detector written only inside a description",
       "[extend]\nuseDefault = true\n",
       1,
-      `[[rules]]\ndescription = """\nid = "tauri-minisign-updater-private-key"\nregex = '${PREAMBLE_B64}'\n"""\nentropy = 3.5\n`,
+      `[[rules]]\ndescription = """\nid = "tauri-minisign-updater-private-key"\nregex = '${RULE_PATTERN}'\n"""\nentropy = 3.5\n`,
     ],
   ]) {
     it(name, (t) => {

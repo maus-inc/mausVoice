@@ -22,6 +22,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  PREAMBLE,
   PREAMBLE_B64,
   rulesSection,
   stripTomlComments,
@@ -52,17 +53,30 @@ try {
 }
 
 // ---- Phase 1: offline regex assertions ----
-const base64OnlyFixture = `untrusted comment: rsign\n${PREAMBLE_B64}\n`;
+// What `tauri signer generate` actually writes: the untrusted-comment line in
+// plain text, then base64 of the key payload. The previous fixture was
+// `<plaintext line>\n<base64 of that line>\n`, a shape no tool produces, which the
+// previous base64-only rule matched -- so it proved the rule matched the fixture,
+// not that it matched a key.
+const realKeyFixture =
+  "untrusted comment: rsign encrypted secret key\n" +
+  "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
+// The same file base64-wrapped whole, as a CI artifact would carry it.
+const wrappedKeyFixture = Buffer.from(realKeyFixture, "utf8").toString("base64") + "\n";
 const fullKeyFixture =
   "untrusted comment: rsign encrypted secret key\n" +
   `${PREAMBLE_B64}IGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg==\n`;
 
-if (!re.test(base64OnlyFixture))
-  fail("Rule regex does NOT match a Base64-only updater key preamble.");
-if (!re.test(fullKeyFixture))
-  fail("Rule regex does NOT match a full hardcoded minisign updater key.");
+for (const [label, fixture] of [
+  ["a real key file", realKeyFixture],
+  ["a base64-wrapped key file", wrappedKeyFixture],
+  ["a full hardcoded minisign updater key", fullKeyFixture],
+]) {
+  if (!re.test(fixture))
+    fail(`Rule regex does NOT match ${label}.`);
+}
 console.log(
-  "OK (offline): gitleaks.toml rule matches both a Base64-only preamble and a full hardcoded key.",
+  "OK (offline): gitleaks.toml rule matches a real key file, a base64-wrapped key file, and a full hardcoded key.",
 );
 
 // Add-then-delete simulation (offline): commit A adds the key, commit B deletes
