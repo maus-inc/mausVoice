@@ -63,7 +63,13 @@ impl PillProcess {
 }
 
 /// Publish `process` as the managed pill, killing the child it owns if the app already has
-/// one. Returns whether the pill is now managed.
+/// one.
+///
+/// Returns whether THIS CALL installed the handle -- not whether a managed pill exists. The
+/// distinction is the same-handle branch below, which returns `false` while the app's pill is
+/// very much still running; `try_spawn_pill` turns `false` into "fall back to Tauri
+/// overlays", which is the right answer for both rejections because in neither case did this
+/// spawn become the pill the app draws.
 ///
 /// `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694), and
 /// `StateManager::set` returns `!already_set` WITHOUT inserting when the type is already
@@ -1460,29 +1466,35 @@ mod pill_event_dispatch_tests {
 mod pill_publish_tests {
     // The reject branch of `publish_pill_process`, driven with real child processes.
     //
-    // `tauri::test::mock_app` is unconditional in the tauri crate -- `pub mod test;` at
-    // `tauri-2.10.3/src/lib.rs:1102`, no feature gate -- so an `AppHandle` that already has a
-    // managed `PillProcess` is reachable here without a feature change and without the
-    // overlay binary `try_spawn_pill` would otherwise need.
+    // `tauri::test::mock_app` is `#[cfg(any(test, feature = "test"))]` at
+    // tauri-2.10.3/src/lib.rs:1100, so it is not reachable from a crate that merely depends
+    // on tauri -- which is why `[dev-dependencies]` in Cargo.toml enables the feature, and
+    // why this comment used to claim the opposite. With it, an `AppHandle` that already has
+    // a managed `PillProcess` is available here without the overlay binary
+    // `try_spawn_pill` would otherwise need.
     use super::{publish_pill_process, PillProcess};
     use std::process::{Child, ChildStdin, Command, Stdio};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    /// A child that outlives the test unless something kills it. `sh`/`cmd` are present on a
-    /// runner and neither is gated, which matters because this module is not behind a `cfg`
-    /// either.
+    /// A child that outlives the test unless something kills it.
+    ///
+    /// `sleep` and `ping` directly, with no shell between: `sh -c "sleep 120"` and
+    /// `cmd /C ping ...` both make the shell the child, and killing the shell leaves the
+    /// grandchild running -- which on Windows would outlive the reaper below by however long
+    /// the ping takes. Naming the program itself means the handle this module holds is the
+    /// only process there is.
     fn idle_child() -> (Child, ChildStdin) {
         #[cfg(windows)]
         let mut command = {
-            let mut c = Command::new("cmd");
-            c.args(["/C", "ping", "-n", "120", "127.0.0.1"]);
+            let mut c = Command::new("ping");
+            c.args(["-n", "120", "127.0.0.1"]);
             c
         };
         #[cfg(not(windows))]
         let mut command = {
-            let mut c = Command::new("sh");
-            c.args(["-c", "sleep 120"]);
+            let mut c = Command::new("sleep");
+            c.arg("120");
             c
         };
         command
@@ -1494,20 +1506,45 @@ mod pill_publish_tests {
         (child, stdin)
     }
 
-    fn pill_process() -> Arc<PillProcess> {
-        let (child, stdin) = idle_child();
-        Arc::new(PillProcess {
-            _child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
-        })
+    /// Kills the pill's child when the test ends, panic or not.
+    ///
+    /// `Child`'s `Drop` does not kill, so without this every run leaves a process behind for
+    /// as long as it sleeps -- two minutes here -- and a failing `assert!` leaks the ones the
+    /// test meant to keep alive, which are the ones that would otherwise be checked.
+    struct ReapOnDrop(Arc<PillProcess>);
+
+    impl Drop for ReapOnDrop {
+        fn drop(&mut self) {
+            if let Ok(mut child) = self.0._child.lock() {
+                // Errors when the child already exited, which is not worth a log line here.
+                let _ = child.kill();
+            }
+        }
     }
 
-    /// Whether `process`'s child has exited, polled rather than slept on: `kill()` raises a
-    /// signal and the operating system reaps on its own schedule, so a fixed sleep would be
-    /// racing it rather than measuring it.
-    fn has_exited(process: &PillProcess) -> bool {
+    fn pill_process() -> ReapOnDrop {
+        let (child, stdin) = idle_child();
+        ReapOnDrop(Arc::new(PillProcess {
+            _child: Mutex::new(child),
+            stdin: Mutex::new(stdin),
+        }))
+    }
+
+    /// How long to wait for a kill this test SENT to be observed. `kill()` raises a signal and
+    /// the operating system reaps on its own schedule, so this is polled rather than slept
+    /// through -- a fixed sleep would be racing the thing it is measuring.
+    const KILLED: Duration = Duration::from_secs(10);
+
+    /// How long to observe that nothing killed it. This direction needs no waiting at all:
+    /// the child was alive a moment ago and nothing has signalled it, so any observation
+    /// answers it. Sharing the ten-second budget made every passing test pay for the
+    /// direction that needs none.
+    const ALIVE: Duration = Duration::from_millis(250);
+
+    /// Whether `process`'s child has exited within `budget`.
+    fn has_exited(process: &PillProcess, budget: Duration) -> bool {
         let mut child = process._child.lock().expect("child lock");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + budget;
         loop {
             if child
                 .try_wait()
@@ -1530,13 +1567,13 @@ mod pill_publish_tests {
 
         let first = pill_process();
         assert!(
-            publish_pill_process(&handle, first.clone()),
+            publish_pill_process(&handle, first.0.clone()),
             "the first pill must be managed"
         );
 
         let second = pill_process();
         assert!(
-            !publish_pill_process(&handle, second.clone()),
+            !publish_pill_process(&handle, second.0.clone()),
             "a second pill must be rejected"
         );
 
@@ -1544,14 +1581,14 @@ mod pill_publish_tests {
         // nothing owning it. `Child`'s `Drop` does not kill, so without the explicit kill this
         // outlives the test.
         assert!(
-            has_exited(&second),
+            has_exited(&second.0, KILLED),
             "the duplicate pill process was left running after being rejected"
         );
 
         // ...and the kill is scoped to the REJECTED spawn. If it were not, this would take the
         // live overlay down with it, which is the worse failure of the two.
         assert!(
-            !has_exited(&first),
+            !has_exited(&first.0, ALIVE),
             "the already-managed pill must not be killed by a rejected spawn"
         );
     }
@@ -1564,8 +1601,8 @@ mod pill_publish_tests {
         let handle = app.handle().clone();
         let only = pill_process();
 
-        assert!(publish_pill_process(&handle, only.clone()));
-        assert!(!publish_pill_process(&handle, only.clone()));
-        assert!(!has_exited(&only));
+        assert!(publish_pill_process(&handle, only.0.clone()));
+        assert!(!publish_pill_process(&handle, only.0.clone()));
+        assert!(!has_exited(&only.0, ALIVE));
     }
 }

@@ -24,13 +24,7 @@ debug-assist = ["tauri/devtools"]
 tauri-build = { version = "=2.5.6", features = [] }
 
 [dependencies]
-# "test" is what exposes `tauri::test::mock_app`, which the pill publish tests need to
-# reach the overlay reject path without the overlay binary. It is an empty feature
-# (`test = []` in tauri 2.10.3), so nothing extra is compiled for a release build, and it
-# sits on this dependency rather than in [dev-dependencies] because this crate is a
-# standalone package: dev-dependency features are unified into the normal build here, so
-# the two spellings would compile the same thing.
-tauri = { version = "=2.10.3", features = ["test", "protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
+tauri = { version = "=2.10.3", features = ["protocol-asset", "tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 log = "0.4"
 # Refcounted buffer for the private-HTTP request body: a redirect hop that
@@ -93,6 +87,13 @@ cap-std = "=4.0.3"
 cap-fs-ext = { version = "=4.0.3", default-features = false }
 
 [dev-dependencies]
+# `tauri::test` -- and so `tauri::test::mock_app` -- is `#[cfg(any(test, feature = "test"))]`
+# at tauri-2.10.3/src/lib.rs:1100, so it is not reachable from a crate that merely depends on
+# tauri. Declared HERE rather than on the `[dependencies]` entry above, because that entry
+# would compile tauri's mock runtime and mock app into every shipped binary: the feature is
+# empty (`test = []`, no extra dependencies) but the ~330 lines of `src/test/` behind it are
+# not, and a mock app has no business in a release build.
+tauri = { version = "=2.10.3", features = ["test"] }
 filetime = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
