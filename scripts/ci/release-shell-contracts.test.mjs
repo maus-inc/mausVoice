@@ -196,21 +196,24 @@ describe("release workflow shell contracts", () => {
         `(declares workflow_dispatch: ${declaresManual})`,
     );
   }
-  // The shape of the capability check, as it appears in the scans and in the verdict.
-  // Pulled out as a function so the two contracts below compare the SAME text.
-  const capabilityPredicate = (text) => {
-    const blocks = [...text.matchAll(/^[ \t]*active=0$/gm)].map((m) => {
-      const rest = text.slice(m.index);
-      const end = rest.search(/\n[ \t]*fi\n/);
-      assert.notEqual(end, -1, "unterminated capability predicate");
-      return rest.slice(0, end + 1).replace(/^[ \t]*active=0$/gm, "active=0");
-    });
-    return blocks.map((b) =>
-      b
-        .split("\n")
-        .map((l) => l.replace(/^[ \t]+/, ""))
-        .join("\n"),
-    );
+  // The capability check, as it appears in the three scans and in the verdict.
+  //
+  // Compared as the awk PROGRAM, not as the whole block. The three scans feed it a
+  // path and the verdict feeds it a blob, so their `if` lines differ by construction:
+  // `if awk '...' "$TRUSTED_POLICY"` against `if printf '%s' "$POLICY_BLOB" | awk
+  // '...'`. What must not drift is the question being asked, which is the program.
+  const capabilityProgram = (text) => {
+    const programs = [];
+    const marker = "awk '";
+    let at = text.indexOf(marker);
+    while (at !== -1) {
+      const start = at + marker.length;
+      const end = text.indexOf("'", start);
+      if (end === -1) break;
+      programs.push(text.slice(start, end));
+      at = text.indexOf(marker, end);
+    }
+    return programs;
   };
 
   it("the verdict re-derives policy capability itself, crossing no step boundary", () => {
@@ -252,16 +255,43 @@ describe("release workflow shell contracts", () => {
     assert.ok(verdict, "secret-scan.yml needs the closing verdict step");
     const body = verdict.run.join("\n");
 
-    // 2. The verdict reads the trusted policy itself, and fails closed on it.
+    // 2. The verdict reads the trusted policy by NAME out of git's object store.
+    //
+    // Reading the trusted checkout's working tree is not enough, and this is the third
+    // time that has been tried. The verdict runs after the three steps that resolve
+    // `node scripts/ci/*.mjs` out of the scanned checkout -- the branch under review,
+    // running as the uid that owns `trusted-scanner/` -- so any of them can rewrite
+    // `../trusted-scanner/gitleaks.toml`. The argument that "no other step is
+    // involved" was true of the read and false of the file. `git cat-file blob
+    // <commit>:<path>` resolves the path through the base commit's tree and returns
+    // the blob those bytes name, which rewriting a working file cannot change.
     assert.match(
       body,
+      /git -C \.\.\/trusted-scanner cat-file blob "\$POLICY_REF:gitleaks\.toml"/,
+      "the closing verdict must read the trusted policy through git cat-file, by " +
+        "name: the working tree is writable by the pull-request-controlled steps " +
+        "that run before this one",
+    );
+    assert.doesNotMatch(
+      body,
       /TRUSTED_POLICY="\.\.\/trusted-scanner\/gitleaks\.toml"/,
-      "the closing verdict must resolve the trusted policy from the trusted checkout",
+      "the verdict must not read the trusted policy off disk",
     );
     assert.match(
       body,
-      /\[ ! -r "\$TRUSTED_POLICY" \]/,
-      "the closing verdict must fail closed when the trusted policy is unreadable",
+      /if ! POLICY_BLOB="\$\(git -C/,
+      "an unreadable policy must fail the job, not be treated as an empty one",
+    );
+    assert.match(
+      body,
+      /::error::Cannot read gitleaks\.toml at \$POLICY_REF/,
+      "the verdict must say the pull request is unscanned when it cannot read the " +
+        "policy",
+    );
+    assert.match(
+      body,
+      /printf '%s' "\$POLICY_BLOB" \| awk/,
+      "the predicate must run over the blob's bytes, not over a path",
     );
     assert.match(
       body,
@@ -286,16 +316,16 @@ describe("release workflow shell contracts", () => {
     //    check in four places because failing inside the scans made every
     //    self-verification step after them unreachable; a drifted copy is exactly how
     //    that trade turns back into a blind green.
-    const blocks = capabilityPredicate(scan);
+    const programs = capabilityProgram(scan);
     assert.equal(
-      blocks.length,
+      programs.length,
       4,
-      `expected the capability predicate in all three scans plus the verdict, found ${blocks.length}`,
+      `expected the capability predicate in all three scans plus the verdict, found ${programs.length}`,
     );
-    const [reference, ...rest] = blocks;
-    for (const block of rest) {
+    const [reference, ...rest] = programs;
+    for (const program of rest) {
       assert.equal(
-        block,
+        program,
         reference,
         "the four copies of the capability predicate have drifted apart",
       );
