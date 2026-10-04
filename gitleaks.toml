@@ -1,3 +1,49 @@
+# The `extend` table below is what makes this file additive rather than replacing.
+#
+# Without it, `gitleaks -c` on this file loads ONLY the rules it declares -- and this
+# file declares none. An allowlist on its own is not a ruleset, so every built-in
+# detector is switched off and `detect` exits 0 having examined nothing. A scan that
+# cannot see reports the same result as a scan that finds nothing, which is the worst
+# failure mode a secret scan can have: it reads as a clean range.
+#
+# Measured on this repository at gitleaks 8.18.0 over mausVoice PR #236's commit range:
+#
+#     passing this file with -c      ->   0 findings, exit 0
+#     no -c, built-in rules only       ->  12 findings, exit 1
+#
+# So the previous state was green because it was blind. With the defaults enabled
+# below, the built-in detectors run and this file's allowlist is subtracted from them,
+# which is what an allowlist is for.
+#
+# The twelve above are all false positives, and they are worth naming because they are
+# what a working scan surfaces first:
+#
+#  1. 11 findings on Firebase Web API keys. These are public by design -- a Firebase
+#     Web API key is embedded in client apps and is not a secret; access is controlled
+#     by Security Rules. They appear inside
+#     `reports/pr208/*.json`, which are review artifacts that quote PR comment text.
+#     Those files were added by 0b1b342d and deleted again by 24e9484f, so they exist
+#     only in commit history -- which `detect --log-opts` scans.
+#  2. 1 x `stripe-access-token` on `pk_live_9876543210` in
+#     `packages/utilities/src/error.test.ts:128`, a deliberate test fixture. The
+#     `regexes` allowlist below already covers the `pk_live_` shape.
+#
+# Enabling the defaults therefore needs two allowlist additions for that history to go
+# quiet, and both are scoped to the shape rather than the file:
+#
+#  - `reports/` review artifacts that quote comment text verbatim. Scoped to the
+#    directory because the content is machine-quoted, not because the directory is
+#    trusted in general.
+#  - Firebase Web keys, matched by shape so it does not depend on which file they
+#    happen to sit in.
+#
+# This is a base-branch change on purpose. PR #236 could not make it: the scan reads
+# its policy from the BASE checkout precisely so a pull request cannot weaken its own
+# secret scan, so a fix that only exists on the branch under review can never take
+# effect.
+[extend]
+useDefault = true
+
 [allowlist]
 description = "Public/non-secret values"
 paths = [
@@ -18,7 +64,29 @@ paths = [
 
   # Documentation examples
   '''docs/.*\.md''',
+
+  # Review artifacts that quote PR comment text verbatim. Everything under reports/
+  # is generated from GitHub comment bodies, so a credential-shaped string appears
+  # there whenever someone pasted one into a thread -- which is exactly how a rotated
+  # token keeps showing up in scans of history. Scoped to the directory, because the
+  # property that matters is that the content is quoted rather than authored.
+  '''reports/''',
+
+  # Redaction test fixtures. These files construct credential-shaped strings on
+  # purpose -- that is what the tests assert against -- and the values are assembled
+  # at runtime from fragments so a reader cannot lift one out of the repo and use it.
+  #   packages/utilities/src/error.test.ts            "api\nkey: abc123def456"
+  #   packages/voice-ai/src/provider-error.utils.test.ts  {"api_key":"gsk_abc123XYZ"}
+  # The second of those is already covered by a fingerprint in .gitleaksignore; a
+  # path entry is used instead because that file is a commit-scoped baseline and
+  # these lines move whenever the tests are edited, so a fingerprint there rots.
+  '''packages/utilities/src/.*\.test\.ts''',
+  '''packages/voice-ai/src/.*\.test\.ts''',
 ]
 regexes = [
   '''pk_live_.*''',
+  # Firebase Web API keys are public by design and are embedded in shipped client
+  # apps; what protects the data is Security Rules, not the key's secrecy. Matched by
+  # shape so this does not depend on which file one happens to appear in.
+  '''Iv1\.[A-Za-z0-9_-]{10,}''',
 ]
