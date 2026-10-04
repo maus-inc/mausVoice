@@ -1543,11 +1543,13 @@ mod pill_publish_tests {
             // `_child`. Recovering from the poison is the difference between this guard reaping
             // on the panicking path, which is the path that needs it, and not.
             //
-            // It is `try_wait` ALONE. An earlier version of this comment also blamed "the
-            // `expect` on the lock itself", which cannot be right: `Mutex::lock` returning
-            // `Err` is how a poison is observed, not caused. `has_exited` has no such an
-            // `expect` now either -- it recovers the same way -- so the list is genuinely one
-            // item long rather than one item long plus a misunderstanding.
+            // Two sites raise a panic while holding this lock, and neither is an `expect`
+            // on the lock itself: `try_wait` inside `has_exited`, and `kill()` in
+            // `the_untouched_window_observes_a_real_kill`, which exists precisely to kill a
+            // child. An earlier version of this comment said `try_wait` ALONE and used that to
+            // conclude the list was one item long -- wrong on arrival, because the control test
+            // had just added the second. Both recover now, so the code is right; only the
+            // enumeration was not.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
@@ -1579,22 +1581,6 @@ mod pill_publish_tests {
     /// immediately; the exit is observed afterwards, by `try_wait`, on the operating system's
     /// schedule. So a single observation cannot tell "no kill was sent" from "a kill was sent
     /// and has not been reaped yet" -- and the second reading is precisely the bug this test
-    /// exists to catch, reported as a pass. Measured over 40 trials:
-    ///
-    ///     try_wait() straight after kill() reported "still running"   40/40
-    ///     the signal already sent became observable within 50 ms       40/40
-    ///
-    /// So the window has to be long enough for a signal already in flight to land, and short
-    /// enough not to charge every run for it. An earlier version of this comment claimed the
-    /// direction needs no waiting at all and proposed a one-shot check; that check would have
-    /// been green for every kill ever sent.
-    ///
-    /// It also quoted a 50 ms observation from 40 trials without saying where, on what, or how
-    /// to repeat it -- and this suite runs on Windows too, where `Child::kill` is
-    /// `TerminateProcess` against a signalled handle rather than SIGKILL and a zombie
-    /// transition. A figure from one platform is not evidence about another, and this is the
-    /// window whose failure mode is a FALSE PASS in the one direction that matters.
-    ///
     /// So the number is no longer the evidence. `the_untouched_window_observes_a_real_kill`
     /// kills a child and asserts it becomes observable inside this same budget, in the same
     /// run, on whatever machine and operating system the suite is on. If a loaded runner
@@ -1604,12 +1590,23 @@ mod pill_publish_tests {
 
     /// Whether `process`'s child has exited within `budget`.
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
-        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`. A `Mutex::lock`
-        // returning `Err` is how a poison is OBSERVED, so this `expect` could never have been
-        // what caused one -- but it could still fire, because the `try_wait` below can panic
-        // while holding the lock, and if that happens while another panic is already unwinding
-        // the process aborts: `Drop` never runs, so `ReapOnDrop` cannot reap, and the children
-        // the failing assertion meant to keep alive outlive the run.
+        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`, at both places
+        // that lock `_child` while panicking can happen. A `Mutex::lock` returning `Err` is
+        // how a poison is OBSERVED, so neither `expect` could have caused one -- but either can
+        // fire because of one, and that is the direction that matters.
+        //
+        // The cascade, since `has_exited` is never itself on an unwinding path: it is always
+        // evaluated to a bool first, and only then does an `assert!` around it fire. So a
+        // `try_wait` panic here poisons the lock and returns through `None`, and the caller
+        // carries on to the assertion that failed. THAT unwind runs `ReapOnDrop::drop`, and a
+        // lock `expect` there would be a second panic while the first is unwinding -- which
+        // aborts the process, skips every remaining `Drop`, and leaves the `sleep`/`ping`
+        // children this suite spawns alive for their full 120 s.
+        //
+        // An earlier version of this comment put the abort at the wrong panic, describing
+        // `try_wait` firing while another panic was already unwinding. That cannot happen
+        // here, and naming it sent the reader looking for an unwind path this function is
+        // never on.
         let mut child = process
             ._child
             .lock()
