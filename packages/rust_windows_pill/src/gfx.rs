@@ -30,6 +30,11 @@ pub(crate) struct Gfx {
     pub(crate) height: i32,
     save_stack: Vec<SaveState>,
     clip_kinds: Vec<ClipKind>,
+    /// Masks handed to `PushLayer`, which borrows a geometry for the lifetime of
+    /// the layer rather than taking a reference of its own. Pushed and popped in
+    /// lockstep with `clip_kinds`, so `layer_masks.last()` is the mask belonging to
+    /// the `ClipKind::Layer` at the same depth.
+    layer_masks: Vec<ID2D1Geometry>,
     current_transform: Matrix3x2,
 }
 
@@ -117,6 +122,7 @@ impl Gfx {
                 height,
                 save_stack: Vec::new(),
                 clip_kinds: Vec::new(),
+                layer_masks: Vec::new(),
                 current_transform: Matrix3x2::identity(),
             })
         }
@@ -125,6 +131,7 @@ impl Gfx {
     pub(crate) fn begin_frame(&mut self) {
         self.save_stack.clear();
         self.clip_kinds.clear();
+        self.layer_masks.clear();
         self.current_transform = Matrix3x2::identity();
         unsafe {
             let rect = RECT {
@@ -139,12 +146,26 @@ impl Gfx {
         }
     }
 
+    /// Ends the layer the clip stack names and releases the mask D2D borrowed for
+    /// it. The mask has to outlive the `PushLayer` that took it and must die no
+    /// earlier than the matching `PopLayer`, which is why it is released here
+    /// rather than where it was created.
+    fn pop_layer(&mut self) {
+        // SAFETY: `clip_rounded_rect` pushes one `ClipKind::Layer` and exactly one
+        // mask for each `PushLayer` it makes, and nothing else touches either
+        // stack, so the two are always the same depth and this pop matches a push.
+        unsafe {
+            self.rt.PopLayer();
+            drop(self.layer_masks.pop());
+        }
+    }
+
     pub(crate) fn end_frame(&mut self) {
         while let Some(kind) = self.clip_kinds.pop() {
             unsafe {
                 match kind {
                     ClipKind::AxisAligned => self.rt.PopAxisAlignedClip(),
-                    ClipKind::Layer => self.rt.PopLayer(),
+                    ClipKind::Layer => self.pop_layer(),
                 }
             }
         }
@@ -174,7 +195,7 @@ impl Gfx {
                     unsafe {
                         match kind {
                             ClipKind::AxisAligned => self.rt.PopAxisAlignedClip(),
-                            ClipKind::Layer => self.rt.PopLayer(),
+                            ClipKind::Layer => self.pop_layer(),
                         }
                     }
                 }
@@ -243,6 +264,12 @@ impl Gfx {
                 .unwrap();
 
             let geom_id2d1: ID2D1Geometry = geom.cast().unwrap();
+            // `PushLayer` borrows this geometry until the matching `PopLayer`, and
+            // `ManuallyDrop` suppresses the drop that would otherwise release the
+            // reference `cast()` just took — one leaked geometry per call, and the
+            // draw pass makes five of these calls a frame. Keep a Rust-side owner
+            // so `pop_layer` can release it when the borrow actually ends.
+            self.layer_masks.push(geom_id2d1.clone());
             let params = D2D1_LAYER_PARAMETERS {
                 contentBounds: D2D_RECT_F {
                     left: f32::MIN,
