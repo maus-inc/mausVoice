@@ -16,7 +16,7 @@ Application targets are local records keyed from the detected foreground applica
 
 At the end of dictation, mausVoice resolves the foreground app again and passes that target's style to post-processing. An unassigned or unrecognized target currently resolves through the built-in Polished fallback. The app list's **Default style** control is stored separately; verify the row assignment you actually need rather than assuming every blank row inherits that control.
 
-On Windows and Linux, the row's overflow menu also exposes a per-app paste binding. The fuller **Settings → General → Text insertion options** dialog can set each target's insertion method, paste binding, and simulated-typing speed. These output settings are independent of writing style.
+On Windows and Linux, the row's overflow menu also exposes a per-app paste binding. The fuller **Settings → Dictation → Text insertion options** dialog can set each target's insertion method, paste binding, and simulated-typing speed. These output settings are independent of writing style.
 
 ## Manual mode and Automatic style loading
 

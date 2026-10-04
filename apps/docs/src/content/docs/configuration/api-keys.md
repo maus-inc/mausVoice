@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Open **Settings → Processing → AI transcription**, **AI post processing**, or **Assistant mode**. Each dialog filters the key list to providers registered for that task. A saved credential is a reusable record; the selected card determines which record that task uses.
+Open **Settings → AI and processing → AI transcription**, **AI post processing**, or **Assistant mode**. Each dialog filters the key list to providers registered for that task. A saved credential is a reusable record; the selected card determines which record that task uses.
 
 ## Add and select a record
 

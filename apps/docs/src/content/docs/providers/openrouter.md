@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-OpenRouter works for both generation and transcription in mausVoice. Add its API key under **Settings → Processing → AI post processing**, **Assistant mode**, or **Transcription** and select that record for the task.
+OpenRouter works for both generation and transcription in mausVoice. Add its API key under **Settings → AI and processing → AI post processing**, **Assistant mode**, or **Transcription** and select that record for the task.
 
 Expand **Model** on the selected key to fetch OpenRouter's live model catalog. Search matches model names and IDs, and stars keep preferred entries at the top. A key with no customized favorites starts with `openai/gpt-oss-120b` and `openai/gpt-oss-20b`. If no model is saved at request time, generation and the key test default to `openai/gpt-4o-mini`. For transcription, pick an OpenRouter-routed STT model such as `openai/whisper-1`.
 

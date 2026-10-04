@@ -5,7 +5,7 @@ sidebar:
   order: 14
 ---
 
-Open **Settings → Processing → Dictation language**. With one language configured, the row is an ordinary selector; use its three-dot button to open the multi-language dialog. After you add a language, the row shows a **Multiple languages** button instead. Each dialog row has both a language and a hotkey.
+Open **Settings → Dictation → Dictation language**. With one language configured, the row is an ordinary selector; use its three-dot button to open the multi-language dialog. After you add a language, the row shows a **Multiple languages** button instead. Each dialog row has both a language and a hotkey.
 
 ## Primary and additional languages
 

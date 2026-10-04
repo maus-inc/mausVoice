@@ -13,7 +13,7 @@ When you register, mausVoice asks the operating system for the **foreground appl
 
 - **Detection** identifies the foreground app by an OS-provided display name. macOS uses the frontmost app's localized name; Windows and Linux derive a display name from the focused-window title when it has a recognizable app-name suffix, then fall back to the process name. The name is normalized into a stable identifier so "Google Chrome" and "google-chrome" resolve to the same target.
 - **Storage.** The target is saved locally on this device: its display name, creation time, chosen writing style, insertion preferences, and a small rendered copy of the app icon. When the system provides an icon it is rendered to a small image and saved locally; when it cannot or the icon fails to render, the native layer normally supplies a generated placeholder that is saved instead (in rare encoding-failure cases the detection call itself is rejected and no target is created; see Troubleshooting). Icon saving is best-effort. If the storage upload fails, the target is still created but without an image.
-- **Effect** makes the app appear in **Writing Styles** and in **Settings → General → Text insertion options**. Once a target exists you can customize it per app:
+- **Effect** makes the app appear in **Writing Styles** and in **Settings → Dictation → Text insertion options**. Once a target exists you can customize it per app:
   - **Writing style.** Which style post-processing uses when that app is focused.
   - **Insertion method.** Whether text is delivered by clipboard paste or simulated typing.
   - **Paste keybind.** Which shortcut the paste path sends (e.g. Shift+Insert).
@@ -57,7 +57,7 @@ Follow those three steps; the list populates after the tray action completes. Di
 ## What changes after registration
 
 - **New row in Writing Styles.** Sorted alphabetically. Each row has a style selector. A freshly registered row starts with no style assigned and behaves like any other target until you choose one.
-- **New entry in Text insertion options.** The dedicated dialog (**Settings → General → Text insertion options**) lists insertion method, paste keybind, and typing speed for that target on all platforms. In the **Writing Styles** list itself, the overflow menu that exposes the paste shortcut is hidden on macOS (use the Settings dialog there instead).
+- **New entry in Text insertion options.** The dedicated dialog (**Settings → Dictation → Text insertion options**) lists insertion method, paste keybind, and typing speed for that target on all platforms. In the **Writing Styles** list itself, the overflow menu that exposes the paste shortcut is hidden on macOS (use the Settings dialog there instead).
 - **Tray label.** The tray item updates to **Register current app [MostRecentName]** after a successful detection. The label records the most recently detected name; choosing the item samples the foreground app again.
 - **No automatic style assignment.** A new entry starts with the global paste shortcut as its initial value and no writing style; assign what you need.
 

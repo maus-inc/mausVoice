@@ -43,7 +43,7 @@ The GTK pill uses layer-shell on compositors that support it. On unsupported com
 
 ### Blank window on X11 or with i3
 
-If mausVoice opens a blank window on X11 (common with i3, bspwm, and some NVIDIA + tiling setups), the WebKitGTK compositing path is failing. mausVoice sets `WEBKIT_DISABLE_COMPOSITING_MODE=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1` automatically when `XDG_SESSION_TYPE=x11` is set at launch, so make sure that variable is exported by your display manager or session script before the app starts. You can confirm it with `echo "$XDG_SESSION_TYPE"` in the same shell you launch mausVoice from.
+If mausVoice opens a blank window on X11 (common with i3, bspwm, and some NVIDIA + tiling setups), the WebKitGTK compositing path is failing. mausVoice sets `WEBKIT_DISABLE_COMPOSITING_MODE=1` and `WEBKIT_DISABLE_DMABUF_RENDERER=1` by itself on X11, including when `XDG_SESSION_TYPE` is unset -- it treats anything that is not a Wayland session as X11, on purpose, so that the session types that leave the variable unset or set it to something unusual still get the workaround. Do not export `XDG_SESSION_TYPE=x11` to "make sure" of it: that is already the fallback, and if your display manager exports `wayland` while the window is actually forwarded to X11, setting it by hand is what switches the workaround OFF. If the window is still blank, you are on a real Wayland session, which is a different problem.
 
 If the window is still blank after that, run from a terminal to capture the WebKit log and look for `EGL_BAD_PARAMETER`:
 

@@ -7,7 +7,7 @@ sidebar:
 
 The best model is the smallest one that handles your real speech reliably. File size is not RAM use, inference speed, or a language-specific accuracy promise.
 
-1. In **Settings → Processing → AI transcription → Local**, download Base or Small.
+1. In **Settings → AI and processing → AI transcription → Local**, download Base or Small.
 2. Choose an available **Processing device**. CPU is always attempted first for discovery; GPU choices appear only when the app detects a discrete Vulkan GPU and the shipped GPU sidecar starts successfully.
 3. Turn **AI post processing** Off and dictate the same representative 30-second passage three times.
 4. Compare Raw text in History. Include names, numbers, punctuation intent, pauses, and your normal noise level.

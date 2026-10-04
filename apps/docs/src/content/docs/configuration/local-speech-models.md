@@ -15,7 +15,7 @@ mausVoice runs local transcription in a separate sidecar process. Two model fami
 
 Whisper is the safe default across languages and hardware. The ONNX models are faster on modern CPUs: Parakeet CTC is tuned for low-latency English dictation, Parakeet TDT trades a little speed for better English accuracy, and Canary adds multilingual recognition with automatic punctuation and casing. SenseVoice is a sherpa-onnx multilingual INT8 model (~226 MB) with automatic language detection and no punctuation.
 
-Open **Settings → Processing → AI transcription → Local** to see the full list. Each row shows the model, its size, and its download state.
+Open **Settings → AI and processing → AI transcription → Local** to see the full list. Each row shows the model, its size, and its download state.
 
 ## Downloads
 

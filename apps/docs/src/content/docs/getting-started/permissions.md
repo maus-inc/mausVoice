@@ -15,7 +15,7 @@ mausVoice crosses several operating-system security boundaries. Grant the narrow
 | Overlay/window access       | Show and position the native recording pill            | Dictation works without a visible indicator                 |
 | `/dev/uinput` on Wayland    | Drive `ydotool` simulated keys                         | Clipboard may update but paste is not triggered             |
 
-On macOS, review mausVoice under **System Settings → Privacy & Security**, especially Microphone and the input/accessibility categories presented by that macOS release. On Windows, use the input setup offered inside Settings and accept the UAC prompt when appropriate. On Linux, desktop and compositor configuration takes the place of a single universal permission panel.
+On macOS, review mausVoice under **System Settings → Privacy and data**, especially Microphone and the input/accessibility categories presented by that macOS release. On Windows, use the input setup offered inside Settings and accept the UAC prompt when appropriate. On Linux, desktop and compositor configuration takes the place of a single universal permission panel.
 
 After changing an operating-system permission, quit and reopen mausVoice. Native audio streams and event taps are often created at process start and do not always recover in-place.
 

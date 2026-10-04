@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-Groq is available for both transcription and generation. Get a key from the [Groq console](https://console.groq.com/keys), then either use the top-level **Settings → Processing → Groq API key** row or add a named Groq record inside a task dialog.
+Groq is available for both transcription and generation. Get a key from the [Groq console](https://console.groq.com/keys), then either use the top-level **Settings → AI and processing → Groq API key** row or add a named Groq record inside a task dialog.
 
 ## Quick personal record
 

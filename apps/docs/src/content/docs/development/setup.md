@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Use Node from `.nvmrc`, currently **v24**. The root `engines.node` floor is `>=20`. Wiki notes that say "Node 18+" are outdated; CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, **pnpm 10.34.5**, then install from the repository root:
+Use Node from `.nvmrc`, currently **v24**. The root `engines.node` range is `^22.22.2 || ^24.15.0 || >=26.0.0`, so 22, 24 and 26 are accepted and odd majors are not. Wiki notes that say "Node 18+" are outdated; CI follows `.nvmrc`. Enable Corepack or install the exact package manager from the root manifest, **pnpm 10.34.5**, then install from the repository root:
 
 ```bash
 corepack enable

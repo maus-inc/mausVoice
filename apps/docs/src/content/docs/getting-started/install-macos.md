@@ -31,4 +31,4 @@ Upgrade it later with:
 brew upgrade --cask mausvoice-desktop
 ```
 
-If macOS permissions were denied, open **System Settings → Privacy & Security** and review Microphone and Accessibility/Input Monitoring access for mausVoice. Permission labels can differ between macOS versions. Restart mausVoice after changing them so the native event tap and recorder are recreated.
+If macOS permissions were denied, open **System Settings → Privacy and data** and review Microphone and Accessibility/Input Monitoring access for mausVoice. Permission labels can differ between macOS versions. Restart mausVoice after changing them so the native event tap and recorder are recreated.

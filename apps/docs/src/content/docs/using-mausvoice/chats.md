@@ -5,7 +5,7 @@ sidebar:
   order: 11
 ---
 
-**Chats** is the main-window view of the experimental assistant. The navigation item appears only after **Settings → Processing → Assistant mode → Assistant mode** is enabled.
+**Chats** is the main-window view of the experimental assistant. The navigation item appears only after **Settings → AI and processing → Assistant mode → Assistant mode** is enabled.
 
 ## Start or continue a conversation
 
@@ -23,7 +23,7 @@ See [Assistant mode](./assistant-mode/) before approving screen reads, paste ope
 
 Conversations, user messages, assistant responses, and tool-result metadata are stored in the local SQLite database. They survive app restarts and are separate from transcription-history rows. Sending another message rebuilds the conversation context and sends the relevant message history to the assistant provider selected in Assistant mode. Tool output can therefore become part of later provider requests.
 
-A conversation's overflow menu offers **Delete**. Deleting it removes the local conversation and all of its chat messages. **Settings → Danger zone → Clear local data** also clears the `conversations` and `chat_messages` tables. Neither action can retract information already sent to an external model provider or reverse filesystem changes made by a tool.
+A conversation's overflow menu offers **Delete**. Deleting it removes the local conversation and all of its chat messages. **Settings → Privacy and data → Danger zone → Clear local data** also clears the `conversations` and `chat_messages` tables. Neither action can retract information already sent to an external model provider or reverse filesystem changes made by a tool.
 
 ## Safe operating habits
 

@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Start in **Settings → Processing → AI transcription → Local**. A usable row must report **Downloaded** after validation; a file merely existing under app data is not enough.
+Start in **Settings → AI and processing → AI transcription → Local**. A usable row must report **Downloaded** after validation; a file merely existing under app data is not enough.
 
 ## Download or validation fails
 

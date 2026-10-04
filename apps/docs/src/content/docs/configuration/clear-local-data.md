@@ -5,7 +5,7 @@ sidebar:
   order: 12
 ---
 
-Open **Settings → Danger zone → Clear local data**. The confirmation dialog requires typing `clear` and warns that the action is irreversible.
+Open **Settings → Privacy and data → Danger zone → Clear local data**. The confirmation dialog requires typing `clear` and warns that the action is irreversible.
 
 The current command empties eleven SQLite tables: chat messages, conversations, user profiles, transcriptions, terms, hotkeys, API keys, user preferences, tones (writing styles), app targets, and paired remote devices. It attempts to delete the audio files referenced by transcriptions from the managed `transcription-audio/` directory (through a canonicalized path guard), sweeps orphaned WAVs there, then attempts to vacuum the database and reload the interface. Use it when a genuine local reset is intended, not as the first response to a provider outage, permission problem, or one bad style.
 

@@ -7,7 +7,7 @@ sidebar:
 
 Gemini and Claude are not interchangeable in mausVoice. [Gemini](./gemini/) has both batch transcription and generative routes. **Claude** is exposed only in post-processing and Assistant key lists; it cannot receive microphone audio through the transcription dispatcher.
 
-Add a Claude key under **Settings → Processing → AI post processing** or **Assistant mode**, then select the saved entry for that task. Both task selectors can reference the same record, but they store their selections independently. **Test** asks Anthropic's `/v1/models` endpoint to list models; it checks authentication, not a complete style or tool call.
+Add a Claude key under **Settings → AI and processing → AI post processing** or **Assistant mode**, then select the saved entry for that task. Both task selectors can reference the same record, but they store their selections independently. **Test** asks Anthropic's `/v1/models` endpoint to list models; it checks authentication, not a complete style or tool call.
 
 Claude generation calls `https://api.anthropic.com/v1/messages` with the `anthropic-version: 2023-06-01` header. The picker queries Anthropic's live catalog; if that request is unavailable, the fallback contains current Claude 5 models plus Haiku 4.5. When no model is saved, mausVoice uses `claude-sonnet-5`. The request supports a separate system instruction, conversation messages, and tool definitions/results, so Claude can participate in Assistant flows as well as transcript rewriting.
 

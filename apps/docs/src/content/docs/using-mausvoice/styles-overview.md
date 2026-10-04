@@ -12,7 +12,7 @@ Open **Writing Styles** from the main navigation. Which layout appears depends o
 - **Based on app** is the default. The page lists registered applications and lets each app have a style.
 - **Manual** shows a selected set of styles. Click a row or use the style-cycle shortcuts while dictating.
 
-Post-processing must also be configured. If **Settings → Processing → AI post processing** is **Off**, style controls are disabled and no generative rewrite runs. The built-in **Verbatim** style also skips the generative stage for that dictation, while leaving post-processing available for other styles.
+Post-processing must also be configured. If **Settings → AI and processing → AI post processing** is **Off**, style controls are disabled and no generative rewrite runs. The built-in **Verbatim** style also skips the generative stage for that dictation, while leaving post-processing available for other styles.
 
 ## What reaches the provider
 

@@ -5,7 +5,7 @@ sidebar:
   order: 15
 ---
 
-After processing, mausVoice places output on the clipboard and delivers it with the configured insertion strategy. Open **Settings → General → Text insertion options** to choose between clipboard paste and simulated typing.
+After processing, mausVoice places output on the clipboard and delivers it with the configured insertion strategy. Open **Settings → Dictation → Text insertion options** to choose between clipboard paste and simulated typing.
 
 Defaults are clipboard **paste**, **Shift+Insert** as the paste key sequence, and a **5 ms** delay for simulated typing. These are operational defaults, not guarantees for every target. Terminals, remote desktops, password fields, games, browser canvases, and elevated windows can intercept or reject synthetic input.
 

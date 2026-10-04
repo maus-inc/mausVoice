@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-Choose **Settings → Processing → AI transcription → Local**. Opening this panel starts the relevant loopback sidecar, discovers devices, and validates each model file. Every model remains listed; use its **Download** button before selecting it. Progress includes percentage and bytes when the server supplies a total.
+Choose **Settings → AI and processing → AI transcription → Local**. Opening this panel starts the relevant loopback sidecar, discovers devices, and validates each model file. Every model remains listed; use its **Download** button before selecting it. Progress includes percentage and bytes when the server supplies a total.
 
 | UI label                 | ID                  | Displayed download |
 | ------------------------ | ------------------- | -----------------: |
@@ -53,4 +53,4 @@ Whisper files go straight into that directory. The filename must match the model
 
 ONNX and sherpa-onnx models ship multiple artifacts, so each gets its own subdirectory named after the model ID. The sidecar marks the model ready only after the required graph, tokenizer or vocabulary, and other companion files are present together. For SenseVoice, place both `model.int8.onnx` and `tokens.txt` in `transcription-models/sense-voice/`. Downloading from the Settings panel handles this grouping; manual placement must keep every artifact in the same subdirectory, or validation will keep failing.
 
-Sources: the `ggerganov/whisper.cpp` Hugging Face repository for Whisper files, published NVIDIA ONNX checkpoints for Parakeet and Canary, and the sherpa-onnx SenseVoice checkpoint. The model id, expected filename, and required artifacts are defined in `packages/rust_transcription/src/models.rs`. After placing files, open **Settings → Processing → AI transcription → Local** and confirm the row's status reads both downloaded and valid before selecting it for the next dictation.
+Sources: the `ggerganov/whisper.cpp` Hugging Face repository for Whisper files, published NVIDIA ONNX checkpoints for Parakeet and Canary, and the sherpa-onnx SenseVoice checkpoint. The model id, expected filename, and required artifacts are defined in `packages/rust_transcription/src/models.rs`. After placing files, open **Settings → AI and processing → AI transcription → Local** and confirm the row's status reads both downloaded and valid before selecting it for the next dictation.

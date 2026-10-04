@@ -32,7 +32,7 @@ Homebrew users can also run `brew upgrade --cask mausvoice-desktop`. The tap is 
 
 ## Release channels
 
-There is a single stable channel. Pre-releases are published to GitHub with installers so you can download and test them deliberately, but they are never served to the updater and never pushed to the Homebrew tap, so a pre-release cannot arrive on your machine on its own. A pre-release build is not OS-code-signed (no Apple notary, no Windows codesign), even when the updater bundles it references are signed: read the notes, and back up important history before installing one.
+There are two channels. **Stable** is the default and serves signed prereleases only after one is promoted out of prerelease. **Beta**, which you opt into under Settings → Updates, serves prereleases as they are published, from `latest-beta.json` on the rolling `beta-channel` tag. A machine left on stable never receives a prerelease on its own, which is the point: opting in is what exposes you to them. A pre-release build is not OS-code-signed (no Apple notary, no Windows codesign), even when the updater bundles it references are signed: read the notes, and back up important history before installing one.
 
 ## When updating fails
 

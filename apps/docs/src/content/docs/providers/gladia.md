@@ -10,7 +10,7 @@ Gladia is a transcription-only provider in mausVoice. It supports both live micr
 ## Set up a key
 
 1. Create an account and API key using [Gladia's getting-started guide](https://docs.gladia.io/chapters/introduction/getting-started).
-2. Open **Settings → Processing → AI transcription**.
+2. Open **Settings → AI and processing → AI transcription**.
 3. Add a named API key, choose **Gladia**, enter the secret, and save it.
 4. Select `solaria-1`, then use **Test**.
 

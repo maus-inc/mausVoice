@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Open **Settings → Processing → AI transcription** and choose **Local** or **API**.
+Open **Settings → AI and processing → AI transcription** and choose **Local** or **API**.
 
 **Local** starts a bundled Rust transcription sidecar on `127.0.0.1` and keeps speech recognition on this computer using a downloaded model: a whisper.cpp GGML model, an ONNX Parakeet/Canary model, or the sherpa-onnx SenseVoice model. It still needs network access while downloading a model from its origin. The app sends audio chunks to the loopback sidecar during recording, but the sidecar buffers them and runs inference only at finalization; Local does not supply interim text for real-time output.
 

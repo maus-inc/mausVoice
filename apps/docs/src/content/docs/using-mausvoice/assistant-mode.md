@@ -9,7 +9,7 @@ Assistant mode is an experimental command workflow, separate from ordinary dicta
 
 ## Configure it
 
-1. Open **Settings → Processing → Assistant mode**.
+1. Open **Settings → AI and processing → Assistant mode**.
 2. Choose **API** and select or add a credential whose provider supports generative text. **Off** leaves the assistant without an LLM backend.
 3. Configure the **Assistant hotkey**.
 4. Turn on the separate **Assistant mode** switch. This feature is disabled by default.
@@ -20,7 +20,7 @@ The assistant has its own provider selection. Changing the transcription provide
 
 Hold the configured assistant shortcut, speak an instruction, and release it. The voice is transcribed using the active transcription configuration, but the recognized text becomes a chat message rather than a normal history row. The assistant conversation appears in the pill and under **Chats** in the main navigation.
 
-Useful companion shortcuts are listed under **Settings → General → Hotkey shortcuts**:
+Useful companion shortcuts are listed under **Settings → Shortcuts → Hotkey shortcuts**:
 
 - **Open chat** opens the current assistant conversation in the main window.
 - **Cancel transcription** cancels the active dictation or assistant session.
