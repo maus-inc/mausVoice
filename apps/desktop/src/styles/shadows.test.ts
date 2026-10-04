@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import { theme } from "../theme";
 import {
   accentSurface,
+  insetRim,
   parseShadowLayers,
   premiumSurface,
+  raisedEdge,
+  recessedEdge,
   switchThumb,
   switchTrack,
   titleBarShadow,
@@ -63,10 +66,10 @@ const dropAlphas = {
   },
 } as const;
 
-/** Title bar: [bottom rim, drop]. */
+/** Title bar: one bottom rim that catches light, no drop. */
 const titleBarAlphas = {
-  light: [0.3, 0.14],
-  dark: [0.04, 0.35],
+  light: [0.5],
+  dark: [0.07],
 } as const;
 
 /** Accent CTA: [1px rim, 2px halo, accent drop]. */
@@ -168,22 +171,101 @@ describe("premiumSurface: one language, two modes", () => {
 });
 
 describe("titleBarShadow", () => {
-  it("shares one structure across modes: machined bottom rim + soft drop", () => {
+  it("shares one structure across modes: a bottom rim and no drop", () => {
     const light = parseShadowLayers(titleBarShadow.light);
     const dark = parseShadowLayers(titleBarShadow.dark);
     expect(geometry(light)).toEqual(geometry(dark));
-    expect(light.map((layer) => layer.inset)).toEqual([true, false]);
+    // No drop layer in either mode. The bar is the plane the content is
+    // recessed into, so it must not throw a shadow down onto that content.
+    expect(light.map((layer) => layer.inset)).toEqual([true]);
     expect([light[0].offsetX, light[0].offsetY]).toEqual([0, -1]);
   });
 
-  it("pins the tuned alphas and casts the scheme ink", () => {
+  it("pins the tuned alphas and catches white light in both modes", () => {
     for (const mode of modes) {
-      expect(alphas(parseShadowLayers(titleBarShadow[mode]))).toEqual(
-        titleBarAlphas[mode],
-      );
+      const layers = parseShadowLayers(titleBarShadow[mode]);
+      expect(alphas(layers)).toEqual(titleBarAlphas[mode]);
+      expect(rgb(layers[0])).toBe("255, 255, 255");
     }
-    expect(rgb(parseShadowLayers(titleBarShadow.light)[1])).toBe("26, 23, 18");
-    expect(rgb(parseShadowLayers(titleBarShadow.dark)[1])).toBe("0, 0, 0");
+  });
+});
+
+describe("insetRim", () => {
+  it("is the emboss premiumSurface rests on, so the two cannot drift", () => {
+    expect(parseShadowLayers(insetRim.light)).toEqual(
+      insets(premiumSurface.light.rest).slice(0, 2),
+    );
+    expect(parseShadowLayers(insetRim.dark)).toEqual(
+      insets(premiumSurface.dark.rest).slice(0, 2),
+    );
+  });
+
+  it("is a rim only, with nothing falling outside the surface", () => {
+    for (const mode of modes) {
+      const layers = parseShadowLayers(insetRim[mode]);
+      expect(layers.every((layer) => layer.inset)).toBe(true);
+      expect(geometry(layers)).toEqual([
+        [0, 1, 0],
+        [0, 2, 0],
+      ]);
+    }
+  });
+});
+
+describe("raisedEdge and recessedEdge", () => {
+  it("cast sideways in opposite directions so two planes can separate", () => {
+    for (const mode of modes) {
+      const raised = parseShadowLayers(raisedEdge[mode]);
+      const recessed = parseShadowLayers(recessedEdge[mode]);
+      // The rail's first stop is a plain vertical contact shadow; only its
+      // widening ambients lean out toward the page.
+      expect(raised[0].offsetX).toBe(0);
+      for (const layer of raised.slice(1)) {
+        expect(layer.offsetX).toBeGreaterThan(0);
+        expect(layer.offsetY).toBeGreaterThan(0);
+      }
+      // The content recedes away from the rail on every stop, including its
+      // contact, because it has no window edge behind it to hide the lean.
+      for (const layer of recessed) {
+        expect(layer.offsetX).toBeLessThan(0);
+        expect(layer.offsetY).toBeLessThan(0);
+      }
+      // Neither is an inset. These are separations between surfaces, not
+      // treatments inside one.
+      expect(raised.some((layer) => layer.inset)).toBe(false);
+      expect(recessed.some((layer) => layer.inset)).toBe(false);
+    }
+  });
+
+  it("keeps the same stop count in both modes and casts the scheme ink", () => {
+    for (const token of [raisedEdge, recessedEdge]) {
+      expect(alphas(parseShadowLayers(token.light))).toHaveLength(
+        alphas(parseShadowLayers(token.dark)).length,
+      );
+      expect(alphas(parseShadowLayers(token.light)).length).toBeGreaterThan(1);
+    }
+    for (const layer of parseShadowLayers(raisedEdge.light)) {
+      expect(rgb(layer)).toBe("26, 23, 18");
+    }
+    for (const layer of parseShadowLayers(recessedEdge.light)) {
+      expect(rgb(layer)).toBe("26, 23, 18");
+    }
+    for (const layer of parseShadowLayers(raisedEdge.dark)) {
+      expect(rgb(layer)).toBe("0, 0, 0");
+    }
+    for (const layer of parseShadowLayers(recessedEdge.dark)) {
+      expect(rgb(layer)).toBe("0, 0, 0");
+    }
+  });
+
+  it("widens and softens outward, so the near edge reads as the contact", () => {
+    for (const token of [raisedEdge, recessedEdge]) {
+      const blur = parseShadowLayers(token.light).map((layer) => layer.blur);
+      expect(blur.length).toBeGreaterThanOrEqual(2);
+      for (let i = 1; i < blur.length; i++) {
+        expect(blur[i]).toBeGreaterThan(blur[i - 1]);
+      }
+    }
   });
 });
 
@@ -253,6 +335,8 @@ describe("theme.ts consumers", () => {
       ...Object.values(titleBarShadow),
       ...Object.values(switchThumb),
       ...Object.values(switchTrack),
+      ...Object.values(raisedEdge),
+      ...Object.values(recessedEdge),
       "none",
     ]);
     const found = new Set<string>();

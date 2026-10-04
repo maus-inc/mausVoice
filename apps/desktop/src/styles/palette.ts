@@ -105,8 +105,32 @@ export const accent = {
   dark: { rgb: "196, 192, 184", main: "#C4C0B8" },
 } as const;
 
-/** Close-button hover (title bar). Named so we never inline the red. */
-export const dangerHover = "rgba(232, 77, 77, 0.92)";
+/**
+ * Close-button hover.
+ *
+ * Deliberately faint. The main window intercepts `CloseRequested` and hides to
+ * tray, so closing the window discards nothing, and a full destructive fill
+ * would be claiming an outcome that does not happen. `error.main` stays
+ * reserved for actions that actually destroy data.
+ */
+export const dangerHoverSoft = "rgba(232, 77, 77, 0.14)";
+
+/**
+ * The window chrome wash, shared by the title bar and the navigation rail.
+ *
+ * Those two are one L-shaped plane, so they have to be the same colour. This
+ * token makes that structural instead of a coincidence. The wash used to be
+ * written out inside the rail while the bar carried its own fill, so the two
+ * could be retuned independently and leave a visible step where they meet.
+ *
+ * One tier of lift at the top settling back into the canvas, so light reads as
+ * falling from the top of the window. Built from the surface ladder rather than
+ * from hexes, so it cannot drift off `level0`.
+ */
+export const chromeWash = {
+  light: `linear-gradient(180deg, ${surfaceAlpha(surfaces.light.level1, 0.7)} 0%, ${surfaceAlpha(surfaces.light.level0, 0.35)} 100%)`,
+  dark: `linear-gradient(180deg, ${surfaceAlpha(surfaces.dark.level2, 0.55)} 0%, ${surfaceAlpha(surfaces.dark.level0, 0.2)} 100%)`,
+} as const;
 
 /** Sanctioned overlay-on-screenshot alphas (pill overlay). */
 export const overlayOnDark = {

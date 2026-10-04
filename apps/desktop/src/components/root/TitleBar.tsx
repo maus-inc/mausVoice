@@ -4,7 +4,7 @@ import { Copy, Minus, Plus, Square, X } from "lucide";
 import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
-import { chalkSolid, surfaceAlpha, surfaces } from "../../styles/palette";
+import { chromeWash, dangerHoverSoft } from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
 import { getPlatform } from "../../utils/platform.utils";
@@ -422,9 +422,11 @@ const CaptionButtons = ({
         aria-label={closeLabel}
         sx={{
           ...sx,
+          // Only the fill is tinted. At this alpha the wash is a nudge, so the
+          // glyph keeps the shared secondary-to-primary step and the close
+          // button stays legible in both schemes without a second colour token.
           "&:hover": {
-            backgroundColor: "rgba(232, 77, 77, 0.92)",
-            color: chalkSolid.base,
+            backgroundColor: dangerHoverSoft,
           },
         }}
       >
@@ -447,9 +449,9 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     pr: trafficLights ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
-    backgroundColor: dark
-      ? surfaceAlpha(surfaces.dark.level1, 0.92)
-      : surfaceAlpha(surfaces.light.level1, 0.88),
+    // Same wash as the navigation rail, so the bar and the rail read as one
+    // plane turning the corner instead of two independently tinted strips.
+    background: dark ? chromeWash.dark : chromeWash.light,
     backdropFilter: "blur(18px) saturate(1.2)",
     WebkitBackdropFilter: "blur(18px) saturate(1.2)",
     borderBottom: dark ? hairline.dark(0.05) : hairline.light(0.06),

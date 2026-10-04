@@ -17,7 +17,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
 - **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines. Use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04-0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
-- `premiumSurface` = 2px inner top highlight (emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class).
+- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different *plane* can borrow the rim without also borrowing the lift.
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained, one accent)
@@ -25,7 +25,7 @@ The two schemes have their own temperature rather than being inversions of each 
 - `primary` = warm near-black charcoal in light (`inkSolid.base` `#1A1712`), `#FFFFFF` in dark (white CTA is the primary).
 - Chrome accent is **silver/ink** (`accent` in `palette.ts`: `#6B6760` / `#C4C0B8`) for focus rings, selection wash, sliders. Never hue-blue.
 - Switches/toggles: grey track + black (light) / chalk (dark) thumb — not the silver accent and not blue.
-- `gold` is a reward/secondary class only (inactive feature); `red` (`dangerHover`) for destructive only.
+- `gold` is a reward/secondary class only (inactive feature); `error.main` for destructive only.
 - Status vocabulary must be semantic; never color-only.
 
 ## Typography
@@ -59,12 +59,25 @@ The two schemes have their own temperature rather than being inversions of each 
 - Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
 - Emoji‑as‑icons. No.
 
+## Window planes
+
+The window is two planes meeting at one seam. The **chrome plane** is the title bar plus the navigation rail: one continuous L-shaped surface, tinted one step above the canvas with a top-lit wash so light reads as falling from the top of the window. The **content plane** is the routed page, recessed beside it.
+
+- Chrome and content are separated by a change of material, not by a shadow thrown from one onto the other. `chromeWash` in `palette.ts` is the single token for the chrome plane, so the bar and the rail cannot be retuned into a visible step where they meet.
+- The title bar does **not** cast downward. `titleBarShadow` is a single inset bottom rim and nothing else. A shadow thrown straight down out of the bar reads as the bar hovering over the page, which is the opposite of how the window sits.
+- `raisedEdge` casts the rail onto the page beside it. `recessedEdge` pushes the content away from the rail in the opposite direction, so the two have a direction to separate in. Both are skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
+- Rounded corners belong on the edge that faces open canvas only. The rail is flush and square against the window's left edge and rounded on its right; the content card is rounded on its left and square against the right and bottom. Rounding a corner that touches the window frame leaves a notch.
+- Corner radius 16 for the two planes, against 14 for cards inside the content plane. The planes are larger, so they carry a slightly larger radius.
+
 ## Custom chrome
 
-- Frameless custom `TitleBar` (drag region + native window controls). Height ~46px, uses title BarShadow. macOS notes traffic-light inset; Windows keeps native buttons via WCO.
-- `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager.
+- Frameless custom `TitleBar` (drag region + window controls), height 40px, all geometry in `titleBarGeometry.ts`. macOS gets traffic lights on the left; Windows and Linux get caption buttons on the right.
+- Traffic lights keep a 12px painted dot inside a 24px hit box. WCAG 2.2 SC 2.5.8 measures the clickable box, not the glyph. Do not flatten them into uniform dots.
+- The close button tints at `dangerHoverSoft` (0.14 alpha). The main window intercepts `CloseRequested` and hides to tray, so closing discards nothing and a full destructive fill is a false signal. The glyph keeps the shared secondary-to-primary step.
+- `decorations: false` also removes the OS resize border, so `WindowResizeHandles` supplies eight invisible edge/corner grips that hand the gesture back to the window manager. With right-side caption buttons the East grip starts below the caption row and NorthEast is a `CORNER`-wide strip inside the top `EDGE` band, so diagonal resize stays reachable without reaching into the button body.
 - Every window command used by the chrome (`start-dragging`, `start-resize-dragging`, `minimize`, `maximize`, `unmaximize`, `close`) must be listed in `src-tauri/capabilities/default.json`; `core:window:default` grants none of them and the controls fail silently without them.
 - Chrome glyphs are lucide nodes rendered through `MorphNavIcon` (`snappy` spring) so state swaps morph instead of cutting.
+- Known Tauri limitation: with `decorations: false` the window cannot be dragged while unfocused (`tauri-apps/tauri#4316`).
 
 ## Toasts
 

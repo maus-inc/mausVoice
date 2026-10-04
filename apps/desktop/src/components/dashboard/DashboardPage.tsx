@@ -1,9 +1,11 @@
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography, useColorScheme } from "@mui/material";
 import { getVersion } from "@tauri-apps/api/app";
 import { motion, useReducedMotion } from "framer-motion";
 import { Outlet, useLocation } from "react-router-dom";
 import { useAsyncData } from "../../hooks/async.hooks";
 import { easeOutQuint } from "../../styles/motion";
+import { chromeWash } from "../../styles/palette";
+import { hairline, insetRim, recessedEdge } from "../../styles/shadows";
 import { TranscriptionDetailsDialog } from "../transcriptions/TranscriptionDetailsDialog";
 import { DashboardMenu } from "./DashboardMenu";
 import { FeatureReleaseDialog } from "./FeatureReleaseDialog";
@@ -18,6 +20,8 @@ export default function DashboardPage() {
   const data = useAsyncData(getVersion, []);
   const { pathname } = useLocation();
   const reduceMotion = useReducedMotion();
+  const { mode, systemMode } = useColorScheme();
+  const dark = (mode === "system" ? systemMode : mode) === "dark";
 
   return (
     <>
@@ -65,7 +69,21 @@ export default function DashboardPage() {
               duration: reduceMotion ? 0 : 0.24,
               ease: easeOutQuint,
             }}
-            sx={{ flexGrow: 1, minHeight: 0, overflow: "auto" }}
+            sx={{
+              flexGrow: 1,
+              minHeight: 0,
+              overflow: "auto",
+              // The routed content is its own plane now that the rail is one.
+              // Rounded only on the corners that face open canvas, so the card
+              // still meets the window frame squarely on the right and bottom.
+              borderRadius: "16px 0 0 16px",
+              borderTop: dark ? hairline.dark(0.05) : hairline.light(0.05),
+              borderLeft: dark ? hairline.dark(0.05) : hairline.light(0.05),
+              boxShadow: dark
+                ? `${insetRim.dark}, ${recessedEdge.dark}`
+                : `${insetRim.light}, ${recessedEdge.light}`,
+              background: dark ? chromeWash.dark : chromeWash.light,
+            }}
           >
             <Outlet />
           </Box>
