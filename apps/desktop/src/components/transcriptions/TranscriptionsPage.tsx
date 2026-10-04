@@ -111,7 +111,11 @@ export default function TranscriptionsPage() {
     return labels;
   }, [transcriptionIds, transcriptionCreatedAtSignature]);
 
-  const groupLabel = (group: ThreadDayGroup) => {
+  // The `: string` annotation is the exhaustiveness net for this switch. With
+  // it, adding a member to `ThreadDayGroup` without a label here is TS2366 at
+  // this line; without it the inferred type silently becomes `string |
+  // undefined`, which renders as a missing heading rather than a build error.
+  const groupLabel = (group: ThreadDayGroup): string => {
     switch (group) {
       case "today":
         return intl.formatMessage({ defaultMessage: "Today" });
