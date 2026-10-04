@@ -476,7 +476,7 @@ function probeBuild(workDir) {
   const failures = [];
   const homes = candidateCargoHomes();
   let home = process.env.CARGO_HOME;
-  if (!hasCachedCrates(home ?? "")) {
+  if (!hasCachedCrates(home)) {
     const found = homes.find((candidate) => hasCachedCrates(candidate));
     if (found) {
       console.log(
@@ -566,6 +566,15 @@ function candidateCargoHomes() {
 
 /** True when `home` holds at least one cached `.crate` file. */
 function hasCachedCrates(home) {
+  // A falsy `home` must be false, never a probe of the relative path
+  // `registry/cache`. `join("", "registry", "cache")` drops the empty first segment and
+  // yields `registry/cache`, which `existsSync` resolves against `process.cwd()` -- the
+  // repository root, since the harness is run from there. So a `registry/cache/<hash>/
+  // *.crate` tree anywhere under the checkout reported the DEFAULT cargo home as warm, the
+  // fallback candidates in `candidateCargoHomes()` were skipped, and the offline probe build
+  // failed with `no matching package named bzip2 found` -- a message that points at the
+  // network rather than at the probe.
+  if (!home) return false;
   const registry = join(home, "registry", "cache");
   if (!existsSync(registry)) return false;
   for (const hash of readdirSync(registry)) {

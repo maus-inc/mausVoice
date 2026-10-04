@@ -188,6 +188,45 @@ function quotedKeyMatches(text, end, expected) {
   return assignmentMatches(rest, eq[0].length, expected);
 }
 
+/**
+ * Whether `text` assigns to a `keywords` key, in any spelling TOML accepts.
+ *
+ * A quoted key IS the bare key as far as a TOML parser is concerned, and gitleaks decodes
+ * the config into a map, so
+ *
+ *     'keywords' = ["untrusted"]
+ *
+ * populates `Rule.Keywords` exactly as `keywords = ["untrusted"]` does. The check this
+ * replaces was `/^\s*keywords\s*=/m`, which matched neither quoted form -- so the guard
+ * printed its success line, `has no 'keywords' pre-filter`, for a config that suppresses
+ * the rule. That is the same class of defect `isBareUseDefaultKey` exists to prevent, two
+ * checks above, and it is the one check here still written as a raw regex.
+ *
+ * Line-anchored on purpose: the surrounding `description` string is free text, and a
+ * presence check that also fired on the word `keywords` appearing in prose would be its own
+ * kind of wrong.
+ */
+function hasKeywordsAssignment(text) {
+  return text.split("\n").some((line) => {
+    let i = 0;
+    while (line[i] === " " || line[i] === "\t") i += 1;
+    if (line.startsWith("keywords", i)) {
+      let j = i + "keywords".length;
+      while (line[j] === " " || line[j] === "\t") j += 1;
+      if (line[j] === "=") return true;
+    }
+    if (isTomlQuote(line[i])) {
+      const span = quotedKeySpan(line, i);
+      if (span.key === "keywords") {
+        let j = span.end;
+        while (line[j] === " " || line[j] === "\t") j += 1;
+        if (line[j] === "=") return true;
+      }
+    }
+    return false;
+  });
+}
+
 function isBareUseDefaultKey(text, cursor) {
   if (!text.startsWith("useDefault", cursor)) return false;
   const before = text[cursor - 1];
@@ -350,6 +389,17 @@ function main() {
   // mention inside a `#` remark can neither trip nor mask a check.
   const raw = stripTomlComments(readFileSync(configPath, "utf8"));
 
+  // What this guard does NOT inspect, so nobody reads its success line as more than it
+  // is: `[allowlist] paths`. An entry there can exempt key-shaped files just as
+  // effectively as naming the preamble outright -- `'''keys/.*'''` covers every key
+  // file in a directory -- and this guard would report that config as clean. It checks the
+  // two preamble STRINGS and the shape of the `[[rules]]` block, nothing else.
+  //
+  // That is a deliberate boundary rather than an oversight. The allowlist lives on the base
+  // branch, which is the copy the scan trusts, so a pull request cannot widen it against
+  // itself: changing it takes a change to the base branch, reviewed on its own. The gate
+  // this guard backs would not get stronger by second-guessing a list it does not own.
+
   // (a) The preamble must NOT be exempted by the global allowlist.
   const allowlist = section(raw, "[allowlist]", "[[rules]]");
   for (const marker of [PREAMBLE, PREAMBLE_B64]) {
@@ -417,7 +467,7 @@ function main() {
   // matched against the file's lowercased text before the regex runs, so a keyword
   // that a real key file does not contain suppresses the rule entirely -- which is
   // the same class of defect as a rule that matches nothing.
-  if (/^\s*keywords\s*=/m.test(rules)) {
+  if (hasKeywordsAssignment(rules)) {
     fail(
       "gitleaks.toml: the [[rules]] updater-key detector uses `keywords`, which " +
         "pre-filters the file before the regex runs and so can suppress detection " +

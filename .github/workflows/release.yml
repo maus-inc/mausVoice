@@ -403,7 +403,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DMG=$(find "$GITHUB_WORKSPACE/${{ matrix.bundle_dir }}" -name '*.dmg' | head -n1)
+          # `-print -quit` rather than piping to `head`: find then stops at the first
+          # match and exits 0, so there is no early-closing pipe to take SIGPIPE on a
+          # multi-DMG bundle. `|| true` covers the case the guard below exists for --
+          # a `bundle_dir` that does not exist, because the build that should have produced
+          # it failed.
+          #
+          # Without it the guard was unreachable for that case. Under `set -euo pipefail`
+          # a failing pipeline makes the ASSIGNMENT fail, so the step aborted on the
+          # assignment line and the `::error::` never printed: the operator got a bare exit 1
+          # from "Sign macOS DMG for manual updater" with nothing pointing at the missing
+          # bundle directory. Measured, with the same three lines:
+          #
+          #     directory missing            exit 1, guard NOT reached
+          #     directory present but empty  exit 3, guard reached
+          DMG=$(find "$GITHUB_WORKSPACE/${{ matrix.bundle_dir }}" -name '*.dmg' -print -quit) || true
           if [ -z "$DMG" ]; then
             echo "::error::No macOS DMG found under ${{ matrix.bundle_dir }} to sign" >&2
             exit 1

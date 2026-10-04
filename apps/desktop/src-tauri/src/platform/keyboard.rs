@@ -1550,10 +1550,19 @@ mod lifecycle_tests {
     /// concurrently in one process, so without this they interfere in both directions and
     /// neither failure has anything to do with the code under test:
     ///
-    ///   * `a_stop_is_visible_to_a_spawn_in_flight` and `stop_key_listener_is_idempotent`
-    ///     both call `stop_listener_child`, whose first action after the epoch bump is to
-    ///     set the stdin slot to `None`. That landing between the publishing test's call
-    ///     returning and its assertion failed it for an unrelated reason.
+    ///   * `a_stop_is_visible_to_a_spawn_in_flight` calls `stop_listener_child`, whose
+    ///     first action after the epoch bump is to set the stdin slot to `None`. That
+    ///     landing between the publishing test's call returning and its assertion failed it
+    ///     for an unrelated reason.
+    ///
+    ///     An earlier version of this bullet also named
+    ///     `stop_key_listener_is_idempotent`, which cannot interfere: it reaches
+    ///     `stop_listener_child` only through `stop_listener_locked`, and that calls it
+    ///     inside `if let Some(handle)` where the handle comes from
+    ///     `listener_state().take()`. No unit test starts a listener -- `start_key_listener`
+    ///     needs an `AppHandle` -- so the slot is always `None` and the call is unreachable
+    ///     from there. It correctly does not take this lock either. Naming a racer that
+    ///     cannot race is how a justification stops being checkable.
     ///   * the reverse, and worse: any sibling holding `combo_store` makes the ordering
     ///     test's `try_lock` fail, so `saw_combo_held` becomes true without the publisher
     ///     thread holding anything, and a test that cannot fail reports success.
@@ -1575,11 +1584,11 @@ mod lifecycle_tests {
     /// order were reversed, the publishing thread would block on `child_stdin_store`
     /// while holding nothing, and the `try_lock` below would succeed.
     ///
-    /// It also covers the other half. A stop landing between the write and the publish
-    /// used to leave the new child with an empty combo set, silently and with no way to
-    /// be sent them again, because `ensure_listener_child` returns early whenever the
-    /// child is alive. Here the handle has to arrive PUBLISHED, under the same hold that
-    /// performed the write.
+    /// It covers the ORDER and nothing else. It passes `None`, and `None` publishes
+    /// `None`, so it says nothing about a handle arriving in the store -- which is what
+    /// `a_real_handle_survives_into_the_store` is for, twelve lines below.
+    ///
+    /// It used to also claim the publishing half, which contradicted that test's own doc.
     #[test]
     fn overlapping_writers_take_the_stores_in_one_order() {
         let _serialised = serialise_stores();
@@ -1632,7 +1641,7 @@ mod lifecycle_tests {
     /// So the property is stated in the code that has it -- `publish_child_stdin`'s own
     /// doc comment -- and not claimed to be covered here.
     #[test]
-    fn the_handle_is_published_under_the_same_hold_that_wrote_to_it() {
+    fn a_real_handle_survives_into_the_store() {
         let _serialised = serialise_stores();
         let mut helper = std::process::Command::new(if cfg!(windows) { "cmd" } else { "cat" })
             .stdin(std::process::Stdio::piped())

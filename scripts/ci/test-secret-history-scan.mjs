@@ -23,7 +23,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   PREAMBLE,
-  PREAMBLE_B64,
   rulesSection,
   stripTomlComments,
   updaterRulePattern,
@@ -63,14 +62,24 @@ const realKeyFixture =
   "RWQ5aGF1c2VmaWtlc2VjcmV0a2V5bWF0ZXJpYWxmb3J1cHRlci0y\n";
 // The same file base64-wrapped whole, as a CI artifact would carry it.
 const wrappedKeyFixture = Buffer.from(realKeyFixture, "utf8").toString("base64") + "\n";
-const fullKeyFixture =
-  "untrusted comment: rsign encrypted secret key\n" +
-  `${PREAMBLE_B64}IGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5OVRKZlAyVDN3dlF1Wm5mbWh1MXYwV3VjRlR2SVhUY2JqdmZUUGdtM1JOMEFBQkFBQUFBQUFBQUFBQUlBQUFBQXp4N2IwQXBxS3lTQnFWeXJuMmpaeGpKdkd5VUhTeit1cklsd3dQVTJvSnkzUktQMVlrQklPQ0duQkVZSStiMEdqTDFaSWJXZW96eTdab0VyaTZMUVNuWlpjSTZTY3NpVXA0bUZVVjh3TldRNHF1Qk1CUFBqcTduS3RMQ3FwMDFQM0VjYTlWdTZQZTQ9Cg==\n`;
+// A THIRD fixture used to live here, and it was a real key.
+//
+// `fullKeyFixture` was a minisign private key whose decoded bytes are identical -- all 259
+// of them, sha256 8437454a207d5a4b -- to the `TAURI_SIGNING_PRIVATE_KEY` this branch REMOVES
+// from `.github/workflows/build-desktop.yml`. That key is a documented throwaway ("the
+// repo-visible throwaway CI key", release.yml) used to sign CI artifacts that publish no
+// `latest.json`, and it is already in the repository's history, so this leaked nothing new.
+//
+// It still meant that a pull request whose purpose includes keeping key material out
+// re-added that key material under a new path, and then added an allowlist entry for that
+// path -- so the scan this branch turns back on could not report it.
+//
+// `realKeyFixture` above proves the same property: the plaintext arm of the rule matches
+// it. A third copy added no coverage the first two did not already give.
 
 for (const [label, fixture] of [
   ["a real key file", realKeyFixture],
   ["a base64-wrapped key file", wrappedKeyFixture],
-  ["a full hardcoded minisign updater key", fullKeyFixture],
 ]) {
   if (!re.test(fixture))
     fail(`Rule regex does NOT match ${label}.`);
@@ -83,7 +92,7 @@ console.log(
 // it, so the final tree is clean. A tree-only scan (the old `--no-git`) would
 // see an empty tree and PASS, while a full-history scan sees commit A's content
 // and MUST fail. This is the exact regression M4 fixes.
-const commitA = fullKeyFixture; // key present
+const commitA = realKeyFixture; // key present
 const finalTree = ""; // commit B removed it
 if (!re.test(commitA))
   fail("Simulation: history (commit A) did not contain a detectable key.");
@@ -135,7 +144,7 @@ try {
   git("config", "commit.gpgsign", "false");
 
   // Commit A: add a file containing a hardcoded updater key.
-  writeFileSync(resolve(tmp, "ci-key.txt"), fullKeyFixture);
+  writeFileSync(resolve(tmp, "ci-key.txt"), realKeyFixture);
   git("add", "ci-key.txt");
   git("commit", "-q", "-m", "add key");
 

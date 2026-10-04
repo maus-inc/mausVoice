@@ -378,6 +378,55 @@ describe("the guard rejects a rule that cannot detect a real key", () => {
     assert.equal(result.status, 0, result.stderr);
   });
 
+  // Every spelling TOML accepts, because a quoted key IS the bare key to a parser: gitleaks
+  // decodes the config into a map, so `'keywords' = [...]` populates `Rule.Keywords` exactly
+  // as `keywords = [...]` does. The check this replaces was a regex over the bare spelling,
+  // so it refused the bare form and ACCEPTED both quoted ones -- printing its success line,
+  // `has no 'keywords' pre-filter`, for a config that suppresses the rule. Measured against
+  // the previous version:
+  //
+  //     keywords = [...]     refused
+  //     'keywords' = [...]   ACCEPTED   <- the gap
+  //     "keywords" = [...]   ACCEPTED   <- the gap
+  const withKeywords = (line) =>
+    [
+      "[extend]",
+      "useDefault = true",
+      "",
+      "[[rules]]",
+      'id = "tauri-minisign-updater-private-key"',
+      `regex = '(${PREAMBLE}|${PREAMBLE_B64})'`,
+      line,
+      "",
+    ].join("\n");
+
+  for (const [label, line] of [
+    ["bare", 'keywords = ["rsign"]'],
+    ["single-quoted", "'keywords' = [\"rsign\"]"],
+    ["double-quoted", '"keywords" = ["rsign"]'],
+    ["padded", "keywords   =   [\"rsign\"]"],
+    ["indented", '  keywords = ["rsign"]'],
+  ]) {
+    it(`rejects a ${label} \`keywords\` pre-filter`, (t) => {
+      const result = run(t, withKeywords(line));
+      assert.notEqual(result.status, 0, `${line} was accepted`);
+      assert.match(result.stderr, /keywords/);
+    });
+  }
+
+  // ...and it must not fire on the word appearing where a key cannot be, because a check
+  // that flags prose is its own kind of wrong: the `description` is free text, and a
+  // `stripTomlComments`-then-regex order does not help inside a string value.
+  for (const [label, line] of [
+    ["prose", 'description = "a keywords pre-filter is banned by this guard"'],
+    ["a comment", '# keywords = ["rsign"]'],
+  ]) {
+    it(`does not fire on ${label} mentioning keywords`, (t) => {
+      const result = run(t, withKeywords(line));
+      assert.equal(result.status, 0, result.stderr);
+    });
+  }
+
   it("rejects a `keywords` pre-filter, which can suppress the rule entirely", (t) => {
     const toml = [
       "[extend]",
