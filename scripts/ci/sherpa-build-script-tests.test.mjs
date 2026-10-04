@@ -527,6 +527,33 @@ describe("hasCachedCrates", () => {
   });
 });
 
+describe("replayedTestBinaryName", () => {
+  // The import existed before this case. A function that is exported, parameterised for a
+  // platform nothing here can observe, and then never called is not covered by anything --
+  // and the harness replays THIS binary by name, so a wrong suffix is a spawn failure on
+  // Windows with the same shape as the `.cmd` EINVAL this harness already had once.
+  it("appends .exe on Windows and nothing elsewhere", () => {
+    assert.equal(replayedTestBinaryName("win32"), "sherpa-build-script-tests.exe");
+    assert.equal(replayedTestBinaryName("linux"), "sherpa-build-script-tests");
+    assert.equal(replayedTestBinaryName("darwin"), "sherpa-build-script-tests");
+  });
+
+  it("defaults to the host platform", () => {
+    assert.equal(
+      replayedTestBinaryName(),
+      process.platform === "win32"
+        ? "sherpa-build-script-tests.exe"
+        : "sherpa-build-script-tests",
+    );
+  });
+
+  // The control: the two names must actually DIFFER, or the first case would pass with a
+  // function that ignored its argument.
+  it("is not the same string on every platform", () => {
+    assert.notEqual(replayedTestBinaryName("win32"), replayedTestBinaryName("linux"));
+  });
+});
+
 describe("buildScriptBinaryName", () => {
   it("appends .exe on Windows and nothing elsewhere", () => {
     assert.equal(buildScriptBinaryName("win32"), "build-script-build.exe");
