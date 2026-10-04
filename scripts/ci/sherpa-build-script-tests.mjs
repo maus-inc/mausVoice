@@ -131,6 +131,28 @@ class HarnessError extends Error {}
 /** How much of cargo's own output to echo when the harness cannot use it. */
 const CARGO_OUTPUT_EXCERPT_LINES = 40;
 
+/**
+ * The tail of what cargo printed, for the log.
+ *
+ * Exported so it can be tested without running cargo. An earlier version of that test ran
+ * the whole harness with a stub `CARGO`, which does not work on Windows: a `.cmd` needs
+ * `shell: true` and `spawnSync` answers EINVAL without it. So the test passed on the two
+ * platforms where the harness worked and failed on the one where it was broken, which is
+ * the worst possible split -- it looked like the harness was still wrong there.
+ *
+ * `lines` is the tail of `stdout + stderr` concatenated. Cargo writes its replayed
+ * commands to one stream and its progress to the other, so the interesting lines can be
+ * anywhere in that concatenation; that is why this is a tail of the whole and not of
+ * either half.
+ */
+export function cargoOutputExcerpt(output, lines = CARGO_OUTPUT_EXCERPT_LINES) {
+  return (
+    `--- last ${lines} lines cargo printed ---\n` +
+    output.split("\n").slice(-lines).join("\n") +
+    "\n--- end ---"
+  );
+}
+
 /** Report why the harness could not do its job, and exit non-zero. */
 function fail(msg) {
   throw new HarnessError(msg);
@@ -690,11 +712,7 @@ function runHarness(workDir) {
     // nothing else: the output is captured in a variable, so the CI log contains the
     // conclusion and none of the evidence, and the obvious next question -- what did
     // cargo 1.99 actually print -- cannot be answered from the run that failed.
-    console.error(
-      `--- last ${CARGO_OUTPUT_EXCERPT_LINES} lines cargo printed ---\n` +
-        output.split("\n").slice(-CARGO_OUTPUT_EXCERPT_LINES).join("\n") +
-        "\n--- end ---",
-    );
+    console.error(cargoOutputExcerpt(output));
     const sawAny = output.includes("Running `");
     fail(
       "cargo build -vv printed no rustc invocation for the " +

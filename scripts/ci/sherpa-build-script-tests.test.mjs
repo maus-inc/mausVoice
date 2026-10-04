@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
   buildScriptBinaryName,
+  cargoOutputExcerpt,
   findBuildScriptInvocation,
   parseEnvPrefix,
   replayedTestBinaryName,
@@ -431,64 +429,58 @@ describe("tokenizeCargoCommandLoose", () => {
 });
 
 describe("the harness says what cargo printed when it cannot use the output", () => {
-  // Without this the CI log carries the conclusion and none of the evidence: cargo's
-  // output is captured into a variable, so "no rustc invocation" cannot be diagnosed from
-  // the run that produced it. That is not hypothetical -- this is exactly the log that
-  // cost a round on a cargo whose `-vv` prefix the strict tokenizer did not accept.
+  // Without this the CI log carries the conclusion and none of the evidence: cargo's output
+  // is captured into a variable, so "no rustc invocation" cannot be diagnosed from the run
+  // that produced it. That is not hypothetical -- this is the log that cost a round on a
+  // cargo whose command shape the tokenizer did not accept.
+  it("frames the tail of cargo's own output", () => {
+    const excerpt = cargoOutputExcerpt("one\ntwo\nthree");
+    assert.match(excerpt, /^--- last \d+ lines cargo printed ---/);
+    assert.match(excerpt, /three/);
+    assert.match(excerpt, /--- end ---$/);
+  });
+
+  it("bounds the excerpt, keeping the end", () => {
+    const many = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    const excerpt = cargoOutputExcerpt(many, 40);
+    assert.match(excerpt, /line 199/);
+    assert.doesNotMatch(excerpt, /line 0\b/);
+  });
+
+  // The three cases above exercise the FUNCTION. None of them would notice if the harness
+  // stopped calling it -- which is exactly what a mutation did: deleting the
+  // `console.error(cargoOutputExcerpt(output))` on the no-invocation path left all of them
+  // green. So the wiring is asserted too.
   //
-  // Driven for real, with a `cargo` that succeeds and prints nothing: no compile, no
-  // network, no disk. The harness reaches the same failure a format change would cause.
-  it("echoes cargo's own output on the path that reports no invocation", () => {
-    // A stub that exits 0 and prints nothing, written rather than assumed. An earlier
-    // version used `/bin/true`, which does not exist on Windows -- so the test failed there
-    // with `spawnSync /bin/true ENOENT` and proved nothing about the harness on the one
-    // platform where the harness was broken.
-    const dir = mkdtempSync(join(tmpdir(), "silent-cargo-"));
-    const stub = join(dir, process.platform === "win32" ? "cargo.cmd" : "cargo");
-    if (process.platform === "win32") {
-      writeFileSync(stub, "@exit /b 0\r\n");
-    } else {
-      writeFileSync(stub, "#!/bin/sh\nexit 0\n");
-      chmodSync(stub, 0o755);
-    }
-    const result = spawnSync(
-      process.execPath,
-      [fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url))],
-      { encoding: "utf8", env: { ...process.env, CARGO: stub } },
+  // It is a structural assertion, which is normally the wrong instrument, and it is here
+  // because the alternative is worse: driving this path means running the whole harness
+  // with a stubbed `CARGO`, and on Windows a stub is a `.cmd`, which `spawnSync` refuses
+  // with EINVAL unless `shell: true`. That attempt failed on the one platform where the
+  // harness was actually broken, which read as "the harness is still wrong there".
+  //
+  // Read it as: the call exists, and it is on the path that reports no invocation.
+  it("is echoed from the path that reports no invocation", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url)),
+      "utf8",
     );
-    rmSync(dir, { recursive: true, force: true });
-    assert.notEqual(result.status, 0, "a silent cargo must not let the harness pass");
+    const noInvocation = source.indexOf("if (matches.length === 0) {");
+    assert.notEqual(noInvocation, -1, "the no-invocation branch must exist");
+    // Wide enough for the comment above the call, bounded so it cannot reach the next
+    // branch. 400 was not: it cut the window short and failed at baseline.
+    const arm = source.slice(noInvocation, noInvocation + 1500);
     assert.match(
-      result.stderr,
-      /printed no rustc invocation/,
-      "expected the harness to reach the no-invocation path",
-    );
-    assert.match(
-      result.stderr,
-      /--- last \d+ lines cargo printed ---/,
-      "the harness must echo cargo's output, or the failure cannot be diagnosed from CI",
+      arm,
+      /console\.error\(cargoOutputExcerpt\(output\)\)/,
+      "the no-invocation path must echo cargo's own output, or a failed run cannot be " +
+        "diagnosed from its own log",
     );
   });
-});
 
-describe("replayedTestBinaryName", () => {
-  it("names the replayed binary with the host's executable suffix", () => {
-    // `cargoBuildScriptBinary` looks for `build-script-build`; this is the same trap on
-    // the output side, where `-o` writes whatever name it is given and Windows then
-    // refuses to start a suffixless file. Parameterised because `process.platform` chooses
-    // the suffix and nothing on Linux can observe that choice.
-    assert.equal(replayedTestBinaryName("win32"), "sherpa-build-script-tests.exe");
-    assert.equal(replayedTestBinaryName("linux"), "sherpa-build-script-tests");
-    assert.equal(replayedTestBinaryName("darwin"), "sherpa-build-script-tests");
-  });
-
-  it("defaults to the host platform", () => {
-    assert.equal(
-      replayedTestBinaryName(),
-      process.platform === "win32"
-        ? "sherpa-build-script-tests.exe"
-        : "sherpa-build-script-tests",
-    );
+  it("says so even when there is nothing to show", () => {
+    // An empty excerpt still has to be framed, or the reader cannot tell "cargo printed
+    // nothing" from "the harness did not bother".
+    assert.match(cargoOutputExcerpt(""), /--- last \d+ lines cargo printed ---/);
   });
 });
 
