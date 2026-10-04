@@ -4011,7 +4011,7 @@ pub fn enable_java_access_bridge() -> Result<JavaAccessBridgeStatus, String> {
     }
 
     if !found_key {
-        lines.push(format!("{}={}", ASSISTIVE_TECH_KEY, JAB_VALUE));
+        lines.push(format!("{ASSISTIVE_TECH_KEY}={JAB_VALUE}"));
     }
 
     if already_enabled {

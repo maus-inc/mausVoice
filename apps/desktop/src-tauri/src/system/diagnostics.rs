@@ -138,11 +138,7 @@ fn purge_old_logs_in_with_cap(logs_dir: &Path, cap: u64) {
     }
 
     if removed > 0 {
-        log::info!(
-            "Purged {} old log file(s), log dir now at {} bytes",
-            removed,
-            running_total
-        );
+        log::info!("Purged {removed} old log file(s), log dir now at {running_total} bytes");
     }
 }
 
@@ -161,7 +157,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
 
     let mut log_content = String::default();
     log_content.push_str("=== mausVoice Startup Diagnostics ===\n");
-    log_content.push_str(&format!("Timestamp: {}\n", timestamp));
+    log_content.push_str(&format!("Timestamp: {timestamp}\n"));
     log_content.push_str(&format!("Version: {}\n", env!("CARGO_PKG_VERSION")));
     log_content.push_str(&format!("OS: {}\n", std::env::consts::OS));
     log_content.push_str(&format!("Arch: {}\n", std::env::consts::ARCH));
@@ -174,7 +170,7 @@ pub fn write_startup_diagnostics(app: &tauri::AppHandle) {
     log_content.push_str("=== System Information ===\n");
     if let Ok(hostname) = hostname::get() {
         if let Some(hostname_str) = hostname.to_str() {
-            log_content.push_str(&format!("Hostname: {}\n", hostname_str));
+            log_content.push_str(&format!("Hostname: {hostname_str}\n"));
         }
     }
 

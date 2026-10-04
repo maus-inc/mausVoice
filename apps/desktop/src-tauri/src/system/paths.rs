@@ -65,11 +65,7 @@ fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::R
             );
         }
     }
-    log::info!(
-        "Migrated legacy database from {:?} to {:?}",
-        legacy_db,
-        current_path
-    );
+    log::info!("Migrated legacy database from {legacy_db:?} to {current_path:?}");
 
     Ok(())
 }
@@ -107,9 +103,7 @@ pub fn migrate_legacy_models(app: &tauri::AppHandle) -> io::Result<()> {
     let migrated = migrate_model_files(&legacy_dir, &current_dir)?;
     if migrated > 0 {
         log::info!(
-            "Migrated {migrated} local transcription model file(s) from {:?} to {:?}",
-            legacy_dir,
-            current_dir
+            "Migrated {migrated} local transcription model file(s) from {legacy_dir:?} to {current_dir:?}"
         );
     }
 
@@ -149,8 +143,7 @@ fn migrate_model_files(legacy_dir: &Path, current_dir: &Path) -> io::Result<usiz
                     io::Error::new(
                         copy_error.kind(),
                         format!(
-                            "failed to migrate model file {:?} after rename error ({rename_error}): {copy_error}",
-                            source
+                            "failed to migrate model file {source:?} after rename error ({rename_error}): {copy_error}"
                         ),
                     )
                 })?;
