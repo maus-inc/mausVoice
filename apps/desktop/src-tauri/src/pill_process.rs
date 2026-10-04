@@ -67,9 +67,20 @@ impl PillProcess {
 ///
 /// Returns whether THIS CALL installed the handle -- not whether a managed pill exists. The
 /// distinction is the same-handle branch below, which returns `false` while the app's pill is
-/// very much still running; `try_spawn_pill` turns `false` into "fall back to Tauri
-/// overlays", which is the right answer for both rejections because in neither case did this
-/// spawn become the pill the app draws.
+/// very much still running.
+///
+/// So `false` is NOT equally right in both branches, and the reasons are worth keeping apart.
+/// On the kill branch it is right: this spawn's process is being terminated and the app keeps
+/// drawing the pill it already has. On the same-handle branch it is right only because nothing
+/// can reach it -- `try_spawn_pill` builds a fresh `PillProcess` on every call, so it never
+/// offers a handle it already owns.
+///
+/// That is a latent hazard rather than a settled design, and the honest form of it is: if a
+/// second caller ever publishes a handle the app may already be managing, returning `false`
+/// here makes the caller fall back to Tauri overlays, and the app then draws those on top of a
+/// live native pill. `try_spawn_pill`'s own comment at the call site records that it falls
+/// back rather than erroring, so the two would be drawn together rather than the second spawn
+/// being refused outright.
 ///
 /// `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694), and
 /// `StateManager::set` returns `!already_set` WITHOUT inserting when the type is already
@@ -1515,10 +1526,20 @@ mod pill_publish_tests {
 
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
-            if let Ok(mut child) = self.0._child.lock() {
-                // Errors when the child already exited, which is not worth a log line here.
-                let _ = child.kill();
-            }
+            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`: the panics that poison
+            // this mutex are the ones raised inside `has_exited` while it HOLDS `_child` --
+            // `try_wait`, or the `expect` on the lock itself -- so recovering from the poison
+            // is the difference between this guard reaping on the panicking path, which is the
+            // path that needs it, and not.
+            //
+            // `kill()` itself still errors when the child already exited, which is not worth a
+            // log line here.
+            let mut child = self
+                .0
+                ._child
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _ = child.kill();
         }
     }
 
@@ -1535,11 +1556,22 @@ mod pill_publish_tests {
     /// through -- a fixed sleep would be racing the thing it is measuring.
     const KILLED: Duration = Duration::from_secs(10);
 
-    /// How long to observe that nothing killed it. This direction needs no waiting at all:
-    /// the child was alive a moment ago and nothing has signalled it, so any observation
-    /// answers it. Sharing the ten-second budget made every passing test pay for the
-    /// direction that needs none.
-    const ALIVE: Duration = Duration::from_millis(250);
+    /// How long to watch a child that should NOT have been killed.
+    ///
+    /// Not zero, and that is the subtle part. `Child::kill` raises a signal and returns
+    /// immediately; the exit is observed afterwards, by `try_wait`, on the operating system's
+    /// schedule. So a single observation cannot tell "no kill was sent" from "a kill was sent
+    /// and has not been reaped yet" -- and the second reading is precisely the bug this test
+    /// exists to catch, reported as a pass. Measured over 40 trials:
+    ///
+    ///     try_wait() straight after kill() reported "still running"   40/40
+    ///     the signal already sent became observable within 50 ms       40/40
+    ///
+    /// So the window has to be long enough for a signal already in flight to land, and short
+    /// enough not to charge every run for it. An earlier version of this comment claimed the
+    /// direction needs no waiting at all and proposed a one-shot check; that check would have
+    /// been green for every kill ever sent.
+    const UNTOUCHED: Duration = Duration::from_millis(250);
 
     /// Whether `process`'s child has exited within `budget`.
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
@@ -1588,7 +1620,7 @@ mod pill_publish_tests {
         // ...and the kill is scoped to the REJECTED spawn. If it were not, this would take the
         // live overlay down with it, which is the worse failure of the two.
         assert!(
-            !has_exited(&first.0, ALIVE),
+            !has_exited(&first.0, UNTOUCHED),
             "the already-managed pill must not be killed by a rejected spawn"
         );
     }
@@ -1603,6 +1635,6 @@ mod pill_publish_tests {
 
         assert!(publish_pill_process(&handle, only.0.clone()));
         assert!(!publish_pill_process(&handle, only.0.clone()));
-        assert!(!has_exited(&only.0, ALIVE));
+        assert!(!has_exited(&only.0, UNTOUCHED));
     }
 }
