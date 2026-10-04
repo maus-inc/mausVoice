@@ -192,10 +192,24 @@ export class DictationStrategy extends BaseStrategy {
       // Remote mode bypasses the backlog altogether.
       if (prefs?.remoteOutputEnabled && prefs.remoteTargetDeviceId) {
         try {
+          // `isInterim` is load-bearing here, not decoration, and it was missing:
+          // without it this call is indistinguishable from a final delivery. The
+          // local branch below sets it, and `RouteTranscriptOutputArgs.isInterim`
+          // documents why -- the hands-free delay applies "when you stop
+          // recording", so an interim segment routed without the flag waits out
+          // the full `MAX_HANDS_FREE_DELAY_MS` (60s) per segment. Those waits
+          // serialise on the paste queue, so remote interim text stopped
+          // streaming and arrived as one burst at the end.
+          //
+          // The same omission also fired the "Inserting" pill stage
+          // (`deliverWithInsertionStage`) and `beginEditWatch` -- a clipboard
+          // read and a toast dismissal -- on every interim segment, none of which
+          // the local path does.
           await routeTranscriptOutput({
             text: textToPaste,
             mode: "dictation",
             currentAppId: this.currentAppId,
+            isInterim: true,
             skipReview: true,
           });
         } catch (error) {

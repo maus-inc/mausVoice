@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultPreferences } from "../actions/user.actions";
 import { POST_PROCESS_ERROR_CATEGORY } from "../actions/post-process-error-category";
 import { INITIAL_APP_STATE } from "../state/app.state";
-import { setAppState } from "../store";
+import { getAppState, setAppState } from "../store";
 import type { HandleTranscriptParams } from "../types/strategy.types";
 import { LOCAL_USER_ID } from "../utils/user.utils";
 import { DictationStrategy } from "./dictation.strategy";
@@ -241,6 +241,55 @@ describe("DictationStrategy backlog lifecycle", () => {
     incrementDictationBacklogNonceMock.mockClear();
     await strategy.cleanup();
     expect(incrementDictationBacklogNonceMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The remote interim path had no test at all, which is why it shipped without
+  // `isInterim`. `RouteTranscriptOutputArgs.isInterim` documents that a realtime
+  // interim segment must bypass the hands-free delay, and all three consequences of
+  // omitting it are in `output-routing.utils.ts`: `:217` awaits up to
+  // `MAX_HANDS_FREE_DELAY_MS` (60s) per segment and those waits serialise on the
+  // paste queue, so remote interim text arrived as one burst at the end; `:178`
+  // fires the "Inserting" pill stage; `:237` calls `beginEditWatch`, a clipboard
+  // read and a toast dismissal.
+  it("marks a remote interim segment as interim so it skips the hands-free delay", async () => {
+    seedState();
+    const state = getAppState();
+    // Built the way `seedState` builds it rather than by spreading the seeded
+    // prefs: `userPrefs` is `Nullable<UserPreferences>`, so spreading it widens the
+    // required `userId` to `string | undefined` and does not type-check.
+    state.userPrefs = {
+      ...createDefaultPreferences(),
+      userId: LOCAL_USER_ID,
+      realtimeOutputEnabled: true,
+      spokenCommandsEnabled: true,
+      hallucinationFilterEnabled: false,
+      remoteOutputEnabled: true,
+      remoteTargetDeviceId: "device-1",
+    };
+    setAppState(state, true);
+    const strategy = new DictationStrategy();
+
+    // `handleInterimSegment` dispatches through `void this.enqueuePasteWork(...)`,
+    // so the routing lands on a later tick. My first version of this test asserted
+    // synchronously and saw zero calls, which reads exactly like a product bug and
+    // is not one.
+    strategy.handleInterimSegment("remote interim");
+
+    await vi.waitFor(() => {
+      expect(routeTranscriptOutputMock).toHaveBeenCalledWith(
+        expect.objectContaining({ isInterim: true }),
+      );
+    });
+
+    // `isInterim: true` on its own does not prove the REMOTE branch ran, because
+    // the local branch sets the same flag -- switching remote output off left this
+    // assertion green. That is the control that has to fail. The remote branch is
+    // documented as bypassing the backlog, so the backlog probes are what
+    // distinguish it. Without them the test would keep passing if the remote
+    // condition broke and every segment silently took the local path instead,
+    // which is the same class of bug this is meant to catch.
+    expect(hasDictationBacklogMock).not.toHaveBeenCalled();
+    expect(appendToDictationBacklogMock).not.toHaveBeenCalled();
   });
 
   it("keeps pasting interim segments after a queued callback rejects", async () => {
