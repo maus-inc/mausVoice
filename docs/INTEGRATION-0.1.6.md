@@ -10,7 +10,7 @@ arena/01a0ca7d-mausvoice      shared base, and the head branch of #208
 #208 is the vehicle that carries `arena/01a0ca7d-mausvoice` into the `0.1.6` release branch. It is the base
 of this stack. **Nothing merges into it, and it is not one of the PRs landed here.**
 
-Every open PR listed in the merge order below still needs to be rebased and merged into this branch.
+Every open PR listed in the merge order tracked on the integration PR still needs to be rebased and merged into this branch.
 
 When all merge-queue PRs have landed, the `integration/0.1.6-staging` branch is promoted to the
 `0.1.6` release branch via a dedicated promotion PR. That promotion step is a separate process

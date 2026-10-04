@@ -123,7 +123,7 @@ Do not assume "no more reviews will come" after a green snapshot. Review bots an
 2. Immediately start short-interval polling (about every 20 to 30 seconds) so review bots cannot land unnoticed. Do not declare done after one green check list. If GitHub returns a rate limit (HTTP 403/429 or `X-RateLimit-Remaining: 0`), back off exponentially (30s, 60s, 120s) until it clears, then resume the short interval.
 3. On every poll, collect all of the following for the PR head SHA. First require an authenticated GitHub CLI (`gh auth status`) with a repo-scoped token (or equivalent for `gh api`). Then verify access with a non-verbose exit-code check (example: `gh repo view <owner>/<repo> >/dev/null`). Never print or log tokens. Store secrets in secure secret storage and use least-privilege tokens.
    - CI: `gh pr checks <pr-number>` (example: `gh pr checks 166`). Interpret each job as pending, fail, or pass. Treat build, lint, unit, integration, i18n, quality, and in-flight review check-runs as required unless the job is explicitly `skipping`. For scripts without `gh pr checks`, use the Checks API via `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`.
-   - Unresolved review threads: Prefer GraphQL `PullRequest.reviewThreads` with `isResolved == false` (path, line, author, full body). Paginate with a modest page size (`first: 100` plus `pageInfo.hasNextPage` / `after`). Request only the fields you need (GraphQL has a point cost model separate from REST rate limits; on GraphQL rate-limit or cost errors, exponential backoff then retry). Example:
+   - Unresolved review threads: Prefer GraphQL `PullRequest.reviewThreads` with `isResolved == false` (path, line, author, full body). Paginate with a modest page size (`first: 100` plus `pageInfo.hasNextPage` / `after`). Paginate each thread's `comments` with its own `pageInfo` / `after` as well — the outer page only walks threads, so a thread with more than `first: 20` comments is silently truncated and step 5 requires reading every annotation in full. Request only the fields you need (GraphQL has a point cost model separate from REST rate limits; on GraphQL rate-limit or cost errors, exponential backoff then retry). Example:
 
 ```graphql
 query($owner:String!, $name:String!, $number:Int!, $after:String) {
@@ -134,6 +134,7 @@ query($owner:String!, $name:String!, $number:Int!, $after:String) {
         nodes {
           id isResolved path line
           comments(first:20) {
+            pageInfo { hasNextPage endCursor }
             nodes { author { login __typename } body createdAt }
           }
         }
