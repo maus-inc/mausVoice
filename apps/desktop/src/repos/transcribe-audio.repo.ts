@@ -79,8 +79,10 @@ export type TranscribeAudioInput = {
   hallucinationFilterEnabled?: boolean;
   /**
    * Cancels in-flight and not-yet-started provider requests. Honored by every
-   * provider that runs batch dictation (where pretranscription happens); the
-   * Gladia and Azure SDK uploads, used only for retranscription, ignore it.
+   * provider that runs batch dictation (where pretranscription happens). The
+   * Gladia SDK upload, used only for retranscription, ignores it: that client
+   * owns its own transport and its args carry no signal, though the batch job
+   * it creates is still deleted in a `finally`.
    */
   signal?: AbortSignal;
 };

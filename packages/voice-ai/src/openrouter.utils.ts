@@ -247,6 +247,17 @@ export const openrouterGenerateTextResponse = ({
       } = {
         messages,
         model,
+        // `max_tokens` stays even for a reasoning model, unlike the two fields
+        // above, and that asymmetry is deliberate. `buildMaxTokensParams` is the
+        // helper that would rename it to `max_completion_tokens`, but its default
+        // classifier is `isOpenAIJsonObjectOnlyModel`, which is only correct for
+        // OpenAI's own endpoints and for aggregators that reuse OpenAI's ids.
+        // OpenRouter does not reuse them: it addresses models by `vendor/model`
+        // slug, so `openai/o3-mini` and `anthropic/claude-3` both miss that set
+        // and every OpenRouter model would be switched to `max_completion_tokens`
+        // — a field the third-party half of the catalogue does not read. The
+        // rejection that motivates the strip above is OpenAI's own, and OpenRouter
+        // normalises this one before it reaches the upstream endpoint.
         max_tokens: maxTokens ?? 1024,
         ...(reasoning ? {} : { temperature: 1, top_p: 1 }),
         ...(response_format ? { response_format } : {}),
