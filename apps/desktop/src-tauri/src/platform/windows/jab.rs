@@ -250,10 +250,7 @@ fn get_jab_api(hint_pid: Option<u32>) -> Option<&'static JabApi> {
     // non-standard cache directories.
     if let Some(pid) = hint_pid {
         let pid_based = JAB_API_PID_BASED.get_or_init(|| {
-            log::info!(
-                "Standard JAB search failed, trying PID-based discovery for PID {}",
-                pid
-            );
+            log::info!("Standard JAB search failed, trying PID-based discovery for PID {pid}");
             find_jab_dll_for_pid(pid).and_then(|p| load_jab_from_path(&p))
         });
         if pid_based.is_some() {
@@ -359,8 +356,7 @@ unsafe fn navigate_to_element(
                 (api.release_object)(vm_id, ac);
             }
             return Err(format!(
-                "JAB: getAccessibleChildFromContext failed at depth {} index {}",
-                depth, index
+                "JAB: getAccessibleChildFromContext failed at depth {depth} index {index}"
             ));
         }
         intermediates.push(child);
@@ -590,11 +586,11 @@ unsafe fn dump_jab_element(
 
     let indent = "  ".repeat(depth);
     let role_display = if role.is_empty() { "unknown" } else { &role };
-    let mut line = format!("{}[{}] \"{}\"", indent, role_display, name);
+    let mut line = format!("{indent}[{role_display}] \"{name}\"");
 
     if !description.is_empty() {
         let d = crate::utils::truncate_display(&description, 100, "...");
-        line.push_str(&format!(" desc=\"{}\"", d));
+        line.push_str(&format!(" desc=\"{d}\""));
     }
 
     if info.accessible_text != 0 {
@@ -609,7 +605,7 @@ unsafe fn dump_jab_element(
         annotations.push("action".to_string());
     }
     if !states.is_empty() {
-        annotations.push(format!("states={}", states));
+        annotations.push(format!("states={states}"));
     }
 
     if !annotations.is_empty() {
@@ -639,7 +635,7 @@ unsafe fn extract_text_append(api: &JabApi, vm_id: i32, ac: JOBJECT64, line: &mu
             let text = wchar_to_string(&buf);
             if !text.is_empty() {
                 let display = crate::utils::truncate_display(&text, 100, "...");
-                line.push_str(&format!(" text=\"{}\"", display));
+                line.push_str(&format!(" text=\"{display}\""));
             }
         }
     }

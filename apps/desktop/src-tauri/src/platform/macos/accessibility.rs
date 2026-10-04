@@ -446,7 +446,7 @@ unsafe fn extract_text_from_element(
         if let Some(ph) = get_string_attribute(element, ax_placeholder) {
             let t = ph.trim();
             if !t.is_empty() {
-                texts.push(format!("[placeholder: {}]", t));
+                texts.push(format!("[placeholder: {t}]"));
             }
         }
     }
@@ -677,7 +677,7 @@ unsafe fn gather_context_outward(focused_element: CFTypeRef) -> String {
                 if let Some(title) = get_string_attribute(parent, ax_title.as_concrete_TypeRef()) {
                     let t = title.trim();
                     if !t.is_empty() {
-                        texts.push(format!("[Window: {}]", t));
+                        texts.push(format!("[Window: {t}]"));
                     }
                 }
                 CFRelease(parent);
@@ -1780,10 +1780,7 @@ unsafe fn focus_accessibility_field_impl(
     );
     if focus_result != AX_ERROR_SUCCESS {
         CFRelease(element);
-        return Err(format!(
-            "Failed to focus element: AX error {}",
-            focus_result
-        ));
+        return Err(format!("Failed to focus element: AX error {focus_result}"));
     }
 
     let text_len = get_string_attribute(element, ax_value.as_concrete_TypeRef())
@@ -2101,8 +2098,7 @@ unsafe fn write_accessibility_fields_impl(
                 wrote = true;
             } else {
                 ax_set_error = Some(format!(
-                    "AXUIElementSetAttributeValue failed with {}",
-                    set_result
+                    "AXUIElementSetAttributeValue failed with {set_result}"
                 ));
             }
         }

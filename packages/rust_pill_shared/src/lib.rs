@@ -337,7 +337,7 @@ pub fn label_slide_y(base_y: f64, drag_t: f64) -> (f64, f64) {
 /// log here without panicking, because failure at install is visible at draw
 /// and must be loud, but does not need to abort the process immediately.
 pub fn log_font_error(msg: &str) {
-    eprintln!("[mausVoice-font] {}", msg);
+    eprintln!("[mausVoice-font] {msg}");
 }
 
 // ── Long-press ring: one continuous driver ────────────────────────────────
@@ -2500,8 +2500,7 @@ mod tests {
     fn label_alpha_cutoff_sits_just_under_half_the_peak() {
         assert!(
             (LABEL_ALPHA_CUTOFF - 0.2475).abs() < 1e-12,
-            "LABEL_ALPHA_CUTOFF is {}",
-            LABEL_ALPHA_CUTOFF
+            "LABEL_ALPHA_CUTOFF is {LABEL_ALPHA_CUTOFF}"
         );
         let half_peak = LABEL_BASE_ALPHA * 0.5;
         assert!(
@@ -2547,8 +2546,7 @@ mod tests {
         assert_eq!(
             overlap_frames.len(),
             99,
-            "both labels are drawn across {}/1000 of the transition",
-            both_drawn
+            "both labels are drawn across {both_drawn}/1000 of the transition"
         );
         // The first and last overlapping samples bracket the window, which is
         // open: the edges fall at 0.45 and 0.55 in `drag_t`.

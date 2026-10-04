@@ -122,7 +122,7 @@ pub fn get_text_field_info() -> TextFieldInfo {
     run_on_uia_thread(|| match try_get_text_field_info() {
         Ok(info) => info,
         Err(e) => {
-            log::error!("Error getting text field info: {:?}", e);
+            log::error!("Error getting text field info: {e:?}");
             empty_text_field_info()
         }
     })
@@ -220,7 +220,7 @@ pub fn get_screen_context() -> ScreenContextInfo {
     run_on_uia_thread(|| match try_get_screen_context() {
         Ok(info) => info,
         Err(e) => {
-            log::error!("Error getting screen context: {:?}", e);
+            log::error!("Error getting screen context: {e:?}");
             ScreenContextInfo {
                 screen_context: None,
             }
@@ -237,7 +237,7 @@ pub fn gather_accessibility_dump() -> AccessibilityDumpResult {
     run_on_uia_thread(|| match try_gather_accessibility_dump() {
         Ok(result) => result,
         Err(e) => {
-            log::error!("Error gathering accessibility dump: {:?}", e);
+            log::error!("Error gathering accessibility dump: {e:?}");
             AccessibilityDumpResult {
                 dump: None,
                 window_title: None,
@@ -279,14 +279,14 @@ fn try_gather_accessibility_dump() -> Result<AccessibilityDumpResult, windows::c
         // Build window header line
         let mut header = format!("[Window] \"{}\"", window_title.as_deref().unwrap_or(""));
         if pid > 0 {
-            header.push_str(&format!(" (pid={})", pid));
+            header.push_str(&format!(" (pid={pid})"));
         }
         if let Some(ref name) = process_name {
-            header.push_str(&format!(" process={}", name));
+            header.push_str(&format!(" process={name}"));
         }
         let framework = get_string_property(&window_element, UIA_FrameworkIdPropertyId);
         if let Some(ref fw) = framework {
-            header.push_str(&format!(" framework={}", fw));
+            header.push_str(&format!(" framework={fw}"));
             if fw == "Java" || fw == "JavaFX" {
                 is_java_app = true;
             }
@@ -307,9 +307,7 @@ fn try_gather_accessibility_dump() -> Result<AccessibilityDumpResult, windows::c
         // Java app with few UIA elements: fall back to direct JAB DLL interop
         if is_java_app && element_count < 10 {
             log::info!(
-                "Java process detected with only {} UIA elements, trying direct JAB API",
-                element_count
-            );
+                "Java process detected with only {element_count} UIA elements, trying direct JAB API");
             if let Some((jab_dump, jab_count)) = super::jab::gather_jab_dump(hwnd) {
                 return Ok(AccessibilityDumpResult {
                     dump: Some(format!(
@@ -434,7 +432,7 @@ unsafe fn format_dump_element(
 
     // Build the line: [Type] "Name"
     let display_name = name.as_deref().unwrap_or("");
-    let mut line = format!("{}[{}] \"{}\"", indent, type_name, display_name);
+    let mut line = format!("{indent}[{type_name}] \"{display_name}\"");
 
     // Append value (truncated if long)
     if let Some(ref v) = value {
@@ -445,7 +443,7 @@ unsafe fn format_dump_element(
             // `-D warnings`. This file is `cfg(windows)`, so a Linux clippy run
             // never compiles it and cannot see this class of error.
             let display = crate::utils::truncate_display(v, 100, "...");
-            line.push_str(&format!(" value=\"{}\"", display));
+            line.push_str(&format!(" value=\"{display}\""));
         }
     }
 
@@ -459,23 +457,23 @@ unsafe fn format_dump_element(
     }
     if let Some(ref id) = automation_id {
         if !id.is_empty() {
-            annotations.push(format!("id={}", id));
+            annotations.push(format!("id={id}"));
         }
     }
     if let Some(ref cls) = class_name {
         if !cls.is_empty() {
-            annotations.push(format!("class={}", cls));
+            annotations.push(format!("class={cls}"));
         }
     }
     if let Some(ref fw) = framework_id {
         if !fw.is_empty() {
-            annotations.push(format!("framework={}", fw));
+            annotations.push(format!("framework={fw}"));
         }
     }
     if let Some(ref ht) = help_text {
         let ht = ht.trim();
         if !ht.is_empty() && ht.len() < 200 {
-            annotations.push(format!("help=\"{}\"", ht));
+            annotations.push(format!("help=\"{ht}\""));
         }
     }
 
@@ -535,7 +533,7 @@ unsafe fn gather_context_outward(
             if let Some(name) = get_element_name(&parent) {
                 let t = name.trim();
                 if !t.is_empty() {
-                    texts.push(format!("[Window: {}]", t));
+                    texts.push(format!("[Window: {t}]"));
                 }
             }
             break;
@@ -914,7 +912,7 @@ unsafe fn find_matching_child(
     if idx < count {
         return children
             .GetElement(idx)
-            .map_err(|e| format!("Fallback index {} failed: {e}", idx));
+            .map_err(|e| format!("Fallback index {idx} failed: {e}"));
     }
 
     Err("No matching child found for fingerprint".to_string())
@@ -1021,19 +1019,13 @@ unsafe fn resolve_element_by_subtree_search(
         if let Some(actual_name) = get_element_name(&found) {
             if &actual_name != expected_name {
                 log::debug!(
-                    "Subtree search: AutomationId matched but Name differs ('{}' vs '{}')",
-                    actual_name,
-                    expected_name
-                );
+                    "Subtree search: AutomationId matched but Name differs ('{actual_name}' vs '{expected_name}')");
                 // Still return it — AutomationId is more stable than Name
             }
         }
     }
 
-    log::info!(
-        "Subtree search resolved element via AutomationId='{}'",
-        auto_id
-    );
+    log::info!("Subtree search resolved element via AutomationId='{auto_id}'");
     Ok(found)
 }
 
@@ -1074,7 +1066,7 @@ pub fn get_focused_field_info() -> Option<crate::commands::AccessibilityFieldInf
     run_on_uia_thread(|| match try_get_focused_field_info() {
         Ok(info) => info,
         Err(e) => {
-            log::error!("Error getting focused field info: {:?}", e);
+            log::error!("Error getting focused field info: {e:?}");
             None
         }
     })
@@ -1895,11 +1887,7 @@ pub fn resolve_app_pids(
         log::warn!("resolve_app_pids: empty identity, returning no matches");
         return Vec::new();
     }
-    log::info!(
-        "resolve_app_pids: searching for path={:?} name={:?}",
-        expected_path,
-        expected_name
-    );
+    log::info!("resolve_app_pids: searching for path={expected_path:?} name={expected_name:?}");
 
     let mut pid_buf = vec![0u32; 4096];
     let mut bytes_returned: u32 = 0;
@@ -1916,7 +1904,7 @@ pub fn resolve_app_pids(
     }
     let pid_count = bytes_returned as usize / std::mem::size_of::<u32>();
     pid_buf.truncate(pid_count);
-    log::info!("resolve_app_pids: enumerated {} PIDs", pid_count);
+    log::info!("resolve_app_pids: enumerated {pid_count} PIDs");
 
     let titles_by_pid = enumerate_visible_window_titles();
 
