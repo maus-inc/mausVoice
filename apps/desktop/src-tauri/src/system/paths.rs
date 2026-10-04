@@ -70,14 +70,6 @@ fn migrate_legacy_database(app: &tauri::AppHandle, current_path: &Path) -> io::R
     Ok(())
 }
 
-pub fn database_url(app: &tauri::AppHandle) -> io::Result<String> {
-    let path = database_path(app)?;
-    let path_str = path
-        .to_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid database path"))?;
-    Ok(format!("sqlite:{path_str}"))
-}
-
 fn resolved_app_data_dir(app: &tauri::AppHandle) -> io::Result<PathBuf> {
     app.path()
         .app_data_dir()
