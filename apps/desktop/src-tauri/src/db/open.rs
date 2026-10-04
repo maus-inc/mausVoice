@@ -7,11 +7,50 @@ use sqlx::{Row, SqlitePool};
 
 use super::migrations;
 
-/// SHA-384 of the migration SQL, matching sqlx / tauri-plugin-sql.
-/// Canonicalizes CRLF to LF so checkout line endings do not alter the checksum.
+/// The canonical SHA-384 of a migration's SQL: CRLF folded to LF, then hashed.
+///
+/// Canonical, NOT compatible. `sqlx` -- and therefore `tauri-plugin-sql`, which this file
+/// replaced -- hashes `sql.as_bytes()` with no normalization at all
+/// (`sqlx-core-0.8.6/src/migrate/migration.rs:25`), so for LF input the two agree and for
+/// CRLF input they do not. That matters because the SQL reaches the binary through
+/// `include_str!` from whatever the *building* checkout held: this file's `.gitattributes`
+/// pins `*.sql text eol=lf`, but it did not exist before this change, and `build-desktop.yml`
+/// builds a `windows-latest` leg. So a build from a Windows checkout at the base branch
+/// embedded CRLF SQL and wrote `Sha384(CRLF)` into `_sqlx_migrations`. Those rows cannot be
+/// rewritten -- the database is the only record -- which is why verification accepts the
+/// historical digest too. See `migration_checksum_matches`.
 pub fn migration_checksum(sql: &str) -> Vec<u8> {
     let normalized = sql.replace("\r\n", "\n");
     Sha384::digest(normalized.as_bytes()).to_vec()
+}
+
+/// The digest a CRLF checkout would have produced for this SQL, which is what `sqlx`
+/// recorded before `.gitattributes` pinned `*.sql text eol=lf`.
+///
+/// SHA-384 over the SQL with every LF expanded back to CRLF -- NOT over `sql` as given.
+/// That distinction is the whole fix, and it is easy to get wrong in a way the unit test
+/// cannot see: hashing the LF text a second time just reproduces the canonical digest, so
+/// a CRLF row still matches neither arm and the open still fails. The end-to-end test is
+/// what caught that; the first version of the unit test passed throughout.
+///
+/// Only ever a second ACCEPTED value. Nothing writes it: `migration_checksum` is canonical
+/// and every row this code writes uses it.
+fn historical_migration_checksum(sql: &str) -> Vec<u8> {
+    Sha384::digest(sql.replace("\r\n", "\n").replace("\n", "\r\n").as_bytes()).to_vec()
+}
+
+/// Whether a recorded checksum is one this build could legitimately have written.
+///
+/// Both forms, and the reason is not symmetry: the canonical one is what every row written
+/// by this code carries, and the historical one is what `sqlx` wrote for a build whose
+/// checkout had CRLF in the `.sql` files. Accepting only the canonical form makes an
+/// unrecoverable `OpenError` out of a database this build could read perfectly well, and
+/// the failure path deliberately does not quarantine, so there is no in-app way back.
+///
+/// This cannot mask a genuinely modified migration: a changed file matches neither.
+fn migration_checksum_matches(stored: &[u8], sql: &str) -> bool {
+    stored == migration_checksum(sql).as_slice()
+        || stored == historical_migration_checksum(sql).as_slice()
 }
 
 #[derive(Debug)]
@@ -360,13 +399,16 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
             continue;
         }
         let version = migration.version;
-        let expected = migration_checksum(migration.sql);
         if let Some(stored) = applied_checksums.get(&version) {
-            if stored.as_slice() != expected.as_slice() {
+            if !migration_checksum_matches(stored, migration.sql) {
                 // A modified migration file is a disagreement about what this
                 // build's history should have been, not damage to the database.
                 // Quarantining here would discard a perfectly readable file and
                 // open an empty one in its place, so this surfaces for repair.
+                //
+                // Neither accepted form matching means the file really did change:
+                // `migration_checksum_matches` accepts the canonical digest and the
+                // one sqlx wrote, and a modified file is different from both.
                 return Err(OpenError::Other(format!(
                     "migration {version} ({}) was previously applied but has been modified; \
                      the database is readable but its history does not match this build",
@@ -806,10 +848,13 @@ mod tests {
             "test needs at least two migrations"
         );
 
-        // Reproduce the state every existing user's database is in before an
-        // upgrade: all but the newest migration applied, with each recorded in
-        // `_sqlx_migrations` exactly as the previous (tauri-plugin-sql) migrator
-        // wrote them.
+        // Reproduce the state an existing database is in before an upgrade: all but
+        // the newest migration applied, with each recorded in `_sqlx_migrations`.
+        //
+        // These rows use `migration_checksum`, which is what this build writes. For a
+        // database whose last write came from `sqlx` on an LF checkout those are the
+        // same bytes -- but not for one written from a CRLF checkout, which is the case
+        // `a_database_recorded_by_sqlx_with_crlf_line_endings_still_opens` exists for.
         {
             let pool = connect_pool(path).await.expect("connect");
             sqlx::query(
@@ -863,6 +908,147 @@ mod tests {
             &temp.dir,
             "a routine upgrade must never quarantine the database",
         );
+    }
+
+    /// The ledger row `sqlx` wrote, and this build has to accept it.
+    ///
+    /// `sqlx` hashes `sql.as_bytes()` with no normalization. This build's own digest folds
+    /// CRLF to LF first. The SQL reaches the binary by `include_str!`, so those two agree
+    /// only when the checkout that built it had LF in the `.sql` files -- and before this
+    /// branch there was no `.gitattributes` to say so, while `build-desktop.yml` has a
+    /// `windows-latest` leg. A row recorded from a CRLF checkout therefore holds a digest
+    /// this build computes differently, and the mismatch path returns `OpenError` WITHOUT
+    /// quarantining: the file is left exactly where it is and the app cannot open it, with
+    /// no in-app way back. Measured on `000_schema.sql`: the LF digest begins `7acd05d8`,
+    /// the CRLF digest `0b0189df`.
+    ///
+    /// This is the end-to-end form; `migration_checksum_accepts_the_sqlx_form` is the unit
+    /// form. The negative is the sibling test below, which asserts a genuinely modified
+    /// migration still refuses to open -- accepting a second form is only safe because a
+    /// changed file matches neither.
+    #[tokio::test]
+    async fn a_database_recorded_by_sqlx_with_crlf_line_endings_still_opens() {
+        let temp = TempDb::new();
+        let path = &temp.path;
+        let up_migrations: Vec<_> = migrations()
+            .into_iter()
+            .filter(|migration| matches!(migration.kind, tauri_plugin_sql::MigrationKind::Up))
+            .collect();
+        assert!(
+            up_migrations.len() >= 2,
+            "test needs at least two migrations"
+        );
+
+        {
+            let pool = connect_pool(path).await.expect("connect");
+            sqlx::query(
+                "CREATE TABLE _sqlx_migrations (
+                    version BIGINT PRIMARY KEY,
+                    description TEXT NOT NULL,
+                    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    success BOOLEAN NOT NULL,
+                    checksum BLOB NOT NULL,
+                    execution_time BIGINT NOT NULL
+                )",
+            )
+            .execute(&pool)
+            .await
+            .expect("create _sqlx_migrations");
+            for migration in &up_migrations[..up_migrations.len() - 1] {
+                // The SQL as a CRLF checkout would have held it, and the digest `sqlx`
+                // takes of exactly those bytes.
+                let crlf = migration.sql.replace("\r\n", "\n").replace("\n", "\r\n");
+                assert_ne!(
+                    crlf, migration.sql,
+                    "test needs a migration with a newline to fold, or it proves nothing"
+                );
+                sqlx::raw_sql(migration.sql)
+                    .execute(&pool)
+                    .await
+                    .expect("apply prior migration");
+                sqlx::query(
+                    "INSERT INTO _sqlx_migrations
+                     (version, description, success, checksum, execution_time)
+                     VALUES (?1, ?2, true, ?3, 0)",
+                )
+                .bind(migration.version)
+                .bind(migration.description)
+                // Stated independently of the function under test, for the same reason
+                // as in the unit test: a row sqlx wrote is Sha384 over the CRLF bytes.
+                .bind(Sha384::digest(crlf.as_bytes()).to_vec())
+                .execute(&pool)
+                .await
+                .expect("record prior migration with the sqlx digest");
+            }
+            pool.close().await;
+        }
+
+        let opened = open_app_database(path)
+            .await
+            .expect("a database sqlx recorded must still open under this build");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&opened)
+            .await
+            .unwrap();
+        assert_eq!(
+            count,
+            up_migrations.len() as i64,
+            "the remaining migration must be applied on upgrade"
+        );
+        opened.close().await;
+        assert_not_quarantined(
+            &temp.dir,
+            "a row sqlx wrote is not corruption and must never quarantine the database",
+        );
+    }
+
+    /// The unit form of the same property, plus the negative that makes the first one safe.
+    ///
+    /// The expected CRLF digest is written out here as a SHA-384 over a literal CRLF
+    /// string, NOT as `historical_migration_checksum(&crlf)`. An earlier version computed it
+    /// with the function under test, so the test agreed with a wrong implementation --
+    /// which is how `historical_migration_checksum` came to hash the LF text and leave the
+    /// real CRLF row matching neither arm.
+    #[test]
+    fn migration_checksum_accepts_the_sqlx_form() {
+        let lf = "CREATE TABLE test (\n  id INTEGER PRIMARY KEY\n);\n";
+        let crlf = "CREATE TABLE test (\r\n  id INTEGER PRIMARY KEY\r\n);\r\n";
+
+        // What a CRLF checkout's `sqlx` recorded, stated independently.
+        let crlf_digest: Vec<u8> = Sha384::digest(crlf.as_bytes()).to_vec();
+        assert_eq!(
+            crlf_digest,
+            super::historical_migration_checksum(lf),
+            "the historical form must be the digest OF THE CRLF TEXT, not of the LF text"
+        );
+        assert_eq!(
+            crlf_digest,
+            super::historical_migration_checksum(crlf),
+            "line endings must not change which variant is hashed"
+        );
+
+        // Canonical: one digest regardless of line endings, and that is what gets written.
+        assert_eq!(migration_checksum(lf), migration_checksum(crlf));
+        assert_ne!(
+            migration_checksum(lf),
+            crlf_digest,
+            "the two accepted forms must be different values, or the second arm is dead"
+        );
+
+        // Accepted: the canonical form, and the form sqlx recorded from a CRLF checkout.
+        assert!(migration_checksum_matches(&migration_checksum(lf), lf));
+        assert!(migration_checksum_matches(&crlf_digest, lf));
+        assert!(migration_checksum_matches(&crlf_digest, crlf));
+
+        // Refused: a genuinely modified migration. This is what stops the second accepted
+        // form from becoming a loophole.
+        let modified_crlf = crlf.replace("test", "other");
+        assert!(!migration_checksum_matches(
+            &Sha384::digest(modified_crlf.as_bytes()).to_vec(),
+            crlf
+        ));
+        assert!(!migration_checksum_matches(b"deadbeef", lf));
+        assert!(!migration_checksum_matches(&[], lf));
     }
 
     #[tokio::test]
