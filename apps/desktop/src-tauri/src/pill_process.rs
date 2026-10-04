@@ -1539,17 +1539,14 @@ mod pill_publish_tests {
         fn drop(&mut self) {
             // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `if let Ok`.
             //
-            // `_child` is locked in three places in this module: here, in `has_exited`, and
-            // in the control test. Two of them can panic while holding it -- the `try_wait`
-            // inside `has_exited` and the `kill` in that test -- and those two are the only
-            // ones that can poison this mutex. This one cannot, because `kill()`'s `Result`
-            // is discarded rather than unwrapped.
+            // The third of the three places in this module that lock `_child`, and the only
+            // one that cannot poison the mutex: `kill()`'s `Result` is discarded rather than
+            // unwrapped, so nothing here panics with the guard held. Recovering anyway is
+            // what makes this guard reap on the panicking path, which is the path that needs
+            // it -- the two sites that CAN poison are the ones this shares a lock with.
             //
-            // Recovering from the poison is the difference between this guard reaping on the
-            // panicking path, which is the path that needs it, and not. The two sites that
-            // recover are unwrapping `try_wait` and `kill`, never the lock, and that is the
-            // distinction worth keeping straight: `Mutex::lock` returning `Err` is how a
-            // poison is OBSERVED, so an `expect` on the lock could never have caused one.
+            // `has_exited` is the other half of this and carries the rest: which two sites
+            // can poison, and why an `expect` on the lock is never one of them.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
@@ -1594,9 +1591,8 @@ mod pill_publish_tests {
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
         // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`, at each of the
         // two places that lock `_child` and can then panic inside the lock: the
-        // `try_wait().expect(..)` below, and `kill().expect(..)` in the control test.
-        // `ReapOnDrop::drop` is the third lock site and cannot panic, because `kill()`'s
-        // `Result` is discarded there.
+        // `try_wait().expect(..)` below, and `kill().expect(..)` in the control test. The
+        // third lock site, `ReapOnDrop::drop`, cannot panic and accounts for itself.
         //
         // The `expect`s in question are on `try_wait` and `kill`, NOT on the lock -- and
         // that is the whole distinction. `Mutex::lock` returning `Err` is how a poison is
