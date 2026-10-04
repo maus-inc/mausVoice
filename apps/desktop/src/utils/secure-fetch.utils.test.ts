@@ -52,21 +52,38 @@ describe("secureFetch", () => {
   /** Answer each hop in turn and record what it was asked to send. */
   const serveHops = (responses: readonly Response[]): void => {
     const queue = [...responses];
-    pluginFetchMock.mockImplementation((input: unknown, init?: RequestInit) => {
-      const headers: Record<string, string> = {};
-      new Headers(init?.headers).forEach((value, name) => {
-        headers[name] = value;
-      });
-      hops.push({
-        url: String(input),
-        method: init?.method,
-        body: init?.body,
-        headers,
-      });
-      const next = queue.shift();
-      if (!next) throw new Error(`unexpected hop to ${String(input)}`);
-      return Promise.resolve(next);
-    });
+    // Deliberately does what the REAL transport does, which is the point of it.
+    //
+    // plugin-http/dist-js/index.js:66-67
+    //     const req = new Request(input, init);
+    //     const buffer = await req.arrayBuffer();
+    //
+    // An earlier version of this mock only recorded `String(input)` and `init?.body`,
+    // so it never disturbed a `Request` input's body. `new Request(alreadyARequest, init)`
+    // inherits that body's stream and `arrayBuffer()` consumes it, which makes the
+    // ORIGINAL unreadable -- and `secure-fetch.utils.ts` replays a 307's body out of
+    // that original. So the mock made the code look correct and the real transport would
+    // have thrown `TypeError: unusable` on the second hop.
+    pluginFetchMock.mockImplementation(
+      async (input: unknown, init?: RequestInit) => {
+        const headers: Record<string, string> = {};
+        new Headers(init?.headers).forEach((value, name) => {
+          headers[name] = value;
+        });
+        const url = String(input);
+        const req = new Request(input as RequestInfo, init);
+        await req.arrayBuffer();
+        hops.push({
+          url,
+          method: init?.method,
+          body: init?.body,
+          headers,
+        });
+        const next = queue.shift();
+        if (!next) throw new Error(`unexpected hop to ${url}`);
+        return next;
+      },
+    );
   };
 
   const hop = (index: number): Hop => {
@@ -192,6 +209,119 @@ describe("secureFetch", () => {
       "https://api.openai.com/v1/moved",
     );
     expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // A `Request` IS the request, so the redirect mode on it is part of it. The signal
+  // already was -- `followHttpsRedirects` inherits `input.signal` and says why -- and
+  // dropping `redirect` while keeping `signal` meant a caller who asked for `error` got
+  // `follow`, which is precisely the outcome the mode exists to prevent.
+  it("honours the redirect mode a Request input carries", async () => {
+    pluginFetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+    );
+    const request = new Request("https://api.openai.com/v1/models", {
+      redirect: "error",
+    });
+
+    await expect(secureFetch(request)).rejects.toThrow(/Redirect not allowed/);
+    expect(pluginFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still follows when a Request input asks to follow", async () => {
+    const request = new Request("https://api.openai.com/v1/models", {
+      redirect: "follow",
+    });
+    pluginFetchMock
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: "https://api.openai.com/v1/hop-2" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("followed"));
+
+    const response = await secureFetch(request);
+
+    expect(await response.text()).toBe("followed");
+    expect(pluginFetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // ...and `init` still wins over the object, because `new Request(input, init)` does the
+  // same. Without this the inheritance above could be implemented as "the Request wins",
+  // which would break every caller that spells the mode in `init`.
+  it("lets init override the mode a Request input carries", async () => {
+    const request = new Request("https://api.openai.com/v1/models", {
+      redirect: "error",
+    });
+    pluginFetchMock.mockResolvedValue(new Response("ok"));
+
+    const response = await secureFetch(request, { redirect: "follow" });
+
+    expect(await response.text()).toBe("ok");
+  });
+
+  // The 307 replay, against a transport that behaves like the real one. `serveHops`
+  // mirrors plugin-http/dist-js/index.js:66-67, so this case is what the bug looked
+  // like: hop 0 spent the caller's body and the replay threw `TypeError: unusable`
+  // instead of following the redirect.
+  it("replays a Request input's body on a 307 when the transport consumes it", async () => {
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response("ok"),
+    ]);
+
+    const request = new Request("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    const response = await secureFetch(request);
+
+    expect(await response.text()).toBe("ok");
+    expect(hop(1).method).toBe("POST");
+    expect(hop(1).body).toBeInstanceOf(ArrayBuffer);
+    expect(new TextDecoder().decode(hop(1).body as ArrayBuffer)).toBe(
+      '{"model":"gpt-4o"}',
+    );
+  });
+
+  // Two hops that both keep the body. A single tee would be spent by the first replay,
+  // which is why there are two clones rather than one.
+  it("replays the body again on a second body-preserving redirect", async () => {
+    serveHops([
+      new Response(null, {
+        status: 307,
+        headers: { location: "https://api.openai.com/v1/hop-2" },
+      }),
+      new Response(null, {
+        status: 308,
+        headers: { location: "https://api.openai.com/v1/hop-3" },
+      }),
+      new Response("ok"),
+    ]);
+
+    const request = new Request("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"model":"gpt-4o"}',
+    });
+
+    const response = await secureFetch(request);
+
+    expect(await response.text()).toBe("ok");
+    for (const index of [1, 2]) {
+      expect(hop(index).method).toBe("POST");
+      expect(new TextDecoder().decode(hop(index).body as ArrayBuffer)).toBe(
+        '{"model":"gpt-4o"}',
+      );
+    }
   });
 
   // The positive control. Without it the two above would also pass if `error`
@@ -561,9 +691,15 @@ describe("secureFetch", () => {
   // body's bytes have to be named. Reading them only when a redirect needs them
   // meant a POST built from a Request reached the server with no body at all.
   it("hands a Request input's body to hop one unbuffered", async () => {
-    // The Request itself is hop one's target, so the plugin streams its body as
-    // it always has. Buffering it here would duplicate every streamed upload to
-    // serve the redirect case, which mostly never arrives.
+    // Hop one still receives a `Request`, so the plugin streams the body as it always has.
+    // Buffering it here would duplicate every streamed upload to serve the redirect case,
+    // which mostly never arrives.
+    //
+    // What it must NOT receive is the caller's own object. It asserted `toBe(request)` here
+    // until the 307 replay was found to throw against the real transport, and that identity
+    // is the defect: the plugin consumes whatever Request it is handed, so handing it the
+    // caller's leaves the caller with `bodyUsed === true` and a spent body. The caller owns
+    // that Request and may reuse it.
     const targets: unknown[] = [];
     const responses = [new Response("ok")];
     serveHops([new Response("ok")]);
@@ -581,7 +717,8 @@ describe("secureFetch", () => {
 
     await secureFetch(request);
 
-    expect(targets[0]).toBe(request);
+    expect(targets[0]).toBeInstanceOf(Request);
+    expect(targets[0]).not.toBe(request);
     expect(request.bodyUsed).toBe(false);
   });
 

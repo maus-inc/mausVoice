@@ -170,7 +170,12 @@ const followHttpsRedirects = async (
   init: RequestInit | undefined,
   startUrl: URL,
 ): Promise<Response> => {
-  const redirectMode = init?.redirect ?? "follow";
+  // Inherited from a `Request` input for the same reason its signal is, further down: a
+  // `Request` IS the request, and dropping part of it because the caller spelled it on the
+  // object rather than in `init` is the same bug as dropping the signal. `new Request(input,
+  // init)` inherits `redirect` whenever `init` omits it.
+  const redirectMode =
+    init?.redirect ?? (input instanceof Request ? input.redirect : "follow");
   const chain = {
     headers: requestHeaders(input, init),
     method: requestMethod(input, init),
@@ -190,6 +195,31 @@ const followHttpsRedirects = async (
     input instanceof Request && init?.body === undefined && input.body !== null
       ? input
       : null;
+  // Clone BEFORE hop 0 goes out, and hand the CLONE to the transport.
+  //
+  // The plugin does `new Request(input, init)` and then `await req.arrayBuffer()`
+  // (plugin-http/dist-js/index.js:66-67). Constructing a `Request` from another `Request`
+  // inherits its body stream, and `arrayBuffer()` consumes that stream -- so passing the
+  // caller's own object to hop 0 leaves the CALLER's request with `bodyUsed === true`, and
+  // the `clone()` in `walkChain` then throws `TypeError: unusable`. Measured:
+  //
+  //     before hop 0   bodyUsed = false
+  //     after  hop 0   bodyUsed = true      clone() -> TypeError: unusable
+  //
+  // Two clones, not one, and the second is the reason. `clone()` tees rather than consumes,
+  // so each is unread until something reads it -- but the transport is GIVEN a Request and
+  // consumes that one, so a single clone is spent by hop 0 and the replay has nothing left to
+  // clone. With two, the transport spends its own and the replay reads the other, repeatedly:
+  //
+  //     after the transport   caller=false  forTransport=true  forReplay=false
+  //     replay 1              {"a":1}
+  //     replay 2              {"a":1}
+  //
+  // Streaming is unaffected: hop one still receives a `Request` for the plugin to stream, not
+  // a buffered ArrayBuffer. This only duplicates the body when the caller passed a `Request`
+  // carrying one, and a chain that never redirects reads neither.
+  const hopOneBody = requestWithBody ? requestWithBody.clone() : null;
+  const replayBody = requestWithBody ? requestWithBody.clone() : null;
 
   // The chain is walked recursively rather than in a loop, because a hop's own
   // body has to be read before the next request goes out and a loop that awaits
@@ -203,7 +233,7 @@ const followHttpsRedirects = async (
       );
     }
     const response = await tauriFetch(
-      hop === 0 && requestWithBody ? requestWithBody : chain.url.href,
+      hop === 0 && hopOneBody ? hopOneBody : chain.url.href,
       {
         ...init,
         method: chain.method,
@@ -223,8 +253,14 @@ const followHttpsRedirects = async (
     // plugin, which drops `RequestInit.redirect`. `manual` hands the redirect
     // response back so the caller can read `Location` itself; `error` refuses
     // it. Both used to be forwarded to a plugin that ignored them, so a caller
-    // asking for `redirect: "error"` — `gladia.utils.ts` does — silently got
-    // follow behaviour instead.
+    // asking for `redirect: "error"` silently got follow behaviour instead.
+    //
+    // No shipped caller asks for either mode today -- every `redirect:` in this
+    // repository is in a test or goes to the bare global `fetch`. An earlier
+    // version of this comment cited `gladia.utils.ts` as a caller that needed
+    // this, but that file passes `redirect: "error"` to the engine's own `fetch`
+    // and never reaches here, so it was evidence for nothing. The mode is honoured
+    // because `fetch` promises it, not because a caller was observed needing it.
     if (redirectMode === "manual") return response;
     if (redirectMode === "error") {
       throw new TypeError(
@@ -239,15 +275,15 @@ const followHttpsRedirects = async (
       headers: chain.headers,
     });
     // `undefined` on both sides means this hop kept the body, which is what a
-    // 307 or 308 does and what a downgrading 301/302/303 does not. This is the
-    // only point the bytes are read; the clone leaves the caller's Request
-    // readable, and a chain that never redirects never pays for it.
-    if (
-      next.body === undefined &&
-      chain.body === undefined &&
-      requestWithBody
-    ) {
-      next.body = await requestWithBody.clone().arrayBuffer();
+    // 307 or 308 does and what a downgrading 301/302/303 does not.
+    //
+    // Read from `replayBody`, never from `requestWithBody`. By this point the transport
+    // has consumed whatever it was handed, so the caller's own Request is spent and
+    // cloning it throws. `replayBody` was cloned before hop 0 and the transport was given a
+    // different clone, so it is still unread here -- and it is cloned again rather than
+    // read, because a second 307 in the same chain needs the bytes a second time.
+    if (next.body === undefined && chain.body === undefined && replayBody) {
+      next.body = await replayBody.clone().arrayBuffer();
     }
     chain.method = next.method;
     chain.body = next.body;
