@@ -52,14 +52,6 @@ const extractSteps = (workflowText) => {
     }
     if (!current) continue;
 
-    const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
-    if (shellMatch) {
-      current.shell = shellMatch[1];
-      current.shells.push(shellMatch[1]);
-      inRun = false;
-      continue;
-    }
-
     const runMatch = line.match(/^(\s*)run:\s*\|/);
     if (runMatch) {
       inRun = true;
@@ -87,19 +79,49 @@ const extractSteps = (workflowText) => {
       inRun = false;
     }
 
-    // Step-level keys the ordering assertion below needs. Read here rather than beside
-    // `shell:`, so a line inside a `run: |` body cannot be taken for a key.
-    if (!inRun) {
-      const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
-      if (ifMatch) {
-        current.if = ifMatch[1];
-        continue;
-      }
-      const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
-      if (wdMatch) {
-        current.workingDirectory = wdMatch[1];
-        continue;
-      }
+    // Step-level keys, read together and only once the run-body block above has had its
+    // say -- so a line inside a `run: |` body cannot be taken for a key.
+    //
+    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
+    // body cannot reach here: the block above `continue`s on it when it is blank or more
+    // indented than the `run:` key, and clears `inRun` on a dedent. So a guard here used to
+    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
+    // arriving here already means `inRun` is false.
+    //
+    // The property that guard was written to protect is real, and it is the `continue` above
+    // rather than the condition. Reinstating the guard would add a check that cannot fail,
+    // which reads as protection and is not.
+    //
+    // `shell:` used to be read up beside `run:`, before any of this. That was a real bug and
+    // not a theoretical one: a `shell:` line inside a run body was taken for the step's shell
+    // AND cleared `inRun`, so every line after it in that body was read as a step key too. No
+    // workflow here has such a line -- measured, 0 across `.github/workflows/*.yml` -- so it
+    // never fired; `does not read a step key out of a run: | body` now covers it.
+    //
+    // Unconditional, and that is load-bearing rather than sloppy. A line inside a `run: |`
+    // body cannot reach here: the block above `continue`s on it when it is blank or more
+    // indented than the `run:` key, and clears `inRun` on a dedent. So this guard used to
+    // read `if (!inRun)`, which DeepScan was right about -- it is always true, because
+    // arriving here already means `inRun` is false.
+    //
+    // The property it was written to protect is real and is the `continue` above, not the
+    // condition. Reinstating the guard would add a check that cannot fail, which reads as
+    // protection and is not.
+    const ifMatch = line.match(/^\s*if:\s*(.+?)\s*$/);
+    if (ifMatch) {
+      current.if = ifMatch[1];
+      continue;
+    }
+    const wdMatch = line.match(/^\s*working-directory:\s*(.+?)\s*$/);
+    if (wdMatch) {
+      current.workingDirectory = wdMatch[1];
+      continue;
+    }
+    const shellMatch = line.match(/^\s*shell:\s*(\S+)/);
+    if (shellMatch) {
+      current.shell = shellMatch[1];
+      current.shells.push(shellMatch[1]);
+      continue;
     }
   }
   if (current) steps.push(current);
@@ -274,6 +296,75 @@ describe("release workflow shell contracts", () => {
   // self-verification steps unreachable -- which was true and cost the integrity of the files
   // the verdict reads. `if: always()` on each of the three buys the reachability back without
   // depending on order, and is asserted below.
+  // The parser, on the shape it has to get right for the assertion below to mean anything.
+  //
+  // DeepScan reported the `if (!inRun)` guard as a constant condition. It was one: a line
+  // inside a `run: |` body is always handled by the block above, which either `continue`s or
+  // clears `inRun` on a dedent, so the guard could never be false when reached. It is gone,
+  // and what does the protecting is the `continue` -- which is structural, not conditional.
+  //
+  // That left the property unpinned: lifting these two key reads above the run-body handling
+  // left all 28 tests green. Nothing in this repository has a run body containing a
+  // key-shaped line either -- measured, 0 across `.github/workflows/*.yml` -- so no real
+  // workflow exercises it. This fixture does.
+  it("does not read a step key out of a run: | body", () => {
+    const steps = extractSteps(
+      [
+        "name: synthetic",
+        "on: [push]",
+        "jobs:",
+        "  probe:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - name: outer",
+        "        shell: bash",
+        "        run: |",
+        "          echo start",
+        "          if: [ -f /tmp/x ]",
+        "          working-directory: /tmp",
+        "          shell: not-a-real-key",
+        "          name: not-a-real-name",
+        "          echo end",
+        "      - name: next",
+        "        if: always()",
+        "        working-directory: scan-target",
+        "        run: echo second",
+        "",
+      ].join("\n"),
+    );
+
+    const outer = steps.find((step) => step.name === "outer");
+    assert.ok(outer, "the step with a block body must be found");
+    // The key-shaped lines belong to the body and must be IN it ...
+    const body = outer.run.join("\n");
+    for (const line of [
+      "if: [ -f /tmp/x ]",
+      "working-directory: /tmp",
+      "shell: not-a-real-key",
+      "name: not-a-real-name",
+    ]) {
+      assert.ok(
+        body.includes(line),
+        `the run body must keep ${JSON.stringify(line)} as body text, not a step key`,
+      );
+    }
+    // ... so the step's own keys are the ones written outside the body.
+    assert.equal(outer.if, null, "a key-shaped line in the body is not the step's `if`");
+    assert.equal(
+      outer.workingDirectory,
+      null,
+      "a key-shaped line in the body is not the step's `working-directory`",
+    );
+
+    // And the control: a real key AFTER the body is still read. Without this the case above
+    // would also pass if the parser simply stopped reading keys altogether.
+    const next = steps.find((step) => step.name === "next");
+    assert.ok(next, "the following step must be found");
+    assert.equal(next.if, "always()");
+    assert.equal(next.workingDirectory, "scan-target");
+    assert.deepEqual(next.run, ["echo second"]);
+  });
+
   it("runs no step from the scanned checkout before the verdict reads the trusted one", () => {
     const scan = read(".github/workflows/secret-scan.yml");
     const steps = extractSteps(scan);
