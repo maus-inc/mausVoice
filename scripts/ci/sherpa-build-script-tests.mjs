@@ -628,6 +628,24 @@ export function buildScriptBinaryName(hostPlatform = process.platform) {
   return hostPlatform === "win32" ? "build-script-build.exe" : "build-script-build";
 }
 
+/**
+ * The name the REPLAYED rustc invocation is told to write, which has to be the name this
+ * host will execute.
+ *
+ * The same trap as `buildScriptBinaryName`, one step later. `-o` writes whatever it is
+ * given, so a suffixless name produces a file Windows will not start -- and the failure
+ * reads like a missing file rather than a missing extension:
+ *
+ *     spawnSync C:\...\sherpa-build-script-tests: ENOENT
+ *
+ * Exported and parameterised because nothing on Linux can observe `process.platform`
+ * choosing the suffix: the name is identical here with or without it, so a test that
+ * asserted the real call would pass either way.
+ */
+export function replayedTestBinaryName(hostPlatform = process.platform) {
+  return `sherpa-build-script-tests${hostPlatform === "win32" ? ".exe" : ""}`;
+}
+
 /** The build script binary cargo actually produced, used for the marker check. */
 function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
   const buildRoot = join(targetDir, "debug", "build");
@@ -726,7 +744,17 @@ function runHarness(workDir) {
     );
   }
 
-  const testBinary = join(workDir, "sherpa-build-script-tests");
+  // WITH the executable suffix, or the replay produces a file Windows will not run.
+  //
+  // This is the same trap `buildScriptBinaryName` exists for, one step later: the replayed
+  // rustc writes whatever `-o` says, so the name has to be the one the host will execute.
+  // Without it the Windows leg got all the way to running the tests -- 18 of them, compiled
+  // from the right source with the right externs -- and then failed with
+  //
+  //     spawnSync C:\...\sherpa-build-script-tests: ENOENT
+  //
+  // which reads like a missing file and is really a missing extension.
+  const testBinary = join(workDir, replayedTestBinaryName());
   const rewrite = rewriteInvocation(located, { outBinary: testBinary, test: true });
   const childEnv = { ...process.env, ...rewrite.env };
 

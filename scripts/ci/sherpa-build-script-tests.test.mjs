@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
   buildScriptBinaryName,
   findBuildScriptInvocation,
   parseEnvPrefix,
+  replayedTestBinaryName,
   rewriteInvocation,
   tokenizeCargoCommand,
   tokenizeCargoCommandLoose,
@@ -434,14 +439,24 @@ describe("the harness says what cargo printed when it cannot use the output", ()
   // Driven for real, with a `cargo` that succeeds and prints nothing: no compile, no
   // network, no disk. The harness reaches the same failure a format change would cause.
   it("echoes cargo's own output on the path that reports no invocation", () => {
+    // A stub that exits 0 and prints nothing, written rather than assumed. An earlier
+    // version used `/bin/true`, which does not exist on Windows -- so the test failed there
+    // with `spawnSync /bin/true ENOENT` and proved nothing about the harness on the one
+    // platform where the harness was broken.
+    const dir = mkdtempSync(join(tmpdir(), "silent-cargo-"));
+    const stub = join(dir, process.platform === "win32" ? "cargo.cmd" : "cargo");
+    if (process.platform === "win32") {
+      writeFileSync(stub, "@exit /b 0\r\n");
+    } else {
+      writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+      chmodSync(stub, 0o755);
+    }
     const result = spawnSync(
       process.execPath,
-      [new URL("./sherpa-build-script-tests.mjs", import.meta.url).pathname],
-      {
-        encoding: "utf8",
-        env: { ...process.env, CARGO: "/bin/true" },
-      },
+      [fileURLToPath(new URL("./sherpa-build-script-tests.mjs", import.meta.url))],
+      { encoding: "utf8", env: { ...process.env, CARGO: stub } },
     );
+    rmSync(dir, { recursive: true, force: true });
     assert.notEqual(result.status, 0, "a silent cargo must not let the harness pass");
     assert.match(
       result.stderr,
@@ -452,6 +467,27 @@ describe("the harness says what cargo printed when it cannot use the output", ()
       result.stderr,
       /--- last \d+ lines cargo printed ---/,
       "the harness must echo cargo's output, or the failure cannot be diagnosed from CI",
+    );
+  });
+});
+
+describe("replayedTestBinaryName", () => {
+  it("names the replayed binary with the host's executable suffix", () => {
+    // `cargoBuildScriptBinary` looks for `build-script-build`; this is the same trap on
+    // the output side, where `-o` writes whatever name it is given and Windows then
+    // refuses to start a suffixless file. Parameterised because `process.platform` chooses
+    // the suffix and nothing on Linux can observe that choice.
+    assert.equal(replayedTestBinaryName("win32"), "sherpa-build-script-tests.exe");
+    assert.equal(replayedTestBinaryName("linux"), "sherpa-build-script-tests");
+    assert.equal(replayedTestBinaryName("darwin"), "sherpa-build-script-tests");
+  });
+
+  it("defaults to the host platform", () => {
+    assert.equal(
+      replayedTestBinaryName(),
+      process.platform === "win32"
+        ? "sherpa-build-script-tests.exe"
+        : "sherpa-build-script-tests",
     );
   });
 });
