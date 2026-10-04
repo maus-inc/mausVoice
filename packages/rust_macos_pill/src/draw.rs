@@ -1650,9 +1650,10 @@ fn draw_review_actions(
         btn_widths.iter().sum::<f64>() + PERM_BUTTON_GAP * (btn_widths.len() as f64 - 1.0);
     let buttons_left = panel_x + panel_w - PANEL_CONTENT_SIDE_INSET - row_width;
     let hint_x = panel_x + PANEL_CONTENT_SIDE_INSET;
-    let hint_budget = buttons_left - PERM_BUTTON_GAP - hint_x;
+    let hint_budget =
+        rust_pill_shared::text_fit::hint_budget(buttons_left, hint_x, PERM_BUTTON_GAP);
 
-    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget.max(0.0), "…", |s| {
+    let hint = rust_pill_shared::text_fit::elide_to_width(hint, hint_budget, "…", |s| {
         ctx.text_extents(s).width
     });
     if !hint.is_empty() {

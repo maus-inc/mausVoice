@@ -231,7 +231,12 @@ pub enum OutMessage {
         kind: String,
     },
     /// The user's decision on the transcript under review.
-    /// `action` is one of "insert", "copy", "cancel", "open".
+    /// `action` is one of "insert", "copy", "cancel", "open", "edit" -- the five
+    /// variants of the desktop's `PillReviewAction`. It listed four until this review;
+    /// the other two platform pills already had all five, so this crate was the only one
+    /// whose vocabulary was short. Nothing was broken -- `parse` maps the string, and
+    /// `Edit` has a variant -- but the file that owns the vocabulary was the one describing
+    /// it wrongly, which is the worst place for that to be true.
     ///
     /// `text` carries what the entry holds for Insert, Copy, and Open. Open
     /// lets the desktop preserve the edited text before it settles the
