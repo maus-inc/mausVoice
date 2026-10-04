@@ -12,8 +12,7 @@ export const DashboardEntryLayout = ({
     <Stack
       sx={{
         flexGrow: 1,
-        overflowY: "auto",
-        pr: 2,
+        minHeight: 0,
       }}
     >
       <Container
