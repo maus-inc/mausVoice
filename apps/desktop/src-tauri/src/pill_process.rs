@@ -1491,10 +1491,9 @@ mod pill_publish_tests {
     //
     // `tauri::test::mock_app` is `#[cfg(any(test, feature = "test"))]` at
     // tauri-2.10.3/src/lib.rs:1100, so it is not reachable from a crate that merely depends
-    // on tauri -- which is why `[dev-dependencies]` in Cargo.toml enables the feature, and
-    // why this comment used to claim the opposite. With it, an `AppHandle` that already has
-    // a managed `PillProcess` is available here without the overlay binary
-    // `try_spawn_pill` would otherwise need.
+    // on tauri -- which is why `[dev-dependencies]` in Cargo.toml enables the feature. With
+    // it, an `AppHandle` that already has a managed `PillProcess` is available here without
+    // the overlay binary `try_spawn_pill` would otherwise need.
     use super::{publish_pill_process, PillProcess};
     use std::process::{Child, ChildStdin, Command, Stdio};
     use std::sync::{Arc, Mutex};
@@ -1538,27 +1537,21 @@ mod pill_publish_tests {
 
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
-            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`.
+            // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `if let Ok`.
             //
-            // `_child` is locked in three places. Two of them can panic while holding it --
-            // `try_wait` inside `has_exited`, and `kill` in
-            // `the_untouched_window_observes_a_real_kill` -- and those two are the only ones
-            // that can poison this mutex. This one cannot, because `kill()`'s `Result` is
-            // discarded rather than unwrapped.
-            //
-            // So recovering from the poison is the difference between this guard reaping on
-            // the panicking path, which is the path that needs it, and not.
+            // `_child` is locked in three places in this module: here, in `has_exited`, and
+            // in the control test. Two of them can panic while holding it -- the `try_wait`
+            // inside `has_exited` and the `kill` in that test -- and those two are the only
+            // ones that can poison this mutex. This one cannot, because `kill()`'s `Result`
+            // is discarded rather than unwrapped. `has_exited` carries the same
+            // enumeration, since it is the other site that has to recover from the same
+            // poison.
             //
             // Both of those `expect`s are on `try_wait` and `kill`, never on the lock, and
             // that is the distinction worth keeping straight: `Mutex::lock` returning `Err` is
             // how a poison is OBSERVED, so an `expect` on the lock could never have caused one.
-            //
-            // This comment got the enumeration wrong twice. It blamed "the expect on the lock
-            // itself", which cannot be a cause; and then it said `try_wait` ALONE, which was
-            // wrong on arrival because the control test had just added the second. It also
-            // listed them once here and once five lines down. The code was right throughout --
-            // every site recovers -- and only the accounting was not, which is the hardest
-            // kind of wrong to notice because nothing fails.
+            // So recovering from the poison is the difference between this guard reaping on
+            // the panicking path, which is the path that needs it, and not.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
@@ -1620,11 +1613,6 @@ mod pill_publish_tests {
         // lock `expect` there would be a second panic while the first is unwinding -- which
         // aborts the process, skips every remaining `Drop`, and leaves the `sleep`/`ping`
         // children this suite spawns alive for their full 120 s.
-        //
-        // An earlier version of this comment put the abort at the wrong panic, describing
-        // `try_wait` firing while another panic was already unwinding. That cannot happen
-        // here, and naming it sent the reader looking for an unwind path this function is
-        // never on.
         let mut child = process
             ._child
             .lock()
