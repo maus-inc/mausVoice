@@ -17,7 +17,7 @@ The two schemes have their own temperature rather than being inversions of each 
 
 - **Never pure `#000` / `#fff`** for surfaces or text. Light tints from the warm ink `ink(α)` = `rgba(26,23,18,α)`; dark tints from `highlight(α)` / `onDark(α)`. The one sanctioned `#FFFFFF` is the inverted CTA fill in dark (`chalkSolid`).
 - **Borders over shadows.** Cards/surfaces separated by 1px translucent hairlines. Use `hairline.light(α)` / `hairline.dark(α)` from `styles/shadows.ts` (0.04-0.08). Elevation shadows (`premiumSurface`) only on layered/floating surfaces (cards, hover), not every face.
-- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different *plane* can borrow the rim without also borrowing the lift.
+- `premiumSurface` = `insetRim` (2px inner top highlight, emboss) + multi‑stop soft drop shadow; distinct rest/hover/active/selected. This is the "machined keycap" treatment (Raycast class). `insetRim` is exported separately so a surface that has to read as a different _plane_ can borrow the rim without also borrowing the lift.
 - Backdrop-filtered chrome uses `surfaceAlpha(tier, α)` so the translucent face can never drift from its opaque tier.
 
 ## Color (restrained, one accent)
@@ -59,17 +59,16 @@ The two schemes have their own temperature rather than being inversions of each 
 - Side-stripe borders >1px; gradient text; decorative glass; `transition-all`; pure black/white; lucide-only generic icon (once stroke); ceil matching radius. See `craft-floor`.
 - Emoji‑as‑icons. No.
 
-## Window planes
+## Window surfaces
 
-The window is two planes meeting at one seam. The **chrome plane** is the title bar plus the navigation rail, tinted one step above the canvas with a top-lit wash so light reads as falling from the top of the window. The **content plane** is the routed page, recessed beside it.
+The window carries one material across three surfaces: the title bar, the navigation rail and the routed content panel. `chromeWash` in `palette.ts` paints all three, one tier above the canvas with a top-lit wash so light reads as falling from the top of the window. One token for all three means they cannot be retuned into a visible step where they meet.
 
-- Chrome and content are separated by a change of material, not by a shadow thrown from one onto the other. `chromeWash` in `palette.ts` is the single token for the chrome plane, so the bar and the rail cannot be retuned into a visible step where they meet.
-- The bar and the rail share a material but are **not contiguous**. The page header sits between them, so roughly 60px of canvas separates the bar's bottom edge from the rail's top. Do not describe them as one L-shaped surface; they read as two pieces of the same material with a gap, and closing that gap is a layout change, not a token change.
+- The title bar and the rail are **not contiguous**. The page header sits between them, and `PageLayout` plus the rail's own padding put roughly 50px of canvas between the bar's bottom edge and the rail's top. Do not describe them as one L-shaped surface; they read as two pieces of the same material with a gap, and closing that gap is a layout change, not a token change.
 - The title bar does **not** cast downward. `titleBarShadow` is a single inset bottom rim and nothing else. A shadow thrown straight down out of the bar reads as the bar hovering over the page, which is the opposite of how the window sits.
-- `raisedEdge` casts the rail onto the page beside it. `recessedEdge` pushes the content away from the rail in the opposite direction, so the two have a direction to separate in. Both are skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
-- In dark, these two shadows do almost nothing. A near-black canvas swallows a black cast, so the plane separation rests entirely on the hairline borders and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
-- Rounded corners belong on the edge that faces open canvas only. The rail is flush and square against the window's left edge and rounded on its right; the content card is rounded on its left and square against the right and bottom. Rounding a corner that touches the window frame leaves a notch.
-- Corner radius 16 for the two planes, against 14 for cards inside the content plane. The planes are larger, so they carry a slightly larger radius.
+- `raisedEdge` casts the rail onto the panel beside it. `recessedEdge` pushes the panel away from the rail in the opposite direction, so the two have a direction to separate in. Both are skewed sideways on purpose: a symmetrical shadow makes a rail look like it is hovering in the middle of the window.
+- In dark, these two shadows do almost nothing. A near-black canvas swallows a black cast, so the separation rests entirely on the hairline borders and on the wash being one tier lighter than `level0`. If dark separation ever reads as too weak, raise the wash alpha before reaching for a stronger shadow.
+- Radii follow the seam. The rail is flush against the window's left edge, so it is square there and rounded on its right; the content panel mirrors that and is rounded on its left only, which leaves one seam of canvas between the two. The panel stays square on the right and bottom so it runs into the layout padding rather than floating inside it as a card.
+- Corner radius 16 for those surfaces, against 14 for cards inside the content panel. They are the largest surfaces in the window, so they carry a slightly larger radius.
 
 ## Custom chrome
 

@@ -1,6 +1,19 @@
 import { accent, darkInk, highlight, ink } from "./palette";
 
 /**
+ * The top-lit emboss on its own, without the drop.
+ *
+ * Split out so a surface that has to read as a separate plane can borrow the rim
+ * without also borrowing the lift. A seam between two planes wants the light
+ * catching its top edge and nothing else; a card wants both. `premiumSurface`
+ * composes this so the two can never drift apart.
+ */
+export const insetRim = {
+  light: `inset 0 1px 0 ${highlight(0.42)}, inset 0 2px 0 ${highlight(0.14)}`,
+  dark: `inset 0 1px 0 ${highlight(0.08)}, inset 0 2px 0 ${highlight(0.03)}`,
+} as const;
+
+/**
  * Sigma-style layered surfaces:
  * - 2px inner highlight from the top (emboss)
  * - soft multi-stop drop shadow below (premium lift)
@@ -30,19 +43,6 @@ import { accent, darkInk, highlight, ink } from "./palette";
  * it marks the active item. The state ramp tracks dark's: hover > rest,
  * active collapses to contact-only, selected is heaviest.
  */
-/**
- * The top-lit emboss on its own, without the drop.
- *
- * Split out so a surface that has to read as a separate *plane* can borrow the
- * rim without also borrowing the lift. A seam between two planes wants the light
- * catching its top edge and nothing else; a card wants both. `premiumSurface`
- * composes this so the two can never drift apart.
- */
-export const insetRim = {
-  light: `inset 0 1px 0 ${highlight(0.42)}, inset 0 2px 0 ${highlight(0.14)}`,
-  dark: `inset 0 1px 0 ${highlight(0.08)}, inset 0 2px 0 ${highlight(0.03)}`,
-} as const;
-
 export const premiumSurface = {
   light: {
     rest: `

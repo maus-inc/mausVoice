@@ -1,9 +1,10 @@
-import { Box, IconButton, Stack, useColorScheme } from "@mui/material";
+import { Box, IconButton, Stack } from "@mui/material";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Plus, Square, X } from "lucide";
 import { useCallback, useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { showErrorSnackbar } from "../../actions/app.actions";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { chromeWash, dangerHoverSoft } from "../../styles/palette";
 import { hairline, titleBarShadow } from "../../styles/shadows";
 import { isTauriRuntime } from "../../utils/env.utils";
@@ -449,8 +450,9 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
     pr: trafficLights ? 1.5 : 0,
     position: "relative",
     zIndex: 20,
-    // Same wash as the navigation rail, so the bar and the rail read as one
-    // plane turning the corner instead of two independently tinted strips.
+    // Same wash as the navigation rail and the content panel, so the whole window
+    // reads as one material. The bar and the rail share that paint but are not
+    // contiguous: the page header sits between them.
     background: dark ? chromeWash.dark : chromeWash.light,
     backdropFilter: "blur(18px) saturate(1.2)",
     WebkitBackdropFilter: "blur(18px) saturate(1.2)",
@@ -459,9 +461,7 @@ const titleBarSx = (dark: boolean, trafficLights: boolean) =>
   }) as const;
 
 export const TitleBar = () => {
-  const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
-  const dark = resolved === "dark";
+  const dark = useIsDarkMode();
   const intl = useIntl();
   const platform = isTauriRuntime() ? getPlatform() : "unknown";
   // Same predicate the resize grips use, so the chrome and the grips can never

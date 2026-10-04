@@ -1,4 +1,4 @@
-import { Box, List, Stack, useColorScheme } from "@mui/material";
+import { Box, List, Stack } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   BookMarked,
@@ -13,6 +13,7 @@ import {
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useIsDarkMode } from "../../hooks/color-scheme.hooks";
 import { useAppStore } from "../../store";
 import { springSnappy } from "../../styles/motion";
 import { chromeWash, inkSolid, surfaces } from "../../styles/palette";
@@ -44,9 +45,7 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
   const intl = useIntl();
   const nav = useNavigate();
   const reduceMotion = useReducedMotion();
-  const { mode, systemMode } = useColorScheme();
-  const resolved = mode === "system" ? systemMode : mode;
-  const dark = resolved === "dark";
+  const dark = useIsDarkMode();
 
   const isUpdateAvailable = useAppStore(
     (state) => state.updater.status === "ready",
@@ -199,9 +198,11 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
         // to be clipped, rather than the edge of a plane.
         borderRadius: "0 16px 16px 0",
         border: dark ? hairline.dark(0.05) : hairline.light(0.05),
-        // Same wash as the title bar, so the two read as one plane turning the
-        // corner. The rim catches light along the rail's top edge and
-        // `raisedEdge` casts along the one edge that faces content.
+        // Same wash as the title bar and the content panel, so all three read as
+        // one material standing off the canvas. The rail is not contiguous with
+        // the bar: the page header sits between them, so this is shared paint,
+        // not one continuous L-shaped surface. The rim catches light along the
+        // top edge and `raisedEdge` casts along the one edge that faces content.
         boxShadow: dark
           ? `${insetRim.dark}, ${raisedEdge.dark}`
           : `${insetRim.light}, ${raisedEdge.light}`,

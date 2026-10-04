@@ -116,12 +116,13 @@ export const accent = {
 export const dangerHoverSoft = "rgba(232, 77, 77, 0.14)";
 
 /**
- * The window chrome wash, shared by the title bar and the navigation rail.
+ * The window wash, shared by the title bar, the navigation rail and the routed
+ * content panel.
  *
- * Those two are one L-shaped plane, so they have to be the same colour. This
- * token makes that structural instead of a coincidence. The wash used to be
- * written out inside the rail while the bar carried its own fill, so the two
- * could be retuned independently and leave a visible step where they meet.
+ * Those three are the same material, so they have to be the same colour. This
+ * token makes that structural instead of a coincidence: the rail used to carry
+ * its own gradient while the bar carried a separate fill, so the two could be
+ * retuned independently and leave a visible step where they met.
  *
  * One tier of lift at the top settling back into the canvas, so light reads as
  * falling from the top of the window. Built from the surface ladder rather than
