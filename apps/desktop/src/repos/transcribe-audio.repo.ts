@@ -4,25 +4,30 @@ import {
   aldeaTranscribeAudio,
   assemblyaiTranscribeAudio,
   azureTranscribeAudio,
+  type CustomFetch,
   deepgramTranscribeAudio,
   elevenlabsTranscribeAudio,
   geminiTranscribeAudio,
   GeminiTranscriptionModel,
+  GEMINI_TRANSCRIPTION_MODELS,
+  isGeminiTranscribeModel,
+  gladiaTranscribeAudio,
+  type GladiaCustomizations,
   groqTranscribeAudio,
+  normalizeGladiaModel,
+  normalizeAssemblyAISpeechModel,
   openaiTranscribeAudio,
   OpenAITranscriptionModel,
+  openrouterTranscribeAudio,
   TranscriptionModel,
   xaiTranscribeAudio,
-  XaiTranscriptionModel,
 } from "@maus-inc/voice-ai";
 import { getAppState } from "../store";
 import { DEFAULT_MODEL_SIZE, TranscriptionMode } from "../types/ai.types";
 import { AudioSamples } from "../types/audio.types";
-import {
-  buildWaveFile,
-  ensureFloat32Array,
-  normalizeSamples,
-} from "../utils/audio.utils";
+import { withAbortSignal } from "../utils/abort-signal.utils";
+import { buildSpeechUploadWav } from "../utils/audio.utils";
+import { analyzeSilence } from "../utils/audio-energy.utils";
 import { getLocalTranscriptionSidecarManager } from "../sidecars";
 import {
   getTranscriptionSidecarDeviceId,
@@ -32,6 +37,16 @@ import {
 } from "../utils/local-transcription.utils";
 import { getLogger } from "../utils/log.utils";
 import { openaiCompatibleTranscribeAudio } from "../utils/openai-compatible-transcribe.utils";
+import {
+  gateSilentSegments,
+  markSilentSegmentAudio,
+  toTranscriptionSegments,
+  type TranscriptionSegment,
+} from "../utils/hallucination.utils";
+import {
+  createOpenAICompatibleFetch,
+  secureFetch,
+} from "../utils/secure-fetch.utils";
 import { speachesTranscribeAudio } from "../utils/speaches.utils";
 import {
   mergeTranscriptions,
@@ -56,11 +71,26 @@ export type TranscribeAudioInput = {
   sampleRate: number;
   prompt?: Nullable<string>;
   language?: string;
+  /**
+   * When false, the probability-gated silence handling is skipped entirely so
+   * the raw provider transcript is preserved EXACTLY, for both single- and
+   * multi-chunk audio. Defaults to true when omitted.
+   */
+  hallucinationFilterEnabled?: boolean;
+  /**
+   * Cancels in-flight and not-yet-started provider requests. Honored by every
+   * provider that runs batch dictation (where pretranscription happens); the
+   * Gladia and Azure SDK uploads, used only for retranscription, ignore it.
+   */
+  signal?: AbortSignal;
 };
 
 export type TranscribeAudioOutput = {
   text: string;
   metadata?: Nullable<TranscribeAudioMetadata>;
+  warnings?: string[];
+  /** Verbose Whisper segments (with `no_speech_prob`) when the provider returns them. */
+  segments?: TranscriptionSegment[];
 };
 
 export type TranscribeSegmentInput = {
@@ -68,34 +98,111 @@ export type TranscribeSegmentInput = {
   sampleRate: number;
   prompt?: Nullable<string>;
   language?: string;
+  hallucinationFilterEnabled?: boolean;
+  signal?: AbortSignal;
+};
+
+export type LocalTranscriptionSegment = {
+  text: string;
+  noSpeechProb: number;
+};
+
+export const NO_SPEECH_PROB_THRESHOLD = 0.6;
+
+const HALLUCINATION_PHRASES = new Set(["thank you", "thanks", "you"]);
+const TRAILING_PUNCTUATION = "!.?,";
+
+const stripTrailingPunctuation = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && TRAILING_PUNCTUATION.includes(value[end - 1] ?? "")) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+};
+
+const isHallucinationText = (text: string): boolean => {
+  const normalized = stripTrailingPunctuation(text.trim().toLowerCase());
+  if (normalized.length === 0) {
+    return true;
+  }
+  return HALLUCINATION_PHRASES.has(normalized);
+};
+
+export const filterLocalTranscriptionSegments = (
+  segments: readonly LocalTranscriptionSegment[],
+): string => {
+  return segments
+    .filter((segment) => {
+      if (segment.noSpeechProb <= NO_SPEECH_PROB_THRESHOLD) {
+        return true;
+      }
+      return !isHallucinationText(segment.text);
+    })
+    .map((segment) => segment.text)
+    .filter((text) => text.trim().length > 0)
+    .join(" ");
 };
 
 export abstract class BaseTranscribeAudioRepo extends BaseRepo {
-  /**
-   * Maximum duration in seconds for a single audio segment.
-   * Override in child classes based on provider limits.
-   */
-  protected abstract getSegmentDurationSec(): number;
+  protected readonly transcriptionMode: TranscriptionMode = "api";
 
-  /**
-   * Overlap duration in seconds between consecutive segments.
-   * Helps ensure transcription continuity at segment boundaries.
-   */
-  protected abstract getOverlapDurationSec(): number;
+  protected getSegmentDurationSec(): number {
+    return 60;
+  }
 
-  /**
-   * Number of concurrent transcription requests to run.
-   * API providers may allow more parallelism, local inference typically 1.
-   */
-  protected abstract getBatchChunkCount(): number;
+  protected getOverlapDurationSec(): number {
+    return 5;
+  }
 
-  /**
-   * Internal method to transcribe a single audio segment.
-   * Implemented by child classes with provider-specific logic.
-   */
+  protected getBatchChunkCount(): number {
+    return 3;
+  }
+
   protected abstract transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput>;
+
+  /**
+   * Energy-based silence gate. Returns true when the samples are
+   * near-silent (low RMS, low loudest-window energy, and low peak), so
+   * a cloud provider cannot echo its dictionary/glossary prompt back as
+   * a fake transcript. Logs the decision with the scope ("whole clip"
+   * or "chunk") for diagnostics.
+   */
+  protected isNearSilent(
+    samples: Float32Array,
+    sampleRate: number,
+    scope: string,
+  ): boolean {
+    const silence = analyzeSilence(samples, sampleRate);
+    if (silence.silent) {
+      getLogger().info(
+        `Skipping transcription (${scope}): audio is near-silent (rms=${silence.rms.toExponential(2)}, peak=${silence.peak.toExponential(2)}, maxWindowRms=${silence.maxWindowRms.toExponential(2)})`,
+      );
+    }
+    return silence.silent;
+  }
+
+  /**
+   * Transcribes one chunk and, when filtering, measures the chunk's own audio
+   * under its segments so the silence gate can see confident hallucinations.
+   */
+  private async transcribeChunk(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const output = await this.transcribeSegment(input);
+    if (!input.hallucinationFilterEnabled) {
+      return output;
+    }
+    return {
+      ...output,
+      segments: markSilentSegmentAudio(
+        output.segments,
+        input.samples,
+        input.sampleRate,
+      ),
+    };
+  }
 
   /**
    * Transcribes audio, automatically splitting long audio into segments
@@ -104,11 +211,33 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
   async transcribeAudio(
     input: TranscribeAudioInput,
   ): Promise<TranscribeAudioOutput> {
-    const normalizedSamples = normalizeSamples(input.samples);
-    const floatSamples = ensureFloat32Array(normalizedSamples);
+    // Keep one defensive Float32 copy without routing typed input through a
+    // temporary number[]; hour-long provider chunks make that extra allocation
+    // prohibitively expensive.
+    const floatSamples =
+      input.samples instanceof Float32Array
+        ? input.samples.slice()
+        : Float32Array.from(input.samples ?? []);
 
     if (floatSamples.length === 0) {
       return { text: "", metadata: null };
+    }
+
+    // Energy-based silence gate. Cloud providers (Gemini, Groq, OpenAI) are
+    // biased by their prompt, which for us contains the user's dictionary:
+    // on near-silent audio they return those glossary words instead of an
+    // empty transcript. This is provider- and language-independent, unlike
+    // `no_speech_prob` (which only some Whisper endpoints return). When the
+    // filter is disabled the user wants the raw transcript, so skip it.
+    const filterEnabled = input.hallucinationFilterEnabled ?? true;
+    if (
+      filterEnabled &&
+      this.isNearSilent(floatSamples, input.sampleRate, "whole clip")
+    ) {
+      return {
+        text: "",
+        metadata: { transcriptionMode: this.transcriptionMode },
+      };
     }
 
     const segmentDurationSec = this.getSegmentDurationSec();
@@ -118,11 +247,13 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
 
     // If audio fits in a single segment, transcribe directly
     if (floatSamples.length <= segmentSampleCount) {
-      return this.transcribeSegment({
+      return this.transcribeChunk({
         samples: floatSamples,
         sampleRate: input.sampleRate,
         prompt: input.prompt,
         language: input.language,
+        hallucinationFilterEnabled: filterEnabled,
+        signal: input.signal,
       });
     }
 
@@ -134,16 +265,28 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       overlapDurationSec: this.getOverlapDurationSec(),
     });
 
-    // Create promise factories for batched execution
-    const transcriptionTasks = segments.map(
-      (segmentSamples) => () =>
-        this.transcribeSegment({
-          samples: segmentSamples,
-          sampleRate: input.sampleRate,
-          prompt: input.prompt,
-          language: input.language,
-        }),
-    );
+    // Create promise factories for batched execution. Skip chunks that are
+    // near-silent so their glossary-prompt bias cannot produce a dictionary
+    // hallucination (and so we don't pay to transcribe room noise).
+    // Factories are async so an abort rejects inside the batch's Promise.all
+    // instead of throwing past sibling requests that are already in flight.
+    const transcriptionTasks = segments.map((segmentSamples) => async () => {
+      input.signal?.throwIfAborted();
+      if (
+        filterEnabled &&
+        this.isNearSilent(segmentSamples, input.sampleRate, "chunk")
+      ) {
+        return { text: "", metadata: null };
+      }
+      return this.transcribeChunk({
+        samples: segmentSamples,
+        sampleRate: input.sampleRate,
+        prompt: input.prompt,
+        language: input.language,
+        hallucinationFilterEnabled: filterEnabled,
+        signal: input.signal,
+      });
+    });
 
     // Execute in batches
     const results = await batchAsync(
@@ -151,29 +294,38 @@ export abstract class BaseTranscribeAudioRepo extends BaseRepo {
       transcriptionTasks,
     );
 
-    // Merge transcription texts
-    const transcriptionTexts = results.map((r) => r.text);
+    // Gate each provider chunk by its `no_speech_prob` segments BEFORE merging,
+    // so audio longer than one provider segment still benefits from the
+    // probability-gated silence handling that single-segment audio gets in the
+    // action layer. Chunks without verbose segments fall back to their raw text.
+    // When the user disables the filter, merge every raw chunk text unchanged so
+    // the off switch preserves the provider transcript for long audio too.
+    const transcriptionTexts = results.map((r) => {
+      const gated = filterEnabled ? gateSilentSegments(r.segments) : null;
+      return gated ?? r.text;
+    });
     const mergedText = mergeTranscriptions(transcriptionTexts);
 
-    // Use metadata from first result (all segments use same provider/device)
-    const metadata = results[0]?.metadata ?? null;
+    // Use metadata from first non-null result (all segments use same provider/device)
+    const metadata = results.find((result) => result.metadata !== null)
+      ?.metadata ?? {
+      transcriptionMode: this.transcriptionMode,
+    };
 
     return {
       text: mergedText,
       metadata,
+      warnings: Array.from(
+        new Set(results.flatMap((result) => result.warnings ?? [])),
+      ),
+      // Do not flatten overlapping chunk segments: a later join would undo
+      // mergeTranscriptions() and reintroduce duplicated overlap words.
     };
   }
 }
 
 export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  // Local whisper can handle longer segments, but 60s is a safe default
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
+  protected override readonly transcriptionMode: TranscriptionMode = "local";
 
   // Local inference is single-threaded, process one at a time
   protected getBatchChunkCount(): number {
@@ -205,10 +357,13 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       initialPrompt: input.prompt ?? undefined,
       language: input.language,
       deviceId: options.deviceId,
+      hallucinationFilterEnabled: input.hallucinationFilterEnabled !== false,
+      signal: input.signal,
     });
 
     return {
       text: output.text,
+      segments: output.segments,
       metadata: {
         inferenceDevice: output.inferenceDevice,
         modelSize: output.model,
@@ -221,43 +376,39 @@ export class LocalTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GroqTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private groqApiKey: string;
   private model: TranscriptionModel;
+  private customFetch?: CustomFetch;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
     super();
     this.groqApiKey = apiKey;
     this.model = (model as TranscriptionModel) ?? "whisper-large-v3-turbo";
-  }
-
-  // Groq has 25MB limit, 60s segments are well within that
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  // Groq can handle parallel requests
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.customFetch = customFetch ?? undefined;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
-    const { text: transcript } = await groqTranscribeAudio({
+    const { text: transcript, segments } = await groqTranscribeAudio({
       apiKey: this.groqApiKey,
       model: this.model,
       blob: wavBuffer,
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      // Without an injected fetch the SDK keeps its own transport.
+      customFetch:
+        this.customFetch && withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
       text: transcript,
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • Groq",
         modelSize: this.model,
@@ -274,39 +425,27 @@ export class OpenAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   constructor(apiKey: string, model: string | null) {
     super();
     this.openaiApiKey = apiKey;
-    this.model = (model as OpenAITranscriptionModel) ?? "whisper-1";
-  }
-
-  // OpenAI has 25MB limit, 60s segments are well within that
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  // OpenAI can handle parallel requests
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.model = model ?? "whisper-1";
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiTranscribeAudio({
+    const { text: transcript, segments } = await openaiTranscribeAudio({
       apiKey: this.openaiApiKey,
       model: this.model,
       blob: wavBuffer,
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
       text: transcript,
+      segments: toTranscriptionSegments(segments),
       metadata: {
         inferenceDevice: "API • OpenAI",
         modelSize: this.model,
@@ -324,30 +463,17 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     this.aldeaApiKey = apiKey;
   }
 
-  // Conservative segment duration for Aldea
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  // Allow some parallelism for API requests
-  protected getBatchChunkCount(): number {
-    return 3;
-  }
-
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await aldeaTranscribeAudio({
       apiKey: this.aldeaApiKey,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      signal: input.signal,
     });
 
     return {
@@ -363,44 +489,42 @@ export class AldeaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private readonly apiKey: string;
+  private readonly model: string | null;
+  private readonly customFetch: typeof secureFetch;
+  private readonly wordBoost: string[];
 
-  constructor(apiKey: string) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+    wordBoost: string[] = [],
+  ) {
     super();
     this.apiKey = apiKey;
-  }
-
-  // AssemblyAI batch transcripts accept far longer audio, but 60s keeps the
-  // retranscribe path consistent with the other batch providers. The
-  // assemblyaiTranscribeAudio() polling budget (180s default) and 3s poll
-  // interval assume ~60s segments — revisit both together if this changes.
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.model = model;
+    this.customFetch = customFetch;
+    this.wordBoost = wordBoost;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await assemblyaiTranscribeAudio({
       apiKey: this.apiKey,
+      model: this.model,
       blob: wavBuffer,
       language: input.language,
+      wordBoost: this.wordBoost,
+      customFetch: withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • AssemblyAI",
-        modelSize: null,
+        modelSize: normalizeAssemblyAISpeechModel(this.model) ?? null,
         transcriptionMode: "api",
       },
     };
@@ -409,34 +533,26 @@ export class AssemblyAITranscribeAudioRepo extends BaseTranscribeAudioRepo {
 
 export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
+  private readonly keyterms: string[];
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, keyterms: string[] = []) {
     super();
     this.apiKey = apiKey;
-  }
-
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.keyterms = keyterms;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await elevenlabsTranscribeAudio({
       apiKey: this.apiKey,
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      keyterms: this.keyterms,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
@@ -453,29 +569,26 @@ export class ElevenLabsTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private apiKey: string;
   private model: string;
+  private customFetch: typeof secureFetch;
+  private readonly keyterms: string[];
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: typeof secureFetch = secureFetch,
+    keyterms: string[] = [],
+  ) {
     super();
     this.apiKey = apiKey;
     this.model = model ?? "nova-3";
-  }
-
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.customFetch = customFetch;
+    this.keyterms = keyterms;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await deepgramTranscribeAudio({
       apiKey: this.apiKey,
@@ -483,6 +596,8 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      keyterms: this.keyterms,
+      customFetch: withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
@@ -496,46 +611,82 @@ export class DeepgramTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   }
 }
 
-export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
-  private apiKey: string;
-  private model: XaiTranscriptionModel;
+export class GladiaTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly customizations: GladiaCustomizations;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customizations: GladiaCustomizations,
+  ) {
     super();
     this.apiKey = apiKey;
-    this.model = (model as XaiTranscriptionModel) ?? "grok-stt";
+    this.model = model ?? "solaria-1";
+    this.customizations = customizations;
   }
 
-  protected getSegmentDurationSec(): number {
-    return 60;
+  protected override getSegmentDurationSec(): number {
+    return 600;
   }
 
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+  protected override getBatchChunkCount(): number {
+    return 1;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
-
-    const { text: transcript } = await xaiTranscribeAudio({
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const { text, warnings } = await gladiaTranscribeAudio({
       apiKey: this.apiKey,
       model: this.model,
       blob: wavBuffer,
+      language: input.language ?? "auto",
+      customizations: this.customizations,
+    });
+
+    return {
+      text,
+      warnings,
+      metadata: {
+        inferenceDevice: "API • Gladia",
+        // gladiaTranscribeAudio normalizes legacy/unsupported persisted values
+        // before issuing its request, so History must record that actual model.
+        modelSize: normalizeGladiaModel(this.model),
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private apiKey: string;
+
+  constructor(apiKey: string) {
+    super();
+    this.apiKey = apiKey;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+
+    const { text: transcript } = await xaiTranscribeAudio({
+      apiKey: this.apiKey,
+      blob: wavBuffer,
       ext: "wav",
       language: input.language,
+      customFetch: withAbortSignal(secureFetch, input.signal),
     });
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Grok",
-        modelSize: this.model,
+        modelSize: "xAI Speech to Text",
         transcriptionMode: "api",
       },
     };
@@ -545,38 +696,27 @@ export class XaiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private azureSubscriptionKey: string;
   private azureRegion: string;
+  private readonly phrases: string[];
 
-  constructor(subscriptionKey: string, region: string) {
+  constructor(subscriptionKey: string, region: string, phrases: string[] = []) {
     super();
     this.azureSubscriptionKey = subscriptionKey;
     this.azureRegion = region;
-  }
-
-  // Azure supports up to 30MB, 60s segments are safe
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  // Azure can handle parallel requests
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.phrases = phrases;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await azureTranscribeAudio({
       subscriptionKey: this.azureSubscriptionKey,
       region: this.azureRegion,
       blob: wavBuffer,
-      prompt: input.prompt ?? undefined,
+      phrases: this.phrases,
       language: input.language,
+      signal: input.signal,
     });
 
     return {
@@ -593,46 +733,98 @@ export class AzureTranscribeAudioRepo extends BaseTranscribeAudioRepo {
 export class GeminiTranscribeAudioRepo extends BaseTranscribeAudioRepo {
   private geminiApiKey: string;
   private model: GeminiTranscriptionModel;
+  private readonly customVocabulary: string[];
+  private resolvedModel: GeminiTranscriptionModel | null = null;
 
-  constructor(apiKey: string, model: string | null) {
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customVocabulary: string[] = [],
+  ) {
     super();
     this.geminiApiKey = apiKey;
-    this.model = (model as GeminiTranscriptionModel) ?? "gemini-2.5-flash";
-  }
-
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+    // Default model is GEMINI_TRANSCRIPTION_MODELS[0] (currently
+    // gemini-3.5-transcribe dedicated STT). Previously defaulted to
+    // gemini-2.5-flash general model; bump to dedicated transcribe for
+    // better accuracy and lower cost. Intentional upgrade.
+    this.model = model ?? GEMINI_TRANSCRIPTION_MODELS[0];
+    this.customVocabulary = customVocabulary;
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
-    const { text: transcript } = await geminiTranscribeAudio({
-      apiKey: this.geminiApiKey,
-      model: this.model,
-      blob: wavBuffer,
-      mimeType: "audio/wav",
-      prompt: input.prompt ?? undefined,
-      language: input.language,
-    });
+    const tryTranscribe = async (model: GeminiTranscriptionModel) => {
+      const { text } = await geminiTranscribeAudio({
+        apiKey: this.geminiApiKey,
+        model,
+        blob: wavBuffer,
+        mimeType: "audio/wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+        // Pass explicit array (even empty) to prevent prompt fallback that
+        // would treat localized instructions as vocabulary terms.
+        customVocabulary: this.customVocabulary,
+        transcriptionMode: "verbatim",
+        customFetch: withAbortSignal(secureFetch, input.signal),
+      });
+      return text;
+    };
+
+    // Cache resolved model after first fallback to avoid 403 per segment.
+    const effectiveModel = this.resolvedModel ?? this.model;
+    let transcript: string;
+    let usedModel = effectiveModel;
+    // Only ever non-empty when the fallback below changed the model, so the
+    // common path returns exactly the shape it returned before.
+    const warnings: string[] = [];
+    try {
+      transcript = await tryTranscribe(effectiveModel);
+      if (!this.resolvedModel) this.resolvedModel = effectiveModel;
+    } catch (error) {
+      const isTranscribeModel = isGeminiTranscribeModel(effectiveModel);
+      const status =
+        error instanceof Error && "status" in error
+          ? (error as { status?: number }).status
+          : undefined;
+      const isModelAccessError = status === 403 || status === 404;
+      if (isTranscribeModel && isModelAccessError) {
+        const fallbackModel = GEMINI_TRANSCRIPTION_MODELS.find(
+          (m) => !isGeminiTranscribeModel(m),
+        ) as GeminiTranscriptionModel | undefined;
+        if (fallbackModel) {
+          transcript = await tryTranscribe(fallbackModel);
+          usedModel = fallbackModel;
+          this.resolvedModel = fallbackModel;
+          // `GEMINI_TRANSCRIPTION_MODELS` holds exactly one dedicated
+          // `-transcribe` id, so this find always lands on a general model --
+          // and `transcribeWithGeneralModel` accepts neither `customVocabulary`
+          // nor `transcriptionMode`. The dictionary the user configured was
+          // therefore dropped for the rest of the recording, with no entry in
+          // `warnings` and so nothing on the history row. There is no second
+          // transcribe model to fall back to, so the fallback stays and reports
+          // itself.
+          warnings.push(
+            `${effectiveModel} was unavailable, so this dictation used ${fallbackModel} instead. That model does not accept dictionary terms, so the custom vocabulary was not applied.`,
+          );
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
 
     return {
       text: transcript,
       metadata: {
         inferenceDevice: "API • Gemini",
-        modelSize: this.model,
-        transcriptionMode: "api",
+        modelSize: usedModel,
+        transcriptionMode: "api" as TranscriptionMode,
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 }
@@ -647,22 +839,10 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
     this.model = model;
   }
 
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
-  }
-
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
     const { text: transcript } = await speachesTranscribeAudio({
       baseUrl: this.baseUrl,
@@ -671,6 +851,7 @@ export class SpeachesTranscribeAudioRepo extends BaseTranscribeAudioRepo {
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      signal: input.signal,
     });
 
     return {
@@ -688,45 +869,93 @@ export class OpenAICompatibleTranscribeAudioRepo extends BaseTranscribeAudioRepo
   private baseUrl: string;
   private model: string;
   private apiKey?: string;
+  private transcriptionPath?: string;
+  private customFetch: typeof secureFetch;
 
-  constructor(baseUrl: string, model: string, apiKey?: string) {
+  constructor(
+    apiKeyId: string,
+    baseUrl: string,
+    model: string,
+    apiKey?: string,
+    transcriptionPath?: string,
+  ) {
     super();
     this.baseUrl = baseUrl;
     this.model = model;
     this.apiKey = apiKey;
-  }
-
-  protected getSegmentDurationSec(): number {
-    return 60;
-  }
-
-  protected getOverlapDurationSec(): number {
-    return 5;
-  }
-
-  protected getBatchChunkCount(): number {
-    return 3;
+    this.transcriptionPath = transcriptionPath;
+    this.customFetch = createOpenAICompatibleFetch(apiKeyId);
   }
 
   protected async transcribeSegment(
     input: TranscribeSegmentInput,
   ): Promise<TranscribeAudioOutput> {
-    const wavBuffer = buildWaveFile(input.samples, input.sampleRate);
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
 
-    const { text: transcript } = await openaiCompatibleTranscribeAudio({
-      baseUrl: this.baseUrl,
-      model: this.model,
+    const { text: transcript, segments } =
+      await openaiCompatibleTranscribeAudio({
+        baseUrl: this.baseUrl,
+        model: this.model,
+        apiKey: this.apiKey,
+        blob: wavBuffer,
+        ext: "wav",
+        prompt: input.prompt ?? undefined,
+        language: input.language,
+        transcriptionPath: this.transcriptionPath,
+        customFetch: withAbortSignal(this.customFetch, input.signal),
+      });
+
+    return {
+      text: transcript,
+      segments,
+      metadata: {
+        inferenceDevice: "API • OpenAI Compatible",
+        modelSize: this.model,
+        transcriptionMode: "api",
+      },
+    };
+  }
+}
+
+export class OpenRouterTranscribeAudioRepo extends BaseTranscribeAudioRepo {
+  private readonly apiKey: string;
+  private readonly model: string;
+  private readonly customFetch?: CustomFetch;
+
+  constructor(
+    apiKey: string,
+    model: string | null,
+    customFetch: CustomFetch | null = secureFetch,
+  ) {
+    super();
+    this.apiKey = apiKey;
+    this.model = model ?? "openai/whisper-large-v3";
+    this.customFetch = customFetch ?? undefined;
+  }
+
+  protected async transcribeSegment(
+    input: TranscribeSegmentInput,
+  ): Promise<TranscribeAudioOutput> {
+    const wavBuffer = buildSpeechUploadWav(input.samples, input.sampleRate);
+    const { text: transcript } = await openrouterTranscribeAudio({
       apiKey: this.apiKey,
+      model: this.model,
       blob: wavBuffer,
       ext: "wav",
       prompt: input.prompt ?? undefined,
       language: input.language,
+      signal: input.signal,
+      // Without an injected fetch the SDK keeps its own transport, and the
+      // redaction and certificate checks this app relies on never run against
+      // the response.
+      customFetch:
+        this.customFetch && withAbortSignal(this.customFetch, input.signal),
     });
 
     return {
       text: transcript,
       metadata: {
-        inferenceDevice: "API • OpenAI Compatible",
+        inferenceDevice: "API • OpenRouter",
         modelSize: this.model,
         transcriptionMode: "api",
       },
