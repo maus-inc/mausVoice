@@ -342,10 +342,19 @@ fn child_stdin_store() -> &'static Mutex<Option<ChildStdin>> {
 }
 
 pub fn sync_combos(combos: Vec<Vec<String>>) {
-    {
-        let mut guard = lock(combo_store());
-        guard.clone_from(&combos);
-    }
+    // The combo lock is held across the write, not released before it. Both
+    // writers of the child's stdin -- this and the initial send in the spawn
+    // path -- must read the store and write the child as one step, or a spawn
+    // that snapshotted older combos can write them after this call has already
+    // sent newer ones, leaving the child holding a configuration the store says
+    // was superseded.
+    //
+    // The order is combo_store then child_stdin_store, which is the order this
+    // function already used across its two acquisitions and the order the spawn
+    // path uses below, so holding both at once introduces no inversion. Nothing
+    // in this file takes them in the reverse order.
+    let mut combos_guard = lock(combo_store());
+    combos_guard.clone_from(&combos);
 
     let mut guard = lock(child_stdin_store());
     if let Some(stdin) = guard.as_mut() {
@@ -691,20 +700,25 @@ fn ensure_listener_child(port: u16) -> Result<(), String> {
         *stdin_guard = stdin;
     }
 
-    {
-        let combos = lock(combo_store()).clone();
-        if !combos.is_empty() {
-            let mut guard = lock(child_stdin_store());
-            if let Some(stdin) = guard.as_mut() {
-                if let Ok(json) = serde_json::to_string(&combos) {
-                    if let Err(err) = writeln!(stdin, "{json}") {
-                        log::error!("Failed to send initial combos to child: {err}");
-                    }
-                    let _ = stdin.flush();
+    // Read the combos and send them under both locks, for the reason given on
+    // `sync_combos`: releasing the combo lock between the snapshot and the write
+    // lets a concurrent `sync_combos` deliver newer combos first and have this
+    // call overwrite them with the stale snapshot.
+    let combos_guard = lock(combo_store());
+    let mut stdin_guard = lock(child_stdin_store());
+    let combos = combos_guard.clone();
+    if !combos.is_empty() {
+        if let Some(stdin) = stdin_guard.as_mut() {
+            if let Ok(json) = serde_json::to_string(&combos) {
+                if let Err(err) = writeln!(stdin, "{json}") {
+                    log::error!("Failed to send initial combos to child: {err}");
                 }
+                let _ = stdin.flush();
             }
         }
     }
+    drop(stdin_guard);
+    drop(combos_guard);
 
     let mut guard = lock(child_store());
     *guard = Some(child);
