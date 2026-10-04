@@ -1,8 +1,8 @@
 #![windows_subsystem = "windows"]
 
 mod constants;
-mod font;
 mod draw;
+mod font;
 mod gfx;
 mod input;
 mod ipc;

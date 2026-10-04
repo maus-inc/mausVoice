@@ -6,6 +6,16 @@
 //! platform traces the *same* path for the same input rectangle, so the
 //! ring lines up pixel-for-pixel across Linux, macOS and Windows.
 
+pub mod clock;
+pub mod deform;
+pub mod drag;
+pub mod edge;
+pub mod hover;
+pub mod placement;
+pub mod spring;
+pub mod text_fit;
+
+use std::cell::{Cell, RefCell};
 use std::f64::consts::FRAC_PI_2;
 
 /// Build the perimeter of an axis-aligned rounded rectangle as an ordered
@@ -79,6 +89,158 @@ pub fn path_distances(path: &[(f64, f64)]) -> (Vec<f64>, f64) {
     (distances, total)
 }
 
+/// Whether a pill-body click may emit interaction feedback and dispatch its
+/// action. Loading owns the current operation, so another body click must be
+/// inert: no haptic/audio event and no second action. A click on an unavailable
+/// action is also inert. Both conditions stay identical on every platform
+/// because the decision lives in this shared crate.
+pub const fn can_emit_interaction_feedback(action_available: bool, is_loading: bool) -> bool {
+    action_available && !is_loading
+}
+
+/// The user's preference for when the pill is on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PillVisibility {
+    Hidden,
+    WhileActive,
+    Persistent,
+}
+
+/// Shared pill visibility policy, used by every platform pill.
+///
+/// | preference    | idle    | recording | pill owns the surface |
+/// |---------------|---------|-----------|-----------------------|
+/// | `Hidden`      | hidden  | hidden    | visible               |
+/// | `WhileActive` | hidden  | visible   | visible               |
+/// | `Persistent`  | visible | visible   | visible               |
+///
+/// `owns_surface` covers assistant mode and a transcript waiting for a review
+/// decision. Both put something on the pill that the user has to answer, so
+/// they override the preference: hiding the pill would leave the user with no
+/// way to respond and the desktop waiting forever.
+pub const fn should_show_pill(
+    preference: PillVisibility,
+    is_active: bool,
+    owns_surface: bool,
+) -> bool {
+    match preference {
+        PillVisibility::Hidden => owns_surface,
+        PillVisibility::WhileActive => is_active || owns_surface,
+        PillVisibility::Persistent => true,
+    }
+}
+
+/// Maximum character budget for the review card transcript preview.
+/// Longer transcripts are safely truncated for rendering while keeping
+/// the complete text intact for insertion and copying.
+pub const MAX_REVIEW_PREVIEW_CHARS: usize = 3000;
+pub const MAX_REVIEW_PREVIEW_LINES: usize = 60;
+
+/// How far back the word-boundary trim may reach for whitespace.
+///
+/// Trimming exists so the preview does not end mid-word. It must not become a
+/// second way to lose the budget: `rfind` over the whole window found the last
+/// whitespace anywhere in it, so a transcript with one space near the top (a
+/// long URL, a hash, CJK text) trimmed thousands of characters away and
+/// rendered an almost-empty card. A word longer than this is not worth
+/// truncating the preview for.
+const REVIEW_PREVIEW_TRIM_WINDOW: usize = 64;
+
+/// Byte offset where the character-budget scan stops, or `None` when the whole
+/// text fits inside the budget.
+///
+/// `char_indices().nth` returns the position of the first character *past* the
+/// budget, so `None` is the same `chars().count() <= limit` comparison the
+/// budget documents without walking the rest of a transcript that can be
+/// thousands of times longer than the preview. `chars().count()` did walk all
+/// of it, which made every rendered frame cost time proportional to the full
+/// text; this returns the offset the scan reached, which is a property of the
+/// budget and not of the input's length, so a test can assert the bound without
+/// timing a sub-microsecond call.
+fn review_preview_scan_end(full_text: &str) -> Option<usize> {
+    full_text
+        .char_indices()
+        .nth(MAX_REVIEW_PREVIEW_CHARS)
+        .map(|(byte_index, _)| byte_index)
+}
+
+/// Prepare a bounded slice of review text for rendering.
+/// Ensures that huge inputs (e.g. long audio imports or transcripts)
+/// do not cause unbounded text layout, wrapping, or allocation overhead on every frame.
+pub fn bound_review_preview_text(full_text: &str) -> (String, bool) {
+    // The budget is documented in characters, so it is measured in characters:
+    // `str::len` is bytes, and 3000 bytes of Japanese is about 1000
+    // characters.
+    let Some(end) = review_preview_scan_end(full_text) else {
+        return (full_text.to_string(), false);
+    };
+
+    // Trim back to a word boundary, but only within a short window: a
+    // transcript can be one long unbroken run, and giving up the whole budget
+    // to find whitespace defeats the point of having one.
+    let cut_pos = full_text[..end]
+        .char_indices()
+        .rev()
+        .take(REVIEW_PREVIEW_TRIM_WINDOW)
+        .find(|(_, ch)| ch.is_whitespace())
+        .map_or(end, |(byte_index, _)| byte_index);
+
+    let mut preview = full_text[..cut_pos].to_string();
+    preview.push_str("\n… [Full transcript preserved for insert]");
+    (preview, true)
+}
+
+/// Clip the vertical span of a click target to the band of the panel that is
+/// actually on screen.
+///
+/// Returns the visible top and height, or `None` when the target sits entirely
+/// outside the band. Scrolling moves buttons under the panel edge, and the part
+/// that slid out is painted over by the surrounding chrome, so it must stop
+/// taking clicks. Keeping or dropping the whole target by its centre point is
+/// not enough: a target that is half out would either lose its visible half or
+/// keep an invisible one, and the user would hit a button they cannot see.
+pub fn clip_span_to_band(y: f64, h: f64, band_y: f64, band_h: f64) -> Option<(f64, f64)> {
+    let top = y.max(band_y);
+    let bottom = (y + h).min(band_y + band_h);
+    let height = bottom - top;
+    if height > 0.0 {
+        Some((top, height))
+    } else {
+        None
+    }
+}
+
+/// The rectangle a click target has to cover when the draw code painted it
+/// inside a scale transform about `(center_x, center_y)`.
+///
+/// Pointer coordinates and the input shape are both in unscaled window space,
+/// so a target registered with the rectangle's own coordinates covers a
+/// different part of the window than the pixels drawn there. The toast banner
+/// is scaled about its centre from half size up to full, and for the whole
+/// animation that leaves a button's registered rectangle offset from the button
+/// the user can see: a click on the visible half misses. Scaling the rectangle
+/// about the same centre, with the same factor the transform used, is what puts
+/// the target and the paint back in step.
+///
+/// A `scale` of 1 leaves the rectangle where it was, so this is safe for a
+/// caller that is unsure whether the transform was degenerate.
+pub fn scaled_click_rect(
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    center_x: f64,
+    center_y: f64,
+    scale: f64,
+) -> (f64, f64, f64, f64) {
+    (
+        center_x + (x - center_x) * scale,
+        center_y + (y - center_y) * scale,
+        w * scale,
+        h * scale,
+    )
+}
+
 /// How many line segments to use for each corner arc.
 #[derive(Debug, Clone, Copy)]
 pub enum RoundedRectArcSteps {
@@ -94,6 +256,89 @@ pub enum RoundedRectArcSteps {
 pub const DRAG_INFLATE_SCALE: f64 = 0.18;
 /// Spring stiffness for the inflate/deflate animation.
 pub const DRAG_INFLATE_STIFFNESS: f64 = 280.0;
+/// Spring stiffness for the pill expand/collapse (idle <-> active).
+///
+/// 320 is critically damped with ~220 ms settle (4/sqrt(320) ≈ 0.22 s),
+/// inside the 100–150 ms to first paint budget (NN/g [1]) and the
+/// <300 ms microinteraction ceiling. The behavioural pin is
+/// `hover::realistic_pass_at_900_px_s_still_counts_as_intent` (900 px/s
+/// arms, 1500 px/s does not) — not an external blog. The previous
+/// 200 (≈283 ms) felt sluggish on rapid passes; 320 keeps the same
+/// ease-out shape (critically damped, no overshoot) but arrives ~25 %
+/// faster, so the dwell reduction and wider hit zone are not wasted
+/// waiting for the spring. Label and inflate already use 280, so 320
+/// is a deliberate step snappier for the primary affordance.
+///
+/// [1]: https://www.nngroup.com/articles/timing-exposing-content/
+pub const PILL_EXPAND_STIFFNESS: f64 = 320.0;
+
+// ── Idle/drag label crossfade (shared by all pill renderers) ──────────────
+/// Base alpha multiplier for the idle label (before expand_t and drag_t).
+pub const LABEL_BASE_ALPHA: f64 = 0.55;
+/// Vertical slide offset for the crossfade in pixels.
+pub const LABEL_SLIDE_OFFSET: f64 = 2.0;
+/// Alpha below which a label is not drawn.
+///
+/// This ends one label when the other has taken over; it is not the
+/// sub-perceptual "avoid pointless draws" threshold it used to be. The two
+/// alphas are complementary — they sum to `LABEL_BASE_ALPHA * expand_t` — so a
+/// cutoff near zero is not a cleanup, it is the width of the crossfade. At
+/// `0.01` both labels cleared the bar for `drag_t` in roughly (0.018, 0.982):
+/// 96% of the transition, about 14 frames at 60 Hz, with `label_slide_y`
+/// parting them by `LABEL_SLIDE_OFFSET` (2px) on 12px glyphs. Two different
+/// strings superimposed 2px apart is a smudge, not a crossfade, and it is
+/// drawn while the pill tracks the cursor.
+///
+/// So the cutoff sits just under half the peak. Just under rather than exactly
+/// half, because all three renderers gate with `alpha > LABEL_ALPHA_CUTOFF`: at
+/// exactly half both arms equal the cutoff at `drag_t == 0.5` and the pill
+/// blinks with no label for one frame. At 45% of peak the overlap is ~19ms of
+/// the spring's ~350ms travel — about one frame at 60 Hz, at ~47% of peak
+/// alpha, so no frame ever draws nothing.
+///
+/// Raising it cannot suppress a label the geometry would have drawn: all three
+/// renderers only call the label painter above `expand_t > 0.5`, and at
+/// `drag_t == 0` the idle alpha is already `0.55 * 0.5 = 0.275` there.
+pub const LABEL_ALPHA_CUTOFF: f64 = LABEL_BASE_ALPHA * 0.45;
+
+/// Idle label text shown when not dragging.
+pub const LABEL_IDLE_TEXT: &str = "Click to dictate";
+/// Label text shown when dragging (or held for drag).
+pub const LABEL_DRAG_TEXT: &str = "Drag To Move";
+
+/// Independent stiffness for the label crossfade spring (tunable separately
+/// from DRAG_INFLATE_STIFFNESS so label feel can evolve independently).
+pub const LABEL_SPRING_STIFFNESS: f64 = 280.0;
+
+/// Crossfade alphas for the idle / drag pair given drag progress and expand.
+pub fn label_crossfade_alpha(drag_t: f64, expand_t: f64) -> (f64, f64) {
+    let drag_t = drag_t.clamp(0.0, 1.0);
+    let expand_t = expand_t.clamp(0.0, 1.0);
+    (
+        LABEL_BASE_ALPHA * expand_t * (1.0 - drag_t),
+        LABEL_BASE_ALPHA * expand_t * drag_t,
+    )
+}
+
+/// Vertical slide Y positions for the two labels, given a base Y and drag_t.
+pub fn label_slide_y(base_y: f64, drag_t: f64) -> (f64, f64) {
+    let drag_t = drag_t.clamp(0.0, 1.0);
+    (
+        base_y - LABEL_SLIDE_OFFSET * drag_t,
+        base_y + LABEL_SLIDE_OFFSET * (1.0 - drag_t),
+    )
+}
+
+/// Shared font-registration failure log.
+///
+/// Strategy: draw-time critical paths (macOS NSFont, Windows DirectWrite
+/// text format) must not fall back silently — they log via this helper and
+/// then panic. Setup paths (GTK fontconfig, Windows collection refresh)
+/// log here without panicking, because failure at install is visible at draw
+/// and must be loud, but does not need to abort the process immediately.
+pub fn log_font_error(msg: &str) {
+    eprintln!("[mausVoice-font] {msg}");
+}
 
 // ── Long-press ring: one continuous driver ────────────────────────────────
 //
@@ -164,6 +409,34 @@ pub const RING_HEAD_FADE_FROM: f64 = 0.55;
 pub const RING_HEAD_BLOOM: f64 = 0.45;
 /// Concentric steps used to approximate the head's radial falloff.
 pub const RING_HEAD_STEPS: usize = 4;
+
+// ── Low-alpha draw cutoffs ────────────────────────────────────────────────
+//
+// Every ring layer skips draws it cannot make visible. The thresholds live
+// here, next to each other, so they are tuned as a set instead of drifting
+// apart as literals sprinkled through three renderers.
+
+/// Peak alpha below which a head-disc stack is not painted at all.
+///
+/// Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it the concentric
+/// discs would only contribute sub-perceptual ghosts. Applied by
+/// [`RingLayers`] to both the silver head and its dark underlay.
+pub const RING_HEAD_FADE_CUTOFF: f64 = 0.004;
+/// Alpha below which one comet segment is skipped.
+///
+/// Higher than [`RING_HEAD_FADE_CUTOFF`] on purpose: the comet is hundreds of
+/// individually-stroked segments per frame, so its threshold buys real time,
+/// whereas a head stack is at most [`RING_HEAD_STEPS`] discs. Still about
+/// three 8-bit alpha steps — the dimmest tail segments it drops are already
+/// indistinguishable from the backdrop.
+pub const RING_SEGMENT_ALPHA_CUTOFF: f64 = 0.012;
+/// Exponent of the concentric-disc alpha falloff: `falloff = (1 - (k-1)/steps)^exp`,
+/// so the outermost disc is dimmest and the innermost is full brightness.
+pub const RING_HEAD_FALLOFF_EXP: f64 = 2.2;
+/// Alpha scale applied to every head disc. The discs are drawn at half the
+/// layer alpha so the stack of overlapping discs sums to roughly the layer's
+/// intended brightness instead of overshooting it.
+pub const RING_HEAD_DISC_ALPHA_SCALE: f64 = 0.5;
 
 /// Duration of the arm-confirmation pulse.
 pub const RING_PULSE_DURATION: f64 = 0.5;
@@ -304,6 +577,186 @@ pub fn ring_head_radius(progress: f64) -> f64 {
     RING_HEAD_RADIUS * (1.0 + RING_HEAD_BLOOM * ring_head_dissolve(progress))
 }
 
+/// Radius fraction and alpha falloff of one concentric head disc.
+///
+/// Discs are numbered `1..=steps` from the inside out (`k = steps` is the
+/// outermost). Returns `(radius_frac, falloff)`: `radius_frac` grows with `k`
+/// so discs stack outward from the head centre, while `falloff` shrinks with
+/// `k` so brightness falls off toward the rim.
+pub fn ring_head_disc(k: usize, steps: usize) -> (f64, f64) {
+    let steps = steps.max(1);
+    let k = k.clamp(1, steps);
+    let radius_frac = k as f64 / steps as f64;
+    let falloff = (1.0 - (k - 1) as f64 / steps as f64).powf(RING_HEAD_FALLOFF_EXP);
+    (radius_frac, falloff)
+}
+
+// ── Long-press ring shadow ────────────────────────────────────
+/// Soft dark halo behind the silver ring so it stays readable on light
+/// backdrops. The renderers have no blur primitive on the render path, so the
+/// halo is approximated with layered strokes over the ring path: each entry
+/// is a `(stroke width, alpha)` pass. Widths grow while alphas shrink, so the
+/// passes sum to a falloff that is darkest exactly under the ring and gone
+/// within a few pixels; the combined alpha is kept low enough that dark
+/// backdrops are unaffected.
+pub const RING_SHADOW_LAYERS: &[(f64, f64)] =
+    &[(2.0, 0.07), (4.0, 0.05), (6.0, 0.035), (8.0, 0.02)];
+
+/// Per-disc alpha of the dark underlay beneath the comet head. It mirrors the
+/// head's concentric-disc shading so the soft silver blob also separates from
+/// a light backdrop.
+pub const RING_SHADOW_HEAD_ALPHA: f64 = 0.06;
+
+/// Guard against dividing by a zero path length when normalising `head_len`
+/// against `total_len` in [`ring_head_index`]. A degenerate perimeter would
+/// otherwise produce `NaN` and poison the index; the value is tiny relative to
+/// any real pixel distance, so it can never shift the selected point.
+pub const RING_PATH_LEN_EPSILON: f64 = 1e-9;
+
+/// Index of the resampled perimeter point nearest `head_len`.
+///
+/// Shared by the comet-head disc and the shadow arc so the two can never
+/// drift apart; the renderers previously repeated this placement inline.
+/// Returns `0` for degenerate input (`point_count < 2`); callers must treat
+/// that as "no perimeter to place a head on".
+pub fn ring_head_index(head_len: f64, total_len: f64, point_count: usize) -> usize {
+    if point_count < 2 {
+        return 0;
+    }
+    // Degenerate perimeter: there is no meaningful position along the ring,
+    // so clamp to the first interior point instead of letting
+    // head_len / total_len explode (the epsilon guard alone would produce a
+    // huge fraction and clamp to the last point, which is the opposite end).
+    if total_len <= RING_PATH_LEN_EPSILON {
+        return 1;
+    }
+    let frac = head_len / total_len;
+    ((frac * (point_count - 1) as f64).round() as usize).clamp(1, point_count - 1)
+}
+
+/// One concentric disc of the comet head, or of the dark underlay beneath it.
+///
+/// Positions and alphas are final: a renderer fills a circle per disc and adds
+/// nothing of its own but the colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingHeadDisc {
+    pub cx: f64,
+    pub cy: f64,
+    pub radius: f64,
+    pub alpha: f64,
+}
+
+/// The shadow and head layers of one ring frame, resolved once from the
+/// resampled perimeter.
+///
+/// The three renderers differ only in which primitives they call — Core
+/// Graphics strokes, Cairo strokes, Direct2D geometries. Everything *before*
+/// the primitive (where the head sits, how many shadow passes to make, each
+/// disc's radius and alpha, and which layers are too faint to bother with) is
+/// identical, so it lives here: a platform can no longer drift by forgetting a
+/// pass, ordering the discs the other way, or applying `ring_alpha` twice.
+///
+/// The comet body is deliberately NOT part of this: its per-segment shading is
+/// already driven by [`ring_envelope`] / [`ring_glimmer`], and it needs a
+/// different primitive per backend (batched lines on Windows, immediate
+/// strokes elsewhere).
+#[derive(Debug, Clone, Copy)]
+pub struct RingLayers {
+    /// Index of the comet head in the resampled buffer. The shadow arc is
+    /// `points[..=head_index]`, i.e. the perimeter the comet has covered.
+    pub head_index: usize,
+    /// Head centre, taken from the resampled point at `head_index`.
+    pub head_x: f64,
+    pub head_y: f64,
+    /// Head radius for this frame, already bloomed by [`ring_head_radius`].
+    pub head_radius: f64,
+    /// Peak alpha of the dark underlay discs, before per-disc falloff.
+    pub underlay_peak_alpha: f64,
+    /// Peak alpha of the silver head discs, before per-disc falloff.
+    pub head_peak_alpha: f64,
+    /// Master ring alpha, already folded into the peaks above and into
+    /// [`RingLayers::shadow_passes`].
+    ring_alpha: f64,
+}
+
+impl RingLayers {
+    /// Resolve the layers for one frame, or `None` when there is nothing to
+    /// paint: a degenerate buffer (`points.len() < 2`), a fully faded ring, or
+    /// a comet that has not started travelling yet.
+    ///
+    /// `points` are the `(x, y, dist)` triples from [`resample_perimeter`].
+    pub fn new(
+        points: &[(f64, f64, f64)],
+        head_len: f64,
+        total_len: f64,
+        progress: f64,
+        arm_t: f64,
+        ring_alpha: f64,
+    ) -> Option<Self> {
+        if points.len() < 2 || ring_alpha <= 0.0 || head_len <= 0.0 {
+            return None;
+        }
+        let head_index = ring_head_index(head_len, total_len, points.len());
+        let (head_x, head_y, _) = points[head_index];
+        let head_fade = ring_head_fade(progress, arm_t);
+        Some(Self {
+            head_index,
+            head_x,
+            head_y,
+            head_radius: ring_head_radius(progress),
+            underlay_peak_alpha: RING_SHADOW_HEAD_ALPHA * head_fade * ring_alpha,
+            head_peak_alpha: RING_HEAD_ALPHA * head_fade * ring_alpha,
+            ring_alpha,
+        })
+    }
+
+    /// `(stroke width, alpha)` for each halo pass over `points[..=head_index]`,
+    /// with the master ring alpha already applied. Narrowest and darkest pass
+    /// first; since every pass paints the same black, source-over compositing
+    /// is order-independent here — what matters is that a renderer makes all
+    /// of them.
+    pub fn shadow_passes(&self) -> impl Iterator<Item = (f64, f64)> {
+        let ring_alpha = self.ring_alpha;
+        RING_SHADOW_LAYERS
+            .iter()
+            .map(move |&(width, layer_alpha)| (width, layer_alpha * ring_alpha))
+    }
+
+    /// Dark discs painted under the head, so the soft silver blob separates
+    /// from a light backdrop. Empty when the head is too faint to matter.
+    pub fn underlay_discs(&self) -> impl Iterator<Item = RingHeadDisc> {
+        self.discs(self.underlay_peak_alpha)
+    }
+
+    /// The silver head itself, as concentric discs approximating a radial
+    /// falloff. Empty when the head has dissolved.
+    pub fn head_discs(&self) -> impl Iterator<Item = RingHeadDisc> {
+        self.discs(self.head_peak_alpha)
+    }
+
+    /// Discs for one stack, outermost first so the brighter inner discs are
+    /// painted over the dimmer outer ones.
+    fn discs(&self, peak_alpha: f64) -> impl Iterator<Item = RingHeadDisc> {
+        // An empty range is how "too faint to draw" is expressed, so the
+        // decision stays here instead of being re-derived by every renderer.
+        let steps = if peak_alpha > RING_HEAD_FADE_CUTOFF {
+            RING_HEAD_STEPS
+        } else {
+            0
+        };
+        let (cx, cy, head_radius) = (self.head_x, self.head_y, self.head_radius);
+        (1..=steps).rev().map(move |k| {
+            let (radius_frac, falloff) = ring_head_disc(k, steps);
+            RingHeadDisc {
+                cx,
+                cy,
+                radius: head_radius * radius_frac,
+                alpha: peak_alpha * falloff * RING_HEAD_DISC_ALPHA_SCALE,
+            }
+        })
+    }
+}
+
 /// Inflate target for the current gesture state.
 ///
 /// Inflation begins partway through the hold (`INFLATE_PRE_AT`) so the pill is
@@ -358,24 +811,144 @@ pub fn ring_release_drift(release_elapsed: f64) -> f64 {
     RING_RELEASE_DRIFT * ease_out_cubic(release_elapsed / LONG_PRESS_RING_FADE)
 }
 
-/// Resolves the hover flag for one pointer sample.
+/// The pill must be at least this expanded before the style tooltip appears,
+/// so the tooltip never floats above a still-collapsing pill.
+pub const STYLE_TOOLTIP_EXPAND_T: f64 = 0.3;
+
+/// Visibility rule for the dictation style tooltip, the style selector that
+/// floats above the pill.
 ///
-/// `probed` is the raw hit test of the cursor against the pill. While the
-/// button is held that hit test must be ignored: the press owns the pointer,
-/// and dragging the pill moves its window, so the cursor routinely lands
-/// outside the pill's last painted rect for a frame or two. Trusting it would
-/// collapse the pill to its unhovered size mid-drag and re-expand on release.
+/// The tooltip is hover-revealed: the pointer on the pill shows it (so the
+/// chevrons stay clickable mid-take) and the pointer leaving fades it out.
+/// Paused keeps it hidden even on hover, leaving the pause/resume controls
+/// free of it.
 ///
-/// `pointer_down` — not `dragging` — is the correct gate. Moving more than
-/// `LONG_PRESS_MOVE_THRESHOLD` before the hold completes cancels the long
-/// press *without* arming a drag, so there is a window in which the button is
-/// still down but both gesture flags are false. Keying off those flags leaves
-/// exactly the "drag across without releasing" collapse this prevents.
+/// Hover alone cannot decide take-start: a take that begins under a parked
+/// pointer would keep the tooltip open for the whole take. That timing lives
+/// in [`StyleTooltipGate`], which forces the fade when a take starts and
+/// re-arms hover-reveal once the pointer has actually left the pill.
+pub fn style_tooltip_visible(
+    assistant_active: bool,
+    style_count: u32,
+    paused: bool,
+    hovered: bool,
+    expand_t: f64,
+) -> bool {
+    !assistant_active && style_count > 1 && !paused && hovered && expand_t > STYLE_TOOLTIP_EXPAND_T
+}
+
+/// Spring target (0.0 or 1.0) for the style tooltip, combining the pure
+/// visibility rule with the take-start gate.
+pub fn style_tooltip_target(
+    gate: &StyleTooltipGate,
+    assistant_active: bool,
+    style_count: u32,
+    paused: bool,
+    hovered: bool,
+    expand_t: f64,
+) -> f64 {
+    // The gate must be evaluated first: is_suppressed() is what releases the
+    // latch on pointer-leave, so hiding it behind the pure rule's
+    // short-circuit would leave the latch set whenever the tooltip is
+    // ineligible for any other reason (single style, assistant panel,
+    // collapsed pill) and the tooltip would stay hidden on the next hover
+    // entry in the same take.
+    if !gate.is_suppressed(hovered)
+        && style_tooltip_visible(assistant_active, style_count, paused, hovered, expand_t)
+    {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Reset every piece of flash-banner state back to "no toast showing".
 ///
-/// A press can only begin on the pill body, so while it is held the pill is by
-/// definition still under the pointer.
-pub fn resolve_hover(probed: bool, pointer_down: bool) -> bool {
-    pointer_down || probed
+/// The three pills dismiss a toast from several places: the display timeout,
+/// an explicit DismissToast, and clicking either the accept or the reject
+/// button. Centralising the reset keeps the six fields from drifting apart
+/// per platform, since forgetting one leaves a stale action wired to
+/// whichever toast appears next.
+pub fn clear_flash_state(
+    flash_visible: &Cell<bool>,
+    flash_timer: &Cell<f64>,
+    flash_action: &RefCell<Option<String>>,
+    flash_action_label: &RefCell<Option<String>>,
+    flash_reject_action: &RefCell<Option<String>>,
+    flash_reject_action_label: &RefCell<Option<String>>,
+) {
+    flash_visible.set(false);
+    flash_timer.set(0.0);
+    *flash_action.borrow_mut() = None;
+    *flash_action_label.borrow_mut() = None;
+    *flash_reject_action.borrow_mut() = None;
+    *flash_reject_action_label.borrow_mut() = None;
+}
+
+/// Spring target (0.0 or 1.0) for the flash banner (the native pill toast,
+/// e.g. the retranscribing banner).
+///
+/// The banner and the style tooltip share the strip above the pill, so one
+/// must yield. A banner without an action button is informational and yields
+/// to a revealed tooltip: hovering the pill swaps the banner for the style
+/// selector without cancelling the banner, which returns once the pointer
+/// leaves and it has not expired. A banner with an action button (for
+/// example the cancel-dictation confirm) keeps the strip; it is an
+/// interactive prompt, so the tooltip stays suppressed beneath it.
+pub fn flash_banner_target(flash_visible: bool, has_action: bool, tooltip_revealed: bool) -> f64 {
+    if flash_visible && (has_action || !tooltip_revealed) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// Whether a toast's buttons should take clicks at the given banner opacity.
+///
+/// A toast may carry an accept button, a reject button, or both. Each is drawn
+/// from its own label, so a toast with only a reject button still paints a
+/// button and registers a click region for it; hit testing that looks at the
+/// accept action alone leaves that button drawn but dead. Both flags matter, so
+/// the decision is shared rather than re-derived per platform and drifting
+/// again.
+///
+/// The banner is held inert until it has mostly faded in, so a click cannot
+/// fire an action for a button the user has not seen yet. A toast with no
+/// buttons at all is not clickable: there is nothing to hit, and claiming
+/// input would swallow clicks meant for the pill behind it.
+pub const fn flash_banner_is_clickable(has_action: bool, has_reject: bool, banner_t: f64) -> bool {
+    (has_action || has_reject) && banner_t >= 0.5
+}
+
+/// Latch that forces the style tooltip to fade the moment a take starts,
+/// even under a pointer that never leaves the pill.
+///
+/// The latch holds from take-start until the pointer actually leaves the
+/// pill or the take ends, so the tooltip comes back on the next hover entry
+/// and the chevrons stay reachable mid-take.
+#[derive(Debug, Clone, Default)]
+pub struct StyleTooltipGate {
+    suppressed: Cell<bool>,
+}
+
+impl StyleTooltipGate {
+    /// Phase-handler hook. Recording latches the fade (a resume from Paused
+    /// re-latches: the tooltip must not pop back in on resume under a parked
+    /// pointer); every other phase (Idle, Loading, Paused) releases it. Paused
+    /// still hides the tooltip through [`style_tooltip_visible`] either way.
+    pub fn set_take_running(&self, running: bool) {
+        self.suppressed.set(running);
+    }
+
+    /// Tick hook: reports whether the tooltip stays hidden. The pointer
+    /// leaving the pill releases the latch, so the next hover entry
+    /// reveals the tooltip again.
+    pub fn is_suppressed(&self, hovered: bool) -> bool {
+        if !hovered {
+            self.suppressed.set(false);
+        }
+        self.suppressed.get()
+    }
 }
 
 /// Normalised progress of the arm-confirmation pulse, in `0..=1`.
@@ -417,7 +990,11 @@ pub fn resample_perimeter(
         }
         let d0 = distances[seg - 1];
         let d1 = distances[seg];
-        let k = if d1 > d0 { (target - d0) / (d1 - d0) } else { 0.0 };
+        let k = if d1 > d0 {
+            (target - d0) / (d1 - d0)
+        } else {
+            0.0
+        };
         let (x0, y0) = path[seg - 1];
         let (x1, y1) = path[seg];
         out.push((x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, target));
@@ -542,8 +1119,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_and_new_start_the_shared_controllers_idle() {
+        for controller in [drag::DragController::default(), drag::DragController::new()] {
+            assert_eq!(controller.phase(), drag::DragPhase::Idle);
+            assert!(!controller.is_settling());
+        }
+        for hover in [hover::HoverIntent::default(), hover::HoverIntent::new()] {
+            assert!(!hover.hovered());
+        }
+        for placement in [
+            placement::SelectorPlacement::default(),
+            placement::SelectorPlacement::new(),
+        ] {
+            assert_eq!(placement.side(), placement::SelectorSide::Above);
+            assert_eq!(placement.blend(), 0.0);
+            assert_eq!(placement.blend_velocity(), 0.0);
+        }
+        for deform in [
+            deform::CrossingDeform::default(),
+            deform::CrossingDeform::new(),
+        ] {
+            assert!(!deform.animating());
+        }
+    }
+
+    #[test]
     fn perimeter_closes_back_to_start() {
-        let pts = rounded_rectangle_perimeter(10.0, 20.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let pts =
+            rounded_rectangle_perimeter(10.0, 20.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
         assert!(pts.len() > 8);
         let first = pts[0];
         let last = *pts.last().unwrap();
@@ -554,7 +1157,8 @@ mod tests {
 
     #[test]
     fn zero_radius_produces_a_rectangle() {
-        let pts = rounded_rectangle_perimeter(0.0, 0.0, 100.0, 50.0, 0.0, RoundedRectArcSteps::Exact(1));
+        let pts =
+            rounded_rectangle_perimeter(0.0, 0.0, 100.0, 50.0, 0.0, RoundedRectArcSteps::Exact(1));
         // With r=0 the "arcs" collapse to the corners: 4 edge endpoints +
         // 4 one-step corners + the closing start point = 9.
         assert_eq!(pts.len(), 9);
@@ -564,8 +1168,10 @@ mod tests {
 
     #[test]
     fn auto_steps_follow_radius() {
-        let small = rounded_rectangle_perimeter(0.0, 0.0, 100.0, 32.0, 8.0, RoundedRectArcSteps::Auto);
-        let big = rounded_rectangle_perimeter(0.0, 0.0, 400.0, 200.0, 100.0, RoundedRectArcSteps::Auto);
+        let small =
+            rounded_rectangle_perimeter(0.0, 0.0, 100.0, 32.0, 8.0, RoundedRectArcSteps::Auto);
+        let big =
+            rounded_rectangle_perimeter(0.0, 0.0, 400.0, 200.0, 100.0, RoundedRectArcSteps::Auto);
         // Bigger radius -> more steps; the minimum is 6.
         assert!(big.len() > small.len());
         assert!(small.len() >= 6 * 4 + 5);
@@ -654,10 +1260,10 @@ mod tests {
     fn hold_progress_decelerates_into_completion() {
         // Smootherstep: the last slice of time must advance less than a slice
         // taken mid-ramp, otherwise the ring arrives at full speed.
-        let mid = hold_progress(0.30, HOLD_DELAY, DURATION)
-            - hold_progress(0.29, HOLD_DELAY, DURATION);
-        let end = hold_progress(0.45, HOLD_DELAY, DURATION)
-            - hold_progress(0.44, HOLD_DELAY, DURATION);
+        let mid =
+            hold_progress(0.30, HOLD_DELAY, DURATION) - hold_progress(0.29, HOLD_DELAY, DURATION);
+        let end =
+            hold_progress(0.45, HOLD_DELAY, DURATION) - hold_progress(0.44, HOLD_DELAY, DURATION);
         assert!(end < mid, "expected deceleration: end {end} >= mid {mid}");
     }
 
@@ -690,9 +1296,8 @@ mod tests {
         for i in 0..=40 {
             let p = start + (1.0 - start) * i as f64 / 40.0;
             let head = total * p;
-            let step = (ring_envelope(head, head, p, total)
-                - ring_envelope(0.0, head, p, total))
-            .abs();
+            let step =
+                (ring_envelope(head, head, p, total) - ring_envelope(0.0, head, p, total)).abs();
             assert!(step <= prev + 1e-9, "seam step grew at p={p}");
             prev = step;
         }
@@ -725,7 +1330,10 @@ mod tests {
         let head = total * p;
         let at_head = ring_envelope(head, head, p, total);
         let behind = ring_envelope(head - 100.0, head, p, total);
-        assert!(at_head > behind, "head {at_head} not brighter than {behind}");
+        assert!(
+            at_head > behind,
+            "head {at_head} not brighter than {behind}"
+        );
     }
 
     #[test]
@@ -736,7 +1344,10 @@ mod tests {
         for i in 0..=100 {
             let d = total * i as f64 / 100.0;
             let e = ring_envelope(d, head, p, total);
-            assert!((0.0..=1.0 + 1e-9).contains(&e), "envelope out of range: {e}");
+            assert!(
+                (0.0..=1.0 + 1e-9).contains(&e),
+                "envelope out of range: {e}"
+            );
         }
     }
 
@@ -748,7 +1359,10 @@ mod tests {
         for &phase in &[0.0, 1.0, 2.5, 4.2] {
             let a = ring_glimmer(0.0, total, phase, 1.0);
             let b = ring_glimmer(total, total, phase, 1.0);
-            assert!((a - b).abs() < 1e-9, "glimmer seam mismatch at phase {phase}");
+            assert!(
+                (a - b).abs() < 1e-9,
+                "glimmer seam mismatch at phase {phase}"
+            );
         }
     }
 
@@ -793,11 +1407,245 @@ mod tests {
     }
 
     #[test]
+    fn ring_head_index_lands_within_one_segment_of_head_len() {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut pts = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut pts);
+        for p in [0.1, 0.3, 0.5, 0.8, 1.0] {
+            let head_len = total * p;
+            let idx = ring_head_index(head_len, total, pts.len());
+            assert!(
+                (pts[idx].2 - head_len).abs() <= RING_SEGMENT_PX + 1e-9,
+                "head point {idx} is {}px from head_len {head_len}",
+                (pts[idx].2 - head_len).abs(),
+            );
+        }
+    }
+
+    #[test]
+    fn ring_head_index_is_bounded_and_monotonic() {
+        // Clamps into the valid range, including the seam point at full ring.
+        assert_eq!(ring_head_index(0.0, 100.0, 10), 1);
+        assert_eq!(ring_head_index(100.0, 100.0, 10), 9);
+        let mut prev = 0usize;
+        for i in 0..=20 {
+            let idx = ring_head_index(100.0 * i as f64 / 20.0, 100.0, 10);
+            assert!(idx >= prev, "head index regressed at {i}");
+            prev = idx;
+        }
+    }
+
+    #[test]
+    fn ring_head_index_handles_degenerate_input() {
+        assert_eq!(ring_head_index(50.0, 100.0, 0), 0);
+        assert_eq!(ring_head_index(50.0, 100.0, 1), 0);
+        // A zero path length must not produce NaN.
+        assert_eq!(ring_head_index(0.0, 0.0, 10), 1);
+        assert_eq!(ring_head_index(5.0, 0.0, 10), 1);
+    }
+
+    #[test]
+    fn ring_head_disc_fractions_and_falloff() {
+        let steps = RING_HEAD_STEPS;
+        // Discs are numbered 1..=steps from the inside out, so walking `k`
+        // upward walks outward from the head centre: the radius grows with
+        // every step while the falloff dims, which is the same statement as
+        // "brightness increases inward".
+        let mut prev_radius = 0.0;
+        let mut prev_falloff = f64::INFINITY;
+        for k in 1..=steps {
+            let (radius_frac, falloff) = ring_head_disc(k, steps);
+            assert!(
+                (0.0..=1.0).contains(&radius_frac),
+                "radius out of range: {radius_frac}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&falloff),
+                "falloff out of range: {falloff}"
+            );
+            assert!(
+                radius_frac > prev_radius,
+                "disc radius must grow outward at k={k}"
+            );
+            assert!(falloff < prev_falloff, "falloff must dim outward at k={k}");
+            prev_radius = radius_frac;
+            prev_falloff = falloff;
+        }
+        // The outermost disc spans the whole head radius, so the stack covers
+        // the head exactly rather than stopping short of the rim.
+        assert_eq!(ring_head_disc(steps, steps).0, 1.0);
+        // Innermost disc is unattenuated; the outermost carries the exponent.
+        assert_eq!(ring_head_disc(1, steps).1, 1.0);
+        let (_, outer) = ring_head_disc(steps, steps);
+        assert!((outer - (1.0 / steps as f64).powf(RING_HEAD_FALLOFF_EXP)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ring_head_disc_clamps_its_inputs() {
+        assert_eq!(ring_head_disc(0, 4), ring_head_disc(1, 4));
+        assert_eq!(ring_head_disc(9, 4), ring_head_disc(4, 4));
+        // Zero steps collapses to a single full-radius, full-alpha disc.
+        assert_eq!(ring_head_disc(1, 0), (1.0, 1.0));
+    }
+
+    /// These are all `const`, so an `assert!(CONST)` in a `#[test]` is folded
+    /// away at compile time and the test passes whatever the constants say —
+    /// `clippy::assertions_on_constants` is right about that. `const _` blocks
+    /// are evaluated during compilation, so an inequality that stops holding
+    /// fails the build instead of a test nobody would have read anyway.
+    const _: () = {
+        // Roughly one 8-bit alpha step (1/255 ≈ 0.0039): below it a disc would
+        // contribute less than a single alpha step and is not worth painting.
+        assert!(RING_HEAD_FADE_CUTOFF > 0.0);
+        assert!(RING_HEAD_FADE_CUTOFF <= 1.0 / 255.0 * 1.5);
+        // The comet's per-segment cutoff is deliberately the coarser of the two
+        // -- hundreds of segments per frame versus a handful of discs -- but
+        // must still stay within a few 8-bit alpha steps.
+        assert!(RING_SEGMENT_ALPHA_CUTOFF > RING_HEAD_FADE_CUTOFF);
+        assert!(RING_SEGMENT_ALPHA_CUTOFF <= 1.0 / 255.0 * 4.0);
+        // The path-length guard must stay far below any real pixel distance.
+        assert!(RING_PATH_LEN_EPSILON > 0.0 && RING_PATH_LEN_EPSILON < 1e-3);
+    };
+
+    /// A resampled perimeter of the size the pills actually draw.
+    fn sample_ring() -> (Vec<(f64, f64, f64)>, f64) {
+        let path =
+            rounded_rectangle_perimeter(0.0, 0.0, 120.0, 32.0, 16.0, RoundedRectArcSteps::Auto);
+        let (distances, total) = path_distances(&path);
+        let mut points = Vec::new();
+        resample_perimeter(&path, &distances, total, RING_SEGMENT_PX, &mut points);
+        (points, total)
+    }
+
+    #[test]
+    fn ring_layers_reports_nothing_to_paint_for_degenerate_frames() {
+        let (points, total) = sample_ring();
+        // Fewer than two points, a faded-out ring and a comet that has not
+        // set off all mean "draw nothing" — the renderers rely on this to
+        // avoid indexing an empty buffer.
+        assert!(RingLayers::new(&points[..1], total * 0.5, total, 0.5, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&[], total * 0.5, total, 0.5, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, 0.0).is_none());
+        assert!(RingLayers::new(&points, 0.0, total, 0.0, 0.0, 1.0).is_none());
+        assert!(RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, 1.0).is_some());
+    }
+
+    #[test]
+    fn ring_layers_places_the_head_on_the_shared_index() {
+        let (points, total) = sample_ring();
+        for p in [0.05, 0.4, 1.0] {
+            let head_len = total * p;
+            let layers = RingLayers::new(&points, head_len, total, p, 0.0, 1.0).unwrap();
+            // Same placement the shadow arc slices to, so the halo can never
+            // stop short of (or run past) the head it sits under.
+            assert_eq!(
+                layers.head_index,
+                ring_head_index(head_len, total, points.len())
+            );
+            let (hx, hy, _) = points[layers.head_index];
+            assert_eq!((layers.head_x, layers.head_y), (hx, hy));
+            assert!(layers.head_index < points.len());
+        }
+    }
+
+    #[test]
+    fn ring_layers_shadow_passes_carry_the_ring_alpha() {
+        let (points, total) = sample_ring();
+        let ring_alpha = 0.4;
+        let layers = RingLayers::new(&points, total * 0.5, total, 0.5, 0.0, ring_alpha).unwrap();
+        let passes: Vec<(f64, f64)> = layers.shadow_passes().collect();
+        assert_eq!(passes.len(), RING_SHADOW_LAYERS.len());
+        for (&(want_w, want_a), &(got_w, got_a)) in RING_SHADOW_LAYERS.iter().zip(passes.iter()) {
+            assert_eq!(got_w, want_w);
+            // Applied exactly once — a renderer multiplying by `alpha` again
+            // would darken the halo quadratically as the ring fades.
+            assert!((got_a - want_a * ring_alpha).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn ring_layers_discs_are_painted_outermost_first() {
+        let (points, total) = sample_ring();
+        let layers = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 1.0).unwrap();
+        for discs in [
+            layers.head_discs().collect::<Vec<_>>(),
+            layers.underlay_discs().collect::<Vec<_>>(),
+        ] {
+            assert_eq!(discs.len(), RING_HEAD_STEPS);
+            // Widest and dimmest first, so each brighter disc lands on top.
+            for pair in discs.windows(2) {
+                assert!(pair[1].radius < pair[0].radius, "discs must shrink inward");
+                assert!(pair[1].alpha > pair[0].alpha, "discs must brighten inward");
+            }
+            assert!((discs[0].radius - ring_head_radius(0.3)).abs() < 1e-12);
+            for d in &discs {
+                assert_eq!((d.cx, d.cy), (layers.head_x, layers.head_y));
+                assert!((0.0..=1.0).contains(&d.alpha));
+            }
+        }
+    }
+
+    #[test]
+    fn ring_layers_underlay_tracks_the_head_it_sits_under() {
+        let (points, total) = sample_ring();
+        let layers = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 1.0).unwrap();
+        let head: Vec<_> = layers.head_discs().collect();
+        let under: Vec<_> = layers.underlay_discs().collect();
+        assert_eq!(head.len(), under.len());
+        for (h, u) in head.iter().zip(under.iter()) {
+            // Same geometry, so the dark disc is never visible around the rim
+            // of the silver one it is meant to back.
+            assert_eq!(h.radius, u.radius);
+            assert!(u.alpha < h.alpha, "underlay must stay dimmer than the head");
+        }
+    }
+
+    #[test]
+    fn ring_layers_drops_disc_stacks_once_the_head_dissolves() {
+        let (points, total) = sample_ring();
+        // At completion the head is gone; nothing bright (or dark) may be
+        // left parked at the seam.
+        let done = RingLayers::new(&points, total, total, 1.0, 0.0, 1.0).unwrap();
+        assert_eq!(done.head_discs().count(), 0);
+        assert_eq!(done.underlay_discs().count(), 0);
+        // Same story once the ring has nearly faded out after release.
+        let faint = RingLayers::new(&points, total * 0.3, total, 0.3, 0.0, 0.001).unwrap();
+        assert_eq!(faint.head_discs().count(), 0);
+        assert_eq!(faint.underlay_discs().count(), 0);
+        // But the shadow arc still exists while any ring is visible.
+        assert_eq!(faint.shadow_passes().count(), RING_SHADOW_LAYERS.len());
+    }
+
+    #[test]
+    fn shadow_layers_fall_off_outward() {
+        // Widths grow and alphas shrink monotonically, so the passes sum to a
+        // halo that is strongest at the ring and fades outward.
+        let mut prev_w = 0.0;
+        let mut prev_a = f64::INFINITY;
+        let mut total = 0.0;
+        for &(w, a) in RING_SHADOW_LAYERS {
+            assert!(w > prev_w, "layer widths must grow");
+            assert!(a < prev_a, "layer alphas must shrink");
+            assert!((0.0..=1.0).contains(&a), "layer alpha out of range: {a}");
+            prev_w = w;
+            prev_a = a;
+            total += a;
+        }
+        // Combined alpha stays low so dark backdrops remain unaffected.
+        assert!(total < 0.3, "combined shadow alpha too strong: {total}");
+    }
+
+    #[test]
     fn inflate_starts_midway_through_the_hold() {
         assert_eq!(inflate_target(0.0, true, false), 0.0);
         assert_eq!(inflate_target(INFLATE_PRE_AT, true, false), 0.0);
         let mid = inflate_target(0.8, true, false);
-        assert!(mid > 0.0 && mid < 1.0, "expected partial pre-inflate, got {mid}");
+        assert!(
+            mid > 0.0 && mid < 1.0,
+            "expected partial pre-inflate, got {mid}"
+        );
         // Arming completes it.
         assert_eq!(inflate_target(1.0, true, true), 1.0);
         // Not held: fully deflated.
@@ -823,12 +1671,21 @@ mod tests {
     fn ring_alpha_rises_fast_and_exits_faster_than_it_enters() {
         // Reaches near-full within the rise window.
         let risen = ring_alpha(true, HOLD_DELAY + RING_ALPHA_RISE, 0.0, HOLD_DELAY);
-        assert!(risen > 0.99, "alpha should be up by the rise window: {risen}");
+        assert!(
+            risen > 0.99,
+            "alpha should be up by the rise window: {risen}"
+        );
         // Release is an accelerating curve: the first half sheds less than the
         // second, i.e. it lingers then drops.
         let half = ring_alpha(false, 0.0, LONG_PRESS_RING_FADE * 0.5, HOLD_DELAY);
-        assert!((half - 0.75).abs() < 1e-9, "expected quadratic exit, got {half}");
-        assert_eq!(ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, HOLD_DELAY), 0.0);
+        assert!(
+            (half - 0.75).abs() < 1e-9,
+            "expected quadratic exit, got {half}"
+        );
+        assert_eq!(
+            ring_alpha(false, 0.0, LONG_PRESS_RING_FADE, HOLD_DELAY),
+            0.0
+        );
     }
 
     #[test]
@@ -916,18 +1773,43 @@ mod tests {
 
     #[test]
     fn advance_ring_pins_alpha_while_held_and_fades_after() {
-        let mut a = RingAnim { release_elapsed: LONG_PRESS_RING_FADE, ..Default::default() };
+        let mut a = RingAnim {
+            release_elapsed: LONG_PRESS_RING_FADE,
+            ..Default::default()
+        };
         let hd = 0.12;
         // Held: alpha rises to full.
         for _ in 0..20 {
-            advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: false,
+                    progress: 0.5,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
-        assert!(a.alpha > 0.99, "alpha should be pinned high while held: {}", a.alpha);
+        assert!(
+            a.alpha > 0.99,
+            "alpha should be pinned high while held: {}",
+            a.alpha
+        );
         assert!((a.release_progress - 0.5).abs() < 1e-9);
 
         // Released: fades to zero and stays there.
         for _ in 0..60 {
-            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: false,
+                    dragging: false,
+                    progress: 0.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.alpha, 0.0);
     }
@@ -936,15 +1818,45 @@ mod tests {
     fn advance_ring_records_the_level_reached_at_release() {
         let mut a = RingAnim::default();
         let hd = 0.12;
-        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.37, delta_seconds: 0.016 }, hd);
-        advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
-        assert!((a.release_progress - 0.37).abs() < 1e-9, "must fade from the level reached");
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: false,
+                progress: 0.37,
+                delta_seconds: 0.016,
+            },
+            hd,
+        );
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: false,
+                dragging: false,
+                progress: 0.0,
+                delta_seconds: 0.016,
+            },
+            hd,
+        );
+        assert!(
+            (a.release_progress - 0.37).abs() < 1e-9,
+            "must fade from the level reached"
+        );
     }
 
     #[test]
     fn dragging_pins_release_progress_to_a_full_ring() {
         let mut a = RingAnim::default();
-        advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 0.2, delta_seconds: 0.016 }, 0.12);
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: true,
+                progress: 0.2,
+                delta_seconds: 0.016,
+            },
+            0.12,
+        );
         assert_eq!(a.release_progress, 1.0);
     }
 
@@ -953,11 +1865,29 @@ mod tests {
         let mut a = RingAnim::default();
         let hd = 0.12;
         for _ in 0..(ARM_RAMP_IN / 0.016) as usize + 2 {
-            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: true,
+                    progress: 1.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.arm_t, 1.0);
         for _ in 0..(ARM_RAMP_OUT / 0.016) as usize + 2 {
-            advance_ring(&mut a, RingTick { held: false, dragging: false, progress: 0.0, delta_seconds: 0.016 }, hd);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: false,
+                    dragging: false,
+                    progress: 0.0,
+                    delta_seconds: 0.016,
+                },
+                hd,
+            );
         }
         assert_eq!(a.arm_t, 0.0);
     }
@@ -989,7 +1919,16 @@ mod tests {
 
         let mut ticks = 0;
         while pulse_is_running(a.arm_pulse) && ticks < 1000 {
-            advance_ring(&mut a, RingTick { held: true, dragging: true, progress: 1.0, delta_seconds: 0.016 }, 0.12);
+            advance_ring(
+                &mut a,
+                RingTick {
+                    held: true,
+                    dragging: true,
+                    progress: 1.0,
+                    delta_seconds: 0.016,
+                },
+                0.12,
+            );
             ticks += 1;
         }
         assert!(ticks < 1000, "pulse never retired");
@@ -1001,37 +1940,817 @@ mod tests {
     #[test]
     fn advance_ring_tolerates_a_negative_delta() {
         let mut a = RingAnim::default();
-        advance_ring(&mut a, RingTick { held: true, dragging: false, progress: 0.5, delta_seconds: -1.0 }, 0.12);
+        advance_ring(
+            &mut a,
+            RingTick {
+                held: true,
+                dragging: false,
+                progress: 0.5,
+                delta_seconds: -1.0,
+            },
+            0.12,
+        );
         assert!(a.press_elapsed >= 0.0);
         assert!((0.0..=1.0).contains(&a.alpha));
     }
 
     #[test]
-    fn hover_survives_a_drag_that_outruns_the_window() {
-        // The raw hit test misses while the pointer is captured, but the pill
-        // must stay hovered so it does not collapse mid-gesture.
-        assert!(resolve_hover(false, true));
-        assert!(resolve_hover(true, true));
+    fn eligible_action_emits_feedback() {
+        assert!(can_emit_interaction_feedback(true, false));
     }
 
     #[test]
-    fn hover_follows_the_cursor_once_the_button_is_released() {
-        assert!(!resolve_hover(false, false));
-        assert!(resolve_hover(true, false));
+    fn loading_action_is_inert() {
+        assert!(!can_emit_interaction_feedback(true, true));
     }
 
-    /// Regression: moving past the cancel threshold before the hold completes
-    /// clears `long_press_active` without setting `dragging`, so a gate keyed
-    /// on those two flags would drop the pin while the button is still down.
     #[test]
-    fn hover_holds_when_a_cancelled_long_press_becomes_a_plain_drag() {
-        let dragging = false;
-        let long_press_active = false;
-        let pointer_down = true;
-        assert!(
-            !(dragging || long_press_active),
-            "this is the state the old gate could not see",
+    fn unavailable_action_is_inert() {
+        assert!(!can_emit_interaction_feedback(false, false));
+        assert!(!can_emit_interaction_feedback(false, true));
+    }
+
+    #[test]
+    fn style_tooltip_follows_hover_mid_take_so_the_chevrons_stay_clickable() {
+        // A running take must not pin the tooltip open, but the pointer on
+        // the pill still reveals it mid-take so a chevron click switches style.
+        assert!(style_tooltip_visible(false, 3, false, true, 1.0));
+        // The pin was the bug: recording with the pointer elsewhere keeps
+        // the tooltip faded out.
+        assert!(!style_tooltip_visible(false, 3, false, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_while_paused() {
+        // Paused keeps the tooltip hidden even on hover, as it was before
+        // the rule was shared.
+        assert!(!style_tooltip_visible(false, 3, true, true, 1.0));
+        assert!(!style_tooltip_visible(false, 3, true, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_is_hover_revealed_when_idle_or_processing() {
+        assert!(style_tooltip_visible(false, 3, false, true, 1.0));
+        // Processing the finished take keeps the hover reveal.
+        assert!(style_tooltip_visible(false, 3, false, true, 0.5));
+        assert!(!style_tooltip_visible(false, 3, false, false, 1.0));
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_when_it_has_nothing_to_switch() {
+        // One active style leaves nothing to cycle, and the assistant panel
+        // owns the window; a collapsing pill must not float a tooltip either.
+        assert!(!style_tooltip_visible(false, 1, false, true, 1.0));
+        assert!(!style_tooltip_visible(true, 3, false, true, 1.0));
+        assert!(!style_tooltip_visible(false, 3, false, true, 0.1));
+    }
+
+    #[test]
+    fn style_tooltip_fades_when_a_take_starts_under_a_parked_pointer() {
+        // The repro the pure rule could not decide on its own: the pointer
+        // never leaves the pill, yet the tooltip must fade when the take
+        // starts.
+        let gate = StyleTooltipGate::default();
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    #[test]
+    fn style_tooltip_returns_after_the_pointer_leaves_and_re_enters() {
+        // Mid-take hover re-entry reveals the tooltip again, keeping the
+        // chevrons clickable while recording.
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+        // Pointer leaves the pill: the latch releases.
+        assert!(!gate.is_suppressed(false));
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn style_tooltip_latch_releases_when_the_take_ends() {
+        // A pointer parked on the pill through the whole take gets the
+        // tooltip back once the take ends (Idle or Loading).
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+        gate.set_take_running(false);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+        // Hover never dropped, so a later take must re-latch cleanly.
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    /// Regression: the latch must release even when the pure rule is false
+    /// when the pointer leaves. Evaluating the gate only behind
+    /// style_tooltip_visible() skipped is_suppressed() whenever the tooltip
+    /// was ineligible for another reason (single style, assistant panel,
+    /// collapsed pill), so the tooltip stayed hidden on the next hover entry
+    /// in the same take.
+    #[test]
+    fn style_tooltip_latch_releases_while_the_rule_is_false_for_other_reasons() {
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        // Pointer leaves while only one style is active: the rule is false,
+        // but the leave must still release the latch.
+        assert_eq!(
+            style_tooltip_target(&gate, false, 1, false, false, 1.0),
+            0.0
         );
-        assert!(resolve_hover(false, pointer_down));
+        // A second style becomes active and the pointer re-enters mid-take.
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn clear_flash_state_resets_every_flash_field() {
+        let visible = Cell::new(true);
+        let timer = Cell::new(4.5);
+        let action = RefCell::new(Some("undo".to_string()));
+        let action_label = RefCell::new(Some("Undo".to_string()));
+        let reject = RefCell::new(Some("dismiss".to_string()));
+        let reject_label = RefCell::new(Some("Dismiss".to_string()));
+
+        clear_flash_state(
+            &visible,
+            &timer,
+            &action,
+            &action_label,
+            &reject,
+            &reject_label,
+        );
+
+        assert!(!visible.get());
+        assert_eq!(timer.get(), 0.0);
+        assert!(action.borrow().is_none());
+        assert!(action_label.borrow().is_none());
+        assert!(reject.borrow().is_none());
+        assert!(reject_label.borrow().is_none());
+    }
+
+    #[test]
+    fn flash_banner_yields_the_strip_to_a_revealed_tooltip() {
+        // The retranscribing banner has no action button: hovering the pill
+        // must swap it for the style selector instead of sitting on top of it.
+        assert_eq!(flash_banner_target(true, false, true), 0.0);
+        // Pointer leaves before the banner expires: it returns.
+        assert_eq!(flash_banner_target(true, false, false), 1.0);
+    }
+
+    #[test]
+    fn flash_banner_with_an_action_keeps_the_strip() {
+        // An interactive banner (cancel-dictation confirm) must not vanish
+        // the moment the pill is hovered; the tooltip waits beneath it.
+        assert_eq!(flash_banner_target(true, true, true), 1.0);
+        assert_eq!(flash_banner_target(true, true, false), 1.0);
+    }
+
+    /// A toast can offer a reject button with no accept button. The draw code
+    /// paints and registers the reject button from the reject label alone, so
+    /// hit testing has to accept that toast as interactive too. macOS gated
+    /// the hit test on `flash_action` alone, so the drawn reject button sat
+    /// there and could not be clicked.
+    #[test]
+    fn a_reject_only_toast_is_clickable() {
+        assert!(
+            flash_banner_is_clickable(false, true, 1.0),
+            "a toast with only a reject button draws that button, so it must be hit-testable"
+        );
+    }
+
+    #[test]
+    fn an_accept_only_toast_is_clickable() {
+        assert!(flash_banner_is_clickable(true, false, 1.0));
+        assert!(flash_banner_is_clickable(true, true, 1.0));
+    }
+
+    #[test]
+    fn a_toast_with_no_buttons_is_not_clickable() {
+        // An informational banner (retranscribing) draws no buttons, so it must
+        // not claim input: the click would fall through to the pill behind it.
+        assert!(!flash_banner_is_clickable(false, false, 1.0));
+    }
+
+    #[test]
+    fn a_toast_is_only_clickable_once_it_has_mostly_faded_in() {
+        // Both platforms hold the buttons inert until the banner is mostly
+        // drawn, so a click during the scale-in does not fire an action for a
+        // button the user has not seen yet.
+        assert!(!flash_banner_is_clickable(true, true, 0.49));
+        assert!(flash_banner_is_clickable(true, true, 0.5));
+        assert!(flash_banner_is_clickable(false, true, 0.5));
+    }
+
+    #[test]
+    fn flash_banner_stays_hidden_when_not_visible() {
+        assert_eq!(flash_banner_target(false, false, false), 0.0);
+        assert_eq!(flash_banner_target(false, true, true), 0.0);
+    }
+
+    #[test]
+    fn hidden_pill_stays_hidden_while_recording() {
+        assert!(!should_show_pill(PillVisibility::Hidden, true, false));
+        assert!(!should_show_pill(PillVisibility::Hidden, false, false));
+    }
+
+    #[test]
+    fn hidden_pill_still_shows_when_it_owns_the_surface() {
+        assert!(should_show_pill(PillVisibility::Hidden, false, true));
+        assert!(should_show_pill(PillVisibility::Hidden, true, true));
+    }
+
+    #[test]
+    fn while_active_shows_only_when_busy() {
+        assert!(!should_show_pill(PillVisibility::WhileActive, false, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, true, false));
+        assert!(should_show_pill(PillVisibility::WhileActive, false, true));
+    }
+
+    #[test]
+    fn persistent_always_shows() {
+        assert!(should_show_pill(PillVisibility::Persistent, false, false));
+        assert!(should_show_pill(PillVisibility::Persistent, true, false));
+    }
+
+    #[test]
+    fn style_tooltip_stays_hidden_while_paused_even_after_re_entry() {
+        // Paused hides the tooltip regardless of the latch, and a resume
+        // re-latches so the tooltip does not pop in under a parked pointer.
+        let gate = StyleTooltipGate::default();
+        gate.set_take_running(true);
+        gate.is_suppressed(false);
+        assert_eq!(style_tooltip_target(&gate, false, 3, true, true, 1.0), 0.0);
+        gate.set_take_running(true);
+        assert_eq!(style_tooltip_target(&gate, false, 3, false, true, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_button_fully_inside_the_band_is_untouched() {
+        assert_eq!(
+            clip_span_to_band(120.0, 44.0, 100.0, 200.0),
+            Some((120.0, 44.0))
+        );
+    }
+
+    #[test]
+    fn a_button_sliding_off_the_top_keeps_only_the_visible_strip() {
+        // 20 of the 44 points scrolled above the panel, so only the lower 24
+        // may take a click.
+        assert_eq!(
+            clip_span_to_band(80.0, 44.0, 100.0, 200.0),
+            Some((100.0, 24.0))
+        );
+    }
+
+    #[test]
+    fn a_button_sliding_off_the_bottom_keeps_only_the_visible_strip() {
+        assert_eq!(
+            clip_span_to_band(280.0, 44.0, 100.0, 200.0),
+            Some((280.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn a_button_with_its_centre_inside_still_loses_its_hidden_half() {
+        // This is the case the centre test got wrong: the top half is off the
+        // panel, painted over by the chrome, and must not be clickable.
+        let (top, height) =
+            clip_span_to_band(90.0, 44.0, 100.0, 200.0).expect("the lower half is still on screen");
+        assert_eq!(top, 100.0);
+        assert_eq!(height, 34.0);
+    }
+
+    #[test]
+    fn a_button_with_its_centre_outside_keeps_the_sliver_that_shows() {
+        // The mirror case: the centre test dropped this one even though a
+        // visible sliver is still on the panel.
+        assert_eq!(
+            clip_span_to_band(70.0, 44.0, 100.0, 200.0),
+            Some((100.0, 14.0))
+        );
+    }
+
+    #[test]
+    fn a_button_scrolled_clear_of_the_band_is_dropped() {
+        assert_eq!(clip_span_to_band(20.0, 44.0, 100.0, 200.0), None);
+        assert_eq!(clip_span_to_band(400.0, 44.0, 100.0, 200.0), None);
+    }
+
+    #[test]
+    fn an_unscaled_transform_leaves_the_rectangle_where_it_was() {
+        assert_eq!(
+            scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 1.0),
+            (300.0, 40.0, 60.0, 22.0)
+        );
+    }
+
+    #[test]
+    fn a_scaled_button_is_registered_where_it_is_painted() {
+        // The toast banner is drawn from half size up, about its centre, so the
+        // button on the banner's right edge is painted 50 points further left
+        // and half as wide while the banner is half size. A rectangle left at 300
+        // covers the empty space to the right of the button the user can see.
+        let (x, y, w, h) = scaled_click_rect(300.0, 40.0, 60.0, 22.0, 200.0, 51.0, 0.5);
+        assert_eq!((x, y, w, h), (250.0, 45.5, 30.0, 11.0));
+    }
+
+    #[test]
+    fn scaling_a_button_gives_the_rectangle_the_transform_paints() {
+        // The property the call sites rely on: the rectangle this returns, put
+        // back through the same transform, is the rectangle the draw code laid
+        // out. A rectangle left unscaled does not survive that round trip at any
+        // step of the animation, which is the whole defect.
+        let (x, y, w, h) = (300.0, 40.0, 60.0, 22.0);
+        let (cx, cy) = (200.0, 51.0);
+        for step in 0..=10 {
+            let scale = 0.5 + 0.5 * f64::from(step) / 10.0;
+            let (rx, ry, rw, rh) = scaled_click_rect(x, y, w, h, cx, cy, scale);
+            for (corner_x, corner_y) in [(rx, ry), (rx + rw, ry + rh)] {
+                let painted_x = cx + (corner_x - cx) / scale;
+                let painted_y = cy + (corner_y - cy) / scale;
+                let expected_x = if corner_x == rx { x } else { x + w };
+                let expected_y = if corner_y == ry { y } else { y + h };
+                assert!(
+                    (painted_x - expected_x).abs() < 1e-9 && (painted_y - expected_y).abs() < 1e-9,
+                    "at scale {scale} the painted corner came back at ({painted_x}, {painted_y}) \
+                     instead of ({expected_x}, {expected_y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_button_touching_a_band_edge_is_dropped() {
+        // Zero visible height is nothing to click.
+        assert_eq!(clip_span_to_band(56.0, 44.0, 100.0, 200.0), None);
+        assert_eq!(clip_span_to_band(300.0, 44.0, 100.0, 200.0), None);
+    }
+
+    #[test]
+    fn review_preview_bounding_preserves_short_text() {
+        let text = "This is a brief transcribed sentence.";
+        let (preview, truncated) = bound_review_preview_text(text);
+        assert!(!truncated);
+        assert_eq!(preview, text);
+    }
+
+    #[test]
+    fn review_preview_bounding_truncates_huge_transcripts_cleanly() {
+        let word = "transcription ";
+        let huge_text = word.repeat(10_000); // ~140,000 characters
+        let (preview, truncated) = bound_review_preview_text(&huge_text);
+
+        assert!(truncated);
+        // In characters: the budget is a character budget, and a byte assertion
+        // would pass for a preview that kept a fraction of it.
+        assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
+        assert!(preview.contains("Full transcript preserved"));
+        // The range the function read is the budget's, not the transcript's:
+        // an offset proportional to the input is what made every rendered frame
+        // cost time proportional to the whole transcript.
+        let end =
+            review_preview_scan_end(&huge_text).expect("a transcript of this size is over budget");
+        assert!(
+            end < MAX_REVIEW_PREVIEW_CHARS * 8,
+            "the scan read {end} bytes of a {} byte transcript",
+            huge_text.len()
+        );
+    }
+
+    #[test]
+    fn review_preview_bounding_respects_utf8_multibyte_boundaries() {
+        let emoji_text = "🎙️✨⚡🦀".repeat(1000);
+        let (preview, truncated) = bound_review_preview_text(&emoji_text);
+        assert!(truncated);
+        assert!(preview.chars().count() <= MAX_REVIEW_PREVIEW_CHARS + 60);
+    }
+
+    #[test]
+    fn review_preview_bounding_spends_the_budget_in_characters_not_bytes() {
+        // The budget is documented in characters, so a multibyte transcript has
+        // to get all of it. Measuring `str::len` spent 3000 *bytes* instead,
+        // which for this text is about 700 characters: a CJK or emoji transcript
+        // lost two thirds of the preview it was allowed.
+        let text = "🎙️✨⚡🦀".repeat(1000); // 4_000 characters, ~17_000 bytes
+        assert!(
+            text.len() > MAX_REVIEW_PREVIEW_CHARS * 4,
+            "the fixture must be over budget in both units to be meaningful"
+        );
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(truncated);
+
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert!(
+            shown.chars().count() >= MAX_REVIEW_PREVIEW_CHARS - 4,
+            "preview kept {} characters of a {MAX_REVIEW_PREVIEW_CHARS} character budget",
+            shown.chars().count()
+        );
+    }
+
+    #[test]
+    fn review_preview_bounding_leaves_multibyte_text_at_the_budget_intact() {
+        // A transcript exactly on the budget must not be truncated at all, which
+        // a byte comparison got wrong in the other direction: 3000 CJK
+        // characters are 9000 bytes, so the byte check truncated text that
+        // fitted the documented limit.
+        let text = "あ".repeat(MAX_REVIEW_PREVIEW_CHARS);
+        assert!(text.len() > MAX_REVIEW_PREVIEW_CHARS);
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(
+            !truncated,
+            "text exactly on the character budget was truncated"
+        );
+        assert_eq!(preview, text);
+    }
+
+    #[test]
+    fn review_preview_bounding_keeps_the_budget_when_whitespace_is_sparse() {
+        // The trim back to a word boundary searched the whole 3000-character
+        // window for the last whitespace, so a transcript that mentions a word
+        // once near the top and then runs on kept 2 characters of a
+        // 3000-character budget. Long unbroken runs — a URL, a hash, a CJK
+        // sentence — are exactly where the budget exists to bound layout, so
+        // the trim may only give back a character or two, never the window.
+        let text = format!("{} {}", "Hi", "あ".repeat(MAX_REVIEW_PREVIEW_CHARS * 2));
+        let (preview, truncated) = bound_review_preview_text(&text);
+        assert!(truncated);
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        // The floor, not the trim window, is the point: 64 characters back is
+        // the worst a bounded trim can give up. Asserting it against
+        // `MAX_REVIEW_PREVIEW_CHARS - REVIEW_PREVIEW_TRIM_WINDOW` made the
+        // comparison hold for any budget — shrink the budget to 600 and the
+        // fixture still kept 600 characters against a floor of 536. The
+        // numbers are written out so moving either constant has to move this
+        // test deliberately.
+        assert!(
+            shown.chars().count() >= 3000 - 64,
+            "preview kept {} characters of a 3000 character budget",
+            shown.chars().count()
+        );
+        // This fixture has no whitespace anywhere near the cut, so the trim
+        // cannot fire at all and the preview keeps the budget to the character.
+        // That is the strongest form of the claim and it pins the budget's
+        // size, not just the trim's reach.
+        assert_eq!(
+            shown.chars().count(),
+            3000,
+            "a transcript with no whitespace near the cut must keep the whole budget"
+        );
+    }
+
+    #[test]
+    fn review_preview_budget_is_3000_characters() {
+        // `MAX_REVIEW_PREVIEW_CHARS` is public and every test that mentions it
+        // compares against it, so a change to its value silently changed the
+        // meaning of all of them: 3000 -> 600 left every assertion passing while
+        // the preview quietly shrank to a fifth of its budget. The budget is a
+        // documented promise about layout cost, so it is pinned against the
+        // literal 3000 here, and separately from the trim window.
+        let at_budget = "a".repeat(3000);
+        let (whole, truncated) = bound_review_preview_text(&at_budget);
+        assert!(
+            !truncated,
+            "3000 characters fit the budget, so nothing should be trimmed"
+        );
+        assert_eq!(whole.chars().count(), 3000);
+
+        // One character over: the preview is trimmed, and what survives the
+        // trim is exactly the budget.
+        let over = "a".repeat(3001);
+        let (preview, truncated) = bound_review_preview_text(&over);
+        assert!(truncated);
+        let shown = preview
+            .strip_suffix("\n… [Full transcript preserved for insert]")
+            .expect("the truncation notice is appended to a bounded preview");
+        assert_eq!(shown.chars().count(), 3000);
+
+        // The budget is in characters, not bytes: 3000 CJK characters are 9000
+        // bytes and must still fit whole.
+        let cjk = "あ".repeat(3000);
+        assert!(cjk.len() > 3000);
+        let (preview, truncated) = bound_review_preview_text(&cjk);
+        assert!(
+            !truncated,
+            "3000 characters are 9000 bytes but still on budget"
+        );
+        assert_eq!(preview.chars().count(), 3000);
+    }
+
+    #[test]
+    fn review_preview_bounding_reads_the_same_range_at_every_length() {
+        // The preview is bounded on the render path, once per drawn frame, so
+        // `chars().count()` walking the entire transcript made every frame linear
+        // in the full text size.
+        //
+        // What is asserted here is the range the function reads, not how long it
+        // takes: a stopwatch around a sub-microsecond call is a test that fails
+        // on a contended runner and under a sanitizer, and the range is the thing
+        // that actually bounds the work. It is a property of the budget and not
+        // of the input's length, so the same two fixtures must produce the same
+        // offset and the same preview whether one is barely over budget and the
+        // other is ten million characters.
+        let barely_over = "word ".repeat(MAX_REVIEW_PREVIEW_CHARS / 5 + 2);
+        let huge = "word ".repeat(2_000_000); // 10M characters
+        assert!(
+            barely_over.chars().count() > MAX_REVIEW_PREVIEW_CHARS,
+            "the baseline must itself be over budget or it would return early"
+        );
+
+        let small_end = review_preview_scan_end(&barely_over);
+        let huge_end = review_preview_scan_end(&huge);
+        assert!(
+            small_end.is_some() && huge_end.is_some(),
+            "both fixtures must be over the budget"
+        );
+        assert_eq!(
+            small_end, huge_end,
+            "the scan stopped at a different offset for a longer transcript, so its \
+             cost still scales with the input"
+        );
+
+        let (small_preview, small_truncated) = bound_review_preview_text(&barely_over);
+        let (huge_preview, huge_truncated) = bound_review_preview_text(&huge);
+        assert!(small_truncated && huge_truncated);
+        assert_eq!(
+            small_preview.chars().count(),
+            huge_preview.chars().count(),
+            "a ten-million character transcript produced a different preview length than a \
+             barely-over-budget one"
+        );
+    }
+
+    // ── Idle/drag label crossfade ──────────────────────────────────────
+    //
+    // `label_crossfade_alpha` and `label_slide_y` are called by all three pill
+    // renderers on every drawn frame and had no test at all: three mutations to
+    // `label_crossfade_alpha` — dropping `(1.0 - drag_t)` from the idle arm,
+    // swapping the two arms, and dropping `expand_t` from the idle arm — left
+    // the suite green. The last is a visible regression by itself, so these
+    // tests pin the contract rather than the arithmetic.
+
+    /// The cutoff is the width of the crossfade, so its value is the thing the
+    /// handoff depends on. Pinned as a number: 0.01 left both labels drawn for
+    /// 96% of the transition, and 0.275 (exactly half the peak) would blink a
+    /// blank frame at `drag_t == 0.5` because the renderers gate on `>`.
+    #[test]
+    fn label_alpha_cutoff_sits_just_under_half_the_peak() {
+        assert!(
+            (LABEL_ALPHA_CUTOFF - 0.2475).abs() < 1e-12,
+            "LABEL_ALPHA_CUTOFF is {LABEL_ALPHA_CUTOFF}"
+        );
+        let half_peak = LABEL_BASE_ALPHA * 0.5;
+        assert!(
+            LABEL_ALPHA_CUTOFF < half_peak,
+            "at or above half the peak, both arms fall under the cutoff together at \
+             drag_t == 0.5 and the pill draws no label for a frame"
+        );
+    }
+
+    #[test]
+    fn label_crossfade_hands_over_around_the_midpoint_without_a_blank_frame() {
+        // Both alphas above the cutoff at once is the smudge the cutoff exists
+        // to prevent; neither above it is a blank frame. At 45% of peak the
+        // overlap is one frame wide and it straddles the midpoint.
+        let mut overlap_frames = Vec::new();
+        let mut blank_frames = Vec::new();
+        let mut both_drawn = 0;
+        let mut neither_drawn = 0;
+        for step in 0..=1000 {
+            let drag_t = step as f64 / 1000.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            let idle_drawn = idle > LABEL_ALPHA_CUTOFF;
+            let drag_drawn = drag > LABEL_ALPHA_CUTOFF;
+            match (idle_drawn, drag_drawn) {
+                (true, true) => both_drawn += 1,
+                (false, false) => neither_drawn += 1,
+                _ => {}
+            }
+            if idle_drawn && drag_drawn {
+                overlap_frames.push(drag_t);
+            }
+            if !idle_drawn && !drag_drawn {
+                blank_frames.push(drag_t);
+            }
+        }
+
+        assert!(
+            blank_frames.is_empty(),
+            "no label is drawn for drag_t in {blank_frames:?}: the pill blinks"
+        );
+        // The window is open at both ends and the grid has 1001 samples, so
+        // (0.45, 0.55) holds 99 of them.
+        assert_eq!(
+            overlap_frames.len(),
+            99,
+            "both labels are drawn across {both_drawn}/1000 of the transition"
+        );
+        // The first and last overlapping samples bracket the window, which is
+        // open: the edges fall at 0.45 and 0.55 in `drag_t`.
+        let (lo, hi) = (overlap_frames[0], overlap_frames[overlap_frames.len() - 1]);
+        assert!(
+            (0.4505..0.452).contains(&lo) && (0.548..0.5495).contains(&hi),
+            "the overlap window runs from {lo} to {hi}, not from 0.45 to 0.55"
+        );
+        // The edges are the cutoff as a fraction of the peak, which is what
+        // makes this a property of the constant rather than a magic number.
+        let fraction = LABEL_ALPHA_CUTOFF / LABEL_BASE_ALPHA;
+        assert!(
+            (fraction - 0.45).abs() < 1e-12,
+            "the cutoff is {fraction} of the peak, so the window edges are not 0.45 and 0.55"
+        );
+
+        // Over 96% of the transition the two labels were both above a 0.01
+        // cutoff. One tenth is the replacement, and the window must stay
+        // centred so the handoff does not drift toward either label.
+        assert_eq!(neither_drawn, 0);
+    }
+
+    #[test]
+    fn label_crossfade_endpoints_pick_exactly_one_label() {
+        // Fully idle: the idle label at full peak, the drag label not drawn.
+        let (idle, drag) = label_crossfade_alpha(0.0, 1.0);
+        assert!(
+            (idle - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the idle label must reach full peak when idle, got {idle}"
+        );
+        assert!(
+            drag <= LABEL_ALPHA_CUTOFF,
+            "the drag label must not be drawn while idle, got {drag}"
+        );
+
+        // Fully dragging: the mirror image. This is the assertion a swapped
+        // pair of arms fails first.
+        let (idle, drag) = label_crossfade_alpha(1.0, 1.0);
+        assert!(
+            idle <= LABEL_ALPHA_CUTOFF,
+            "the idle label must not be drawn while dragging, got {idle}"
+        );
+        assert!(
+            (drag - LABEL_BASE_ALPHA).abs() < 1e-12,
+            "the drag label must reach full peak while dragging, got {drag}"
+        );
+    }
+
+    #[test]
+    fn a_collapsed_pill_draws_no_label_at_any_drag_progress() {
+        // `expand_t == 0` is a collapsed pill. Every renderer skips the label
+        // painter below `expand_t > 0.5`, so the multiplier is the last line of
+        // defence — and losing it painted "Click to dictate" on a pill with
+        // nowhere to put it.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle, drag) = label_crossfade_alpha(drag_t, 0.0);
+            assert!(
+                idle <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the idle label at {idle}"
+            );
+            assert!(
+                drag <= LABEL_ALPHA_CUTOFF,
+                "drag_t {drag_t}: a collapsed pill drew the drag label at {drag}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alpha_scales_with_expansion_and_clamps_its_inputs() {
+        // Half-expanded is half as opaque, which is what keeps the label from
+        // arriving at full strength on a pill that is still growing.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            for expand_t in [0.25, 0.5, 0.75, 1.0] {
+                let (idle, drag) = label_crossfade_alpha(drag_t, expand_t);
+                let peak = LABEL_BASE_ALPHA * expand_t;
+                assert!(
+                    (idle + drag - peak).abs() < 1e-12,
+                    "alphas must sum to {peak}"
+                );
+                assert!(
+                    idle <= peak + 1e-12 && drag <= peak + 1e-12,
+                    "neither arm may exceed the peak for expand_t {expand_t}"
+                );
+            }
+        }
+
+        // Out-of-range progress is clamped, not propagated: a spring that
+        // overshoots past 1.0 must not paint a label brighter than peak, and a
+        // value below 0 must not paint a negative alpha, which every backend
+        // treats as opaque.
+        for (raw, clamped) in [(-5.0, 0.0), (-0.001, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(raw, 1.0),
+                label_crossfade_alpha(clamped, 1.0),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+        for (raw, clamped) in [(-1.0, 0.0), (2.0, 1.0)] {
+            assert_eq!(
+                label_crossfade_alpha(0.5, raw),
+                label_crossfade_alpha(0.5, clamped),
+                "expand_t {raw} was not clamped to {clamped}"
+            );
+        }
+        let (idle, drag) = label_crossfade_alpha(-3.0, -3.0);
+        assert!((idle).abs() < 1e-12 && (drag).abs() < 1e-12);
+    }
+
+    #[test]
+    fn label_slide_y_ends_where_the_labels_belong_and_never_parts_them_further() {
+        // At rest the idle label sits on the base line and the drag label is
+        // parked one offset below it, ready to slide up into place. Fully
+        // dragging, they have swapped: the idle label is one offset above the
+        // base and the drag label is on it.
+        let (idle_y, drag_y) = label_slide_y(100.0, 0.0);
+        assert!(
+            (idle_y - 100.0).abs() < 1e-12,
+            "idle label rest y is {idle_y}"
+        );
+        assert!(
+            (drag_y - 102.0).abs() < 1e-12,
+            "the drag label parks one offset below base, got {drag_y}"
+        );
+
+        let (idle_y, drag_y) = label_slide_y(100.0, 1.0);
+        assert!(
+            (idle_y - 98.0).abs() < 1e-12,
+            "the idle label ends one offset above base, got {idle_y}"
+        );
+        assert!(
+            (drag_y - 100.0).abs() < 1e-12,
+            "drag label rest y is {drag_y}"
+        );
+
+        // The slide is what would separate two overlapping labels, and it is
+        // fixed at `LABEL_SLIDE_OFFSET` for the whole transition — 2px on 12px
+        // glyphs. That is why the cutoff, not the offset, carries the handoff:
+        // pinned here so a larger offset cannot arrive unnoticed.
+        for step in 0..=100 {
+            let drag_t = step as f64 / 100.0;
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                (drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12,
+                "at drag_t {drag_t} the labels are parted by {}px, not {LABEL_SLIDE_OFFSET}px",
+                drag_y - idle_y
+            );
+        }
+
+        // base_y is a baseline the renderers computed from font extents, so it
+        // has to pass through untouched at the midpoint rather than be pulled
+        // toward either label.
+        for drag_t in [0.0, 0.5, 1.0] {
+            let (idle_y, drag_y) = label_slide_y(-17.5, drag_t);
+            assert!(
+                idle_y < -17.5 + 1e-12 && drag_y > -17.5 - 1e-12,
+                "a negative baseline must still bracket base_y, got {idle_y} and {drag_y}"
+            );
+        }
+
+        for (raw, clamped) in [(-5.0, 0.0), (1.001, 1.0), (7.0, 1.0)] {
+            assert_eq!(
+                label_slide_y(100.0, raw),
+                label_slide_y(100.0, clamped),
+                "drag_t {raw} was not clamped to {clamped}"
+            );
+        }
+    }
+
+    #[test]
+    fn label_crossfade_alphas_and_slide_agree_about_when_each_label_is_visible() {
+        // The two functions are called back to back by all three renderers with
+        // the same `drag_t`, and the renderers gate drawing on the alphas. So
+        // the visible range of each label is the same window, and it has to be
+        // the one the cutoff intends: nothing drawn, then one label, then both
+        // for about a frame, then the other label, then nothing.
+        let visible = |drag_t: f64| -> (bool, bool) {
+            let (idle, drag) = label_crossfade_alpha(drag_t, 1.0);
+            (idle > LABEL_ALPHA_CUTOFF, drag > LABEL_ALPHA_CUTOFF)
+        };
+
+        assert_eq!(visible(0.0), (true, false));
+        assert_eq!(visible(0.4), (true, false));
+        assert_eq!(visible(0.5), (true, true), "the midpoint must not blink");
+        assert_eq!(visible(0.6), (false, true));
+        assert_eq!(visible(1.0), (false, true));
+
+        // The slide never lifts a suppressed label back over the bar, so the
+        // alpha gate and the geometry gate cannot disagree about which strings
+        // are on screen at the same time.
+        for step in 0..=200 {
+            let drag_t = step as f64 / 200.0;
+            let (idle_drawn, drag_drawn) = visible(drag_t);
+            let (idle_y, drag_y) = label_slide_y(100.0, drag_t);
+            assert!(
+                idle_y.is_finite() && drag_y.is_finite(),
+                "drag_t {drag_t} produced a non-finite baseline"
+            );
+            if idle_drawn && drag_drawn {
+                // Both drawn: they are 2px apart, which is the overlap the
+                // cutoff keeps to a single frame.
+                assert!((drag_y - idle_y - LABEL_SLIDE_OFFSET).abs() < 1e-12);
+            }
+        }
     }
 }
