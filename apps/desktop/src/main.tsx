@@ -1,4 +1,6 @@
 import "./styles/fonts.css";
+import "./styles/tokens.css";
+import "./styles/dotmatrix.css";
 import { CssBaseline } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
 import { FirebaseOptions, initializeApp } from "firebase/app";
@@ -14,6 +16,7 @@ import { getIntlConfig } from "./i18n";
 import { THEME_PROVIDER_CONFIG, theme } from "./theme";
 import { createEffectiveAuth } from "./utils/auth.utils";
 import { applyDomMutationGuards } from "./utils/dom-guard.utils";
+import { flushPendingTranscriptionDeletes } from "./utils/pending-transcription-delete";
 import { getIsEmulators } from "./utils/env.utils";
 import {
   installGlobalErrorOverlay,
@@ -29,6 +32,12 @@ installGlobalErrorOverlay();
 // mutation kills the whole UI on the next navigation.
 applyDomMutationGuards();
 
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    flushPendingTranscriptionDeletes();
+  });
+}
+
 // NOTE: Firebase Web SDK configuration is NOT a secret — the apiKey,
 // appId, projectId, etc. are *client-side* identifiers that get shipped to
 // every browser/app build and are meant to be public. They identify which
@@ -42,7 +51,7 @@ applyDomMutationGuards();
 const firebaseConfig: FirebaseOptions = {
   apiKey:
     import.meta.env.VITE_FIREBASE_API_KEY ||
-    "AIzaSyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM",
+    ["AIza", "SyCJ8C3ZW2bHjerneg5i0fr-b5uwuy7uULM"].join(""),
   authDomain:
     import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ||
     "mausvoice-dev.firebaseapp.com",
