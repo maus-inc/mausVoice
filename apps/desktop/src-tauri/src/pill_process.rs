@@ -1538,18 +1538,27 @@ mod pill_publish_tests {
 
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
-            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`: the panic that can
-            // poison this mutex is `try_wait` inside `has_exited`, raised while it HOLDS
-            // `_child`. Recovering from the poison is the difference between this guard reaping
-            // on the panicking path, which is the path that needs it, and not.
+            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`.
             //
-            // Two sites raise a panic while holding this lock, and neither is an `expect`
-            // on the lock itself: `try_wait` inside `has_exited`, and `kill()` in
-            // `the_untouched_window_observes_a_real_kill`, which exists precisely to kill a
-            // child. An earlier version of this comment said `try_wait` ALONE and used that to
-            // conclude the list was one item long -- wrong on arrival, because the control test
-            // had just added the second. Both recover now, so the code is right; only the
-            // enumeration was not.
+            // `_child` is locked in three places. Two of them can panic while holding it --
+            // `try_wait` inside `has_exited`, and `kill` in
+            // `the_untouched_window_observes_a_real_kill` -- and those two are the only ones
+            // that can poison this mutex. This one cannot, because `kill()`'s `Result` is
+            // discarded rather than unwrapped.
+            //
+            // So recovering from the poison is the difference between this guard reaping on
+            // the panicking path, which is the path that needs it, and not.
+            //
+            // Both of those `expect`s are on `try_wait` and `kill`, never on the lock, and
+            // that is the distinction worth keeping straight: `Mutex::lock` returning `Err` is
+            // how a poison is OBSERVED, so an `expect` on the lock could never have caused one.
+            //
+            // This comment got the enumeration wrong twice. It blamed "the expect on the lock
+            // itself", which cannot be a cause; and then it said `try_wait` ALONE, which was
+            // wrong on arrival because the control test had just added the second. It also
+            // listed them once here and once five lines down. The code was right throughout --
+            // every site recovers -- and only the accounting was not, which is the hardest
+            // kind of wrong to notice because nothing fails.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
@@ -1580,7 +1589,9 @@ mod pill_publish_tests {
     /// Not zero, and that is the subtle part. `Child::kill` raises a signal and returns
     /// immediately; the exit is observed afterwards, by `try_wait`, on the operating system's
     /// schedule. So a single observation cannot tell "no kill was sent" from "a kill was sent
-    /// and has not been reaped yet" -- and the second reading is precisely the bug this test
+    /// and has not been reaped yet" -- and the second reading is precisely the bug these
+    /// assertions exist to catch, reported as a pass.
+    ///
     /// So the number is no longer the evidence. `the_untouched_window_observes_a_real_kill`
     /// kills a child and asserts it becomes observable inside this same budget, in the same
     /// run, on whatever machine and operating system the suite is on. If a loaded runner
@@ -1590,10 +1601,17 @@ mod pill_publish_tests {
 
     /// Whether `process`'s child has exited within `budget`.
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
-        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`, at both places
-        // that lock `_child` while panicking can happen. A `Mutex::lock` returning `Err` is
-        // how a poison is OBSERVED, so neither `expect` could have caused one -- but either can
-        // fire because of one, and that is the direction that matters.
+        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`, at each of the
+        // two places that lock `_child` and can then panic inside the lock: the
+        // `try_wait().expect(..)` below, and `kill().expect(..)` in the control test.
+        // `ReapOnDrop::drop` is the third lock site and cannot panic, because `kill()`'s
+        // `Result` is discarded there.
+        //
+        // The `expect`s in question are on `try_wait` and `kill`, NOT on the lock -- and
+        // that is the whole distinction. `Mutex::lock` returning `Err` is how a poison is
+        // OBSERVED, so an `expect` on the lock could never have caused one. These two can
+        // only fire because of one, which is the direction that matters, and it is why both
+        // recover rather than just this one.
         //
         // The cascade, since `has_exited` is never itself on an unwinding path: it is always
         // evaluated to a bool first, and only then does an `assert!` around it fire. So a
