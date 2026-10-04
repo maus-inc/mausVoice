@@ -25,6 +25,8 @@ export interface LlmTool {
 export type LlmToolChoice = "auto" | "none" | "required" | { name: string };
 
 export interface LlmChatInput {
+  /** Local transport cancellation; never serialized into the model payload. */
+  signal?: AbortSignal;
   messages: LlmMessage[];
   tools?: LlmTool[];
   toolChoice?: LlmToolChoice;
@@ -49,12 +51,7 @@ export type LlmStreamEvent =
   | { type: "error"; error: string };
 
 export type LlmFinishReason =
-  | "stop"
-  | "length"
-  | "tool-calls"
-  | "content-filter"
-  | "error"
-  | "other";
+  "stop" | "length" | "tool-calls" | "content-filter" | "error" | "other";
 
 export interface LlmUsage {
   promptTokens?: number;
