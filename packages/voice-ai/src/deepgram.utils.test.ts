@@ -104,9 +104,9 @@ describe("deepgramTestIntegration", () => {
     it(`settles when the socket closes with ${code}`, async () => {
       vi.stubGlobal("WebSocket", closingSocket(code));
       try {
-        expect(await settleOrHang(deepgramTestIntegration("key"))).toBe(
-          "settled",
-        );
+        expect(
+          await settleOrHang(deepgramTestIntegration({ apiKey: "key" })),
+        ).toBe("settled");
       } finally {
         vi.unstubAllGlobals();
       }
@@ -118,9 +118,9 @@ describe("deepgramTestIntegration", () => {
   it("settles on a code it already handled", async () => {
     vi.stubGlobal("WebSocket", closingSocket(4001));
     try {
-      expect(await settleOrHang(deepgramTestIntegration("key"))).toBe(
-        "settled",
-      );
+      expect(
+        await settleOrHang(deepgramTestIntegration({ apiKey: "key" })),
+      ).toBe("settled");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -145,7 +145,7 @@ describe("deepgramTestIntegration", () => {
     try {
       expect(
         await Promise.race([
-          deepgramTestIntegration("key"),
+          deepgramTestIntegration({ apiKey: "key" }),
           new Promise<boolean>((resolve) =>
             setTimeout(() => resolve(false), 200),
           ),
