@@ -22,7 +22,7 @@ export const ButtonDemo = () => {
           <Button variant="contained">Contained</Button>
           <Button variant="text">Text</Button>
           <Button variant="flat">Flat</Button>
-          <Button variant="contained">Blue</Button>
+          <Button variant="blue">Blue</Button>
         </State>
         <State label="with icons">
           <Button variant="contained" startIcon={<AddIcon />}>
@@ -45,7 +45,7 @@ export const ButtonDemo = () => {
           <Button variant="flat" disabled>
             Flat
           </Button>
-          <Button variant="contained" disabled>
+          <Button variant="blue" disabled>
             Blue
           </Button>
         </State>

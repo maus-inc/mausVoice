@@ -23,7 +23,17 @@ export const resolvePillWindowSize = ({
   pillHasContent: boolean;
 }): PillWindowSize => {
   if (hasPendingReview) return "assistant_typing";
-  if (!isAgentRecording) return "dictation";
+  // Tested BEFORE the recording check, and that order is the whole point of this function.
+  //
+  // Type mode is entered by STOPPING the recording: `DictationSideEffects` runs
+  // `systemVolumeDim.endRecording()` and `invoke("stop_recording")` and only then sets
+  // `assistantInputMode = "type"`. So for the whole of type mode the caller passes
+  // `isAgentRecording: false` together with `isAssistantTyping: true` -- and a
+  // `!isAgentRecording` early return above the typing branch answered "dictation", leaving the
+  // pill at dictation size while the assistant was typing. That is what this file's header
+  // says must not happen: typing needs the same room as a pending review "even when no
+  // assistant session is running".
   if (isAssistantTyping) return "assistant_typing";
+  if (!isAgentRecording) return "dictation";
   return pillHasContent ? "assistant_expanded" : "assistant_compact";
 };

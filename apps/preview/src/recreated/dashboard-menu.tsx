@@ -11,7 +11,7 @@
 import { Box, List, Stack, useColorScheme } from "@mui/material";
 import { motion, useReducedMotion } from "framer-motion";
 import { House, MessagesSquare, Mic, Settings, Shapes } from "lucide";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ListTile } from "@desktop/components/common/ListTile";
 import { MorphNavIcon } from "@desktop/components/common/MorphNavIcon";
 import { springSnappy } from "@desktop/styles/motion";
@@ -38,6 +38,16 @@ export const DashboardMenuPreview = ({
   const dark = resolved === "dark";
   const reduceMotion = useReducedMotion();
   const [path, setPath] = useState(initial);
+
+  // A framer-motion `layoutId` must be unique among MOUNTED components, and
+  // `demos/navigation.tsx` mounts this component twice on a single page (plain, then
+  // `showUpdate initial="/settings"`). Sharing one literal made the active indicator animate
+  // across from one instance to the other on selection, instead of within each menu.
+  //
+  // The desktop original this shell is copied from uses the literal `layoutId="sidebar-active"`
+  // (`components/dashboard/DashboardMenu.tsx:122`), so scoping here is a fix rather than a
+  // restoration. `SegmentedControl.tsx:55` is the in-repo precedent for a per-instance id.
+  const activeLayoutId = `${useId()}-sidebar-active`;
   const indicatorRadius = useSpecValue(
     "dashboard-menu",
     "indicator-radius",
@@ -63,7 +73,7 @@ export const DashboardMenuPreview = ({
     return (
       <Box
         component={motion.div}
-        layoutId="sidebar-active"
+        layoutId={activeLayoutId}
         transition={springSnappy}
         sx={sx}
       />

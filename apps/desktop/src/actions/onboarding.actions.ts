@@ -477,6 +477,22 @@ export const submitOnboarding = async () => {
       getAgentModePrefs(currentState),
     );
 
+    // Re-read state BEFORE writing, for the reason `finishOnboarding` gives below: an auth
+    // handoff mid-await must not clobber the wrong account's record.
+    //
+    // It matters more here than it does there, because both of these writes resolve their
+    // target from the CURRENT session when the command is invoked -- `user_set_one` takes
+    // `State<OptionKeyDatabase>`, so the pool is chosen at call time. An account switch
+    // between this guard and the write therefore lands the previous account's onboarding data
+    // in the NEW account's database, not merely in the wrong row of the same one.
+    //
+    // The check that follows the await cannot undo that. It stops the stale result reaching
+    // the store; it does not un-write the row. What this guard does is close the window
+    // between building the payload and issuing the write. It cannot close the remainder --
+    // a handoff during the write itself is not observable from here.
+    if (getAppState().authSessionNonce !== initiatingAuthSessionNonce) {
+      return null;
+    }
     const [savedUser, savedPreferences] = await Promise.all([
       repo.setMyUser(user),
       preferencesRepo.setUserPreferences(preferences),

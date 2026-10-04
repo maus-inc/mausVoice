@@ -206,6 +206,9 @@ export const AppSideEffects = () => {
   const versionData = useAsyncData(getVersion, []);
   const userId = useAppStore((state) => state.auth?.uid ?? "");
   const initialized = useAppStore((state) => state.initialized);
+  // Bumped whenever the signed-in identity changes. Subscribed to here because the
+  // post-elevation init effect below has to re-run for the NEW user; see its deps.
+  const authSessionNonce = useAppStore((state) => state.authSessionNonce);
   const member = useAppStore((state) => {
     const uid = state.auth?.uid;
     return uid ? (state.memberById[uid] ?? null) : null;
@@ -661,7 +664,20 @@ export const AppSideEffects = () => {
       getLogger().error(`Failed to load the current user: ${error}`);
     });
     setInitReady(true);
-  }, [authReady, elevationReady]);
+    // `authSessionNonce` is in these deps deliberately, and its absence was a trap.
+    //
+    // A uid change takes the branch in `onAuthStateChanged` that calls `setInitReady(false)`
+    // to force onboarding to re-run for the new identity. But that branch also calls
+    // `setAuthReady(true)` -- and `authReady` is ALREADY true by then, so React bails out and
+    // the dep array does not change. With `[authReady, elevationReady]` alone this effect then
+    // never re-ran, `setInitReady(true)` never came back, and since nothing else writes
+    // `initReady` (see the comment above) `OnboardingPage` stayed on its `return null` path --
+    // an app that looks stuck, on exactly the transition that is supposed to reset it.
+    //
+    // The nonce is bumped in that same branch and nothing else in this file re-runs on it,
+    // so subscribing to it is what closes the loop. `OnboardingPage` already depends on it for
+    // the same reason.
+  }, [authReady, elevationReady, authSessionNonce]);
 
   useAsyncEffect(async () => {
     if (!canRunPostElevationInit(elevationReady, initReady)) {

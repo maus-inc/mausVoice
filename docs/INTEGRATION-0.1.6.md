@@ -61,7 +61,7 @@ pnpm --filter @maus-inc/voice-ai test
 pnpm --filter @repo/agent test
 ```
 
-Before push, run `pnpm run build` when resources permit; otherwise skip it. Always run `pnpm run check-types` and the linter. Never edit a test to hide a defect. Bug fixes get a regression test.
+Before push, run `pnpm run build`, `pnpm run check-types` and the linter, as `AGENTS.md` requires. Never edit a test to hide a defect. Bug fixes get a regression test.
 
 ## SonarCloud
 

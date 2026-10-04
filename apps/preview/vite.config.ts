@@ -37,7 +37,23 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5193,
-    allowedHosts: true,
+    // `host: "0.0.0.0"` already exposes this dev server to the network, and
+    // `allowedHosts: true` additionally switches OFF Vite's Host-header check. The pair is a
+    // DNS-rebinding hole: any web page the developer visits could resolve its own hostname to
+    // this server and read the app, which serves the real desktop source through `fs.allow`.
+    //
+    // So the hosts are named instead. Loopback keeps working with no setup; serving anyone
+    else on the LAN is now an explicit opt-in.
+    //
+    //   PREVIEW_ALLOWED_HOSTS=preview-host.local,192.168.1.20 pnpm --filter @maus-inc/preview dev
+    //
+    // A leading dot allows a whole domain (`example.local` matches `a.example.local`); a
+    // literal IP must be listed exactly, because Vite compares the Host header verbatim.
+    allowedHosts: process.env.PREVIEW_ALLOWED_HOSTS
+      ? process.env.PREVIEW_ALLOWED_HOSTS.split(",")
+          .map((host) => host.trim())
+          .filter(Boolean)
+      : [".localhost", "127.0.0.1", "[::1]"],
     fs: {
       allow: [rootDir, path.resolve(rootDir, ".."), desktopSrc],
     },

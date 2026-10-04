@@ -4,9 +4,12 @@ use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::OnceLock;
 
-// Fontconfig FFI — process-scoped, owned by fontconfig; do not free.
+// Fontconfig FFI.
+//
+// `FcConfigAppFontAddFile` takes a NULLABLE config: NULL means "the current config", which
+// fontconfig creates on demand and which is the one Pango and Cairo actually resolve fonts
+// through. Nothing here owns a config, so there is nothing to free.
 extern "C" {
-    fn FcInitLoadConfigAndFonts() -> *mut std::ffi::c_void;
     fn FcConfigAppFontAddFile(config: *mut std::ffi::c_void, file: *const std::ffi::c_char) -> i32;
 }
 
@@ -41,31 +44,6 @@ pub fn install_embedded_satoshi() {
         // Prefer prepending our dir via FONTCONFIG_PATH so "Satoshi" resolves first.
         // Do not remove system config entirely (cairo may need defaults), but our
         // face is still the only one we select by family name.
-        // Explicit fontconfig app-font registration.
-        // The returned FcConfig pointer is owned by fontconfig and must not
-        // be freed by us; its lifetime is process-scoped. We call this once
-        // at startup before GTK initializes Pango's font database.
-        let conf = unsafe { FcInitLoadConfigAndFonts() };
-        if conf.is_null() {
-            rust_pill_shared::log_font_error("FcInitLoadConfigAndFonts returned null — fontconfig may not be installed or initialized");
-        } else {
-            let bytes = path.as_os_str().as_bytes();
-            if bytes.contains(&0) {
-                rust_pill_shared::log_font_error("Satoshi path contains interior null bytes — cannot build C string");
-            } else {
-                match CString::new(bytes) {
-                    Ok(c_path) => {
-                        let ok = unsafe { FcConfigAppFontAddFile(conf, c_path.as_ptr()) };
-                        if ok == 0 {
-                            rust_pill_shared::log_font_error("FcConfigAppFontAddFile returned false for Satoshi (may fall back to system font)");
-                        }
-                    }
-                    Err(_) => {
-                        rust_pill_shared::log_font_error("CString::new failed for Satoshi path — encoding issue");
-                    }
-                }
-            }
-        }
         let prev = std::env::var_os("FONTCONFIG_PATH");
         let mut paths = vec![dir.display().to_string()];
         if let Some(p) = prev {
@@ -76,6 +54,38 @@ pub fn install_embedded_satoshi() {
         #[allow(unused_unsafe)]
         unsafe {
             std::env::set_var("FONTCONFIG_PATH", paths.join(":"));
+        }
+
+        // Register Satoshi with fontconfig itself, AFTER FONTCONFIG_PATH is set.
+        //
+        // This used to call `FcInitLoadConfigAndFonts()` and register against the config it
+        // returned. That call creates a NEW config and returns it; it does not install it as
+        // the current one. So the app font was added to a config no renderer ever read, and
+        // the registration had no effect — Satoshi resolved only because of the
+        // `FONTCONFIG_PATH` set immediately below it. The returned config was also never freed
+        // (the old comment claimed fontconfig owned it; the caller does), and building it
+        // meant scanning every system font at startup for nothing.
+        //
+        // NULL means "the current config", and doing this after FONTCONFIG_PATH means the
+        // config fontconfig creates on demand already has our directory prepended. Runs once,
+        // before GTK initializes Pango's font database.
+        let bytes = path.as_os_str().as_bytes();
+        if bytes.contains(&0) {
+            rust_pill_shared::log_font_error("Satoshi path contains interior null bytes — cannot build C string");
+        } else {
+            match CString::new(bytes) {
+                Ok(c_path) => {
+                    let ok = unsafe {
+                        FcConfigAppFontAddFile(std::ptr::null_mut(), c_path.as_ptr())
+                    };
+                    if ok == 0 {
+                        rust_pill_shared::log_font_error("FcConfigAppFontAddFile returned false for Satoshi (may fall back to system font)");
+                    }
+                }
+                Err(_) => {
+                    rust_pill_shared::log_font_error("CString::new failed for Satoshi path — encoding issue");
+                }
+            }
         }
         path
     });

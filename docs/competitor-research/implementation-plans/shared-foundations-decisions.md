@@ -50,8 +50,8 @@ because an ephemeral session has to reach those call sites to suppress anything.
 ## Decision 5: New domain types in `apps/desktop/src/types/`
 
 **Choice:** Add `meetings.types.ts`, `automation.types.ts`,
-`translations.types.ts`, `snippets.types.ts`, `expansion-flags.types.ts` to
-`apps/desktop/src/types/`.
+`translations.types.ts`, `snippets.types.ts`, `workflows.types.ts`,
+`expansion-flags.types.ts` to `apps/desktop/src/types/`.
 
 **Rationale:** These types are app-specific, not cross-package. Keeping them
 in the desktop app avoids rebuilding `packages/types/` and is consistent with

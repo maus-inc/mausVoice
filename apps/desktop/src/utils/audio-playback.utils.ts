@@ -194,7 +194,12 @@ export const playWebAudio = async (
     }
   }
 
+  // Superseded while awaiting `closingContext`. `onStop` still has to fire: the caller sets
+  // `isPlaying` true BEFORE awaiting this function, and `activePlayback` only takes ownership
+  // further down, so a newer `stopActivePlayback("replaced")` finds nothing to stop and never
+  // reaches this call's `onStop`. Returning quietly leaves the row showing "playing" forever.
   if (generation !== playbackGeneration) {
+    onStop("replaced");
     return;
   }
 
@@ -214,7 +219,9 @@ export const playWebAudio = async (
       await context.resume();
     }
 
+    // Same reasoning as the exit above: superseded after `resume()`, before ownership.
     if (generation !== playbackGeneration) {
+      onStop("replaced");
       return;
     }
 

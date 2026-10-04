@@ -87,6 +87,22 @@ export const OpenAICompatibleModelPicker = ({
     // the newer run's deadline and overwrite its verdict.
     let currentRun = 0;
 
+    // A new endpoint, key or authorized-fetch identity means the previous answer describes a
+    // DIFFERENT server, so it is cleared here rather than left for the first `await` to
+    // overwrite.
+    //
+    // This effect's cleanup only sets `cancelled` and clears the timers, and every verdict is
+    // written after an await, so without this the picker kept rendering the old answer for the
+    // whole probe: the "Checking..." branch is `isLoading && isAvailable === null`, and
+    // `isAvailable` still held the old `true`, so the branch was skipped, the previous model
+    // list stayed on screen, and the select stayed enabled — you could pick a model that does
+    // not exist on the endpoint just typed.
+    //
+    // `useManualInput` is deliberately NOT reset. The deadline and the catch below set it, and
+    // forcing it here would flip the control to manual entry for the duration of every probe.
+    setIsAvailable(null);
+    setModels([]);
+
     /** Ends this run's deadline, which a settled run no longer needs. */
     const clearDeadline = () => {
       if (deadline) clearTimeout(deadline);

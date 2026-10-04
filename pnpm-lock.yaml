@@ -300,7 +300,7 @@ importers:
         specifier: ^7.3.6
         version: 7.3.6(@types/node@24.13.3)(jiti@2.6.1)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.8.3)
       vitest:
-        specifier: '>=3.2.6 <4.0.0'
+        specifier: ^3.2.4
         version: 3.2.7(@types/debug@4.1.13)(@types/node@24.13.3)(jiti@2.6.1)(jsdom@30.0.1)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.8.3)
 
   apps/docs:
@@ -420,7 +420,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vite:
-        specifier: '>=6.4.3 <7.0.0'
+        specifier: ^6.4.2
         version: 6.4.3(@types/node@25.5.2)(jiti@2.6.1)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.8.3)
 
   packages/agent:
@@ -470,7 +470,7 @@ importers:
         specifier: ~2.10.1
         version: 2.10.1
       '@types/react':
-        specifier: 19.2.18
+        specifier: ^19.2.18
         version: 19.2.18
       react:
         specifier: ^19.2.8

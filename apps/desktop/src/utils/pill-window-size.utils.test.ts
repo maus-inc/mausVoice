@@ -33,7 +33,22 @@ describe("resolvePillWindowSize", () => {
     );
   });
 
-  it("opens the entry while typing to the assistant", () => {
+  it("opens the entry while typing to the assistant, which stops the recording first", () => {
+    // This case used to be asserted as `isAgentRecording: true, isAssistantTyping: true` --
+    // a combination that cannot occur. `DictationSideEffects` runs `endRecording()` and
+    // `invoke("stop_recording")` and only THEN sets `assistantInputMode = "type"`, so the
+    // real call is recording-false, typing-true. Asserting the unreachable pair is what let a
+    // `!isAgentRecording` early return sit above the typing branch and keep the pill at
+    // dictation size for the whole of type mode.
+    expect(
+      resolvePillWindowSize({
+        ...base,
+        isAgentRecording: false,
+        isAssistantTyping: true,
+      }),
+    ).toBe("assistant_typing");
+
+    // Kept as a control: recording is the pre-typing state, and it must not regress either.
     expect(
       resolvePillWindowSize({
         ...base,

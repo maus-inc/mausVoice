@@ -77,12 +77,37 @@ fn to_top_down(rect: NSRect, primary_top: f64) -> Rect {
 unsafe fn pill_geometry(window: id) -> (Rect, Rect) {
     let frame = window_frame(window);
     let screen: id = msg_send![window, screen];
+
+    // `NSScreen.screens` can be EMPTY -- briefly when every display disconnects, the lid
+    // closes, or the display sleeps. `objectAtIndex:0` on an empty array raises
+    // `NSRangeException`, which is an Objective-C exception: it cannot be caught from Rust and
+    // takes the pill process down with it. This runs from `tick_spatial_feedback` every frame,
+    // and from `ResetPosition`, `RequestPosition` and `persist_drag_position`, so the window is
+    // wide.
+    //
+    // `pill_center_monitor` already guards exactly this and returns `unknown`; the shape is
+    // copied here. There is no meaningful monitor to report with no displays, so the window's
+    // own frame stands in for both, which keeps the returned pair self-consistent instead of
+    // measuring against a zeroed rect.
     let primary_screens = screens();
-    let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
-    let pf: NSRect = msg_send![primary, frame];
-    let primary_top = pf.origin.y + pf.size.height;
+    let count: usize = msg_send![primary_screens, count];
+    let primary_top = if count > 0 {
+        let primary: id = msg_send![primary_screens, objectAtIndex: 0usize];
+        let pf: NSRect = msg_send![primary, frame];
+        pf.origin.y + pf.size.height
+    } else {
+        frame.origin.y + frame.size.height
+    };
+
     let rect = to_top_down(frame, primary_top);
-    let monitor = to_top_down(screen_visible_frame(screen), primary_top);
+    // `msg_send![window, screen]` is nil when the window is on no display. Sending
+    // `visibleFrame` to nil yields a zeroed NSRect, and the y-offset arithmetic above would
+    // then be computed against nothing, so the frame stands in for it as well.
+    let monitor = if (screen as *mut std::ffi::c_void).is_null() {
+        to_top_down(frame, primary_top)
+    } else {
+        to_top_down(screen_visible_frame(screen), primary_top)
+    };
     (rect, monitor)
 }
 
