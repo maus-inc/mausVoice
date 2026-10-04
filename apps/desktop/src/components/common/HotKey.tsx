@@ -1,6 +1,6 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import { keyframes } from "@mui/material/styles";
+import { hotkeyRecorderStyles } from "./hotkey-recorder.styles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { produceAppState, useAppStore } from "../../store";
@@ -14,15 +14,6 @@ type HotKeyProps = {
   value?: string[];
   onChange?: (value: string[]) => void;
 };
-
-const pulseBorder = keyframes`
-  0%, 100% {
-    border-color: color-mix(in srgb, var(--app-palette-blue) 50%, transparent);
-  }
-  50% {
-    border-color: var(--app-palette-blue);
-  }
-`;
 
 export const HotKey = ({ value, onChange }: HotKeyProps) => {
   const intl = useIntl();
@@ -150,24 +141,7 @@ export const HotKey = ({ value, onChange }: HotKeyProps) => {
         setFocused(false);
         setHasInteracted(false);
       }}
-      sx={{
-        width: 200,
-        height: 40,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 1,
-        cursor: "pointer",
-        bgcolor: (t) =>
-          focused ? t.vars?.palette.level2 : t.vars?.palette.level1,
-        border: focused ? "2px solid" : "2px solid transparent",
-        animation: focused ? `${pulseBorder} 2s ease-in-out infinite` : "none",
-        outline: "none",
-        "&:hover": {
-          border: (t) =>
-            focused ? "2px solid" : `2px solid ${t.vars?.palette.divider}`,
-        },
-      }}
+      sx={hotkeyRecorderStyles(focused)}
     >
       <Typography
         variant="body2"
