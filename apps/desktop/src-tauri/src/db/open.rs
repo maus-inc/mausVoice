@@ -1046,7 +1046,7 @@ mod tests {
         // form from becoming a loophole.
         let modified_crlf = crlf.replace("test", "other");
         assert!(!migration_checksum_matches(
-            &Sha384::digest(modified_crlf.as_bytes()).to_vec(),
+            &Sha384::digest(modified_crlf.as_bytes()),
             crlf
         ));
         assert!(!migration_checksum_matches(b"deadbeef", lf));

@@ -6402,16 +6402,31 @@ mod tests {
     }
 
     #[cfg(not(target_os = "windows"))]
-    #[tokio::test]
-    async fn terminal_command_runs_ls_without_path_in_environment() {
-        // The guard has to stay held across the `.await` below, because the mutation is
-        // only in effect while the child is being spawned. It used to be a `tokio` mutex
-        // declared inside this function, on the reasoning that a `std::sync::Mutex` held
-        // across an `.await` blocks a runtime thread on `lock()`. `#[tokio::test]` builds a
-        // CURRENT-THREAD runtime, so there is no second runtime thread to stall, and the
-        // alternative cost a private lock that could not exclude
-        // `platform::linux::launch_env`'s -- which is the arrangement that let the two
-        // modules interleave in the first place.
+    #[test]
+    fn terminal_command_runs_ls_without_path_in_environment() {
+        // This is a `#[test]`, not a `#[tokio::test]`, and that is load-bearing.
+        //
+        // `run_terminal_command` spawns through `tauri::async_runtime::spawn_blocking`, so
+        // the `Command::new("ls")` resolution and the `std::env::var("PATH")` read that
+        // re-seeds the child's environment happen on a BLOCKING POOL THREAD while this
+        // thread is parked. The mutation therefore has to still be in effect for the whole
+        // of the call, which means the guard has to be held across it.
+        //
+        // An `async fn` cannot say that without tripping `clippy::await_holding_lock`, and
+        // that lint is right to ask: a `std::sync::MutexGuard` held across a suspension is
+        // how a runtime task ends up blocking on a lock another task is holding. The two
+        // ways out were both rejected. An async-aware `tokio::sync::Mutex` cannot be taken
+        // from the SYNC tests that also touch this environment -- the `mkfifo` spawn and
+        // `platform::linux::launch_env` -- so two locks would again be unable to exclude
+        // each other, which is the arrangement this module exists to end. And a bare
+        // `#[allow]` would silence the warning without addressing it.
+        //
+        // Driving the future with `block_on` instead is the third option and it is not a
+        // dodge: there is no suspension of THIS thread to hold a lock across. `block_on`
+        // parks the calling thread and lets the runtime's threads run, the guard is held
+        // across the whole call exactly as before, and the assertion below is unchanged.
+        // It also removes a dependence on `#[tokio::test]`'s runtime, since the future now
+        // runs on tauri's own runtime -- the same one `spawn_blocking` is taken from.
         let _guard = crate::test_env::lock();
 
         // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
@@ -6423,7 +6438,7 @@ mod tests {
             std::env::remove_var("PATH"); // skipcq: RS-W1015 - fixed OS contract.
         }
 
-        let result = run_terminal_command("ls".to_string()).await;
+        let result = tauri::async_runtime::block_on(run_terminal_command("ls".to_string()));
 
         // Restore the environment for any subsequent code.
         #[allow(unused_unsafe)]
