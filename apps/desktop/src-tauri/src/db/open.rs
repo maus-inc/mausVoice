@@ -540,11 +540,20 @@ async fn apply_migrations(pool: &SqlitePool) -> Result<(), OpenError> {
                 // Quarantining here would discard a perfectly readable file and
                 // open an empty one in its place, so this surfaces for repair.
                 //
-                // Two of the three accepted sources hash this build's own text, so neither
-                // matching means the file really did change. The third does not: for 069 it is
-                // a fixed list of two superseded digests, so this is unreachable for 069 by
-                // construction and a later edit to that one file would not be caught here.
-                // `is_superseded_checksum` says so where the list is.
+                // Two of the three accepted sources hash this build's own text, so for every
+                // version but 069 neither matching means the file really did change.
+                //
+                // 069 is worth separating, because the two ways it behaves are different and
+                // read as one claim when stated together. An UNRECOGNISED digest still lands
+                // here: a 069 row holding something none of the three arms produce -- a third
+                // edit's digest, or one written by hand -- is refused exactly like any other
+                // migration, which is the point of refusing rather than quarantining.
+                //
+                // What the superseded list gives up is narrower, and is the only case here that
+                // is not detected: a database already carrying one of those two digests is
+                // still accepted by a build where 069 has since been edited a THIRD time,
+                // because the list decides on the version and a fixed table and never
+                // re-derives from the text. `is_superseded_checksum` says so where the list is.
                 return Err(OpenError::Other(format!(
                     "migration {version} ({}) was previously applied but has been modified; \
                      the database is readable but its history does not match this build",
