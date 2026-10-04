@@ -28,7 +28,7 @@ const stringifyToolResult = (result: unknown): string => {
   const serialized = JSON.stringify(result ?? {});
   // Also reachable for values JSON cannot represent at all, e.g. an object
   // whose `toJSON` throws or returns undefined.
-  return serialized === undefined ? String(result) : serialized;
+  return serialized ?? String(result);
 };
 
 /**

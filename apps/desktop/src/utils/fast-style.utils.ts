@@ -92,24 +92,36 @@ const isHighSurrogate = (code: number): boolean =>
  * pair — `slice` counts UTF-16 code units, so cutting at 15000 could otherwise
  * end a chunk on a lone high surrogate.
  */
-const findChunkCut = (text: string, start: number, end: number): number => {
+const findSentenceBoundary = (
+  text: string,
+  start: number,
+  end: number,
+): number | null => {
   for (let i = end - 1; i > start; i -= 1) {
     if (!SENTENCE_TERMINATORS.has(text[i])) continue;
     let afterSpace = i + 1;
     while (afterSpace < end && isSpace(text[afterSpace])) afterSpace += 1;
-    // A terminator only ends a sentence if something separates it from the
-    // next word. "3.5" and "www.example.com" are not sentence boundaries.
-    //
-    // The window edge is not a separator either. When the terminator is the
-    // last character of the chunk, the character after it belongs to the NEXT
-    // chunk, so returning here would split "3.5" into "3." + "5 ..." and
-    // "example.com" into "example." + "com" across two pill syncs.
+    // A separator inside the window settles it. "3.5" and "www.example.com" are
+    // not sentence boundaries because nothing separates them.
     if (afterSpace > i + 1) return afterSpace;
-    if (afterSpace >= end) {
-      if (afterSpace < text.length && !isSpace(text[afterSpace])) continue;
+    // The window edge is not a separator. When the terminator is the last
+    // character of the chunk, the character after it belongs to the NEXT chunk,
+    // so cutting here would hand that chunk a false sentence start -- which
+    // strips a connective or capitalises a word that was mid-sentence. Only the
+    // very end of the text qualifies, because nothing follows to glue it to.
+    if (
+      afterSpace >= end &&
+      (afterSpace >= text.length || isSpace(text[afterSpace]))
+    ) {
       return afterSpace;
     }
   }
+  return null;
+};
+
+const findChunkCut = (text: string, start: number, end: number): number => {
+  const sentence = findSentenceBoundary(text, start, end);
+  if (sentence !== null) return sentence;
   for (let i = end - 1; i > start; i -= 1) {
     if (isSpace(text[i])) return i;
   }
