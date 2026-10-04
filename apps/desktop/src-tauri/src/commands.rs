@@ -6404,14 +6404,15 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn terminal_command_runs_ls_without_path_in_environment() {
-        // Serialize env mutation so it cannot race any other test. The guard
-        // has to stay held while the child is spawned below, so it must be an
-        // async lock: a `std::sync::Mutex` held across an `.await` blocks a
-        // runtime thread on `lock()` instead of yielding, which stalls every
-        // other task on that thread for the whole spawn.
-        static PATH_GUARD: once_cell::sync::Lazy<tokio::sync::Mutex<()>> =
-            once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(()));
-        let _guard = PATH_GUARD.lock().await;
+        // The guard has to stay held across the `.await` below, because the mutation is
+        // only in effect while the child is being spawned. It used to be a `tokio` mutex
+        // declared inside this function, on the reasoning that a `std::sync::Mutex` held
+        // across an `.await` blocks a runtime thread on `lock()`. `#[tokio::test]` builds a
+        // CURRENT-THREAD runtime, so there is no second runtime thread to stall, and the
+        // alternative cost a private lock that could not exclude
+        // `platform::linux::launch_env`'s -- which is the arrangement that let the two
+        // modules interleave in the first place.
+        let _guard = crate::test_env::lock();
 
         // skipcq: RS-W1015 - PATH is a fixed OS contract, not a configurable key.
         let original = std::env::var("PATH").ok();
@@ -7869,17 +7870,39 @@ mod tests {
         #[cfg(unix)]
         {
             let fifo_path = allowed[0].path().join("audio.fifo");
+            // Asserted, not skipped.
+            //
+            // `if let Ok(s) = status { if s.success() { ... } }` meant that anything which
+            // stopped `mkfifo` from running removed this test's only coverage that a FIFO
+            // inside an authorized root is rejected without blocking -- and left the test
+            // green. `Command::new("mkfifo")` searches `PATH`, so removing `PATH` (which
+            // another test in this binary does, for its own reasons) was enough, and
+            // whether it broke depended on the platform's fallback search path rather than
+            // on anything about this code.
+            //
+            // Holding `test_env` closes that window: it is the same lock the `PATH` test
+            // takes, so the two cannot overlap. `mkfifo` is coreutils, present on the
+            // linux and macOS images this runs on, so a failure here means the tool really
+            // is absent -- which is worth a red test, not a silent pass.
+            let _env = crate::test_env::lock();
             let status = std::process::Command::new("mkfifo")
                 .arg(&fifo_path)
-                .status();
-            if let Ok(s) = status {
-                if s.success() {
-                    assert!(
-                        open_audio_import_file(&fifo_path, &allowed).is_err(),
-                        "FIFO special file must be rejected without blocking"
-                    );
-                }
-            }
+                .status()
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "mkfifo must be available to create the FIFO under test: {err}. \
+                         The FIFO rejection has no other coverage, so this must not be skipped."
+                    )
+                });
+            assert!(
+                status.success(),
+                "mkfifo failed to create {}: {status}",
+                fifo_path.display()
+            );
+            assert!(
+                open_audio_import_file(&fifo_path, &allowed).is_err(),
+                "FIFO special file must be rejected without blocking"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&tmp);

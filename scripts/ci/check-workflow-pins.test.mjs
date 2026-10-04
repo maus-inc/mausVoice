@@ -148,14 +148,26 @@ describe("GitHub Actions pin guard", () => {
         "VERIFIED_ACTION_PINS with its version comment.",
     );
 
-    const node20 = pins
-      .filter((p) => p.pin && VERIFIED_PINS.get(p.pin)?.runtime === "node20")
-      .map((p) => `${p.file}:${p.line} ${p.pin}`);
+    // The whole runtime column, not a filter that can select nothing.
+    //
+    // This used to collect the pins whose recorded runtime is `node20` and assert that
+    // collection was empty. No row in `VERIFIED_ACTION_PINS` declares `node20` -- and
+    // cannot, because a row is only added after its runtime has been confirmed as node24 --
+    // so the filter was empty on every run and the assertion could not fail. It read as
+    // coverage of a rule it had never once exercised.
+    //
+    // Asserting every row's runtime against the two that exist gives it a subject: eleven
+    // rows today, and a `node20` row would now fail here rather than being invisible.
+    const badRuntime = Object.entries(VERIFIED_ACTION_PINS)
+      .filter(([, [, , runtime]]) => runtime !== "node24" && runtime !== "composite")
+      .map(([name, [pin, , runtime]]) => `${name} ${pin} declares ${runtime}`);
     assert.deepEqual(
-      node20,
+      badRuntime,
       [],
-      "pins declaring node20 will fail once GitHub removes Node 20 (2026-09-16)",
+      "every pinned action must run on node24 or be a composite action; a node20 pin will " +
+        "fail once GitHub removes the Node 20 runtime (2026-09-16)",
     );
+
   });
 
   it("labels every pin with the version comment that matches the map", () => {

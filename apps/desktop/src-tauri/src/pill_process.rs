@@ -8,8 +8,12 @@ use tauri::{Emitter, Manager};
 
 use crate::domain::{OverlayPhase, PillWindowSize};
 
+/// `child` is behind a `Mutex` so a spawn that `manage` REJECTS can still kill the process
+/// it started. Nothing reads it -- it exists to keep the child alive for as long as the
+/// managed state exists -- but `Child::kill` needs `&mut Child`, and without the `Mutex` the
+/// only handle is inside a value that `manage` has already taken by value.
 pub struct PillProcess {
-    _child: Child,
+    _child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
 }
 
@@ -105,11 +109,28 @@ pub fn try_spawn_pill(app: &tauri::AppHandle, pill_path: &std::path::Path) -> bo
     };
 
     let process = std::sync::Arc::new(PillProcess {
-        _child: child,
+        _child: Mutex::new(child),
         stdin: Mutex::new(stdin),
     });
 
-    app.manage(process);
+    // `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694),
+    // and `StateManager::set` returns `!already_set` WITHOUT inserting when the type is
+    // already present (tauri-2.10.3/src/state.rs:118). So a rejected value is dropped, and
+    // the result used to be discarded.
+    //
+    // That made a second spawn leak a process: `command.spawn()` had already succeeded,
+    // `wait_for_ready` had returned a reader and a reader thread was about to be started,
+    // and then the new `PillProcess` -- holding the only handle to that `Child` -- was
+    // dropped. `Child`'s `Drop` does not kill, so the overlay ran with nothing owning it
+    // while the app kept writing to the first one. The `Mutex` above is what lets this kill
+    // it.
+    if !app.manage(process.clone()) {
+        if let Ok(mut child) = process._child.lock() {
+            let _ = child.kill();
+        }
+        log::error!("A pill overlay is already managed; killed the duplicate this call spawned");
+        return false;
+    }
 
     start_stdout_reader(app.clone(), reader);
 
