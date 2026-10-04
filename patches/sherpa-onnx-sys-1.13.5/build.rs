@@ -746,19 +746,44 @@ fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
 
     let mut hasher = Sha256::new();
     hasher.update(TREE_DIGEST_LAYOUT_VERSION.to_le_bytes());
+    // 64 KiB at a time, so the peak allocation is a buffer rather than the largest
+    // file in the tree. `read_to_end` avoided that at the cost of holding a whole
+    // `libonnxruntime.a` -- this tree is the unpacked archive, whose `.a` files run
+    // to hundreds of megabytes -- in memory at once.
+    //
+    // The framing needs `len(content)` BEFORE the content, which is why the obvious
+    // streaming version takes the length from `metadata()` and can disagree with
+    // itself if the file changes underneath: the prefix would claim one length and
+    // the stream would carry another, and the digest would be of bytes that never
+    // existed. So the length is VERIFIED rather than assumed. Hash the prefix from
+    // the metadata, stream the content, and compare what was actually hashed against
+    // what the prefix claimed; a mismatch is a hard error, which is the correct
+    // outcome -- the alternative is a digest that silently describes no file.
+    let mut buffer = [0u8; 64 * 1024];
     for (relative, path) in &files {
         let mut file = File::open(path)?;
-        // Read the content in one piece rather than streaming it, so the length
-        // written into the stream is by construction the number of bytes hashed
-        // after it. A two-pass version that took the length from `metadata()` and
-        // then streamed could disagree with itself if the file changed underneath,
-        // which is the one thing the framing above exists to make impossible.
-        let mut content = Vec::new();
-        file.read_to_end(&mut content)?;
+        let claimed = file.metadata()?.len();
         hasher.update((relative.len() as u64).to_le_bytes());
         hasher.update(relative.as_bytes());
-        hasher.update((content.len() as u64).to_le_bytes());
-        hasher.update(&content);
+        hasher.update(claimed.to_le_bytes());
+        let mut hashed = 0u64;
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hashed += read as u64;
+            hasher.update(&buffer[..read]);
+        }
+        if hashed != claimed {
+            return Err(format!(
+                "{} changed while it was being hashed: the framing declared {claimed} \
+                 bytes and {hashed} were read. Refusing to record a digest of bytes \
+                 that were never on disk as a set.",
+                path.display(),
+            )
+            .into());
+        }
     }
 
     Ok(format!("{:x}", hasher.finalize()))
@@ -1778,32 +1803,52 @@ mod tests {
     }
 
     #[test]
-    fn the_pinned_digest_override_is_absent_when_the_file_is_not_built_as_a_test() {
-        // Stated as a property of this compilation rather than asserted about the
-        // non-test one, because there is no non-test compilation of this file in
-        // this process: `cfg(test)` is on, so the override is reachable here and must
-        // be reachable only here. The harness supplies the other half by compiling
-        // the same file as a plain build script and finding the marker absent.
+    fn the_wiring_archive_has_a_production_pin() {
+        // An earlier version of this test was named
+        // `the_pinned_digest_override_is_absent_when_the_file_is_not_built_as_a_test`
+        // and asserted `installed == Some(wiring_archive_name())`. That is a
+        // tautology: `wiring_archive_name()` builds the value on one side, and
+        // `prime_cache` installs `format!("{stem}.tar.bz2")` from
+        // `wiring_archive_name().trim_end_matches(".tar.bz2")` on the other, so both
+        // sides came out of the same function and could not disagree. Neither branch
+        // could fail, and the name promised an absence check the body never made.
+        //
+        // The absence half is not assertable from in here at all, and the reason is
+        // worth writing down rather than papering over. `PINNED_DIGEST_OVERRIDE` is a
+        // single process-wide `Mutex<Option<..>>` shared by every test in this binary
+        // and `pinned_archive_digest` locks it again, and std's `Mutex` is not
+        // reentrant -- so a test holding the lock across the lookup would deadlock,
+        // and one that releases it first races every other test in the harness.
+        // `scripts/ci/sherpa-build-script-tests.mjs` supplies that half properly: it
+        // compiles this file twice and looks for the marker in one binary and not in
+        // the other, which is the only place the absence is observable.
+        //
+        // What IS assertable here, and was silently assumed before, is that the
+        // archive the wiring tests drive has a production pin at all. Delete that
+        // entry and every override path in this file still passes.
         let name = wiring_archive_name();
+        let pinned = ARCHIVE_SHA256_DIGESTS
+            .iter()
+            .find(|(pinned_name, _)| *pinned_name == name.as_str())
+            .map(|(_, digest)| (*digest).to_string());
+        assert!(
+            pinned.is_some(),
+            "the wiring archive {name} has no entry in ARCHIVE_SHA256_DIGESTS, so the \
+             wiring tests pass only because a cfg(test) override supplies a digest"
+        );
+
+        // With no override installed, the lookup must answer with that pin. Read the
+        // slot, drop the lock, and only then call -- never the other way round.
         let installed = PINNED_DIGEST_OVERRIDE
             .lock()
             .expect("override lock")
-            .clone()
-            .map(|(name, _)| name);
+            .clone();
         if installed.is_none() {
-            // No wiring test has installed one yet, which is the ordinary case for a
-            // test that does not need one.
-            assert!(
-                pinned_archive_digest(&name).is_some(),
-                "precondition: the production pin table is consulted when no override \
-                 is installed"
+            assert_eq!(
+                pinned_archive_digest(&name).as_deref(),
+                pinned.as_deref(),
+                "with no override installed the lookup must return the production pin"
             );
-            return;
         }
-        assert_eq!(
-            installed.as_deref(),
-            Some(name.as_str()),
-            "the override is installed only for the archive a wiring test built"
-        );
     }
 }

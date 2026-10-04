@@ -110,11 +110,20 @@ const REQUIRED_TESTS = [
   "tests::a_tree_with_no_recorded_digest_is_not_reused",
   "tests::the_repair_path_re_extracts_instead_of_downloading",
   "tests::a_tree_whose_archive_is_missing_is_not_reused",
-  // The three that keep this harness's premise, and `pinned_archive_digest`'s
+  // The ones that keep this harness's premise, and `pinned_archive_digest`'s
   // production branch, honest.
+  //
+  // The third was `the_pinned_digest_override_is_absent_when_the_file_is_not_built_as_a_test`,
+  // which asserted `installed == Some(wiring_archive_name())` -- a tautology, since
+  // `wiring_archive_name()` produces both sides. It is now
+  // `the_wiring_archive_has_a_production_pin`, which asserts the pin table actually
+  // contains the wiring archive: delete that entry and every override path still
+  // passes. The name is renamed here too, because pinning a name that no longer exists
+  // is what this list exists to prevent -- the harness caught the rename on its first
+  // run against the edited build.rs, which is the whole reason the list is by name.
   "tests::pinned_digests_come_from_the_table_for_every_pinned_archive",
   "tests::the_test_only_digest_override_cannot_reach_a_real_build",
-  "tests::the_pinned_digest_override_is_absent_when_the_file_is_not_built_as_a_test",
+  "tests::the_wiring_archive_has_a_production_pin",
 ];
 
 class HarnessError extends Error {}
@@ -242,8 +251,14 @@ export function findBuildScriptInvocation(verboseOutput) {
  */
 export function rewriteInvocation({ env, argv }, { outBinary, test }) {
   const droppedWithValue = new Set(["--crate-type", "--out-dir", "-o", "--emit"]);
+  // `-C\s*` rather than `-C `: cargo's `-vv` output spells these JOINED
+  // (`-Cincremental=...`), and a rewrite that only recognised the spaced form
+  // passed `-Cincremental=<the non-test fingerprint>` straight through while also
+  // appending `--test` -- the exact collision the comment above this function says
+  // the flag is dropped to avoid. The spaced spelling is kept in the pattern because
+  // a hand-written or older cargo may emit it, and both cost nothing to accept.
   const droppedPrefix =
-    /^(?:--error-format|--json|--emit|-C incremental|-C extra-filename)=/;
+    /^(?:--(?:error-format|json|emit)|-C\s*(?:incremental|extra-filename))=/;
   const out = [];
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -492,21 +507,43 @@ function probeBuildFailureMessage(failures, { seedLock, homes, home }) {
   return lines.join("\n");
 }
 
+/**
+ * The name cargo gives the build-script binary on THIS host.
+ *
+ * Cargo appends the target's executable suffix, so the file on disk is
+ * `build-script-build.exe` on Windows and has no suffix elsewhere. Looking for the
+ * extensionless name alone made `candidates` empty on the `windows-latest` leg of
+ * test-package-rust-transcription, which failed the step after doing all the cargo
+ * work and before running a single test -- a green-looking job on every other
+ * platform and a hard failure on one.
+ */
+export function buildScriptBinaryName(hostPlatform = process.platform) {
+  return hostPlatform === "win32" ? "build-script-build.exe" : "build-script-build";
+}
+
 /** The build script binary cargo actually produced, used for the marker check. */
-function cargoBuildScriptBinary(targetDir) {
+function cargoBuildScriptBinary(targetDir, hostPlatform = process.platform) {
   const buildRoot = join(targetDir, "debug", "build");
+  const names = [buildScriptBinaryName(hostPlatform), "build-script-build"]
+    .filter((name, i, all) => all.indexOf(name) === i);
   const candidates = [];
   if (existsSync(buildRoot)) {
     for (const entry of readdirSync(buildRoot)) {
       if (!entry.startsWith(`${SHERPA_PKG_NAME}-`)) continue;
-      const candidate = join(buildRoot, entry, "build-script-build");
-      if (existsSync(candidate)) candidates.push(candidate);
+      for (const name of names) {
+        const candidate = join(buildRoot, entry, name);
+        if (existsSync(candidate)) {
+          candidates.push(candidate);
+          break;
+        }
+      }
     }
   }
   if (candidates.length !== 1) {
     fail(
-      `expected exactly one ${SHERPA_PKG_NAME} build script under ${buildRoot}, ` +
-        `found ${candidates.length}. Without the binary cargo produced, this ` +
+      `expected exactly one ${SHERPA_PKG_NAME} build script under ${buildRoot} ` +
+        `(looked for ${names.join(" and ")}), found ${candidates.length}. ` +
+        `Without the binary cargo produced, this ` +
         "harness cannot check that the test-only digest override is absent from " +
         "it. Refusing to pass.",
     );
@@ -701,19 +738,40 @@ function escapeForRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-let exitCode = 0;
-let workDir = null;
-try {
-  if (!existsSync(buildRs) || !existsSync(manifest)) {
-    fail(`sherpa-onnx-sys patch crate not found at ${patchDir}`);
+/**
+ * Run the harness. Split out of the module body so importing this file for its
+ * exported helpers does not compile anything.
+ *
+ * That is not a stylistic preference: the four exports below exist only so
+ * `sherpa-build-script-tests.test.mjs` can pin the selection rule, and a test file
+ * that triggers the whole cargo replay the moment it imports the module cannot test
+ * anything. The top-level code used to run on import, so the test could not exist --
+ * which is why these exports were documented as tested while nothing tested them.
+ */
+function main() {
+  let exitCode = 0;
+  let workDir = null;
+  try {
+    if (!existsSync(buildRs) || !existsSync(manifest)) {
+      fail(`sherpa-onnx-sys patch crate not found at ${patchDir}`);
+    }
+    workDir = mkdtempSync(join(tmpdir(), "sherpa-build-script-tests-"));
+    runHarness(workDir);
+  } catch (err) {
+    if (!(err instanceof HarnessError)) throw err;
+    console.error(`::error::${err.message}`);
+    exitCode = 1;
+  } finally {
+    if (workDir) rmSync(workDir, { recursive: true, force: true });
   }
-  workDir = mkdtempSync(join(tmpdir(), "sherpa-build-script-tests-"));
-  runHarness(workDir);
-} catch (err) {
-  if (!(err instanceof HarnessError)) throw err;
-  console.error(`::error::${err.message}`);
-  exitCode = 1;
-} finally {
-  if (workDir) rmSync(workDir, { recursive: true, force: true });
+  return exitCode;
 }
-process.exit(exitCode);
+
+// Only when run as a program. `node --test` imports this file, and importing it
+// must not start a cargo build.
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  process.exit(main());
+}
