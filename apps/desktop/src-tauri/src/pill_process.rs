@@ -1245,19 +1245,26 @@ mod pill_line_log_tests {
     // drifts emitted one record per review click for the whole session.
     #[test]
     fn a_repeated_unknown_action_is_reported_once_and_its_repeats_stay_quiet() {
-        // A token unique to this test, so an earlier assertion on the shared
-        // per-thread set cannot make this pass vacuously. It has to survive a
-        // JSON round trip, since it is interpolated into the probe line.
-        let token = "dedupe-probe-review-7c1e-drifted";
-        let line = format!(r#"{{"type":"review_decision","review_id":"r1","action":"{token}"}}"#);
+        // An ACTION unique to this test, so an earlier assertion on the shared per-thread
+        // set cannot make this pass vacuously. It has to survive a JSON round trip, since it
+        // is interpolated into the probe line.
+        //
+        // Named for what it is. It goes into the `action` field, the dedupe is keyed on it,
+        // and a secret scanner reads a bare `token` bound to a hyphenated pseudo-random
+        // string as a credential -- which is how this line came to be reported as "cryptographic
+        // key material, confidence HIGH" by a gate that is otherwise finding nothing at all
+        // here. The old name was the inaccurate one.
+        let probe_action = "drifted-action-probe-7c1e";
+        let line =
+            format!(r#"{{"type":"review_decision","review_id":"r1","action":"{probe_action}"}}"#);
 
         assert!(
-            note_unreported_pill_review_decision(token),
+            note_unreported_pill_review_decision(probe_action),
             "the first unknown action must be reported"
         );
         for _ in 0..500 {
             assert!(
-                !note_unreported_pill_review_decision(token),
+                !note_unreported_pill_review_decision(probe_action),
                 "a repeated unknown action must not be reported again"
             );
         }
@@ -1265,7 +1272,7 @@ mod pill_line_log_tests {
         // And the dedupe is per distinct token, not a blanket mute: a second
         // failing build with a different vocabulary still gets through.
         assert!(
-            note_unreported_pill_review_decision("dedupe-probe-review-other"),
+            note_unreported_pill_review_decision("other-drifted-action-probe"),
             "a distinct unknown action must still be reported after another has been deduped"
         );
 
