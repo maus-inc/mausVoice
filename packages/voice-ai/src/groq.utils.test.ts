@@ -10,7 +10,11 @@ vi.mock("groq-sdk/index", () => ({
   },
 }));
 
-import { groqGenerateTextResponse } from "./groq.utils";
+import {
+  groqGenerateTextResponse,
+  isGroqAccountScopedError,
+  isGroqPermanentRequestError,
+} from "./groq.utils";
 
 // The redaction rules key on the provider prefix, so the fixture is realistic in the value it produces; it is assembled from two parts so that a secret scanner reading this repository does not report a live key.
 const GROQ_KEY = "gsk" + "_test";
@@ -78,12 +82,44 @@ describe("groqGenerateTextResponse retries", () => {
     expect(createChatCompletion).toHaveBeenCalledTimes(1);
   });
 
-  it("lets a 403 reach the model fallback instead of failing hard", async () => {
-    // Groq has no documented code for a model-scoped 403, and a denial the
-    // second model can still answer is exactly what the fallback is for. The
-    // base test suite covers `isGroqAccountScopedError` returning false here;
-    // this asserts the retry policy follows it.
-    createChatCompletion.mockRejectedValue(reject(403));
+  // This case was misnamed and misasserted. There is NO model-fallback loop in
+  // `groqGenerateTextResponse` -- the only `.map` in it is over `imageUrls` -- so the
+  // `toBeGreaterThan(1)` this replaced was counting `retry()` re-sending the SAME request to
+  // the SAME deployment. A 403 is an organisation-level refusal (the research recorded above
+  // the set in the source is why), so those two extra requests could not succeed and the
+  // measured cost was three chargeable calls per failure.
+  //
+  // The two halves are now asserted separately, because they are separate decisions:
+  //   * do NOT retry it                      -> exactly one call
+  //   * do NOT treat it as account-scoped    -> the fallback chain above still gets its turn
+  // Conflating them is what let the retry happen: the only test covering 403 asserted the
+  // retry, and the only thing keeping the chain reachable was a predicate nothing checked.
+  it.each([403, 422])(
+    "sends a permanent %i exactly once, and leaves it out of the account-scoped set",
+    async (status) => {
+      createChatCompletion.mockRejectedValue(reject(status));
+
+      await expect(
+        groqGenerateTextResponse({
+          apiKey: GROQ_KEY,
+          model: "openai/gpt-oss-20b",
+          prompt: "p",
+        }),
+      ).rejects.toMatchObject({ status });
+
+      // Half one: the same request is not re-sent. Without this the retry loop is back.
+      expect(createChatCompletion).toHaveBeenCalledTimes(1);
+      // Half two: and it is NOT account-scoped, so whatever consults that set still tries the
+      // next model. Asserted explicitly because nothing else in this file covers the 403.
+      expect(isGroqAccountScopedError(reject(status))).toBe(false);
+      expect(isGroqPermanentRequestError(reject(status))).toBe(true);
+    },
+  );
+
+  // The control for the pair above: a transient failure must still be retried, or the
+  // permanent cases would pass for the wrong reason.
+  it("still retries a status that can clear", async () => {
+    createChatCompletion.mockRejectedValue(reject(503));
 
     await expect(
       groqGenerateTextResponse({
@@ -91,8 +127,9 @@ describe("groqGenerateTextResponse retries", () => {
         model: "openai/gpt-oss-20b",
         prompt: "p",
       }),
-    ).rejects.toMatchObject({ status: 403 });
+    ).rejects.toMatchObject({ status: 503 });
     expect(createChatCompletion.mock.calls.length).toBeGreaterThan(1);
+    expect(isGroqPermanentRequestError(reject(503))).toBe(false);
   });
 
   it("still retries a transient failure", async () => {

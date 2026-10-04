@@ -102,6 +102,28 @@ const JSON_SCHEMA_SUPPORTED_MODELS = new Set<string>([
 const ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES = new Set([400, 401, 402]);
 
 /**
+ * True when re-sending the IDENTICAL request cannot succeed, whatever model comes next.
+ *
+ * Deliberately NOT a member of `ACCOUNT_SCOPED_GENERATE_TEXT_STATUSES`. That set also stops
+ * the model-fallback chain, and these two statuses must not stop it -- `groq.utils.test.ts`
+ * pins that a 403 reaches the chain, because that is the case the chain exists for. What is
+ * pointless for a 403 is re-sending the same request to the same deployment, which is a
+ * different decision from which model to try, and it was being made by accident: the
+ * argument recorded above concluded a 403 is organisation-level, and nothing carried that
+ * conclusion into `isRetryable`.
+ *
+ * Measured before this: a 403 cost three requests and a 422 cost three, because
+ * `retryTerminalStatuses: true` hands every 4xx decision to `isRetryable` and neither
+ * status was in either set. 401 correctly cost one.
+ *
+ *   403  organisation-level refusal. Groq's published SDKs give it its own
+ *        `PermissionDeniedError` with no model-scoped variant, and the body carrying
+ *        per-model wording rides on a 404, which already reaches the chain.
+ *   422  an unprocessable payload. The same bytes are unprocessable next time.
+ */
+const GROQ_PERMANENT_REQUEST_STATUSES = new Set([403, 422]);
+
+/**
  * True when the failure is scoped to the account or the request rather than
  * the model, so retrying the same model or falling back to a different one
  * cannot succeed.
@@ -182,6 +204,11 @@ const MODEL_NOT_FOUND_MESSAGE =
  * back, so this is not retried; it is also not account-scoped, so the caller
  * still gets to try a different model before reporting failure.
  */
+export const isGroqPermanentRequestError = (error: unknown): boolean => {
+  const status = readProviderStatus(error);
+  return status !== undefined && GROQ_PERMANENT_REQUEST_STATUSES.has(status);
+};
+
 export const isGroqModelUnavailableError = (error: unknown): boolean => {
   if (error instanceof GroqModelUnavailableError) return true;
   if (readProviderStatus(error) !== 404) return false;
@@ -377,13 +404,17 @@ export const groqGenerateTextResponse = async ({
     // model-scoped 403, so a denial the fallback model can still answer is
     // exactly the case the chain exists for. Opting out of the blanket 4xx
     // rejection hands the whole decision back to `isRetryable` above, which
-    // already refuses the statuses that genuinely cannot clear (400/401/402
-    // account-scoped, and a model id Groq does not serve).
+    // already refuses the statuses that genuinely cannot clear: 400/401/402
+    // account-scoped, a model id Groq does not serve, and -- since `isGroqPermanentRequestError`
+    // -- a 403 or 422, which are permanent for this request without being reasons to give up
+    // on the model chain. That comment was wrong about its own predicate until this commit:
+    // neither status was in any set, so both cost three requests.
     retryTerminalStatuses: true,
     retries: 3,
     isRetryable: (error) =>
       !signal?.aborted &&
       !isGroqAccountScopedError(error) &&
+      !isGroqPermanentRequestError(error) &&
       !isGroqModelUnavailableError(error),
     // An abort during the wait is honoured: `retry` hands the signal to its
     // own wait, so a cancelled caller stops there instead of sitting it out.
