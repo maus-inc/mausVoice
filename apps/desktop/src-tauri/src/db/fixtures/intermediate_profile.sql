@@ -52,11 +52,24 @@ ALTER TABLE api_keys ADD COLUMN transcription_path TEXT;
 INSERT INTO api_keys (id, name, provider, created_at, salt, key_hash, key_ciphertext, transcription_path)
 VALUES ('existing-key', 'Existing key', 'openai', 123, 'fixture-salt', 'fixture-hash', 'fixture-ciphertext', '/custom/transcribe');
 
--- The descriptions must be the names these steps actually shipped under, since
--- retirement matches on (version, description). 075 is `expansion_flags` and 087
--- is `eleven_labs_keyterms_enabled`; `add_tone_structured_fields` and
--- `add_eleven_labs_keyterms_enabled` were never the recorded descriptions and
--- are correctly not retired.
+-- Retirement matches on (version, description), so these two rows have to carry names
+-- that are in `RETIRED_CONSOLIDATION_ERA_VERSIONS` or the open is refused. 075 is
+-- `expansion_flags` and 087 is `eleven_labs_keyterms_enabled`, and both are in the list.
+--
+-- This comment used to claim that `add_tone_structured_fields` and
+-- `add_eleven_labs_keyterms_enabled` "were never the recorded descriptions". They were:
+-- `arena/01a01583-mausvoice` and several sibling branches register
+-- `version: 75, description: "add_tone_structured_fields"`, and two register
+-- `add_eleven_labs_keyterms_enabled` at 087. So those builds' databases are refused by the
+-- open today. That is the deliberate trade the list's own comment describes -- surfacing an
+-- unknown schema beats deleting its ledger row -- and it is a decision about branch builds,
+-- not about the released 0.1.6.
+--
+-- Which is why this fixture cannot stand in for the shipped upgrade. It covers only the two
+-- versions whose names are contested, and none of 071-074, which are the ones the released
+-- 0.1.6 actually wrote and the ones whose names were wrong here until
+-- `a_database_written_by_the_released_0_1_6_upgrades` was added. Green on this fixture was
+-- compatible with the shipped upgrade path being refused outright.
 INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
 VALUES (75, 'expansion_flags', 1, x'deadbeef', 0),
        (87, 'eleven_labs_keyterms_enabled', 1, x'feedface', 0);

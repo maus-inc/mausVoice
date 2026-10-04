@@ -271,6 +271,24 @@ async fn retire_consolidated_migrations(
 /// description is the part that says which migration a row actually recorded,
 /// and it is already stored on every row.
 ///
+/// Two of these keep a leading `add_`, and that is not an inconsistency: it is what the
+/// step was registered under, so it is what ended up on the ledger row. The descriptions
+/// come from the migration filenames with the numeric prefix removed, and
+/// `073_add_pill_reset_monitor_strategy.sql` and `074_add_always_request_admin_on_startup.sql`
+/// both begin `add_`. Writing the list from the filenames and dropping the prefix gave
+/// `pill_reset_monitor_strategy` and `always_request_admin_on_startup`, which match no row
+/// any build ever wrote -- and an unmatched row is not ignored, it refuses the open:
+///
+///     migration 73 is recorded but is not in the current migration set; the database was
+///     likely created by a newer version of the app
+///
+/// That is a shipped-blocker, not a latent one: 073 and 074 are in the released 0.1.6, so
+/// every database that release wrote carries these two names, and this build ships 1-70 plus
+/// 89 and 90, so both versions are unconfigured here and both go down the retirement path.
+/// `a_database_written_by_the_released_0_1_6_upgrades` is the test that failed before this
+/// fix; it takes the four names from the released branch's own registrations rather than
+/// from this list, which is the only way a typo in the list can be caught by anything.
+///
 /// A name that no build shipped is deliberately absent: `075_preserve_audio_on_failure`,
 /// `075_tone_structured_fields` and `077_spoken_commands_and_hallucination` appear
 /// only on long-lived branches and the 069 header lists them as never released, so a
@@ -288,8 +306,8 @@ async fn retire_consolidated_migrations(
 const RETIRED_CONSOLIDATION_ERA_VERSIONS: &[(i64, &str)] = &[
     (71, "remove_cloud_modes"),
     (72, "drop_is_enterprise"),
-    (73, "pill_reset_monitor_strategy"),
-    (74, "always_request_admin_on_startup"),
+    (73, "add_pill_reset_monitor_strategy"),
+    (74, "add_always_request_admin_on_startup"),
     (75, "expansion_flags"),
     (76, "api_key_transcription_path"),
     (77, "pill_placement_and_hands_free_delay"),
@@ -1768,6 +1786,67 @@ mod tests {
             &temp.dir,
             "a checksum disagreement is a repairable disagreement about history, not corruption",
         );
+    }
+
+    /// The upgrade path for a database the released 0.1.6 actually wrote.
+    ///
+    /// The names below are transcribed from `0.1.6`'s own migration registrations, NOT from
+    /// `RETIRED_CONSOLIDATION_ERA_VERSIONS` -- transcribing them from the list would make
+    /// this agree with any typo in it, which is how `073` and `074` shipped names with a
+    /// leading `add_` and a list without it, and the retirement tests stayed green because
+    /// the fixture they used covered only 075 and 087.
+    ///
+    /// The failure this covers is not subtle and not survivable: the open is refused before
+    /// any migration runs, and the refusal path deliberately does not quarantine, so the
+    /// file stays where it is and the app reports it cannot open the database.
+    #[tokio::test]
+    async fn a_database_written_by_the_released_0_1_6_upgrades() {
+        for (version, description) in [
+            (71_i64, "remove_cloud_modes"),
+            (72_i64, "drop_is_enterprise"),
+            (73_i64, "add_pill_reset_monitor_strategy"),
+            (74_i64, "add_always_request_admin_on_startup"),
+        ] {
+            let temp = TempDb::new();
+            let path = &temp.path;
+            let pool = try_open(path).await.expect("initial migrate");
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                 (version, description, success, checksum, execution_time)
+                 VALUES (?1, ?2, true, x'deadbeef', 0)",
+            )
+            .bind(version)
+            .bind(description)
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+
+            let opened = open_app_database(path).await.unwrap_or_else(|error| {
+                panic!(
+                    "a database recording {version} as {description:?} is one the released \
+                     0.1.6 wrote, so this build must open it; got: {error}"
+                )
+            });
+
+            // Retired, not left behind: the row is deleted rather than deleted-along-with,
+            // so a later merge from one of the colliding branches cannot re-run its step.
+            let survivors: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?1")
+                    .bind(version)
+                    .fetch_one(&opened)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                survivors, 0,
+                "version {version} was retired from the set but its row survived"
+            );
+            opened.close().await;
+            assert_not_quarantined(
+                &temp.dir,
+                "a folded consolidation-era row is not damage and must never quarantine",
+            );
+        }
     }
 
     #[tokio::test]
