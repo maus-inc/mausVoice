@@ -1543,15 +1543,13 @@ mod pill_publish_tests {
             // in the control test. Two of them can panic while holding it -- the `try_wait`
             // inside `has_exited` and the `kill` in that test -- and those two are the only
             // ones that can poison this mutex. This one cannot, because `kill()`'s `Result`
-            // is discarded rather than unwrapped. `has_exited` carries the same
-            // enumeration, since it is the other site that has to recover from the same
-            // poison.
+            // is discarded rather than unwrapped.
             //
-            // Both of those `expect`s are on `try_wait` and `kill`, never on the lock, and
-            // that is the distinction worth keeping straight: `Mutex::lock` returning `Err` is
-            // how a poison is OBSERVED, so an `expect` on the lock could never have caused one.
-            // So recovering from the poison is the difference between this guard reaping on
-            // the panicking path, which is the path that needs it, and not.
+            // Recovering from the poison is the difference between this guard reaping on the
+            // panicking path, which is the path that needs it, and not. The two sites that
+            // recover are unwrapping `try_wait` and `kill`, never the lock, and that is the
+            // distinction worth keeping straight: `Mutex::lock` returning `Err` is how a
+            // poison is OBSERVED, so an `expect` on the lock could never have caused one.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
