@@ -7,6 +7,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, ffi::OsString};
 
+// Only the test-only pinned-digest override and the test harness's environment
+// lock need this, and neither is compiled into the build script cargo runs, so
+// importing it unconditionally would warn on every real build.
+#[cfg(test)]
+use std::sync::Mutex;
+
 use bzip2::read::BzDecoder;
 use sha2::{Digest, Sha256};
 use tar::Archive;
@@ -196,13 +202,31 @@ fn download_prebuilt_libs(
         None
     };
 
-    // Verifying the archive is necessary but not sufficient, and that gap is what
-    // this closes: the pinned digest covers the archive, while the linker reads
-    // the *extracted* `.so`/`.a` files. A local process that rewrites a file under
-    // `extracted_dir` after extraction leaves the archive byte-identical, so the
-    // pinned digest still passes and the modified content gets linked. The
-    // extracted tree therefore carries a digest of its own, recorded beside it,
-    // and the cache is reused only while that still matches.
+    // Verifying the archive is necessary but not sufficient. The pinned digest
+    // covers the archive; the linker reads the *extracted* `.so`/`.a` files. A
+    // process that rewrites a library under `extracted_dir` after extraction leaves
+    // the archive byte-identical, so the pinned digest still passes and the
+    // modified content gets linked. The extracted tree therefore carries a digest
+    // of its own, recorded beside it, and the cache is reused only while that still
+    // matches.
+    //
+    // Stating the limit of that, because the previous wording here claimed more
+    // than it had. The recorded digest is a sibling of the tree in the same
+    // `cache_root`, with nothing separating them: no permission hardening, no
+    // separate directory, nothing outside what the tree's own writer can reach. So
+    // a process able to rewrite a library can also rewrite the digest beside it to
+    // match, and then the tree verifies -- the check is not a boundary against a
+    // local writer with access to the cache directory. Deleting the digest is the
+    // lesser case: it reads as unverifiable rather than as a match, so it costs a
+    // re-extract and nothing else.
+    //
+    // What it does buy is real, and is what the recorded digest is for: the tree is
+    // unchanged across incidental alteration -- an interrupted or partial unpack, a
+    // tree left behind by a different archive, bit rot, another build step touching
+    // it -- and it is checked against a process that can write the tree but not the
+    // file beside it. Hardening against a same-uid writer would need the expected
+    // digest derived from the verified archive rather than read back from the
+    // cache, which is a larger change than this one.
     let tree_digest_path = cache_root.join(format!("{archive_stem}.extracted.sha256"));
     if let Some(dir) = cached_dir {
         if archive_path.is_file() {
@@ -612,18 +636,69 @@ fn copy_windows_runtime_dlls(lib_dir: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
+/// Framing tag prefixed to the hashed stream.
+///
+/// A digest recorded under one framing must never be read as a match under
+/// another, and two framings can in principle hash some tree identically. The tag
+/// removes the question by making the framings disjoint at the first byte. Bump it
+/// whenever the layout in `digest_extracted_tree` changes: every existing cache
+/// then reads as unverifiable and is re-extracted once, which is the same path a
+/// tampered tree already takes, so the cost is one redundant unpack per machine.
+const TREE_DIGEST_LAYOUT_VERSION: u64 = 1;
+
 /// Digests the extracted tree, so a cache hit can be checked against the content
 /// the linker will actually read rather than only against the archive it came
 /// from.
 ///
-/// Entries are hashed in sorted relative-path order with the path mixed in, so the
-/// digest is stable across runs and independent of the order the filesystem
-/// returns. Hashing the path means a renamed or added file changes the digest;
-/// hashing the contents means a rewritten one does too.
+/// Entries are hashed in sorted relative-path order, so the digest is stable across
+/// runs and independent of the order the filesystem returns. Hashing the path means
+/// a renamed or added file changes the digest; hashing the contents means a
+/// rewritten one does too.
 ///
-/// File mode is deliberately not hashed. It is not part of what the linker reads
-/// here, and hashing it would make the recorded digest platform-dependent for no
-/// gain.
+/// # Framing, and why every field is length-delimited
+///
+/// Each entry contributes its path length, its path, its content length and its
+/// content, in that order, after a `TREE_DIGEST_LAYOUT_VERSION` tag. Both lengths
+/// are fixed-width little-endian `u64` counts of the bytes that follow them.
+///
+/// What that buys is a stream with exactly one parse: a reader can step through it
+/// entry by entry and always know where each path ends and where each file's
+/// content ends. Two different sequences of (path, content) pairs therefore cannot
+/// produce the same byte stream.
+///
+/// This is not a property the framing used to have, and the difference is not
+/// cosmetic. It hashed `path || content || len(path)`: the length trailed the very
+/// content it was supposed to delimit, and the content field was unbounded, so
+/// nothing stopped the stream being re-cut. A three-file tree and a *one*-file
+/// tree whose single file held the middle of the three-file stream were the same
+/// byte stream and so had the same SHA-256 -- with neither of the other two files
+/// present. Every suffix merge collided, not just the one-file case. Moving the
+/// path length in front of the path fixes none of it: `len(path) || path ||
+/// content` is re-parsable for exactly the same reason, and collides the same way.
+/// A length only delimits if it delimits *something*; the unbounded content field
+/// is what made both layouts ambiguous, so the content length is not optional.
+///
+/// The path length is here for the same reason, not because the content length
+/// already covered it. Dropping it gives `path || len(content) || content`, whose
+/// stream is ambiguous in the same abstract sense -- one entry's bytes can be read
+/// as the next entry's path -- and it is worth being precise about how far that
+/// goes, because the two framings are not equally weak. Such a forgery needs the
+/// absorbing file's *name* to contain the 8-byte length field of an entry it
+/// swallowed, and for any real length those bytes include NUL, which no POSIX
+/// filesystem permits in a filename. So that ambiguity cannot be reached through a
+/// tree that was actually extracted. It is still the wrong shape to rely on: it is
+/// safe only because of a filesystem restriction this function does not enforce and
+/// cannot check, it would stop holding for any store that permits such a name, and
+/// the path length costs eight bytes. Delimiting both fields means the property
+/// comes from the format instead of from the platform.
+///
+/// What the framing still does not give: an injective stream says the digest is a
+/// faithful statement about the (path, content) pairs the walk yields, and nothing
+/// more. File mode is deliberately not hashed -- it is not what the linker reads
+/// here, and hashing it would make the digest platform-dependent for no gain. An
+/// entry that is not a plain file is not hashed at all (see `walk` below). And
+/// none of this is a claim about who may write to the tree or to the file the
+/// digest is recorded in; `verify_extracted_tree` is where that boundary is stated.
 fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
     use std::io::Read as _;
 
@@ -644,9 +719,23 @@ fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
                     .replace('\\', "/");
                 files.push((relative, path));
             }
-            // Anything that is neither a plain file nor a directory (a symlink, a
-            // socket) is skipped rather than followed, so `read_dir` cannot walk
-            // outside the cache root through a symlinked directory.
+            // An entry that is neither a plain file nor a directory -- a symlink, a
+            // socket -- is skipped rather than followed. Two different things follow
+            // from that, and only one of them is a safety property.
+            //
+            // For *traversal* it is the right behaviour, and is what this comment
+            // used to be about: the recursion only ever descends into real
+            // directories, so a symlink planted in the tree cannot lead the walk out
+            // of the cache root and have whatever it points at hashed as though it
+            // were part of the tree.
+            //
+            // For *integrity* it is a limit, not a safeguard, and the older wording
+            // was silent about it. A symlink is not hashed at all, so adding one to
+            // an otherwise untouched tree leaves the digest unchanged: such a tree
+            // verifies. That is narrower than "the digest covers everything under
+            // the tree", and the linker does follow a symlink planted where it
+            // expects a library. Closing it means hashing the link target too, which
+            // this does not do.
         }
         Ok(())
     }
@@ -656,20 +745,20 @@ fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut hasher = Sha256::new();
+    hasher.update(TREE_DIGEST_LAYOUT_VERSION.to_le_bytes());
     for (relative, path) in &files {
-        hasher.update(relative.as_bytes());
         let mut file = File::open(path)?;
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-        // Length-delimited, so two different trees cannot concatenate to the same
-        // byte stream and hash alike.
+        // Read the content in one piece rather than streaming it, so the length
+        // written into the stream is by construction the number of bytes hashed
+        // after it. A two-pass version that took the length from `metadata()` and
+        // then streamed could disagree with itself if the file changed underneath,
+        // which is the one thing the framing above exists to make impossible.
+        let mut content = Vec::new();
+        file.read_to_end(&mut content)?;
         hasher.update((relative.len() as u64).to_le_bytes());
+        hasher.update(relative.as_bytes());
+        hasher.update((content.len() as u64).to_le_bytes());
+        hasher.update(&content);
     }
 
     Ok(format!("{:x}", hasher.finalize()))
@@ -677,6 +766,10 @@ fn digest_extracted_tree(root: &Path) -> Result<String, DynError> {
 
 /// Writes the tree's digest beside it, so a later build can tell an untouched
 /// cache from an altered one.
+///
+/// "Beside it" is also the limit: the digest is only as trustworthy as the directory
+/// holding it. See the block comment in `download_prebuilt_libs` for what a
+/// recorded digest does and does not defend against.
 fn record_extracted_tree_digest(root: &Path, digest_path: &Path) -> Result<(), DynError> {
     let digest = digest_extracted_tree(root)?;
     write_atomic(&format!("{digest}\n"), digest_path)?;
@@ -695,6 +788,11 @@ fn record_extracted_tree_digest(root: &Path, digest_path: &Path) -> Result<(), D
 /// which reproduces the official tree with no download. A hard failure here would
 /// instead make the first build after this check was introduced fail permanently,
 /// since no cache carries a recorded digest until one build has written one.
+///
+/// `Ok(true)` means the tree hashes to the recorded digest and nothing more. It is
+/// not a statement that the tree is safe to link against an adversary: the recorded
+/// digest lives beside the tree and can be rewritten by whoever can rewrite it. See
+/// `download_prebuilt_libs`.
 fn verify_extracted_tree(root: &Path, digest_path: &Path) -> Result<bool, DynError> {
     if !root.is_dir() {
         return Ok(false);
@@ -743,18 +841,62 @@ fn write_atomic(contents: &str, dest: &Path) -> Result<(), DynError> {
     Ok(())
 }
 
+/// Marker string that exists only in a `cfg(test)` build of this file.
+///
+/// `scripts/ci/sherpa-build-script-tests.mjs` compiles this file twice — once the
+/// way cargo does, and once with `--test` — and asserts that this literal is
+/// present in the test build's binary and absent from the build script cargo
+/// actually runs. That is how the statement "the override below cannot reach a
+/// real build" is checked rather than merely asserted in a comment.
+#[cfg(test)]
+const PINNED_DIGEST_OVERRIDE_MARKER: &str = "sherpa-pinned-digest-override-cfg-test-only";
+
+/// One `(archive name, digest)` pair a test has asked `pinned_archive_digest` to
+/// accept, or `None` when no test has.
+///
+/// `cfg(test)` because cargo builds a build script as an ordinary binary and never
+/// under `--test`, so this static is not compiled into the artifact any build
+/// runs — see `PINNED_DIGEST_OVERRIDE_MARKER` and the harness that checks it.
+/// `Mutex` because the test harness runs tests on several threads in one process
+/// and this is process-wide state.
+#[cfg(test)]
+static PINNED_DIGEST_OVERRIDE: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+/// The pinned SHA-256 digest for `archive_name`, or `None` when that name is not
+/// pinned at all.
+///
+/// Split out of `verify_archive_digest` so the one place a digest is looked up can
+/// be the one place a test supplies one. `verify_archive_digest` refuses any
+/// archive it cannot match against a pin, and a test cannot produce a 22 MB
+/// official release tarball byte-for-byte, so the wiring tests below — which drive
+/// `download_prebuilt_libs` end to end and need the archive check to genuinely
+/// pass — would otherwise be unable to reach the code under test at all.
+fn pinned_archive_digest(archive_name: &str) -> Option<String> {
+    #[cfg(test)]
+    {
+        if let Ok(guard) = PINNED_DIGEST_OVERRIDE.lock() {
+            if let Some((name, digest)) = guard.as_ref() {
+                if name == archive_name {
+                    return Some(digest.clone());
+                }
+            }
+        }
+    }
+
+    ARCHIVE_SHA256_DIGESTS
+        .iter()
+        .find(|(name, _)| *name == archive_name)
+        .map(|(_, digest)| (*digest).to_string())
+}
+
 fn verify_archive_digest(archive_path: &Path, archive_name: &str) -> Result<(), DynError> {
     use std::io::Read;
 
-    let expected_digest = ARCHIVE_SHA256_DIGESTS
-        .iter()
-        .find(|(name, _)| *name == archive_name)
-        .map(|(_, digest)| *digest)
-        .ok_or_else(|| {
-            format!(
-                "No pinned SHA-256 digest found for archive '{archive_name}'. Refusing to unpack unverified asset."
-            )
-        })?;
+    let expected_digest = pinned_archive_digest(archive_name).ok_or_else(|| {
+        format!(
+            "No pinned SHA-256 digest found for archive '{archive_name}'. Refusing to unpack unverified asset."
+        )
+    })?;
 
     let mut file = File::open(archive_path)?;
     let mut hasher = Sha256::new();
@@ -768,7 +910,7 @@ fn verify_archive_digest(archive_path: &Path, archive_name: &str) -> Result<(), 
     }
     let actual_digest = format!("{:x}", hasher.finalize());
 
-    if !actual_digest.eq_ignore_ascii_case(expected_digest) {
+    if !actual_digest.eq_ignore_ascii_case(&expected_digest) {
         let _ = fs::remove_file(archive_path);
         return Err(format!(
             "SHA-256 verification failed for {}: expected {}, got {}. The file has been deleted.",
@@ -998,6 +1140,670 @@ mod tests {
         assert!(
             verify_extracted_tree(&tree, &digest_path).expect("verify"),
             "hex comparison must be case-insensitive"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // The tests above exercise the pure helpers. They cannot see the
+    // decision this whole change exists to make: whether a cache hit is
+    // taken at all. Restoring the original behaviour -- reusing an
+    // extracted tree without consulting `verify_extracted_tree` -- leaves
+    // every one of them green, because none of them calls
+    // `download_prebuilt_libs`. The tests below do.
+    // ------------------------------------------------------------------
+
+    /// The target the wiring tests drive. Linux/x64 static is the combination
+    /// `rust_transcription` actually builds, and it is the one whose archive the
+    /// pinned table holds.
+    const WIRING_OS: &str = "linux";
+    const WIRING_ARCH: &str = "x86_64";
+
+    /// Serialises the wiring tests against each other.
+    ///
+    /// They set process-wide environment variables, because the cache root and
+    /// the archive source are the only inputs `download_prebuilt_libs` takes and it
+    /// reads both from the environment. The test harness runs tests on several
+    /// threads in one process, so without this two of these tests could interleave
+    /// their environment and read each other's cache. The pure-helper tests above
+    /// touch no environment and so do not take it.
+    static WIRING_ENV: Mutex<()> = Mutex::new(());
+
+    /// The environment variables `download_prebuilt_libs` and its callees read.
+    /// All of them are cleared and then set, so a value inherited from whatever
+    /// invoked the test binary cannot redirect a cache.
+    const WIRING_ENV_VARS: &[&str] = &[
+        "OUT_DIR",
+        "CARGO_TARGET_DIR",
+        "SHERPA_ONNX_ARCHIVE_DIR",
+        "SHERPA_ONNX_LIB_DIR",
+        "DOCS_RS",
+    ];
+
+    /// Owns the environment `download_prebuilt_libs` reads, for one test.
+    struct WiringEnv {
+        cache_root: PathBuf,
+        previous: Vec<(String, Option<OsString>)>,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl WiringEnv {
+        fn new(scratch: &Scratch, tag: &str) -> Self {
+            // `unwrap_or_else` rather than `unwrap`: a test that panicked while
+            // holding the lock poisons it, and the tests that follow must still run
+            // and report their own failures rather than dying on someone else's.
+            let guard = WIRING_ENV.lock().unwrap_or_else(|err| err.into_inner());
+
+            let root = scratch.path().join(tag);
+            // `OUT_DIR` is never read on this path -- `target_dir_from_out_dir`
+            // prefers `CARGO_TARGET_DIR` -- but `download_prebuilt_libs` calls
+            // `env::var("OUT_DIR")` unconditionally, so it has to be present.
+            let out_dir = root.join("debug/build/sherpa-onnx-sys-test/out");
+            fs::create_dir_all(&out_dir).expect("create out dir");
+            // Empty on purpose: any attempt to source the archive from here fails
+            // with "does not contain expected archive" instead of quietly succeeding.
+            let archive_dir = root.join("archive-dir");
+            fs::create_dir_all(&archive_dir).expect("create archive dir");
+
+            let previous: Vec<(String, Option<OsString>)> = WIRING_ENV_VARS
+                .iter()
+                .map(|name| ((*name).to_string(), env::var_os(name)))
+                .collect();
+            for name in WIRING_ENV_VARS {
+                env::remove_var(name);
+            }
+            env::set_var("OUT_DIR", &out_dir);
+            env::set_var("CARGO_TARGET_DIR", &root);
+            env::set_var("SHERPA_ONNX_ARCHIVE_DIR", &archive_dir);
+
+            WiringEnv {
+                cache_root: root.join("sherpa-onnx-prebuilt"),
+                previous,
+                _guard: guard,
+            }
+        }
+
+        /// `cache_root/<stem>`, where `stem` is the archive name without its
+        /// extension: the directory `download_prebuilt_libs` extracts into.
+        fn extracted_dir(&self, stem: &str) -> PathBuf {
+            self.cache_root.join(stem)
+        }
+
+        /// The path of the tree digest recorded beside the extracted tree.
+        fn tree_digest_path(&self, stem: &str) -> PathBuf {
+            self.cache_root.join(format!("{stem}.extracted.sha256"))
+        }
+
+        fn archive_path(&self, stem: &str) -> PathBuf {
+            self.cache_root.join(format!("{stem}.tar.bz2"))
+        }
+
+        /// The `lib/` directory of the extracted tree, which is what a build script
+        /// caller goes on to link against.
+        fn lib_dir(&self, stem: &str) -> PathBuf {
+            self.extracted_dir(stem).join("lib")
+        }
+    }
+
+    impl Drop for WiringEnv {
+        fn drop(&mut self) {
+            // The digest override is process-wide too, and test order is not
+            // guaranteed, so an override left behind by one wiring test would decide
+            // whether a later test sees the pinned table or the test's stand-in for
+            // it. Cleared here, under the same lock held for the whole test, so the
+            // next one starts from the production lookup.
+            let _ = PINNED_DIGEST_OVERRIDE
+                .lock()
+                .expect("pinned digest override lock")
+                .take();
+            // Restored even on panic: the harness shares one process across every
+            // test in this binary, and a leaked `OUT_DIR` or
+            // `SHERPA_ONNX_ARCHIVE_DIR` would silently redirect some other test's
+            // cache.
+            for (name, value) in &self.previous {
+                match value {
+                    Some(value) => env::set_var(name, value),
+                    None => env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    /// The libraries a synthetic prebuilt archive contains, named and shaped like
+    /// the ones the linker reads out of a real extracted tree.
+    const SYNTHETIC_LIBS: &[(&str, &[u8])] = &[
+        ("libsherpa-onnx-c-api.a", b"official c-api bytes"),
+        ("libsherpa-onnx-core.a", b"official core bytes"),
+    ];
+
+    /// What a tampered extracted tree looks like: the archive's own libraries, with a
+    /// payload substituted for one of them. A function rather than a `const` only so
+    /// the name reads as the thing it is at each call site.
+    fn tampered_core_bytes() -> &'static [u8] {
+        b"core bytes, plus whatever a local process wrote"
+    }
+
+    /// Builds a small `.tar.bz2` with the layout of a real prebuilt archive:
+    /// `<stem>/lib/*.a`, which is what `download_prebuilt_libs` unpacks and links.
+    ///
+    /// Written with the same `bzip2` and `tar` crates the build script uses to read
+    /// one, rather than assembled by hand, so the fixture exercises the real unpack
+    /// path. Returns the archive's SHA-256.
+    fn write_synthetic_archive(dest: &Path, stem: &str) -> String {
+        fs::create_dir_all(dest.parent().expect("archive has a parent")).expect("create parent");
+        let file = File::create(dest).expect("create archive");
+        let encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::best());
+        let mut builder = tar::Builder::new(encoder);
+        for &(name, contents) in SYNTHETIC_LIBS {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, format!("{stem}/lib/{name}"), contents)
+                .expect("append entry");
+        }
+        let encoder = builder.into_inner().expect("finish tar");
+        encoder.finish().expect("finish bzip2");
+
+        sha256_hex(dest)
+    }
+
+    /// The archive name and directory name `download_prebuilt_libs` will use for
+    /// this target, taken from the production mapping rather than written out, so a
+    /// change to `archive_name` cannot leave these tests building a different
+    /// archive than a real build would.
+    fn wiring_archive_name() -> String {
+        archive_name(LinkMode::Static, WIRING_OS, WIRING_ARCH).expect("archive name")
+    }
+
+    fn wiring_stem() -> String {
+        wiring_archive_name()
+            .trim_end_matches(".tar.bz2")
+            .to_string()
+    }
+
+    /// Puts a verified archive in the cache the way a previous build would have
+    /// left it, and installs its digest as the pinned one.
+    ///
+    /// The override is the single thing these tests take on trust. `verify_archive_digest`
+    /// itself runs unmodified; what a real build would compare against a pin, these
+    /// compare against the archive's actual digest, so a mutation that changes the
+    /// comparison, the deletion-on-mismatch, or the lookup still turns them red.
+    fn prime_cache(env: &WiringEnv, stem: &str) -> PathBuf {
+        let archive_path = env.archive_path(stem);
+        let digest = write_synthetic_archive(&archive_path, stem);
+        PINNED_DIGEST_OVERRIDE
+            .lock()
+            .expect("pinned digest override lock")
+            .replace((format!("{stem}.tar.bz2"), digest));
+        archive_path
+    }
+
+    fn sha256_hex(path: &Path) -> String {
+        use std::io::Read as _;
+
+        let mut file = File::open(path).expect("open for digest");
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buffer).expect("read for digest");
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+        format!("{:x}", hasher.finalize())
+    }
+
+    fn read_lib(lib_dir: &Path, name: &str) -> Vec<u8> {
+        fs::read(lib_dir.join(name)).expect("read library")
+    }
+
+    fn run_wiring() -> Result<PathBuf, DynError> {
+        download_prebuilt_libs(LinkMode::Static, WIRING_OS, WIRING_ARCH)
+    }
+
+    #[test]
+    fn a_tampered_extracted_tree_is_not_reused() {
+        // The regression this change exists to prevent. The archive still matches its
+        // pinned digest, so only the tree digest can notice that the file the linker
+        // will read has been rewritten underneath the build.
+        let scratch = Scratch::new("wiring-tamper");
+        let env = WiringEnv::new(&scratch, "cache");
+        let stem = wiring_stem();
+        let archive_path = prime_cache(&env, &stem);
+
+        // First build: archive present, nothing extracted. Extracts and records.
+        let lib_dir = run_wiring().expect("cold cache must extract");
+        assert_eq!(lib_dir, env.lib_dir(&stem), "unexpected lib dir");
+        assert_eq!(
+            read_lib(&lib_dir, "libsherpa-onnx-core.a"),
+            SYNTHETIC_LIBS[1].1,
+            "precondition: the cold extraction unpacked the archive's own library"
+        );
+        assert!(
+            env.tree_digest_path(&stem).is_file(),
+            "precondition: a successful extraction records the tree digest"
+        );
+
+        // Tamper with the extracted tree, leaving the archive byte-identical -- which
+        // is the whole difficulty: the pinned archive digest still passes.
+        fs::write(lib_dir.join("libsherpa-onnx-core.a"), tampered_core_bytes())
+            .expect("tamper with the extracted library");
+        assert_eq!(
+            read_lib(&lib_dir, "libsherpa-onnx-core.a"),
+            tampered_core_bytes(),
+            "precondition: the extracted library now differs from the archive's"
+        );
+        verify_archive_digest(&archive_path, &wiring_archive_name()).expect(
+            "precondition: the archive still passes its own digest check, so only the \
+             tree digest can reject this cache",
+        );
+
+        // Second build: must not link the tampered library.
+        let returned = run_wiring().expect("a tampered tree must be repaired, not fatal");
+
+        assert_ne!(
+            read_lib(&returned, "libsherpa-onnx-core.a"),
+            tampered_core_bytes(),
+            "the tampered library was handed back to be linked: the cache hit \
+             ignored the recorded tree digest"
+        );
+        assert_eq!(
+            read_lib(&returned, "libsherpa-onnx-core.a"),
+            SYNTHETIC_LIBS[1].1,
+            "the repair must restore the archive's own library"
+        );
+    }
+
+    #[test]
+    fn a_tree_with_no_recorded_digest_is_not_reused() {
+        // Every cache predating this check is in exactly this state: an extracted
+        // tree, a verified archive beside it, and nothing recording what the tree
+        // should look like. Reusing that silently is what would link an
+        // unverifiable directory on the first build after the change shipped.
+        let scratch = Scratch::new("wiring-norecord");
+        let env = WiringEnv::new(&scratch, "cache");
+        let stem = wiring_stem();
+        prime_cache(&env, &stem);
+
+        let lib_dir = env.lib_dir(&stem);
+        fs::create_dir_all(&lib_dir).expect("create lib dir");
+        fs::write(lib_dir.join("libsherpa-onnx-core.a"), tampered_core_bytes())
+            .expect("seed a tree from an older build");
+        assert!(
+            !env.tree_digest_path(&stem).exists(),
+            "precondition: no digest is recorded for this tree"
+        );
+
+        let returned = run_wiring().expect("an unrecorded tree must be re-extracted, not fatal");
+
+        assert_ne!(
+            read_lib(&returned, "libsherpa-onnx-core.a"),
+            tampered_core_bytes(),
+            "the unrecorded tree was handed back to be linked: a cache hit with no \
+             recorded digest was treated as verified"
+        );
+        assert!(
+            env.tree_digest_path(&stem).is_file(),
+            "the re-extracted tree must have had its digest recorded, or the next \
+             build would have to re-extract it again"
+        );
+        assert!(
+            verify_extracted_tree(&env.extracted_dir(&stem), &env.tree_digest_path(&stem))
+                .expect("verify"),
+            "the tree the build went on to link must verify against its own digest"
+        );
+    }
+
+    #[test]
+    fn the_repair_path_re_extracts_instead_of_downloading() {
+        // The repair must come from the archive already sitting in the cache, which
+        // was just verified against its digest: re-downloading 22 MB to fix a local
+        // tamper would be both slower and a second thing that can fail.
+        //
+        // "Instead of downloading" is asserted by the tripwire rather than by
+        // inspection. `SHERPA_ONNX_ARCHIVE_DIR` is an empty directory for every
+        // wiring test, so the copy-from-directory branch -- the only branch left
+        // once the archive is present -- cannot succeed; and with that variable set
+        // the download branch is unreachable. A repair that returned `Ok` therefore
+        // had to read the cached archive.
+        let scratch = Scratch::new("wiring-repair");
+        let env = WiringEnv::new(&scratch, "cache");
+        let stem = wiring_stem();
+        let archive_path = prime_cache(&env, &stem);
+
+        let lib_dir = run_wiring().expect("cold cache must extract");
+        fs::write(lib_dir.join("libsherpa-onnx-core.a"), tampered_core_bytes())
+            .expect("tamper with the extracted library");
+        let archive_digest_before = sha256_hex(&archive_path);
+
+        let returned = run_wiring().expect("repair from the cached archive");
+
+        assert_eq!(
+            read_lib(&returned, "libsherpa-onnx-core.a"),
+            SYNTHETIC_LIBS[1].1,
+            "the repair must unpack the archive's own library"
+        );
+        assert_eq!(
+            sha256_hex(&archive_path),
+            archive_digest_before,
+            "the repair must not have rewritten the archive in the cache"
+        );
+        assert!(
+            verify_extracted_tree(&env.extracted_dir(&stem), &env.tree_digest_path(&stem))
+                .expect("verify"),
+            "the repaired tree must verify against its recorded digest"
+        );
+    }
+
+    #[test]
+    fn a_tree_whose_archive_is_missing_is_not_reused() {
+        // The other unverifiable-cache state: the extracted tree is present but the
+        // archive it came from has gone, so nothing about it traces back to a pinned
+        // digest even if a digest for it is recorded.
+        let scratch = Scratch::new("wiring-noarchive");
+        let env = WiringEnv::new(&scratch, "cache");
+        let stem = wiring_stem();
+
+        let lib_dir = env.lib_dir(&stem);
+        fs::create_dir_all(&lib_dir).expect("create lib dir");
+        fs::write(lib_dir.join("libsherpa-onnx-core.a"), tampered_core_bytes())
+            .expect("seed a tree");
+        // A recorded digest that matches, so the only thing left to reject this tree
+        // is the archive being gone.
+        record_extracted_tree_digest(&env.extracted_dir(&stem), &env.tree_digest_path(&stem))
+            .expect("record");
+        assert!(
+            !env.archive_path(&stem).exists(),
+            "precondition: there is no archive"
+        );
+        assert!(
+            verify_extracted_tree(&env.extracted_dir(&stem), &env.tree_digest_path(&stem))
+                .expect("verify"),
+            "precondition: the tree verifies against its own recorded digest"
+        );
+
+        // No archive and an empty `SHERPA_ONNX_ARCHIVE_DIR`, so the honest outcome is
+        // a failure to find the archive -- not a directory to link.
+        let err = run_wiring().expect_err("an unverifiable tree must not be linked");
+        let message = err.to_string();
+        assert!(
+            message.contains("does not contain expected archive"),
+            "unexpected failure reason: {message}"
+        );
+        assert!(
+            !env.extracted_dir(&stem).exists(),
+            "the unverifiable tree must be discarded, not left for the next build"
+        );
+        assert!(
+            !env.tree_digest_path(&stem).exists(),
+            "the digest describing a discarded tree must go with it, or a later \
+             extraction that differed would be re-extracted forever"
+        );
+    }
+
+    /// Moving a byte across a file boundary must change the digest.
+    ///
+    /// This is the layout-independent form of the collision test below, and it is
+    /// the one that matters most. Every way this digest has been wrong came from the
+    /// same root: the hashed stream did not record *where one file's content ends
+    /// and the next entry begins*, so the same bytes could be re-cut into a
+    /// different set of files. `splice_suffix` checks that against one historical
+    /// framing; this checks the property itself, and so survives the framing being
+    /// changed again.
+    ///
+    /// Each case holds the total byte content of the tree fixed and moves one byte
+    /// across a boundary between two files -- `a` gains what `b` loses, and `b`
+    /// shrinks by one. The two trees contain the same bytes in the same order. The
+    /// only thing that differs is where the split falls, so any layout that fails
+    /// to encode the split gives them the same digest, which is precisely a
+    /// re-parseable stream.
+    #[test]
+    fn moving_a_byte_across_a_file_boundary_changes_the_digest() {
+        let scratch = Scratch::new("boundary");
+        let left = scratch.path().join("left");
+        let right = scratch.path().join("right");
+
+        // Same 12 bytes either way; only the split point moves.
+        write(&left, "lib/one.a", b"AAAA");
+        write(&left, "lib/two.a", b"BBBB");
+        write(&right, "lib/one.a", b"AAAAB");
+        write(&right, "lib/two.a", b"BBB");
+
+        let mut all = Vec::new();
+        for tree in [&left, &right] {
+            let mut bytes = Vec::new();
+            for name in ["lib/one.a", "lib/two.a"] {
+                bytes.extend_from_slice(&fs::read(tree.join(name)).expect("read"));
+            }
+            all.push(bytes);
+        }
+        assert_eq!(
+            all[0], all[1],
+            "precondition: the two trees hold the same bytes in the same order, so \
+             only the file boundary differs"
+        );
+
+        assert_ne!(
+            digest_extracted_tree(&left).expect("digest"),
+            digest_extracted_tree(&right).expect("digest"),
+            "moving one byte from one library into the next did not change the tree \
+             digest. The hashed stream must record where each file's content ends, \
+             or the same bytes re-cut into different files hash alike -- which is \
+             how a tree missing most of its libraries can pass as verified."
+        );
+    }
+
+    /// Splices files `keep..` into the content of file `keep - 1` and drops them,
+    /// returning the resulting file list.
+    ///
+    /// This builds a forgery for the framing `digest_extracted_tree` used to have,
+    /// `path || content || len(path)`, under which every such splice hashed
+    /// identically to the original: the merged content ends exactly where the
+    /// trailing length field used to be, so as long as the merged file's name is as
+    /// long as the last original one, the streams are byte-identical. `keep == 1` is
+    /// the extreme case, a one-file tree standing in for an n-file one with none of
+    /// the others present.
+    ///
+    /// The bytes are written out here rather than derived from whatever the encoder
+    /// currently is. A forgery computed from the encoder would agree with it by
+    /// construction and so would assert nothing at all -- which is how the original
+    /// layout survived a suite that only ever fed it honest trees. Under the current
+    /// framing these bytes are nothing but file content.
+    fn splice_suffix(files: &[(&str, &[u8])], keep: usize) -> Vec<(String, Vec<u8>)> {
+        assert!(
+            (1..=files.len()).contains(&keep),
+            "keep {keep} is outside 1..={}",
+            files.len()
+        );
+        let mut spliced: Vec<(String, Vec<u8>)> = files[..keep - 1]
+            .iter()
+            .map(|(name, bytes)| ((*name).to_string(), bytes.to_vec()))
+            .collect();
+
+        let (name, bytes) = files[keep - 1];
+        let mut content = bytes.to_vec();
+        for (next_name, next_bytes) in &files[keep..] {
+            content.extend_from_slice(&(next_name.len() as u64).to_le_bytes());
+            content.extend_from_slice(next_name.as_bytes());
+            content.extend_from_slice(next_bytes);
+        }
+        spliced.push((name.to_string(), content));
+        spliced
+    }
+
+    /// An honest tree, and the forgeries that used to hash identically to it.
+    ///
+    /// Every case is already in the sorted order the digest walks in, and within a
+    /// case all the paths share a length -- the first condition so `splice_suffix`
+    /// lines the merged content up with the old trailing field, the second so the
+    /// precondition holds for every `keep`. Both are asserted by the test rather than
+    /// assumed, because they are what make the case discriminating.
+    const FORGERY_CASES: &[&[(&str, &[u8])]] = &[
+        &[
+            ("a", b"first file bytes" as &[u8]),
+            ("b", b"second file bytes"),
+            ("c", b"third file bytes"),
+        ],
+        &[("lib/one.a", b"one"), ("lib/two.a", b"two")],
+        &[("etc", b"e"), ("inc", b"i"), ("lib", b"l"), ("obj", b"o")],
+    ];
+
+    #[test]
+    fn a_forged_tree_is_not_accepted_as_the_tree_whose_digest_it_carries() {
+        // The regression. The digest was computed over a stream with no framing on
+        // the content field, so a tree could be re-cut into a different and shorter
+        // file list that hashed the same. A green suite did not find it because
+        // every other test here feeds the digest honest trees; nothing ever tried to
+        // make two different trees agree, which is the only thing that can.
+        //
+        // Each case is a real multi-file tree, and for every way of merging a suffix
+        // of it into one of its own files, a real tree that is genuinely missing
+        // those files. The digest recorded is the honest tree's own, as a real
+        // extraction leaves it, and the forgery is what an attacker would put in the
+        // tree's place.
+        for (case, files) in FORGERY_CASES.iter().enumerate() {
+            for pair in files.windows(2) {
+                assert!(
+                    pair[0].0 < pair[1].0,
+                    "precondition: the case is listed in the sorted order the digest \
+                     walks in, but {:?} sorts before {:?}",
+                    pair[1].0,
+                    pair[0].0
+                );
+                assert_eq!(
+                    pair[0].0.len(),
+                    pair[1].0.len(),
+                    "precondition: every path in a case shares a length, so the \
+                     splice lines up under the old framing for any `keep`"
+                );
+            }
+
+            let scratch = Scratch::new(&format!("forged-{case}"));
+            let honest = scratch.path().join("honest");
+            for (name, bytes) in *files {
+                write(&honest, name, bytes);
+            }
+            let digest_path = scratch.path().join("honest.sha256");
+            record_extracted_tree_digest(&honest, &digest_path).expect("record");
+            let honest_digest = fs::read_to_string(&digest_path).expect("read recorded digest");
+
+            // `keep == files.len()` is the identity splice -- merge nothing -- and so
+            // is not a forgery. Every other value drops at least one file.
+            for keep in 1..files.len() {
+                let spliced = splice_suffix(files, keep);
+                assert!(
+                    spliced.len() < files.len(),
+                    "the forgery must genuinely be missing files, not the same tree"
+                );
+
+                let forged = scratch.path().join(format!("forged-{keep}"));
+                for (name, bytes) in &spliced {
+                    write(&forged, name, bytes);
+                }
+
+                assert!(
+                    !verify_extracted_tree(&forged, &digest_path).expect("verify"),
+                    "case {case}, keep {keep}: a {}-file forgery of a {}-file tree \
+                     verified against that tree's own recorded digest {}. The digest \
+                     stream has no framing on the content field, so these bytes \
+                     parse as a shorter file list; {} of the original files are \
+                     absent from the forgery.",
+                    spliced.len(),
+                    files.len(),
+                    honest_digest.trim(),
+                    files.len() - spliced.len()
+                );
+                assert_ne!(
+                    digest_extracted_tree(&forged).expect("digest"),
+                    honest_digest.trim(),
+                    "case {case}, keep {keep}: the forgery and the tree it replaces \
+                     hash the same"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_digests_come_from_the_table_for_every_pinned_archive() {
+        // `pinned_archive_digest` is the one place a digest is looked up, and every
+        // wiring test below installs the `cfg(test)` override, which is consulted
+        // first. Left alone, the branch that reads `ARCHIVE_SHA256_DIGESTS` would
+        // therefore never be taken by a test: deleting it outright — checked by
+        // mutation — leaves every other test green, and it is the branch every real
+        // build goes through. Checked here directly instead.
+        //
+        // Takes the wiring lock because the override is process-wide: without it this
+        // could read an override a wiring test installed, and fail for that reason
+        // rather than for the one it is checking.
+        let _guard = WIRING_ENV.lock().unwrap_or_else(|err| err.into_inner());
+        assert!(
+            PINNED_DIGEST_OVERRIDE
+                .lock()
+                .expect("override lock")
+                .is_none(),
+            "precondition: no override is installed, so this exercises the table"
+        );
+
+        for (name, digest) in ARCHIVE_SHA256_DIGESTS {
+            assert_eq!(
+                pinned_archive_digest(name).as_deref(),
+                Some(*digest),
+                "{name} must resolve to its own pinned digest"
+            );
+        }
+        assert!(
+            pinned_archive_digest("sherpa-onnx-v0.0.0-nowhere-static-lib.tar.bz2").is_none(),
+            "an archive that is not pinned must not resolve to a digest, or \
+             download_prebuilt_libs would verify whatever bytes turned up"
+        );
+    }
+
+    #[test]
+    fn the_test_only_digest_override_cannot_reach_a_real_build() {
+        // `download_prebuilt_libs` cannot be driven by a synthetic archive without
+        // supplying a pinned digest for it, so `pinned_archive_digest` carries a
+        // `cfg(test)` override. Cargo never builds a build script under `--test`, so
+        // that override is not in the artifact any build runs -- but that is a claim
+        // about cargo's behaviour, and this file is exactly where it would fail
+        // silently. `scripts/ci/sherpa-build-script-tests.mjs` checks it by
+        // compiling both forms and looking for the marker string in each, and it
+        // looks for the literal below. Renaming one without the other would leave
+        // that check asserting nothing.
+        assert_eq!(
+            PINNED_DIGEST_OVERRIDE_MARKER, "sherpa-pinned-digest-override-cfg-test-only",
+            "the harness scans compiled binaries for this exact literal"
+        );
+    }
+
+    #[test]
+    fn the_pinned_digest_override_is_absent_when_the_file_is_not_built_as_a_test() {
+        // Stated as a property of this compilation rather than asserted about the
+        // non-test one, because there is no non-test compilation of this file in
+        // this process: `cfg(test)` is on, so the override is reachable here and must
+        // be reachable only here. The harness supplies the other half by compiling
+        // the same file as a plain build script and finding the marker absent.
+        let name = wiring_archive_name();
+        let installed = PINNED_DIGEST_OVERRIDE
+            .lock()
+            .expect("override lock")
+            .clone()
+            .map(|(name, _)| name);
+        if installed.is_none() {
+            // No wiring test has installed one yet, which is the ordinary case for a
+            // test that does not need one.
+            assert!(
+                pinned_archive_digest(&name).is_some(),
+                "precondition: the production pin table is consulted when no override \
+                 is installed"
+            );
+            return;
+        }
+        assert_eq!(
+            installed.as_deref(),
+            Some(name.as_str()),
+            "the override is installed only for the archive a wiring test built"
         );
     }
 }
