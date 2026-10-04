@@ -69,18 +69,30 @@ impl PillProcess {
 /// distinction is the same-handle branch below, which returns `false` while the app's pill is
 /// very much still running.
 ///
-/// So `false` is NOT equally right in both branches, and the reasons are worth keeping apart.
-/// On the kill branch it is right: this spawn's process is being terminated and the app keeps
-/// drawing the pill it already has. On the same-handle branch it is right only because nothing
-/// can reach it -- `try_spawn_pill` builds a fresh `PillProcess` on every call, so it never
-/// offers a handle it already owns.
+/// So `false` is NOT equally justified in both branches, and the reasons are worth keeping
+/// apart. On the kill branch it is right REGARDLESS of whether the kill succeeded: the answer
+/// this function owes its caller is "did THIS CALL install the handle", and a spawn whose kill
+/// failed did not install it either. What a failed kill changes is the residual state -- the
+/// process may still be running beside the live one -- which is what the error log says, and it
+/// is the one outcome here that leaves two pill processes alive.
 ///
-/// That is a latent hazard rather than a settled design, and the honest form of it is: if a
-/// second caller ever publishes a handle the app may already be managing, returning `false`
-/// here makes the caller fall back to Tauri overlays, and the app then draws those on top of a
-/// live native pill. `try_spawn_pill`'s own comment at the call site records that it falls
-/// back rather than erroring, so the two would be drawn together rather than the second spawn
-/// being refused outright.
+/// On the same-handle branch `false` is right only because nothing can reach it:
+/// `try_spawn_pill` builds a fresh `PillProcess` on every call, so it never offers a handle it
+/// already owns.
+///
+/// That is a latent hazard rather than a settled design, and it takes TWO things that are not
+/// both true today. A caller has to publish a handle the app may already be managing, which needs
+/// a second caller since `try_spawn_pill` builds a fresh handle every time. AND a caller has to
+/// ACT on `false` by drawing Tauri overlays, which nothing currently does: the only consumer
+/// discards the value -- `app.rs:309` calls `try_create_native_overlays(app_handle);` and ignores
+/// it -- and the chain above only logs "Native overlay not available, falling back to Tauri
+/// overlays". So today a second publish would leave the live native pill alone.
+///
+/// Both halves are one edit away, and `try_spawn_pill`'s own comment at the call site records
+/// that it falls back rather than erroring, so if both landed the app would draw the two together
+/// rather than refusing the second spawn. Stating the two conditions separately is the point:
+/// read as a description of what a second caller does, this paragraph overstates what any second
+/// caller would reach.
 ///
 /// `Manager::manage` is `self.manager().state().set(state)` (tauri-2.10.3/src/lib.rs:694), and
 /// `StateManager::set` returns `!already_set` WITHOUT inserting when the type is already
@@ -1526,11 +1538,16 @@ mod pill_publish_tests {
 
     impl Drop for ReapOnDrop {
         fn drop(&mut self) {
-            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`: the panics that poison
-            // this mutex are the ones raised inside `has_exited` while it HOLDS `_child` --
-            // `try_wait`, or the `expect` on the lock itself -- so recovering from the poison
-            // is the difference between this guard reaping on the panicking path, which is the
-            // path that needs it, and not.
+            // `unwrap_or_else(|err| err.into_inner())`, not `if let Ok`: the panic that can
+            // poison this mutex is `try_wait` inside `has_exited`, raised while it HOLDS
+            // `_child`. Recovering from the poison is the difference between this guard reaping
+            // on the panicking path, which is the path that needs it, and not.
+            //
+            // It is `try_wait` ALONE. An earlier version of this comment also blamed "the
+            // `expect` on the lock itself", which cannot be right: `Mutex::lock` returning
+            // `Err` is how a poison is observed, not caused. `has_exited` has no such an
+            // `expect` now either -- it recovers the same way -- so the list is genuinely one
+            // item long rather than one item long plus a misunderstanding.
             //
             // `kill()` itself still errors when the child already exited, which is not worth a
             // log line here.
@@ -1571,11 +1588,32 @@ mod pill_publish_tests {
     /// enough not to charge every run for it. An earlier version of this comment claimed the
     /// direction needs no waiting at all and proposed a one-shot check; that check would have
     /// been green for every kill ever sent.
+    ///
+    /// It also quoted a 50 ms observation from 40 trials without saying where, on what, or how
+    /// to repeat it -- and this suite runs on Windows too, where `Child::kill` is
+    /// `TerminateProcess` against a signalled handle rather than SIGKILL and a zombie
+    /// transition. A figure from one platform is not evidence about another, and this is the
+    /// window whose failure mode is a FALSE PASS in the one direction that matters.
+    ///
+    /// So the number is no longer the evidence. `the_untouched_window_observes_a_real_kill`
+    /// kills a child and asserts it becomes observable inside this same budget, in the same
+    /// run, on whatever machine and operating system the suite is on. If a loaded runner
+    /// cannot manage that, the control fails and the "must not be killed" assertions are not to
+    /// be believed -- which is the only arrangement in which they mean anything.
     const UNTOUCHED: Duration = Duration::from_millis(250);
 
     /// Whether `process`'s child has exited within `budget`.
     fn has_exited(process: &PillProcess, budget: Duration) -> bool {
-        let mut child = process._child.lock().expect("child lock");
+        // `unwrap_or_else(|poisoned| poisoned.into_inner())`, not `expect`. A `Mutex::lock`
+        // returning `Err` is how a poison is OBSERVED, so this `expect` could never have been
+        // what caused one -- but it could still fire, because the `try_wait` below can panic
+        // while holding the lock, and if that happens while another panic is already unwinding
+        // the process aborts: `Drop` never runs, so `ReapOnDrop` cannot reap, and the children
+        // the failing assertion meant to keep alive outlive the run.
+        let mut child = process
+            ._child
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let deadline = Instant::now() + budget;
         loop {
             if child
@@ -1636,5 +1674,37 @@ mod pill_publish_tests {
         assert!(publish_pill_process(&handle, only.0.clone()));
         assert!(!publish_pill_process(&handle, only.0.clone()));
         assert!(!has_exited(&only.0, UNTOUCHED));
+    }
+
+    /// The positive control for `UNTOUCHED`, and the only reason the two tests above can be
+    /// believed.
+    ///
+    /// Every "must not be killed" assertion is negative: it passes when `has_exited` returns
+    /// false, and it ALSO passes when the window is simply too short for a kill to become
+    /// observable. That is the same direction those tests exist to catch -- the live pill was
+    /// killed and the assertion reports otherwise -- so the window, not the code under test, is
+    /// what they are really measuring.
+    ///
+    /// This measures the window against a real kill, here, now. `KILLED` is ten seconds and
+    /// `UNTOUCHED` a quarter of one, and that asymmetry is a choice rather than a constraint: if
+    /// a platform needs longer, raising `UNTOUCHED` costs a fraction of a second per test,
+    /// whereas a window that is too short costs a silent false pass indefinitely.
+    #[test]
+    fn the_untouched_window_observes_a_real_kill() {
+        let reaped = pill_process();
+        {
+            let mut child = reaped
+                .0
+                ._child
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            child.kill().expect("kill the control child");
+        }
+        assert!(
+            has_exited(&reaped.0, UNTOUCHED),
+            "a killed child did not become observable within UNTOUCHED ({UNTOUCHED:?}), so a \
+             'the pill must not be killed' assertion cannot tell an untouched child from a \
+             slow one"
+        );
     }
 }
