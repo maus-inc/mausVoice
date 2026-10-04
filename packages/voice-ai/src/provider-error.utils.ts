@@ -266,7 +266,9 @@ const labelValueEnd = (
   // separator.
   if (isQuote(message[cursor])) cursor += 1;
   cursor = whitespaceEnd(message, cursor);
-  if (message[cursor] !== ":") return null;
+  // `=` as well as `:`, matching `apiKeyAssignmentEnd` above and the shared
+  // scrubber, so an `authorization=<credential>` echo is redacted too.
+  if (message[cursor] !== ":" && message[cursor] !== "=") return null;
   cursor = whitespaceEnd(message, cursor + 1);
   const quote = message[cursor];
   if (isQuote(quote)) cursor += 1;

@@ -505,7 +505,12 @@ export async function* openaiCompatibleStreamChat(
       stream_options: { include_usage: true },
       tools: llmToolsToOpenAI(input.tools),
       tool_choice: llmToolChoiceToOpenAI(input.toolChoice),
-      max_tokens: input.maxTokens,
+      // Same per-model field the non-streaming call above picks: `max_tokens` is
+      // rejected outright by the o-series, which answer a request carrying it
+      // with a 400 before generating anything. Omitted when unset, as before.
+      ...(input.maxTokens === undefined
+        ? {}
+        : buildMaxTokensParams(model, input.maxTokens)),
       // The streaming half of the guard the non-streaming call above already
       // has: this entry point serves the same reasoning ids (Azure by
       // deployment name, OpenRouter by routing prefix), and OpenAI documents
