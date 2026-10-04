@@ -1,0 +1,25 @@
+version = 1
+
+# The repo's Node tooling (apps/desktop/scripts/*.mjs, scripts/*.mjs) is
+# written as ES modules. Without this declaration DeepSource parses .mjs
+# files as classic scripts and reports bogus "'import' and 'export' may
+# appear only with sourceType: module" errors on every one of them.
+[[analyzers]]
+name = "javascript"
+enabled = true
+
+  [analyzers.meta]
+  module_system = "es-modules"
+
+# Minified vendor bundles are third-party code checked into the marketing site:
+# three of them, tens of thousands of characters each, none of them written here.
+# An analyzer that reads them reports line lengths, nested ternaries and missing
+# semicolons in code no one in this repository can change, and a gate that counts
+# those is a gate nobody reads. The JavaScript analyzer is switched off for those
+# paths rather than for the repository, so first-party JS is still analysed.
+[[overrides]]
+paths = ["marketing/assets/vendor/**"]
+
+  [[overrides.analyzers]]
+  name = "javascript"
+  enabled = false
