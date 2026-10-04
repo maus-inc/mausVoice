@@ -173,6 +173,24 @@ export function tokenizeCargoCommandLoose(line) {
   return splitCommandWords(line.slice(first + 1, last));
 }
 
+/**
+ * Whether a backslash before `ch` is an escape rather than a literal backslash.
+ *
+ * Only for the characters where a backslash has to mean something: whitespace, a quote,
+ * a backtick, `$`, and another backslash. Everywhere else it is a literal backslash, and
+ * that distinction is the whole reason this harness can read cargo's output on Windows.
+ *
+ * Cargo prints the rustc path bare there -- `C:\Users\...\rustc.exe` -- so treating
+ * every backslash as an escape deleted each one (`\U` is just `U`), argv[0] stopped being
+ * a recognisable program name, and every windows leg reported that cargo had printed no
+ * invocation at all.
+ *
+ * `'` is in the set because of cargo's `set K='v'&&` output and the `\'\''` form it uses to
+ * embed a quote: a backslash before a quote is an escape in both cases, and dropping it
+ * would merge two arguments into one.
+ */
+const isEscapable = (ch) => /[\s'"`$\\]/.test(ch);
+
 function splitCommandWords(body) {
   const words = [];
   let current = "";
@@ -185,14 +203,23 @@ function splitCommandWords(body) {
       started = true;
       index += 1;
       while (index < body.length && body[index] !== startedQuote) {
-        // Inside single quotes a backslash is literal, which is why only the
-        // double-quoted case honours an escape.
-        if (startedQuote === '"' && body[index] === "\\" && index + 1 < body.length) {
+        // Inside single quotes a backslash is literal, so only the double-quoted case
+        // honours an escape -- and then only for the characters a POSIX shell actually
+        // escapes. Honouring it for every backslash destroys Windows paths: cargo
+        // double-quotes the rustc path there, so `C:\Users\...\rustc.exe` lost every
+        // backslash (`\U` is just `U`), argv[0] stopped being a recognisable program
+        // name, and the harness reported that cargo had printed no invocation at all.
+        // A shell leaves `\Q` alone for exactly this reason.
+        if (
+          startedQuote === '"' &&
+          body[index] === "\\" &&
+          index + 1 < body.length &&
+          isEscapable(body[index + 1])
+        ) {
           current += body[index + 1];
           index += 2;
           continue;
-        }
-        current += body[index];
+        }        current += body[index];
         index += 1;
       }
       if (index >= body.length) {
@@ -201,7 +228,17 @@ function splitCommandWords(body) {
       index += 1;
       continue;
     }
-    if (ch === "\\" && index + 1 < body.length) {
+    // Same rule outside quotes as inside them: a backslash only escapes what a shell
+    // escapes. Cargo prints the rustc path BARE on windows -- `C:\Users\...\rustc.exe`
+    // -- so treating every backslash as an escape here removed each one (`\U` is just
+    // `U`), argv[0] stopped being a recognisable program name, and the harness reported
+    // that cargo had printed no invocation. This was the cause on the windows legs; the
+    // quoted case above was a second instance of the same mistake, found by the fix.
+    if (
+      ch === "\\" &&
+      index + 1 < body.length &&
+      isEscapable(body[index + 1])
+    ) {
       started = true;
       current += body[index + 1];
       index += 2;
@@ -291,8 +328,12 @@ export function findBuildScriptInvocation(verboseOutput) {
     if (!words) continue;
     const { env, argv } = parseEnvPrefix(words);
     if (env.CARGO_PKG_NAME !== SHERPA_PKG_NAME) continue;
+    // `basename` from node:path splits on `/` only, and the program name on windows is a
+    // `\`-separated absolute path, so it came back whole and matched nothing. Take the
+    // last segment across both separators.
+    const program = (argv[0] ?? "").split(/[/\\]/).pop() ?? "";
     // `rustc.exe` on Windows: the replayed command is whatever cargo invoked there.
-    if (!/^rustc(\.exe)?$/.test(basename(argv[0] ?? ""))) continue;
+    if (!/^rustc(\.exe)?$/.test(program)) continue;
     const at = argv.indexOf("--crate-name");
     if (at === -1 || argv[at + 1] !== BUILD_SCRIPT_CRATE_NAME) continue;
     matches.push({ env, argv });

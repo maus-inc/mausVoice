@@ -146,7 +146,11 @@ describe("the windows shape of a replayed command", () => {
     "set CARGO_MANIFEST_DIR='C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\" +
     "sherpa-build-script-tests-FJLxV3\\crate'&& " +
     "set CARGO_PKG_LICENSE='MIT OR Apache-2.0'&& set CARGO_PKG_NAME=sherpa-onnx-sys&& " +
-    "rustc --crate-name build_script_build --edition=2021 --crate-type bin " +
+    // Bare, and a windows path -- which is what cargo prints. A fixture saying just
+    // `rustc` could not catch it: a tokenizer that eats backslashes still reads `rustc`
+    // as `rustc`. This one only parses if the backslashes survive.
+    "C:\\Users\\runneradmin\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\rustc.exe " +
+    "--crate-name build_script_build --edition=2021 --crate-type bin " +
     "--out-dir C:\\out build.rs`";
 
   it("parses the `set K=V&&` prefix and finds the invocation", () => {
@@ -182,17 +186,34 @@ describe("the windows shape of a replayed command", () => {
     );
   });
 
-  it("accepts rustc.exe, which is what the name is on windows", () => {
-    // Permissive rather than observed: the CI log line is truncated before the command,
-    // so whether cargo spells it `rustc` or `rustc.exe` there is not established from
-    // here. Accepting both costs nothing and a wrong guess in the strict direction would
-    // fail a leg for a cosmetic reason.
-    const line = windowsLine.replace("&& rustc --crate-name", "&& rustc.exe --crate-name");
+  it("accepts a bare `rustc` as well, which is the unix shape", () => {
+    const line = windowsLine.replace(
+      /C:\\Users[^ ]+rustc\.exe /,
+      "rustc ",
+    );
     assert.equal(findBuildScriptInvocation(line).length, 1);
   });
 
+  it("keeps the backslashes in the program path", () => {
+    // The bug this fixture exists for: a tokenizer that treats every backslash as an
+    // escape turns `C:\Users\...` into `C:Users...`, which is then not a recognisable
+    // program name, so the harness reports that cargo printed no invocation at all.
+    const found = findBuildScriptInvocation(windowsLine);
+    assert.equal(found.length, 1);
+    assert.match(
+      found[0].argv[0],
+      /^C:\\Users\\runneradmin\\\.rustup\\/,
+      `program path lost its backslashes: ${JSON.stringify(found[0].argv[0])}`,
+    );
+  });
+
   it("still rejects a different command under the windows shape", () => {
-    const line = windowsLine.replace("&& rustc --crate-name", "&& cc --crate-name");
+    // Substitute the program the fixture actually carries. An earlier version replaced
+    // `&& rustc --crate-name`, which stopped matching when the fixture became a bare
+    // windows path -- so the replacement was a no-op and the case asserted that the
+    // unmodified line found nothing, which is false. It failed, correctly.
+    const line = windowsLine.replace("rustc.exe --crate-name", "cc --crate-name");
+    assert.notEqual(line, windowsLine, "the substitution must actually change the line");
     assert.deepEqual(findBuildScriptInvocation(line), []);
   });
 
