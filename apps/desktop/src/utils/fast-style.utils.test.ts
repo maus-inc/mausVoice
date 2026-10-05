@@ -550,6 +550,46 @@ describe("sentence-initial phrase removal keeps the next capital", () => {
  * chunk size used to be `slice`d to the cap, so the styled output was a prefix
  * of the input and everything after 15,000 characters was delivered nowhere.
  */
+describe("CJK sentence terminators are recognised everywhere ASCII ones are", () => {
+  // `。`, `！`, `？` and `…` ended a sentence for `findSentenceBoundary` but not
+  // for `ensureSentencePunctuation` or `splitIntoSentences`, which each spelled out
+  // `.!?` by hand. A dictation ending in `。` therefore came back as `。.` -- two
+  // full stops, one of them ASCII. Every terminator list now derives from one
+  // `TERMINATOR_CHARS`.
+  const cases: [string, string][] = [
+    ["。", "第一句。"],
+    ["！", "第一句！"],
+    ["？", "第一句？"],
+    ["…", "等等…"],
+  ];
+
+  it.each(cases)(
+    "does not append an ASCII stop after %s",
+    (_mark, sentence) => {
+      // The defect shows through the public entry point: the styled text must not end
+      // in one terminator followed by a second, different one.
+      expect(applyFastStyle(sentence, "default")).not.toMatch(
+        /[.!?…。！？][.!?]$/,
+      );
+    },
+  );
+
+  it("still appends a stop when there is no terminator at all", () => {
+    // The control. Without it the cases above would also pass if the function had
+    // simply stopped appending anything.
+    expect(applyFastStyle("no terminator here", "default")).toMatch(/[.!?]$/);
+  });
+
+  it("splits a mixed Latin and CJK sentence on the CJK full stop", () => {
+    // `SENTENCE_SPLIT_RE` needs whitespace plus a capital or digit after it, so the
+    // next sentence here starts with an ASCII capital. Before the fix the `。` was
+    // invisible to it and the whole input stayed one blob.
+    const out = applyFastStyle("Mixed Latin 和中文。 Next one", "default");
+    expect(out).toContain("Mixed");
+    expect(out).toContain("Next");
+  });
+});
+
 describe("chunk boundaries never land where the next chunk opens mid-word", () => {
   it("keeps scanning past a terminator that ends the window", () => {
     // Every other chunking test here puts a SPACE after the terminator, so none

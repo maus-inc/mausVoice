@@ -59,15 +59,33 @@ const assertWithinChunkSize = (text: string): string => {
  * would miss real sentence boundaries there and always fall through to the
  * word-boundary fallback.
  */
-const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set([
-  ".",
-  "!",
-  "?",
-  "…",
-  "。",
-  "！",
-  "？",
-]);
+/**
+ * Every character that ends a sentence. The CJK forms belong here because a
+ * dictation can be mixed Latin and CJK.
+ *
+ * Three places used to spell this set out separately and two of them listed
+ * only `.!?`. A sentence ending in `。` was therefore not recognised as a
+ * sentence: it stayed one blob, and then `ensureSentencePunctuation` appended a
+ * second, ASCII, full stop to text that already had one. The regexes below are
+ * built from this list so that cannot happen again.
+ */
+const TERMINATOR_CHARS = [".", "!", "?", "…", "。", "！", "？"];
+
+const SENTENCE_TERMINATORS: ReadonlySet<string> = new Set(TERMINATOR_CHARS);
+
+const TERMINATOR_CLASS_SOURCE = `[${TERMINATOR_CHARS.map((char) =>
+  char.replace(/[\\^\]-]/g, "\\$&"),
+).join("")}]`;
+
+/** A sentence boundary is whitespace after a terminator and before a capital. */
+const SENTENCE_SPLIT_RE = new RegExp(
+  `(?<=${TERMINATOR_CLASS_SOURCE})\\s+(?=[A-Z0-9])`,
+  "g",
+);
+
+/** Not global, so `.test` carries no `lastIndex` between calls. */
+const CONTAINS_TERMINATOR_RE = new RegExp(TERMINATOR_CLASS_SOURCE);
+const ENDS_SENTENCE_RE = new RegExp(`${TERMINATOR_CLASS_SOURCE}$`);
 
 /** Matches every Unicode space separator, not just ASCII space. */
 const isSpace = (ch: string): boolean => ch.length > 0 && /\s/u.test(ch);
@@ -304,8 +322,6 @@ const SYMBOL_MAP: Array<[RegExp, string]> = [
   [/\bnew paragraph\b/gi, "\n\n"],
 ];
 
-const SENTENCE_SPLIT_RE = /(?<=[.!?])\s+(?=[A-Z0-9])/g;
-
 const capitalizeFirst = (s: string): string =>
   s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
 
@@ -332,14 +348,14 @@ const deleteLeadingPhrase = (text: string, phrase: RegExp): string =>
 const ensureSentencePunctuation = (sentence: string): string => {
   const trimmed = sentence.trim();
   if (!trimmed) return "";
-  if (/[.!?]$/.test(trimmed)) return trimmed;
+  if (ENDS_SENTENCE_RE.test(trimmed)) return trimmed;
   return `${trimmed}.`;
 };
 
 const splitIntoSentences = (text: string): string[] => {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return [];
-  if (/[.!?]/.test(normalized)) {
+  if (CONTAINS_TERMINATOR_RE.test(normalized)) {
     return normalized
       .split(SENTENCE_SPLIT_RE)
       .map((s) => s.trim())
