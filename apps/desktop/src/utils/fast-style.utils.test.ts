@@ -870,6 +870,48 @@ describe("bullet edge stripping", () => {
   });
 });
 
+describe("an ambiguous 'd is left alone rather than guessed at", () => {
+  // All four `'d` entries in CONTRACTION_MAP map to *would*, and `I'd already
+  // left` came back as `I would already left`. This is the one entry class in the
+  // map that is genuinely ambiguous: `'d` is *would* in "I'd like" and *had* in
+  // "I'd already left", and nothing in the sentence distinguishes them.
+  //
+  // The module's own rule for a match that might be wrong is at the contraction
+  // list: "failing to expand a typo costs something that still reads correctly,
+  // whereas matching a bare word rewrites a sentence the speaker did not say." An
+  // `'d` that picks the wrong sense is on the second side of that line -- it
+  // rewrites the tense. Leaving `I'd already left` unexpanded still reads
+  // correctly and cannot mis-state it.
+  //
+  // So the four entries are dropped rather than disambiguated. Guessing at the
+  // participle would need a lexicon this module deliberately does not carry, and
+  // `"I'd rather"`, `"I'd better"`, `"I'd love"` and `"I'd prefer"` all take
+  // *would*, so a lookahead would have to know that list too.
+  for (const input of [
+    "i'd already left the office",
+    "we'd already shipped it",
+    "you'd told me twice",
+    "they'd finished by then",
+    "i'd seen it before",
+  ]) {
+    expect(applyFastStyle(input, "formal")).toBe(
+      `${input[0].toUpperCase()}${input.slice(1)}.`,
+    );
+  }
+
+  // The unambiguous contractions are untouched by that, and the ones that are
+  // ambiguous in English but not here now require their apostrophe.
+  for (const [input, expected] of [
+    ["it's fine", "It is fine."],
+    ["you're right", "You are right."],
+    ["let's go", "Let us go."],
+    ["we'll see", "We will see."],
+    ["they're here", "They are here."],
+  ] as const) {
+    expect(applyFastStyle(input, "formal")).toBe(expected);
+  }
+});
+
 describe("a casual word is rewritten, not deleted", () => {
   // `INFORMAL_RE` matched `gonna|wanna|gotta|kinda|sorta|yeah|yep|nope` and every
   // match was deleted. Deleting is only harmless for a word with nothing to say:
@@ -948,9 +990,14 @@ describe("filler removal keeps words that merely end in a filler", () => {
 
   describe("a contraction expansion never fires on a bare word that happens to be one", () => {
     // `contraction.replace("'", "'?")` made the APOSTROPHE optional, so `we're`
-    // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `I'd`
-    // matched `id`, `let's` matched `lets`, `we'd` matched `wed`, and `I'll`
-    // matched `ill`. Formal mode rewrote ordinary sentences accordingly.
+    // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `let's`
+    // matched `lets`, and `I'll` matched `ill`. Formal mode rewrote ordinary
+    // sentences accordingly.
+    //
+    // It used to name `Id` and `wed` here too. Those two entries were dropped
+    // later, for a different reason and in a different commit: `'d` is ambiguous
+    // between *would* and *had*, so it is not expanded at all. See "an ambiguous
+    // 'd is left alone rather than guessed at" below.
     //
     // It is the apostrophe that becomes optional, not the tail of the stem, so
     // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is
@@ -960,9 +1007,7 @@ describe("filler removal keeps words that merely end in a filler", () => {
       ["we were ready", "We were ready."],
       ["the dog wagged its tail", "The dog wagged its tail."],
       ["as well as that", "As well as that."],
-      ["the id number is 7", "The id number is 7."],
       ["it is well done", "It is well done."],
-      ["they wed in june", "They wed in june."],
       ["he lets go", "He lets go."],
       ["he is ill", "He is ill."],
     ] as const) {
@@ -972,7 +1017,7 @@ describe("filler removal keeps words that merely end in a filler", () => {
     // `can` is not among them: the `'?` sits between the stem and the final `t`.
     expect(applyFastStyle("we can go now", "formal")).toBe("We can go now.");
 
-    // The seven are not the whole map. The other bare forms are not words, so
+    // The five are not the whole map. The other bare forms are not words, so
     // their apostrophe stays optional: speech-to-text drops it, and "dont stop"
     // reading as "Do not stop." is the behaviour worth keeping. Being wrong in
     // that direction costs an unexpanded typo that still reads correctly; being
@@ -980,17 +1025,15 @@ describe("filler removal keeps words that merely end in a filler", () => {
     expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
     expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
 
-    // And the seven still expand when they are genuinely contractions.
+    // And the five still expand when they are genuinely contractions.
     expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
     expect(applyFastStyle("it's fine", "formal")).toBe("It is fine.");
     expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
     expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
-    expect(applyFastStyle("we'd better go", "formal")).toBe(
-      "We would better go.",
-    );
-    expect(applyFastStyle("I'd go now", "formal")).toBe("I would go now.");
     expect(applyFastStyle("I'll be there", "formal")).toBe("I will be there.");
     expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
+    // The `'d` family is not here: it is ambiguous, so it is not expanded at all.
+    // See "an ambiguous 'd is left alone rather than guessed at" below.
   });
 
   describe("every semicolon-separated idea becomes its own bullet", () => {
