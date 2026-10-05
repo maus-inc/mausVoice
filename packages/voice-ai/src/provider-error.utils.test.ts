@@ -502,6 +502,54 @@ describe("an authorization label with a scheme-prefixed value", () => {
     expect(output).not.toContain("Digest abc ");
     expect(output).toContain("is not authorized for this request");
   });
+
+  it("redacts the challenge after a prefixed authorization label too", () => {
+    // `AUTHORIZATION_LABELS` holds the two canonical spellings, and the scan rejects
+    // any candidate preceded by `[A-Za-z0-9_-]` as being inside a longer word. A header
+    // whose name is the canonical one BEHIND A PREFIX -- `x-authorization`, which is a
+    // real header several providers send -- trips that guard, so the label is never
+    // recognised and the whole Digest challenge survives.
+    //
+    // The guard is right about the words it was written for (`unauthorization`,
+    // `my_authorization_header`). It is the HYPHEN that does double duty here: the same
+    // character separates the words inside those words and prefixes a header name.
+    //
+    // Only the hyphen, and that is a limit rather than a decision. `_` prefixes a header
+    // name exactly as `-` does, and the shared scrubber already treats both as label
+    // separators, so the three underscore spellings below are handled by the follow-up
+    // commit rather than by this one -- the loop carries only the hyphenated forms.
+    //
+    // Scoped to the labels this scanner actually knows. A first draft of this test also
+    // asserted `x-auth`, which is not a spelling of a label in `AUTHORIZATION_LABELS`
+    // at all -- so it was asserting a redaction the design does not promise, and it
+    // failed after the fix for that reason rather than because the fix was wrong.
+    const CHALLENGE = "nc" + "7f3a91";
+    for (const label of [
+      "x-authorization",
+      "X-Authorization",
+      "x-proxy-authorization",
+    ]) {
+      const output = providerErrorUtils.redactProviderMessage(
+        `${label}: Digest nonce=${CHALLENGE}, realm="eastus"`,
+      );
+      expect(output).not.toContain(CHALLENGE);
+      expect(output).not.toContain('realm="eastus"');
+      expect(output).toContain("[redacted]");
+    }
+  });
+
+  it("still refuses a label that is genuinely inside a longer word", () => {
+    // The control for the case above. If the prefix guard were simply removed, these
+    // would start being redacted, which is the false positive the guard exists to
+    // prevent: a word that merely CONTAINS `authorization` is not a header name.
+    for (const message of [
+      "unauthorization: Digest abc",
+      "my_authorization_header: Digest abc",
+    ]) {
+      const output = providerErrorUtils.redactProviderMessage(message);
+      expect(output).toBe(message);
+    }
+  });
 });
 
 describe("an authorization label inside a JSON body", () => {

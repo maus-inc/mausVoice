@@ -247,6 +247,37 @@ const apiKeyAssignmentEnd = (message: string, index: number): number | null => {
 
 const AUTHORIZATION_LABELS = ["proxy-authorization", "authorization"];
 
+// One header segment plus the widest label, so the backread sees a full prefix and
+// stops there rather than walking the message.
+const LABEL_PREFIX_WINDOW =
+  Math.max(...AUTHORIZATION_LABELS.map((label) => label.length)) + 32;
+
+/**
+ * Whether the label at `index` is the tail of a hyphenated header name rather than
+ * the inside of a longer word.
+ *
+ * True for `x-authorization` and `X-Authorization`, whose canonical label is preceded
+ * by a segment joined with hyphens -- a shape providers send and a shape that must
+ * still be recognised, or the credential behind it is printed. False for
+ * `my_authorization_header` and `unauthorization`, where the label is embedded in a
+ * word that continues past it, and where redacting would be a false positive.
+ *
+ * Bounded by the widest label plus one segment, reading back from `index` only. The
+ * obvious spelling -- a regex over `message.slice(0, index)` -- is quadratic, because
+ * this is called at every offset of the message and the suite has a timing case that
+ * measures exactly that.
+ */
+const isHyphenatedLabelPrefix = (message: string, index: number): boolean => {
+  const window = message.slice(Math.max(0, index - LABEL_PREFIX_WINDOW), index);
+  // The discriminator is the single character before the label, and nothing else. A
+  // hyphen means the header name carries a prefix -- `x-authorization`,
+  // `X-Authorization`, `x-proxy-authorization` -- and the segment in front of it need
+  // not be spelled out, because the separator alone carries the whole claim. An
+  // underscore or a letter means the label is embedded in a longer word instead, which
+  // is the false positive the guard exists to prevent.
+  return window.endsWith("-");
+};
+
 /**
  * The end of the value a label starting at `index` names, or null when there is
  * no assignment here at all.
@@ -309,7 +340,25 @@ const redactAuthorizationLabels = (message: string): string => {
     );
     // A label inside a longer word is not a label: `unauthorization` and the
     // middle of `my_authorization_header` must survive untouched.
-    const inside = /[A-Za-z0-9_-]/.test(message[index - 1] ?? "");
+    //
+    // A HYPHENATED PREFIX is the exception, because a hyphen does double duty: it
+    // separates the words inside a longer identifier AND it prefixes a header name.
+    // Refusing every hyphen meant `x-authorization` -- a header several providers
+    // actually send -- was never recognised as a label at all, so the Digest challenge
+    // behind it reached the log and the persisted error metadata in the clear.
+    // Measured before this change: `x-authorization: Digest nonce=...` came back
+    // byte-for-byte unchanged, while the same value after a bare `authorization:` was
+    // redacted.
+    //
+    // The lookbehind is bounded to the length of the longest label rather than
+    // slicing the message. Scanning backwards over `message.slice(0, index)` once per
+    // step is quadratic in the input, and this scan runs at every offset: the first
+    // version of this fix took the suite's whitespace-run timing case from under a
+    // second to 3.5s. The prefix a provider sends is a short header name, so a window
+    // of the widest label plus a segment is enough to see one.
+    const inside =
+      /[A-Za-z0-9_-]/.test(message[index - 1] ?? "") &&
+      !isHyphenatedLabelPrefix(message, index);
     const end =
       label === undefined || inside
         ? null
