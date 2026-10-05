@@ -40,7 +40,6 @@ export default function DashboardPage() {
             minWidth: 232,
             maxWidth: 232,
             overflowY: "auto",
-            py: 0.5,
           }}
         >
           <DashboardMenu />
@@ -74,17 +73,26 @@ export default function DashboardPage() {
               minHeight: 0,
               overflow: "auto",
               // The routed content carries the same wash as the chrome, so the panel
-              // and the rail read as one material. Only the left edge is
-              // rounded, mirroring the rail's right edge so the canvas shows
-              // through one seam between them; rounding the right and bottom
-              // would set the panel off as a card floating inside the layout
-              // padding.
-              borderRadius: "16px 0 0 16px",
+              // and the rail read as one material. Above `sm` the panel's left
+              // edge is rounded, mirroring the rail's right edge so the canvas
+              // shows through one seam between them; rounding the right and
+              // bottom would set the panel off as a card floating inside the
+              // layout padding. Below `sm` the rail is hidden, so there is no
+              // neighbour to mirror: the radius, the left hairline and the
+              // up-left cast all step away rather than sitting there as an
+              // artifact.
+              borderRadius: { xs: 0, sm: "16px 0 0 16px" },
               borderTop: dark ? hairline.dark(0.05) : hairline.light(0.05),
-              borderLeft: dark ? hairline.dark(0.05) : hairline.light(0.05),
-              boxShadow: dark
-                ? `${insetRim.dark}, ${recessedEdge.dark}`
-                : `${insetRim.light}, ${recessedEdge.light}`,
+              borderLeft: {
+                xs: "none",
+                sm: dark ? hairline.dark(0.05) : hairline.light(0.05),
+              },
+              boxShadow: {
+                xs: dark ? insetRim.dark : insetRim.light,
+                sm: dark
+                  ? `${insetRim.dark}, ${recessedEdge.dark}`
+                  : `${insetRim.light}, ${recessedEdge.light}`,
+              },
               background: dark ? chromeWash.dark : chromeWash.light,
             }}
           >

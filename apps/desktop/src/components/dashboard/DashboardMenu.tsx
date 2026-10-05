@@ -192,12 +192,15 @@ export const DashboardMenu = ({ onChoose }: DashboardMenuProps) => {
       sx={{
         alignItems: "stretch",
         height: "100%",
-        // Flush against the window's left edge, rounded only where the rail
-        // faces the page. Rounding all four corners left a notch against the
-        // window frame and made the rail read as a floating card that happened
-        // to be clipped, rather than the edge of a plane.
+        // Flush against the window's left edge and full height, rounded only where the
+        // rail faces the page. Rounding all four corners left a notch against
+        // the window frame and made the rail read as a floating card that
+        // happened to be clipped, rather than the edge of a plane.
         borderRadius: "0 16px 16px 0",
-        border: dark ? hairline.dark(0.05) : hairline.light(0.05),
+        // Only the edge that faces content carries a hairline. The other three
+        // run into the window frame or into bare canvas, where a 1px line has
+        // nothing to separate and reads as an artifact.
+        borderRight: dark ? hairline.dark(0.05) : hairline.light(0.05),
         // Same wash as the title bar and the content panel, so all three read as
         // one material standing off the canvas. The rail is not contiguous with
         // the bar: the page header sits between them, so this is shared paint,

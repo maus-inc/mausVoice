@@ -1,25 +1,26 @@
 import { useColorScheme } from "@mui/material";
 
+/** The attribute `index.html` writes before this bundle loads. */
+const BOOTSTRAPPED_SCHEME = "muiColorScheme";
+
 /**
- * The OS preference, read the same way MUI reads it.
+ * The scheme `index.html` already painted, read back off the document element.
  *
- * MUI leaves `systemMode` undefined on the first paint, before the stored mode
- * has been read, and this app defaults to `defaultMode: "system"`. One-shot on
- * purpose: the fallback only covers that first paint, and a subscription here
- * would re-render the whole chrome for a value MUI is already tracking once
- * `systemMode` exists.
+ * That inline script runs before React exists and resolves the stored mode the
+ * same way this app's theme does, including its legacy key migration. Reading
+ * it back is the only way to agree with what the user is currently looking at:
+ * MUI reports `mode` as `undefined` on the first paint, so any fallback here
+ * that re-derives the answer from `localStorage` or the media query can land on
+ * a different scheme from the one on screen.
  */
-const prefersDarkScheme = (): "light" | "dark" => {
-  if (
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function"
-  ) {
-    return "light";
+const bootstrappedScheme = (): "light" | "dark" | undefined => {
+  if (typeof document === "undefined") {
+    return undefined;
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  const resolved = document.documentElement.dataset[BOOTSTRAPPED_SCHEME];
+
+  return resolved === "dark" || resolved === "light" ? resolved : undefined;
 };
 
 /**
@@ -43,5 +44,5 @@ export const useIsDarkMode = (): boolean => {
   }
 
   // `"system"`, or `undefined` before the stored mode has been read.
-  return (systemMode ?? prefersDarkScheme()) === "dark";
+  return (systemMode ?? bootstrappedScheme()) === "dark";
 };

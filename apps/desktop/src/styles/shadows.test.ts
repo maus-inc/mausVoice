@@ -258,12 +258,14 @@ describe("raisedEdge and recessedEdge", () => {
     }
   });
 
-  it("widens and softens outward, so the near edge reads as the contact", () => {
-    for (const token of [raisedEdge, recessedEdge]) {
-      const blur = parseShadowLayers(token.light).map((layer) => layer.blur);
-      expect(blur.length).toBeGreaterThanOrEqual(2);
-      for (let i = 1; i < blur.length; i++) {
-        expect(blur[i]).toBeGreaterThan(blur[i - 1]);
+  it("widens and softens outward in both modes, so the near edge is the contact", () => {
+    for (const mode of modes) {
+      for (const token of [raisedEdge, recessedEdge]) {
+        const blur = parseShadowLayers(token[mode]).map((layer) => layer.blur);
+        expect(blur.length).toBeGreaterThanOrEqual(2);
+        for (let i = 1; i < blur.length; i++) {
+          expect(blur[i]).toBeGreaterThan(blur[i - 1]);
+        }
       }
     }
   });
@@ -337,6 +339,7 @@ describe("theme.ts consumers", () => {
       ...Object.values(switchTrack),
       ...Object.values(raisedEdge),
       ...Object.values(recessedEdge),
+      ...Object.values(insetRim),
       "none",
     ]);
     const found = new Set<string>();

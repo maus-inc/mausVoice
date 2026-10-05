@@ -197,7 +197,7 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
   return { minimize, toggleMax, close };
 };
 
-const captionButtonSx = (compact: boolean) =>
+const captionButtonSx = (compact: boolean, hoverFill = "action.hover") =>
   ({
     width: compact ? COMPACT_CAPTION_BUTTON_WIDTH : CAPTION_BUTTON_WIDTH,
     height: TITLE_BAR_HEIGHT,
@@ -205,8 +205,10 @@ const captionButtonSx = (compact: boolean) =>
     color: "text.secondary",
     transition:
       "background-color var(--duration-fast) ease, color var(--duration-fast) ease",
+    // Hover changes the fill and steps the glyph up in both cases, so the
+    // close button keeps the same secondary-to-primary step as the others.
     "&:hover": {
-      backgroundColor: "action.hover",
+      backgroundColor: hoverFill,
       color: "text.primary",
     },
     "&:focus-visible": {
@@ -385,6 +387,10 @@ const CaptionButtons = ({
   onClose,
 }: CaptionButtonProps) => {
   const sx = captionButtonSx(compact);
+  // Only the close fill is tinted. At `dangerHoverSoft`'s alpha the wash is a
+  // nudge rather than a state change, and the glyph still steps up on hover.
+  // Both come from one factory so the rest of the caption styling cannot drift.
+  const closeSx = captionButtonSx(compact, dangerHoverSoft);
   return (
     <Stack
       direction="row"
@@ -421,15 +427,7 @@ const CaptionButtons = ({
         size="small"
         onClick={onClose}
         aria-label={closeLabel}
-        sx={{
-          ...sx,
-          // Only the fill is tinted. At this alpha the wash is a nudge, so the
-          // glyph keeps the shared secondary-to-primary step and the close
-          // button stays legible in both schemes without a second colour token.
-          "&:hover": {
-            backgroundColor: dangerHoverSoft,
-          },
-        }}
+        sx={closeSx}
       >
         <MorphNavIcon icon={X} size={CONTROL_ICON_SIZE} />
       </IconButton>
