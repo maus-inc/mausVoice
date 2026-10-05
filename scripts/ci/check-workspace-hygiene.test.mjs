@@ -41,11 +41,24 @@ const gitDiffCheckReport = (cwd, ref = "HEAD") => {
 // The subset of glob syntax these patterns use: `**` for any path depth and `*`
 // for anything but a separator. A full matcher is not worth a dependency for two
 // patterns, and a test that silently mis-matches would be worse than no test.
+//
+// `**/` is not the same as `**`. GitHub's filter-pattern cheat sheet documents
+// `'**/README.md'` as "A README.md file anywhere in the repository", and its
+// worked example matches a top-level `README.md` as well as `js/README.md`, so the
+// separator after `**/` is optional. It has to be translated as one optional depth
+// prefix, `(?:.*/)?`. Compiling it to `.*` and leaving the slash mandatory -- the
+// first version here -- demanded at least one directory, and reported every
+// top-level suite as uncovered by a `**/`-prefixed filter.
+//
+// A bare `**` with nothing after it is still "any depth, at or below here", so it
+// keeps the plain `.*`.
 const globToRegExp = (pattern) => {
   const source = pattern
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*\//g, "\u0001")
     .replace(/\*\*/g, "\u0000")
     .replace(/\*/g, "[^/]*")
+    .replace(/\u0001/g, "(?:.*/)?")
     .replace(/\u0000/g, ".*");
   return new RegExp(`^${source}$`);
 };
@@ -801,6 +814,42 @@ describe("the trigger filter check compares executed paths to filter entries", (
       ["scripts/ci/windows-tauri-imports.test.mjs"],
       "a paths-ignore entry is not coverage: with no paths entry, the suite is " +
         "still an omission",
+    );
+  });
+
+  it("reads `**/` in a filter as matching zero directories, as GitHub does", () => {
+    // GitHub's filter-pattern cheat sheet documents `'**/README.md'` as "A
+    // README.md file anywhere in the repository", and its worked example matches
+    // `README.md` at the top level as well as `js/README.md`. So `**/` legally
+    // matches zero directories. Compiling `**` to `.*` while leaving the slash
+    // behind it mandatory asked for at least one, which made a root-level suite
+    // read as uncovered under `**/*.test.mjs` -- an omission reported in the
+    // direction that reassures, which is the direction this guard exists to
+    // catch. `scripts/**` must keep meaning "inside scripts, any depth".
+    const covering = (entry) =>
+      [
+        "on:",
+        "  push:",
+        "    paths:",
+        `      - "${entry}"`,
+        "jobs:",
+        "  unit:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - run: node --test root.test.mjs",
+        "",
+      ].join("\n");
+    for (const entry of ["**/*.test.mjs", "**.test.mjs", "*"]) {
+      assert.deepStrictEqual(
+        missingFromTriggerFilter(covering(entry), repoRoot),
+        [],
+        `a filter naming ${JSON.stringify(entry)} covers a top-level suite`,
+      );
+    }
+    assert.deepStrictEqual(
+      missingFromTriggerFilter(covering("scripts/**"), repoRoot),
+      ["root.test.mjs"],
+      "`scripts/**` is still scoped to scripts/ and does not cover the top level",
     );
   });
 
