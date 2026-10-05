@@ -353,7 +353,7 @@ export function findBuildScriptInvocation(verboseOutput) {
     // `basename` from node:path splits on `/` only, and the program name on windows is a
     // `\`-separated absolute path, so it came back whole and matched nothing. Take the
     // last segment across both separators.
-    const program = (argv[0] ?? "").split(/[/\\]/).pop() ?? "";
+    const program = (argv[0] ?? "").split(/[/\\]/).pop();
     // `rustc.exe` on Windows: the replayed command is whatever cargo invoked there.
     if (!/^rustc(\.exe)?$/.test(program)) continue;
     const at = argv.indexOf("--crate-name");
