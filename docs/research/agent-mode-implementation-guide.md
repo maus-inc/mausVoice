@@ -927,3 +927,405 @@ All new TypeScript tools must:
 4. Start Phase 1 implementation in feature branches
 5. CI/CD for Rust + TypeScript cross-platform builds
 6. Dogfood agent mode internally before user release
+
+---
+
+## Appendix A: Tauri v2 Implementation Details
+
+### Command Organization Pattern
+
+```rust
+// src-tauri/src/commands/mod.rs
+pub mod agent;
+pub mod native;
+
+pub use agent::*;
+pub use native::*;
+```
+
+### Plugin Initialization
+
+```rust
+// src-tauri/src/app.rs or src-tauri/src/main.rs
+fn main() {
+  tauri::Builder::default()
+    .plugin(tauri_plugin_screenshots::init())
+    .plugin(tauri_plugin_shell::init())
+    .invoke_handler(tauri::generate_handler![
+      take_screenshot,
+      mouse_move,
+      mouse_click,
+      type_text,
+      press_key,
+      run_shell_command,
+    ])
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
+}
+```
+
+### TypeScript IPC Pattern
+
+```typescript
+import { invoke } from "@tauri-apps/api/core";
+import type { ScreenshotResult, CommandResult } from "./actions/native.actions";
+
+export async function takeScreenshot(displayId?: number): Promise<ScreenshotResult> {
+  return await invoke<ScreenshotResult>("take_screenshot", { displayId });
+}
+```
+
+### Error Handling Pattern
+
+```rust
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum AgentError {
+  #[error("screenshot failed: {0}")]
+  ScreenshotError(String),
+  #[error("input simulation failed: {0}")]
+  InputError(String),
+  #[error("shell command failed: {0}")]
+  ShellError(String),
+}
+
+impl Serialize for AgentError {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+    serializer.serialize_str(self.to_string().as_ref())
+  }
+}
+```
+
+### Binary Data Handling
+
+**Critical:** Tauri v2 has a bug with `Uint8Array` properties inside objects. Use base64 strings for binary data (screenshots):
+
+```rust
+// Rust: encode to base64
+let base64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+
+// TypeScript: decode from base64
+const binary = atob(result.base64);
+const bytes = new Uint8Array(binary.length);
+for (let i = 0; i < binary.length; i++) {
+  bytes[i] = binary.charCodeAt(i);
+}
+```
+
+### Capability Configuration
+
+```json
+{
+  "identifier": "agent-automation",
+  "description": "Agent mode desktop automation",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "exec-sh",
+          "cmd": "sh",
+          "args": [{ "validator": "\\S+" }],
+          "sidecar": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+Reference in `tauri.conf.json`:
+
+```json
+{
+  "app": {
+    "withGlobalTauri": true
+  },
+  "plugins": {
+    "shell": {
+      "scope": [
+        { "name": "sh", "cmd": "sh", "args": true },
+        { "name": "pwsh", "cmd": "pwsh", "args": true }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## Appendix B: mausVoice Integration Points
+
+### Strategy Registration
+
+**File:** `apps/desktop/src/components/root/DictationSideEffects.tsx`
+
+```typescript
+// Around line 150:
+const strategy =
+  mode === "action"
+    ? new ActionStrategy()
+    : mode === "agent"
+      ? new AgentStrategy()
+      : new DictationStrategy();
+```
+
+### Recording Mode Type
+
+**File:** `packages/types/src/common.types.ts`
+
+```typescript
+export type RecordingMode = "dictate" | "agent" | "action" | "computer-use";
+```
+
+### Agent Configs
+
+**File:** `apps/desktop/src/agents/agent-configs.ts`
+
+```typescript
+export const AGENT_TYPE_CONFIGS: Readonly<Record<string, AgentTypeConfig>> = {
+  chat: CHAT_AGENT_CONFIG,
+  action: ACTION_AGENT_CONFIG,
+  "computer-use": COMPUTER_USE_AGENT_CONFIG,
+};
+
+export const getAgentTypeConfig = (agentType = "chat"): AgentTypeConfig =>
+  AGENT_TYPE_CONFIGS[agentType] ?? CHAT_AGENT_CONFIG;
+```
+
+### Action Loop Entry Point
+
+**File:** `apps/desktop/src/actions/chat.actions.ts`
+
+```typescript
+export async function sendChatMessage(conversationId: string, text: string): Promise<void> {
+  const message = await createChatMessage({
+    id: createId(),
+    conversationId,
+    role: "user",
+    content: text,
+    createdAt: new Date().toISOString(),
+    metadata: null,
+  });
+  
+  const config = getAgentTypeConfig(getAppState().settings.agentMode.mode);
+  if (config.agentType === "action" || config.agentType === "computer-use") {
+    await runActionForConversation(conversationId, config);
+  } else {
+    await runAgentForConversation(conversationId);
+  }
+}
+```
+
+### Provider Capabilities Detection
+
+**File:** `apps/desktop/src/repos/generate-text.repo.ts`
+
+```typescript
+export abstract class BaseGenerateTextRepo extends BaseRepo {
+  abstract generateText(input: GenerateTextInput): Promise<GenerateTextOutput>;
+  abstract streamChat(input: LlmChatInput): AsyncGenerator<LlmStreamEvent>;
+  
+  detectCapabilities(): ProviderCapabilities {
+    return {
+      supportsStreaming: true,
+      supportsToolCalls: true,
+      supportsVision: this.modelSupportsVision(),
+      supportsComputerUse: this.modelSupportsComputerUse(),
+      supportsStructuredOutput: true,
+      supportsThinking: this.modelSupportsThinking(),
+    };
+  }
+  
+  protected modelSupportsVision(): boolean {
+    const model = (this.constructor as typeof BaseGenerateTextRepo).modelName ?? "";
+    return model.includes("vision") || model.includes("gpt-4o") || model.includes("claude");
+  }
+  
+  protected modelSupportsComputerUse(): boolean {
+    const model = (this.constructor as typeof BaseGenerateTextRepo).modelName ?? "";
+    return model.includes("computer-use") || model.includes("computer_use");
+  }
+  
+  protected modelSupportsThinking(): boolean {
+    const model = (this.constructor as typeof BaseGenerateTextRepo).modelName ?? "";
+    return model.includes("thinking") || model.includes("reasoning");
+  }
+}
+```
+
+---
+
+## Appendix C: UI Component Specifications
+
+### Agent Status Indicator
+
+**States:**
+- `idle` — dimmed gray dot
+- `thinking` — soft blue pulse (1.5s ease-in-out)
+- `tool-calling` — sequential blue flash
+- `streaming` — blue wave motion
+- `complete` — animated green checkmark
+- `error` — red shake animation
+
+**Implementation:** Use `phaseKey = `${state}-${tool ?? ""}`` for identity. Apply `minDwell` latch (150ms) to prevent flicker.
+
+### Permission Dialog Anatomy
+
+1. Risk badge (Critical/High/Medium/Low) at top
+2. Action description in plain language
+3. Exact command/args in code block
+4. Estimated impact (if computable)
+5. Countdown auto-deny timer
+6. Action buttons: Allow / Deny / Always Allow
+
+**Risk colors:**
+- Critical: `#d04437` (red)
+- High: `#ffd351` (yellow/amber)
+- Medium: `#4a6785` (blue)
+- Low: `#cccccc` (gray)
+
+### Action Timeline
+
+Each timeline entry:
+- Screenshot thumbnail (60px square, click to expand)
+- Action type icon (click, type, scroll, drag, wait)
+- Target element description
+- Outcome (success/failure/no change)
+- Timestamp with elapsed time
+
+### Autonomy Modes
+
+| Mode | User Role | Agent Behavior | Approval Gates |
+|---|---|---|---|
+| Watch | Observer | Agent runs fully | All risky actions prompt |
+| Assist | Co-pilot | Agent suggests, user confirms | Every action |
+| Autonomous | Delegator | Agent executes independently | Only critical/high-risk |
+
+---
+
+## Appendix D: Testing Patterns
+
+### Unit Test Structure
+
+```
+packages/agent/src/agent-loop.test.ts          # Existing - 12 tests
+packages/agent/src/action-loop.test.ts         # New - action loop tests
+packages/agent/src/computer-use-loop.test.ts   # New - computer-use adapter tests
+packages/agent/src/action-schema.test.ts       # New - Zod validation tests
+apps/desktop/src/tools/*.test.ts               # New - tool unit tests
+apps/desktop/src/agents/run-agent.test.ts      # Existing - extend for action mode
+```
+
+### Mocking Tauri Commands
+
+```typescript
+import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
+
+beforeEach(() => {
+  clearMocks();
+});
+
+test("mocked screenshot command", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "take_screenshot") {
+      return { base64: TINY_PNG_BASE64, width: 1920, height: 1080, display_id: 0 };
+    }
+  });
+  
+  const tool = new TakeScreenshotTool({ id: "take_screenshot" } as ToolInfo);
+  const result = await tool.execute({ params: {}, reason: "test", toolCallId: "test" });
+  expect(result.success).toBe(true);
+});
+```
+
+### Mocking LLM Providers
+
+```typescript
+function scriptedProvider(script: Array<LlmStreamEvent[]>) {
+  let i = 0;
+  return {
+    async *streamChat() {
+      for (const chunk of script[i++] ?? []) {
+        yield chunk;
+      }
+    },
+  };
+}
+```
+
+### Integration Test Pattern
+
+```typescript
+test("action loop completes task", async () => {
+  const mockProvider = scriptedProvider([
+    [{ type: "tool-call", id: "c1", name: "take_screenshot", arguments: "{}" }],
+    [{ type: "tool-call", id: "c2", name: "mouse_click", arguments: '{"x":100,"y":200}' }],
+    [{ type: "text-delta", text: "Done" }],
+    [{ type: "finish", finishReason: "stop" }],
+  ]);
+  
+  const loop = new ActionLoop({
+    provider: mockProvider,
+    tools: [screenshotTool, clickTool],
+    systemPrompt: "act on screen",
+  });
+  
+  const events = await collectEvents(loop.run([]));
+  expect(events).toContainEqual(expect.objectContaining({ type: "finish", reason: "stop" }));
+});
+```
+
+---
+
+## Appendix E: Risk and Mitigation Summary
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Linux Wayland screen capture blocked | Medium | High | Detect at runtime, fall back to portal, disable computer-use mode |
+| macOS TCC permission denial | Low | High | Detect and request on first use, graceful degradation |
+| Coordinate mapping bugs on multi-monitor | Medium | Medium | Use `pixelcoords-core`, log transformations |
+| Provider-specific tool calling differences | Low | Medium | Adapter layer, test each provider |
+| Action loop infinite loop | Low | High | Max iterations, stuck-detection, abort button |
+| Shell command injection | Low | Critical | Tauri capabilities allowlist, never expose unrestricted shell |
+| Computer-use API cost | Medium | Low | Cache screenshots, use cheaper models, rate-limit |
+
+---
+
+## Appendix F: Open Questions and Decisions
+
+| Question | Decision | Rationale |
+|---|---|---|
+| Use `tauri-plugin-user-input`? | Implement custom commands | Plugin doesn't exist in Tauri v2 registry; use `enigo` directly |
+| Action loop in TS or Rust? | TypeScript for v1 | Keeps consistency with existing agent code; move to Rust only if performance demands |
+| Support OpenAI Computer Use? | Defer to Phase 7 | Requires Responses API; Gemini/Anthropic cover most use cases |
+| Port Atlas persona system? | Defer | Tightly coupled to Electron; use chat history + fact extraction instead |
+| Vercel AI SDK adoption? | Defer | Existing `@maus-inc/voice-ai` works and is tested |
+| Context caching abstraction? | Phase 1 | Stable system prompt + tool definitions benefit most from caching |
+
+---
+
+## Appendix G: Reference Implementations
+
+| Project | Language | Relevance |
+|---|---|---|
+| `suitedaces/computer-agent` | Tauri + React + Rust | Closest reference — 700 stars, similar stack |
+| `shlawgathon/Computer-Use` | Tauri 2 + React + Rust | macOS-focused, uses `xcap` + `enigo` |
+| `pipi-shrimp-agent` | Tauri + Rust + React | Multi-provider, tool execution, workflows |
+| `windows-computer-use-mcp` | Tauri + Python + FastAPI | Windows-specific, 22 MCP tools |
+| Atlas (archived) | Electron + Vue 3 | Source of features being ported |
+
+## Appendix H: Key Research Documents
+
+| Document | Location | Description |
+|---|---|---|
+| Atlas analysis | `docs/research/agent-mode-atlas-analysis.md` | Complete analysis of mausVoice PR #236 and Atlas codebase |
+| Model-agnostic architectures | `docs/research/model-agnostic-agent-loop-architectures.md` | Provider abstraction, tool calling, computer use, vision loops, caching |
+| Porting plan | `docs/research/agent-mode-porting-plan.md` | Phased implementation plan with file inventory and timeline |
+| Implementation guide | `docs/research/agent-mode-implementation-guide.md` | This document — exact implementation steps |
+| Tauri integration guide | `temp/AGENT_MODE_TAURI_INTEGRATION_GUIDE.md` | Rust command patterns, plugin init, capabilities, IPC |
+| UI/UX design guide | Research output | Agent status, permission dialogs, computer-use UI patterns |
+| Testing patterns | Research output | Unit/integration/E2E testing patterns for agent mode |
+| mausVoice integration | Research output | Exact hook points in mausVoice codebase |
