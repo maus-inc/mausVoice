@@ -723,6 +723,7 @@ type PairDialogState = {
 const usePairDialogState = (
   pairedDevices: PairedRemoteDevice[],
   remoteTargetDeviceId: string | null,
+  remoteOutputEnabled: boolean,
 ): PairDialogState => {
   const intl = useIntl();
   const [pairDialogOpen, setPairDialogOpen] = useState(false);
@@ -811,9 +812,24 @@ const usePairDialogState = (
         // consistent with the rest of the file, which selects it once via `useAppStore`
         // and passes it down.
         const wasTheTarget = remoteTargetDeviceId === editingDeviceId;
+        const wasOutputEnabled = remoteOutputEnabled;
         await deletePairedRemoteDevice(editingDeviceId);
         if (wasTheTarget) {
           await setRemoteTargetDeviceId(deviceId);
+          // `setRemoteTargetDeviceId` is not a pure setter -- it also writes
+          // `remoteOutputEnabled = Boolean(deviceId)`, which turns the output back on
+          // (user.actions.ts:842-843). So without this the rename would trade one silent
+          // surprise for the other: the user turns the switch off, corrects a typo in the
+          // receiver's id, and dictation starts broadcasting to that device again with no
+          // switch visibly moved. "Target selected, output off" is a normal state to be in
+          // -- turning the output off calls `setRemoteOutputEnabled(false)`, which leaves
+          // the target set (`:632`).
+          //
+          // The two are independent user decisions, so the rename moves the pointer and
+          // restores the switch rather than letting the pointer write imply it.
+          if (!wasOutputEnabled) {
+            await setRemoteOutputEnabled(false);
+          }
         }
       }
       closePairDialog();
@@ -1199,7 +1215,11 @@ export const MultiDeviceDialog = () => {
     remoteTargetDeviceId,
     pairedDevices,
   });
-  const pair = usePairDialogState(pairedDevices, remoteTargetDeviceId);
+  const pair = usePairDialogState(
+    pairedDevices,
+    remoteTargetDeviceId,
+    remoteOutputEnabled,
+  );
   const invite = useImportInviteState();
 
   const handleClose = () => {
