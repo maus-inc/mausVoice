@@ -190,17 +190,21 @@ const followHttpsRedirects = async (
   // body — an `init.body` stream was handed back to the transport already consumed,
   // and it threw `TypeError: Response body object should not be disturbed or locked`.
   // Buffer it once here, the last point the bytes still exist, so both hop 0 and
-  // every replay read the same ArrayBuffer.
+  // every replay read the same ArrayBuffer. This does mean a streamed upload is
+  // held in memory in full, which the note below explains and now contradicts:
+  // the alternative is a spent stream on any 307/308.
   if (init?.body instanceof ReadableStream) {
     chain.body = await new Response(init.body).arrayBuffer();
   }
   const requestSignal = input instanceof Request ? input.signal : null;
   // A `Request` input carries its body on the object rather than in `init`, and a
   // URL cannot name one. So hop one is issued against that Request and lets the
-  // plugin stream it as it always has; only a redirect needs the bytes spelled
-  // out, and only then is the body read (see `walkChain`). Buffering it up front
-  // would duplicate every streamed upload in memory to serve a case that mostly
-  // never arrives.
+  // plugin stream it as it always has, and only a redirect needs the bytes spelled
+  // out (see `walkChain`). Note the deliberate asymmetry with the block above: a
+  // `Request` input is streamed and never buffered, whereas an `init.body` stream
+  // is buffered up front whatever the hop count, because that one cannot be cloned
+  // after the transport has read it. So the cost is paid only by callers that pass
+  // a stream in `init`, and only that path can hit a redirect replay.
   const requestWithBody =
     input instanceof Request && init?.body === undefined && input.body !== null
       ? input

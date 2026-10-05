@@ -241,9 +241,10 @@ const stripHtml = (input: string): string => {
  *
  * (The two are NOT interchangeable in `fast-style.utils.ts` or
  * `packages/utilities/src/error.ts`, where the check asks whether a cut would
- * *split* a pair. There `codePointAt` answers a different question -- it combines
- * the lead with the trail, which is exactly the pair the split test needs to see
- * -- so those two sites keep `charCodeAt`.)
+ * *split* a pair. `codePointAt` answers the inverse question there -- it combines
+ * the lead with the trail, which is the pair the split test needs to see -- so
+ * both of those sites re-express the check from the other side of the boundary
+ * rather than reading the unit directly.)
  */
 const dropLoneTrailingSurrogate = (s: string): string => {
   if (s.length === 0) return s;

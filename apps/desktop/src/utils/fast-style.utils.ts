@@ -122,8 +122,10 @@ const findSentenceBoundary = (
     // The window edge is not a separator. When the terminator is the last
     // character of the chunk, the character after it belongs to the NEXT chunk,
     // so cutting here would hand that chunk a false sentence start -- which
-    // strips a connective or capitalises a word that was mid-sentence. Only the
-    // very end of the text qualifies, because nothing follows to glue it to.
+    // strips a connective or capitalises a word that was mid-sentence. The edge
+    // still qualifies when what follows is a space, or when there is nothing after
+    // it at all; only a non-space character disqualifies it, because then the two
+    // halves are the same word.
     if (
       afterSpace >= end &&
       (afterSpace >= text.length || isSpace(text[afterSpace]))

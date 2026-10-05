@@ -83,7 +83,9 @@ Use **pnpm** with the frozen lockfile, same as the rest of the monorepo. Do not 
 ## Notes
 
 - WebView2 uses Tauri's embedded bootstrapper.
-- First-install UX only. There is no in-app update path to describe yet: release builds
-  ship with `plugins.updater.endpoints` empty and the release workflow deliberately
-  publishes no `latest.json`, so a shipped build has no updater to check. Upgrading means
-  installing a newer installer over the top.
+- First-install UX only. This installer has no updater to check at all, and not because a
+  field was left blank: its `src-tauri/tauri.conf.json` declares no `plugins` block, so
+  there is no endpoint and no pubkey. The signed `latest.json` that `release.yml` publishes
+  is the desktop app's manifest, gated fail-closed on the updater signing secrets, and it
+  says nothing about this installer. Upgrading means installing a newer installer over the
+  top.

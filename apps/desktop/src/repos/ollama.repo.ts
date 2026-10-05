@@ -4,7 +4,10 @@ import { appendOpenAICompatiblePath } from "../utils/openai-compatible.utils";
 import { BaseRepo } from "./base.repo";
 
 export abstract class BaseOllamaRepo extends BaseRepo {
-  // `signal` is optional so existing callers are unaffected, but the pickers need it:
+  // `signal` is optional so existing callers are unaffected, and both pickers that
+  // poll these do pass one -- `OllamaModelPicker` and `OpenAICompatibleModelPicker`
+  // each abort on timeout and on unmount, with a fresh controller per probe so a
+  // timeout cannot poison later retries. The reason they need it:
   // a probe bounded by `withTimeout` stops WAITING on a stalled host, it does not stop the
   // request, so without an abort every retry left another live fetch behind.
   abstract checkAvailability(signal?: AbortSignal): Promise<boolean>;

@@ -47,11 +47,15 @@ export const OllamaModelPicker = ({
     let cancelled = false;
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    // One controller for the whole effect. `withTimeout` stops WAITING on a host that
-    // accepts the connection and then stalls; it does not stop the request, so
-    // without this every 3s retry armed another live probe and they accumulated.
-    // The timeout path and the unmount/endpoint-change path both abort it.
-    const controller = new AbortController();
+    // The in-flight run's controller, so the unmount/endpoint-change path can abort
+    // exactly that request. It is deliberately NOT one controller for the whole
+    // effect: an aborted signal rejects immediately and stays rejected, so a shared
+    // one would make every retry after the first timeout fail without ever reaching
+    // the server, and the picker could not recover even once the host came back.
+    // `withTimeout` stops WAITING on a host that accepts the connection then stalls;
+    // it does not stop the request, so without an abort each 3s retry armed another
+    // live probe and they accumulated.
+    let activeController: AbortController | undefined;
 
     // A new endpoint or key means the previous answer describes a DIFFERENT server, so it is
     // cleared here rather than left for the first `await` to overwrite.
@@ -68,6 +72,9 @@ export const OllamaModelPicker = ({
       if (cancelled || inFlight) return;
       inFlight = true;
       setIsLoading(true);
+      // Fresh per run: see `activeController` above for why this cannot be hoisted.
+      const controller = new AbortController();
+      activeController = controller;
       try {
         const repo = new OllamaRepo(effectiveUrl, apiKey || undefined);
         // Bounded, because `OllamaRepo` has no timeout and no AbortSignal. A host that accepts
@@ -106,6 +113,9 @@ export const OllamaModelPicker = ({
           timer = setTimeout(() => void run(), 3000);
         }
       } finally {
+        // Only clear it if it is still this run's, so a retired run cannot disown a
+        // newer run's controller.
+        if (activeController === controller) activeController = undefined;
         inFlight = false;
         if (!cancelled) setIsLoading(false);
       }
@@ -116,7 +126,7 @@ export const OllamaModelPicker = ({
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
-      controller.abort();
+      activeController?.abort();
     };
   }, [effectiveUrl, apiKey]);
 
