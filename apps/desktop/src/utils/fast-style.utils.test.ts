@@ -482,14 +482,38 @@ describe("measureFastStyleTruncation", () => {
   });
 
   it("agrees with applyFastStyle, which styles the whole over-length input", () => {
-    const raw = "word ".repeat(6000);
+    // The input used to be `"word ".repeat(6000)`, which made this assertion pass
+    // by one character: the styled output came back 15001 chars against a cap of
+    // 15000, so `toBeGreaterThan(cap)` held while `REPEATED_WORD_RE` had collapsed
+    // "word word" pairs and HALF the words were gone -- 3000 of 6000. The assertion
+    // was too weak to notice, and it only started failing when an unrelated change
+    // removed a single period at a chunk seam.
+    //
+    // Two things are wrong with that. The input is pathological for this
+    // measurement, because the repeat rule is doing the halving, not the chunk
+    // size. And `length > cap` says nothing about coverage: 15001 characters of
+    // repeated filler is not a styled dictation.
+    //
+    // So the input is a realistic sentence and the assertion counts coverage. A
+    // distinct marker per sentence makes a dropped tail detectable, which a length
+    // comparison cannot do.
+    const count = 700;
+    const raw = Array.from(
+      { length: count },
+      (_, i) => `The meeting on day ${i} ran long and covered the roadmap. `,
+    ).join("");
+    expect(raw.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+
     // The reported loss and the applied loss must not disagree.
     expect(measureFastStyleTruncation(raw)).toBeNull();
-    // And nothing may be missing from what comes back, which is the half of the
-    // agreement that a null report alone would not prove.
-    expect(applyFastStyle(raw, "default").length).toBeGreaterThan(
-      FAST_STYLE_MAX_INPUT_CHARS,
-    );
+
+    // Every sentence has to be present in the output, tail included. This is the
+    // half of the agreement that a null report alone would not prove.
+    const out = applyFastStyle(raw, "default");
+    for (let i = 0; i < count; i += 1) {
+      expect(out).toContain(`day ${i} ran long`);
+    }
+    expect(out).toContain(`day ${count - 1} ran long`);
   });
 });
 
@@ -871,88 +895,92 @@ describe("bullet edge stripping", () => {
 });
 
 describe("an ambiguous 'd is left alone rather than guessed at", () => {
-  // All four `'d` entries in CONTRACTION_MAP map to *would*, and `I'd already
-  // left` came back as `I would already left`. This is the one entry class in the
-  // map that is genuinely ambiguous: `'d` is *would* in "I'd like" and *had* in
-  // "I'd already left", and nothing in the sentence distinguishes them.
-  //
-  // The module's own rule for a match that might be wrong is at the contraction
-  // list: "failing to expand a typo costs something that still reads correctly,
-  // whereas matching a bare word rewrites a sentence the speaker did not say." An
-  // `'d` that picks the wrong sense is on the second side of that line -- it
-  // rewrites the tense. Leaving `I'd already left` unexpanded still reads
-  // correctly and cannot mis-state it.
-  //
-  // So the four entries are dropped rather than disambiguated. Guessing at the
-  // participle would need a lexicon this module deliberately does not carry, and
-  // `"I'd rather"`, `"I'd better"`, `"I'd love"` and `"I'd prefer"` all take
-  // *would*, so a lookahead would have to know that list too.
-  for (const input of [
-    "i'd already left the office",
-    "we'd already shipped it",
-    "you'd told me twice",
-    "they'd finished by then",
-    "i'd seen it before",
-  ]) {
-    expect(applyFastStyle(input, "formal")).toBe(
-      `${input[0].toUpperCase()}${input.slice(1)}.`,
-    );
-  }
+  it("covers every case in this note", () => {
+    // All four `'d` entries in CONTRACTION_MAP map to *would*, and `I'd already
+    // left` came back as `I would already left`. This is the one entry class in the
+    // map that is genuinely ambiguous: `'d` is *would* in "I'd like" and *had* in
+    // "I'd already left", and nothing in the sentence distinguishes them.
+    //
+    // The module's own rule for a match that might be wrong is at the contraction
+    // list: "failing to expand a typo costs something that still reads correctly,
+    // whereas matching a bare word rewrites a sentence the speaker did not say." An
+    // `'d` that picks the wrong sense is on the second side of that line -- it
+    // rewrites the tense. Leaving `I'd already left` unexpanded still reads
+    // correctly and cannot mis-state it.
+    //
+    // So the four entries are dropped rather than disambiguated. Guessing at the
+    // participle would need a lexicon this module deliberately does not carry, and
+    // `"I'd rather"`, `"I'd better"`, `"I'd love"` and `"I'd prefer"` all take
+    // *would*, so a lookahead would have to know that list too.
+    for (const input of [
+      "i'd already left the office",
+      "we'd already shipped it",
+      "you'd told me twice",
+      "they'd finished by then",
+      "i'd seen it before",
+    ]) {
+      expect(applyFastStyle(input, "formal")).toBe(
+        `${input[0].toUpperCase()}${input.slice(1)}.`,
+      );
+    }
 
-  // The unambiguous contractions are untouched by that, and the ones that are
-  // ambiguous in English but not here now require their apostrophe.
-  for (const [input, expected] of [
-    ["it's fine", "It is fine."],
-    ["you're right", "You are right."],
-    ["let's go", "Let us go."],
-    ["we'll see", "We will see."],
-    ["they're here", "They are here."],
-  ] as const) {
-    expect(applyFastStyle(input, "formal")).toBe(expected);
-  }
+    // The unambiguous contractions are untouched by that, and the ones that are
+    // ambiguous in English but not here now require their apostrophe.
+    for (const [input, expected] of [
+      ["it's fine", "It is fine."],
+      ["you're right", "You are right."],
+      ["let's go", "Let us go."],
+      ["we'll see", "We will see."],
+      ["they're here", "They are here."],
+    ] as const) {
+      expect(applyFastStyle(input, "formal")).toBe(expected);
+    }
+  });
 });
 
 describe("a casual word is rewritten, not deleted", () => {
-  // `INFORMAL_RE` matched `gonna|wanna|gotta|kinda|sorta|yeah|yep|nope` and every
-  // match was deleted. Deleting is only harmless for a word with nothing to say:
-  // `nope` inverts a negation, and the `-in'g` forms left a verb with nothing to
-  // attach to once `expandContractions` had already turned "I'm" into "I am".
-  //
-  //   "nope, the report is correct" -> ", the report is correct."
-  //   "im gonna go now"             -> "I am go now."
-  //   "i wanna go now"              -> "I go now."
-  //   "you gotta be there"          -> "You be there."
-  //
-  // The first is the worst: `no` IS the formal equivalent of `nope`, so this is not
-  // a register change, it is the opposite claim. It also left a leading comma that
-  // `fixCapitalizationAndPunctuation` cannot repair, because it capitalizes
-  // `text[0]` and that character is now the comma.
-  for (const [input, expected] of [
-    ["nope, the report is correct", "No, the report is correct."],
-    ["nope that's right", "No that's right."],
-    // Mid-sentence `yeah`, not leading: `SO_WELL_LEADING_RE` already strips a
-    // sentence-initial `yeah` as a discourse opener, alongside `so` and `well`,
-    // and that is deliberate. This case is about the rewrite map, which runs after.
-    ["we shipped yeah", "We shipped yes."],
-    ["yep that works", "Yes that works."],
-    ["im gonna go now", "I am going to go now."],
-    ["i wanna go now", "I want to go now."],
-    ["you gotta be there", "You got to be there."],
-    ["kinda tired", "Somewhat tired."],
-    ["sorta late", "Somewhat late."],
-  ] as const) {
-    expect(applyFastStyle(input, "formal")).toBe(expected);
-  }
+  it("covers every case in this note", () => {
+    // `INFORMAL_RE` matched `gonna|wanna|gotta|kinda|sorta|yeah|yep|nope` and every
+    // match was deleted. Deleting is only harmless for a word with nothing to say:
+    // `nope` inverts a negation, and the `-in'g` forms left a verb with nothing to
+    // attach to once `expandContractions` had already turned "I'm" into "I am".
+    //
+    //   "nope, the report is correct" -> ", the report is correct."
+    //   "im gonna go now"             -> "I am go now."
+    //   "i wanna go now"              -> "I go now."
+    //   "you gotta be there"          -> "You be there."
+    //
+    // The first is the worst: `no` IS the formal equivalent of `nope`, so this is not
+    // a register change, it is the opposite claim. It also left a leading comma that
+    // `fixCapitalizationAndPunctuation` cannot repair, because it capitalizes
+    // `text[0]` and that character is now the comma.
+    for (const [input, expected] of [
+      ["nope, the report is correct", "No, the report is correct."],
+      ["nope that's right", "No that's right."],
+      // Mid-sentence `yeah`, not leading: `SO_WELL_LEADING_RE` already strips a
+      // sentence-initial `yeah` as a discourse opener, alongside `so` and `well`,
+      // and that is deliberate. This case is about the rewrite map, which runs after.
+      ["we shipped yeah", "We shipped yes."],
+      ["yep that works", "Yes that works."],
+      ["im gonna go now", "I am going to go now."],
+      ["i wanna go now", "I want to go now."],
+      ["you gotta be there", "You got to be there."],
+      ["kinda tired", "Somewhat tired."],
+      ["sorta late", "Somewhat late."],
+    ] as const) {
+      expect(applyFastStyle(input, "formal")).toBe(expected);
+    }
 
-  // A deletion that leaves punctuation behind must not survive as a leading comma,
-  // whatever caused it. This is the shape the `nope` case produced.
-  expect(applyFastStyle("nope, we are done", "formal")).toBe(
-    "No, we are done.",
-  );
+    // A deletion that leaves punctuation behind must not survive as a leading comma,
+    // whatever caused it. This is the shape the `nope` case produced.
+    expect(applyFastStyle("nope, we are done", "formal")).toBe(
+      "No, we are done.",
+    );
 
-  // Bare `nope` has nothing left to say, so the transform returns a stop rather
-  // than an empty string that a caller would have to special-case.
-  expect(applyFastStyle("nope", "formal")).toBe("No.");
+    // Bare `nope` has nothing left to say, so the transform returns a stop rather
+    // than an empty string that a caller would have to special-case.
+    expect(applyFastStyle("nope", "formal")).toBe("No.");
+  });
 });
 
 describe("filler removal keeps words that merely end in a filler", () => {
@@ -989,91 +1017,105 @@ describe("filler removal keeps words that merely end in a filler", () => {
   });
 
   describe("a contraction expansion never fires on a bare word that happens to be one", () => {
-    // `contraction.replace("'", "'?")` made the APOSTROPHE optional, so `we're`
-    // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `let's`
-    // matched `lets`, and `I'll` matched `ill`. Formal mode rewrote ordinary
-    // sentences accordingly.
-    //
-    // It used to name `Id` and `wed` here too. Those two entries were dropped
-    // later, for a different reason and in a different commit: `'d` is ambiguous
-    // between *would* and *had*, so it is not expanded at all. See "an ambiguous
-    // 'd is left alone rather than guessed at" below.
-    //
-    // It is the apostrophe that becomes optional, not the tail of the stem, so
-    // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is
-    // pinned below, because it is the one entry in this map where the naive
-    // reading of the substitution goes wrong in the safe direction.
-    for (const [input, expected] of [
-      ["we were ready", "We were ready."],
-      ["the dog wagged its tail", "The dog wagged its tail."],
-      ["as well as that", "As well as that."],
-      ["it is well done", "It is well done."],
-      ["he lets go", "He lets go."],
-      ["he is ill", "He is ill."],
-    ] as const) {
-      expect(applyFastStyle(input, "formal")).toBe(expected);
-    }
+    it("covers every case in this note", () => {
+      // `contraction.replace("'", "'?")` made the APOSTROPHE optional, so `we're`
+      // also matched `were`, `it's` matched `its`, `we'll` matched `well`, `let's`
+      // matched `lets`, and `I'll` matched `ill`. Formal mode rewrote ordinary
+      // sentences accordingly.
+      //
+      // It used to name `Id` and `wed` here too. Those two entries were dropped
+      // later, for a different reason and in a different commit: `'d` is ambiguous
+      // between *would* and *had*, so it is not expanded at all. See "an ambiguous
+      // 'd is left alone rather than guessed at" below.
+      //
+      // It is the apostrophe that becomes optional, not the tail of the stem, so
+      // `can't` compiles to `\bcan'?t\b` and never matched a bare `can`. That is
+      // pinned below, because it is the one entry in this map where the naive
+      // reading of the substitution goes wrong in the safe direction.
+      for (const [input, expected] of [
+        ["we were ready", "We were ready."],
+        ["the dog wagged its tail", "The dog wagged its tail."],
+        ["as well as that", "As well as that."],
+        ["it is well done", "It is well done."],
+        ["he lets go", "He lets go."],
+        ["he is ill", "He is ill."],
+      ] as const) {
+        expect(applyFastStyle(input, "formal")).toBe(expected);
+      }
 
-    // `can` is not among them: the `'?` sits between the stem and the final `t`.
-    expect(applyFastStyle("we can go now", "formal")).toBe("We can go now.");
+      // `can` is not among them: the `'?` sits between the stem and the final `t`.
+      expect(applyFastStyle("we can go now", "formal")).toBe("We can go now.");
 
-    // The five are not the whole map. The other bare forms are not words, so
-    // their apostrophe stays optional: speech-to-text drops it, and "dont stop"
-    // reading as "Do not stop." is the behaviour worth keeping. Being wrong in
-    // that direction costs an unexpanded typo that still reads correctly; being
-    // wrong in the other one rewrites the user's sentence.
-    expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
-    expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
+      // The five are not the whole map. The other bare forms are not words, so
+      // their apostrophe stays optional: speech-to-text drops it, and "dont stop"
+      // reading as "Do not stop." is the behaviour worth keeping. Being wrong in
+      // that direction costs an unexpanded typo that still reads correctly; being
+      // wrong in the other one rewrites the user's sentence.
+      expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
+      expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
 
-    // And the five still expand when they are genuinely contractions.
-    expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
-    expect(applyFastStyle("it's fine", "formal")).toBe("It is fine.");
-    expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
-    expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
-    expect(applyFastStyle("I'll be there", "formal")).toBe("I will be there.");
-    expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
-    // The `'d` family is not here: it is ambiguous, so it is not expanded at all.
-    // See "an ambiguous 'd is left alone rather than guessed at" below.
+      // And the five still expand when they are genuinely contractions.
+      expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
+      expect(applyFastStyle("it's fine", "formal")).toBe("It is fine.");
+      expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
+      expect(applyFastStyle("let's go", "formal")).toBe("Let us go.");
+      expect(applyFastStyle("I'll be there", "formal")).toBe(
+        "I will be there.",
+      );
+      expect(applyFastStyle("can't stay", "formal")).toBe("Cannot stay.");
+      // The `'d` family is not here: it is ambiguous, so it is not expanded at all.
+      // See "an ambiguous 'd is left alone rather than guessed at" below.
+    });
   });
 
   describe("every semicolon-separated idea becomes its own bullet", () => {
-    // The fragment filter was `trimmed.length > 2`, which drops a two-character
-    // idea. It read as a guard against emitting empty bullets, but the fallback
-    // only applies when EVERY fragment was short, so a single longer sibling was
-    // enough to delete the short ones. This module's own header says nothing here
-    // may shorten text.
-    // Bullets capitalize each item, which is established behaviour below, so the
-    // expectations here carry it. The point of each case is which items survive.
-    expect(applyFastStyle("Go; no; stop.", "bullets")).toBe(
-      "- Go\n- No\n- Stop",
-    );
-    expect(applyFastStyle("go; no; stop", "bullets")).toBe(
-      "- Go\n- No\n- Stop",
-    );
-    // A digit is an idea too, and "3; 4; 5" is a list of three.
-    expect(applyFastStyle("3; 4; 5", "bullets")).toBe("- 3\n- 4\n- 5");
-
-    // The filter exists to keep empty bullets out. A fragment with no letter or
-    // digit in it is one.
-    //
-    // The threshold that was here also dropped both of these, but only as a side
-    // effect of counting characters: an em dash survives `stripEdgePunctuation`,
-    // which removes only `[,.;\s]`, and `toBullets` strips a leading marker, so a
-    // bare hyphen became an empty bullet. A threshold of 1 or less is what would let
-    // either through as content. The reason to prefer the letter-or-digit test is
-    // that it drops both without also dropping "no" or "3", and it reads as the
-    // property being checked rather than as a proxy for it. The control without the
-    // empty fragment is the same sentence and shows what these three are compared
-    // against.
-    expect(applyFastStyle("Buy milk; eggs", "bullets")).toBe(
-      "- Buy milk\n- Eggs",
-    );
-    for (const empty of ["-", "", "\u2014"]) {
-      expect(applyFastStyle(`Buy milk; ${empty}; eggs`, "bullets")).toBe(
-        "- Buy milk\n- Eggs",
-        `${JSON.stringify(empty)} is not an idea, so it does not become a bullet`,
+    it("covers every case in this note", () => {
+      // The fragment filter was `trimmed.length > 2`, which drops a two-character
+      // idea. It read as a guard against emitting empty bullets, but the fallback
+      // only applies when EVERY fragment was short, so a single longer sibling was
+      // enough to delete the short ones. This module's own header says nothing here
+      // may shorten text.
+      // Bullets capitalize each item, which is established behaviour below, so the
+      // expectations here carry it. The point of each case is which items survive.
+      expect(applyFastStyle("Go; no; stop.", "bullets")).toBe(
+        "- Go\n- No\n- Stop",
       );
-    }
+      expect(applyFastStyle("go; no; stop", "bullets")).toBe(
+        "- Go\n- No\n- Stop",
+      );
+      // A digit is an idea too, and "3; 4; 5" is a list of three.
+      expect(applyFastStyle("3; 4; 5", "bullets")).toBe("- 3\n- 4\n- 5");
+
+      // The filter exists to keep empty bullets out. A fragment with no letter or
+      // digit in it is one.
+      //
+      // The threshold that was here also dropped both of these, but only as a side
+      // effect of counting characters: an em dash survives `stripEdgePunctuation`,
+      // which removes only `[,.;\s]`, and `toBullets` strips a leading marker, so a
+      // bare hyphen became an empty bullet. A threshold of 1 or less is what would let
+      // either through as content. The reason to prefer the letter-or-digit test is
+      // that it drops both without also dropping "no" or "3", and it reads as the
+      // property being checked rather than as a proxy for it. The control without the
+      // empty fragment is the same sentence and shows what these three are compared
+      // against.
+      expect(applyFastStyle("Buy milk; eggs", "bullets")).toBe(
+        "- Buy milk\n- Eggs",
+      );
+      // One assertion over an object rather than a loop: vitest matchers take a
+      // single argument, so a message cannot be attached to `toBe`, and the keys are
+      // what name the failing case in the diff.
+      const bulletsFor = (empty: string) =>
+        applyFastStyle(`Buy milk; ${empty}; eggs`, "bullets");
+      expect({
+        "a bare hyphen": bulletsFor("-"),
+        "nothing at all": bulletsFor(""),
+        "an em dash": bulletsFor("\u2014"),
+      }).toEqual({
+        "a bare hyphen": "- Buy milk\n- Eggs",
+        "nothing at all": "- Buy milk\n- Eggs",
+        "an em dash": "- Buy milk\n- Eggs",
+      });
+    });
   });
 
   describe("a chunk seam is not a sentence boundary", () => {
