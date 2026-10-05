@@ -287,4 +287,58 @@ describe("applySpokenCommands", () => {
       }),
     ).toBe("hello new line scratch that");
   });
+
+  describe("a quotative 'scratch that' is not the command", () => {
+    // "scratch that" is ordinary English as the object of a reporting verb. The
+    // clause-subject deny-list is what keeps the command from firing there, and it
+    // held only pronouns, modals, auxiliaries and negations. "The manager said
+    // scratch that." passed the gate, reached `applyScratch`, found no sentence
+    // boundary before the command and cleared the whole buffer -- so a quotative
+    // use deleted the dictation. This file rates a miss that only mispunctuates a
+    // cosmetic error and puts data loss above it.
+    for (const input of [
+      "The manager said scratch that.",
+      "She asked scratch that.",
+      "I wrote scratch that in the notes.",
+      "He repeated scratch that.",
+      "He told scratch that.",
+      // And the damaging shape: an earlier sentence that must survive intact.
+      "I sent the invoice. The manager said scratch that.",
+    ]) {
+      expect(applySpokenCommands(input)).toBe(input);
+    }
+
+    // The real command still fires, including where the boundary is what makes the
+    // scratch well-defined. These are the cases the existing suite already pins,
+    // restated here because the deny-list that protects them was widened.
+    expect(applySpokenCommands("Hello world scratch that")).toBe("");
+    expect(applySpokenCommands("First sentence. Second scratch that")).toBe(
+      "First sentence.",
+    );
+    expect(applySpokenCommands("Keep this. Drop that. scratch that")).toBe(
+      "Keep this.",
+    );
+    expect(applySpokenCommands("one two scratch that scratch that")).toBe("");
+    expect(applySpokenCommands("See Dr. Smith scratch that")).toBe("");
+    expect(applySpokenCommands("First. Second. new line scratch that")).toBe(
+      "First.",
+    );
+
+    // The deny-list entries this module added for `scratch that` itself. Each of
+    // these has the command word inside a clause that cannot be one.
+    for (const input of [
+      "I finished the report. I'll scratch that off my to-do list.",
+      "Let's scratch that idea and start over.",
+      "We should scratch that from the agenda.",
+    ]) {
+      expect(applySpokenCommands(input)).toBe(input);
+    }
+
+    // What the deny-list cannot do, stated so it is not mistaken for coverage: it
+    // looks only at the token immediately before the command. "told me scratch
+    // that" puts "me" there, and "me" is not a reporting verb, so that shape still
+    // clears the buffer. Catching it needs the whole clause, which is a different
+    // gate from the one widened above.
+    expect(applySpokenCommands("He told me scratch that.")).toBe("");
+  });
 });

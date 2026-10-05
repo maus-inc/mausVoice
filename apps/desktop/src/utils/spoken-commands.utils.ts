@@ -204,6 +204,52 @@ const SCRATCH_CLAUSE_SUBJECTS = new Set([
   "won't",
   "not",
   "never",
+  // Reporting and mental-state verbs. "scratch that" is also ordinary English
+  // after one of these, where it is the object of what was said rather than a
+  // command, and the gate above is only supposed to fire where the words cannot
+  // be part of the surrounding sentence. Without these, "The manager said
+  // scratch that." reached `applyScratch`, which found no sentence boundary
+  // before the command and cleared the whole buffer -- so a quotative use
+  // deleted the user's dictation instead of doing nothing.
+  //
+  // This is an open class and will never be complete. Adding the common ones is
+  // the difference between the command firing and not firing, so it is worth
+  // more here than completeness would be.
+  "said",
+  "says",
+  "say",
+  "telling",
+  "tells",
+  "told",
+  "asked",
+  "asks",
+  "ask",
+  "asking",
+  "yelled",
+  "whispered",
+  "shouted",
+  "mumbled",
+  "wrote",
+  "writes",
+  "writing",
+  "read",
+  "reads",
+  "reading",
+  "thought",
+  "thinks",
+  "think",
+  "meant",
+  "means",
+  "repeat",
+  "repeated",
+  "reply",
+  "replied",
+  "heard",
+  "hears",
+  "hear",
+  "see",
+  "saw",
+  "seen",
 ]);
 
 // Closed-class words that commonly open a sentence. Transcription only
