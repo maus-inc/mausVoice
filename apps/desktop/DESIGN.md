@@ -81,7 +81,7 @@ The Windows and Linux caption buttons are three square targets inset from the ba
 - Transitions read `var(--duration-fast)` rather than a literal, so the cluster follows the same clock as the rest of the chrome and drops to 1ms under `prefers-reduced-motion`.
 - Press scales the target to 0.95 and ramps the fill, rather than swapping in a gradient.
 - The maximize glyph is a single wide rounded rectangle in both window states. Swapping to an overlapping restore pair mid-gesture reads as a different control, and the pair needs more width than the box it stands for, so it sits off-centre in a square target. The accessible name still changes between Maximize and Restore.
-- `-webkit-corner-smoothing: 60%` keeps the rounded corners from being shaved flat by the compositor on a translucent target. It lives on `.caption-button` in `styles/tokens.css`, not in the component's `sx`, because MUI's style system drops properties it does not recognise. It is a no-op on non-Chromium engines.
+- `-webkit-corner-smoothing: 60%` keeps the rounded corners from being shaved flat by the compositor on a translucent target. It lives on `.caption-button` in `styles/caption.css`, not in the component's `sx`, because MUI's style system drops properties it does not recognise. It is a no-op on non-Chromium engines.
 
 ## Custom chrome
 

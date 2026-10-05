@@ -251,7 +251,7 @@ const captionButtonSx = (dark: boolean, compact: boolean) => {
     opacity: captionButtonRestOpacity,
     // Windows corner smoothing cannot be set here: MUI's style system drops
     // properties it does not recognise, so it lives on `.caption-button` in
-    // `styles/tokens.css` instead. The transition reads the shared duration
+    // `styles/caption.css` instead. The transition reads the shared duration
     // token rather than a literal because the token collapses to 1ms under
     // prefers-reduced-motion, and a hand-written value would ignore that.
     transition:

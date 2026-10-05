@@ -244,9 +244,15 @@ describe("TitleBar on Windows and Linux", () => {
       }
     }
 
+    // Skip MUI's global utility classes: a future `:hover` rule on one of
+    // them would be matched first and measured instead of the caption fill.
+    // The caption's own class is the one Emotion generates for the `sx`
+    // prop, which never carries the `Mui` prefix.
     const captionClass = classes[0]
       .split(" ")
-      .find((name) => pseudoRules.has(`${name}:hover`));
+      .find(
+        (name) => !name.startsWith("Mui") && pseudoRules.has(`${name}:hover`),
+      );
     if (!captionClass) {
       throw new Error("no :hover rule found for the caption cluster");
     }
