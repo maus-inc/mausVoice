@@ -22,6 +22,23 @@ const read = (relativePath) =>
 // the bare word boundary would also match English prose inside echo strings.
 const POSIX_ONLY = [/\bif\s*\[/, /^\s*elif\b/m, /^\s*fi\b/m, /^\s*then\b/m];
 
+// A `run:` body that resolves `scripts/ci/` out of the scanned checkout. The subject is
+// the RESOLVED PATH, not the launcher in front of it: a relative path needs no
+// interpreter to execute branch code, so `./scripts/ci/evil.sh`, `scripts/ci/evil.sh`
+// and `source scripts/ci/env.sh` reach the branch under review as effectively as
+// `sh scripts/ci/evil.sh`. Finding 4187450820.
+//
+// One constant, read by both the assertion that guards the real workflow and the test
+// that exercises it. They were separate literals 127 lines apart, which meant a test
+// could agree with a regressed assertion by agreeing with its own copy of the pattern.
+// Reverting THIS constant to the old interpreter list now fails the suite, which is
+// what makes the guard's coverage a fact rather than a claim.
+//
+// No `g` flag, so `.test()` is stateless and order cannot change the answer. That is
+// load-bearing for the shared use: adding `g` would make the two call sites depend on
+// how many times each had been called.
+const PRE_VERDICT_SCRIPTS_CI = /(?:^|[\s;&|(])\.?\/?scripts\/ci\//;
+
 // Extract the steps of a workflow file as { name, shell, shells, run } records.
 // The release workflow pins structure by convention (steps are `- name:`
 // entries with an optional `shell:` and a `run: |` block), so a line scanner
@@ -498,6 +515,102 @@ describe("release workflow shell contracts", () => {
     assert.deepEqual(next.run, ["echo second"]);
   });
 
+it("treats a pre-verdict scripts/ci path as the hazard whatever launches it", () => {
+    // PRE_VERDICT_SCRIPTS_CI names no launcher. It used to be a list of them:
+    //
+    //     (?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\/
+    //
+    // which is a list of interpreters standing in for the thing the contract is about --
+    // a step that executes bytes out of the scanned checkout BEFORE the verdict. A
+    // relative path needs no interpreter to do that, so the interpreter list was never
+    // the property the hazard depended on.
+    //
+    // These are fed to the file's OWN `extractSteps`, so each one is a step this suite
+    // really parses, positioned where a pre-verdict step really sits. A hand-copied copy
+    // of the matcher was the first draft of this test and it pinned itself: it stayed
+    // green when the constant was reverted to the old list -- which is the point of
+    // sharing one constant rather than two literals.
+    const synthetic = (body) =>
+      [
+        "name: t",
+        "on:",
+        "  pull_request:",
+        "jobs:",
+        "  scan:",
+        "    runs-on: ubuntu-latest",
+        "    steps:",
+        "      - name: a step from the branch under review",
+        "        working-directory: scan-target",
+        "        run: |",
+        `          ${body}`,
+        "      - name: Require a secret-scan policy that can actually detect secrets",
+        "        working-directory: scan-target",
+        "        run: echo verdict",
+        "",
+      ].join("\n");
+
+    const isHazard = (body) => {
+      const steps = extractSteps(synthetic(body));
+      const verdict = steps.findIndex((step) =>
+        step.name.startsWith("Require a secret-scan policy"),
+      );
+      assert.ok(verdict >= 0, "the synthetic workflow needs its verdict step");
+      const step = steps[verdict - 1];
+      // The same two things the real assertion does: comments off, then the path.
+      const code = step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
+      return PRE_VERDICT_SCRIPTS_CI.test(code);
+    };
+
+    // Every spelling of "runs a path out of the checkout" that this subject recognises.
+    // It is not every spelling: the leading `[\s;&|(]` admits a bare or `./`-prefixed
+    // path only, so a `$PWD/`-prefixed path, a command substitution or a quoted path
+    // defeats it. Those are a false NEGATIVE, where the old interpreter list had only
+    // false negatives too -- nothing regressed, and against a determined adversary no
+    // text matcher closes this. Stated so the limit is on the record rather than
+    // assumed.
+    for (const [body, why] of [
+      ["node scripts/ci/evil.mjs", "interpreter-prefixed"],
+      ["sh scripts/ci/evil.sh", "interpreter-prefixed"],
+      ["bash scripts/ci/evil.sh", "interpreter-prefixed"],
+      ["python3 scripts/ci/evil.py", "interpreter-prefixed"],
+      ["./scripts/ci/evil.sh", "executed directly, no interpreter"],
+      ["scripts/ci/evil.sh", "relative path, no interpreter"],
+      ["./scripts/ci/run", "executed directly, no interpreter"],
+      ["source scripts/ci/env.sh", "sourced, not forked"],
+      [". scripts/ci/env.sh", "sourced by POSIX dot"],
+      ["sh -c 'node scripts/ci/evil.mjs'", "interpreter behind a flag"],
+    ]) {
+      assert.ok(
+        isHazard(body),
+        `${why}: ${JSON.stringify(body)} resolves scripts/ci/ out of the scanned ` +
+          `checkout before the verdict, so the guard must report it`,
+      );
+    }
+
+    // And a step that never resolves scripts/ci/ is not the hazard. Widening the subject
+    // must not condemn every step, or the guard becomes noise and gets ignored.
+    for (const body of [
+      "npm run test:unit",
+      "node --test scripts/ci-other/run.test.mjs",
+      "git diff --stat origin/main...HEAD",
+      "echo nothing to see",
+    ]) {
+      assert.ok(
+        !isHazard(body),
+        `${JSON.stringify(body)} does not resolve scripts/ci/ out of the scanned ` +
+          `checkout, so the guard must not report it`,
+      );
+    }
+
+    // The limit worth stating rather than leaving for a reader to assume: the subject
+    // matches the literal path, so a step that merely NAMES scripts/ci/ without executing
+    // from it -- `echo scripts/ci/` -- is indistinguishable here. Reading a NAME where the
+    // contract is about an ACT is the same mistake as the interpreter list, one level up.
+    // Recorded so the boundary is known rather than assumed.
+  });
+
   it("runs no step from the scanned checkout before the verdict reads the trusted one", () => {
     const scan = read(".github/workflows/secret-scan.yml");
     const steps = extractSteps(scan);
@@ -554,11 +667,40 @@ describe("release workflow shell contracts", () => {
     // Before the verdict, running anything from the scanned checkout at all is the
     // hazard -- the branch under review owns those bytes and can forge both inputs the
     // verdict compares. A composite action is the same hazard with no `run:` to inspect.
+    //
+    // The subject is the RESOLVED PATH, not the launcher in front of it. This used to
+    // list interpreters --
+    //
+    //     (?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\/
+    //
+    // which stood in for the thing the contract is about. A relative path needs no
+    // interpreter to execute branch code, so `./scripts/ci/evil.sh`, `scripts/ci/evil.sh`
+    // and `source scripts/ci/env.sh` reached the scanned checkout exactly as effectively
+    // as `sh scripts/ci/evil.sh` and matched none of them. Finding 4187450820.
+    //
+    // Comments come off the body first because three PRE-verdict steps name the forbidden
+    // command in their own prose: measured against the subject above, "Scan PR commit
+    // range", "Scan pushed commit range" and "Scan working tree for committed updater
+    // keys" each match on raw text and only on a comment line, so reading raw text
+    // convicts all three. Measured by deleting this filter, which drops the suite to
+    // 31/32 and fails on exactly that prose:
+    //
+    //     Scan PR commit range for secrets runs BEFORE the verdict and resolves
+    //     scripts/ci/ out of the scanned checkout ...
+    //
+    // An earlier draft of this comment said the opposite -- that deleting the filter
+    // leaves the suite green, so it was kept only because it was correct. That was
+    // wrong, and wrong in the way that matters here: the mutation that "showed" it
+    // anchored on the pattern text alone and landed on a COPY of it elsewhere in the
+    // file rather than on this one. The sentence above it was already the proof.
     for (const [index, step] of steps.entries()) {
       if (index >= verdictIndex) continue;
+      const code = step.run
+        .filter((line) => line.trim() !== "" && !line.trim().startsWith("#"))
+        .join("\n");
       assert.doesNotMatch(
-        step.run.join("\n"),
-        /(?:^|[\s;&|(])(?:node|npx|bun|deno|sh|bash|zsh|python3?|ruby|perl)\s[^\n]*scripts\/ci\//,
+        code,
+        PRE_VERDICT_SCRIPTS_CI,
         `${step.name} runs BEFORE the verdict and resolves scripts/ci/ out of the ` +
           "scanned checkout, so the branch under review can forge both inputs the " +
           "verdict compares (../trusted-scanner/.git and ../trusted-scanner/gitleaks.toml)",
