@@ -241,7 +241,8 @@ function splitCommandWords(body) {
           current += body[index + 1];
           index += 2;
           continue;
-        }        current += body[index];
+        }
+        current += body[index];
         index += 1;
       }
       if (index >= body.length) {
