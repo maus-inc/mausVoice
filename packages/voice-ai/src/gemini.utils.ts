@@ -580,6 +580,9 @@ const delay = (ms: number, signal?: AbortSignal): Promise<void> =>
  * become ready. The attempt cap still applies so a state endpoint that answers
  * instantly and never reaches ACTIVE cannot spin.
  */
+/** The one sub-500 status worth retrying: Gemini rate-limits per project. */
+const RATE_LIMITED_STATUS = 429;
+
 const FILE_POLL_MAX_ATTEMPTS = 30;
 const FILE_POLL_INITIAL_INTERVAL_MS = 100;
 const FILE_POLL_MAX_INTERVAL_MS = 2_000;
@@ -624,7 +627,22 @@ const pollGeminiFileState = async (
   } catch (error) {
     if (signal?.aborted) throw error;
     if (error instanceof GeminiFileProcessingError) throw error;
-    if (error instanceof GeminiHttpError && error.status < 500) {
+    // `429` is the one 4xx that means "later". It used to be rethrown with the rest of the
+    // sub-500 range, so a transient rate limit abandoned the uploaded file and fell back to
+    // inline audio -- which cannot carry a large recording, and is the failure the Files
+    // path exists to prevent. Every other sub-500 status stays permanent: 400 (bad request),
+    // 401/403 (bad key) and 404 (unknown file) do not fix themselves, and retrying them would
+    // spend the whole deadline before falling back.
+    //
+    // This is the one place that reads a `GeminiHttpError`'s status on a polling path, so it
+    // is also the place the class's own doc comment describes: preserving `retryAfter` "so
+    // retry helpers can distinguish a permanent client error (400/401/403/404) from a
+    // transient rate limit or server failure".
+    if (
+      error instanceof GeminiHttpError &&
+      error.status < 500 &&
+      error.status !== RATE_LIMITED_STATUS
+    ) {
       throw error;
     }
     return "pending";
