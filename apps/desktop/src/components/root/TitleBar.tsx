@@ -220,11 +220,10 @@ const useWindowControls = (setMaximized: (value: boolean) => void) => {
 };
 
 /**
- * The window-control buttons, sized and coloured off one factory.
+ * Hover and press share one pair of tokens, press being the stronger of the two.
  *
- * Square targets inset from the bar edges rather than flush strips, so the
- * bar's own material is visible between them and against the window edge. That
- * is what separates a control cluster from a row of divider lines.
+ * All three buttons resolve their fill through here, which is what keeps close
+ * from being special-cased. See `captionButtonHover` for why it must not be.
  */
 const captionButtonFill = (dark: boolean, pressed: boolean): string => {
   const fills = pressed ? captionButtonActive : captionButtonHover;
@@ -232,6 +231,13 @@ const captionButtonFill = (dark: boolean, pressed: boolean): string => {
   return dark ? fills.dark : fills.light;
 };
 
+/**
+ * The window-control buttons, sized and coloured off one factory.
+ *
+ * Square targets inset from the bar edges rather than flush strips, so the
+ * bar's own material is visible between them and against the window edge. That
+ * is what separates a control cluster from a row of divider lines.
+ */
 const captionButtonSx = (dark: boolean, compact: boolean) => {
   const size = captionButtonSize(compact);
 

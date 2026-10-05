@@ -97,9 +97,14 @@ export const isCompactWidth = (width: number | null): boolean =>
   width !== null && width > 0 && width <= COMPACT_WIDTH;
 
 /*
- * The derived helpers below read the constants above, so they sit after every
- * one of them is declared. A helper that named a later constant would work at
+ * The derived helper below reads the constants above, so it sits after every one
+ * of them is declared. A helper that named a later constant would work at
  * runtime and still be a trap for the next reader.
+ *
+ * The cluster's vertical position is deliberately absent. The bar centres it
+ * with `alignItems`, so a constant here would be a second copy of that rule that
+ * no test could keep honest. Reason about the row vertically in terms of the top
+ * frame band instead.
  */
 
 /** Side of one caption button in a given bar density. */
@@ -117,10 +122,3 @@ export const captionClusterWidth = (compact: boolean): number =>
   3 * captionButtonSize(compact) +
   2 * CAPTION_CLUSTER_GAP +
   CAPTION_CLUSTER_PAD_RIGHT;
-
-/**
- * Top edge of a caption button inside the bar. The buttons are centred in the
- * bar rather than filling it, so they start below the top frame band.
- */
-export const captionButtonTop = (): number =>
-  Math.round((TITLE_BAR_HEIGHT - captionButtonSize(false)) / 2);

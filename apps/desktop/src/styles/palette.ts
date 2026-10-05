@@ -138,12 +138,13 @@ export const captionButtonActive = {
 } as const;
 
 /**
- * Resting opacity of each caption button. Hover and press both go to full.
+ * Resting opacity of each caption button, cleared by hover and press.
  *
  * Windows dims unfocused chrome rather than removing it, and a cluster that
  * vanished would take the only visible cue that the window has controls. This is
- * the per-button rest value; the cluster's extra dimming while the window is
- * unfocused is applied once on the wrapper, so the three dim as a group.
+ * the per-button rest value and it is only half the story: the cluster's focus
+ * dim is applied once on the wrapper, so the two multiply and a hovered button
+ * on an unfocused window still renders dimmed.
  */
 export const captionButtonRestOpacity = 0.8;
 

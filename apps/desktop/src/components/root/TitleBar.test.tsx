@@ -73,11 +73,7 @@ import {
   TRAFFIC_DOT_SIZE,
   TRAFFIC_HIT_SIZE,
 } from "./titleBarGeometry";
-import {
-  captionButtonActive,
-  captionButtonHover,
-  captionButtonRestOpacity,
-} from "../../styles/palette";
+import { captionButtonRestOpacity } from "../../styles/palette";
 
 import {
   ensureUiHarness,
@@ -224,27 +220,52 @@ describe("TitleBar on Windows and Linux", () => {
 
   it("gives close the same hover and press treatment as the other two", async () => {
     await renderBar();
-    // jsdom never applies a `:hover` rule, so asserting on computed background
-    // would compare three resting values and pass even with a red close button.
-    // What actually guarantees the claim is that all three come out of one
-    // factory call and so carry one identical emotion class, which means one
-    // identical hover and press fill. Give close a fill of its own and the
-    // class diverges, which fails here.
+    // One factory call, so the three carry one identical emotion class, which
+    // means one identical set of rules. Give close a fill of its own and the
+    // class diverges.
     const classes = ["Minimize", "Maximize", "Close"].map(
       (label) => requireByLabel(label).className,
     );
     expect(new Set(classes).size).toBe(1);
 
-    // And the shared fill itself has to stay neutral, for the same reason.
-    for (const fill of [
-      captionButtonHover.light,
-      captionButtonHover.dark,
-      captionButtonActive.light,
-      captionButtonActive.dark,
-    ]) {
+    // Class equality would still hold with the interaction rules deleted, so read
+    // them out of the stylesheet Emotion injects. jsdom never applies a
+    // pseudo-class, which is exactly why the computed style cannot be the thing
+    // asserted here.
+    const pseudoRules = new Map<string, string>();
+    for (const sheet of Array.from(document.styleSheets)) {
+      for (const rule of Array.from(sheet.cssRules)) {
+        const text = rule.cssText;
+        for (const [, className, pseudo] of text.matchAll(
+          /\.([\w-]+):(hover|active)\b/g,
+        )) {
+          pseudoRules.set(`${className}:${pseudo}`, text);
+        }
+      }
+    }
+
+    const captionClass = classes[0]
+      .split(" ")
+      .find((name) => pseudoRules.has(`${name}:hover`));
+    if (!captionClass) {
+      throw new Error("no :hover rule found for the caption cluster");
+    }
+
+    const strength = (pseudo: "hover" | "active") => {
+      const text = pseudoRules.get(`${captionClass}:${pseudo}`) ?? "";
+      const fill =
+        text.match(/background-color:\s*([^;}]+)/)?.[1]?.trim() ?? "";
+      // The resting value is transparent, so any paint means the rule is real,
+      // and a neutral fill has three equal channels.
+      expect(fill, `${pseudo} must paint a background`).toBeTruthy();
       const channels = (fill.match(/\d+/g) ?? []).slice(0, 3).map(Number);
       expect(Math.max(...channels), fill).toBe(Math.min(...channels));
-    }
+      return Number(fill.match(/([\d.]+)\s*\)/)?.[1] ?? 0);
+    };
+
+    // Press is stronger than hover, so the two read as a ramp rather than one
+    // hover state that never changes.
+    expect(strength("active")).toBeGreaterThan(strength("hover"));
   });
 
   it("draws the caption buttons as rounded square targets, not flush strips", async () => {

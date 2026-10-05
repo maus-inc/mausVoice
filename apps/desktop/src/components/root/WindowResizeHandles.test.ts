@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   CAPTION_CLUSTER_PAD_RIGHT,
   captionButtonSize,
-  captionButtonTop,
   captionClusterWidth,
   CORNER,
   EDGE,
@@ -73,9 +72,12 @@ describe("getGrips with right-side caption buttons (Windows/Linux)", () => {
   });
 
   it("keeps every grip over the caption row inside the top frame band", () => {
+    // The row spans the whole bar. Its buttons are centred inside it by CSS, so
+    // pinning a vertical position here would only add a second copy of that
+    // rule for the assertion to drift from.
     const captionRow: Rect = {
       left: WINDOW.width - captionClusterWidth(false),
-      top: captionButtonTop(),
+      top: 0,
       right: WINDOW.width,
       bottom: TITLE_BAR_HEIGHT,
     };
