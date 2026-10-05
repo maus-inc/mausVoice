@@ -870,6 +870,49 @@ describe("bullet edge stripping", () => {
   });
 });
 
+describe("a casual word is rewritten, not deleted", () => {
+  // `INFORMAL_RE` matched `gonna|wanna|gotta|kinda|sorta|yeah|yep|nope` and every
+  // match was deleted. Deleting is only harmless for a word with nothing to say:
+  // `nope` inverts a negation, and the `-in'g` forms left a verb with nothing to
+  // attach to once `expandContractions` had already turned "I'm" into "I am".
+  //
+  //   "nope, the report is correct" -> ", the report is correct."
+  //   "im gonna go now"             -> "I am go now."
+  //   "i wanna go now"              -> "I go now."
+  //   "you gotta be there"          -> "You be there."
+  //
+  // The first is the worst: `no` IS the formal equivalent of `nope`, so this is not
+  // a register change, it is the opposite claim. It also left a leading comma that
+  // `fixCapitalizationAndPunctuation` cannot repair, because it capitalizes
+  // `text[0]` and that character is now the comma.
+  for (const [input, expected] of [
+    ["nope, the report is correct", "No, the report is correct."],
+    ["nope that's right", "No that's right."],
+    // Mid-sentence `yeah`, not leading: `SO_WELL_LEADING_RE` already strips a
+    // sentence-initial `yeah` as a discourse opener, alongside `so` and `well`,
+    // and that is deliberate. This case is about the rewrite map, which runs after.
+    ["we shipped yeah", "We shipped yes."],
+    ["yep that works", "Yes that works."],
+    ["im gonna go now", "I am going to go now."],
+    ["i wanna go now", "I want to go now."],
+    ["you gotta be there", "You got to be there."],
+    ["kinda tired", "Somewhat tired."],
+    ["sorta late", "Somewhat late."],
+  ] as const) {
+    expect(applyFastStyle(input, "formal")).toBe(expected);
+  }
+
+  // A deletion that leaves punctuation behind must not survive as a leading comma,
+  // whatever caused it. This is the shape the `nope` case produced.
+  expect(applyFastStyle("nope, we are done", "formal")).toBe(
+    "No, we are done.",
+  );
+
+  // Bare `nope` has nothing left to say, so the transform returns a stop rather
+  // than an empty string that a caller would have to special-case.
+  expect(applyFastStyle("nope", "formal")).toBe("No.");
+});
+
 describe("filler removal keeps words that merely end in a filler", () => {
   it("does not eat ordinary words", () => {
     for (const sentence of [

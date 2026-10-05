@@ -599,8 +599,34 @@ const toChat = (raw: string, isFinal = true): string => {
   return joined;
 };
 
-/** Casual register that has no formal equivalent and is simply dropped. */
-const INFORMAL_RE = /\b(?:gonna|wanna|gotta|kinda|sorta|yeah|yep|nope)\b/gi;
+/**
+ * Casual register, rewritten rather than dropped. Deleting was the first version
+ * and it was wrong twice over. `nope` has a formal equivalent -- `no` -- so
+ * deleting it inverts a negation rather than changing register. And the
+ * `-in'g` forms left a verb with nothing to attach to, because
+ * `expandContractions` has already rewritten "I'm" as "I am" by the time this
+ * runs: "I'm gonna go now" became "I am go now." A deletion also leaves
+ * punctuation behind, and `fixCapitalizationAndPunctuation` capitalizes
+ * `text[0]`, so a comma that moved to the front survives as its own defect.
+ */
+const INFORMAL_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bgonna\b/gi, "going to"],
+  [/\bwanna\b/gi, "want to"],
+  [/\bgotta\b/gi, "got to"],
+  [/\bkinda\b/gi, "somewhat"],
+  [/\bsorta\b/gi, "somewhat"],
+  [/\byeah\b/gi, "yes"],
+  [/\byep\b/gi, "yes"],
+  [/\bnope\b/gi, "no"],
+];
+
+const rewriteInformalRegister = (text: string): string => {
+  let out = text;
+  for (const [pattern, replacement] of INFORMAL_REWRITES) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+};
 
 const expandContractions = (text: string): string => {
   let out = text;
@@ -614,10 +640,9 @@ const expandContractions = (text: string): string => {
 };
 
 const toFormal = (raw: string, isFinal = true): string => {
-  const text = expandContractions(
-    toPolished(assertWithinChunkSize(raw), isFinal),
+  const text = rewriteInformalRegister(
+    expandContractions(toPolished(assertWithinChunkSize(raw), isFinal)),
   )
-    .replace(INFORMAL_RE, "")
     .replace(/\s{2,}/g, " ")
     .trim();
   return fixCapitalizationAndPunctuation(text, isFinal);
