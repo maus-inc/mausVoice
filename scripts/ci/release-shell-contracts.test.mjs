@@ -951,28 +951,6 @@ describe("release workflow shell contracts", () => {
 
     // ...and the file's own header must keep saying what that phrase costs.
     //
-    // This assertion pins TWO stale spellings and one required spelling, so a comment
-    // making the forbidden claim in any other wording passed. Measured on the committed
-    // file with the header reworded to "The PR scan is the only gate before main and it
-    // always runs" and the capability disclaimer deleted: 30/30.
-    //
-    // The obvious repair -- broadening the ban to cover the current claim -- is WRONG,
-    // and the mutation above is why. The committed header DOES say "the PR scan is the
-    // gate that can catch it before it reaches main" (secret-scan.yml:8-9). It is honest
-    // because of the paragraph four lines below it (:15-17): "The sentence above is what
-    // this job is FOR; whether it is currently capable of it is reported per run rather
-    // than assumed." The mutation is dishonest precisely because it kept the claim and
-    // removed the qualifier. So banning the claim's wording would push the author toward
-    // deleting an accurate paragraph, which is the failure mode this whole file exists to
-    // prevent.
-    //
-    // So the property asserted is the DISCLAIMER, not the phrasing of either half: the
-    // header must state that against a base whose policy cannot extend the built-in
-    // detectors, no scan here runs at all. That is checkable, it survives rewording of
-    // both the claim and the qualifier, and it is the thing whose absence makes the claim
-    // false.
-    // ...and the file's own header must keep saying what that phrase costs.
-    //
     // Scoped to the HEADER, and matched on whitespace-normalised text. Both halves of
     // that matter and a reviewer's two mutations found each one.
     //
@@ -981,24 +959,34 @@ describe("release workflow shell contracts", () => {
     // the most natural refactor of a header paragraph, and arguably an improvement --
     // left the suite at 30/30 while the trigger comment above kept asserting an
     // unqualified gate. That is the finding's defect again, in a worse form: it survives
-    // MOVING the qualifier. `[\s\S]` also crosses comment boundaries, so end-of-file
+    // MOVING the qualifier, which a reviewer proved by relocating the paragraph
+    // byte-identically and getting 30/30. `[\s\S]` also crosses comment boundaries, so end-of-file
     // works too.
     //
-    // Normalised, with no gap budget: a `{0,140}?` gap is ~6x the committed distance
-    // between the two halves (measured: 23 and 5 characters), which buys nothing a rewrap
-    // needs and only widens what `[\s\S]` can span. Measured: adding two honest aside
-    // lines to the header paragraph turned the suite RED, because 117 characters of slack
-    // ran out. That is a false red introduced by the gap, and `scan.replace(/\s+/g, " ")`
-    // -- the technique the sibling assertion at :1019 already uses -- removes both
-    // problems at once.
-    const header = scan.slice(0, scan.indexOf("\njobs:"));
+    // Normalised, with no gap at all. A `{0,140}?` gap is ~6x the committed distance
+    // between the two halves (measured: 23 and 5 characters); it buys nothing a rewrap
+    // needs and only widens what `[\s\S]` can span. Measured: two honest aside lines
+    // inside the header paragraph turned the suite RED on 117 characters of slack running
+    // out. `replace(/\s+/g, " ")` -- the technique the sibling assertion already uses --
+    // removes both problems at once.
+    //
+    // The earlier diagnosis of WHY the regex form failed was wrong, and the correction is
+    // worth keeping because the wrong version reads like a JS subtlety: it was NOT `\s*`
+    // greedily eating the newline. `\s*` matches zero characters there and leaves the `\n`
+    // for `\n` to consume. The real cause is that the two halves are separated by the
+    // PROSE `no scan here runs`, which is not whitespace, so no whitespace-only gap can
+    // bridge them.
+    const jobsAt = scan.indexOf("\njobs:");
     assert.ok(
-      header !== scan,
-      "secret-scan.yml must have a jobs: block to bound the header",
+      jobsAt !== -1,
+      "secret-scan.yml must carry a jobs: block, or there is no header to bound the " +
+        "disclaimer to and the patterns below would silently cover the whole file",
     );
+    const header = scan.slice(0, jobsAt);
     // The comment markers go BEFORE flattening, not after. `#` is not whitespace, so
     // normalising first leaves `no scan here runs # at all` wherever the paragraph happens
-    // to wrap -- which fails on the committed file and only on the committed file.
+    // to wrap -- which fails on every wrap, not just the committed one. The reviewer
+    // proved it by swapping the two operations and running both wrap shapes.
     const flatHeader = header
       .split("\n")
       .map((line) => line.replace(/^\s*#+\s?/, ""))
@@ -1518,8 +1506,10 @@ describe("release workflow shell contracts", () => {
     // list is compared against the FILTERED set -- filtering first is what hides it.
     //
     // So: a step is a scan if its body invokes gitleaks, excluding the `--help` probe
-    // and the two self-verification fixtures, which pass `--no-git --source` over a
-    // scratch directory and are not scanning the checkout at all.
+    // and the two self-verification fixture STEPS, which pass `--no-git --source` over a
+    // scratch directory and are not scanning the checkout at all. Two steps, three
+    //
+    // invocations -- secret-scan.yml:700 and :745 hold two and three respectively.
     // The body with comment and blank lines dropped. Every predicate below runs on THIS, not
     // on the raw body: `step.run` includes `#` lines, and all three real scans carry a
     // comment mentioning `gitleaks detect` (secret-scan.yml:281, :447, :610), so a
@@ -1538,29 +1528,36 @@ describe("release workflow shell contracts", () => {
     const isCapabilityProbe = (step) =>
       step.name === "Install Gitleaks" ||
       /\bgitleaks\s+detect\b[\s\S]*?--help\b/.test(stepCode(step));
-    // "Scans the checkout" is decided by the checkout, not by one spelling of a path.
+    // "Scans the checkout" is decided by the CHECKOUT, resolved against the step's
+    // own working directory -- not by one spelling of a path.
     //
     // An earlier version read `--source X` and treated anything other than a literal `.`
     // as a fixture, so `--source scan-target`, `--source ./` and `--source "$CHECKOUT"`
-    // -- all of which name the checkout, and all of which run in this very workflow --
-    // were silently excluded from the ordering check and the baseline check. Measured:
-    // the commit's own fourth-scan mutation with `--source scan-target` stayed 30/30.
-    // It was also form-dependent, because the regex required whitespace and so missed
-    // `--source=scan-target`.
+    // -- all of which name the checkout -- were silently excluded from the ordering
+    // check and the baseline check. Measured: that commit's own fourth-scan mutation
+    // with `--source scan-target` stayed 30/30. It was form-dependent too, because the
+    // regex required whitespace and so missed `--source=scan-target`.
     //
-    // So: accept `.`, `./`, and the step's own `working-directory` (that directory IS
-    // the checkout -- the scans run `working-directory: scan-target`), with any trailing
-    // slash and either the `--source X` or `--source=X` form.
+    // The obvious fix -- also accept the step's `working-directory` by name -- was
+    // WRONG, in the direction that matters. The three scans run
+    // `working-directory: scan-target`, so their CWD is ALREADY the checkout, and a
+    // relative `--source scan-target` from inside them resolves to
+    // `scan-target/scan-target`. Measured: a fourth scan carrying both
+    // `working-directory: scan-target` and `--source scan-target` satisfied that rule
+    // while naming a path one level below the checkout.
+    //
+    // So the checkout is resolved against the CWD: it is `.` for a step with no working
+    // directory, and the working directory itself for one that has it. A `--source` names
+    // the checkout only if it comes out at that path.
     const sourcesTheCheckout = (step) => {
       const source = /--source[=\s]+(\S+)/.exec(stepCode(step));
       if (!source) return true; // a range scan passes no --source at all
-      const value =
-        source[1].replace(/^["']|["']$/g, "").replace(/\/+$/, "") || ".";
-      const checkout = (step.workingDirectory ?? "scan-target").replace(
-        /\/+$/,
-        "",
-      );
-      return value === "." || value === checkout || value === `./${checkout}`;
+      const value = source[1].replace(/^["']|["']$/g, "").replace(/\/+$/, "");
+      if (value === "" || value === ".") return true;
+      // With no working-directory the CWD is the workspace root, where the checkout is
+      // the `scan-target` directory by name. With one, the CWD is already the checkout,
+      // so any other relative path is below it.
+      return step.workingDirectory ? false : value === "scan-target";
     };
     const scanSteps = steps.filter(
       (step) =>
