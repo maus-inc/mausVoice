@@ -79,6 +79,13 @@ const COMMANDS: SpokenCommand[] = [
   insert(["comma"], ",", {
     attachLeft: true,
     blockedPredecessors: [["oxford"], ["inverted"], ["serial"]],
+    // `blockedPredecessors` cannot see this case, because the modifier FOLLOWS the
+    // head: "comma separated values" is one noun phrase. The command fired and the
+    // word `comma` was removed from the middle of it, which is silent data loss --
+    // the same cost this module already accepts for the `period` command at its
+    // `blockedPredecessors`. "a comma separated list" was already spared, by the
+    // determiners rule above, which is why only some of these were corrupting.
+    blockedFollowers: [["separated"], ["delimited"], ["spliced"]],
   }),
   insert(["period"], ".", {
     attachLeft: true,

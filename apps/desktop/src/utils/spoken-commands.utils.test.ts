@@ -288,6 +288,48 @@ describe("applySpokenCommands", () => {
     ).toBe("hello new line scratch that");
   });
 
+  describe("a command word inside a noun phrase is not a command", () => {
+    // "comma" was in the command list with `blockedPredecessors` but no
+    // `blockedFollowers`, and the modifier in this phrase FOLLOWS the head. So the
+    // command fired and removed the word from the middle of a noun phrase:
+    //
+    //   "comma separated values"               ->  ", separated values"
+    //   "the file holds comma separated values" ->  "the file holds, separated values"
+    //
+    // That is silent data loss, which this module rates above a miss that only
+    // mispunctuates. "a comma separated list" was already spared, by the determiners
+    // rule, which is why only part of this shape was corrupting.
+    for (const input of [
+      "comma separated values",
+      "the file holds comma separated values",
+      "comma delimited",
+      "the comma separated rule applies",
+      "names comma separated, ages comma separated",
+    ]) {
+      expect(applySpokenCommands(input)).toBe(input);
+    }
+
+    // The command itself is unaffected.
+    for (const [input, expected] of [
+      ["hello comma world", "hello, world"],
+      ["one two comma three comma four", "one two, three, four"],
+      ["comma", ","],
+      // `blockedPredecessors` still holds for the modifiers in front.
+      ["the Oxford comma matters", "the Oxford comma matters"],
+      ["Put a comma after the name.", "Put a comma after the name."],
+    ] as const) {
+      expect(applySpokenCommands(input)).toBe(expected);
+    }
+
+    // One input changes reading rather than corrupting: "values comma separated by
+    // tab" used to become "values, separated by tab" and now stays literal. The
+    // speaker is describing comma separation rather than asking for a mark, so the
+    // literal reading is the better of the two.
+    expect(applySpokenCommands("values comma separated by tab")).toBe(
+      "values comma separated by tab",
+    );
+  });
+
   describe("a quotative 'scratch that' is not the command", () => {
     // "scratch that" is ordinary English as the object of a reporting verb. The
     // clause-subject deny-list is what keeps the command from firing there, and it
