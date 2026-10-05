@@ -270,13 +270,32 @@ describe("findBuildScriptInvocation", () => {
   });
 
   it("skips a line it cannot tokenize instead of failing the whole scan", () => {
-    const mixed = ["garbage", "   Running `a 'b", SHERPA_PLAIN].join("\n");
+    // The bad line below is the one the LOOSE tokenizer throws on. Strict does not: its
+    // guard regex is anchored at both ends and the ` c` after the closing backtick defeats
+    // it, so strict returns `null` and `??` falls through to loose, which throws
+    // `unterminated " quote`. THAT is what puts this line inside the catch.
+    //
+    // The obvious choice, `   Running `a 'b`, reaches nothing: strict returns
+    // `null` for it AND loose returns `null` too, so `if (!words) continue` skips it and
+    // the catch is never entered. Measured with the catch's `continue` mutated to `break`:
+    // that line still yields 1 match, so an assertion built on it cannot fail whatever the
+    // scan does.
+    const UNPARSEABLE = '   Running `a "b` c';
+    const mixed = ["garbage", UNPARSEABLE, SHERPA_PLAIN].join("\n");
     // The unterminated line throws inside, is caught per line, and the good one
     // is still found -- provided it is this package's.
     assert.equal(findBuildScriptInvocation(mixed).length, 0);
+    // ...so prefix ONLY the good line, which is the only shape in which the recovery is
+    // observable. `withEnv(line, name)` takes a SINGLE line and slices it from its first
+    // backtick to its last, so handing it the three-line `mixed` spans lines 2 and 3 and
+    // yields ONE unterminated command -- nothing is findable, which is what the assertion
+    // above already established. The `.replace(SHERPA_PLAIN, SHERPA_PLAIN)` that used to sit
+    // here replaced a string with itself, which is the tell that the input was never what
+    // it looked like.
     assert.equal(
-      findBuildScriptInvocation(withEnv(mixed, SHERPA_PKG).replace(SHERPA_PLAIN, SHERPA_PLAIN)).length,
-      0,
+      findBuildScriptInvocation(["garbage", UNPARSEABLE, withEnv(SHERPA_PLAIN, SHERPA_PKG)].join("\n")).length,
+      1,
+      "a well-formed line after an unparseable one must still be found",
     );
   });
 });
