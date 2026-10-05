@@ -48,15 +48,23 @@ export const DashboardMenuPreview = ({
   // (`components/dashboard/DashboardMenu.tsx:129`), so scoping here is a fix rather than a
   // restoration.
   //
-  // An earlier version of this comment also cited `SegmentedControl.tsx:55` as the in-repo
-  // precedent for a per-instance id. It is not: that line is a style object, and that component
-  // does not call `useId` at all. The justification is the double mount above and needs no
-  // precedent.
+  // The scoping itself is justified by the double mount above and needs no precedent.
   //
-  // `useId()` returns a colon-delimited string (`:r0:`). That is deliberate rather than
-  // sanitised: this value only ever reaches framer-motion's `layoutId`, which matches it in a
-  // React context map. It is never a DOM id or a CSS selector, where a colon would need escaping.
-  const activeLayoutId = `${useId()}-sidebar-active`;
+  // `useId()` is stripped of everything outside `[A-Za-z0-9_-]` because that is what the
+  // sibling control already does for the same prop:
+  // `components/common/SegmentedControl.tsx:77` builds a framer-motion `layoutId` from a
+  // `useId()` with the identical character class, and matching it is worth more than
+  // re-deriving the decision.
+  //
+  // Two earlier versions of this comment were wrong, in sequence. The first cited
+  // `SegmentedControl.tsx:55` as that precedent; line 55 is a style object. The second
+  // corrected it by asserting no sanitiser existed at all, which is also false. The third
+  // said the reason was that `useId()` returns a colon-delimited `:r0:` -- that is the React
+  // 18 format. React 19 builds `"_" + prefix + "r_" + id + "_"`, so there are no colons and
+  // the replace currently strips nothing. It is kept for consistency with the precedent and
+  // because an `identifierPrefix` could reintroduce a character worth dropping, not because
+  // today's output needs it.
+  const activeLayoutId = `${useId().replace(/[^a-zA-Z0-9_-]/g, "")}-sidebar-active`;
   const indicatorRadius = useSpecValue(
     "dashboard-menu",
     "indicator-radius",
