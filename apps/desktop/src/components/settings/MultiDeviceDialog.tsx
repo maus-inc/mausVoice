@@ -990,6 +990,22 @@ const ReceiverSettingsSection = ({
         </Button>
       </Stack>
 
+      <SettingSection
+        title={
+          <FormattedMessage defaultMessage="Start receiver automatically" />
+        }
+        description={
+          <FormattedMessage defaultMessage="When enabled, mausVoice will start the multi-device receiver automatically on launch using the saved receiver port." />
+        }
+        action={
+          <Switch
+            edge="end"
+            checked={remoteReceiverAutoStart}
+            onChange={onAutoStartChange}
+          />
+        }
+      />
+
       {(receiverStatus?.enabled ?? false) && (
         <>
           <SettingSection
@@ -1023,22 +1039,6 @@ const ReceiverSettingsSection = ({
                   <FormattedMessage defaultMessage="Apply" />
                 </Button>
               </Stack>
-            }
-          />
-
-          <SettingSection
-            title={
-              <FormattedMessage defaultMessage="Start receiver automatically" />
-            }
-            description={
-              <FormattedMessage defaultMessage="When enabled, mausVoice will start the multi-device receiver automatically on launch using the saved receiver port." />
-            }
-            action={
-              <Switch
-                edge="end"
-                checked={remoteReceiverAutoStart}
-                onChange={onAutoStartChange}
-              />
             }
           />
 
