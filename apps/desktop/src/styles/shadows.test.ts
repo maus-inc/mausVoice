@@ -81,6 +81,9 @@ const accentAlphas = {
 const modes = ["light", "dark"] as const;
 const states = ["rest", "hover", "active", "selected"] as const;
 
+const otherMode = (mode: (typeof modes)[number]) =>
+  mode === "light" ? "dark" : "light";
+
 const insets = (token: string) =>
   parseShadowLayers(token).filter((layer) => layer.inset);
 const drops = (token: string) =>
@@ -238,23 +241,19 @@ describe("raisedEdge and recessedEdge", () => {
   });
 
   it("keeps the same stop count in both modes and casts the scheme ink", () => {
-    for (const token of [raisedEdge, recessedEdge]) {
-      expect(alphas(parseShadowLayers(token.light))).toHaveLength(
-        alphas(parseShadowLayers(token.dark)).length,
-      );
-      expect(alphas(parseShadowLayers(token.light)).length).toBeGreaterThan(1);
-    }
-    for (const layer of parseShadowLayers(raisedEdge.light)) {
-      expect(rgb(layer)).toBe("26, 23, 18");
-    }
-    for (const layer of parseShadowLayers(recessedEdge.light)) {
-      expect(rgb(layer)).toBe("26, 23, 18");
-    }
-    for (const layer of parseShadowLayers(raisedEdge.dark)) {
-      expect(rgb(layer)).toBe("0, 0, 0");
-    }
-    for (const layer of parseShadowLayers(recessedEdge.dark)) {
-      expect(rgb(layer)).toBe("0, 0, 0");
+    const ink = { light: "26, 23, 18", dark: "0, 0, 0" };
+
+    for (const mode of modes) {
+      for (const token of [raisedEdge, recessedEdge]) {
+        const layers = parseShadowLayers(token[mode]);
+        expect(alphas(layers)).toHaveLength(
+          alphas(parseShadowLayers(token[otherMode(mode)])).length,
+        );
+        expect(layers.length).toBeGreaterThan(1);
+        for (const layer of layers) {
+          expect(rgb(layer)).toBe(ink[mode]);
+        }
+      }
     }
   });
 
