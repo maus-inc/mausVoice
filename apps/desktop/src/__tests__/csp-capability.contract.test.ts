@@ -214,5 +214,24 @@ describe("http:default capability contract", () => {
         `${host} must be in http:default capability`,
       ).toBe(true);
     }
+
+    // The `*.googleapis.com` WILDCARD is separately load-bearing and separately pinned.
+    //
+    // It appears exactly once above, in `approvedHttpsHosts`, which this file's own header
+    // calls "Reviewed provider families, independent of the capability under test" -- a
+    // filter for what to accept, not a requirement, so removing a scope cannot fail the test
+    // that uses it. And every host in `nonApiHosts` is a SPECIFIC name, so deleting the
+    // wildcard leaves all six in place and nothing notices.
+    //
+    // It matters because `assertGeminiUrl(url, false)` in `gemini.utils.ts` deliberately
+    // lets an unexpected `*.googleapis.com` upload host through with a warning rather than a
+    // refusal, on the stated grounds that this capability blocks the request before it leaves
+    // the process. That reasoning holds only while the wildcard is here.
+    expect(
+      capabilityHosts.has("https://*.googleapis.com"),
+      "the *.googleapis.com wildcard must be in http:default -- gemini.utils.ts relies on " +
+        "the capability to block a credential-carrying request to an unexpected googleapis " +
+        "host, and no other host asserted here covers that wildcard",
+    ).toBe(true);
   });
 });
