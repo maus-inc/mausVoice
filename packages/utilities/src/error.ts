@@ -300,11 +300,23 @@ const CREDENTIAL_LABEL_CORE =
   "(?:" +
   // Tier 1: an unambiguous name, behind any separator-delimited qualifier.
   //
-  // The qualifier loop carried a hardcoded `[_-]` too, which is the same defect one
-  // clause over from tier 2 and the reason `openai api key` leaked as an object key
-  // even after tier 2 was widened: the name itself (`api key`) was reachable, but the
-  // `openai ` in front of it was not. Mandatory separator, as tier 2.
-  `(?:[a-z0-9]+${SEPARATOR_CLASS})*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
+  // The separator here stays `[_-]`, and it must. Putting a space in it -- so that
+  // `openai api key` matched as one label -- makes this loop consume runs of ordinary
+  // words, and because the alternation that follows it is not possessive, every start
+  // position in the text then backtracks over every way of splitting that run. On
+  // space-separated input that is quadratic in the length of the message. Measured on
+  // 16KB of two-letter words, against the same regex with `[_-]`: 0.22ms before,
+  // 389ms after, a 1740x cliff, and 16KB is a small provider error body. The text
+  // pass is unanchored, so it pays that at every offset; the anchored object-key pass
+  // does not, which is why this only shows up on free text.
+  //
+  // The hazard is the one documented at `foldCamelLabel` below, and the way out of it
+  // is the mechanism already there: fold the spelling instead of widening the pattern.
+  // `foldSeparators` turns `openai api key` into `openai_api_key` before the anchored
+  // test, exactly as `foldCamelLabel` turns `azureApiKey` into `azure_Api_Key`. Nothing
+  // here gets wider, and the free-text pass needed no help anyway -- it already finds
+  // the bare `api key` name inside the label and rewrites from there.
+  `(?:[a-z0-9]+[_-])*(?:${CREDENTIAL_NAMES.map((name) => name.join(OPTIONAL_SEPARATOR)).join("|")})` +
   // Tier 2: the ambiguous words, behind a qualifier from the holder list.
   //
   // The separator class gained a space. It used to be `[_-]` written out in both
@@ -418,12 +430,22 @@ const trimLabelEdges = (label: string): string => {
 const CAMEL_BOUNDARY = /([a-z0-9])([A-Z])/g;
 const foldCamelLabel = (label: string): string =>
   label.replace(CAMEL_BOUNDARY, "$1_$2");
+// Runs of spaces become one underscore, so `openai api key` reads as `openai_api_key`
+// to a pattern that already accepts `_`. This is the camel fold's twin, and it is
+// here for the same reason: to cover a SPELLING without widening the pattern, which is
+// what the tier-1 qualifier loop must not do -- see the comment on `CREDENTIAL_LABEL_CORE`
+// for the measured cost of widening it. A space is folded but a hyphen is not: the
+// pattern already matches `-`, and folding it too would erase the distinction the
+// qualifier loop relies on to bound each of its iterations.
+const SPACE_RUN = /[ \t]+/g;
+const foldSeparators = (label: string): string => label.replace(SPACE_RUN, "_");
 
 const isCredentialLabel = (label: string): boolean => {
   const trimmed = trimLabelEdges(label);
   return (
     ANCHORED_CREDENTIAL_LABEL.test(trimmed) ||
-    ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed))
+    ANCHORED_CREDENTIAL_LABEL.test(foldCamelLabel(trimmed)) ||
+    ANCHORED_CREDENTIAL_LABEL.test(foldSeparators(foldCamelLabel(trimmed)))
   );
 };
 // The one tier-1 name that denotes a header rather than a stored credential, so
