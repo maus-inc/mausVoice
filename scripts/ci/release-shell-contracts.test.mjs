@@ -1462,7 +1462,51 @@ describe("release workflow shell contracts", () => {
       "secret-scan.yml must strip an untrusted .gitleaksignore out of the scanned checkout",
     );
 
-    const scanSteps = steps.filter((step) => /^Scan /.test(step.name));
+    // The three gitleaks scans, selected by BEHAVIOUR rather than by name.
+    //
+    // This filtered on `/^Scan /`, which is a naming convention rather than a property,
+    // and the two assertions below are both about the scans' behaviour: that each runs
+    // after the strip and names the trusted baseline explicitly. A gitleaks step under
+    // any other name satisfied neither. Measured: inserting a fourth one --
+    //
+    //     - name: Audit the full history for secrets
+    //       run: gitleaks detect --no-git --redact --config "$TRUSTED_POLICY"
+    //
+    // before the first scan, with no `--gitleaks-ignore-path`, left the suite at 30/30.
+    // That is precisely the regression the test exists to catch: a scan running before
+    // the strip, on a tree still carrying the untrusted baseline.
+    //
+    // The `deepStrictEqual` on the three names does not catch it either, because the
+    // list is compared against the FILTERED set -- filtering first is what hides it.
+    //
+    // So: a step is a scan if its body invokes gitleaks, excluding the `--help` probe
+    // and the two self-verification fixtures, which pass `--no-git --source` over a
+    // scratch directory and are not scanning the checkout at all.
+    const runsGitleaksDetect = (step) =>
+      /\bgitleaks\s+detect\b/.test(step.run.join("\n"));
+    // `--help` is the capability probe, not a scan. A `--source` naming anything other
+    // than the checkout is a fixture file. A range scan passes no `--source` at all, and
+    // the working-tree scan passes exactly `.` -- those two are the real scans, and
+    // `gitleaks version` is neither.
+    //
+    // My first discriminator excluded any `--no-git --source`, which also excluded the
+    // working-tree scan at secret-scan.yml:692 (`gitleaks detect --no-git --source .`).
+    // The suite caught it: the name list came back with two entries.
+    const isCapabilityProbe = (step) =>
+      /\bgitleaks\s+detect\b[^\n]*--help\b/.test(step.run.join("\n"));
+    const sourcesTheCheckout = (step) => {
+      const source = /--source\s+(\S+)/.exec(step.run.join("\n"));
+      return !source || /^\.$/.test(source[1]);
+    };
+    const scanSteps = steps.filter(
+      (step) =>
+        runsGitleaksDetect(step) &&
+        !isCapabilityProbe(step) &&
+        sourcesTheCheckout(step),
+    );
+    // The three names are still pinned -- they are how the rest of this file refers to
+    // these steps -- but they are pinned against the BEHAVIOUR-selected set, so adding a
+    // fourth scan is now a contract failure rather than a silent no-op.
     assert.deepStrictEqual(
       scanSteps.map((step) => step.name),
       [
@@ -1470,7 +1514,9 @@ describe("release workflow shell contracts", () => {
         "Scan pushed commit range for secrets",
         "Scan working tree for committed updater keys",
       ],
-      "expected the three gitleaks scans to still exist under their current names",
+      "expected exactly the three gitleaks scans, selected by behaviour rather than by " +
+        "a `Scan ` name prefix; a fourth gitleaks step would otherwise escape both the " +
+        "ordering check and the baseline check below",
     );
     for (const step of scanSteps) {
       assert.ok(
