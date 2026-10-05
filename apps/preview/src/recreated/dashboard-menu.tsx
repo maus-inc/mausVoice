@@ -45,8 +45,17 @@ export const DashboardMenuPreview = ({
   // across from one instance to the other on selection, instead of within each menu.
   //
   // The desktop original this shell is copied from uses the literal `layoutId="sidebar-active"`
-  // (`components/dashboard/DashboardMenu.tsx:122`), so scoping here is a fix rather than a
-  // restoration. `SegmentedControl.tsx:55` is the in-repo precedent for a per-instance id.
+  // (`components/dashboard/DashboardMenu.tsx:129`), so scoping here is a fix rather than a
+  // restoration.
+  //
+  // An earlier version of this comment also cited `SegmentedControl.tsx:55` as the in-repo
+  // precedent for a per-instance id. It is not: that line is a style object, and that component
+  // does not call `useId` at all. The justification is the double mount above and needs no
+  // precedent.
+  //
+  // `useId()` returns a colon-delimited string (`:r0:`). That is deliberate rather than
+  // sanitised: this value only ever reaches framer-motion's `layoutId`, which matches it in a
+  // React context map. It is never a DOM id or a CSS selector, where a colon would need escaping.
   const activeLayoutId = `${useId()}-sidebar-active`;
   const indicatorRadius = useSpecValue(
     "dashboard-menu",

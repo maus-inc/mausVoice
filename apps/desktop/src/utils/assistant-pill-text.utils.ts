@@ -506,9 +506,17 @@ export const markdownToPillText = (
   text = stripHtml(text);
 
   // Restore protected inline code as quoted plain text.
+  //
+  // The span content is masked out while `stripHtml` runs, so it never reaches
+  // `normalizeSurrogates`. A model can still emit a raw lone surrogate inside
+  // backticks, and that one then reaches the pill, where `JSON.stringify`
+  // escapes it as `\udXXX` and serde_json rejects the whole sync -- the same
+  // failure the pass exists to prevent, reached by a different route. Measured:
+  // `"before `\uD800` after"` came out with the lone lead intact, while the
+  // same character outside a code span was dropped.
   text = text.replace(/__MAUS_INLINE_CODE_(\d+)__/g, (_, idxStr: string) => {
     const code = codeSpans[Number(idxStr)] ?? "";
-    return `"${code}"`;
+    return `"${normalizeSurrogates(code)}"`;
   });
 
   // 11. Collapse excessive whitespace (preserving one newline between lines).

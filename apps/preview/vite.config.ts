@@ -49,11 +49,23 @@ export default defineConfig({
     //
     // A leading dot allows a whole domain (`example.local` matches `a.example.local`); a
     // literal IP must be listed exactly, because Vite compares the Host header verbatim.
-    allowedHosts: process.env.PREVIEW_ALLOWED_HOSTS
-      ? process.env.PREVIEW_ALLOWED_HOSTS.split(",")
-          .map((host) => host.trim())
-          .filter(Boolean)
-      : [".localhost", "127.0.0.1", "[::1]"],
+    //
+    // The variable ADDS to the loopback set rather than replacing it. Replacing it meant that
+    // naming one LAN host silently stopped the dev server answering on `localhost`, which is
+    // the opposite of what "serving anyone else on the LAN is an explicit opt-in" implies.
+    //
+    // The two IP literals are belt-and-braces: Vite short-circuits IP hosts before consulting
+    // this list, so `[::1]` in particular never has to match. They are kept because that
+    // short-circuit is Vite's internal behaviour rather than a documented contract.
+    allowedHosts: [
+      ".localhost",
+      "127.0.0.1",
+      "[::1]",
+      ...(process.env.PREVIEW_ALLOWED_HOSTS ?? "")
+        .split(",")
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ],
     fs: {
       // `rootDir` and `desktopSrc` are the only two roots the preview reads: specs and
       // components live under the first, and `@desktop/*` aliases into the second. Listing

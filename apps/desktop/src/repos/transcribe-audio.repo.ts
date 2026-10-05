@@ -79,10 +79,17 @@ export type TranscribeAudioInput = {
   hallucinationFilterEnabled?: boolean;
   /**
    * Cancels in-flight and not-yet-started provider requests. Honored by every
-   * provider that runs batch dictation (where pretranscription happens). The
-   * Gladia SDK upload, used only for retranscription, ignores it: that client
-   * owns its own transport and its args carry no signal, though the batch job
-   * it creates is still deleted in a `finally`.
+   * provider that runs batch dictation (where pretranscription happens).
+   *
+   * Gladia is the exception, and it is an exception for the DICTATION path too, not only for
+   * retranscription: `gladia` resolves to `GladiaTranscribeAudioRepo` in
+   * `getTranscribeAudioRepo`, which is the provider every dictation uses. An earlier version of
+   * this comment called the upload "used only for retranscription", which made the gap read as
+   * narrow; it is not. `GladiaTranscribeAudioArgs` (`packages/voice-ai/src/gladia.utils.ts:26`)
+   * carries no signal and the SDK owns its transport, so an upload already in flight cannot be
+   * called off — cancellation takes effect only before the request is issued. The batch job the
+   * upload creates is still deleted in a `finally` (`:950`), so cancelling leaves no remote job
+   * behind, only the bytes already sent.
    */
   signal?: AbortSignal;
 };

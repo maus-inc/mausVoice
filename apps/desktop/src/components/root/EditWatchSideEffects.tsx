@@ -54,6 +54,15 @@ export const EditWatchSideEffects = () => {
     // It is still read before `endEditWatch()` on the next line, so the proposal this is here to
     // dismiss is the one that was live a moment ago -- which is the case the original comment
     // wanted, and the case the existing "disabled with a visible proposal" test covers.
+    //
+    // One case this misses, on purpose: the proposal can expire on its TTL while its toast is
+    // still on screen, because the toast queue is serialised behind every other toast
+    // (`edit-watch.actions.ts:136`). Turning the setting off in that window leaves that toast up
+    // until its own duration runs out. Dropping the gate would fix it and reintroduce the bug
+    // above, and the toast channel is shared, so there is no way to ask "is the visible toast
+    // ours?" -- `runToast`/`showToast` carry no owner. `recentlyLapsedProposal` knows a proposal
+    // lapsed, but it is module-private and is scoped to honouring a click, not to identifying a
+    // toast. Worth the trade: a prompt lingering a few seconds beats clearing an update notice.
     if (proposalRef.current) {
       runToast(dismissToast());
     }
