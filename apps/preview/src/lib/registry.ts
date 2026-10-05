@@ -296,13 +296,20 @@ export const REGISTRY: RegistryEntry[] = [
         // *.palette.blueHover`, neither of which is that token or that value.
         //
         // `token` is the top-level key on the MUI palette, not the palette-source name it
-        // is assigned from, so it reads `chrome` and not `accent`. `accent` is IMPORTED
-        // into theme.ts from ./styles/palette (theme.ts:3, declared at palette.ts:103),
-        // and its value is registered under `chrome` (theme.ts:66 / :90) --
-        // `chrome: accent.light.main`. Naming `accent` here bound
-        // the override to nothing: `spec-store.tsx` would write `--app-palette-accent`,
-        // which no rule reads, while the real consumer is `var(--app-palette-chrome)`.
-        // The `mapsTo` line keeps pointing at the source const, which is what it is for.
+        // is assigned from. `accent` is IMPORTED into theme.ts from ./styles/palette
+        // (theme.ts:3, declared at palette.ts:103) and is registered under `chrome`
+        // (theme.ts:66 / :90) -- `chrome: accent.light.main`. Naming `accent` bound the
+        // override to nothing: `spec-store.tsx` would write `--app-palette-accent`, which
+        // no rule reads, while the real consumer is `var(--app-palette-chrome)`.
+        //
+        // The three states are three keys, not one. `chromeHover` and `chromeActive` are
+        // registered in their own right (theme.ts:67-68, :91-92) and read at :557 and
+        // :561, so each swatch below targets the key its own label names. Sending all six
+        // to `chrome` -- which an earlier version of this fix did -- collapsed the three
+        // light ones onto a single CSS variable, and since `collectPaletteDecls` joins
+        // without de-duplicating, editing "Blue hover" moved the base accent and the last
+        // swatch edited won. The `mapsTo` line keeps pointing at the source const, which
+        // is what it is for.
         key: "blue-light",
         label: "Accent blue · light",
         type: "color",
@@ -323,7 +330,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue hover · light",
         type: "color",
         default: "#1a7cd4",
-        target: { kind: "palette", scheme: "light", token: "chrome" },
+        target: { kind: "palette", scheme: "light", token: "chromeHover" },
         mapsTo: `${D}styles/palette.ts → accent.light.main (#6B6760, silver — NOT this swatch)`,
       },
       {
@@ -331,7 +338,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue hover · dark",
         type: "color",
         default: "#2787e6",
-        target: { kind: "palette", scheme: "dark", token: "chrome" },
+        target: { kind: "palette", scheme: "dark", token: "chromeHover" },
         mapsTo: `${D}styles/palette.ts → accent.dark.main (#C4C0B8, ink — NOT this swatch)`,
       },
       {
@@ -339,7 +346,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue active · light",
         type: "color",
         default: "#166bbf",
-        target: { kind: "palette", scheme: "light", token: "chrome" },
+        target: { kind: "palette", scheme: "light", token: "chromeActive" },
         mapsTo: `${D}styles/palette.ts → accent.light.main (#6B6760, silver — NOT this swatch)`,
       },
       {
@@ -347,7 +354,7 @@ export const REGISTRY: RegistryEntry[] = [
         label: "Blue active · dark",
         type: "color",
         default: "#1f76cc",
-        target: { kind: "palette", scheme: "dark", token: "chrome" },
+        target: { kind: "palette", scheme: "dark", token: "chromeActive" },
         mapsTo: `${D}styles/palette.ts → accent.dark.main (#C4C0B8, ink — NOT this swatch)`,
       },
     ],
