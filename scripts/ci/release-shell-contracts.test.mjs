@@ -278,22 +278,56 @@ describe("release workflow shell contracts", () => {
   });
   // The capability check, as it appears in the three scans and in the verdict.
   //
-  // Compared as the awk PROGRAM, not as the whole block. The three scans feed it a
-  // path and the verdict feeds it a blob, so their `if` lines differ by construction:
-  // `if awk '...' "$TRUSTED_POLICY"` against `if printf '%s' "$POLICY_BLOB" | awk
-  // '...'`. What must not drift is the question being asked, which is the program.
-  const capabilityProgram = (text) => {
-    const programs = [];
-    const marker = "awk '";
-    let at = text.indexOf(marker);
-    while (at !== -1) {
-      const start = at + marker.length;
-      const end = text.indexOf("'", start);
-      if (end === -1) break;
-      programs.push(text.slice(start, end));
-      at = text.indexOf(marker, end);
+  // Compared as the WHOLE BLOCK, from `active=0` to the `fi` closing the inert arm.
+  //
+  // An earlier version compared only the awk PROGRAM, on the stated ground that the
+  // three scans feed it a path while the verdict feeds it a blob, so their `if` lines
+  // differ by construction. That ground stopped being true when the verdict stopped
+  // re-deriving the blob in the pipeline: all four now open with the same
+  // `if awk '...' "$TRUSTED_POLICY"`, and the only real difference between the scans and
+  // the verdict is what the inert arm DOES -- the scans skip, the verdict exits 1.
+  //
+  // Comparing the program alone therefore left the whole of the scaffolding unpinned,
+  // and the scaffolding is where the decision lives. Measured: flipping one scan's
+  // `active=1` to `active=0` leaves all four programs byte-identical, so that assertion
+  // reported 30/30 on a gate that would never have activated in that scan.
+  const capabilityBlocks = (text) => {
+    const lines = text.split("\n");
+    const blocks = [];
+    let afterClose = -1;
+    for (let i = 0; i < lines.length; i += 1) {
+      // Skip lines inside a block already collected, so a second `active=0` further
+      // down the same arm cannot register as another copy.
+      if (i <= afterClose) continue;
+      if (!/^\s*active=0\s*$/.test(lines[i])) continue;
+      let opened = -1;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (/^\s*if \[ "\$active" -ne 1 \]; then\s*$/.test(lines[j])) {
+          opened = j;
+          break;
+        }
+      }
+      if (opened === -1) continue;
+      // Line-anchored, because the comments inside the arm contain prose that ends in
+      // the word `fi` -- the same reason `4175584793` needed a line-anchored close.
+      let closed = -1;
+      for (let j = opened + 1; j < lines.length; j += 1) {
+        if (/^\s*fi\s*$/.test(lines[j])) {
+          closed = j;
+          break;
+        }
+      }
+      if (closed === -1) continue;
+      const body = lines.slice(i, closed + 1);
+      blocks.push({
+        text: body.join("\n"),
+        // Whether this copy's inert arm ends the STEP rather than skipping the scan.
+        exits: /^\s*exit 1\s*$/.test(body[body.length - 2] ?? ""),
+        startLine: i + 1,
+      });
+      afterClose = closed;
     }
-    return programs;
+    return blocks;
   };
 
   // Ordering, asserted POSITIVELY. Every other check in this file asks whether the verdict
@@ -641,24 +675,49 @@ describe("release workflow shell contracts", () => {
       "the old file-based verdict warned instead of failing",
     );
 
-    // 4. All four copies of the predicate are byte-identical. The workflow keeps the
-    //    check in four places because failing inside the scans made every
-    //    self-verification step after them unreachable; a drifted copy is exactly how
-    //    that trade turns back into a blind green.
-    const programs = capabilityProgram(scan);
+    // 4. All three scans carry the capability gate byte-identical, and the verdict
+    //    carries it too but with a different inert arm -- it exits 1 where the scans
+    //    skip. The workflow keeps the check in four places because failing inside the
+    //    scans made every self-verification step after them unreachable; a drifted copy
+    //    is exactly how that trade turns back into a blind green.
+    //
+    //    The scans are compared to EACH OTHER and the verdict is compared to neither:
+    //    pinning all four to one text would fail on the one difference that is
+    //    deliberate. What is asserted for the verdict is the property, not the shape --
+    //    its arm ends the step.
+    const blocks = capabilityBlocks(scan);
     assert.equal(
-      programs.length,
+      blocks.length,
       4,
-      `expected the capability predicate in all three scans plus the verdict, found ${programs.length}`,
+      `expected the capability predicate in all three scans plus the verdict, found ${blocks.length}`,
     );
-    const [reference, ...rest] = programs;
-    for (const program of rest) {
+    const skipping = blocks.filter((block) => !block.exits);
+    const failing = blocks.filter((block) => block.exits);
+    assert.equal(
+      skipping.length,
+      3,
+      `expected the three scans to skip an inert policy, found ${skipping.length} that do`,
+    );
+    assert.equal(
+      failing.length,
+      1,
+      `expected exactly one copy that ends the job on an inert policy (the verdict), found ${failing.length}`,
+    );
+    const [reference, ...rest] = skipping;
+    for (const block of rest) {
       assert.equal(
-        program,
-        reference,
-        "the four copies of the capability predicate have drifted apart",
+        block.text,
+        reference.text,
+        `the three scans' copies of the capability gate have drifted apart (first differs at or after line ${reference.startLine})`,
       );
     }
+    // And the verdict must not have quietly become a fourth skipper, which is the one
+    // direction that would make a green run mean "unscanned".
+    assert.equal(
+      failing[0].text.includes("exit 1"),
+      true,
+      "the verdict's inert arm must end the job",
+    );
   });
 
   it("the policy-resolution rationale describes skipping, not failing, inside the scan", () => {
