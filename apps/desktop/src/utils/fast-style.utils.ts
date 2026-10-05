@@ -306,7 +306,7 @@ const CONTRACTION_MAP: Record<string, string> = {
 //
 // Making the apostrophe optional is right for most entries, because their bare forms
 // are not words and tolerating them is what catches speech-to-text output like
-// "dont stop". It is wrong for the four below, whose bare form IS a word, so for those
+// "dont stop". It is wrong for the entries below, whose bare form IS a word, so for those
 // the apostrophe is required. Both directions are deliberate: failing to expand a typo
 // costs something that still reads correctly, whereas matching a bare word rewrites a
 // sentence the speaker did not say.
@@ -332,6 +332,7 @@ const BARE_STEMS_THAT_ARE_WORDS = new Set([
   "let's", // "he lets go" became "he let us go"
   "we'll", // "as well as that" became "as we will as that"
   "we're", // "we were ready" became "we we are ready"
+  "won't", // "he was wont to nod" became "he was will not to nod"
 ]);
 
 const CONTRACTION_RES: Array<[RegExp, string]> = Object.entries(

@@ -1075,6 +1075,17 @@ describe("filler removal keeps words that merely end in a filler", () => {
       expect(applyFastStyle("dont stop", "formal")).toBe("Do not stop.");
       expect(applyFastStyle("cant wait", "formal")).toBe("Cannot wait.");
 
+      // `wont` is the one that is not a plausible typo. `cant wait` and `dont stop`
+      // are what speech-to-text produces for `can't wait` and `don't stop`, so
+      // accepting the apostrophe-less spelling costs an unexpanded typo at worst.
+      // `wont` has no such reading: "he was wont to nod" is ordinary English, and
+      // expanding it to "will not" rewrites the sentence the user actually said.
+      // So `won't` requires its apostrophe while `won't` still expands.
+      expect(applyFastStyle("he was wont to nod", "formal")).toBe(
+        "He was wont to nod.",
+      );
+      expect(applyFastStyle("he won't nod", "formal")).toBe("He will not nod.");
+
       // And the four still expand when they are genuinely contractions.
       expect(applyFastStyle("we're ready", "formal")).toBe("We are ready.");
       expect(applyFastStyle("we'll go", "formal")).toBe("We will go.");
