@@ -1639,6 +1639,18 @@ fn draw_review_actions(
     // first is what makes that possible; previously the hint was drawn first
     // and the French and German translations -- both far longer than the English
     // default -- ran under the leftmost button by 35.7px and 32.6px.
+    // Measure at the size the labels are actually drawn at, which is 11px
+    // (see `set_font_size` further down, just before `show_text`).
+    //
+    // Nothing between the last explicit size and here sets it back, and that
+    // matters more here than in the GTK port: `Ctx::set_font_size` writes a Rust
+    // `Cell` (`gfx.rs:291`) that `save`/`restore` cannot restore, because the
+    // state stack belongs to the CGContext while the font size is ours. The 14px
+    // set for the transcript text above therefore survives, so every button came out
+    // about a quarter wider than its 11px label needed, and `row_width` being the
+    // sum of those widths meant the hint was budgeted less room than it had.
+    ctx.select_font_face("Satoshi", false, false);
+    ctx.set_font_size(11.0);
     let btn_widths: Vec<f64> = buttons
         .iter()
         .map(|(label, _, _)| {
