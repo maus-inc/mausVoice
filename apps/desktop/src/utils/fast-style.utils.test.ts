@@ -667,6 +667,265 @@ describe("chunk boundaries never land where the next chunk opens mid-word", () =
   });
 });
 
+describe("a whitespace-tier cut does not make the next chunk sentence-initial", () => {
+  // The three sites that read "the start of my input" as "the start of a sentence" are
+  // `SO_WELL_LEADING_RE` and `PROMPT_OPENER_RE`, both anchored to `^`, and
+  // `deleteLeadingPhrase`, which reads `before.length === 0` the same way
+  // (`fast-style.utils.ts:98-100`). Every tone transform TRIMS its chunk before running
+  // them, so a chunk that begins with whitespace is indistinguishable from one that
+  // begins a sentence by the time they see it.
+  //
+  // That is what the whitespace tier hands over: `findSentenceBoundary` returns an index
+  // PAST the whitespace run, and the fallback in `findChunkCut` returns the index OF a
+  // space (`fast-style.utils.ts:118`, `:145`). The leading space is the only thing that
+  // distinguished the two, and `trim()` removes it.
+  //
+  // So build the input so the LAST space inside the window is the one before the marker.
+  // The fallback scans backward from the window edge and returns the largest space index
+  // below the cap, which is exactly that one, so the next chunk opens on the marker.
+  // Probed on the FULL opener text, because at a mid-sentence seam nothing may be
+  // removed -- not even the marker word itself. An earlier draft probed the words AFTER
+  // the marker instead, which would also have passed on a `SO_WELL_LEADING_RE` that had
+  // been narrowed to leave the marker in place; the full text cannot pass that way.
+  const openers: Array<[string, string]> = [
+    ["so I went home", "so I went home"],
+    ["well that worked", "well that worked"],
+    ["okay then we start", "okay then we start"],
+    ["Can you send that file over again", "can you send that file over again"],
+    ["hey there friend", "hey there friend"],
+  ];
+  const TAIL = " and everything after it went on for a while longer.";
+  const withOpenerAtTheSeam = (opener: string): string => {
+    const unit = "alpha bravo charlie delta echo foxtrot golf hotel ";
+    const head = unit
+      .repeat(Math.ceil(FAST_STYLE_MAX_INPUT_CHARS / unit.length) + 3)
+      .slice(0, FAST_STYLE_MAX_INPUT_CHARS)
+      .replace(/\s+$/, "");
+    return `${head} ${opener}${TAIL}`;
+  };
+
+  it("puts the opener exactly where the whitespace tier will cut", () => {
+    // The guard for the tests below: if the cut moved, they would pass for the wrong
+    // reason. Measured on this construction the cut is at the cap, and the character at
+    // the cap is the space before the opener.
+    const text = withOpenerAtTheSeam("so I went home");
+    const cut = findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS);
+    expect(text[cut]).toBe(" ");
+    expect(text.slice(cut + 1)).toMatch(/^so I went home/);
+  });
+
+  // Case-insensitive on purpose. The words are what must survive, not their casing: a
+  // chunk that continues a sentence is not a sentence start, so most tones correctly
+  // leave the word lowercase, but `fixCapitalizationAndPunctuation` still capitalises a
+  // chunk's first character and `chat` is the one that does not. Pinning the case would
+  // pin an accident of which transform ran.
+  //
+  // `Can you` and `hey` are probed on the words AFTER the marker, because those are the
+  // parts a marker-stripping regex takes with it: `PROMPT_OPENER_RE` matched `hey` and
+  // `PROMPT_REQUEST_RE` matched `Can you` in full.
+  for (const tone of [
+    "default",
+    "email",
+    "notes",
+    "prompt",
+    "concise",
+    "chat",
+    "formal",
+    "bullets",
+  ] as const) {
+    it(`keeps a mid-sentence opener the ${tone} tone would delete at a real sentence start`, () => {
+      for (const [opener, probe] of openers) {
+        const text = withOpenerAtTheSeam(opener);
+        const output = applyFastStyle(text, tone);
+        expect(output.toLowerCase(), `tone=${tone} opener=${opener}`).toContain(
+          probe.toLowerCase(),
+        );
+      }
+    });
+  }
+
+  it("still deletes an opener that genuinely opened the dictation", () => {
+    // The control, and the reason this is a boundary bug rather than a rule change. The
+    // same patterns, applied to text that really does start with the marker, must still
+    // fire -- otherwise the fix would have been to stop removing openers at all.
+    //
+    // Measured, not assumed. Of the five openers above, `SO_WELL_LEADING_RE` removes
+    // three (`so`, `well`, `okay`) under every tone, and the other two need the tone's
+    // own pattern AND a wording it recognises: `PROMPT_OPENER_RE` only matches `hey`
+    // followed by a request, and `PROMPT_REQUEST_RE` only matches `Can you` on the
+    // `prompt` tone. Those are listed with the wording that actually fires.
+    for (const [opener, probe] of [
+      ["so I went home", "so I went home"],
+      ["well that worked", "well that worked"],
+      ["okay then we start", "okay then we start"],
+      ["Can you send that file over again", "can you"],
+    ] as const) {
+      const tone = opener.startsWith("Can you") ? "prompt" : "default";
+      const real = applyFastStyle(`${opener}${TAIL}`, tone);
+      expect(real.toLowerCase(), `tone=${tone} opener=${opener}`).not.toContain(
+        probe.toLowerCase(),
+      );
+    }
+
+    // `PROMPT_OPENER_RE` removes the marker word alone, so `hey there friend` comes back
+    // as `there friend` and that is why the loop probes `there friend` rather than the
+    // whole opener. `PROMPT_REQUEST_RE` is the pattern that carries the finding's own
+    // example, so it gets its own case here rather than being folded into the loop; it
+    // removes the REQUEST FRAMING and keeps the request itself, so the words to check are
+    // the framing and not the payload -- `I need you to send that file` came back as
+    // `Send that file`.
+    expect(
+      applyFastStyle(
+        `I need you to send that file${TAIL}`,
+        "prompt",
+      ).toLowerCase(),
+    ).not.toContain("i need you to");
+  });
+
+  it("still deletes an opener that opened a real sentence inside the same dictation", () => {
+    // The other control, and the one that says the fix belongs at the seam rather than in
+    // the patterns. A chunk that opens on a SENTENCE boundary is sentence-initial for
+    // real, so the removal has to survive there. Same tone, same opener, same chunk size
+    // -- the only difference is which tier produced the cut.
+    //
+    // Sized so the terminator lands inside the window with room to spare: the boundary
+    // index is 14962 and the cap is 15000, so this exercises the sentence tier and not
+    // the fallback.
+    const unit = "alpha bravo charlie delta echo foxtrot golf hotel ";
+    const head = unit
+      .repeat(Math.ceil(FAST_STYLE_MAX_INPUT_CHARS / unit.length) + 3)
+      .slice(0, FAST_STYLE_MAX_INPUT_CHARS - 40)
+      .replace(/\s+$/, "");
+    const text = `${head}. well that worked${TAIL}`;
+    expect(text.length).toBeGreaterThan(FAST_STYLE_MAX_INPUT_CHARS);
+    // The cut lands just past the terminator, which is what makes the next chunk
+    // sentence-initial: the character AT the cut is the first letter of the opener.
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      head.length + 2,
+    );
+    expect(applyFastStyle(text, "default").toLowerCase()).not.toContain(
+      "well that worked",
+    );
+  });
+
+  // The control above puts the terminator 40 characters inside the window, so the cut is
+  // the FIRST return of `findSentenceBoundary` and it points past the whitespace run.
+  // The second return points AT a separator instead, and it fires when the terminator is
+  // the LAST character of the window. That is a real sentence boundary -- the existing
+  // test "still takes a real boundary that falls on the window edge" pins that -- but it
+  // looks exactly like a whitespace-tier cut if all you check is the character at the cut.
+  const withTerminatorOnTheWindowEdge = (opener: string): string => {
+    const head = "alpha ".repeat(Math.ceil(FAST_STYLE_MAX_INPUT_CHARS / 6) + 4);
+    return `${head.slice(0, FAST_STYLE_MAX_INPUT_CHARS - 1)}. ${opener}${TAIL}`;
+  };
+
+  it("puts the terminator on the window edge, where the cut points at the separator", () => {
+    // The guard for the test below. If this shape stopped being the `afterSpace >= end`
+    // branch, the next test would pass for the wrong reason.
+    const text = withTerminatorOnTheWindowEdge("so I went home");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS - 1]).toBe(".");
+    expect(text[FAST_STYLE_MAX_INPUT_CHARS]).toBe(" ");
+    expect(findChunkCut(text, 0, FAST_STYLE_MAX_INPUT_CHARS)).toBe(
+      FAST_STYLE_MAX_INPUT_CHARS,
+    );
+  });
+
+  for (const tone of [
+    "default",
+    "email",
+    "notes",
+    "prompt",
+    "concise",
+    "chat",
+    "formal",
+    "bullets",
+  ] as const) {
+    it(`still deletes the opener the ${tone} tone would delete, behind an edge boundary`, () => {
+      // The under-redaction half of the seam. Gating on "the character at the cut is not a
+      // space" is right for the whitespace tier and wrong for this one, so an opener
+      // behind a real boundary stopped being removed once the input crossed the cap.
+      // Measured on this input at `default`: over the cap it came back as
+      // "...alpha alpha alpha. So I went home." and under the cap as "Alpha. so I went home."
+      // What each tone actually removes at a genuine sentence start, measured rather than
+      // assumed. `SO_WELL_LEADING_RE` takes `so`, `well` and `okay` under every tone.
+      // Under `prompt`, `PROMPT_OPENER_RE` removes the marker word alone -- `hey there
+      // friend` comes back as `there friend` -- and `PROMPT_REQUEST_RE` removes the
+      // request framing and keeps the payload. So the probe is the REMOVED part, not the
+      // whole opener, and the two `prompt`-only patterns are not asserted on other tones
+      // at all.
+      const forThisTone =
+        tone === "prompt"
+          ? [
+              ...openers,
+              ["hey can you send that file", "hey can you"],
+              ["I need you to send that file", "i need you to"],
+            ]
+          : openers.filter(([opener]) => !/^(Can you|hey)/.test(opener));
+      for (const [opener, probe] of forThisTone) {
+        const text = withTerminatorOnTheWindowEdge(opener);
+        const output = applyFastStyle(text, tone);
+        expect(
+          output.toLowerCase(),
+          `tone=${tone} opener=${opener}`,
+        ).not.toContain(probe.toLowerCase());
+      }
+    });
+  }
+
+  // `EXTRA_FILLER_COMMA_RE` is a fourth reader of the same thing, and it is the only one
+  // the commit above missed. It is `(?:^|\s)(?:I mean|so|well)\s*,\s*` -- anchored to `^`
+  // as one of its two alternatives, applied to the same trimmed chunk, deleting the same
+  // connective words -- and it sits inside the very `removeFillerWords` call the gate was
+  // added to.
+  //
+  // Its `\s` alternative also deletes MID-CLAUSE with no seam involved at all, which is a
+  // separate defect: `we shipped the build so, the report is ready` becomes `We shipped the
+  // build the report is ready.` That is pre-existing and byte-identical at the parent
+  // commit, so the tests here scope to the `^` alternative and the mid-clause case is named
+  // rather than pinned, because fixing it means changing which of the two alternatives
+  // fires -- a different change from gating one on `startsSentence`.
+  const commaFilled = [
+    ["so, the report is ready", "so,"],
+    ["well, the report is ready", "well,"],
+    ["I mean, the report is ready", "I mean,"],
+  ];
+
+  it("still deletes a comma-filled connective behind an edge boundary", () => {
+    // The control for the test below, and it uses the edge seam rather than an under-cap
+    // input so the two tests differ only in which tier produced the cut.
+    for (const [opener, probe] of commaFilled) {
+      const output = applyFastStyle(
+        withTerminatorOnTheWindowEdge(opener),
+        "default",
+      );
+      expect(
+        output.toLowerCase(),
+        `opener=${opener} behind an edge boundary`,
+      ).not.toContain(probe.toLowerCase());
+    }
+  });
+
+  for (const tone of [
+    "default",
+    "email",
+    "notes",
+    "prompt",
+    "concise",
+    "chat",
+    "formal",
+    "bullets",
+  ] as const) {
+    it(`keeps a comma-filled connective the ${tone} tone deletes at a real sentence start`, () => {
+      for (const [opener, probe] of commaFilled) {
+        const output = applyFastStyle(withOpenerAtTheSeam(opener), tone);
+        expect(output.toLowerCase(), `tone=${tone} opener=${opener}`).toContain(
+          probe.toLowerCase(),
+        );
+      }
+    });
+  }
+});
+
 describe("over-length dictation keeps every character", () => {
   /** Long enough to need several chunks at the current chunk size. */
   const overCap = (repeats: number) => "dictation word ".repeat(repeats);
